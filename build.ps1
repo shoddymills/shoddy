@@ -72,6 +72,7 @@ switch ($Command) {
     }
     'clean' {
         if (Test-Path bin) { Remove-Item -Recurse -Force bin }
+        if (Test-Path artifacts) { Remove-Item -Recurse -Force artifacts }
         Get-ChildItem src -Recurse -Directory -Include bin, obj |
             ForEach-Object { Remove-Item -Recurse -Force $_.FullName }
         Write-Host 'cleaned.'

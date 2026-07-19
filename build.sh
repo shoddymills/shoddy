@@ -66,7 +66,7 @@ case "${1:-help}" in
         )
         ;;
     clean)
-        rm -rf bin
+        rm -rf bin artifacts
         find src -type d \( -name bin -o -name obj \) -prune -exec rm -rf {} +
         echo "cleaned."
         ;;

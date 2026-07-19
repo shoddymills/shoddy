@@ -1,4 +1,15 @@
+<!--
+  Copyright (c) 2026 Stephen Vincent Foster. All rights reserved.
+
+  This file is part of the Shoddy Language project.
+  Licensed under the Shoddy Language License 1.0.0 (PolyForm Noncommercial
+  License 1.0.0 with Additional Use Grant). See the LICENSE file in the
+  project root for full terms.
+-->
+
 # Lesson 1 — "Hello, Shoddy" · The Craftsman Instructions Prompt
+
+**Lesson page:** [lesson-01.html](lesson-01.html) — the built, student-facing version of this lesson.
 
 This is the **system / instructions prompt** that turns a general-purpose language model into *the Craftsman* for Phase 1, Lesson 1 of The Shoddy Apprenticeship. Paste the block in **§1** into your provider's system-instruction slot (see the wiring notes in **§3**). It is self-contained: it carries the lesson's goals, the exact Shoddy it may reference, the eight-step ritual, and the hard rules the Craftsman may never break.
 
@@ -216,4 +227,4 @@ Notes that apply across providers:
 
 ---
 
-*Grounding: Lesson 1 content is drawn from the built lesson (`lesson-01.html`) and its source, which in turn cite the uploaded Shoddy documentation (`README.md`, `tst/examples.shoddy`, `tst/libtest.shoddy`, `doc/QUICKREF.html`, `doc/VSCODE.md`). Provider mechanisms and versions verified against current provider documentation and release notes (mid-2026): [Anthropic Claude models overview](https://platform.claude.com/docs/en/about-claude/models/overview) and [system-prompt docs](https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/claude-prompting-best-practices); [OpenAI GPT-5 system card — instruction hierarchy & developer messages](https://cdn.openai.com/gpt-5-system-card.pdf) and [GPT-5.1 prompting guide](https://developers.openai.com/cookbook/examples/gpt-5/gpt-5-1_prompting_guide); [Google Gemini model versions](https://cloud.google.com/vertex-ai/generative-ai/docs/learn/model-versions) and [current Gemini generation summary](https://nettpilot.com/google-gemini-business-guide-2026/).*
+*Grounding: Lesson 1 content is drawn from the built lesson ([lesson-01.html](lesson-01.html)) and its source, which in turn cite the uploaded Shoddy documentation (`README.md`, `tst/examples.shoddy`, `tst/libtest.shoddy`, `doc/QUICKREF.html`, `doc/VSCODE.md`). Provider mechanisms and versions verified against current provider documentation and release notes (mid-2026): [Anthropic Claude models overview](https://platform.claude.com/docs/en/about-claude/models/overview) and [system-prompt docs](https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/claude-prompting-best-practices); [OpenAI GPT-5 system card — instruction hierarchy & developer messages](https://cdn.openai.com/gpt-5-system-card.pdf) and [GPT-5.1 prompting guide](https://developers.openai.com/cookbook/examples/gpt-5/gpt-5-1_prompting_guide); [Google Gemini model versions](https://cloud.google.com/vertex-ai/generative-ai/docs/learn/model-versions) and [current Gemini generation summary](https://nettpilot.com/google-gemini-business-guide-2026/).*

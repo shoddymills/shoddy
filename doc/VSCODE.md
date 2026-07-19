@@ -1,25 +1,31 @@
-# Shoddy in Visual Studio Code (macOS)
+# Shoddy in Visual Studio Code
 
 *Making useless things useful, through skill — now with a Run button.*
 
-This guide sets up VS Code on a Mac to write, run, weave, and test
-Shoddy with the mill. It assumes the repository is checked out and
-nothing else.
+This guide sets up VS Code to write, run, weave, and test Shoddy with
+the mill. It assumes the repository is checked out and nothing else.
+
+> **Platform note.** Commands and key bindings below are written for
+> macOS (`Cmd`, zsh, `brew`). On Windows and Linux the flow is
+> identical — substitute `Ctrl` for `Cmd`, use `./build.ps1` instead of
+> `./build.sh` on Windows, and set environment variables the usual way
+> for your shell.
 
 ## 1. Prerequisites
 
 - **.NET SDK 10** — check with `dotnet --version`. Install from
   <https://dotnet.microsoft.com/download> or `brew install dotnet-sdk`.
-- **The mill** — a prebuilt `bin/` (Apple Silicon) ships in the repo;
-  the executable is `bin/mill`. If it's missing or you're on a
-  different machine, rebuild it:
+- **The mill** — not committed; build it from source. From the repo
+  root:
 
   ```sh
-  dotnet publish src/Shoddy.Mill -c Release -o bin
+  ./build.sh build          # Windows: ./build.ps1 build
   ```
 
-  (A folder publish, not single-file: the weaver needs
-  `Shoddy.Runtime.dll` on disk to reference from generated code.)
+  which runs `dotnet publish src/Shoddy.Mill -c Release -o bin` (a
+  folder publish, not single-file: the weaver needs `Shoddy.Runtime.dll`
+  on disk to reference from generated code). The executable lands at
+  `bin/mill` (`bin/mill.exe` on Windows).
 
 Sanity check from the repo root:
 
@@ -60,17 +66,30 @@ with `F5`** (section 6), and mill commands — **Shoddy: Run File**
 (`ctrl+r`, plus the ▶ button), **Weave File**, **Build Machine from
 File**, and **Show Generated C#**.
 
-Install it with a plain copy — no tooling needed:
+The extension is plain JavaScript — no build step. A packaged
+`vscode-shoddy-0.9.0.vsix` ships in the folder; install it from the repo
+root (works on macOS, Windows, and Linux):
 
 ```sh
-cp -R vscode-shoddy \
-      ~/.vscode/extensions/shoddy-mill.vscode-shoddy-2.0.0
+code --install-extension vscode-shoddy/vscode-shoddy-0.9.0.vsix
 ```
 
+Or in VS Code: Extensions view → `···` menu → **Install from VSIX…** →
+pick the file. Reload when prompted.
+
+If you've edited the extension, repackage first (the committed `.vsix`
+may be stale):
+
+```sh
+npm install -g @vscode/vsce
+cd vscode-shoddy && vsce package        # emits a fresh .vsix
+```
+
+To iterate on the extension without packaging, open the
+`vscode-shoddy/` folder in VS Code and press **F5** — that launches an
+Extension Development Host with it loaded.
+
 Then reload VS Code (`Cmd+Shift+P` → **Developer: Reload Window**).
-To uninstall, delete that folder. Alternatives — a packaged `.vsix`
-(managed via the Extensions view) or a symlink (live-editing the
-extension) — are in `vscode-shoddy/README.md`.
 The extension finds the mill via the `shoddy.millPath` setting, falling
 back to the workspace's `bin/mill`, then `mill` on your PATH.
 

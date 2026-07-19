@@ -37,37 +37,51 @@ your PATH.
 
 ### Install the packaged .vsix (recommended)
 
+A packaged `.vsix` ships in this folder. From here:
+
 ```sh
-npx @vscode/vsce package --allow-missing-repository --skip-license
-code --install-extension vscode-shoddy-2.0.0.vsix
+code --install-extension vscode-shoddy-0.9.0.vsix
 ```
 
 The extension then appears in the Extensions view and can be updated
 or uninstalled from there like any other. (If `code` isn't on your
 PATH: `Cmd+Shift+P` → **Shell Command: Install 'code' command in
-PATH**. If a previous install of this extension is loaded, quit VS
-Code fully — `Cmd+Q` — before running the install.)
+PATH**.)
 
-### Install as a plain copy (no tooling)
+### Rebuild the .vsix and bump the version
 
-```sh
-cp -R "$(pwd)" ~/.vscode/extensions/shoddy-mill.vscode-shoddy-2.0.0
-```
-
-Then reload VS Code (`Cmd+Shift+P` → **Developer: Reload Window**).
-To uninstall, delete that folder. Repeat the copy after changing the
-extension source.
-
-### Symlink (for hacking on the extension)
+After editing the extension, repackage. `vsce` bumps the version in
+`package.json` for you — `patch`/`minor`/`major` or an exact semver:
 
 ```sh
-ln -s "$(pwd)" ~/.vscode/extensions/shoddy-mill.vscode-shoddy-2.0.0
+npm install -g @vscode/vsce
+vsce package patch --no-git-tag-version   # e.g. 0.9.0 -> 0.9.1
 ```
 
-Edits to the grammar/snippets/commands take effect on the next
-**Developer: Reload Window** — no re-copy needed.
+To force a completely clean reinstall — old copy removed, cache
+overwritten (the extension ID is `shoddy-mill.vscode-shoddy`):
+
+```sh
+code --uninstall-extension shoddy-mill.vscode-shoddy   # remove the old install
+rm -f *.vsix                                           # drop stale packages
+vsce package patch --no-git-tag-version                # repackage at a new version
+code --install-extension vscode-shoddy-<new-version>.vsix --force
+```
+
+Then reload VS Code (`Cmd+Shift+P` → **Developer: Reload Window**), or
+quit fully (`Cmd+Q`) if a previous install is still loaded. Bumping the
+version is what makes VS Code pick up the new build; `--force` overwrites
+an install at the same version.
+
+### Hacking on the extension (no packaging)
+
+Open this folder in VS Code and press **F5** to launch an Extension
+Development Host with the extension loaded. Edits to the
+grammar/snippets/commands take effect on the next **Developer: Reload
+Window** in that host — no re-copy needed.
 
 ## Requirements
 
-The mill (`bin/mill` in the repo, or built from `src/`). See
-`doc/VSCODE.md` in the Shoddy repository for full workspace setup.
+The mill, built from source into `bin/` (`./build.sh build`, or
+`./build.ps1 build` on Windows). See `doc/VSCODE.md` in the Shoddy
+repository for full workspace setup.

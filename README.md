@@ -56,17 +56,21 @@ libraries), and the tagline, meant literally. The full story is in
 | Path  | Contents                                                    |
 |-------|-------------------------------------------------------------|
 | `src/`| The .NET solution: `Shoddy.Runtime` · `Shoddy.Devil` (front-end) · `Shoddy.Mill` · `Shoddy.Compiler` · `Shoddy.Tests` |
-| `bin/`| `mill` — the toolchain, published (folder; run `bin/mill`)   |
+| `bin/`| Build output — the published `mill` toolchain lands here after `dotnet publish` (not committed; build it, then run `bin/mill`) |
 | `machines/`| Standard library (the machines): `seq` `str` `matrix` `money` `file` `recio` `dict` `isam` `simplex` `mps` |
 | `doc/`| `GUIDE.html` (start here) · `SPEC.html` · `QUICKREF.html` · `VSCODE.md` · `DEVLOG.md`  |
 | `tst/`| `libtest.shoddy` (assertion suite) · `examples.shoddy` · `gradebook.shoddy` · `simplex.shoddy` · `simplex-mps.shoddy` · `golden/` (the constitution) |
 | `vscode-shoddy/`| VS Code extension: highlighting, snippets, mill commands |
-| `dotnet/`| `PORTING.md` — the port brief and status of record          |
-| `oldc/`| `shoddy.c` — the retired C reference, kept as specification artifact |
 
 ## Build and run
 
-Requires the .NET 10 SDK.
+Requires the .NET 10 SDK. Build the mill first — it is not committed:
+
+```
+dotnet publish src/Shoddy.Mill -c Release -o bin   # build the mill into bin/
+```
+
+Then:
 
 ```
 bin/mill run tst/examples.shoddy     # compile in memory and run
@@ -81,6 +85,41 @@ dotnet test src/Shoddy.Tests     # the golden conformance suite
 To rebuild the mill: `dotnet publish src/Shoddy.Mill -c Release -o bin`
 (a folder publish — the weaver references `Shoddy.Runtime.dll` from
 disk when compiling generated code).
+
+### Build wrapper
+
+Thin convenience wrappers bundle the commands above — `build.ps1` on
+Windows, `build.sh` on Linux/macOS/WSL (same subcommands):
+
+```
+./build.sh build                 # build the mill into bin/
+./build.sh test                  # golden suite + libtest assertions
+./build.sh run tst/examples.shoddy
+./build.sh machines              # compile every machine to a DLL
+./build.sh vsix                  # package the VS Code extension (.vsix)
+./build.sh vsix patch            # bump version, then package
+./build.sh clean
+```
+
+On Windows, run `build.cmd` in place of `./build.sh` (e.g.
+`build.cmd build`). It's a shim that invokes `build.ps1` with an
+execution-policy bypass, so the unsigned script runs regardless of the
+machine's PowerShell policy.
+
+To call `build.ps1` directly instead, either bypass the policy per run:
+
+```
+powershell -ExecutionPolicy Bypass -File .\build.ps1 build
+```
+
+or allow local unsigned scripts for your user once:
+
+```
+Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned
+```
+
+(If `AllSigned` is enforced by Group Policy on a managed machine, use
+`build.cmd` or the per-run bypass above.)
 
 ## Documentation
 
@@ -101,6 +140,24 @@ disk when compiling generated code).
 - `Include "FILE.SHODDY"` splices files (include-once, path relative to the
   including file).
 - Errors carry source line numbers; `Assert` and `Error` are built in.
+
+## License
+
+Shoddy is licensed under the **Shoddy Language License 1.0.0** — the
+[PolyForm Noncommercial License 1.0.0](https://polyformproject.org/licenses/noncommercial/1.0.0/)
+with an Additional Use Grant. In short:
+
+- **Noncommercial use** (personal, research, education, evaluation) is free.
+- **Commercial use is also free** if both you (the individual or entity) and
+  the compiled application each earn **less than $50,000 USD** in gross annual
+  revenue.
+- Above either threshold you need a **Commercial Production License**.
+
+See [LICENSE](LICENSE) for the full terms. To purchase a Commercial Production
+License, contact Stephen Vincent Foster at **svfoster@gmail.com**.
+
+Contributions are governed by the CLA in
+[CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Status
 

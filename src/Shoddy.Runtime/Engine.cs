@@ -1,0 +1,856 @@
+using System.Globalization;
+using System.Text;
+
+namespace Shoddy.Runtime;
+
+/// <summary>
+/// The execution engine woven programs run against: the value stack,
+/// every builtin word, record operations, and I/O. Quotation values are
+/// CLR closures — a body Action plus a QItem array for sequence ops and
+/// printing (Shoddy's lists ARE quotations).
+/// </summary>
+public sealed partial class Engine
+{
+    readonly List<Value> Stk = new();
+    readonly FileStream?[] files = new FileStream?[16];
+    readonly Random rnd = new();
+    readonly TextWriter O;
+    readonly TextReader In;
+
+    static readonly Encoding Bytes = Encoding.Latin1;   // 1 char = 1 byte
+    static readonly CultureInfo Inv = CultureInfo.InvariantCulture;
+
+    readonly string[] progArgs;
+
+    public Engine(TextWriter? output = null, TextReader? input = null, string[]? args = null)
+    {
+        O = output ?? Console.Out;
+        In = input ?? Console.In;
+        progArgs = args ?? Array.Empty<string>();
+    }
+
+    static ShoddyError Die(int line, string msg) => new(line, msg);
+
+    // ---- value stack --------------------------------------------------
+
+    public int Depth => Stk.Count;
+
+    public void Push(Value v) => Stk.Add(v);
+
+    public Value Pop(int line)
+    {
+        if (Stk.Count == 0) throw Die(line, "stack underflow");
+        Value v = Stk[^1];
+        Stk.RemoveAt(Stk.Count - 1);
+        return v;
+    }
+
+    public void PushNum(double d) => Push(Value.OfNum(d));
+    public void PushStr(string s) => Push(Value.OfStr(s));
+    public void PushBool(bool b) => Push(Value.OfBool(b));
+
+    public double PopNum(int line, string who)
+    {
+        Value v = Pop(line);
+        if (v.T != VType.Num) throw Die(line, $"{who} expects a NUMBER, got {Value.TypeName(v.T)}");
+        return v.Num;
+    }
+
+    public string PopStr(int line, string who)
+    {
+        Value v = Pop(line);
+        if (v.T != VType.Str) throw Die(line, $"{who} expects a STRING, got {Value.TypeName(v.T)}");
+        return v.Str!;
+    }
+
+    public bool PopBool(int line, string who)
+    {
+        Value v = Pop(line);
+        if (v.T != VType.Bool)
+            throw Die(line, $"{who} expects a BOOLEAN, got {Value.TypeName(v.T)} (booleans are not numbers in Shoddy)");
+        return v.B;
+    }
+
+    /* pop a function value, keeping its captured environment (closure) */
+    public Value PopFunc(int line, string who)
+    {
+        Value v = Pop(line);
+        if (v.T != VType.Quot)
+            throw Die(line, $"{who} expects a QUOTATION, got {Value.TypeName(v.T)}");
+        return v;
+    }
+
+    Value PopListVal(int line, string who)
+    {
+        Value v = Pop(line);
+        if (v.T != VType.Quot)
+            throw Die(line, $"{who} expects a QUOTATION or LIST, got {Value.TypeName(v.T)}");
+        return v;
+    }
+
+    /// <summary>For list construction: assert a compiled element left
+    /// exactly one value since depth d0, and take it.</summary>
+    public Value TakeOne(int d0, int line)
+    {
+        if (Stk.Count != d0 + 1)
+            throw Die(line, "list element must yield exactly one value");
+        return Pop(line);
+    }
+
+    // ---- quotations ----------------------------------------------------
+
+    /// <summary>Execute a quotation value: its body closure, or (for a
+    /// constructed list) push each item.</summary>
+    public void CallQuot(Value f)
+    {
+        if (f.Body != null) { f.Body(); return; }
+        foreach (QItem it in f.CItems!)
+        {
+            if (it.Lit != null) Push(it.Lit);
+            else it.Act!();
+        }
+    }
+
+    /// <summary>Evaluate the k-th item of a quotation-kind sequence;
+    /// must yield exactly one value.</summary>
+    Value QuotItem(Value q, int k, int line, string who)
+    {
+        QItem it = q.CItems![k];
+        if (it.Lit != null) return it.Lit;
+        int d0 = Stk.Count;
+        it.Act!();
+        if (Stk.Count != d0 + 1)
+            throw Die(line, $"{who}: each list item must yield exactly one value");
+        return Pop(line);
+    }
+
+    /// <summary>Build a new list (quotation-kind sequence) of values.</summary>
+    static Value NewValueList(List<Value> vals, int line)
+    {
+        var items = new QItem[vals.Count];
+        for (int k = 0; k < vals.Count; k++) items[k] = QItem.OfValue(vals[k]);
+        return Value.OfCQuot(items, items);
+    }
+
+    public void PushCQuot(object id, QItem[] items, Action? body) =>
+        Push(Value.OfCQuot(id, items, body));
+
+    /// <summary>Push a freshly-constructed list of values — the woven
+    /// form of a <c>{ ... }</c> list literal (new identity per run).</summary>
+    public void PushList(List<Value> vals, int line) => Push(NewValueList(vals, line));
+
+    // ---- shared semantics ---------------------------------------------
+
+    public static bool EqualValues(Value a, Value b)
+    {
+        if (a.T != b.T) return false;
+        switch (a.T)
+        {
+            case VType.Num: return a.Num == b.Num;
+            case VType.Str: return a.Str == b.Str;
+            case VType.Bool: return a.B == b.B;
+            case VType.Quot: return ReferenceEquals(a.CId, b.CId);
+            case VType.Rec:
+                if (!ReferenceEquals(a.RType, b.RType)) return false;
+                for (int k = 0; k < a.Elems!.Length; k++)
+                    if (!EqualValues(a.Elems[k], b.Elems![k])) return false;
+                return true;
+            case VType.Arr:
+                if (a.Elems!.Length != b.Elems!.Length) return false;
+                for (int k = 0; k < a.Elems.Length; k++)
+                    if (!EqualValues(a.Elems[k], b.Elems[k])) return false;
+                return true;
+        }
+        return false;
+    }
+
+    static int SeqLen(Value s) =>
+        s.T == VType.Arr ? s.Elems!.Length : s.CItems!.Length;
+
+    Value PopSeq(int line, string who)
+    {
+        Value v = Pop(line);
+        if (v.T != VType.Quot && v.T != VType.Arr)
+            throw Die(line, $"{who} expects a LIST or ARRAY, got {Value.TypeName(v.T)}");
+        return v;
+    }
+
+    Value SeqItem(Value s, int k, int line, string who) =>
+        s.T == VType.Arr ? s.Elems![k] : QuotItem(s, k, line, who);
+
+    /// <summary>Record construction: pop fields (rightmost on top).</summary>
+    public void Ctor(TypeDef t, int line)
+    {
+        var fields = new Value[t.Fields.Count];
+        for (int k = t.Fields.Count - 1; k >= 0; k--)
+            fields[k] = Pop(line);
+        Push(Value.OfRec(t, fields));
+    }
+
+    /// <summary>Field accessor: ( rec -- value ).</summary>
+    public void Field(string name, int line)
+    {
+        Value v = Pop(line);
+        if (v.T != VType.Rec)
+            throw Die(line, $"{name} expects a RECORD, got {Value.TypeName(v.T)}");
+        int fi = v.RType!.FieldIndex(name);
+        if (fi < 0)
+            throw Die(line, $"{v.RType.Name} has no field {name}");
+        Push(v.Elems![fi]);
+    }
+
+    /// <summary>WITH: pop field values (in names order, rightmost on top),
+    /// then the record; push the functionally-updated record.</summary>
+    public void With(int line, string[] names)
+    {
+        var vals = new Value[names.Length];
+        for (int k = names.Length - 1; k >= 0; k--)
+            vals[k] = Pop(line);
+        Value r = Pop(line);
+        if (r.T != VType.Rec)
+            throw Die(line, $"WITH expects a RECORD, got {Value.TypeName(r.T)}");
+        var fields = (Value[])r.Elems!.Clone();
+        for (int k = 0; k < names.Length; k++)
+        {
+            int fi = r.RType!.FieldIndex(names[k]);
+            if (fi < 0)
+                throw Die(line, $"{r.RType.Name} has no field {names[k]}");
+            fields[fi] = vals[k];
+        }
+        Push(Value.OfRec(r.RType!, fields));
+    }
+
+    public void UnknownWord(string name, int line) =>
+        throw Die(line, $"unknown word: {name}");
+
+    /// <summary>Execute a builtin word or die — for woven code.</summary>
+    public void Op(string w, int line)
+    {
+        if (!Builtin(w, line)) UnknownWord(w, line);
+    }
+
+    // ---- binary random-access files ----
+
+    FileStream BinHandle(double h, int line, string w)
+    {
+        int k = (int)h;
+        if (k < 1 || k > files.Length || files[k - 1] == null)
+            throw Die(line, $"{w}: bad file handle");
+        return files[k - 1]!;
+    }
+
+    /// <summary>All builtin words, dispatched by folded name.
+    /// Returns true if the word was handled.</summary>
+    public bool Builtin(string w, int line)
+    {
+        switch (w)
+        {
+            /* ---- stack shuffling ---- */
+            case "DUP": { Value a = Pop(line); Push(a); Push(a); return true; }
+            case "DROP": Pop(line); return true;
+            case "SWAP": { Value b = Pop(line), a = Pop(line); Push(b); Push(a); return true; }
+            case "OVER": { Value b = Pop(line), a = Pop(line); Push(a); Push(b); Push(a); return true; }
+            case "ROT": { Value c = Pop(line), b = Pop(line), a = Pop(line); Push(b); Push(c); Push(a); return true; }
+            case "NIP": { Value b = Pop(line); Pop(line); Push(b); return true; }
+            case "TUCK": { Value b = Pop(line), a = Pop(line); Push(b); Push(a); Push(b); return true; }
+            case "DEPTH": PushNum(Stk.Count); return true;
+
+            /* ---- arithmetic ---- */
+            case "+": { double b = PopNum(line, w), a = PopNum(line, w); PushNum(a + b); return true; }
+            case "-": { double b = PopNum(line, w), a = PopNum(line, w); PushNum(a - b); return true; }
+            case "*": { double b = PopNum(line, w), a = PopNum(line, w); PushNum(a * b); return true; }
+            case "/":
+            {
+                double b = PopNum(line, w), a = PopNum(line, w);
+                if (b == 0) throw Die(line, "division by zero");
+                PushNum(a / b); return true;
+            }
+            case "MOD":
+            {
+                double b = PopNum(line, w), a = PopNum(line, w);
+                if (b == 0) throw Die(line, "MOD by zero");
+                PushNum(a % b); return true;    // C fmod semantics
+            }
+            case "NEGATE": PushNum(-PopNum(line, w)); return true;
+            case "ABS": PushNum(Math.Abs(PopNum(line, w))); return true;
+            case "MIN": { double b = PopNum(line, w), a = PopNum(line, w); PushNum(a < b ? a : b); return true; }
+            case "MAX": { double b = PopNum(line, w), a = PopNum(line, w); PushNum(a > b ? a : b); return true; }
+            case "SQR":
+            {
+                double a = PopNum(line, w);
+                if (a < 0) throw Die(line, "SQR of negative number");
+                PushNum(Math.Sqrt(a)); return true;
+            }
+            case "FLOOR": PushNum(Math.Floor(PopNum(line, w))); return true;
+            case "CEIL": PushNum(Math.Ceiling(PopNum(line, w))); return true;
+            case "ROUND": PushNum(Math.Floor(PopNum(line, w) + 0.5)); return true;   // half-up
+            case "^":
+            {
+                double b = PopNum(line, w), a = PopNum(line, w);
+                double r = Math.Pow(a, b);
+                if (!double.IsFinite(r)) throw Die(line, "invalid exponentiation");
+                PushNum(r); return true;
+            }
+            case "SIN": PushNum(Math.Sin(PopNum(line, w))); return true;
+            case "COS": PushNum(Math.Cos(PopNum(line, w))); return true;
+            case "TAN": PushNum(Math.Tan(PopNum(line, w))); return true;
+            case "ATN": PushNum(Math.Atan(PopNum(line, w))); return true;
+            case "EXP": PushNum(Math.Exp(PopNum(line, w))); return true;
+            case "LOG":
+            {
+                double a = PopNum(line, w);
+                if (a <= 0) throw Die(line, "LOG of non-positive number");
+                PushNum(Math.Log(a)); return true;
+            }
+            case "PI": PushNum(Math.PI); return true;
+            case "RND": PushNum(rnd.NextDouble()); return true;   // ( -- x ), in [0,1)
+
+            /* ---- errors and testing ---- */
+            case "ERROR": throw Die(line, PopStr(line, w));
+            case "ASSERT":                      // ( bool msg -- )
+            {
+                string msg = PopStr(line, w);
+                if (!PopBool(line, w)) throw Die(line, $"ASSERTION FAILED: {msg}");
+                return true;
+            }
+            case "INSTR":                       // ( s sub -- pos ), 0 if absent
+            {
+                string subs = PopStr(line, w), s = PopStr(line, w);
+                if (subs.Length == 0) { PushNum(0); return true; }
+                PushNum(s.IndexOf(subs, StringComparison.Ordinal) + 1);
+                return true;
+            }
+
+            /* ---- comparison ---- */
+            case "=":
+            case "<>":
+            {
+                Value b = Pop(line), a = Pop(line);
+                bool eq = EqualValues(a, b);
+                PushBool(w == "=" ? eq : !eq);
+                return true;
+            }
+            case "<":
+            case ">":
+            case "<=":
+            case ">=":
+            {
+                Value b = Pop(line), a = Pop(line);
+                double c;
+                if (a.T == VType.Num && b.T == VType.Num) c = a.Num - b.Num;
+                else if (a.T == VType.Str && b.T == VType.Str)
+                    c = string.CompareOrdinal(a.Str, b.Str);
+                else throw Die(line, $"{w} expects two NUMBERs or two STRINGs");
+                PushBool(w switch { "<" => c < 0, ">" => c > 0, "<=" => c <= 0, _ => c >= 0 });
+                return true;
+            }
+
+            /* ---- logic (strict postfix words; the expression dialect
+             * compiles AND/OR to short-circuiting conditionals) ---- */
+            case "AND": { bool b = PopBool(line, w), a = PopBool(line, w); PushBool(a && b); return true; }
+            case "OR": { bool b = PopBool(line, w), a = PopBool(line, w); PushBool(a || b); return true; }
+            case "NOT": PushBool(!PopBool(line, w)); return true;
+            case "TRUE": PushBool(true); return true;
+            case "FALSE": PushBool(false); return true;
+
+            /* ---- strings ---- */
+            case "&":
+            {
+                string b = PopStr(line, w), a = PopStr(line, w);
+                PushStr(a + b); return true;
+            }
+            case "LEN": PushNum(PopStr(line, w).Length); return true;
+            case "STR": PushStr(Format.Num(PopNum(line, w))); return true;
+            case "VAL":
+            {
+                string s = PopStr(line, w);
+                if (!Strtod(s, out double v)) throw Die(line, $"VAL: '{s}' is not a number");
+                PushNum(v); return true;
+            }
+            case "LEFT":
+            {
+                int n = (int)PopNum(line, w);
+                string s = PopStr(line, w);
+                n = Math.Clamp(n, 0, s.Length);
+                PushStr(s[..n]); return true;
+            }
+            case "RIGHT":
+            {
+                int n = (int)PopNum(line, w);
+                string s = PopStr(line, w);
+                n = Math.Clamp(n, 0, s.Length);
+                PushStr(s[(s.Length - n)..]); return true;
+            }
+            case "MID":                         // ( s start len -- s' ), 1-based
+            {
+                int n = (int)PopNum(line, w);
+                int start = (int)PopNum(line, w);
+                string s = PopStr(line, w);
+                if (start < 1) start = 1;
+                if (start > s.Length) { PushStr(""); return true; }
+                if (n < 0) n = 0;
+                if (start - 1 + n > s.Length) n = s.Length - (start - 1);
+                PushStr(s.Substring(start - 1, n)); return true;
+            }
+            case "CHR":
+            {
+                int c = (int)PopNum(line, w);
+                PushStr(c == 0 ? "" : ((char)c).ToString());   // NUL ends a C string
+                return true;
+            }
+            case "ASC":
+            {
+                string s = PopStr(line, w);
+                if (s.Length == 0) throw Die(line, "ASC of empty string");
+                PushNum(s[0]); return true;
+            }
+            case "UPPER":
+            case "LOWER":
+            {
+                string s = PopStr(line, w);
+                var sb = new StringBuilder(s.Length);
+                foreach (char ch in s)                        // ASCII, like C's toupper
+                    sb.Append(w == "UPPER"
+                        ? ch is >= 'a' and <= 'z' ? (char)(ch - 32) : ch
+                        : ch is >= 'A' and <= 'Z' ? (char)(ch + 32) : ch);
+                PushStr(sb.ToString()); return true;
+            }
+
+            /* ---- I/O ---- */
+            case "PRINT":
+                Printer.PrintValue(O, Pop(line));
+                O.Write('\n');
+                return true;
+            case "READFILE":                    // ( path -- s ) whole file
+            {
+                string path = PopStr(line, w);
+                byte[] buf;
+                try { buf = File.ReadAllBytes(path); }
+                catch (Exception) { throw Die(line, $"READFILE: cannot open '{path}'"); }
+                PushStr(Bytes.GetString(buf));
+                return true;
+            }
+            case "WRITEFILE":
+            case "APPENDFILE":
+            {
+                string s = PopStr(line, w);     // ( path s -- )
+                string path = PopStr(line, w);
+                try
+                {
+                    using var f = new FileStream(path,
+                        w == "WRITEFILE" ? FileMode.Create : FileMode.Append, FileAccess.Write);
+                    f.Write(Bytes.GetBytes(s));
+                }
+                catch (Exception e) when (e is not ShoddyError)
+                {
+                    throw Die(line, $"{w}: cannot open '{path}'");
+                }
+                return true;
+            }
+            case "FILEEXISTS":                  // ( path -- bool )
+                PushBool(File.Exists(PopStr(line, w)));
+                return true;
+            case "DELETEFILE":                  // ( path -- )
+            {
+                string path = PopStr(line, w);
+                try
+                {
+                    if (!File.Exists(path)) throw new IOException();
+                    File.Delete(path);
+                }
+                catch (Exception e) when (e is not ShoddyError)
+                {
+                    throw Die(line, $"DELETEFILE: cannot delete '{path}'");
+                }
+                return true;
+            }
+
+            /* binary random-access: handles are NUMBERs, positions are
+             * 1-based bytes, GET/PUT advance. NUMBER = 8-byte native-endian
+             * double, BOOLEAN = 1 byte, strings = fixed zero-padded fields. */
+            case "BOPEN":                       // ( path -- handle )
+            {
+                string path = PopStr(line, w);
+                int slot = Array.IndexOf(files, null);
+                if (slot < 0) throw Die(line, "BOPEN: too many open files");
+                try
+                {
+                    files[slot] = new FileStream(path, FileMode.OpenOrCreate,
+                                                 FileAccess.ReadWrite);
+                }
+                catch (Exception e) when (e is not ShoddyError)
+                {
+                    throw Die(line, $"BOPEN: cannot open '{path}'");
+                }
+                PushNum(slot + 1);
+                return true;
+            }
+            case "BCLOSE":                      // ( h -- )
+            {
+                double h = PopNum(line, w);
+                BinHandle(h, line, w).Dispose();
+                files[(int)h - 1] = null;
+                return true;
+            }
+            case "SEEK":                        // ( h pos -- ), 1-based bytes
+            {
+                double pos = PopNum(line, w);
+                FileStream f = BinHandle(PopNum(line, w), line, w);
+                if (pos < 1) throw Die(line, "SEEK: position must be >= 1");
+                f.Position = (long)pos - 1;
+                return true;
+            }
+            case "BPOS":                        // ( h -- pos )
+                PushNum(BinHandle(PopNum(line, w), line, w).Position + 1);
+                return true;
+            case "BSIZE":                       // ( h -- bytes )
+                PushNum(BinHandle(PopNum(line, w), line, w).Length);
+                return true;
+            case "PUTNUM":                      // ( h n -- ), 8 bytes
+            {
+                double d = PopNum(line, w);
+                FileStream f = BinHandle(PopNum(line, w), line, w);
+                f.Write(BitConverter.GetBytes(d));
+                return true;
+            }
+            case "GETNUM":                      // ( h -- n )
+            {
+                FileStream f = BinHandle(PopNum(line, w), line, w);
+                var buf = new byte[8];
+                if (f.ReadAtLeast(buf, 8, false) != 8)
+                    throw Die(line, "GETNUM: read past end of file");
+                PushNum(BitConverter.ToDouble(buf));
+                return true;
+            }
+            case "PUTBOOL":                     // ( h b -- ), 1 byte
+            {
+                byte c = PopBool(line, w) ? (byte)1 : (byte)0;
+                FileStream f = BinHandle(PopNum(line, w), line, w);
+                f.WriteByte(c);
+                return true;
+            }
+            case "GETBOOL":                     // ( h -- b )
+            {
+                FileStream f = BinHandle(PopNum(line, w), line, w);
+                int c = f.ReadByte();
+                if (c < 0) throw Die(line, "GETBOOL: read past end of file");
+                PushBool(c != 0);
+                return true;
+            }
+            case "PUTSTR":                      // ( h s len -- ), fixed field
+            {
+                int len = (int)PopNum(line, w);
+                string s = PopStr(line, w);
+                FileStream f = BinHandle(PopNum(line, w), line, w);
+                if (len < 1) throw Die(line, "PUTSTR: field length must be >= 1");
+                byte[] sb = Bytes.GetBytes(s);
+                if (sb.Length > len)
+                    throw Die(line, $"PUTSTR: string of {sb.Length} bytes exceeds the {len}-byte field");
+                f.Write(sb);
+                for (int k = sb.Length; k < len; k++) f.WriteByte(0);
+                return true;
+            }
+            case "GETSTR":                      // ( h len -- s ), strips padding
+            {
+                int len = (int)PopNum(line, w);
+                FileStream f = BinHandle(PopNum(line, w), line, w);
+                if (len < 1) throw Die(line, "GETSTR: field length must be >= 1");
+                var buf = new byte[len];
+                if (f.ReadAtLeast(buf, len, false) != len)
+                    throw Die(line, "GETSTR: read past end of file");
+                string s = Bytes.GetString(buf);
+                int z = s.IndexOf('\0');        // C strings end at the first NUL
+                PushStr(z < 0 ? s : s[..z]);
+                return true;
+            }
+            case "INPUT":                       // ( prompt -- s )
+            {
+                O.Write(PopStr(line, w));
+                O.Flush();
+                PushStr(In.ReadLine() ?? "");
+                return true;
+            }
+            case "ARGS":                        // ( -- [args] ) program arguments
+            {
+                var vals = new List<Value>(progArgs.Length);
+                foreach (string a in progArgs) vals.Add(Value.OfStr(a));
+                Push(NewValueList(vals, line));
+                return true;
+            }
+
+            /* ---- combinators ---- */
+            case "CALL":
+                CallQuot(PopFunc(line, w));
+                return true;
+            case "IFTE":
+            {
+                Value fe = PopFunc(line, w), te = PopFunc(line, w);
+                bool c = PopBool(line, w);
+                CallQuot(c ? te : fe);
+                return true;
+            }
+            case "MAP":                         // result has the input's kind
+            {
+                Value f = PopFunc(line, w);
+                Value l = PopSeq(line, w);
+                int n = SeqLen(l);
+                var resl = l.T == VType.Quot ? new List<Value>() : null;
+                var resa = l.T == VType.Arr ? new Value[n] : null;
+                for (int k = 0; k < n; k++)
+                {
+                    Push(SeqItem(l, k, line, w));
+                    int d0 = Stk.Count - 1;
+                    CallQuot(f);
+                    if (Stk.Count != d0 + 1)
+                        throw Die(line, "MAP quotation must leave exactly one value");
+                    if (resa != null) resa[k] = Pop(line);
+                    else resl!.Add(Pop(line));
+                }
+                if (resa != null) Push(Value.OfArr(resa)); else Push(NewValueList(resl!, line));
+                return true;
+            }
+            case "FILTER":
+            {
+                Value f = PopFunc(line, w);
+                Value l = PopSeq(line, w);
+                int n = SeqLen(l);
+                var res = new List<Value>();
+                for (int k = 0; k < n; k++)
+                {
+                    Value item = SeqItem(l, k, line, w);
+                    Push(item);
+                    int d0 = Stk.Count - 1;
+                    CallQuot(f);
+                    if (Stk.Count != d0 + 1)
+                        throw Die(line, "FILTER quotation must leave exactly one value");
+                    if (PopBool(line, w)) res.Add(item);
+                }
+                if (l.T == VType.Arr) Push(Value.OfArr(res.ToArray()));
+                else Push(NewValueList(res, line));
+                return true;
+            }
+            case "FOLD":                        // ( seq acc f -- result )
+            {
+                Value f = PopFunc(line, w);
+                Value acc = Pop(line);
+                Value l = PopSeq(line, w);
+                Push(acc);
+                int n = SeqLen(l);
+                for (int k = 0; k < n; k++)
+                {
+                    Push(SeqItem(l, k, line, w));
+                    CallQuot(f);
+                }
+                return true;
+            }
+            case "EACH":
+            {
+                Value f = PopFunc(line, w);
+                Value l = PopSeq(line, w);
+                int n = SeqLen(l);
+                for (int k = 0; k < n; k++)
+                {
+                    Push(SeqItem(l, k, line, w));
+                    CallQuot(f);
+                }
+                return true;
+            }
+            case "TIMES":
+            {
+                Value f = PopFunc(line, w);
+                int n = (int)PopNum(line, w);
+                for (int k = 0; k < n; k++)
+                    CallQuot(f);
+                return true;
+            }
+            case "RANGE":                       // ( a b -- [a..b] )
+            {
+                double b = PopNum(line, w), a = PopNum(line, w);
+                var res = new List<Value>();
+                for (double x = a; x <= b; x += 1)
+                    res.Add(Value.OfNum(x));
+                Push(NewValueList(res, line));
+                return true;
+            }
+            case "LENGTH": PushNum(SeqLen(PopSeq(line, w))); return true;
+            case "REVERSE":
+            {
+                Value l = PopSeq(line, w);
+                int n = SeqLen(l);
+                if (l.T == VType.Arr)
+                {
+                    var res = new Value[n];
+                    for (int k = 0; k < n; k++) res[k] = l.Elems![n - 1 - k];
+                    Push(Value.OfArr(res));
+                }
+                else                            // share items, reversed
+                {
+                    var res = new QItem[n];
+                    for (int k = 0; k < n; k++) res[k] = l.CItems![n - 1 - k];
+                    Push(Value.OfCQuot(res, res));
+                }
+                return true;
+            }
+            case "CONCAT":
+            {
+                Value b = PopSeq(line, w), a = PopSeq(line, w);
+                if (a.T != b.T)
+                    throw Die(line, "CONCAT expects two LISTs or two ARRAYs");
+                if (a.T == VType.Arr)
+                {
+                    var res = new Value[a.Elems!.Length + b.Elems!.Length];
+                    a.Elems.CopyTo(res, 0);
+                    b.Elems.CopyTo(res, a.Elems.Length);
+                    Push(Value.OfArr(res));
+                }
+                else                            // share items
+                {
+                    var res = new QItem[a.CItems!.Length + b.CItems!.Length];
+                    a.CItems.CopyTo(res, 0);
+                    b.CItems.CopyTo(res, a.CItems.Length);
+                    Push(Value.OfCQuot(res, res));
+                }
+                return true;
+            }
+
+            /* ---- list / array primitives ---- */
+            case "ISEMPTY": PushBool(SeqLen(PopSeq(line, w)) == 0); return true;
+            case "FIRST":
+            {
+                Value l = PopSeq(line, w);
+                if (SeqLen(l) == 0) throw Die(line, "FIRST of empty sequence");
+                Push(SeqItem(l, 0, line, w));
+                return true;
+            }
+            case "NTH":                         // ( seq k -- v ), 1-based
+            {
+                int k = (int)PopNum(line, w);
+                Value l = PopSeq(line, w);
+                if (k < 1 || k > SeqLen(l))
+                    throw Die(line, $"NTH: index {k} out of range 1..{SeqLen(l)}");
+                Push(SeqItem(l, k - 1, line, w));
+                return true;
+            }
+            case "SETNTH":                      // ( seq k v -- seq' ), functional
+            {
+                Value nv = Pop(line);
+                int k = (int)PopNum(line, w);
+                Value l = PopSeq(line, w);
+                int n = SeqLen(l);
+                if (k < 1 || k > n)
+                    throw Die(line, $"SETNTH: index {k} out of range 1..{n}");
+                if (l.T == VType.Arr)
+                {
+                    var res = (Value[])l.Elems!.Clone();
+                    res[k - 1] = nv;
+                    Push(Value.OfArr(res));
+                }
+                else                            // share items
+                {
+                    var res = (QItem[])l.CItems!.Clone();
+                    res[k - 1] = QItem.OfValue(nv);
+                    Push(Value.OfCQuot(res, res));
+                }
+                return true;
+            }
+            case "DIM":                         // ( n init -- arr )
+            {
+                Value init = Pop(line);
+                int n = (int)PopNum(line, w);
+                if (n < 0) throw Die(line, "DIM: negative size");
+                var res = new Value[n];
+                Array.Fill(res, init);
+                Push(Value.OfArr(res));
+                return true;
+            }
+            case "TOARRAY":
+            {
+                Value l = PopSeq(line, w);
+                if (l.T == VType.Arr) { Push(l); return true; }
+                var res = new Value[SeqLen(l)];
+                for (int k = 0; k < res.Length; k++)
+                    res[k] = QuotItem(l, k, line, w);
+                Push(Value.OfArr(res));
+                return true;
+            }
+            case "TOLIST":
+            {
+                Value l = PopSeq(line, w);
+                if (l.T == VType.Quot) { Push(l); return true; }
+                Push(NewValueList(new List<Value>(l.Elems!), line));
+                return true;
+            }
+            case "REST":
+            {
+                Value l = PopListVal(line, w);
+                if (SeqLen(l) == 0) throw Die(line, "REST of empty list");
+                var res = l.CItems![1..];       // share items
+                Push(Value.OfCQuot(res, res));
+                return true;
+            }
+            case "PREPEND":                     // ( v [l] -- [v ...l] )
+            {
+                Value l = PopListVal(line, w);
+                Value v = Pop(line);
+                var res = new QItem[l.CItems!.Length + 1];   // share items
+                res[0] = QItem.OfValue(v);
+                l.CItems.CopyTo(res, 1);
+                Push(Value.OfCQuot(res, res));
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /// <summary>The full builtin vocabulary — used by the compiler to
+    /// resolve words at weave time. Must match the switch above.</summary>
+    public static readonly HashSet<string> BuiltinWords = new()
+    {
+        "DUP", "DROP", "SWAP", "OVER", "ROT", "NIP", "TUCK", "DEPTH",
+        "+", "-", "*", "/", "MOD", "NEGATE", "ABS", "MIN", "MAX", "SQR",
+        "FLOOR", "CEIL", "ROUND", "^", "SIN", "COS", "TAN", "ATN", "EXP",
+        "LOG", "PI", "RND",
+        "ERROR", "ASSERT", "INSTR",
+        "=", "<>", "<", ">", "<=", ">=",
+        "AND", "OR", "NOT", "TRUE", "FALSE",
+        "&", "LEN", "STR", "VAL", "LEFT", "RIGHT", "MID", "CHR", "ASC",
+        "UPPER", "LOWER",
+        "PRINT", "READFILE", "WRITEFILE", "APPENDFILE", "FILEEXISTS",
+        "DELETEFILE", "BOPEN", "BCLOSE", "SEEK", "BPOS", "BSIZE",
+        "PUTNUM", "GETNUM", "PUTBOOL", "GETBOOL", "PUTSTR", "GETSTR",
+        "INPUT", "ARGS",
+        "CALL", "IFTE", "MAP", "FILTER", "FOLD", "EACH", "TIMES", "RANGE",
+        "LENGTH", "REVERSE", "CONCAT",
+        "ISEMPTY", "FIRST", "NTH", "SETNTH", "DIM", "TOARRAY", "TOLIST",
+        "REST", "PREPEND",
+    };
+
+    /// <summary>C strtod semantics: parse the longest numeric prefix
+    /// (sign, digits, decimal point, exponent); false if none.</summary>
+    public static bool Strtod(string s, out double v)
+    {
+        v = 0;
+        int i0 = 0;
+        while (i0 < s.Length && char.IsWhiteSpace(s[i0])) i0++;
+        int j = i0;
+        if (j < s.Length && (s[j] == '+' || s[j] == '-')) j++;
+        int digits = 0;
+        while (j < s.Length && char.IsAsciiDigit(s[j])) { j++; digits++; }
+        if (j < s.Length && s[j] == '.')
+        {
+            j++;
+            while (j < s.Length && char.IsAsciiDigit(s[j])) { j++; digits++; }
+        }
+        if (digits == 0) return false;
+        int end = j;
+        if (j < s.Length && (s[j] == 'e' || s[j] == 'E'))
+        {
+            int m = j + 1;
+            if (m < s.Length && (s[m] == '+' || s[m] == '-')) m++;
+            int ed = 0;
+            while (m < s.Length && char.IsAsciiDigit(s[m])) { m++; ed++; }
+            if (ed > 0) end = m;
+        }
+        return double.TryParse(s[i0..end], NumberStyles.Float, Inv, out v);
+    }
+}

@@ -1,0 +1,65 @@
+Rem ==================================================================
+Rem money.shoddy — Shoddy standard library: exact money
+Rem
+Rem a Money is a record holding a whole number of cents. Doubles hold
+Rem whole numbers exactly to 2^53, so this is exact past $90 trillion —
+Rem no decimal type required. Multiplication rounds explicitly (to the
+Rem nearest cent), and MoneySplit allocates without losing a penny.
+Rem Pure throughout.
+Rem ==================================================================
+
+Type Money
+    Cents As Number
+
+Rem ---- construction ---------------------------------------------------
+
+Def Dollars(d As Number) As Money
+    Money(Round(d * 100))
+
+Def MoneyVal(s As String) As Money
+    Dollars(Val(s))
+
+Rem ---- arithmetic (exact; rounding only where explicit) ---------------
+
+Def MoneyAdd(a As Money, b As Money) As Money
+    Money(Cents(a) + Cents(b))
+
+Def MoneySub(a As Money, b As Money) As Money
+    Money(Cents(a) - Cents(b))
+
+Def MoneyMul(a As Money, f As Number) As Money
+    Money(Round(Cents(a) * f))
+
+Def MoneySum(xs As List Of Money) As Money
+    Fold(xs, Money(0), MoneyAdd)
+
+Def MoneyLt(a As Money, b As Money) As Boolean
+    Cents(a) < Cents(b)
+
+Rem ---- allocation: split m into n parts, no pennies created or lost ---
+
+Def SplitPart(k As Number, base As Number, r As Number) As Money
+    If k <= r Then
+        Money(base + 1)
+    Else
+        Money(base)
+
+Def MoneySplit(m As Money, n As Number) As List Of Money
+    Let base = Floor(Cents(m) / n)
+    Let r = Cents(m) - base * n
+    Map(Range(1, n), Fn(k) => SplitPart(k, base, r))
+
+Rem ---- formatting ------------------------------------------------------
+
+Def Pad2(n As Number) As String
+    If n < 10 Then
+        "0" & Str(n)
+    Else
+        Str(n)
+
+Def MoneyFmt(m As Money) As String
+    Let c = Cents(m)
+    If c < 0 Then
+        "-" & MoneyFmt(Money(0 - c))
+    Else
+        "$" & Str(Floor(c / 100)) & "." & Pad2(c Mod 100)

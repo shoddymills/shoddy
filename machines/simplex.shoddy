@@ -1,0 +1,192 @@
+Rem ==================================================================
+Rem simplex.shoddy — Shoddy standard library: linear programming
+Rem
+Rem The public surface:
+Rem
+Rem   Problem(Costs, A, Rhs)      minimize Costs . x
+Rem                               s.t. A x >= Rhs,  x >= 0
+Rem   Optimize(p As Problem) As Solution
+Rem
+Rem   Solution: Status ("OPTIMAL" | "UNBOUNDED" | "MAXITER"),
+Rem             X (the primal variables), Cost,
+Rem             DualPrices (shadow price per constraint — the change in
+Rem             Cost per unit of Rhs; the sensitivity analysis),
+Rem             Reduced (reduced cost per variable), Iterations.
+Rem
+Rem Revised simplex over the Matrix machine, solved via the dual
+Rem (max Rhs.y s.t. Transp(A) y <= Costs): at optimality the simplex
+Rem multipliers are exactly the primal x. Negative objective
+Rem coefficients make the dual's slack start infeasible, so those rows
+Rem are negated and given big-M artificial variables (when every cost
+Rem is >= 0 no artificials are created and the computation is exactly
+Rem the classic slack start). Honest statuses: "INFEASIBLE" when the
+Rem dual is unbounded (the primal has no feasible point) and
+Rem "UNBOUNDED-OR-INFEASIBLE" when artificials cannot be driven out
+Rem (the dual is infeasible). Pure throughout; effects stay with the
+Rem caller.
+Rem ==================================================================
+
+Include "matrix.shoddy"
+
+Type Problem
+    Costs As Array Of Number
+    A     As Matrix
+    Rhs   As Array Of Number
+
+Type Solution
+    Status     As String
+    X          As Array Of Number
+    Cost       As Number
+    DualPrices As Array Of Number
+    Reduced    As Array Of Number
+    Iterations As Number
+
+Rem The dual in standard form (internal plumbing). NStruct = number of
+Rem structural dual variables (primal constraints); Flip records which
+Rem dual rows were negated for the big-M start (multiplier signs).
+
+Type Dual
+    DA      As Matrix
+    DCost   As Array Of Number
+    DRhs    As Array Of Number
+    NStruct As Number
+    Flip    As Array Of Number
+
+Rem ---- small helpers ---------------------------------------------------
+
+Def SignFor(v As Number) As Number
+    If v < 0 Then
+        -1
+    Else
+        1
+
+Def OneIf(i As Number, j As Number) As Number
+    If i = j Then
+        1
+    Else
+        0
+
+Def MaxAbs(xs As Array Of Number) As Number
+    Fold(xs, 0, Fn(a, v) => Max(a, Abs(v)))
+
+Def PosOf(xs As List, v As Number, k As Number) As Number
+    If Nth(xs, k) = v Then
+        k
+    Else
+        PosOf(xs, v, k + 1)
+
+Def BasisSlot(i As Number, flip As Array Of Number, m As Number, n As Number, arts As List) As Number
+    If Nth(flip, i) > 0 Then
+        m + i
+    Else
+        m + n + PosOf(arts, i, 1)
+
+Rem ---- pricing: entering column (most positive reduced cost) --------
+
+Def PickEnter(j As Number, bestJ As Number, bestR As Number, basis As Array Of Number, y As Array Of Number, du As Dual) As Number
+    If j > Length(DCost(du)) Then
+        bestJ
+    Else
+        If Contains(ToList(basis), j) Then
+            PickEnter(j + 1, bestJ, bestR, basis, y, du)
+        Else
+            Let r = Nth(DCost(du), j) - Dot(y, MatCol(DA(du), j))
+            If r > bestR + 0.000001 Then
+                PickEnter(j + 1, j, r, basis, y, du)
+            Else
+                PickEnter(j + 1, bestJ, bestR, basis, y, du)
+
+Rem ---- ratio test: leaving row (0 means unbounded) -------------------
+
+Def PickLeave(i As Number, bestI As Number, bestRatio As Number, xb As Array Of Number, d As Array Of Number) As Number
+    If i > Length(d) Then
+        bestI
+    Else
+        If Nth(d, i) > 0.000001 Then
+            Let ratio = Nth(xb, i) / Nth(d, i)
+            If ratio < bestRatio Then
+                PickLeave(i + 1, i, ratio, xb, d)
+            Else
+                PickLeave(i + 1, bestI, bestRatio, xb, d)
+        Else
+            PickLeave(i + 1, bestI, bestRatio, xb, d)
+
+Rem ---- eta-style basis inverse update ---------------------------------
+
+Def UpdRow(i As Number, r As Number, binv As Matrix, d As Array Of Number, pivRow As Array Of Number) As Array Of Number
+    If i = r Then
+        pivRow
+    Else
+        VSub(MatRow(binv, i), VScale(pivRow, Nth(d, i)))
+
+Def UpdateBinv(binv As Matrix, d As Array Of Number, r As Number) As Matrix
+    Let pivRow = VScale(MatRow(binv, r), 1 / Nth(d, r))
+    MatFromRows(Map(Range(1, Rows(binv)), Fn(i) => UpdRow(i, r, binv, d, pivRow)))
+
+Rem ---- reading the optimal basis: the value of dual variable k --------
+
+Def BasisVal(k As Number, i As Number, basis As Array Of Number, xb As Array Of Number) As Number
+    If i > Length(basis) Then
+        0
+    Else
+        If Nth(basis, i) = k Then
+            Nth(xb, i)
+        Else
+            BasisVal(k, i + 1, basis, xb)
+
+Rem ---- the revised simplex loop: pure, returns a Solution -------------
+Rem At optimality the dual's structural variables (1..m) are the primal
+Rem constraints' shadow prices; its slacks (m+1..m+n) are the primal
+Rem variables' reduced costs.
+
+Def Solve(basis As Array Of Number, binv As Matrix, iter As Number, du As Dual) As Solution
+    If iter > 100000 Then
+        Solution("MAXITER", Dim(0, 0), 0, Dim(0, 0), Dim(0, 0), iter)
+    Else
+        Let cb = Map(basis, Fn(j) => Nth(DCost(du), j))
+        Let y = MatVec(Transp(binv), cb)
+        Let e = PickEnter(1, 0, 0, basis, y, du)
+        If e = 0 Then
+            Let xb = MatVec(binv, DRhs(du))
+            Let n = Length(DRhs(du))
+            Let m = NStruct(du)
+            Let aSum = Fold(Range(m + n + 1, Length(DCost(du))), 0, Fn(a, k) => a + BasisVal(k, 1, basis, xb))
+            If aSum > 0.000001 Then
+                Rem artificials could not be driven out: the dual is
+                Rem infeasible, so the primal is unbounded or empty
+                Solution("UNBOUNDED-OR-INFEASIBLE", Dim(0, 0), 0, Dim(0, 0), Dim(0, 0), iter)
+            Else
+                Let duals = ToArray(Map(Range(1, m), Fn(k) => BasisVal(k, 1, basis, xb)))
+                Let red = ToArray(Map(Range(m + 1, m + n), Fn(k) => BasisVal(k, 1, basis, xb)))
+                Let px = ToArray(Map(Range(1, n), Fn(i) => Nth(y, i) * Nth(Flip(du), i)))
+                Solution(Status = "OPTIMAL", X = px, Cost = Dot(cb, xb), DualPrices = duals, Reduced = red, Iterations = iter)
+        Else
+            Let d = MatVec(binv, MatCol(DA(du), e))
+            Let xBasic = MatVec(binv, DRhs(du))
+            Let r = PickLeave(1, 0, 999999999, xBasic, d)
+            If r = 0 Then
+                Rem the dual is unbounded, so the primal has no feasible point
+                Solution("INFEASIBLE", Dim(0, 0), 0, Dim(0, 0), Dim(0, 0), iter)
+            Else
+                Solve(SetNth(basis, r, e), UpdateBinv(binv, d, r), iter + 1, du)
+
+Rem ---- the public entry: primal in, full result out --------------------
+
+Def Optimize(p As Problem) As Solution
+    Let n = Length(Costs(p))
+    Let m = Length(Rhs(p))
+    Let at = Transp(A(p))
+    Let idn = Ident(n)
+    Rem Rows whose rhs (a primal cost) is negative are negated for a
+    Rem feasible start and get a big-M artificial; a clean problem gets
+    Rem none and computes exactly as the classic slack start.
+    Let flip = ToArray(Map(Range(1, n), Fn(i) => SignFor(Nth(Costs(p), i))))
+    Let arts = Filter(Range(1, n), Fn(i) => Nth(flip, i) < 0)
+    Let bigM = 1000 * (1 + MaxAbs(Rhs(p)))
+    Let rows0 = Map(Range(1, n), Fn(i) => VScale(Concat(MatRow(at, i), MatRow(idn, i)), Nth(flip, i)))
+    Let rowsA = Map(Range(1, n), Fn(i) => Concat(Nth(rows0, i), ToArray(Map(arts, Fn(j) => OneIf(i, j)))))
+    Let dco = Concat(Concat(Rhs(p), Dim(n, 0)), Dim(Length(arts), 0 - bigM))
+    Let drh = ToArray(Map(Range(1, n), Fn(i) => Nth(Costs(p), i) * Nth(flip, i)))
+    Let du = Dual(MatFromRows(rowsA), dco, drh, m, flip)
+    Let basis = ToArray(Map(Range(1, n), Fn(i) => BasisSlot(i, flip, m, n, arts)))
+    Solve(basis, Ident(n), 1, du)

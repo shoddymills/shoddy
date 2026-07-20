@@ -398,6 +398,8 @@ public sealed class DapServer : IDebugSink
     {
         var sw = new StringWriter();
         Printer.Repr(sw, v);
+        // Scribbler is deliberately a leaf: an opaque handle with no fields
+        // reachable from Shoddy, shown as its repr, e.g. Scribbler(640, 480).
         bool composite = v.T is VType.Rec or VType.Arr ||
                          (v.T == VType.Quot && v.CItems!.Length > 0);
         return new

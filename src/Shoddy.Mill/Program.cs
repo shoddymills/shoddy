@@ -83,7 +83,14 @@ try
         default:
         {
             (ShoddyProgram prog, MachineSet machines) = ParseWithMachines(file);
-            return Weaver.Execute(prog, machines.Machines, Console.Out, Console.In, progArgs);
+            // The program runs on a background thread; this (the main)
+            // thread serves scribbler windows, because GLFW requires them
+            // here. A console program costs one blocked wait — and if the
+            // program returns while a window is open, the process stays
+            // alive until the user closes it ("draw a picture, return" is
+            // a complete program).
+            return ScribblerWindows.Run(() =>
+                Weaver.Execute(prog, machines.Machines, Console.Out, Console.In, progArgs));
         }
     }
 }

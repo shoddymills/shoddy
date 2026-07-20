@@ -167,6 +167,8 @@ public sealed partial class Engine
                 for (int k = 0; k < a.Elems.Length; k++)
                     if (!EqualValues(a.Elems[k], b.Elems[k])) return false;
                 return true;
+            case VType.Scribbler:               // opaque mutable reference
+                return ReferenceEquals(a.Scribbler, b.Scribbler);
         }
         return false;
     }
@@ -572,6 +574,12 @@ public sealed partial class Engine
             }
             case "INPUT":                       // ( prompt -- s )
             {
+                // The console and a scribbler window are separate input
+                // channels routed by OS focus; reading the console while a
+                // window is up silently hangs, so it is refused instead.
+                if (Volatile.Read(ref ScribblerRegistry.OpenCount) > 0)
+                    throw Die(line, "Input: cannot read the console while a scribbler window is open" +
+                                    " — read keystrokes with ScribblerWait or ScribblerPoll.");
                 O.Write(PopStr(line, w));
                 O.Flush();
                 PushStr(In.ReadLine() ?? "");
@@ -805,9 +813,196 @@ public sealed partial class Engine
                 Push(Value.OfCQuot(res, res));
                 return true;
             }
+
+            /* ---- timing (no window required) ----
+               TICKS is for measuring (frame pacing, deltas) and is the only
+               clock animation may use; CLOCK is for stamping (logs, file
+               names) and jumps whenever the OS adjusts system time. */
+            case "TICKS":                       // ( -- n ) monotonic ms, fractional
+                PushNum(Ticker.Now);
+                return true;
+            case "SLEEP":                       // ( ms -- ) yield the calling thread
+            {
+                double ms = PopNum(line, w);
+                if (ms > 0) Thread.Sleep((int)Math.Min(ms, int.MaxValue));
+                return true;
+            }
+            case "CLOCK":                       // ( -- arr ) wall clock, 7 fields
+            {
+                DateTime t = DateTime.Now;
+                Push(Value.OfArr(new[]
+                {
+                    Value.OfNum(t.Year), Value.OfNum(t.Month), Value.OfNum(t.Day),
+                    Value.OfNum(t.Hour), Value.OfNum(t.Minute), Value.OfNum(t.Second),
+                    Value.OfNum(t.Millisecond),
+                }));
+                return true;
+            }
+
+            /* ---- scribblers ----
+               Every word leaves exactly one value (surface calls have no
+               arity check, and a word leaving two strands one per call
+               site); mutators return the scribbler so Let sc = ... reads
+               functionally even though the handle mutates in place. */
+            case "SCRIBBLEROPEN":               // ( width height -- scribbler )
+            {
+                int hgt = (int)PopNum(line, w), wid = (int)PopNum(line, w);
+                Func<int, int, ScribblerHandle>? create = ScribblerRegistry.CreateScribbler;
+                if (create == null)
+                    throw Die(line, "ScribblerOpen: no window backend — scribbler programs require `mill run`");
+                if (wid < 1 || hgt < 1)
+                    throw Die(line, $"ScribblerOpen: size must be at least 1x1, got {wid}x{hgt}");
+                ScribblerHandle h = create(wid, hgt);    // blocks until the window exists
+                h.Width = wid; h.Height = hgt;
+                if (h.Pixels.Length != wid * hgt * 4) h.Pixels = new byte[wid * hgt * 4];
+                Interlocked.Increment(ref ScribblerRegistry.OpenCount);
+                Push(Value.OfScribbler(h));
+                return true;
+            }
+            case "SCRIBBLERPIXEL":              // ( scribbler x y r g b -- scribbler )
+            {
+                byte b = Chan(PopNum(line, w)), g = Chan(PopNum(line, w)), r = Chan(PopNum(line, w));
+                int y = (int)PopNum(line, w), x = (int)PopNum(line, w);
+                Value v = PopScrib(line, w);
+                v.Scribbler!.SetPixelClamped(x, y, r, g, b);
+                Push(v);
+                return true;
+            }
+            case "SCRIBBLERFILL":               // ( scribbler r g b -- scribbler )
+            {
+                byte b = Chan(PopNum(line, w)), g = Chan(PopNum(line, w)), r = Chan(PopNum(line, w));
+                Value v = PopScrib(line, w);
+                byte[] px = v.Scribbler!.Pixels;
+                for (int i = 0; i < px.Length; i += 4)
+                {
+                    px[i] = r; px[i + 1] = g; px[i + 2] = b; px[i + 3] = 255;
+                }
+                Push(v);
+                return true;
+            }
+            case "SCRIBBLERTEXT":               // ( scribbler x y scale r g b text -- scribbler )
+            {
+                string text = PopStr(line, w);
+                byte b = Chan(PopNum(line, w)), g = Chan(PopNum(line, w)), r = Chan(PopNum(line, w));
+                int scale = (int)PopNum(line, w);
+                int y = (int)PopNum(line, w), x = (int)PopNum(line, w);
+                Value v = PopScrib(line, w);
+                Font8x8.DrawText(v.Scribbler!, text, x, y, scale, r, g, b);
+                Push(v);
+                return true;
+            }
+            case "SCRIBBLERGETPIXEL":           // ( scribbler x y -- arr ) r,g,b; OOB reads 0,0,0
+            {
+                int y = (int)PopNum(line, w), x = (int)PopNum(line, w);
+                ScribblerHandle h = PopScrib(line, w).Scribbler!;
+                double r = 0, g = 0, b = 0;
+                if (x >= 0 && y >= 0 && x < h.Width && y < h.Height)
+                {
+                    int i = (y * h.Width + x) * 4;
+                    r = h.Pixels[i]; g = h.Pixels[i + 1]; b = h.Pixels[i + 2];
+                }
+                Push(Value.OfArr(new[] { Value.OfNum(r), Value.OfNum(g), Value.OfNum(b) }));
+                return true;
+            }
+            case "SCRIBBLERWIDTH":              // ( scribbler -- n )
+                PushNum(PopScrib(line, w).Scribbler!.Width);
+                return true;
+            case "SCRIBBLERHEIGHT":             // ( scribbler -- n )
+                PushNum(PopScrib(line, w).Scribbler!.Height);
+                return true;
+            case "SCRIBBLERBLIT":               // ( scribbler -- scribbler )
+            {
+                Value v = PopScrib(line, w);
+                ScribblerHandle h = v.Scribbler!;
+                h.OnBlit?.Invoke(h.Pixels, h.Width, h.Height);   // headless: no-op
+                Push(v);
+                return true;
+            }
+            case "SCRIBBLERCLOSE":              // ( scribbler -- scribbler ) idempotent
+            {
+                Value v = PopScrib(line, w);
+                ScribblerHandle h = v.Scribbler!;
+                if (h.MarkClosed())             // exactly once, against window teardown too
+                {
+                    Interlocked.Decrement(ref ScribblerRegistry.OpenCount);
+                    h.OnClose?.Invoke();        // mill: destroy the window (bookkeeping done here)
+                    h.Signal.Release();         // teardown release — wake any waiter
+                }
+                Push(v);
+                return true;
+            }
+            case "SCRIBBLERTITLE":              // ( scribbler title -- scribbler )
+            {
+                string title = PopStr(line, w);
+                Value v = PopScrib(line, w);
+                v.Scribbler!.Title = title;
+                v.Scribbler.OnSetTitle?.Invoke(title);
+                Push(v);
+                return true;
+            }
+            case "SCRIBBLERPOLL":               // ( scribbler -- arr ) kind 0 = queue empty
+            {
+                ScribblerHandle h = PopScrib(line, w).Scribbler!;
+                Push(EventArray(h.TryTake(out ScribblerEvent ev) ? ev : null));
+                return true;
+            }
+            case "SCRIBBLERWAIT":               // ( scribbler -- arr ) zero CPU while waiting
+            {
+                ScribblerHandle h = PopScrib(line, w).Scribbler!;
+                while (true)
+                {
+                    if (h.TryTake(out ScribblerEvent ev)) { Push(EventArray(ev)); return true; }
+                    if (h.Closed)               // teardown wake with an empty queue
+                    {
+                        Push(EventArray(new ScribblerEvent
+                        {
+                            Type = ScribblerEvent.Kind.Quit, At = Ticker.Now,
+                        }));
+                        return true;
+                    }
+                    if (h.OnBlit == null)       // headless: nothing will ever wake it
+                        throw Die(line, "ScribblerWait: no window backs this scribbler — the wait would never wake");
+                    h.Signal.Wait();
+                }
+            }
+            case "SCRIBBLERSETINTERVAL":        // ( scribbler ms -- scribbler ) 0 = off
+            {
+                int ms = (int)PopNum(line, w);
+                Value v = PopScrib(line, w);
+                v.Scribbler!.OnSetInterval?.Invoke(Math.Max(ms, 0));   // headless: no-op
+                Push(v);
+                return true;
+            }
         }
         return false;
     }
+
+    Value PopScrib(int line, string who)
+    {
+        Value v = Pop(line);
+        if (v.T != VType.Scribbler)
+            throw Die(line, $"{who} expects a SCRIBBLER, got {Value.TypeName(v.T)}");
+        return v;
+    }
+
+    static byte Chan(double d) => (byte)Math.Clamp((int)d, 0, 255);
+
+    /// <summary>The 8-element event array SCRIBBLERPOLL and SCRIBBLERWAIT
+    /// return: kind, x, y, button, key, keyChar, mods, at. Null means the
+    /// queue was empty — kind 0 (None) with every field zeroed. A flat
+    /// Array, not a record: a builtin cannot reach a TypeDef, so decoding
+    /// into the sum type is machines/scribbler.shoddy's job.</summary>
+    static Value EventArray(ScribblerEvent? e) => Value.OfArr(new[]
+    {
+        Value.OfNum(e == null ? 0 : (int)e.Type),
+        Value.OfNum(e?.X ?? 0),
+        Value.OfNum(e?.Y ?? 0),
+        Value.OfNum(e?.Button ?? 0),
+        Value.OfNum(e?.Key ?? 0),
+        Value.OfStr(e?.KeyChar ?? ""),
+        Value.OfNum(e == null ? 0 : (int)e.Mods),
+        Value.OfNum(e?.At ?? 0),
+    });
 
     /// <summary>The full builtin vocabulary — used by the compiler to
     /// resolve words at weave time. Must match the switch above.</summary>
@@ -830,6 +1025,11 @@ public sealed partial class Engine
         "LENGTH", "REVERSE", "CONCAT",
         "ISEMPTY", "FIRST", "NTH", "SETNTH", "DIM", "TOARRAY", "TOLIST",
         "REST", "PREPEND",
+        "TICKS", "SLEEP", "CLOCK",
+        "SCRIBBLEROPEN", "SCRIBBLERPIXEL", "SCRIBBLERFILL", "SCRIBBLERTEXT",
+        "SCRIBBLERGETPIXEL", "SCRIBBLERWIDTH", "SCRIBBLERHEIGHT",
+        "SCRIBBLERBLIT", "SCRIBBLERCLOSE", "SCRIBBLERTITLE", "SCRIBBLERPOLL",
+        "SCRIBBLERWAIT", "SCRIBBLERSETINTERVAL",
     };
 
     /// <summary>C strtod semantics: parse the longest numeric prefix

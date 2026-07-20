@@ -1,0 +1,496 @@
+Rem Copyright (c) 2026 Stephen Vincent Foster. All rights reserved.
+Rem
+Rem This file is part of the Shoddy Language project.
+Rem Licensed under the Shoddy Language License 1.0.0 (PolyForm Noncommercial
+Rem License 1.0.0 with Additional Use Grant). See the LICENSE file in the
+Rem project root for full terms.
+
+Rem ==================================================================
+Rem vt100.shoddy — Shoddy standard library: VT100 terminal control
+Rem
+Rem Source: "machines/VT100 escape codes.html" (the classic vt100.txt
+Rem escape-code reference). Two halves:
+Rem
+Rem   HOST -> TERMINAL  every Def below EvalKey builds and returns the
+Rem   raw escape-sequence STRING for one terminal function (cursor
+Rem   moves, erasing, character attributes, modes, ...). Pure — nothing
+Rem   here writes to the screen. Build up what you need with & and emit
+Rem   it once with Print. Print always appends a newline (Shoddy has no
+Rem   "write without newline" builtin), so prefer concatenating several
+Rem   sequences into one string and Print-ing once, rather than
+Rem   Print-ing each escape code separately — several stray line feeds
+Rem   mid-sequence is harmless on most terminals but not guaranteed.
+Rem
+Rem       Print(CursorPos(1, 1) & ClearEos() & Bold() & "HELLO")
+Rem
+Rem   TERMINAL -> HOST  EvalKey(raw) classifies one raw keystroke
+Rem   sequence (as a String) into a Vt100Key. IMPORTANT: Shoddy's only
+Rem   input builtin is Input(prompt), which blocks on a whole line
+Rem   (Console.In.ReadLine) — there is no raw/no-echo read and no
+Rem   Console.ReadKey equivalent. So EvalKey cannot be wired to live
+Rem   arrow-key-driven input by itself; it classifies a raw sequence
+Rem   you already have in hand (captured externally, replayed from a
+Rem   test fixture, or otherwise assembled as a String). Treat it as a
+Rem   decoder, not a live keyboard reader.
+Rem
+Rem A few rows in the source table are themselves ambiguous or contain
+Rem apparent transcription slips against the well-established VT100/
+Rem VT52 protocol; each is called out at the point it's implemented
+Rem rather than transcribed blindly.
+Rem ==================================================================
+
+Rem ---- building blocks --------------------------------------------
+
+Def Esc() As String
+    Chr(27)
+
+Def Csi() As String
+    Esc() & "["
+
+Rem ---- ANSI/DEC private modes (CSI <n> h / CSI <n> l pairs) --------
+
+Def SetNewlineMode() As String
+    Csi() & "20h"
+
+Def SetLinefeedMode() As String
+    Csi() & "20l"
+
+Def SetCursorKeyApp() As String
+    Csi() & "?1h"
+
+Def SetCursorKeyNormal() As String
+    Csi() & "?1l"
+
+Def Set132Cols() As String
+    Csi() & "?3h"
+
+Def Set80Cols() As String
+    Csi() & "?3l"
+
+Def SetSmoothScroll() As String
+    Csi() & "?4h"
+
+Def SetJumpScroll() As String
+    Csi() & "?4l"
+
+Def SetReverseScreen() As String
+    Csi() & "?5h"
+
+Def SetNormalScreen() As String
+    Csi() & "?5l"
+
+Def SetOriginRelative() As String
+    Csi() & "?6h"
+
+Def SetOriginAbsolute() As String
+    Csi() & "?6l"
+
+Def SetAutoWrap() As String
+    Csi() & "?7h"
+
+Def ResetAutoWrap() As String
+    Csi() & "?7l"
+
+Def SetAutoRepeat() As String
+    Csi() & "?8h"
+
+Def ResetAutoRepeat() As String
+    Csi() & "?8l"
+
+Def SetInterlace() As String
+    Csi() & "?9h"
+
+Def ResetInterlace() As String
+    Csi() & "?9l"
+
+Def SetVt52Mode() As String
+    Csi() & "?2l"
+
+Rem The source table lists "enter ANSI mode" as DECANM's h-form with no
+Rem code ("none") — there isn't one: once a terminal is in VT52 mode it
+Rem no longer parses CSI at all, so the only way back is the VT52-side
+Rem two-byte command below (same function as VT52's own "setansi" row).
+Def SetAnsiMode() As String
+    Esc() & "<"
+
+Rem ---- keypad mode ---------------------------------------------------
+
+Def SetAltKeypad() As String
+    Esc() & "="
+
+Def SetNumKeypad() As String
+    Esc() & ">"
+
+Rem ---- character set selection (G0/G1) --------------------------------
+
+Def SetUkG0() As String
+    Esc() & "(A"
+
+Def SetUkG1() As String
+    Esc() & ")A"
+
+Def SetUsG0() As String
+    Esc() & "(B"
+
+Def SetUsG1() As String
+    Esc() & ")B"
+
+Def SetSpecialG0() As String
+    Esc() & "(0"
+
+Def SetSpecialG1() As String
+    Esc() & ")0"
+
+Def SetAltRomG0() As String
+    Esc() & "(1"
+
+Def SetAltRomG1() As String
+    Esc() & ")1"
+
+Def SetAltRomSpecialG0() As String
+    Esc() & "(2"
+
+Def SetAltRomSpecialG1() As String
+    Esc() & ")2"
+
+Rem SS2/SS3 share their two-byte introducer with the application
+Rem cursor-key and keypad codes below (ESC O is a real, meaningful
+Rem prefix in the protocol, not a naming accident here).
+Def SetShift2() As String
+    Esc() & "N"
+
+Def SetShift3() As String
+    Esc() & "O"
+
+Rem ---- character attributes (SGR) --------------------------------------
+
+Def AttrsOff() As String
+    Csi() & "0m"
+
+Def Bold() As String
+    Csi() & "1m"
+
+Def LowIntensity() As String
+    Csi() & "2m"
+
+Def Underline() As String
+    Csi() & "4m"
+
+Def Blink() As String
+    Csi() & "5m"
+
+Rem Named ReverseVideo, not Reverse — REVERSE is a core builtin (list/
+Rem array reversal); shadowing it here would break every other machine
+Rem and program that Includes this file.
+Def ReverseVideo() As String
+    Csi() & "7m"
+
+Def Invisible() As String
+    Csi() & "8m"
+
+Rem ---- scrolling region -------------------------------------------------
+
+Def SetScrollRegion(top As Number, bottom As Number) As String
+    Csi() & Str(top) & ";" & Str(bottom) & "r"
+
+Rem ---- cursor movement ---------------------------------------------------
+
+Def CursorUp(n As Number) As String
+    Csi() & Str(n) & "A"
+
+Def CursorDown(n As Number) As String
+    Csi() & Str(n) & "B"
+
+Def CursorRight(n As Number) As String
+    Csi() & Str(n) & "C"
+
+Def CursorLeft(n As Number) As String
+    Csi() & Str(n) & "D"
+
+Def CursorHome() As String
+    Csi() & "H"
+
+Def CursorPos(row As Number, col As Number) As String
+    Csi() & Str(row) & ";" & Str(col) & "H"
+
+Rem hvhome/hvpos are the table's documented aliases for CursorHome/
+Rem CursorPos (final byte f instead of H) — same effect, kept distinct
+Rem because the source lists them as separate named entries.
+Def HvHome() As String
+    Csi() & "f"
+
+Def HvPos(row As Number, col As Number) As String
+    Csi() & Str(row) & ";" & Str(col) & "f"
+
+Def IndexDown() As String
+    Esc() & "D"
+
+Def ReverseIndex() As String
+    Esc() & "M"
+
+Def NextLine() As String
+    Esc() & "E"
+
+Def SaveCursor() As String
+    Esc() & "7"
+
+Def RestoreCursor() As String
+    Esc() & "8"
+
+Rem ---- tabs -----------------------------------------------------------
+
+Def TabSet() As String
+    Esc() & "H"
+
+Def TabClear() As String
+    Csi() & "0g"
+
+Def TabClearAll() As String
+    Csi() & "3g"
+
+Rem ---- double-width / double-height lines ------------------------------
+
+Def DoubleHeightTop() As String
+    Esc() & "#3"
+
+Def DoubleHeightBottom() As String
+    Esc() & "#4"
+
+Def SingleWidthHeight() As String
+    Esc() & "#5"
+
+Def DoubleWidthHeight() As String
+    Esc() & "#6"
+
+Rem ---- erasing ----------------------------------------------------------
+
+Def ClearEol() As String
+    Csi() & "0K"
+
+Def ClearBol() As String
+    Csi() & "1K"
+
+Def ClearLine() As String
+    Csi() & "2K"
+
+Def ClearEos() As String
+    Csi() & "0J"
+
+Def ClearBos() As String
+    Csi() & "1J"
+
+Def ClearScreen() As String
+    Csi() & "2J"
+
+Rem ---- status & identification requests ----------------------------------
+
+Rem The source table writes devstat/getcursor as "^[5n" / "^[6n" — no
+Rem CSI bracket. Real DSR is unambiguously CSI-based (ESC[5n, ESC[6n);
+Rem this implements the standards-correct form rather than the table's
+Rem apparently-abbreviated one.
+Def RequestStatus() As String
+    Csi() & "5n"
+
+Def RequestCursorPos() As String
+    Csi() & "6n"
+
+Def RequestTerminalType() As String
+    Csi() & "0c"
+
+Def ResetTerminal() As String
+    Esc() & "c"
+
+Rem ---- confidence tests & keyboard LEDs ----------------------------------
+
+Def ScreenAlignmentTest() As String
+    Esc() & "#8"
+
+Def TestPowerUp() As String
+    Csi() & "2;1y"
+
+Def TestLoopback() As String
+    Csi() & "2;2y"
+
+Def TestPowerUpRepeat() As String
+    Csi() & "2;9y"
+
+Def TestLoopbackRepeat() As String
+    Csi() & "2;10y"
+
+Def LedsOff() As String
+    Csi() & "0q"
+
+Def Led1On() As String
+    Csi() & "1q"
+
+Def Led2On() As String
+    Csi() & "2q"
+
+Def Led3On() As String
+    Csi() & "3q"
+
+Def Led4On() As String
+    Csi() & "4q"
+
+Rem ---- VT52 compatibility mode --------------------------------------------
+Rem Only meaningful once the terminal has actually been switched into
+Rem VT52 mode (SetVt52Mode above) — in that mode it no longer parses
+Rem CSI sequences at all, only these short ESC-prefixed ones. Two of
+Rem the table's VT52 rows are exact duplicates of functions already
+Rem defined above (altkeypad/numkeypad = SetAltKeypad/SetNumKeypad;
+Rem "setansi" = SetAnsiMode) and aren't redefined here.
+Rem
+Rem Several VT52 codes share their raw bytes with an unrelated ANSI-
+Rem mode function purely because both protocols reuse short ESC
+Rem sequences — the same bytes mean different things depending on
+Rem which mode the terminal is actually in: Vt52CursorLeft == IndexDown
+Rem (both "ESC D"), Vt52CursorHome == TabSet (both "ESC H"). This is a
+Rem real property of the protocol, not a bug in this file.
+
+Def Vt52SetGraphics() As String
+    Esc() & "F"
+
+Def Vt52ResetGraphics() As String
+    Esc() & "G"
+
+Def Vt52CursorUp() As String
+    Esc() & "A"
+
+Def Vt52CursorDown() As String
+    Esc() & "B"
+
+Def Vt52CursorRight() As String
+    Esc() & "C"
+
+Def Vt52CursorLeft() As String
+    Esc() & "D"
+
+Def Vt52CursorHome() As String
+    Esc() & "H"
+
+Rem The source table writes this row as just "^[<v><h>", omitting both
+Rem the "Y" that real VT52 direct cursor addressing sends and the
+Rem +32 offset applied to each 0-based coordinate before it's sent as
+Rem a raw byte (so row 0, col 0 addresses as ESC Y <space><space>).
+Rem Reconstructed here from the real VT52 spec, not transcribed from
+Rem the table — verify against your actual terminal/emulator.
+Def Vt52CursorPos(row As Number, col As Number) As String
+    Esc() & "Y" & Chr(row + 32) & Chr(col + 32)
+
+Def Vt52ReverseIndex() As String
+    Esc() & "I"
+
+Def Vt52ClearEol() As String
+    Esc() & "K"
+
+Def Vt52ClearEos() As String
+    Esc() & "J"
+
+Def Vt52Ident() As String
+    Esc() & "Z"
+
+Def Vt52IdentResponse() As String
+    Esc() & "/Z"
+
+Rem ---- keystrokes: TERMINAL -> HOST ---------------------------------------
+Rem The "VT100 Special Key Codes" section of the source table: what a
+Rem real VT100 sends when the apprentice presses PF1-4, an arrow key,
+Rem or a numeric-keypad key. Arrow keys and keypad keys each have two
+Rem forms depending on the terminal's current mode (SetCursorKeyApp/
+Rem Normal, SetAltKeypad/SetNumKeypad) — EvalKey recognizes both forms
+Rem for a given logical key, so the caller doesn't need to track which
+Rem mode is active.
+Rem
+Rem Caveat: in Numeric keypad mode, a keypad digit/minus/comma/period/
+Rem Enter sends the exact same byte(s) as the equivalent main-keyboard
+Rem key — that's the whole reason Application keypad mode exists (to
+Rem make keypad keys distinguishable at all). EvalKey classifies a bare
+Rem "5" as KeyPad("5") by convention; the raw byte alone cannot actually
+Rem prove it came from the numeric keypad rather than the top row.
+
+Type Vt100Key = KeyUp | KeyDown | KeyLeft | KeyRight | KeyPF1 | KeyPF2 | KeyPF3 | KeyPF4 | KeyPad(Ch) | KeyEnter | KeyUnknown(Raw)
+
+Def EvalKey(raw As String) As Vt100Key
+    Select Case raw
+        Case Esc() & "OP"
+            KeyPF1()
+        Case Esc() & "OQ"
+            KeyPF2()
+        Case Esc() & "OR"
+            KeyPF3()
+        Case Esc() & "OS"
+            KeyPF4()
+        Case Esc() & "A"
+            KeyUp()
+        Case Esc() & "OA"
+            KeyUp()
+        Case Esc() & "B"
+            KeyDown()
+        Case Esc() & "OB"
+            KeyDown()
+        Case Esc() & "C"
+            KeyRight()
+        Case Esc() & "OC"
+            KeyRight()
+        Case Esc() & "D"
+            KeyLeft()
+        Case Esc() & "OD"
+            KeyLeft()
+        Case "0"
+            KeyPad("0")
+        Case Esc() & "Op"
+            KeyPad("0")
+        Case "1"
+            KeyPad("1")
+        Case Esc() & "Oq"
+            KeyPad("1")
+        Case "2"
+            KeyPad("2")
+        Case Esc() & "Or"
+            KeyPad("2")
+        Case "3"
+            KeyPad("3")
+        Case Esc() & "Os"
+            KeyPad("3")
+        Case "4"
+            KeyPad("4")
+        Case Esc() & "Ot"
+            KeyPad("4")
+        Case "5"
+            KeyPad("5")
+        Case Esc() & "Ou"
+            KeyPad("5")
+        Case "6"
+            KeyPad("6")
+        Case Esc() & "Ov"
+            KeyPad("6")
+        Case "7"
+            KeyPad("7")
+        Case Esc() & "Ow"
+            KeyPad("7")
+        Case "8"
+            KeyPad("8")
+        Case Esc() & "Ox"
+            KeyPad("8")
+        Case "9"
+            KeyPad("9")
+        Case Esc() & "Oy"
+            KeyPad("9")
+        Case "-"
+            KeyPad("-")
+        Case Esc() & "Om"
+            KeyPad("-")
+        Case ","
+            KeyPad(",")
+        Case Esc() & "Ol"
+            KeyPad(",")
+        Case "."
+            KeyPad(".")
+        Case Esc() & "On"
+            KeyPad(".")
+        Case Chr(13)
+            KeyEnter()
+        Case Esc() & "OM"
+            KeyEnter()
+        Case Else
+            KeyUnknown(raw)

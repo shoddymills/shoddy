@@ -390,6 +390,40 @@ if any, else appends. `IsamDelete` tombstones the flag byte + frees the
 slot (does not shrink the file). Keys must support `<` (Number or String).
 One live handle at a time; no crash safety, no concurrency.
 
+**random.shoddy** (no dependencies) — thin wrapper over the `Rnd` builtin
+| Word | Signature | Notes |
+|---|---|---|
+| `Random()` | → `Number` in `[0,1)` | `Rnd()` directly. **Impure and seedless** — same "effects at the edge" category as `Print`; two calls with the same (no) arguments can differ on purpose. No pure/seeded alternative is provided — that would require threading generator state through every call, the opposite of seedless. |
+| `RandomRange(lo, hi)` | → `Number` in `[lo, hi)` | `lo + Random()*(hi-lo)`. `hi < lo` → `Error("RANDOMRANGE: HI < LO")`. |
+| `RandomInt(lo, hi)` | → `Number` in `[lo, hi]`, integral | `lo + Floor(Random()*(hi-lo+1))`. Same `hi < lo` guard. |
+
+**vt100.shoddy** (no dependencies) — VT100/VT52 terminal control, from
+`machines/VT100 escape codes.html`. Two halves:
+- **Host → terminal** (~90 `Def`s, one per escape sequence: modes,
+  character sets, SGR attributes, cursor movement, tabs, erasing, DSR/DA/RIS
+  requests, DECTST/LED test codes, and the VT52-compatibility-mode
+  equivalents). Every word returns the raw `String`; none of them print —
+  compose with `&` and `Print` once, since `Print` always appends a newline
+  and there's no "write without newline" builtin. Named `ReverseVideo`, not
+  `Reverse` — the latter is a core builtin (list/array reversal) and
+  defining over it would break every program that includes this file.
+- **Terminal → host**: `Type Vt100Key = KeyUp | KeyDown | KeyLeft | KeyRight
+  | KeyPF1 | KeyPF2 | KeyPF3 | KeyPF4 | KeyPad(Ch) | KeyEnter |
+  KeyUnknown(Raw)` and `EvalKey(raw As String) As Vt100Key`, which
+  classifies one raw keystroke sequence from the VT100 "Special Key Codes"
+  table, recognizing both cursor-key modes and both keypad modes for a
+  given logical key. **Not a live keyboard reader** — Shoddy's only input
+  builtin (`Input`) blocks on a whole line (`Console.In.ReadLine`); there is
+  no raw/no-echo read. `EvalKey` decodes a raw sequence the caller already
+  has in hand (captured externally, or a test fixture), it doesn't capture
+  one itself.
+- Two rows in the source HTML table look like transcription slips against
+  the real, well-established protocol and are implemented per the real spec
+  instead, each flagged with a comment in the file: `RequestStatus`/
+  `RequestCursorPos` (source omits the CSI `[`) and `Vt52CursorPos` (source
+  omits the `Y` and the `+32` per-coordinate offset — reconstructed from the
+  VT52 spec, not literally transcribed; verify against the target terminal).
+
 ## 13. I/O, errors, program args
 
 | Word | Signature | Notes |

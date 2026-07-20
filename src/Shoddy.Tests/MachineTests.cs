@@ -22,8 +22,7 @@ namespace Shoddy.Tests;
 [Collection("golden")]
 public class MachineTests
 {
-    static readonly string Root =
-        Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", ".."));
+    static readonly string Root = RepoRoot.Dir;
 
     // seq and str first; the rest reference them
     static readonly string[] BuildOrder =

@@ -6,11 +6,12 @@ rem Licensed under the Shoddy Language License 1.0.0 (PolyForm Noncommercial
 rem License 1.0.0 with Additional Use Grant). See the LICENSE file in the
 rem project root for full terms.
 rem
-rem Runs the machines/isam.shoddy test suite in order and leaves every
-rem data file on disk afterward — nothing here deletes anything (same
-rem as isamdump.shoddy's own default, and isam.shoddy itself, which
-rem never calls DeleteFile at all). Requires bin\mill.exe already
-rem built (build.cmd build). Usage: run-isam-tests.cmd
+rem Runs the machines/isam.shoddy test suite in order, then deletes the
+rem test data files the run produced (_isamtest.tmp, the _err_*.tmp
+rem fixtures, and their .idx companions). The individual programs still
+rem leave their files in place when run by hand — only this wrapper
+rem cleans up. Requires bin\mill.exe already built (build.cmd build).
+rem Usage: run-isam-tests.cmd
 
 setlocal enabledelayedexpansion
 cd /d "%~dp0"
@@ -56,9 +57,10 @@ call :checkerr empty-last        "ISAMLAST: EMPTY FILE"
 
 echo.
 echo ============================================================
-echo  Data files left in place:
+echo  Cleaning up test data files:
 echo ============================================================
-dir /b _isamtest.tmp _err_*.tmp 2>nul
+dir /b _isamtest.tmp* _err_*.tmp* 2>nul
+del /q _isamtest.tmp _isamtest.tmp.idx _err_*.tmp _err_*.tmp.idx 2>nul
 
 exit /b 0
 

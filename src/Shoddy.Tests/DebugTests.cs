@@ -20,8 +20,7 @@ namespace Shoddy.Tests;
 [Collection("golden")]
 public class DebugTests
 {
-    static readonly string Root =
-        Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", ".."));
+    static readonly string Root = RepoRoot.Dir;
 
     sealed class Recorder : IDebugSink
     {

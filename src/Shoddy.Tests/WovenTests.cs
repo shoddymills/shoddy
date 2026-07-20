@@ -21,17 +21,18 @@ namespace Shoddy.Tests;
 [Collection("golden")]
 public class WovenTests
 {
-    static readonly string Root =
-        Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", ".."));
+    static readonly string Root = RepoRoot.Dir;
 
     [Fact] public void Examples() => RunGolden("examples.shoddy", "examples.out");
     [Fact] public void LibTest() => RunGolden("libtest.shoddy", "libtest.out");
     [Fact] public void Simplex() => RunGolden("simplex.shoddy", "simplex.out");
     [Fact] public void Gradebook() => RunGolden("gradebook.shoddy", "gradebook.out", stdinFile: "gradebook.in");
 
-    // MPS machine -> simplex machine -> sensitivity report; Input reads
-    // EOF, selecting the dat/mix.mps default.
-    [Fact] public void SimplexMps() => RunGolden("simplex-mps.shoddy", "simplex-mps.out");
+    // MPS machine -> simplex machine -> sensitivity report, over Bruce
+    // Murtagh's BLEND problem. The file is a required program argument —
+    // running without one aborts.
+    [Fact] public void SimplexMps() =>
+        RunGolden("simplex-mps.shoddy", "simplex-mps.out", args: new[] { "tst/dat/blend.mps" });
 
     [Fact]
     public void TailRecursionBecomesALoop()
@@ -54,7 +55,8 @@ public class WovenTests
         Assert.Equal("DONE\n", RunWoven(sb, TextReader.Null));
     }
 
-    static void RunGolden(string program, string golden, string? stdinFile = null)
+    static void RunGolden(string program, string golden, string? stdinFile = null,
+                          string[]? args = null)
     {
         using TextReader input = stdinFile != null
             ? new StreamReader(Path.Combine(Root, "tst", "golden", stdinFile))
@@ -64,7 +66,7 @@ public class WovenTests
         string actual;
         try
         {
-            actual = RunWoven(Path.Combine(Root, "tst", program), input);
+            actual = RunWoven(Path.Combine(Root, "tst", program), input, args);
         }
         finally
         {
@@ -74,11 +76,11 @@ public class WovenTests
         Assert.Equal(expected, actual);
     }
 
-    static string RunWoven(string sbPath, TextReader input)
+    static string RunWoven(string sbPath, TextReader input, string[]? args = null)
     {
         var prog = Parser.Parse(Lexer.ReadProgram(sbPath));
         var output = new StringWriter();
-        Assert.Equal(0, Weaver.Execute(prog, null, output, input));
+        Assert.Equal(0, Weaver.Execute(prog, null, output, input, args));
         return output.ToString();
     }
 }

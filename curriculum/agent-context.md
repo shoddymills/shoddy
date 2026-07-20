@@ -380,14 +380,23 @@ checks `Cols(m)=Length(v)` → `MATVEC: DIMENSION MISMATCH` · `MatShow`
 (effectful — prints each row).
 
 **isam.shoddy** (includes seq.shoddy) — indexed-sequential file, `Type Isam:
-Fh, RecSize, Rd, Wr, KeyOf, Index (sorted List Of Pair), Free (List Of
-Number)`. Disk layout: each slot is `1 + RecSize` bytes (1 live-flag byte +
-payload). **Every mutating word returns a new handle — the file write is a
-side effect, but the handle's Index/Free are ordinary immutable values; a
-stale handle after a mutation has an out-of-date Index.** `IsamOpen` scans
-every slot once to rebuild `Index`/`Free`. `IsamInsert` reuses a freed slot
-if any, else appends. `IsamDelete` tombstones the flag byte + frees the
-slot (does not shrink the file). Keys must support `<` (Number or String).
+Fh, IxFh, RecSize, Rd, Wr, KeyOf` (no index in the handle). Data-file layout:
+each slot is `1 + RecSize` bytes (1 live-flag byte + payload). The key→slot
+index lives on disk as an order-16 B+tree in a companion file `path & ".idx"`
+(24-byte header: root page, live count, free-list head; 273-byte pages). Index
+entries store slot numbers only — keys are re-derived as `KeyOf(Rd(slot))`, so
+Number and String keys both work with no width limit; internal nodes key on
+"separator images" (dead-flagged record copies appended at leaf splits, never
+reclaimed). **Every mutating word still returns the handle, but it is
+unchanged — all state is on disk, so stale-handle staleness is no longer a
+hazard; thread it anyway by convention.** `IsamOpen` reads the header — O(1),
+no scan — and only falls back to a one-time rebuild scan when the `.idx` is
+missing beside a non-empty data file (a stale `.idx` beside a fresh empty data
+file is detected and deleted). `IsamInsert` reuses a freed slot if any, else
+appends; the free list threads through dead slots' payload bytes (records
+under 8 bytes leak their dead slots instead). `IsamDelete` tombstones the flag
+byte + frees the slot (does not shrink the file; index pages never merge).
+`IsamCount` is O(1) from the header. Keys must support `<` (Number or String).
 One live handle at a time; no crash safety, no concurrency.
 
 **random.shoddy** (no dependencies) — thin wrapper over the `Rnd` builtin

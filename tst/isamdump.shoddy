@@ -1,0 +1,70 @@
+Rem Copyright (c) 2026 Stephen Vincent Foster. All rights reserved.
+Rem
+Rem This file is part of the Shoddy Language project.
+Rem Licensed under the Shoddy Language License 1.0.0 (PolyForm Noncommercial
+Rem License 1.0.0 with Additional Use Grant). See the LICENSE file in the
+Rem project root for full terms.
+
+Rem ==================================================================
+Rem isamdump.shoddy — round-trip demonstration for machines/isam.shoddy
+Rem
+Rem A SEPARATE program from isamtest.shoddy. Run isamtest.shoddy first
+Rem — it builds "_isamtest.tmp" and deliberately leaves it on disk.
+Rem This one is a fresh process with no memory of that run: it reopens
+Rem the file (IsamOpen reads the persisted key index back from the
+Rem companion .idx file — no scan), dumps every surviving row, and
+Rem checks the shape isamtest guarantees deterministically (998 rows;
+Rem ids 1001-1003 present) even
+Rem though it has no idea which 5 of the original 1000 were the ones
+Rem randomly deleted. That's the round trip: everything either program
+Rem knows about the data came from the bytes on disk, not from memory
+Rem carried over between them.
+Rem
+Rem Leaves the data file in place by default — this program doesn't
+Rem delete anything unless told to (isam.shoddy itself only ever
+Rem deletes a stale .idx it finds beside a fresh, empty data file).
+Rem Pass DELETE as a program argument to clean up afterward; that
+Rem removes the data file and leaves the .idx, which the stale-index
+Rem guard discards on the next open.
+Rem
+Rem Build (once): build.cmd build
+Rem Run:          bin\mill run tst\isamtest.shoddy          (first, to build it)
+Rem               bin\mill run tst\isamdump.shoddy           (read it back, leave it)
+Rem               bin\mill run tst\isamdump.shoddy DELETE    (read it back, then clean up)
+Rem ==================================================================
+
+Include "isamfixture.shoddy"
+Include "../machines/isam.shoddy"
+
+Def WantsDelete() As Boolean
+    Contains(Map(Args(), Upper), "DELETE")
+
+Def AvailLabel(it As Item) As String
+    If Available(it) Then
+        "AVAILABLE"
+    Else
+        "UNAVAILABLE"
+
+Def ShowItem(it As Item)
+    Print(Str(Id(it)) & "  " & Description(it) & "  " & AvailLabel(it) & "  $" & Str(Price(it)))
+
+Def Main()
+    If Not FileExists(ItemFile()) Then
+        Error("ISAMDUMP: run isamtest.shoddy first -- " & ItemFile() & " does not exist")
+
+    Let db = IsamOpen(ItemFile(), ItemRecSize(), RdItem, WrItem, ItemKey)
+    Print("--- ROUND-TRIP DUMP: " & ItemFile() & " ---")
+    Print("ROW COUNT: " & Str(IsamCount(db)))
+    Assert(IsamCount(db) = 998, "998 ROWS (1000 BUILT - 5 DELETED + 3 ADDED), READ BACK FROM A FRESH SCAN")
+
+    Each(IsamAll(db), ShowItem)
+
+    Assert(IsamHas(db, 1001) And IsamHas(db, 1002) And IsamHas(db, 1003), "APPENDED ROWS SURVIVED THE ROUND TRIP")
+    Assert(Description(IsamGet(db, 1003)) = MakeDesc(1003), "APPENDED ROW FIELDS SURVIVED THE ROUND TRIP")
+
+    IsamClose(db)
+    If WantsDelete() Then
+        DeleteFile(ItemFile())
+        Print("ROUND-TRIP RETRIEVAL CONFIRMED -- CLEANED UP (ran with DELETE)")
+    Else
+        Print("ROUND-TRIP RETRIEVAL CONFIRMED -- DATA FILE LEFT IN PLACE: " & ItemFile())

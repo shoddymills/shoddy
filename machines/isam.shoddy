@@ -1,0 +1,560 @@
+Rem Copyright (c) 2026 Stephen Vincent Foster. All rights reserved.
+Rem
+Rem This file is part of the Shoddy Language project.
+Rem Licensed under the Shoddy Language License 1.0.0 (PolyForm Noncommercial
+Rem License 1.0.0 with Additional Use Grant). See the LICENSE file in the
+Rem project root for full terms.
+
+Rem ==================================================================
+Rem isam.shoddy — Shoddy standard library: indexed-sequential files
+Rem
+Rem Fixed-length records in a binary file, plus a key -> slot index
+Rem kept ON DISK in a B+tree, so opening a file reads a tiny header
+Rem instead of scanning every slot, and nothing index-shaped is ever
+Rem held in memory. The handle only carries the two file handles and
+Rem your reader/writer/key functions; mutating words still return the
+Rem handle (unchanged, now that no index lives in it) so existing
+Rem threading code keeps working:
+Rem
+Rem     Let db  = IsamOpen("staff.dat", 20, RdPair, WrPair, Fst)
+Rem     Let db2 = IsamInsert(db, Pair("ADA", 96))
+Rem     Snd(IsamGet(db2, "ADA"))                    ' 96
+Rem
+Rem DATA FILE (same layout as it always was — SlotPos/NSlots are
+Rem untouched): each slot is 1 + RecSize bytes, a live-flag byte then
+Rem the payload written by your writer. Deletes tombstone the flag and
+Rem thread the slot onto a free list stored in the slot's own payload
+Rem bytes (the first 8 bytes of a dead slot hold the next free slot
+Rem number), so the free list costs no extra space. Records smaller
+Rem than 8 bytes can't hold that pointer, so their dead slots are
+Rem simply never reused. Two other kinds of dead slot exist: separator
+Rem images (below), and — in files written by the old in-memory
+Rem version — plain tombstones, which a one-time rebuild (below) puts
+Rem on the free list.
+Rem
+Rem INDEX FILE: a companion file at path & ".idx". Same file after a
+Rem header was considered and rejected: index pages grow independently
+Rem of record slots, and interleaving the two would break the fixed
+Rem 1 + RecSize stride that SlotPos/NSlots (and any external tool that
+Rem reads the data file) rely on. The companion file keeps the data
+Rem file byte-compatible with the old format; the price is that the
+Rem .idx must travel with the data file. If the .idx is missing while
+Rem the data file has records, IsamOpen falls back to a one-time full
+Rem scan that rebuilds it (so old-format files migrate themselves);
+Rem after that every open is O(1). A stale .idx next to a fresh empty
+Rem data file is detected and discarded.
+Rem
+Rem Index layout, 1-based byte positions:
+Rem     header (24 bytes): root page, live-record count, free-list head
+Rem     pages of 273 bytes: leaf flag (1), entry count (8), link (8),
+Rem         then 16 entries of two numbers (a, b).
+Rem     leaf entry:     a = data slot of the record, b unused
+Rem     internal entry: a = data slot of a separator image, b = child
+Rem         page holding keys >= that separator; the page link is the
+Rem         next-leaf chain for leaves, the leftmost child otherwise.
+Rem
+Rem KEYS ARE NEVER SERIALIZED. Shoddy has no way to ask a value's type
+Rem at runtime, so a NUMBER-or-STRING key can't be written to a typed
+Rem field; instead every index entry stores a slot number and the key
+Rem is re-derived as KeyOf(reader(slot)). That supports both key types
+Rem with no maximum key width at the cost of one record read per key
+Rem comparison. Because a deleted slot's payload is overwritten (free
+Rem list) and reused, internal nodes never point at live slots: each
+Rem leaf split appends a SEPARATOR IMAGE — a dead-flagged copy of the
+Rem boundary record — whose bytes never change afterward. Separator
+Rem images (one per leaf split, about count/8 slots) are never
+Rem reclaimed; deletes also never merge index pages. Both are accepted
+Rem waste, in the spirit of the house.
+Rem
+Rem Costs: IsamOpen, IsamClose, IsamCount O(1). IsamHas/Get/Insert/
+Rem Update/Delete/Next O(log n) pages, each probed key costing one
+Rem record read. IsamPrev walks leaves up to the key; IsamLast walks
+Rem the whole leaf chain; IsamAll/IsamRange are output-sized. Keys come
+Rem from your KeyOf function and must be NUMBERs or STRINGs (they are
+Rem ordered with < ). No crash safety, no concurrent access — one live
+Rem handle at a time.
+Rem ==================================================================
+
+Include "seq.shoddy"
+
+Type Isam
+    Fh      As Number               ' data file handle
+    IxFh    As Number               ' index file handle (path & ".idx")
+    RecSize As Number               ' payload bytes (excludes flag byte)
+    Rd      As [ Number -- t ]      ' reader, as in recio
+    Wr      As [ Number t -- ]      ' writer
+    KeyOf   As [ t -- k ]           ' record -> key
+
+Rem ---- data-file slot geometry (unchanged from the in-memory version) --
+
+Def SlotPos(n As Number, size As Number) As Number
+    1 + (n - 1) * (size + 1)
+
+Def NSlots(h As Number, size As Number) As Number
+    Floor(BSize(h) / (size + 1))
+
+Rem ---- index-file geometry ---------------------------------------------
+
+Def IxHdr() As Number
+    24                              ' root (8) + count (8) + free head (8)
+
+Def IxOrder() As Number
+    16                              ' max entries per page; split when full
+
+Def IxEntSize() As Number
+    16                              ' two numbers: (a, b)
+
+Def IxPageSize() As Number
+    17 + IxOrder() * IxEntSize()    ' flag (1) + count (8) + link (8) + entries
+
+Def IxPagePos(p As Number) As Number
+    IxHdr() + (p - 1) * IxPageSize() + 1
+
+Def IxEntPos(p As Number, i As Number) As Number
+    IxPagePos(p) + 17 + (i - 1) * IxEntSize()
+
+Rem ---- index header: root page, live count, free-list head --------------
+
+Def IxRoot(db As Isam) As Number
+    Seek(IxFh(db), 1)
+    GetNum(IxFh(db))
+
+Def SetIxRoot(db As Isam, p As Number)
+    Seek(IxFh(db), 1)
+    PutNum(IxFh(db), p)
+
+Def IxCount(db As Isam) As Number
+    Seek(IxFh(db), 9)
+    GetNum(IxFh(db))
+
+Def SetIxCount(db As Isam, c As Number)
+    Seek(IxFh(db), 9)
+    PutNum(IxFh(db), c)
+
+Def IxFree(db As Isam) As Number
+    Seek(IxFh(db), 17)
+    GetNum(IxFh(db))
+
+Def SetIxFree(db As Isam, n As Number)
+    Seek(IxFh(db), 17)
+    PutNum(IxFh(db), n)
+
+Rem ---- index page headers ------------------------------------------------
+
+Def PgLeaf(db As Isam, p As Number) As Boolean
+    Seek(IxFh(db), IxPagePos(p))
+    GetBool(IxFh(db))
+
+Def PgCount(db As Isam, p As Number) As Number
+    Seek(IxFh(db), IxPagePos(p) + 1)
+    GetNum(IxFh(db))
+
+Def SetPgCount(db As Isam, p As Number, c As Number)
+    Seek(IxFh(db), IxPagePos(p) + 1)
+    PutNum(IxFh(db), c)
+
+Def PgLink(db As Isam, p As Number) As Number
+    Seek(IxFh(db), IxPagePos(p) + 9)
+    GetNum(IxFh(db))
+
+Def SetPgLink(db As Isam, p As Number, v As Number)
+    Seek(IxFh(db), IxPagePos(p) + 9)
+    PutNum(IxFh(db), v)
+
+Def WrPgHdr(db As Isam, p As Number, isLeaf As Boolean, cnt As Number, lnk As Number)
+    Seek(IxFh(db), IxPagePos(p))
+    PutBool(IxFh(db), isLeaf)
+    PutNum(IxFh(db), cnt)
+    PutNum(IxFh(db), lnk)
+
+Def IxNPages(db As Isam) As Number
+    Floor((BSize(IxFh(db)) - IxHdr()) / IxPageSize())
+
+Def NewPage(db As Isam, isLeaf As Boolean, lnk As Number) As Number
+    Let p = IxNPages(db) + 1
+    Seek(IxFh(db), IxPagePos(p) + IxPageSize() - 1)
+    PutBool(IxFh(db), False)        ' claim the page's last byte so BSize grows
+    WrPgHdr(db, p, isLeaf, 0, lnk)
+    p
+
+Def IxInit(db As Isam)
+    Seek(IxFh(db), 1)
+    PutNum(IxFh(db), 1)             ' root = page 1
+    PutNum(IxFh(db), 0)             ' live count
+    PutNum(IxFh(db), 0)             ' free-list head
+    WrPgHdr(db, 1, True, 0, 0)      ' page 1: empty leaf
+    Seek(IxFh(db), IxPagePos(1) + IxPageSize() - 1)
+    PutBool(IxFh(db), False)
+
+Rem ---- raw slot i/o and key derivation ------------------------------------
+
+Def ReadRec(db As Isam, n As Number) As t
+    Seek(Fh(db), SlotPos(n, RecSize(db)) + 1)       ' skip the live flag
+    Call(Rd(db), Fh(db))
+
+Def WriteSlot(db As Isam, n As Number, rec As t)
+    Seek(Fh(db), SlotPos(n, RecSize(db)))
+    PutBool(Fh(db), True)
+    Call(Wr(db), Fh(db), rec)
+
+Def KeyAt(db As Isam, n As Number) As k
+    Call(KeyOf(db), ReadRec(db, n))
+
+Rem ---- index entries: (a, b) number pairs ----------------------------------
+
+Def EntA(db As Isam, p As Number, i As Number) As Number
+    Seek(IxFh(db), IxEntPos(p, i))
+    GetNum(IxFh(db))
+
+Def EntB(db As Isam, p As Number, i As Number) As Number
+    Seek(IxFh(db), IxEntPos(p, i) + 8)
+    GetNum(IxFh(db))
+
+Def WrEnt(db As Isam, p As Number, i As Number, a As Number, b As Number)
+    Seek(IxFh(db), IxEntPos(p, i))
+    PutNum(IxFh(db), a)
+    PutNum(IxFh(db), b)
+
+Def ShiftRight(db As Isam, p As Number, src As Number, pos As Number)
+    If src >= pos Then
+        WrEnt(db, p, src + 1, EntA(db, p, src), EntB(db, p, src))
+        ShiftRight(db, p, src - 1, pos)
+
+Def ShiftLeft(db As Isam, p As Number, i As Number, n As Number)
+    If i < n Then
+        WrEnt(db, p, i, EntA(db, p, i + 1), EntB(db, p, i + 1))
+        ShiftLeft(db, p, i + 1, n)
+
+Def CopyEnts(db As Isam, src As Number, dst As Number, i As Number, n As Number, j As Number)
+    If i <= n Then
+        WrEnt(db, dst, j, EntA(db, src, i), EntB(db, src, i))
+        CopyEnts(db, src, dst, i + 1, n, j + 1)
+
+Def InsEnt(db As Isam, p As Number, i As Number, a As Number, b As Number)
+    ShiftRight(db, p, PgCount(db, p), i)
+    WrEnt(db, p, i, a, b)
+    SetPgCount(db, p, PgCount(db, p) + 1)
+
+Rem ---- descent -------------------------------------------------------------
+
+Rem largest entry index whose separator key is <= k, else 0 (take the link)
+Def ChildPos(db As Isam, p As Number, k As t, i As Number, n As Number) As Number
+    If i > n Then
+        i - 1
+    Else
+        If k < KeyAt(db, EntA(db, p, i)) Then
+            i - 1
+        Else
+            ChildPos(db, p, k, i + 1, n)
+
+Def ChildAt(db As Isam, p As Number, pos As Number) As Number
+    If pos = 0 Then
+        PgLink(db, p)
+    Else
+        EntB(db, p, pos)
+
+Def FindLeaf(db As Isam, p As Number, k As t) As Number
+    If PgLeaf(db, p) Then
+        p
+    Else
+        FindLeaf(db, ChildAt(db, p, ChildPos(db, p, k, 1, PgCount(db, p))), k)
+
+Rem entry index of the exact key in a leaf, 0 if absent
+Def LeafPosOf(db As Isam, p As Number, k As t, i As Number, n As Number) As Number
+    If i > n Then
+        0
+    Else
+        If KeyAt(db, EntA(db, p, i)) = k Then
+            i
+        Else
+            LeafPosOf(db, p, k, i + 1, n)
+
+Rem first entry index whose key is > k (where a new key belongs), else n + 1
+Def LeafPosFor(db As Isam, p As Number, k As t, i As Number, n As Number) As Number
+    If i > n Then
+        i
+    Else
+        If k < KeyAt(db, EntA(db, p, i)) Then
+            i
+        Else
+            LeafPosFor(db, p, k, i + 1, n)
+
+Def FindSlot(db As Isam, k As t) As Number
+    Let p = FindLeaf(db, IxRoot(db), k)
+    Let i = LeafPosOf(db, p, k, 1, PgCount(db, p))
+    If i = 0 Then
+        0
+    Else
+        EntA(db, p, i)
+
+Def LeftLeaf(db As Isam, p As Number) As Number
+    If PgLeaf(db, p) Then
+        p
+    Else
+        LeftLeaf(db, PgLink(db, p))
+
+Rem ---- data-file free list --------------------------------------------------
+
+Def TakeSlot(db As Isam) As Number
+    Let n = IxFree(db)
+    If n = 0 Then
+        NSlots(Fh(db), RecSize(db)) + 1
+    Else
+        Seek(Fh(db), SlotPos(n, RecSize(db)) + 1)
+        SetIxFree(db, GetNum(Fh(db)))
+        n
+
+Def FreeSlot(db As Isam, n As Number)
+    Seek(Fh(db), SlotPos(n, RecSize(db)))
+    PutBool(Fh(db), False)
+    If RecSize(db) >= 8 Then        ' payload too small for a next pointer: leak it
+        PutNum(Fh(db), IxFree(db))
+        SetIxFree(db, n)
+
+Rem ---- insertion: proactive splits on the way down ----------------------------
+
+Rem copy the record at slot n into a fresh dead slot whose bytes never
+Rem change again — a separator image internal nodes can safely key on
+Def CopySep(db As Isam, n As Number) As Number
+    Let rec = ReadRec(db, n)
+    Let img = NSlots(Fh(db), RecSize(db)) + 1
+    Seek(Fh(db), SlotPos(img, RecSize(db)))
+    PutBool(Fh(db), False)
+    Call(Wr(db), Fh(db), rec)
+    img
+
+Rem split the full child cp of parent pp (cp reached via entry pos, 0 = link);
+Rem pp is guaranteed non-full, the new separator lands at entry pos + 1
+Def SplitChild(db As Isam, pp As Number, pos As Number, cp As Number)
+    Let h = IxOrder() / 2
+    If PgLeaf(db, cp) Then
+        Let rp = NewPage(db, True, PgLink(db, cp))
+        CopyEnts(db, cp, rp, h + 1, IxOrder(), 1)
+        SetPgCount(db, rp, IxOrder() - h)
+        SetPgCount(db, cp, h)
+        SetPgLink(db, cp, rp)
+        InsEnt(db, pp, pos + 1, CopySep(db, EntA(db, rp, 1)), rp)
+    Else
+        Let rp = NewPage(db, False, EntB(db, cp, h + 1))
+        CopyEnts(db, cp, rp, h + 2, IxOrder(), 1)
+        SetPgCount(db, rp, IxOrder() - h - 1)
+        Let sep = EntA(db, cp, h + 1)
+        SetPgCount(db, cp, h)
+        InsEnt(db, pp, pos + 1, sep, rp)
+
+Def GrowRoot(db As Isam)
+    Let r = IxRoot(db)
+    If PgCount(db, r) = IxOrder() Then
+        Let nr = NewPage(db, False, r)
+        SplitChild(db, nr, 0, r)
+        SetIxRoot(db, nr)
+
+Def InsDescend(db As Isam, p As Number, k As t, n As Number)
+    If PgLeaf(db, p) Then
+        InsEnt(db, p, LeafPosFor(db, p, k, 1, PgCount(db, p)), n, 0)
+    Else
+        Let pos = ChildPos(db, p, k, 1, PgCount(db, p))
+        Let c = ChildAt(db, p, pos)
+        If PgCount(db, c) = IxOrder() Then
+            SplitChild(db, p, pos, c)
+            If k < KeyAt(db, EntA(db, p, pos + 1)) Then
+                InsDescend(db, c, k, n)
+            Else
+                InsDescend(db, EntB(db, p, pos + 1), k, n)
+        Else
+            InsDescend(db, c, k, n)
+
+Def IxAdd(db As Isam, k As t, n As Number)
+    GrowRoot(db)
+    InsDescend(db, IxRoot(db), k, n)
+    SetIxCount(db, IxCount(db) + 1)
+
+Rem ---- open: O(1) header read; full scan only to adopt an index-less file ----
+
+Def RebuildScan(db As Isam, n As Number, total As Number)
+    If n <= total Then
+        Seek(Fh(db), SlotPos(n, RecSize(db)))
+        If GetBool(Fh(db)) Then
+            IxAdd(db, Call(KeyOf(db), Call(Rd(db), Fh(db))), n)
+        Else
+            FreeSlot(db, n)
+        RebuildScan(db, n + 1, total)
+
+Def IsamOpen(path As String, size As Number, rd0 As [ Number -- t ], wr0 As [ Number t -- ], keyof0 As [ t -- k ]) As Isam
+    Let h = BOpen(path)
+    If BSize(h) = 0 And FileExists(path & ".idx") Then
+        DeleteFile(path & ".idx")   ' stale index left beside a fresh data file
+    Let ih = BOpen(path & ".idx")
+    Let db = Isam(h, ih, size, rd0, wr0, keyof0)
+    If BSize(ih) = 0 Then
+        IxInit(db)
+        RebuildScan(db, 1, NSlots(h, size))
+    db
+
+Def IsamClose(db As Isam)
+    BClose(Fh(db))
+    BClose(IxFh(db))
+
+Rem ---- lookups -----------------------------------------------------------
+
+Def IsamHas(db As Isam, k As t) As Boolean
+    FindSlot(db, k) <> 0
+
+Def IsamCount(db As Isam) As Number
+    IxCount(db)
+
+Def IsamGet(db As Isam, k As t) As u
+    Let n = FindSlot(db, k)
+    If n = 0 Then
+        Error("ISAMGET: KEY NOT FOUND")
+    Else
+        ReadRec(db, n)
+
+Def IsamGetOr(db As Isam, k As t, dflt As u) As u
+    If IsamHas(db, k) Then
+        IsamGet(db, k)
+    Else
+        dflt
+
+Rem ---- mutation: each still returns the (now unchanged) handle -------------
+
+Def IsamInsert(db As Isam, rec As t) As Isam
+    Let k = Call(KeyOf(db), rec)
+    If IsamHas(db, k) Then
+        Error("ISAMINSERT: DUPLICATE KEY")
+    Else
+        Let n = TakeSlot(db)
+        WriteSlot(db, n, rec)
+        IxAdd(db, k, n)
+        db
+
+Def IsamUpdate(db As Isam, rec As t) As Isam
+    Let n = FindSlot(db, Call(KeyOf(db), rec))
+    If n = 0 Then
+        Error("ISAMUPDATE: KEY NOT FOUND")
+    Else
+        WriteSlot(db, n, rec)
+        db
+
+Def IsamDelete(db As Isam, k As t) As Isam
+    Let p = FindLeaf(db, IxRoot(db), k)
+    Let i = LeafPosOf(db, p, k, 1, PgCount(db, p))
+    If i = 0 Then
+        Error("ISAMDELETE: KEY NOT FOUND")
+    Else
+        FreeSlot(db, EntA(db, p, i))
+        ShiftLeft(db, p, i, PgCount(db, p))
+        SetPgCount(db, p, PgCount(db, p) - 1)
+        SetIxCount(db, IxCount(db) - 1)
+        db
+
+Rem ---- sequential access (in key order, cursorless) -----------------------
+
+Def LeafRecs(db As Isam, p As Number, i As Number) As List Of t
+    If p = 0 Then
+        { }
+    Else
+        If i > PgCount(db, p) Then
+            LeafRecs(db, PgLink(db, p), 1)
+        Else
+            Prepend(ReadRec(db, EntA(db, p, i)), LeafRecs(db, p, i + 1))
+
+Def IsamAll(db As Isam) As List Of t
+    LeafRecs(db, LeftLeaf(db, IxRoot(db)), 1)
+
+Rem first entry index in leaf p whose key is >= lo, else count + 1
+Def RangePos(db As Isam, p As Number, lo As k, i As Number, n As Number) As Number
+    If i > n Then
+        i
+    Else
+        If KeyAt(db, EntA(db, p, i)) < lo Then
+            RangePos(db, p, lo, i + 1, n)
+        Else
+            i
+
+Def RangeRecs(db As Isam, p As Number, i As Number, hi As k) As List Of t
+    If p = 0 Then
+        { }
+    Else
+        If i > PgCount(db, p) Then
+            RangeRecs(db, PgLink(db, p), 1, hi)
+        Else
+            If KeyAt(db, EntA(db, p, i)) > hi Then
+                { }
+            Else
+                Prepend(ReadRec(db, EntA(db, p, i)), RangeRecs(db, p, i + 1, hi))
+
+Def IsamRange(db As Isam, lo As k, hi As k) As List Of t
+    Let p = FindLeaf(db, IxRoot(db), lo)
+    RangeRecs(db, p, RangePos(db, p, lo, 1, PgCount(db, p)), hi)
+
+Def FirstLive(db As Isam, p As Number) As Number
+    If p = 0 Then
+        0
+    Else
+        If PgCount(db, p) = 0 Then
+            FirstLive(db, PgLink(db, p))
+        Else
+            EntA(db, p, 1)
+
+Def IsamFirst(db As Isam) As t
+    If IsamCount(db) = 0 Then
+        Error("ISAMFIRST: EMPTY FILE")
+    Else
+        ReadRec(db, FirstLive(db, LeftLeaf(db, IxRoot(db))))
+
+Rem walk the whole leaf chain remembering the last live entry — deletes
+Rem never merge pages, so the rightmost leaf may be empty
+Def LastLive(db As Isam, p As Number, best As Number) As Number
+    If p = 0 Then
+        best
+    Else
+        If PgCount(db, p) = 0 Then
+            LastLive(db, PgLink(db, p), best)
+        Else
+            LastLive(db, PgLink(db, p), EntA(db, p, PgCount(db, p)))
+
+Def IsamLast(db As Isam) As t
+    If IsamCount(db) = 0 Then
+        Error("ISAMLAST: EMPTY FILE")
+    Else
+        ReadRec(db, LastLive(db, LeftLeaf(db, IxRoot(db)), 0))
+
+Def NextSlotFor(db As Isam, p As Number, k As t, i As Number) As Number
+    If p = 0 Then
+        0
+    Else
+        If i > PgCount(db, p) Then
+            NextSlotFor(db, PgLink(db, p), k, 1)
+        Else
+            If k < KeyAt(db, EntA(db, p, i)) Then
+                EntA(db, p, i)
+            Else
+                NextSlotFor(db, p, k, i + 1)
+
+Def IsamNext(db As Isam, k As t) As u
+    Let n = NextSlotFor(db, FindLeaf(db, IxRoot(db), k), k, 1)
+    If n = 0 Then
+        Error("ISAMNEXT: NO NEXT KEY")
+    Else
+        ReadRec(db, n)
+
+Rem keys ascend along the chain, so scan from the left and stop at k
+Def PrevSlotFor(db As Isam, p As Number, k As t, i As Number, best As Number) As Number
+    If p = 0 Then
+        best
+    Else
+        If i > PgCount(db, p) Then
+            PrevSlotFor(db, PgLink(db, p), k, 1, best)
+        Else
+            If KeyAt(db, EntA(db, p, i)) < k Then
+                PrevSlotFor(db, p, k, i + 1, EntA(db, p, i))
+            Else
+                best
+
+Def IsamPrev(db As Isam, k As t) As u
+    Let n = PrevSlotFor(db, LeftLeaf(db, IxRoot(db)), k, 1, 0)
+    If n = 0 Then
+        Error("ISAMPREV: NO PREVIOUS KEY")
+    Else
+        ReadRec(db, n)

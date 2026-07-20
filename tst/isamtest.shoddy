@@ -1,0 +1,146 @@
+Rem Copyright (c) 2026 Stephen Vincent Foster. All rights reserved.
+Rem
+Rem This file is part of the Shoddy Language project.
+Rem Licensed under the Shoddy Language License 1.0.0 (PolyForm Noncommercial
+Rem License 1.0.0 with Additional Use Grant). See the LICENSE file in the
+Rem project root for full terms.
+
+Rem ==================================================================
+Rem isamtest.shoddy — test program for machines/isam.shoddy
+Rem
+Rem Builds a 1000-row Item file, exercises sequential and random-start
+Rem reads, mutates prices, deletes and re-inserts, and checks the
+Rem non-aborting missing-key paths (IsamHas / IsamGetOr). Deliberately
+Rem does NOT delete its data file at the end — isamdump.shoddy reopens
+Rem it afterward, as a separate process, to demonstrate round-trip
+Rem retrieval across a fresh IsamOpen (which reads the on-disk index
+Rem back from the companion .idx file). Aborting error conditions
+Rem (duplicate insert, missing-key Get/Update/Delete, IsamNext/Prev at
+Rem the boundary, IsamFirst/Last on an empty file) can't be tested here
+Rem — Error() would kill this whole run — see tst/isam-errors/ instead.
+Rem
+Rem Build (once): build.cmd build
+Rem Run:          bin\mill run tst\isamtest.shoddy
+Rem ==================================================================
+
+Include "isamfixture.shoddy"
+Include "../machines/isam.shoddy"
+Include "../machines/random.shoddy"
+
+Rem ---- building ---------------------------------------------------
+
+Def BuildRow(db As Isam, id As Number) As Isam
+    Let avail = Not (Random() < 0.2)
+    Let price = Round(RandomRange(1, 100000) * 100) / 100
+    IsamInsert(db, Item(id, MakeDesc(id), avail, price))
+
+Def BuildAll(db As Isam, id As Number, total As Number) As Isam
+    If id > total Then
+        db
+    Else
+        BuildAll(BuildRow(db, id), id + 1, total)
+
+Rem ---- sequential walk via IsamFirst/IsamNext (not just IsamAll) ---
+
+Def WalkIds(db As Isam, k As Number, stopAt As Number) As List Of Number
+    If k = stopAt Then
+        { k }
+    Else
+        Prepend(k, WalkIds(db, Id(IsamNext(db, k)), stopAt))
+
+Rem ---- distinct random ids, sampled without replacement -------------
+
+Def DistinctRandomIds(soFar As List Of Number, need As Number) As List Of Number
+    If Length(soFar) = need Then
+        soFar
+    Else
+        Let cand = RandomInt(1, 1000)
+        If Contains(soFar, cand) Then
+            DistinctRandomIds(soFar, need)
+        Else
+            DistinctRandomIds(Prepend(cand, soFar), need)
+
+Rem ---- repricing, handle threaded through every update --------------
+
+Def RepriceOne(db As Isam, id As Number) As Isam
+    Let old = IsamGet(db, id)
+    Let newPrice = Round(RandomRange(1, 100000) * 100) / 100
+    IsamUpdate(db, With(old, Price = newPrice))
+
+Def RepriceAll(db As Isam, ids As List Of Number) As Isam
+    If IsEmpty(ids) Then
+        db
+    Else
+        RepriceAll(RepriceOne(db, First(ids)), Rest(ids))
+
+Def PricesOf(db As Isam, ids As List Of Number) As List Of Number
+    Map(ids, Fn(id) => Price(IsamGet(db, id)))
+
+Def InPriceRange(p As Number) As Boolean
+    p >= 1 And p <= 100000
+
+Rem ---- deleting, handle threaded through every delete ----------------
+
+Def DeleteAll(db As Isam, ids As List Of Number) As Isam
+    If IsEmpty(ids) Then
+        db
+    Else
+        DeleteAll(IsamDelete(db, First(ids)), Rest(ids))
+
+Def Main()
+    Rem re-runnable: start from a clean file every time
+    If FileExists(ItemFile()) Then
+        DeleteFile(ItemFile())
+
+    Print("--- BUILD 1000 ROWS ---")
+    Let db0 = IsamOpen(ItemFile(), ItemRecSize(), RdItem, WrItem, ItemKey)
+    Let db1 = BuildAll(db0, 1, 1000)
+    Assert(IsamCount(db1) = 1000, "1000 ROWS BUILT")
+
+    Let unavailCount = Length(Filter(IsamAll(db1), Fn(it) => Not Available(it)))
+    Print("UNAVAILABLE: " & Str(unavailCount) & " OF 1000")
+    Assert(unavailCount >= 100 And unavailCount <= 300, "ROUGHLY 20% UNAVAILABLE")
+
+    Print("--- SEQUENTIAL READ, IN ORDER ---")
+    Assert(ToArray(Map(IsamAll(db1), Id)) = ToArray(Range(1, 1000)), "ISAMALL IS SORTED 1..1000")
+    Let walked = WalkIds(db1, Id(IsamFirst(db1)), 1000)
+    Assert(ToArray(walked) = ToArray(Range(1, 1000)), "ISAMFIRST/ISAMNEXT WALK MATCHES 1..1000")
+
+    Print("--- RANDOM START, 5 ROWS ---")
+    Let start = RandomInt(1, 996)
+    Print("STARTING AT " & Str(start))
+    Let five = IsamRange(db1, start, start + 4)
+    Assert(Length(five) = 5, "GOT 5 ROWS")
+    Assert(ToArray(Map(five, Id)) = ToArray(Range(start, start + 4)), "5 ROWS ARE start..start+4")
+
+    Print("--- REPRICE 20 RANDOM ITEMS ---")
+    Let repriceIds = DistinctRandomIds({ }, 20)
+    Let before = PricesOf(db1, repriceIds)
+    Let db2 = RepriceAll(db1, repriceIds)
+    Let after = PricesOf(db2, repriceIds)
+    Assert(IsamCount(db2) = 1000, "REPRICING DOES NOT CHANGE ROW COUNT")
+    Assert(Fold(Map(after, InPriceRange), True, And), "NEW PRICES STAY IN [1,100000]")
+    Assert(Fold(ZipWith(before, after, <>), True, And), "REPRICED ITEMS ACTUALLY CHANGED")
+
+    Print("--- MISSING-KEY PATHS THAT DO NOT ABORT ---")
+    Assert(Not IsamHas(db2, 99999), "ISAMHAS FALSE FOR MISSING KEY")
+    Let dflt = Item(0, "NONE", False, 0)
+    Assert(IsamGetOr(db2, 99999, dflt) = dflt, "ISAMGETOR RETURNS DEFAULT FOR MISSING KEY")
+
+    Print("--- DELETE 5 RANDOM ROWS ---")
+    Let deleteIds = DistinctRandomIds({ }, 5)
+    Print("DELETING:")
+    Print(deleteIds)
+    Let db3 = DeleteAll(db2, deleteIds)
+    Assert(IsamCount(db3) = 995, "COUNT AFTER 5 DELETES")
+    Assert(Fold(Map(deleteIds, Fn(id) => Not IsamHas(db3, id)), True, And), "DELETED ROWS ARE GONE")
+
+    Print("--- ADD 3 MORE, STARTING AT 1001 ---")
+    Let db4 = BuildAll(db3, 1001, 1003)
+    Assert(IsamCount(db4) = 998, "COUNT AFTER 3 NEW INSERTS")
+    Assert(IsamHas(db4, 1001) And IsamHas(db4, 1002) And IsamHas(db4, 1003), "NEW ROWS PRESENT")
+    Assert(Description(IsamGet(db4, 1002)) = MakeDesc(1002), "NEW ROW FIELDS ROUND-TRIP")
+
+    IsamClose(db4)
+    Print("ALL ISAM TESTS PASSED")
+    Print("(data file " & ItemFile() & " left in place for isamdump.shoddy)")

@@ -1,0 +1,73 @@
+Rem Copyright (c) 2026 Stephen Vincent Foster. All rights reserved.
+Rem
+Rem This file is part of the Shoddy Language project.
+Rem Licensed under the Shoddy Language License 1.0.0 (PolyForm Noncommercial
+Rem License 1.0.0 with Additional Use Grant). See the LICENSE file in the
+Rem project root for full terms.
+
+Rem ==================================================================
+Rem simplex-mps.shoddy — load an MPS file, optimize, report the works.
+Rem
+Rem Build (once): build.cmd build
+Rem Run:          bin\mill run tst\simplex-mps.shoddy FILE.mps [-z]
+Rem
+Rem FILE is required — the run aborts without one. The golden test
+Rem (WovenTests.SimplexMps) passes tst/dat/blend.mps; tst/dat/mix.mps
+Rem is a smaller worked example. The -z (or --zero-lower) switch
+Rem forces a zero lower bound (x >= 0) on every variable, skipping a
+Rem BOUNDS section instead of rejecting it. Solves with the simplex
+Rem machine and reports status, objective, the nonzero variables, and
+Rem the sensitivity analysis: shadow prices per normalised constraint
+Rem row (an E row appears as its +/- pair) and reduced costs per
+Rem variable.
+Rem ==================================================================
+
+Include "../machines/mps.shoddy"
+
+Def ShowVar(names As List Of String, xs As Array Of Number, i As Number)
+    If Abs(Nth(xs, i)) > 0.0000005 Then
+        Print("  " & Nth(names, i) & " = " & Str(Nth(xs, i)))
+
+Def ShowPrice(names As List Of String, vs As Array Of Number, i As Number)
+    If Abs(Nth(vs, i)) > 0.0000005 Then
+        Print("  " & Nth(names, i) & ": " & Str(Nth(vs, i)))
+
+Def CountNonzero(xs As Array Of Number) As Number
+    Length(Filter(ToList(xs), Fn(v) => Abs(v) > 0.0000005))
+
+Def Report(mo As MpsModel)
+    Let p = Prob(mo)
+    Print("PROBLEM: " & Str(Length(Costs(p))) & " VARIABLES, " & Str(Rows(A(p))) & " CONSTRAINT ROWS (NORMALISED TO >=)")
+    Let s = Optimize(p)
+    Print("STATUS: " & Status(s) & "   ITERATIONS: " & Str(Iterations(s)))
+    If Status(s) = "OPTIMAL" Then
+        Print("OBJECTIVE: " & Str(Cost(s)))
+        Print("")
+        Print("VARIABLES (" & Str(CountNonzero(X(s))) & " NONZERO OF " & Str(Length(X(s))) & "):")
+        Each(Range(1, Length(X(s))), Fn(i) => ShowVar(VarNames(mo), X(s), i))
+        Print("")
+        Print("SHADOW PRICES - CHANGE IN OBJECTIVE PER UNIT OF RHS (" & Str(CountNonzero(DualPrices(s))) & " NONZERO):")
+        Each(Range(1, Length(DualPrices(s))), Fn(i) => ShowPrice(ConNames(mo), DualPrices(s), i))
+        Print("")
+        Print("REDUCED COSTS - PENALTY FOR FORCING IN A ZERO VARIABLE (" & Str(CountNonzero(Reduced(s))) & " NONZERO):")
+        Each(Range(1, Length(Reduced(s))), Fn(i) => ShowPrice(VarNames(mo), Reduced(s), i))
+    Else
+        Print("NO OPTIMUM REPORTED - SEE STATUS")
+
+Def PathOf(files As List Of String) As String
+    If IsEmpty(files) Then
+        Error("SIMPLEX-MPS: NO MPS FILE GIVEN")
+    Else
+        First(files)
+
+Def ModeName(zl As Boolean) As String
+    If zl Then
+        "ZERO-LOWER"
+    Else
+        "STRICT"
+
+Def Main()
+    Let files = Filter(Args(), Fn(t) => Not StartsWith(t, "-"))
+    Let zl = Contains(Args(), "-z") Or Contains(Args(), "--zero-lower")
+    Print("FILE: " & PathOf(files) & "   BOUNDS MODE: " & ModeName(zl))
+    Report(LoadMpsModel(PathOf(files), zl))

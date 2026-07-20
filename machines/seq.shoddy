@@ -1,0 +1,103 @@
+Rem Copyright (c) 2026 Stephen Vincent Foster. All rights reserved.
+Rem
+Rem This file is part of the Shoddy Language project.
+Rem Licensed under the Shoddy Language License 1.0.0 (PolyForm Noncommercial
+Rem License 1.0.0 with Additional Use Grant). See the LICENSE file in the
+Rem project root for full terms.
+
+Rem ==================================================================
+Rem seq.shoddy — Shoddy standard library: sequences
+Rem The usual Fold/Map suspects. Pure, self-hosted.
+Rem Words marked (poly) work on LISTs and ARRAYs; others are List-only
+Rem because they lean on First/Rest/Prepend structural recursion.
+Rem ==================================================================
+
+Rem ---- aggregation (poly) -------------------------------------------
+
+Def Sum(xs As List Of Number) As Number
+    Fold(xs, 0, +)
+
+Def Product(xs As List Of Number) As Number
+    Fold(xs, 1, *)
+
+Def Maximum(xs As List Of Number) As Number
+    Fold(xs, First(xs), Max)
+
+Def Minimum(xs As List Of Number) As Number
+    Fold(xs, First(xs), Min)
+
+Def Average(xs As List Of Number) As Number
+    Sum(xs) / Length(xs)
+
+Rem ---- predicates over sequences (poly) ------------------------------
+
+Def Any(xs As List Of t, p As [ t -- Boolean ]) As Boolean
+    Fold(xs, False, Fn(a, x) => a Or Call(p, x))
+
+Def All(xs As List Of t, p As [ t -- Boolean ]) As Boolean
+    Fold(xs, True, Fn(a, x) => a And Call(p, x))
+
+Def CountIf(xs As List Of t, p As [ t -- Boolean ]) As Number
+    Length(Filter(xs, p))
+
+Def Contains(xs As List Of t, v As t) As Boolean
+    Any(xs, =(v))
+
+Rem ---- searching (List) ----------------------------------------------
+
+Def IndexFrom(xs As List Of t, v As t, k As Number) As Number
+    If IsEmpty(xs) Then
+        0
+    Else
+        If First(xs) = v Then
+            k
+        Else
+            IndexFrom(Rest(xs), v, k + 1)
+
+Def IndexOf(xs As List Of t, v As t) As Number
+    IndexFrom(xs, v, 1)
+
+Rem ---- slicing and building (List) -----------------------------------
+
+Def Taken(xs As List Of t, n As Number) As List Of t
+    If n <= 0 Or IsEmpty(xs) Then
+        { }
+    Else
+        Prepend(First(xs), Taken(Rest(xs), n - 1))
+
+Def DropN(xs As List Of t, n As Number) As List Of t
+    If n <= 0 Or IsEmpty(xs) Then
+        xs
+    Else
+        DropN(Rest(xs), n - 1)
+
+Def Append(xs As List Of t, x As t) As List Of t
+    Concat(xs, { x })
+
+Def Last(xs As List Of t) As t
+    Nth(xs, Length(xs))
+
+Def Flatten(xss As List Of List Of t) As List Of t
+    Fold(xss, { }, Concat)
+
+Rem ---- sorting (List, quicksort via Filter) --------------------------
+
+Def Sort(xs As List Of Number) As List Of Number
+    If IsEmpty(xs) Then
+        { }
+    Else
+        Let p = First(xs)
+        Let rs = Rest(xs)
+        Concat(Append(Sort(Filter(rs, <(p))), p), Sort(Filter(rs, >=(p))))
+
+Rem ---- pairing --------------------------------------------------------
+
+Type Pair
+    Fst As t
+    Snd As u
+
+Def ZipWith(xs As List Of t, ys As List Of u, f As [ t u -- v ]) As List Of v
+    Map(Range(1, Min(Length(xs), Length(ys))), Fn(k) => Call(f, Nth(xs, k), Nth(ys, k)))
+
+Def Zip(xs As List Of t, ys As List Of u) As List Of Pair
+    ZipWith(xs, ys, Pair)

@@ -9,7 +9,7 @@ core that remains a legal dialect. Python's layout, BASIC's keywords,
 Joy's soul.
 
 ```basic
-Include "machines/seq.shoddy"
+Include "machines/stats.shoddy"
 
 Type Student
     Name  As String

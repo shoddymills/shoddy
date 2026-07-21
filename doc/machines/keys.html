@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
+<title>keys — Physical-Key Classification | Shoddy Machines</title>
+<style>
+:root { --ink:#1a1d27; --accent:#1e3a8a; --code-bg:#f4f5f8; --rule:#d8dbe4; }
+html { font-size:17px; }
+body { font-family:Georgia,'Times New Roman',serif; color:var(--ink); max-width:46rem; margin:2.5rem auto; padding:0 1.25rem; line-height:1.6; }
+h1,h2,h3 { font-family:Verdana,Geneva,sans-serif; color:var(--accent); line-height:1.25; margin-top:2.2rem; }
+h1 { font-size:1.7rem; border-bottom:3px solid var(--accent); padding-bottom:.4rem; }
+h1 small { display:block; color:#667; font-size:.95rem; font-weight:normal; font-family:Verdana,Geneva,sans-serif; margin-top:.3rem; }
+h2 { font-size:1.25rem; border-bottom:1px solid var(--rule); padding-bottom:.25rem; }
+h3 { font-size:1.02rem; }
+code { font-family:'Consolas','Menlo',monospace; font-size:.85em; background:var(--code-bg); padding:.08em .3em; border-radius:3px; }
+pre { background:var(--code-bg); border:1px solid var(--rule); border-left:4px solid var(--accent); padding:.8rem 1rem; overflow-x:auto; border-radius:4px; }
+pre code { background:none; padding:0; font-size:.82rem; line-height:1.45; }
+table { border-collapse:collapse; width:100%; margin:1rem 0; font-size:.88rem; font-family:Verdana,Geneva,sans-serif; }
+th { background:var(--accent); color:#fff; font-size:.78rem; text-align:left; padding:.45rem .6rem; }
+td { border:1px solid var(--rule); padding:.4rem .6rem; vertical-align:top; }
+td:first-child { font-family:'Consolas','Menlo',monospace; font-size:.82rem; white-space:nowrap; }
+tr:nth-child(even) td { background:#fafbfd; }
+a { color:var(--accent); }
+.tag { font-family:Verdana,sans-serif; font-size:.7rem; color:#7a3b8f; font-weight:bold; text-transform:uppercase; letter-spacing:.03em; }
+.crumb { font-family:Verdana,Geneva,sans-serif; font-size:.85rem; color:#667; }
+footer { margin-top:2.5rem; padding-top:1rem; border-top:1px solid var(--rule); font-family:Verdana,Geneva,sans-serif; font-size:.78rem; color:#667; }
+</style>
+</head>
+<body>
+
+<p class="crumb"><a href="index.html">&larr; Machines</a></p>
+
+<h1>keys <small>Physical-Key Classification — machines/keys.shoddy</small></h1>
+
+<h2 id="summary">Summary</h2>
+<p><code>keys</code> takes the raw number that comes with a keyboard event and
+tells you, in plain terms, which key was pressed. When a program using <a
+href="scribbler.html">scribbler</a> hears that a key went down, all it gets is
+a bare code — <code>262</code>, say, or <code>81</code> — and codes like that
+are no way to write readable game logic. <code>ClassifyKey</code> folds that
+number into a friendly <code>GameKey</code>: <code>262</code> becomes
+<code>ArrowLeft</code>, <code>32</code> becomes <code>SpaceBar</code>, a letter
+or digit becomes a <code>CharKey</code> carrying its code, and anything else
+becomes an <code>OtherKey</code> so nothing is ever lost. From there you can
+match on the key by name, or ask "was that the Q key?" with
+<code>IsKey</code>. It's a small, standalone translation layer — it includes
+nothing else and depends on nothing else — that turns magic numbers into
+something you'd actually want to read.</p>
+
+<h2 id="why">Why It's Useful</h2>
+<p>Any program that responds to the keyboard — a game, a menu, a set of
+hotkeys — has to answer the question "which key just went down?" Without help,
+that means littering your code with numbers: <code>If code = 262</code>,
+<code>If code = 81</code>, and a comment on each to remind you what it meant.
+Get one wrong and the bug is silent and maddening. <code>keys</code> does that
+comparing once, correctly, and hands you names instead:
+<code>Case ArrowLeft()</code> reads like what it does. Reach for it whenever a
+scribbler program needs to steer by the arrow keys, jump on the space bar, or
+watch for a particular letter — the classic controls of anything interactive.</p>
+<p>One distinction is worth getting straight, because <code>keys</code> sits
+firmly on one side of it. This machine answers the <strong>physical-key</strong>
+question — "the Left arrow went down", "the Q key went down" — which is what
+navigation, hotkeys and game controls care about. It does <em>not</em> answer
+the <strong>character</strong> question — "the user produced a
+<code>q</code>". That's a different thing entirely, with keyboard layout,
+Shift and international input already applied, and it belongs to scribbler's
+<code>ScribblerTyped</code> event, not here. If you're moving a player around,
+you want <code>keys</code>. If you're collecting text someone typed, you want
+<code>ScribblerTyped</code>.</p>
+
+<h2 id="guide">User's Guide</h2>
+<p>You feed <code>ClassifyKey</code> the raw code from a scribbler key event
+and match on what comes back. Named keys have their own tags; letters and
+digits arrive as <code>CharKey</code>, and you can pull the character out with
+<code>KeyGlyph</code> or test for a specific one with <code>IsKey</code>.</p>
+<pre><code>Include "keys.shoddy"
+
+Def Handle(code As Number)
+    Let k = ClassifyKey(code)
+    Select Case k
+        Case ArrowLeft()
+            Print("move left")
+        Case ArrowRight()
+            Print("move right")
+        Case SpaceBar()
+            Print("jump")
+        Case Else
+            If IsKey(k, "q") Then Print("quit")   ' matches the Q key</code></pre>
+<p>A few things worth remembering:</p>
+<ul>
+<li><strong>Physical keys report uppercase.</strong> The letter keys sit on
+codes 65–90 ("A"–"Z"), so <code>KeyGlyph</code> of a letter is always a
+capital. That's why <code>IsKey</code> upper-cases what you pass it —
+<code>IsKey(k, "q")</code> and <code>IsKey(k, "Q")</code> both match the Q
+key.</li>
+<li><strong><code>KeyGlyph</code> is empty for named keys.</strong> Only
+<code>CharKey</code> stands for a printable glyph; the arrows, space, Enter and
+the rest return <code>""</code>, as does anything unmapped. Match those by
+their names instead.</li>
+<li><strong>Nothing falls through the cracks.</strong> A code that isn't a
+recognised named key, letter, or digit comes back as <code>OtherKey(code)</code>,
+still carrying the original number, so you can handle or ignore it as you
+like.</li>
+<li><strong>It pairs with <a href="scribbler.html">scribbler</a>.</strong>
+The codes it understands are scribbler's stable <code>ScribblerKeys</code>
+table — the number that rides along on a <code>ScribblerKeyDown</code> or
+<code>ScribblerKeyUp</code> event. And its constructor names deliberately
+avoid the ones <a href="vt100.html">vt100</a> uses
+(<code>KeyUp</code>/<code>KeyDown</code>) and the <code>Left</code>/<code>Right</code>
+string builtins, so you can include it alongside either without a clash.</li>
+</ul>
+
+<h2 id="words">Word Reference</h2>
+<p class="tag">3 words, plus the GameKey type</p>
+
+<h3>The type</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>GameKey</td><td>The friendly key sum type: <code>ArrowLeft</code>,
+<code>ArrowRight</code>, <code>ArrowUp</code>, <code>ArrowDown</code>,
+<code>SpaceBar</code>, <code>EnterKey</code>, <code>EscKey</code>,
+<code>TabKey</code>, <code>BackKey</code>, <code>CharKey(Code)</code> (a letter
+or digit, carrying its raw code), and <code>OtherKey(Code)</code> (anything
+unrecognised, carrying its raw code).</td></tr>
+</table>
+
+<h3>Classifying and testing</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>ClassifyKey(code)</td><td>Fold a raw <code>ScribblerKeys</code> code
+into a <code>GameKey</code>. The arrows, space, Enter, Escape, Tab and
+Backspace get their own tags; letters (65–90) and digits (48–57) become
+<code>CharKey(code)</code>; everything else becomes
+<code>OtherKey(code)</code>.</td></tr>
+<tr><td>KeyGlyph(k)</td><td>The character a <code>CharKey</code> stands for —
+"A".."Z" or "0".."9". Returns <code>""</code> for the named keys and anything
+unmapped.</td></tr>
+<tr><td>IsKey(k, s)</td><td>True when <code>k</code> is the letter or digit
+whose glyph is <code>s</code>. Case-insensitive: since physical letters report
+uppercase, <code>IsKey(k, "q")</code> matches the Q key.</td></tr>
+</table>
+
+<footer>
+<p><em>Making useless things useful, through skill.</em> &mdash;
+<a href="index.html">Machines index</a> &middot;
+<a href="../GUIDE.html">Beginner's Guide</a> &middot;
+<a href="../SPEC.html">Language Spec</a> &middot;
+<a href="../QUICKREF.html">Quick Reference</a></p>
+</footer>
+
+</body>
+</html>

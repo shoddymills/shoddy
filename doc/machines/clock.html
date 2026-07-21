@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
+<title>clock — Time and Timing | Shoddy Machines</title>
+<style>
+:root { --ink:#1a1d27; --accent:#1e3a8a; --code-bg:#f4f5f8; --rule:#d8dbe4; }
+html { font-size:17px; }
+body { font-family:Georgia,'Times New Roman',serif; color:var(--ink); max-width:46rem; margin:2.5rem auto; padding:0 1.25rem; line-height:1.6; }
+h1,h2,h3 { font-family:Verdana,Geneva,sans-serif; color:var(--accent); line-height:1.25; margin-top:2.2rem; }
+h1 { font-size:1.7rem; border-bottom:3px solid var(--accent); padding-bottom:.4rem; }
+h1 small { display:block; color:#667; font-size:.95rem; font-weight:normal; font-family:Verdana,Geneva,sans-serif; margin-top:.3rem; }
+h2 { font-size:1.25rem; border-bottom:1px solid var(--rule); padding-bottom:.25rem; }
+h3 { font-size:1.02rem; }
+code { font-family:'Consolas','Menlo',monospace; font-size:.85em; background:var(--code-bg); padding:.08em .3em; border-radius:3px; }
+pre { background:var(--code-bg); border:1px solid var(--rule); border-left:4px solid var(--accent); padding:.8rem 1rem; overflow-x:auto; border-radius:4px; }
+pre code { background:none; padding:0; font-size:.82rem; line-height:1.45; }
+table { border-collapse:collapse; width:100%; margin:1rem 0; font-size:.88rem; font-family:Verdana,Geneva,sans-serif; }
+th { background:var(--accent); color:#fff; font-size:.78rem; text-align:left; padding:.45rem .6rem; }
+td { border:1px solid var(--rule); padding:.4rem .6rem; vertical-align:top; }
+td:first-child { font-family:'Consolas','Menlo',monospace; font-size:.82rem; white-space:nowrap; }
+tr:nth-child(even) td { background:#fafbfd; }
+a { color:var(--accent); }
+.tag { font-family:Verdana,sans-serif; font-size:.7rem; color:#7a3b8f; font-weight:bold; text-transform:uppercase; letter-spacing:.03em; }
+.crumb { font-family:Verdana,Geneva,sans-serif; font-size:.85rem; color:#667; }
+footer { margin-top:2.5rem; padding-top:1rem; border-top:1px solid var(--rule); font-family:Verdana,Geneva,sans-serif; font-size:.78rem; color:#667; }
+</style>
+</head>
+<body>
+
+<p class="crumb"><a href="index.html">&larr; Machines</a></p>
+
+<h1>clock <small>Time and Timing — machines/clock.shoddy</small></h1>
+
+<h2 id="summary">Summary</h2>
+<p><code>clock</code> is the friendly layer over Shoddy's three timing
+built-ins — <code>Ticks</code>, <code>Sleep</code>, and <code>Clock</code> — for
+any console program that needs to measure how long something took, stamp a log
+line with the date and time, wait until a moment arrives, or turn a raw duration
+into readable words. It gives you <code>Elapsed</code> and <code>TimeIt</code>
+for timing, <code>SleepUntil</code> for pacing, <code>Stamp</code> and friends
+for ISO-8601 timestamps, and <code>FormatDuration</code> for turning
+milliseconds into <code>"1m 04.2s"</code>. The built-ins underneath are always
+callable without including anything; this machine is simply the derived,
+window-independent convenience layer over them, in the same spirit that
+<a href="vt100.html">vt100</a> is a derived layer over <code>Chr</code>.</p>
+
+<h2 id="why">Why It's Useful</h2>
+<p>Programs need to know about time in two quite different ways, and the whole
+design of this machine turns on keeping them apart. Sometimes you want to
+<strong>measure</strong>: how long did that computation take, how much time has
+passed since the last frame, is it time to draw again yet? And sometimes you
+want to <strong>stamp</strong>: what is the wall-clock date and time right now,
+so I can label this log line or name this file? Those sound similar but they
+demand opposite things from a clock, and Shoddy gives you two clocks precisely
+so you never have to choose the wrong one.</p>
+<p><strong><code>Ticks()</code> is for measuring.</strong> It counts
+milliseconds since your program started, and — this is the key word —
+it is <em>monotonic</em>: it only ever goes forward, at a steady pace, never
+jumping. That makes it perfect for deltas, frame pacing, and benchmarks, where
+all you care about is how much time elapsed between two readings. It is also the
+only clock animation should ever use, because a clock that never jumps
+backward is a clock that never makes your animation stutter or leap.</p>
+<p><strong><code>Clock()</code> is for stamping.</strong> It reports the
+wall-clock time — the actual calendar date and time on the wall — as a
+7-element array: <code>[year, month, day, hour, minute, second, ms]</code>.
+That's exactly what you want on a log line or in a filename. But wall-clock time
+is <em>not</em> monotonic: whenever the operating system adjusts the system
+clock — a daylight-saving change, a network time sync nudging the clock a
+second or two either way — <code>Clock()</code> jumps with it. Measure a
+duration by subtracting two <code>Clock()</code> readings and a time sync in the
+middle can hand you a negative answer, or a duration off by an hour. That's why
+the two jobs get two clocks: use <code>Ticks()</code> to measure, use
+<code>Clock()</code> to stamp, and never cross the streams.</p>
+
+<h2 id="guide">User's Guide</h2>
+<p>For measuring, read <code>Ticks()</code> yourself and hand it to
+<code>Elapsed</code>, or let <code>TimeIt</code> time a function for you. For
+stamping, <code>Stamp</code> and its relatives read <code>Clock()</code> and
+hand you a ready-made string. For pacing, <code>SleepUntil</code> waits until a
+target tick arrives.</p>
+<pre><code>Include "clock.shoddy"
+
+Def Work()
+    Sleep(1200)                           ' pretend this is real work
+
+Def Main()
+    Let took = TimeIt(Work)               ' run Work, return ms it took
+    Print(FormatDuration(took))           ' 1.2s
+
+    Let start = Ticks()
+    ' ... some loop body ...
+    Print(Elapsed(start))                 ' ms since start, monotonic
+
+    Print(Stamp())                        ' 2026-07-20T14:03:07.042
+    Print(StampDate())                    ' 2026-07-20
+    Print(StampTime())                    ' 14:03:07.042
+
+    SleepUntil(Ticks() + 500)             ' wait out the rest of a 500ms beat</code></pre>
+<p>A few things worth remembering:</p>
+<ul>
+<li><strong>Measure with Ticks, stamp with Clock.</strong> If you're asking
+"how long?", stay on the <code>Ticks()</code> side — <code>Elapsed</code>,
+<code>TimeIt</code>, <code>SleepUntil</code>. If you're asking "what time is it
+now?", use the stamping words. Don't subtract two <code>Stamp</code>s to time
+something; a system-clock adjustment in the middle will lie to you.</li>
+<li><strong>One <code>Clock()</code> read per stamp.</strong>
+<code>Stamp</code> reads the wall clock exactly once and formats both halves
+from that single reading, so the date and time can never straddle midnight —
+you'll never get yesterday's date bolted onto today's time because the clock
+ticked over between two reads.</li>
+<li><strong>Never name a Def <code>Ticks</code>, <code>Sleep</code>, or
+<code>Clock</code>.</strong> A <code>Def</code> silently shadows a built-in of
+the same name, so defining your own <code>Ticks</code> would quietly replace
+the real one everywhere — including inside this machine — and break timing in
+ways that are miserable to track down. Steer clear of those three names.</li>
+<li><strong><code>SleepUntil</code> never sleeps backwards.</strong> If the
+target moment has already passed, it simply returns at once rather than sleeping
+a negative amount — handy for pacing a loop that occasionally runs slow.</li>
+<li><strong>Durations read like a stopwatch.</strong>
+<code>FormatDuration</code> gives <code>"4.2s"</code> under a minute and
+<code>"1m 04.2s"</code> above it, seconds always to one decimal place.</li>
+</ul>
+
+<h2 id="words">Word Reference</h2>
+<p class="tag">9 words, over the Ticks/Sleep/Clock builtins</p>
+
+<h3>Measuring and pacing</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>Elapsed(since)</td><td>Milliseconds that have passed since an earlier
+<code>Ticks()</code> reading you pass in as <code>since</code>. Monotonic and
+drift-free — the right way to time things.</td></tr>
+<tr><td>TimeIt(f)</td><td>Runs the function <code>f</code> and hands back how
+many milliseconds it took. A one-line benchmark.</td></tr>
+<tr><td>SleepUntil(t)</td><td>Sleeps until <code>Ticks()</code> reaches the
+target <code>t</code>. If <code>t</code> is already in the past, returns
+immediately rather than waiting — good for keeping a loop on a steady
+beat.</td></tr>
+</table>
+
+<h3>Stamping the wall clock</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>Stamp()</td><td>The current date and time as one ISO-8601 string, like
+<code>"2026-07-20T14:03:07.042"</code>. Reads the wall clock exactly once, so
+the date and time halves are always from the same instant.</td></tr>
+<tr><td>StampDate()</td><td>Just the date part of now, like
+<code>"2026-07-20"</code>.</td></tr>
+<tr><td>StampTime()</td><td>Just the time part of now, like
+<code>"14:03:07.042"</code>.</td></tr>
+<tr><td>DateOf(c)</td><td>Formats the date from a <code>Clock()</code> array
+<code>c</code> (<code>[year, month, day, ...]</code>) as
+<code>"YYYY-MM-DD"</code>. Use it when you've already taken a
+<code>Clock()</code> reading of your own.</td></tr>
+<tr><td>TimeOf(c)</td><td>Formats the time from a <code>Clock()</code> array
+<code>c</code> as <code>"HH:MM:SS.mmm"</code>, milliseconds and all.</td></tr>
+</table>
+
+<h3>Formatting a duration</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>FormatDuration(ms)</td><td>Turns a number of milliseconds into readable
+words: <code>"4.2s"</code> under a minute, <code>"1m 04.2s"</code> at or above
+one, seconds always to one decimal place.</td></tr>
+</table>
+
+<footer>
+<p><em>Making useless things useful, through skill.</em> &mdash;
+<a href="index.html">Machines index</a> &middot;
+<a href="../GUIDE.html">Beginner's Guide</a> &middot;
+<a href="../SPEC.html">Language Spec</a> &middot;
+<a href="../QUICKREF.html">Quick Reference</a></p>
+</footer>
+
+</body>
+</html>

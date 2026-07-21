@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
+<title>seq — Sequences | Shoddy Machines</title>
+<style>
+:root { --ink:#1a1d27; --accent:#1e3a8a; --code-bg:#f4f5f8; --rule:#d8dbe4; }
+html { font-size:17px; }
+body { font-family:Georgia,'Times New Roman',serif; color:var(--ink); max-width:46rem; margin:2.5rem auto; padding:0 1.25rem; line-height:1.6; }
+h1,h2,h3 { font-family:Verdana,Geneva,sans-serif; color:var(--accent); line-height:1.25; margin-top:2.2rem; }
+h1 { font-size:1.7rem; border-bottom:3px solid var(--accent); padding-bottom:.4rem; }
+h1 small { display:block; color:#667; font-size:.95rem; font-weight:normal; font-family:Verdana,Geneva,sans-serif; margin-top:.3rem; }
+h2 { font-size:1.25rem; border-bottom:1px solid var(--rule); padding-bottom:.25rem; }
+h3 { font-size:1.02rem; }
+code { font-family:'Consolas','Menlo',monospace; font-size:.85em; background:var(--code-bg); padding:.08em .3em; border-radius:3px; }
+pre { background:var(--code-bg); border:1px solid var(--rule); border-left:4px solid var(--accent); padding:.8rem 1rem; overflow-x:auto; border-radius:4px; }
+pre code { background:none; padding:0; font-size:.82rem; line-height:1.45; }
+table { border-collapse:collapse; width:100%; margin:1rem 0; font-size:.88rem; font-family:Verdana,Geneva,sans-serif; }
+th { background:var(--accent); color:#fff; font-size:.78rem; text-align:left; padding:.45rem .6rem; }
+td { border:1px solid var(--rule); padding:.4rem .6rem; vertical-align:top; }
+td:first-child { font-family:'Consolas','Menlo',monospace; font-size:.82rem; white-space:nowrap; }
+tr:nth-child(even) td { background:#fafbfd; }
+a { color:var(--accent); }
+.tag { font-family:Verdana,sans-serif; font-size:.7rem; color:#7a3b8f; font-weight:bold; text-transform:uppercase; letter-spacing:.03em; }
+.crumb { font-family:Verdana,Geneva,sans-serif; font-size:.85rem; color:#667; }
+footer { margin-top:2.5rem; padding-top:1rem; border-top:1px solid var(--rule); font-family:Verdana,Geneva,sans-serif; font-size:.78rem; color:#667; }
+</style>
+</head>
+<body>
+
+<p class="crumb"><a href="index.html">&larr; Machines</a></p>
+
+<h1>seq <small>Sequences — machines/seq.shoddy</small></h1>
+
+<h2 id="summary">Summary</h2>
+<p><code>seq</code> is the workhorse toolbox for working with lists of
+things: add them all up, find the biggest, keep only the ones that pass a
+test, sort them, stitch two lists together, and so on. It's the pile of
+everyday verbs you reach for the moment you have more than one of something.
+None of it is built into the language — every word here is written in plain
+Shoddy on top of a handful of built-in building blocks (<code>Fold</code>,
+<code>Map</code>, <code>Filter</code>, and the trio
+<code>First</code>/<code>Rest</code>/<code>Prepend</code> that take a list
+apart and put it back together). Pure and self-hosted: nothing here touches a
+file or the screen, so the same input always gives the same answer, and you
+can read the whole machine like a recipe book.</p>
+
+<h2 id="why">Why It's Useful</h2>
+<p>Almost every program ends up juggling a bunch of values at once — a list
+of scores, a row of prices, the words in a sentence, the students in a class.
+The language gives you the raw ability to loop over them, but writing the
+same little loop by hand every time (to total a column, to count how many are
+over the line, to grab the first three) gets old fast, and every hand-written
+loop is a fresh chance to get an off-by-one wrong. <code>seq</code> hands you
+those loops already written, named, and tested, so you can say what you mean
+&mdash; <code>Sum(scores)</code>, <code>Sort(prices)</code>,
+<code>CountIf(students, passed)</code> &mdash; instead of spelling out how.
+It's also the quiet foundation a great many other machines are built on: when
+another machine needs to fold, filter, or sort a list, it leans on
+<code>seq</code> rather than reinventing it.</p>
+
+<p>One thing worth knowing up front: Shoddy has two flavours of sequence, the
+<strong>List</strong> (grown from front to back with
+<code>First</code>/<code>Rest</code>/<code>Prepend</code>) and the
+<strong>Array</strong> (a fixed block you index into). Some words here are
+<strong>poly</strong> &mdash; they work happily on either kind, because they
+only ever ask a sequence to fold or map over itself. The aggregations
+(<code>Sum</code>, <code>Product</code>, <code>Maximum</code>,
+<code>Minimum</code>, <code>Average</code>) and the predicates
+(<code>Any</code>, <code>All</code>, <code>CountIf</code>,
+<code>Contains</code>) are all poly. The rest &mdash; searching, slicing,
+sorting, and pairing &mdash; are <strong>List-only</strong>, because they
+take the sequence apart with structural recursion, and that's a List's trick,
+not an Array's. The Word Reference below labels which is which.</p>
+
+<h2 id="guide">User's Guide</h2>
+<p>Include the file and the words are yours. Most of them take a list as
+their first argument; the ones that test each element (like <code>Any</code>,
+<code>All</code>, <code>CountIf</code>) take a little function too &mdash;
+often written inline as a <code>Fn</code> lambda, or as a partially-applied
+operator like <code>&gt;(4)</code> (read "greater than 4").</p>
+<pre><code>Include "seq.shoddy"
+
+Def Main()
+    Let xs = { 5, 3, 8, 1, 9, 2 }
+
+    Print(Sum(xs))                       ' 28
+    Print(Maximum(xs))                   ' 9
+    Print(Average(xs))                   ' 4.6666...
+
+    Print(CountIf(xs, >(4)))             ' 3   (5, 8, 9)
+    Print(Any(xs, =(8)))                 ' True
+    Print(Contains(xs, 7))               ' False
+
+    Let top3 = Taken(Sort(xs), 3)
+    Each(top3, Fn(n) => Print(Str(n)))   ' 1, then 2, then 3
+
+    Print(IndexOf(xs, 8))                ' 3   (8 is the 3rd item)
+
+    Let names = { "ADA", "LIN", "GRACE" }
+    Each(Zip(names, xs), Fn(pr) => Print(Fst(pr) & " = " & Str(Snd(pr))))
+                                         ' ADA = 5, LIN = 3, GRACE = 8</code></pre>
+<p>A few things worth remembering:</p>
+<ul>
+<li><strong>Nothing is changed in place.</strong> Shoddy values are
+immutable, so words like <code>Sort</code>, <code>Append</code>, and
+<code>Taken</code> hand you back a brand-new list and leave the original
+untouched. Chain them freely &mdash; <code>Taken(Sort(xs), 3)</code> sorts a
+copy, then takes three from that.</li>
+<li><strong>Indexes are 1-based.</strong> <code>IndexOf</code> returns
+<code>1</code> for the first item, and <code>0</code> when the value isn't in
+the list at all &mdash; a handy "not found" signal. <code>IndexFrom</code>
+does the same but lets you start the search partway along.</li>
+<li><strong>Empties behave gently &mdash; mostly.</strong> Taking or dropping
+more items than a list holds just stops at the end rather than complaining.
+But a few words assume there's something there: <code>Maximum</code>,
+<code>Minimum</code>, and <code>Last</code> reach for a first or final
+element, so an empty list has no sensible answer to give them.</li>
+<li><strong>Zipping stops at the shorter list.</strong> <code>Zip</code> and
+<code>ZipWith</code> pair items up position by position and stop when either
+list runs out &mdash; three names against six numbers gives three pairs, as
+in the example.</li>
+<li><strong>Poly where it can be.</strong> If you're holding an Array rather
+than a List, the aggregations and predicates still work on it directly; for
+the List-only words, convert to a List first.</li>
+</ul>
+<p>Because it's the common vocabulary of lists, <code>seq</code> shows up
+underneath a lot of other machines &mdash; anywhere a machine needs to total,
+filter, or sort, it tends to <code>Include</code> this one rather than roll
+its own.</p>
+
+<h2 id="words">Word Reference</h2>
+<p class="tag">19 words, plus the Pair type</p>
+
+<h3>Aggregation <span class="tag">poly &mdash; List or Array</span></h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>Sum(xs)</td><td>Adds every number in <code>xs</code> together. The
+total of an empty list is <code>0</code>.</td></tr>
+<tr><td>Product(xs)</td><td>Multiplies every number in <code>xs</code>
+together. The product of an empty list is <code>1</code>.</td></tr>
+<tr><td>Maximum(xs)</td><td>The largest number in <code>xs</code>. Needs at
+least one item &mdash; an empty list has no maximum.</td></tr>
+<tr><td>Minimum(xs)</td><td>The smallest number in <code>xs</code>. Needs at
+least one item &mdash; an empty list has no minimum.</td></tr>
+<tr><td>Average(xs)</td><td>The mean: the sum divided by how many there are.
+An empty list would divide by zero.</td></tr>
+</table>
+
+<h3>Predicates <span class="tag">poly &mdash; List or Array</span></h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>Any(xs, p)</td><td>True if the test <code>p</code> holds for at least
+one item in <code>xs</code>. False for an empty list.</td></tr>
+<tr><td>All(xs, p)</td><td>True if the test <code>p</code> holds for every
+item in <code>xs</code>. True for an empty list (nothing fails it).</td></tr>
+<tr><td>CountIf(xs, p)</td><td>How many items in <code>xs</code> pass the
+test <code>p</code>.</td></tr>
+<tr><td>Contains(xs, v)</td><td>True if the value <code>v</code> appears
+somewhere in <code>xs</code>.</td></tr>
+</table>
+
+<h3>Searching <span class="tag">List only</span></h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>IndexOf(xs, v)</td><td>The 1-based position of the first
+<code>v</code> in <code>xs</code>, or <code>0</code> if it isn't
+there.</td></tr>
+<tr><td>IndexFrom(xs, v, k)</td><td>Like <code>IndexOf</code>, but treats the
+front of <code>xs</code> as position <code>k</code> &mdash; the building
+block <code>IndexOf</code> is written on, useful directly when you want to
+number from something other than 1.</td></tr>
+</table>
+
+<h3>Slicing and building <span class="tag">List only</span></h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>Taken(xs, n)</td><td>A new list of the first <code>n</code> items of
+<code>xs</code>. If <code>xs</code> is shorter, you get all of it; if
+<code>n</code> is zero or less, you get an empty list.</td></tr>
+<tr><td>DropN(xs, n)</td><td>A new list with the first <code>n</code> items of
+<code>xs</code> removed. Drop more than there are and you get an empty
+list.</td></tr>
+<tr><td>Append(xs, x)</td><td>A new list that is <code>xs</code> with
+<code>x</code> tacked on the end.</td></tr>
+<tr><td>Last(xs)</td><td>The final item of <code>xs</code>. Needs a
+non-empty list.</td></tr>
+<tr><td>Flatten(xss)</td><td>Takes a list of lists and joins them end to end
+into one flat list.</td></tr>
+</table>
+
+<h3>Sorting <span class="tag">List only</span></h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>Sort(xs)</td><td>A new list with the numbers of <code>xs</code> in
+ascending order. A tidy self-hosted quicksort, built by partitioning around a
+pivot with <code>Filter</code>.</td></tr>
+</table>
+
+<h3>Pairing <span class="tag">List only</span></h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>Pair</td><td>A two-value bundle with fields <code>Fst</code> and
+<code>Snd</code> &mdash; what <code>Zip</code> hands back for each matched-up
+couple.</td></tr>
+<tr><td>Zip(xs, ys)</td><td>Pairs up <code>xs</code> and <code>ys</code>
+position by position into a list of <code>Pair</code>s, stopping when the
+shorter list runs out.</td></tr>
+<tr><td>ZipWith(xs, ys, f)</td><td>Like <code>Zip</code>, but instead of
+making pairs it calls <code>f</code> on each matched couple and collects the
+results. <code>Zip</code> is just <code>ZipWith</code> with
+<code>Pair</code> as the combiner.</td></tr>
+</table>
+
+<footer>
+<p><em>Making useless things useful, through skill.</em> &mdash;
+<a href="index.html">Machines index</a> &middot;
+<a href="../GUIDE.html">Beginner's Guide</a> &middot;
+<a href="../SPEC.html">Language Spec</a> &middot;
+<a href="../QUICKREF.html">Quick Reference</a></p>
+</footer>
+
+</body>
+</html>

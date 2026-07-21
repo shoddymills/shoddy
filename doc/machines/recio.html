@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
+<title>recio — Record-Oriented Binary I/O | Shoddy Machines</title>
+<style>
+:root { --ink:#1a1d27; --accent:#1e3a8a; --code-bg:#f4f5f8; --rule:#d8dbe4; }
+html { font-size:17px; }
+body { font-family:Georgia,'Times New Roman',serif; color:var(--ink); max-width:46rem; margin:2.5rem auto; padding:0 1.25rem; line-height:1.6; }
+h1,h2,h3 { font-family:Verdana,Geneva,sans-serif; color:var(--accent); line-height:1.25; margin-top:2.2rem; }
+h1 { font-size:1.7rem; border-bottom:3px solid var(--accent); padding-bottom:.4rem; }
+h1 small { display:block; color:#667; font-size:.95rem; font-weight:normal; font-family:Verdana,Geneva,sans-serif; margin-top:.3rem; }
+h2 { font-size:1.25rem; border-bottom:1px solid var(--rule); padding-bottom:.25rem; }
+h3 { font-size:1.02rem; }
+code { font-family:'Consolas','Menlo',monospace; font-size:.85em; background:var(--code-bg); padding:.08em .3em; border-radius:3px; }
+pre { background:var(--code-bg); border:1px solid var(--rule); border-left:4px solid var(--accent); padding:.8rem 1rem; overflow-x:auto; border-radius:4px; }
+pre code { background:none; padding:0; font-size:.82rem; line-height:1.45; }
+table { border-collapse:collapse; width:100%; margin:1rem 0; font-size:.88rem; font-family:Verdana,Geneva,sans-serif; }
+th { background:var(--accent); color:#fff; font-size:.78rem; text-align:left; padding:.45rem .6rem; }
+td { border:1px solid var(--rule); padding:.4rem .6rem; vertical-align:top; }
+td:first-child { font-family:'Consolas','Menlo',monospace; font-size:.82rem; white-space:nowrap; }
+tr:nth-child(even) td { background:#fafbfd; }
+a { color:var(--accent); }
+.tag { font-family:Verdana,sans-serif; font-size:.7rem; color:#7a3b8f; font-weight:bold; text-transform:uppercase; letter-spacing:.03em; }
+.crumb { font-family:Verdana,Geneva,sans-serif; font-size:.85rem; color:#667; }
+footer { margin-top:2.5rem; padding-top:1rem; border-top:1px solid var(--rule); font-family:Verdana,Geneva,sans-serif; font-size:.78rem; color:#667; }
+</style>
+</head>
+<body>
+
+<p class="crumb"><a href="index.html">&larr; Machines</a></p>
+
+<h1>recio <small>Record-Oriented Binary I/O — machines/recio.shoddy</small></h1>
+
+<h2 id="summary">Summary</h2>
+<p><code>recio</code> turns a binary file into an evenly-spaced grid of
+records — like a car park with numbered bays all exactly the same size. Every
+record takes up the same fixed number of bytes, so record number 5 always
+lives at the same spot no matter what's in it, and jumping straight to it is a
+matter of simple arithmetic: skip over the four bays in front and park in the
+fifth. That's the whole job of this machine — it does the offset sums for you.
+You supply the record size in bytes and a pair of little functions that read
+and write one record, and <code>recio</code> handles seeking to record number
+<em>k</em>, reading it back, overwriting it in place, adding a new one on the
+end, or slurping the lot into a list. It sits directly on Shoddy's binary
+builtins — <code>Seek</code>, <code>BSize</code>, and the
+<code>GetStr</code> / <code>GetNum</code> / <code>PutStr</code> /
+<code>PutNum</code> family — and is itself the record layer that
+<a href="isam.html">isam</a> is built on top of.</p>
+
+<h2 id="why">Why It's Useful</h2>
+<p>Sometimes you don't want a text file full of lines — you want a file of
+uniform records you can reach into by number. Because every record is the same
+size, you can read or replace <em>any one of them</em> without touching the
+rest: change record 900 in a file of a million and you write exactly one
+record's worth of bytes, not the whole file. That's the payoff of fixed-size
+records, and it's exactly the trick that makes random-access data files fast.</p>
+<p>On its own, <code>recio</code> is the right tool when your records already
+have a natural numbering — row 1, row 2, row 3 — and you want to seek to one
+by that number. The moment you'd rather look records up by a <em>key</em> (a
+name, an ID) instead of a bay number, that's where <a href="isam.html">isam</a>
+comes in: it keeps a sorted index on disk that translates a key into a record
+number, then leans on this very machine to fetch the bytes. Learn
+<code>recio</code> and you've learned the floor that <code>isam</code> stands
+on.</p>
+
+<h2 id="guide">User's Guide</h2>
+<p>To use <code>recio</code> you decide three things and stick to them: the
+byte layout of one record, a <strong>reader</strong> that pulls one record out
+of an open file, and a <strong>writer</strong> that lays one back down. The
+reader and writer must agree on the exact same size — that's the contract that
+makes the bays line up. Records are numbered from 1.</p>
+<pre><code>Include "recio.shoddy"
+
+Type Student
+    Name  As String
+    Score As Number
+
+Def RdStudent(f As Number) As Student
+    Student(GetStr(f, 12), GetNum(f))       ' 12 bytes name + 8 bytes score
+
+Def WrStudent(f As Number, s As Student)
+    PutStr(f, Name(s), 12)
+    PutNum(f, Score(s))
+
+Def Main()
+    Let f = BOpen("class.dat")
+    AppendRec(f, 20, WrStudent, Student("ADA", 96))
+    AppendRec(f, 20, WrStudent, Student("LIN", 78))
+    AppendRec(f, 20, WrStudent, Student("GRACE", 91))
+
+    Print(RecCount(f, 20))                          ' 3
+    Print(Score(GetRec(f, 2, 20, RdStudent)))       ' 78  (record 2 is LIN)
+
+    PutRec(f, 2, 20, WrStudent, Student("LIN", 85)) ' overwrite record 2 in place
+    Print(Score(GetRec(f, 2, 20, RdStudent)))       ' 85
+
+    Each(AllRecs(f, 20, RdStudent), Fn(s) => Print(Name(s)))
+                                                     ' ADA LIN GRACE
+    BClose(f)</code></pre>
+<p>The <code>20</code> threaded through every call is the record size: 12
+bytes for the name plus 8 for the score. A few things worth remembering:</p>
+<ul>
+<li><strong>The size is a promise you keep everywhere.</strong> Every word
+takes the record size as an argument, and it must be the same number your
+reader and writer actually produce. Get it wrong and the bays overlap — record
+3 starts reading halfway through record 2 — and the file comes back
+scrambled.</li>
+<li><strong>Records start at 1, and there's a one-byte offset up front.</strong>
+Record <em>k</em> begins at byte <code>1 + (k - 1) * size</code>
+(<code>RecPos</code> does this sum). Byte position 1 is the very start of the
+file, so record 1 sits right at the front and each later record follows
+directly on.</li>
+<li><strong>Overwriting is in place; appending grows the file.</strong>
+<code>PutRec</code> seeks to bay <em>k</em> and drops the record there,
+replacing whatever was in it. <code>AppendRec</code> asks how many records
+there are with <code>RecCount</code> and writes the new one just past the end
+— the equivalent of parking in the next empty bay.</li>
+<li><strong>Counting is just division.</strong> <code>RecCount</code> is the
+file's byte length divided by the record size (rounded down), so it's
+instant — it never reads a single record. It relies on the file being nothing
+but whole records back to back; if you write a header or stray bytes, the
+count won't mean what you expect.</li>
+<li><strong>These words touch the outside world.</strong> Like every file
+word, reading and writing records are effectful — they move the file's read
+position and change bytes on disk. Keep them at the edges of your program.</li>
+</ul>
+<p>If you find yourself wanting to fetch a record by name rather than by bay
+number, don't build the index by hand — reach for <a href="isam.html">isam</a>,
+which does exactly that on top of these words.</p>
+
+<h2 id="words">Word Reference</h2>
+<p class="tag">7 words</p>
+
+<h3>Locating a record</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>RecPos(k, size)</td><td>The byte position where record <code>k</code>
+begins, computed as <code>1 + (k - 1) * size</code>. Pure arithmetic — it
+doesn't touch any file. This is the offset sum the rest of the machine is
+built on.</td></tr>
+<tr><td>RecSeek(f, k, size)</td><td>Moves the open file <code>f</code>'s
+position to the start of record <code>k</code>, so the next read or write
+lands on that record.</td></tr>
+<tr><td>RecCount(f, size)</td><td>How many whole records the file
+<code>f</code> holds: its byte length (<code>BSize</code>) divided by
+<code>size</code>, rounded down. Instant — reads no records.</td></tr>
+</table>
+
+<h3>Reading and writing one record</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>GetRec(f, k, size, reader)</td><td>Seeks to record <code>k</code> and
+returns it, using your <code>reader</code> function to turn the bytes into a
+value. The record's type is whatever your reader produces.</td></tr>
+<tr><td>PutRec(f, k, size, writer, v)</td><td>Seeks to record <code>k</code>
+and writes value <code>v</code> there with your <code>writer</code> function,
+overwriting whatever was in that slot.</td></tr>
+<tr><td>AppendRec(f, size, writer, v)</td><td>Writes value <code>v</code> as a
+brand-new record just past the current end of the file — at position
+<code>RecCount(f, size) + 1</code>.</td></tr>
+</table>
+
+<h3>Reading them all</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>AllRecs(f, size, reader)</td><td>Reads every record in the file, in
+order from 1 to <code>RecCount</code>, and hands them back as a list. Uses
+your <code>reader</code> for each one.</td></tr>
+</table>
+
+<footer>
+<p><em>Making useless things useful, through skill.</em> &mdash;
+<a href="index.html">Machines index</a> &middot;
+<a href="../GUIDE.html">Beginner's Guide</a> &middot;
+<a href="../SPEC.html">Language Spec</a> &middot;
+<a href="../QUICKREF.html">Quick Reference</a></p>
+</footer>
+
+</body>
+</html>

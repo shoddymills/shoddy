@@ -57,9 +57,9 @@ libraries), and the tagline, meant literally. The full story is in
 |-------|-------------------------------------------------------------|
 | `src/`| The .NET solution: `Shoddy.Runtime` · `Shoddy.Devil` (front-end) · `Shoddy.Mill` · `Shoddy.Compiler` · `Shoddy.Tests` |
 | `bin/`| Build output — the published `mill` toolchain lands here after `dotnet publish` (not committed; build it, then run `bin/mill`) |
-| `machines/`| Standard library (the machines): `seq` `str` `matrix` `money` `file` `recio` `dict` `isam` `simplex` `mps` |
-| `doc/`| `GUIDE.html` (start here) · `SPEC.html` · `QUICKREF.html` · `VSCODE.md` · `DEVLOG.md`  |
-| `tst/`| `libtest.shoddy` (assertion suite) · `examples.shoddy` · `gradebook.shoddy` · `simplex.shoddy` · `simplex-mps.shoddy` · `golden/` (the constitution) |
+| `machines/`| Standard library (the machines): `seq` `str` `math` `matrix` `stats` `random` `money` `file` `recio` `dict` `isam` `simplex` `mps` `clock` `vt100` `keys` `scribbler` `turtle` `plotter` `buzzer` |
+| `doc/`| `GUIDE.html` (start here) · `SPEC.html` · `QUICKREF.html` · `machines/` (one page per machine) · `VSCODE.md` · `DEVLOG.md`  |
+| `tst/`| `libtest.shoddy` (assertion suite) · `examples.shoddy` · `gradebook.shoddy` · `simplex.shoddy` · demos (`scribbler-` `turtle-` `plotter-` `buzzer-demo.shoddy`) · `golden/` (the constitution) |
 | `vscode-shoddy/`| VS Code extension: highlighting, snippets, mill commands |
 
 ## Build and run

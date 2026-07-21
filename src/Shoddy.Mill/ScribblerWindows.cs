@@ -68,6 +68,12 @@ public static class ScribblerWindows
             return win!.Handle;
         };
 
+        // The buzzer serves both `mill run` and `mill dap` (this method is
+        // both paths). Init is lazy — installing costs nothing, and sound
+        // works under the debugger: the scribbler's dap restriction is
+        // about the window loop and does not apply here.
+        Buzzer.Install();
+
         // The exit code and completion flag cross a thread boundary: the
         // ManualResetEventSlim publishes both (and any exception).
         int exitCode = 0;
@@ -117,6 +123,10 @@ public static class ScribblerWindows
             win.ForceClose();
         dispatcher.Drain();
         ScribblerRegistry.CreateScribbler = null;
+        // Held notes stop now (they would never end); queued notes finish
+        // unless the program failed — "queue a tune, return from Main" is a
+        // complete program, the audio sibling of "draw a picture, return".
+        Buzzer.Shutdown(drain: failure == null);
         if (failure != null) ExceptionDispatchInfo.Capture(failure).Throw();
         return exitCode;
     }

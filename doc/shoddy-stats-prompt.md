@@ -1,5 +1,10 @@
 # Shoddy Stats — Implementation Prompts
 
+> **Status: implemented** (2026-07-20). Both prompts landed: the four
+> builtins with C# tests (`SpecialTests.cs`), `machines/stats.shoddy`,
+> `Shuffle`/`Sample` in random.shoddy, and all the test/doc fixups below.
+> Decisions taken during implementation are noted inline.
+
 Two prompts, run in order. Prompt 1 is runtime (C#) work; Prompt 2 is machine
 (Shoddy) work and depends on Prompt 1 being done. The item tables at the bottom
 are the shared spec both prompts refer to.
@@ -36,16 +41,24 @@ Also in this prompt, because it must land with `SORT`:
   names (a builtin outranks a field accessor).
 - C# tests for the three special functions against known values — these are
   exactly the functions where a sign error hides quietly — and for SORT
-  (including already-sorted, reversed, duplicate, and empty inputs).
+  (including already-sorted, reversed, duplicate, and empty inputs). Any test
+  that redirects `Console.Error` must join the xUnit `[Collection("golden")]`
+  that serializes the other stderr-redirecting classes, or parallel test
+  classes race on the redirect.
 - Add the new words everywhere the builtin word list is duplicated: QUICKREF,
-  SPEC, and the vscode-shoddy syntax highlighter.
+  SPEC, the vscode-shoddy syntax highlighter, and the "authoritative" list in
+  `curriculum/agent-context.md` §16. Those lists were already stale (missing
+  the Scribbler words and several math builtins: Sgn, Fix, Atn2, Asin, Acos,
+  Log10, Wrap, Seed, Ticks, Sleep, Clock, Args) — true them up while there.
 
 ---
 
 ## Prompt 2 — Machines: stats.shoddy and friends
 
 Create `machines/stats.shoddy` implementing the stat-function tables below,
-pure Shoddy, `Include`-ing seq, math, and dict. Structure and conventions:
+pure Shoddy, `Include`-ing seq and dict. (Not math: nothing in the spec needs
+it — Exp/Log/^ are builtins — and every extra Include ripples into
+MachineTests' machine count.) Structure and conventions:
 
 - **Move aggregation out of seq.shoddy.** `Sum`, `Product`, `Maximum`,
   `Minimum`, `Average` leave seq (seq keeps structure only: predicates,
@@ -63,7 +76,8 @@ pure Shoddy, `Include`-ing seq, math, and dict. Structure and conventions:
   natural in pure-functional style.
 - **Compound results are records**, in the style of seq's `Pair`: a `Fit`
   (slope, intercept, r²) for regression, a `TestResult` (statistic, df,
-  p-value) for the tests.
+  p-value) for the tests. P-values are two-sided; the two-sample t-test is
+  the pooled/equal-variance textbook form (R's `var.equal = TRUE`).
 - **CDFs derive from the Prompt 1 builtins**: normal from `ERF`, chi-square
   from `GAMMAP`, t and F from `BETAI`. Real p-values throughout — no
   critical-value tables.
@@ -72,11 +86,30 @@ pure Shoddy, `Include`-ing seq, math, and dict. Structure and conventions:
 Also in this prompt:
 
 - `Shuffle` and `Sample` go in `machines/random.shoddy`, not stats — they are
-  Rnd-based and impure, and random.shoddy owns that edge.
+  Rnd-based and impure, and random.shoddy owns that edge. Keep random.shoddy
+  dependency-free (a local `DropAt` helper instead of seq). Their tests are
+  contract checks in `tst/randomtest.shoddy` — nondeterministic output can't
+  be a golden file. Note lists compare by identity, so multiset assertions go
+  through `ToArray`.
 - Known-answer Shoddy tests in the libtest pattern: small canonical datasets
   with values checked against an outside authority (R or scipy).
+- **Update `MachineTests.cs`**: `BuildOrder` gains `"stats"` (after dict),
+  the machine-count assert goes 8 → 9, and the `SUM` external-def assert now
+  proves stats (not seq) arrived — add an `ANY` assert for seq itself.
+- **Regenerate `tst/golden/libtest.out`** — moving the aggregation asserts
+  and adding the stats section changes the golden bytes. `gradebook.out` is
+  unchanged (gradebook only gains an Include).
+- **Docs beyond the word lists**: `doc/machines/seq.html` loses its
+  aggregation/sorting sections, `doc/machines/stats.html` is new,
+  `index.html` gains its row, `random.html` gains Shuffle/Sample; in
+  `curriculum/`, agent-context.md's §9/§12 tables move with the code and the
+  lesson-guide smoke test must Include stats.shoddy (its `Sum` check breaks
+  otherwise).
 - Document the intended scale in the stats.shoddy header: lists are linked
   lists, so this is classroom-sized data, not bulk analytics.
+- One naming trap from the spec tables: "Range" (max − min) must not be a Def
+  named `Range` — that would shadow the `Range(a, b)` builtin. It landed as
+  `RangeOf`.
 
 ---
 

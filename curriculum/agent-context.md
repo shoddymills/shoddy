@@ -223,6 +223,7 @@ an implicit `Take` (same binding discipline) at body entry.
 | `ToArray` / `ToList` | convert | |
 | `Dim(n, v)` | array ctor | n copies of v. Negative n aborts. |
 | `Map Filter Fold Each` | poly, library-speed builtins | Preserve the input's kind (`Map` over an array yields an array). |
+| `Sort(xs)` | poly, builtin | Ascending; all numbers or all strings (mixed aborts). Preserves the input's kind. |
 | `Range(a, b)` | → List | Inclusive, `a` through `b` stepping by 1 (if `a > b`, empty). |
 | `Times(n, f)` | — | Run `f` n times, no accumulation. |
 
@@ -307,12 +308,10 @@ the loop is the TCO` (visible via `mill gen`).
 Everything below is written *in* Shoddy — self-hosted, no special status vs.
 user code. `Include "seq.shoddy"` etc. Words are pure unless noted.
 
-**seq.shoddy** (no dependencies)
+**seq.shoddy** (no dependencies) — structure only; aggregation lives in
+stats.shoddy, sorting is the `Sort` builtin
 | Word | Signature | Notes |
 |---|---|---|
-| `Sum(xs)` `Product(xs)` | `List Of Number → Number` | `Fold(xs,0,+)` / `Fold(xs,1,*)` |
-| `Maximum(xs)` `Minimum(xs)` | `List Of Number → Number` | `Fold(xs, First(xs), Max/Min)` — **aborts on empty** (`First` does) |
-| `Average(xs)` | → `Number` | `Sum(xs)/Length(xs)` — aborts (div by zero) on empty |
 | `Any(xs,p)` `All(xs,p)` | → `Boolean` | Fold over `Or`/`And` — actually visits every item (no short-circuit exit) |
 | `CountIf(xs,p)` | → `Number` | `Length(Filter(xs,p))` |
 | `Contains(xs,v)` | → `Boolean` | `Any(xs, =(v))` |
@@ -321,7 +320,6 @@ user code. `Include "seq.shoddy"` etc. Words are pure unless noted.
 | `Append(xs,x)` | → `List Of t` | `Concat(xs, { x })` |
 | `Last(xs)` | → `t` | `Nth(xs, Length(xs))` — aborts on empty |
 | `Flatten(xss)` | → `List Of t` | `Fold(xss, { }, Concat)` |
-| `Sort(xs)` | → `List Of Number`, ascending | Quicksort via `Filter` (not in-place; not stable-documented) |
 | `Type Pair: Fst, Snd` | — | Generic 2-field record |
 | `Zip(xs,ys)` `ZipWith(xs,ys,f)` | → `List Of Pair` / `List Of v` | Truncates to the shorter input |
 
@@ -344,6 +342,37 @@ user code. `Include "seq.shoddy"` etc. Words are pure unless noted.
 | `DictHas(d,k)` → `Boolean` | |
 | `DictDel(d,k)` | New dict without k (no-op if absent). |
 | `DictKeys(d)` / `DictVals(d)` | Order = current internal list order (most-recently-put first), not insertion order. |
+
+**stats.shoddy** (includes seq.shoddy, dict.shoddy) — statistics, pure, over
+the `Erf`/`GammaP`/`BetaI` and `Sort` builtins. Conventions: `Var`/`StdDev`/
+`StdErr` are sample forms (n−1), `VarP`/`StdDevP` population; quantiles use
+R type 7 (linear interpolation); `Skewness`/`Kurtosis` are moment forms
+(Kurtosis excess); every test returns `TestResult(Stat, Df, PVal)` with a
+two-sided p-value; classroom-scale (lists are linked lists).
+| Word | Signature | Notes |
+|---|---|---|
+| `Sum Product Maximum Minimum` | `List Of Number → Number` | Moved here from seq.shoddy; Max/Min **abort on empty** |
+| `Mean(xs)` (`Average` alias) | → `Number` | Aborts (div by zero) on empty |
+| `WeightedMean(xs,ws)` `GeoMean(xs)` `HarmonicMean(xs)` | → `Number` | GeoMean needs positive values (`Log` aborts otherwise) |
+| `Median(xs)` `Quantile(xs,p)` `Percentile(xs,k)` `Iqr(xs)` | → `Number` | p in [0,1] (outside aborts), k in 0..100 |
+| `RangeOf(xs)` | → `Number` | Max − min. Not `Range` — that's the builtin |
+| `Var VarP StdDev StdDevP StdErr` | → `Number` | Two-pass via `SqDevSum`; `Var` of a 1-item list divides by zero |
+| `Mad(xs)` `Skewness(xs)` `Kurtosis(xs)` | → `Number` | |
+| `ZScore(x,m,s)` `ZScores(xs)` | → `Number` / `List` | ZScores uses the sample SD |
+| `Outliers(xs)` `OutliersZ(xs,z)` | → `List Of Number` | 1.5×IQR fences / beyond z sample SDs |
+| `Freq(xs)` `RelFreq(xs)` | → `List Of Pair` (dict) | Any `=`-comparable keys, first-seen order |
+| `Modes(xs)` | → `List Of t` | ALL modes; ties never broken silently |
+| `Ecdf(xs,x)` | → `Number` | Proportion ≤ x |
+| `Cov Correl Spearman` | `(xs, ys) → Number` | Sample covariance; Pearson; Pearson-on-ranks (`Ranks`/`RankOf` average ties) |
+| `LinFit(xs,ys)` | → `Fit(Slope, Intercept, R2)` | Least squares |
+| `NormPdf NormCdf Chi2Cdf TCdf FCdf` | → `Number` | Real CDFs from the special-function builtins |
+| `NormInv(p)` `TInv(p,df)` | → `Number` | Bisection; p outside (0,1) aborts |
+| `TTest1(xs,mu0)` `TTest2(xs,ys)` `TTestPaired(xs,ys)` | → `TestResult` | TTest2 is pooled/equal-variance |
+| `ZTest1(xs,mu0,sigma)` `TwoPropZTest(k1,n1,k2,n2)` | → `TestResult` | `Df` = 0 for z-tests |
+| `Anova(gs)` | → `TestResult` | One-way over `List Of List`; `Df` = between-groups |
+| `ChiSqGof(obs,exp)` `ChiSqTest(rows)` | → `TestResult` | Goodness of fit / independence |
+| `MeanCI(xs,conf)` `PropCI(k,n,conf)` | → `Pair(lo, hi)` | t-based / Wald |
+| `CohenD(xs,ys)` | → `Number` | Pooled-SD effect size |
 
 **money.shoddy** — `Type Money: Cents` (whole cents, exact to 2^53 ≈ $90T)
 | Word | Notes |
@@ -405,6 +434,9 @@ One live handle at a time; no crash safety, no concurrency.
 | `Random()` | → `Number` in `[0,1)` | `Rnd()` directly. **Impure and seedless** — same "effects at the edge" category as `Print`; two calls with the same (no) arguments can differ on purpose. No pure/seeded alternative is provided — that would require threading generator state through every call, the opposite of seedless. |
 | `RandomRange(lo, hi)` | → `Number` in `[lo, hi)` | `lo + Random()*(hi-lo)`. `hi < lo` → `Error("RANDOMRANGE: HI < LO")`. |
 | `RandomInt(lo, hi)` | → `Number` in `[lo, hi]`, integral | `lo + Floor(Random()*(hi-lo+1))`. Same `hi < lo` guard. |
+| `Shuffle(xs)` | → `List Of t` | Uniform random permutation (pick-and-remove recursion). Impure. |
+| `Sample(xs, n)` | → `List Of t` | n draws **without replacement**; `n <= 0` → `{ }`; n past the length → all of xs, shuffled. Impure. |
+| `DropAt(xs, k)` | → `List Of t` | Pure helper: xs without its k-th item. |
 
 **vt100.shoddy** (no dependencies) — VT100/VT52 terminal control, from
 `machines/VT100 escape codes.html`. Two halves:
@@ -501,8 +533,9 @@ All of the above are wrapped by the top-level handler as
 
 ```
 DUP DROP SWAP OVER ROT NIP TUCK DEPTH
-+ - * / MOD NEGATE ABS MIN MAX SQR FLOOR CEIL ROUND ^
-SIN COS TAN ATN EXP LOG PI RND
++ - * / MOD WRAP NEGATE ABS SGN MIN MAX SQR FLOOR CEIL ROUND FIX ^
+SIN COS TAN ATN ATN2 ASIN ACOS EXP LOG LOG10 PI RND SEED
+ERF GAMMAP BETAI
 ERROR ASSERT INSTR
 = <> < > <= >=
 AND OR NOT TRUE FALSE
@@ -510,8 +543,12 @@ AND OR NOT TRUE FALSE
 PRINT READFILE WRITEFILE APPENDFILE FILEEXISTS DELETEFILE
 BOPEN BCLOSE SEEK BPOS BSIZE PUTNUM GETNUM PUTBOOL GETBOOL PUTSTR GETSTR
 INPUT ARGS
-CALL IFTE MAP FILTER FOLD EACH TIMES RANGE LENGTH REVERSE CONCAT
+CALL IFTE MAP FILTER FOLD EACH TIMES RANGE LENGTH REVERSE CONCAT SORT
 ISEMPTY FIRST NTH SETNTH DIM TOARRAY TOLIST REST PREPEND
+TICKS SLEEP CLOCK
+SCRIBBLEROPEN SCRIBBLERPIXEL SCRIBBLERFILL SCRIBBLERTEXT SCRIBBLERGETPIXEL
+SCRIBBLERWIDTH SCRIBBLERHEIGHT SCRIBBLERBLIT SCRIBBLERCLOSE SCRIBBLERTITLE
+SCRIBBLERPOLL SCRIBBLERWAIT SCRIBBLERSETINTERVAL
 ```
 Everything else callable (`Sum`, `Split`, `MatMul`, ...) is library Shoddy
 from `machines/`, not a builtin.

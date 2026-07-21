@@ -344,6 +344,31 @@ public sealed partial class Engine
             case "RND": PushNum(rnd.NextDouble()); return true;   // ( -- x ), in [0,1)
             case "SEED": rnd = new Random((int)PopNum(line, w)); return true;   // ( n -- ) reproducible RND
 
+            /* ---- special functions (stats CDFs; not in System.Math) ---- */
+            case "ERF":                         // ( x -- erf(x) ), odd, range (-1,1)
+            {
+                double x = PopNum(line, w);
+                double p = GammaP(0.5, x * x);  // erf(|x|) = P(1/2, x^2)
+                PushNum(x >= 0 ? p : -p);
+                return true;
+            }
+            case "GAMMAP":                      // ( a x -- P(a,x) ), regularized lower incomplete gamma
+            {
+                double x = PopNum(line, w), a = PopNum(line, w);
+                if (a <= 0) throw Die(line, "GAMMAP: A must be positive");
+                if (x < 0) throw Die(line, "GAMMAP: X must be non-negative");
+                PushNum(GammaP(a, x));
+                return true;
+            }
+            case "BETAI":                       // ( a b x -- I_x(a,b) ), regularized incomplete beta
+            {
+                double x = PopNum(line, w), bb = PopNum(line, w), aa = PopNum(line, w);
+                if (aa <= 0 || bb <= 0) throw Die(line, "BETAI: A and B must be positive");
+                if (x < 0 || x > 1) throw Die(line, "BETAI: X outside [0, 1]");
+                PushNum(BetaI(aa, bb, x));
+                return true;
+            }
+
             /* ---- errors and testing ---- */
             case "ERROR": throw Die(line, PopStr(line, w));
             case "ASSERT":                      // ( bool msg -- )
@@ -736,6 +761,26 @@ public sealed partial class Engine
                 }
                 return true;
             }
+            case "SORT":                        // ascending; result has the input's kind
+            {
+                Value l = PopSeq(line, w);
+                int n = SeqLen(l);
+                var vals = new Value[n];
+                bool nums = true, strs = true;
+                for (int k = 0; k < n; k++)
+                {
+                    vals[k] = SeqItem(l, k, line, w);
+                    nums &= vals[k].T == VType.Num;
+                    strs &= vals[k].T == VType.Str;
+                }
+                if (!nums && !strs)
+                    throw Die(line, "SORT expects all NUMBERs or all STRINGs");
+                if (nums) Array.Sort(vals, (a, b) => a.Num.CompareTo(b.Num));
+                else Array.Sort(vals, (a, b) => string.CompareOrdinal(a.Str, b.Str));
+                if (l.T == VType.Arr) Push(Value.OfArr(vals));
+                else Push(NewValueList(new List<Value>(vals), line));
+                return true;
+            }
             case "CONCAT":
             {
                 Value b = PopSeq(line, w), a = PopSeq(line, w);
@@ -1042,6 +1087,7 @@ public sealed partial class Engine
         "+", "-", "*", "/", "MOD", "WRAP", "NEGATE", "ABS", "SGN", "MIN", "MAX", "SQR",
         "FLOOR", "CEIL", "ROUND", "FIX", "^", "SIN", "COS", "TAN", "ATN", "ATN2",
         "ASIN", "ACOS", "EXP", "LOG", "LOG10", "PI", "RND", "SEED",
+        "ERF", "GAMMAP", "BETAI",
         "ERROR", "ASSERT", "INSTR",
         "=", "<>", "<", ">", "<=", ">=",
         "AND", "OR", "NOT", "TRUE", "FALSE",
@@ -1052,7 +1098,7 @@ public sealed partial class Engine
         "PUTNUM", "GETNUM", "PUTBOOL", "GETBOOL", "PUTSTR", "GETSTR",
         "INPUT", "ARGS",
         "CALL", "IFTE", "MAP", "FILTER", "FOLD", "EACH", "TIMES", "RANGE",
-        "LENGTH", "REVERSE", "CONCAT",
+        "LENGTH", "REVERSE", "CONCAT", "SORT",
         "ISEMPTY", "FIRST", "NTH", "SETNTH", "DIM", "TOARRAY", "TOLIST",
         "REST", "PREPEND",
         "TICKS", "SLEEP", "CLOCK",
@@ -1061,6 +1107,103 @@ public sealed partial class Engine
         "SCRIBBLERBLIT", "SCRIBBLERCLOSE", "SCRIBBLERTITLE", "SCRIBBLERPOLL",
         "SCRIBBLERWAIT", "SCRIBBLERSETINTERVAL",
     };
+
+    // ---- special functions ----------------------------------------------
+    // erf, the regularized lower incomplete gamma P(a,x), and the
+    // regularized incomplete beta I_x(a,b) are not in the BCL. These are
+    // the classic implementations — Lanczos log-gamma, power series and
+    // modified-Lentz continued fractions — accurate to ~1e-14 relative
+    // over the ranges the stats machine uses.
+
+    /// <summary>ln Γ(x) for x &gt; 0 (Lanczos, g=5, n=6).</summary>
+    static double GammLn(double x)
+    {
+        double y = x, tmp = x + 5.5;
+        tmp -= (x + 0.5) * Math.Log(tmp);
+        double ser = 1.000000000190015;
+        ser += 76.18009172947146 / ++y;
+        ser += -86.50532032941677 / ++y;
+        ser += 24.01409824083091 / ++y;
+        ser += -1.231739572450155 / ++y;
+        ser += 0.1208650973866179e-2 / ++y;
+        ser += -0.5395239384953e-5 / ++y;
+        return -tmp + Math.Log(2.5066282746310005 * ser / x);
+    }
+
+    /// <summary>Regularized lower incomplete gamma P(a, x), a &gt; 0, x ≥ 0.
+    /// Series for x &lt; a+1, continued fraction for the complement above.</summary>
+    static double GammaP(double a, double x)
+    {
+        if (x == 0) return 0;
+        if (x < a + 1)                          // series converges fast here
+        {
+            double ap = a, sum = 1 / a, del = sum;
+            for (int k = 0; k < 500; k++)
+            {
+                ap += 1;
+                del *= x / ap;
+                sum += del;
+                if (Math.Abs(del) < Math.Abs(sum) * 1e-16) break;
+            }
+            return sum * Math.Exp(-x + a * Math.Log(x) - GammLn(a));
+        }
+        else                                    // Lentz continued fraction for Q(a,x)
+        {
+            double b = x + 1 - a, c = 1 / 1e-300, d = 1 / b, h = d;
+            for (int k = 1; k <= 500; k++)
+            {
+                double an = -k * (k - a);
+                b += 2;
+                d = an * d + b; if (Math.Abs(d) < 1e-300) d = 1e-300;
+                c = b + an / c; if (Math.Abs(c) < 1e-300) c = 1e-300;
+                d = 1 / d;
+                double del = d * c;
+                h *= del;
+                if (Math.Abs(del - 1) < 1e-16) break;
+            }
+            return 1 - Math.Exp(-x + a * Math.Log(x) - GammLn(a)) * h;
+        }
+    }
+
+    /// <summary>Continued fraction for the incomplete beta (modified Lentz);
+    /// only valid on the fast-converging side, which BetaI arranges.</summary>
+    static double BetaCf(double a, double b, double x)
+    {
+        double qab = a + b, qap = a + 1, qam = a - 1;
+        double c = 1, d = 1 - qab * x / qap;
+        if (Math.Abs(d) < 1e-300) d = 1e-300;
+        d = 1 / d;
+        double h = d;
+        for (int m = 1; m <= 500; m++)
+        {
+            int m2 = 2 * m;
+            double aa = m * (b - m) * x / ((qam + m2) * (a + m2));
+            d = 1 + aa * d; if (Math.Abs(d) < 1e-300) d = 1e-300;
+            c = 1 + aa / c; if (Math.Abs(c) < 1e-300) c = 1e-300;
+            d = 1 / d;
+            h *= d * c;
+            aa = -(a + m) * (qab + m) * x / ((a + m2) * (qap + m2));
+            d = 1 + aa * d; if (Math.Abs(d) < 1e-300) d = 1e-300;
+            c = 1 + aa / c; if (Math.Abs(c) < 1e-300) c = 1e-300;
+            d = 1 / d;
+            double del = d * c;
+            h *= del;
+            if (Math.Abs(del - 1) < 1e-16) break;
+        }
+        return h;
+    }
+
+    /// <summary>Regularized incomplete beta I_x(a, b), a,b &gt; 0, x in [0,1].</summary>
+    static double BetaI(double a, double b, double x)
+    {
+        if (x == 0) return 0;
+        if (x == 1) return 1;
+        double bt = Math.Exp(GammLn(a + b) - GammLn(a) - GammLn(b)
+                             + a * Math.Log(x) + b * Math.Log(1 - x));
+        if (x < (a + 1) / (a + b + 2))
+            return bt * BetaCf(a, b, x) / a;
+        return 1 - bt * BetaCf(b, a, 1 - x) / b;    // symmetry: faster side
+    }
 
     /// <summary>C strtod semantics: parse the longest numeric prefix
     /// (sign, digits, decimal point, exponent); false if none.</summary>

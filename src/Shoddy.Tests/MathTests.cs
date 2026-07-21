@@ -16,7 +16,10 @@ namespace Shoddy.Tests;
 /// LOG10, WRAP, SEED) and the derived machines/math.shoddy layer built on
 /// them. Everything here is pure computation — no window, no I/O — so it
 /// weaves and runs in-process like any `mill run` program.
+/// (In "golden" because RunSrcError redirects Console.Error, which
+/// must not interleave with the other classes that do the same.)
 /// </summary>
+[Collection("golden")]
 public class MathTests
 {
     static readonly string Root = RepoRoot.Dir;

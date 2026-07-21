@@ -20,7 +20,7 @@ public sealed partial class Engine
 {
     readonly List<Value> Stk = new();
     readonly FileStream?[] files = new FileStream?[16];
-    readonly Random rnd = new();
+    Random rnd = new();   // reassigned by SEED for reproducible runs
     readonly TextWriter O;
     readonly TextReader In;
 
@@ -280,8 +280,17 @@ public sealed partial class Engine
                 if (b == 0) throw Die(line, "MOD by zero");
                 PushNum(a % b); return true;    // C fmod semantics
             }
+            case "WRAP":
+            {
+                // Floored modulo: result carries the divisor's sign, so
+                // Wrap(-10, 360) is 350, not -10 — angle and index wrapping.
+                double b = PopNum(line, w), a = PopNum(line, w);
+                if (b == 0) throw Die(line, "WRAP by zero");
+                PushNum(a - b * Math.Floor(a / b)); return true;
+            }
             case "NEGATE": PushNum(-PopNum(line, w)); return true;
             case "ABS": PushNum(Math.Abs(PopNum(line, w))); return true;
+            case "SGN": { double a = PopNum(line, w); PushNum(a < 0 ? -1 : a > 0 ? 1 : 0); return true; }
             case "MIN": { double b = PopNum(line, w), a = PopNum(line, w); PushNum(a < b ? a : b); return true; }
             case "MAX": { double b = PopNum(line, w), a = PopNum(line, w); PushNum(a > b ? a : b); return true; }
             case "SQR":
@@ -293,6 +302,7 @@ public sealed partial class Engine
             case "FLOOR": PushNum(Math.Floor(PopNum(line, w))); return true;
             case "CEIL": PushNum(Math.Ceiling(PopNum(line, w))); return true;
             case "ROUND": PushNum(Math.Floor(PopNum(line, w) + 0.5)); return true;   // half-up
+            case "FIX": PushNum(Math.Truncate(PopNum(line, w))); return true;   // toward zero, unlike FLOOR
             case "^":
             {
                 double b = PopNum(line, w), a = PopNum(line, w);
@@ -304,6 +314,19 @@ public sealed partial class Engine
             case "COS": PushNum(Math.Cos(PopNum(line, w))); return true;
             case "TAN": PushNum(Math.Tan(PopNum(line, w))); return true;
             case "ATN": PushNum(Math.Atan(PopNum(line, w))); return true;
+            case "ATN2": { double x = PopNum(line, w), y = PopNum(line, w); PushNum(Math.Atan2(y, x)); return true; }
+            case "ASIN":
+            {
+                double a = PopNum(line, w);
+                if (a < -1 || a > 1) throw Die(line, "ASIN outside [-1, 1]");
+                PushNum(Math.Asin(a)); return true;
+            }
+            case "ACOS":
+            {
+                double a = PopNum(line, w);
+                if (a < -1 || a > 1) throw Die(line, "ACOS outside [-1, 1]");
+                PushNum(Math.Acos(a)); return true;
+            }
             case "EXP": PushNum(Math.Exp(PopNum(line, w))); return true;
             case "LOG":
             {
@@ -311,8 +334,15 @@ public sealed partial class Engine
                 if (a <= 0) throw Die(line, "LOG of non-positive number");
                 PushNum(Math.Log(a)); return true;
             }
+            case "LOG10":
+            {
+                double a = PopNum(line, w);
+                if (a <= 0) throw Die(line, "LOG10 of non-positive number");
+                PushNum(Math.Log10(a)); return true;
+            }
             case "PI": PushNum(Math.PI); return true;
             case "RND": PushNum(rnd.NextDouble()); return true;   // ( -- x ), in [0,1)
+            case "SEED": rnd = new Random((int)PopNum(line, w)); return true;   // ( n -- ) reproducible RND
 
             /* ---- errors and testing ---- */
             case "ERROR": throw Die(line, PopStr(line, w));
@@ -1009,9 +1039,9 @@ public sealed partial class Engine
     public static readonly HashSet<string> BuiltinWords = new()
     {
         "DUP", "DROP", "SWAP", "OVER", "ROT", "NIP", "TUCK", "DEPTH",
-        "+", "-", "*", "/", "MOD", "NEGATE", "ABS", "MIN", "MAX", "SQR",
-        "FLOOR", "CEIL", "ROUND", "^", "SIN", "COS", "TAN", "ATN", "EXP",
-        "LOG", "PI", "RND",
+        "+", "-", "*", "/", "MOD", "WRAP", "NEGATE", "ABS", "SGN", "MIN", "MAX", "SQR",
+        "FLOOR", "CEIL", "ROUND", "FIX", "^", "SIN", "COS", "TAN", "ATN", "ATN2",
+        "ASIN", "ACOS", "EXP", "LOG", "LOG10", "PI", "RND", "SEED",
         "ERROR", "ASSERT", "INSTR",
         "=", "<>", "<", ">", "<=", ">=",
         "AND", "OR", "NOT", "TRUE", "FALSE",

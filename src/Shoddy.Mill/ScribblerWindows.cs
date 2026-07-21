@@ -32,8 +32,13 @@ public static class ScribblerWindows
     /// window creation, pumping and frame timing. Returns the program's
     /// exit code once it has finished and every window is closed. A
     /// console program that never opens a scribbler costs one blocked
-    /// wait here — no GLFW init, no polling.</summary>
-    public static int Run(Func<int> program)
+    /// wait here — no GLFW init, no polling.
+    ///
+    /// With <paramref name="linger"/> false, windows do not outlive the
+    /// program: the moment it returns, any still open are torn down. The
+    /// perch runs its serve loop this way — its "program" is the DAP
+    /// session, and a window with no session behind it is an orphan.</summary>
+    public static int Run(Func<int> program, bool linger = true)
     {
         var dispatcher = new MainThreadDispatcher();
 
@@ -80,7 +85,7 @@ public static class ScribblerWindows
         while (true)
         {
             dispatcher.Drain();
-            if (done.IsSet && failure != null) break;    // error: don't linger
+            if (done.IsSet && (failure != null || !linger)) break;   // error or no-linger: tear down now
             if (windows.Count == 0)
             {
                 if (done.IsSet) break;

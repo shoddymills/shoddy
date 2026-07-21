@@ -19,7 +19,9 @@ the **mill** (the .NET toolchain).
   (no launch.json needed): breakpoints, stepping, a call stack of your
   defs, Shoddy-shaped variables in three scopes (Locals, Globals, and
   the Value Stack), and a debug console that inspects bindings by
-  name. Runs `mill dap` under the hood.
+  name. Scribbler programs debug too — the window opens under the
+  perch and stays live while you sit at a breakpoint. Runs `mill dap`
+  under the hood.
 - **Commands** (palette, editor context menu, and the ▶ run button):
   - **Shoddy: Run File** (`ctrl+r`) — `mill run` in the integrated
     terminal, so `Input` works.
@@ -45,7 +47,7 @@ your PATH.
 A packaged `.vsix` ships in this folder. From here:
 
 ```sh
-code --install-extension vscode-shoddy-0.9.1.vsix
+code --install-extension vscode-shoddy-0.9.2.vsix
 ```
 
 The extension then appears in the Extensions view and can be updated

@@ -330,6 +330,28 @@ public class ScribblerTests
         Assert.Equal(0, ScribblerRegistry.OpenCount);
     }
 
+    [Fact]
+    public void WaitAllClosedBlocksUntilTheLastClose()
+    {
+        // The perch holds the terminated event on this: it must block
+        // while any scribbler is open and wake on the last NoteClosed,
+        // shrugging off stale ticks left by earlier closes.
+        ScribblerRegistry.OpenCount = 2;
+        var released = new ManualResetEventSlim(false);
+        var waiter = new Thread(() => { ScribblerRegistry.WaitAllClosed(); released.Set(); })
+        { IsBackground = true };
+        waiter.Start();
+        Assert.False(released.Wait(50));
+        ScribblerRegistry.NoteClosed();
+        Assert.False(released.Wait(50));
+        ScribblerRegistry.NoteClosed();
+        Assert.True(released.Wait(5000));
+        Assert.Equal(0, ScribblerRegistry.OpenCount);
+
+        // And with nothing open it returns immediately.
+        ScribblerRegistry.WaitAllClosed();
+    }
+
     // ---- the machines compile ------------------------------------------
 
     [Fact]

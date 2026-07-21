@@ -999,7 +999,7 @@ public sealed partial class Engine
                 ScribblerHandle h = v.Scribbler!;
                 if (h.MarkClosed())             // exactly once, against window teardown too
                 {
-                    Interlocked.Decrement(ref ScribblerRegistry.OpenCount);
+                    ScribblerRegistry.NoteClosed();
                     h.OnClose?.Invoke();        // mill: destroy the window (bookkeeping done here)
                     h.Signal.Release();         // teardown release — wake any waiter
                 }

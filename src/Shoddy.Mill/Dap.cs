@@ -19,6 +19,11 @@ namespace Shoddy.Mill;
 /// compiles it with debug instrumentation, runs it on a worker thread,
 /// and pauses it inside Engine line hooks — breakpoints, stepping, a
 /// call stack of defs, Shoddy-shaped variables, and the value stack.
+///
+/// Serve runs on a background thread under ScribblerWindows.Run, which
+/// keeps the process's main thread free to serve scribbler windows —
+/// so a debugged program can open one, and a pause at a breakpoint
+/// blocks only the program thread while the window keeps pumping.
 /// </summary>
 public sealed class DapServer : IDebugSink
 {
@@ -39,6 +44,7 @@ public sealed class DapServer : IDebugSink
 
     Func<TextWriter, TextReader, int>? entry;
     bool stopOnEntry;
+    bool disconnected;
 
     public static int Serve() => new DapServer().Run();
 
@@ -54,6 +60,9 @@ public sealed class DapServer : IDebugSink
                 if (root.GetProperty("type").GetString() != "request") continue;
                 Dispatch(root);
             }
+            // Returning (rather than exiting) lets ScribblerWindows.Run
+            // tear down any windows the debugged program left open.
+            if (disconnected) return 0;
         }
     }
 
@@ -228,7 +237,7 @@ public sealed class DapServer : IDebugSink
 
             case "disconnect":
                 Respond(req);
-                Environment.Exit(0);
+                disconnected = true;
                 break;
 
             default:
@@ -254,6 +263,11 @@ public sealed class DapServer : IDebugSink
             {
                 Engine.PendingSink = this;
                 rc = entry(stdout, TextReader.Null);
+                // A program that returns with a window still open isn't
+                // over: `mill run` keeps the picture up until the user
+                // closes it, and the session does the same — terminated
+                // waits for the last window. An error skips the wait.
+                ScribblerRegistry.WaitAllClosed();
             }
             catch (Exception e)
             {

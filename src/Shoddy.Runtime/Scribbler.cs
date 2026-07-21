@@ -152,12 +152,36 @@ public static class ScribblerKeys
 public static class ScribblerRegistry
 {
     // Set once by the mill at startup. Null when no window backend is running
-    // (mill dap, mill weave output, mill machine).
+    // (a woven program run via dotnet, mill machine, headless tests).
     public static Func<int, int, ScribblerHandle>? CreateScribbler;
 
-    // Incremented by SCRIBBLEROPEN, decremented by SCRIBBLERCLOSE and by
-    // window teardown (via MarkClosed, exactly once per handle). Read by
-    // the INPUT builtin — the console and the window are separate input
-    // channels and reading the blocked one is refused.
+    // Incremented by SCRIBBLEROPEN, decremented by NoteClosed (via
+    // MarkClosed, exactly once per handle). Read by the INPUT builtin —
+    // the console and the window are separate input channels and reading
+    // the blocked one is refused.
     public static int OpenCount;
+
+    // Released once per NoteClosed; WaitAllClosed drains it. Stale counts
+    // (closes nobody was waiting for) cause spurious wakes, never missed
+    // ones — the waiter loops on OpenCount.
+    static readonly SemaphoreSlim closedTick = new(0);
+
+    /// <summary>The MarkClosed winner's bookkeeping: decrement OpenCount
+    /// and wake anyone waiting for the last scribbler to close. Called by
+    /// SCRIBBLERCLOSE and by window teardown — never both for one handle;
+    /// MarkClosed arbitrates.</summary>
+    public static void NoteClosed()
+    {
+        Interlocked.Decrement(ref OpenCount);
+        closedTick.Release();
+    }
+
+    /// <summary>Block at zero CPU until no scribbler is open. Returns
+    /// immediately when none is. The perch uses this to keep a debug
+    /// session alive while a returned program's window is still up —
+    /// the same "draw a picture, return" semantics `mill run` gives.</summary>
+    public static void WaitAllClosed()
+    {
+        while (Volatile.Read(ref OpenCount) > 0) closedTick.Wait();
+    }
 }

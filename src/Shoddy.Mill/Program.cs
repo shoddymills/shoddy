@@ -25,7 +25,11 @@ using Shoddy.Runtime;
 // present — compiled include-once — and splices the source otherwise.
 
 if (args.Length == 1 && args[0] == "dap")
-    return DapServer.Serve();           // the perch: DAP over stdio for the editor
+    // The perch: DAP over stdio for the editor. The serve loop runs on a
+    // background thread so this (the main) thread can serve scribbler
+    // windows for the debugged program, exactly as `run` does; no linger,
+    // because a window must not outlive its debug session.
+    return ScribblerWindows.Run(DapServer.Serve, linger: false);
 
 string? cmd = null, file = null;
 string[] progArgs = Array.Empty<string>();

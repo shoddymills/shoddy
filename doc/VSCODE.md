@@ -149,6 +149,11 @@ instrumentation and stops on its first line. Then:
   concatenative language.
 - **Debug Console** — type a binding's name to inspect it; hovering a
   name in the editor shows its value.
+- **Scribbler programs** — `ScribblerOpen` works under the perch: the
+  window stays live (pumping, redrawing) while you sit at a
+  breakpoint, and a program that returns with its window still open
+  keeps the session alive until you close it — the same "draw a
+  picture, return" semantics as `mill run`.
 
 Limitation: `Input` reads end-of-file under the perch (interactive
 stdin isn't wired through the debug session) — debug the logic, run

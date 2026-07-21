@@ -130,7 +130,7 @@ public sealed class ScribblerWindow
         Enqueue(new ScribblerEvent { Type = ScribblerEvent.Kind.Quit, At = Ticker.Now });
         if (Handle.MarkClosed())
         {
-            Interlocked.Decrement(ref ScribblerRegistry.OpenCount);
+            ScribblerRegistry.NoteClosed();
             Handle.Signal.Release();        // teardown release — wake any waiter
         }
         Destroy();
@@ -142,7 +142,7 @@ public sealed class ScribblerWindow
     {
         if (Handle.MarkClosed())
         {
-            Interlocked.Decrement(ref ScribblerRegistry.OpenCount);
+            ScribblerRegistry.NoteClosed();
             Handle.Signal.Release();
         }
         Destroy();

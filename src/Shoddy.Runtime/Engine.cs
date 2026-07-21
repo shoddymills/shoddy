@@ -640,6 +640,40 @@ public sealed partial class Engine
                 PushStr(In.ReadLine() ?? "");
                 return true;
             }
+            case "INKEY":                       // ( -- s ) one pending keystroke, "" if none
+            {
+                // Non-blocking and unechoed, unlike INPUT: returns at once
+                // with "" when nothing is pending, so a game loop can poll
+                // it between frames. Arrow keys and PF1-4 arrive as their
+                // VT100 application-mode sequences (ESC OA .. ESC OS), the
+                // exact strings machines/vt100.shoddy's EvalKey classifies.
+                if (Volatile.Read(ref ScribblerRegistry.OpenCount) > 0)
+                    throw Die(line, "InKey: cannot read the console while a scribbler window is open" +
+                                    " — read keystrokes with ScribblerWait or ScribblerPoll.");
+                if (!ReferenceEquals(In, Console.In) || Console.IsInputRedirected)
+                {
+                    // Redirected or test-supplied input: consume one pending
+                    // character; "" at end of input. Keeps INKEY testable
+                    // headless (feed a StringReader) and sane under pipes.
+                    PushStr(In.Peek() < 0 ? "" : ((char)In.Read()).ToString());
+                    return true;
+                }
+                if (!Console.KeyAvailable) { PushStr(""); return true; }
+                ConsoleKeyInfo k = Console.ReadKey(intercept: true);
+                PushStr(k.Key switch
+                {
+                    ConsoleKey.UpArrow => "\x1bOA",
+                    ConsoleKey.DownArrow => "\x1bOB",
+                    ConsoleKey.RightArrow => "\x1bOC",
+                    ConsoleKey.LeftArrow => "\x1bOD",
+                    ConsoleKey.F1 => "\x1bOP",
+                    ConsoleKey.F2 => "\x1bOQ",
+                    ConsoleKey.F3 => "\x1bOR",
+                    ConsoleKey.F4 => "\x1bOS",
+                    _ => k.KeyChar == '\0' ? "" : k.KeyChar.ToString(),
+                });
+                return true;
+            }
             case "ARGS":                        // ( -- [args] ) program arguments
             {
                 var vals = new List<Value>(progArgs.Length);
@@ -1096,7 +1130,7 @@ public sealed partial class Engine
         "PRINT", "READFILE", "WRITEFILE", "APPENDFILE", "FILEEXISTS",
         "DELETEFILE", "BOPEN", "BCLOSE", "SEEK", "BPOS", "BSIZE",
         "PUTNUM", "GETNUM", "PUTBOOL", "GETBOOL", "PUTSTR", "GETSTR",
-        "INPUT", "ARGS",
+        "INPUT", "INKEY", "ARGS",
         "CALL", "IFTE", "MAP", "FILTER", "FOLD", "EACH", "TIMES", "RANGE",
         "LENGTH", "REVERSE", "CONCAT", "SORT",
         "ISEMPTY", "FIRST", "NTH", "SETNTH", "DIM", "TOARRAY", "TOLIST",

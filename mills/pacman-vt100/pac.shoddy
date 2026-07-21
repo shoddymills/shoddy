@@ -1,0 +1,219 @@
+Rem Copyright (c) 2026 Stephen Vincent Foster. All rights reserved.
+Rem
+Rem This file is part of the Shoddy Language project.
+Rem Licensed under the Shoddy Language License 1.0.0 (PolyForm Noncommercial
+Rem License 1.0.0 with Additional Use Grant). See the LICENSE file in the
+Rem project root for full terms.
+
+Rem ==================================================================
+Rem pac.shoddy — Pac in the terminal (VT100 escapes + game loop).
+Rem
+Rem Run: mill run mills/pacman-vt100/pac.shoddy
+Rem      WASD, the arrow keys or the numeric keypad move; Q or Escape
+Rem      quits. Eat every dot to win; a cherry makes the ghosts edible
+Rem      for a few seconds. No scribbler: the screen is a VT100/ANSI
+Rem      terminal driven by machines/vt100.shoddy escape strings, and
+Rem      keys arrive through the InKey builtin — non-blocking and
+Rem      unechoed, decoded by EvalKey. Needs a terminal at least 80x26.
+Rem
+Rem The pure model — maze, simulation, input actions — is in
+Rem pac-core.shoddy and is unit-tested headless. This file is the
+Rem terminal half: painting, the menu, and the loop. Print appends a
+Rem newline, so each frame is assembled into ONE string that ends by
+Rem parking the cursor at row 1 (the newline then lands harmlessly on
+Rem row 2 and can never scroll the maze away). Every recursive branch of
+Rem GameLoop / MenuWait / WaitKey calls itself directly — genuine SELF
+Rem tail calls, which CodeGen turns into loops.
+Rem ==================================================================
+
+Include "pac-core.shoddy"
+Include "../../machines/clock.shoddy"
+
+Rem ---- pacing --------------------------------------------------------
+
+Def TickMs() As Number
+    100
+
+Rem ---- paint helpers -------------------------------------------------
+Rem Colour is the menu's C toggle, exactly as in pac.c: when off, only
+Rem cursor addressing is emitted, never an SGR. Fg is bold+colour; the
+Rem VT100 machine stops at attributes, so the ANSI colour codes live here.
+
+Def Ink(colour As Boolean, seq As String) As String
+    If colour Then
+        seq
+    Else
+        ""
+
+Def Fg(n As Number) As String
+    Csi() & "1;" & Str(n) & "m"
+
+Rem 0-based board cell -> 1-based cursor address.
+Def At(x As Number, y As Number) As String
+    CursorPos(y + 1, x + 1)
+
+Def CellText(c As String, colour As Boolean) As String
+    If c = "#" Then
+        Ink(colour, Fg(34)) & c
+    Else
+        If c = "+" Then
+            Ink(colour, Fg(31)) & c
+        Else
+            If c = "." Then
+                Ink(colour, Fg(37)) & c
+            Else
+                c
+
+Rem The whole maze, one row per cursor line. Painted once per game;
+Rem after that FrameText repaints only the cells that changed.
+Def BoardText(g As Game, colour As Boolean) As String
+    Let rows = Map(Range(0, BoardH() - 1), Fn(y) => CursorPos(y + 1, 1) & RowText(Nth(Board(g), y + 1), colour))
+    Fold(rows, "", Fn(a, r) => a & r) & Ink(colour, AttrsOff())
+
+Def RowText(row As String, colour As Boolean) As String
+    If Len(row) = 0 Then
+        ""
+    Else
+        CellText(Left(row, 1), colour) & RowText(Mid(row, 2, Len(row)), colour)
+
+Rem The sidebar legend, straight from pac.c (typo and all).
+Def Legend(colour As Boolean) As String
+    Let a = CursorPos(1, 42) & Ink(colour, Fg(36)) & "P A C" & Ink(colour, AttrsOff())
+    Let b = a & CursorPos(6, 42) & Ink(colour, Fg(31)) & "+ " & Ink(colour, AttrsOff()) & "Cherry, Makes Ghosts Edible"
+    Let c = b & CursorPos(8, 42) & Ink(colour, Fg(35)) & "H " & Ink(colour, AttrsOff()) & "A Ghost! Look out!"
+    Let d = c & CursorPos(10, 42) & Ink(colour, Fg(32)) & "M " & Ink(colour, AttrsOff()) & "A frightend Ghost! Eat it!"
+    Let e = d & CursorPos(12, 42) & Ink(colour, Fg(33)) & "< " & Ink(colour, AttrsOff()) & "You!"
+    e & CursorPos(14, 42) & Ink(colour, Fg(31)) & "WASD or Arrows move, Q quits" & Ink(colour, AttrsOff())
+
+Rem pac.c's player_spr "V<^>": the mouth trails the direction of travel.
+Def PacSprite(d As Number) As String
+    Select Case d
+        Case 1
+            "V"
+        Case 2
+            "<"
+        Case 3
+            "^"
+        Case Else
+            ">"
+
+Def GhostGlyph(g As Game, colour As Boolean) As String
+    If EdibleT(g) > 0 Then
+        Ink(colour, Fg(32)) & "M"
+    Else
+        Ink(colour, Fg(35)) & "H"
+
+Rem Repaint one cell from the board — how a ghost or the player is
+Rem erased from where it just was (the dot it covered reappears; an
+Rem eaten cell comes back as bare floor).
+Def RestoreAt(g As Game, colour As Boolean, x As Number, y As Number) As String
+    At(x, y) & CellText(CellAt(Board(g), x, y), colour)
+
+Def Hud(g As Game, colour As Boolean) As String
+    CursorPos(3, 42) & "SCORE: " & Str(Score(g)) & ClearEol() & CursorPos(4, 42) & "LIVES: " & Str(Lives(g)) & ClearEol()
+
+Rem One frame: wipe every actor's old cell, draw every actor's new one,
+Rem refresh the HUD, park the cursor on row 1.
+Def FrameText(old As Game, g As Game, colour As Boolean) As String
+    Let wiped = Fold(Ghosts(old), RestoreAt(g, colour, Px(old), Py(old)), Fn(a, gh) => a & RestoreAt(g, colour, Gx(gh), Gy(gh)))
+    Let drawn = Fold(Ghosts(g), wiped, Fn(a, gh) => a & At(Gx(gh), Gy(gh)) & GhostGlyph(g, colour))
+    Let pac = drawn & At(Px(g), Py(g)) & Ink(colour, Fg(33)) & PacSprite(Pd(g)) & Ink(colour, AttrsOff())
+    pac & Hud(g, colour) & CursorPos(1, 1)
+
+Rem ---- input ---------------------------------------------------------
+
+Rem Drain the keyboard, keeping only the newest keystroke — at 10 ticks
+Rem a second, key auto-repeat would otherwise queue up faster than the
+Rem loop consumes it and steering would lag.
+Def LastKey(k As String) As String
+    Let n = InKey()
+    If n = "" Then
+        k
+    Else
+        LastKey(n)
+
+Def WaitKey() As String
+    Sleep(30)
+    Let k = InKey()
+    If k = "" Then
+        WaitKey()
+    Else
+        k
+
+Rem ---- the loop ------------------------------------------------------
+
+Def EndMsg(g As Game) As String
+    If Won(g) Then
+        "You WIN! SCORE: "
+    Else
+        "You LOSE!, SCORE: "
+
+Def EndScreen(g As Game, colour As Boolean) As Number
+    Print(Ink(colour, AttrsOff()) & ClearScreen() & CursorPos(12, 30) & EndMsg(g) & Str(Score(g)) & CursorPos(14, 30) & "Press a key..." & CursorPos(1, 1))
+    Let k = WaitKey()
+    Score(g)
+
+Def GameLoop(g As Game, colour As Boolean, next As Number) As Number
+    If Ended(g) Then
+        EndScreen(g, colour)
+    Else
+        Let raw = LastKey("")
+        If QuitKey(EvalKey(raw)) Then
+            Score(g)
+        Else
+            Let g2 = Advance(Act(g, EvalKey(raw)))
+            Print(FrameText(g, g2, colour))
+            SleepUntil(next)
+            GameLoop(g2, colour, next + TickMs())
+
+Def PlayGame(colour As Boolean) As Number
+    Seed(Ticks())
+    Let g = NewGame()
+    Print(ClearScreen() & BoardText(g, colour) & Legend(colour) & CursorPos(1, 1))
+    GameLoop(g, colour, Ticks() + TickMs())
+
+Rem ---- the menu ------------------------------------------------------
+Rem pac.c's front door: the PAC banner, the last score, and P/C/Q.
+
+Def ArtLines() As List Of String
+    { "   _ (`-.    ('-.                ", "  ( (OO  )  ( OO ).-.            ", " _.`     \\  / . --. /   .-----.  ", "(__...--''  | \\-.  \\   '  .--./  ", " |  /  | |.-'-'  |  |  |  |('-.  ", " |  |_.' | \\| |_.'  | /_) |OO  ) ", " |  .___.'  |  .-.  | ||  |`-'|  ", " |  |       |  | |  |(_'  '--'\\  ", " `--'       `--' `--'   `-----'  " }
+
+Def ArtText(colour As Boolean) As String
+    Let ls = ArtLines()
+    Fold(Range(1, Length(ls)), Ink(colour, Fg(33)), Fn(a, i) => a & CursorPos(i + 1, 4) & Nth(ls, i))
+
+Def OnOff(colour As Boolean) As String
+    If colour Then
+        Ink(colour, Fg(32)) & "on"
+    Else
+        "off"
+
+Def MenuText(last As Number, colour As Boolean) As String
+    Let a = ClearScreen() & ArtText(colour)
+    Let b = a & CursorPos(12, 4) & Ink(colour, Fg(33)) & "LAST SCORE " & Str(last) & "!"
+    Let c = b & CursorPos(14, 4) & Ink(colour, Fg(36)) & "P - " & Ink(colour, Fg(37)) & "Play"
+    Let d = c & CursorPos(15, 4) & Ink(colour, Fg(36)) & "C - " & Ink(colour, Fg(37)) & "ANSI Color (" & OnOff(colour) & Ink(colour, Fg(37)) & ")"
+    Let e = d & CursorPos(16, 4) & Ink(colour, Fg(36)) & "Q - " & Ink(colour, Fg(37)) & "Quit"
+    e & CursorPos(18, 4) & "> " & Ink(colour, AttrsOff())
+
+Def Menu(last As Number, colour As Boolean) As Number
+    Print(MenuText(last, colour))
+    MenuWait(last, colour)
+
+Def MenuWait(last As Number, colour As Boolean) As Number
+    Sleep(30)
+    Let k = Upper(InKey())
+    If k = "P" Then
+        Menu(PlayGame(colour), colour)
+    Else
+        If k = "C" Then
+            Menu(last, Not colour)
+        Else
+            If k = "Q" Then
+                last
+            Else
+                MenuWait(last, colour)
+
+Def Main()
+    Let final = Menu(0, True)
+    Print(AttrsOff() & ClearScreen() & CursorPos(1, 1) & "LAST SCORE " & Str(final))

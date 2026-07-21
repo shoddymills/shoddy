@@ -1,0 +1,392 @@
+Rem Copyright (c) 2026 Stephen Vincent Foster. All rights reserved.
+Rem
+Rem This file is part of the Shoddy Language project.
+Rem Licensed under the Shoddy Language License 1.0.0 (PolyForm Noncommercial
+Rem License 1.0.0 with Additional Use Grant). See the LICENSE file in the
+Rem project root for full terms.
+
+Rem ==================================================================
+Rem pac-core.shoddy — Pac, the pure model.
+Rem
+Rem Everything the game IS that does not touch a terminal: the maze, the
+Rem state record, the per-tick simulation (ghost AI, timers, collisions,
+Rem eating, winning and losing), and the input actions. A rewrite of the
+Rem C original kept alongside as pac.c; the shape mirrors the
+Rem space-invaders mill — this file includes no cursor addressing, so it
+Rem runs headless and is unit-tested that way (test.shoddy and
+Rem src/Shoddy.Tests/PacTests.cs). pac.shoddy adds the VT100 drawing and
+Rem the game loop on top.
+Rem
+Rem Coordinates are 0-based cells, x rightward 0..38, y downward 0..24,
+Rem exactly the C original's board[25][39]. Directions are the C
+Rem original's ghost scheme, used for the player too: 0 none, 1 up,
+Rem 2 right, 3 down, 4 left. The board is an Array of 25 row Strings
+Rem holding "#" walls, "." dots, "+" cherries and " " eaten cells;
+Rem PutCell returns a new board, nothing mutates.
+Rem
+Rem Timers count engine ticks (pac.shoddy runs 1 tick per frame at a
+Rem fixed FPS) where the C original counted iterations of a free-running
+Rem read loop, so the constants are re-tuned, not copied: GHOST_TIMEOUT
+Rem 5 -> GhostEvery 2, EDIBLE_TIMEOUT 300 -> EdibleTicks 80,
+Rem SCATTER_TIMEOUT 800 -> ScatterSteps 250 (like the original it runs
+Rem down per ghost step, five per round, not per tick).
+Rem ==================================================================
+
+Include "../../machines/seq.shoddy"
+Include "../../machines/math.shoddy"
+Include "../../machines/str.shoddy"
+Include "../../machines/vt100.shoddy"
+
+Rem ---- tunables ------------------------------------------------------
+
+Def BoardW() As Number
+    39
+Def BoardH() As Number
+    25
+Def GhostCount() As Number
+    5
+Def CherryCount() As Number
+    6
+Def StartLives() As Number
+    5
+Def GhostEvery() As Number
+    2
+Def EdibleTicks() As Number
+    80
+Def ScatterSteps() As Number
+    250
+Def GhostScore() As Number
+    100
+Def LifeBonus() As Number
+    500
+
+Rem ---- the maze ------------------------------------------------------
+Rem level_1 from pac.c, verbatim: "#" wall, " " a dot-to-be, "S" the
+Rem player start, "G" a ghost start, "X" bare floor (the ghost cage).
+Rem Split five rows per Def only because list literals are single-line.
+
+Def MazeA() As List Of String
+    { "#######################################", "#   #              #              #   #", "# # # ##### # #### # #### # ##### # # #", "#         # #             # #         #", "### ##### # ####### ####### # ##### ###" }
+
+Def MazeB() As List Of String
+    { "#       #                     #       #", "# ##### ### ############### ### ##### #", "# #                                 # #", "# # ####### # ############# ####### # #", "#   #       #             #       #   #" }
+
+Def MazeC() As List Of String
+    { "# # # # ### ### # ### ### # # # # # # #", "#   # #       # #XGXGX#   #   # # #   #", "# # # # ### # # #XXGXX# # # # # # # # #", "#           #   #XGXGX# #             #", "######### # # ######### ### # #########" }
+
+Def MazeD() As List Of String
+    { "#         # #             # #         #", "# # ####### ############# # ####### # #", "# #                                 # #", "# ##### ### ############### ### ##### #", "#       #          S          #       #" }
+
+Def MazeE() As List Of String
+    { "### ##### # ####### ####### # ##### ###", "#         # #             # #         #", "# # # ##### # #### # #### # ##### # # #", "#   #       #      #      #       #   #", "#######################################" }
+
+Def RawMaze() As List Of String
+    Concat(MazeA(), Concat(MazeB(), Concat(MazeC(), Concat(MazeD(), MazeE()))))
+
+Rem ---- state ---------------------------------------------------------
+
+Type Cell
+    CellX As Number
+    CellY As Number
+
+Type Ghost
+    Gx As Number
+    Gy As Number
+    Gd As Number                Rem 0 none, 1 up, 2 right, 3 down, 4 left
+    Hx As Number                Rem home (cage) cell, returned to when eaten
+    Hy As Number
+
+Type Game
+    Board    As Array Of String
+    Px       As Number
+    Py       As Number
+    Pd       As Number          Rem facing, for the sprite: starts 2 (right)
+    Sx       As Number          Rem player start cell, respawn point
+    Sy       As Number
+    Ghosts   As List Of Ghost
+    Score    As Number
+    Lives    As Number
+    Dots     As Number          Rem dots AND cherries left; 0 wins
+    EdibleT  As Number          Rem ticks of fright left; > 0 = ghosts edible
+    ScatterT As Number          Rem ghost steps of scatter left before they hunt
+    StepT    As Number          Rem ticks until the ghosts next move
+    Won      As Boolean
+    Ended    As Boolean
+
+Rem ---- building the board --------------------------------------------
+
+Rem One maze row as a board row: spaces become dots, then the S/G/X
+Rem markers become bare floor (they are never dots — same as the C).
+Def BoardRow(row As String) As String
+    Replace(Replace(Replace(Replace(row, " ", "."), "S", " "), "G", " "), "X", " ")
+
+Rem 0-based x positions of every occurrence of c in row.
+Def ChPositions(row As String, c As String, base As Number) As List Of Number
+    Let k = Instr(row, c)
+    If k = 0 Then
+        {}
+    Else
+        Prepend(base + k - 1, ChPositions(Mid(row, k + 1, Len(row)), c, base + k))
+
+Rem Every cell of the raw maze holding c, scanned row by row.
+Def CellsWith(rows As List Of String, c As String) As List Of Cell
+    Flatten(Map(Range(0, BoardH() - 1), Fn(y) => Map(ChPositions(Nth(rows, y + 1), c, 0), Fn(x) => Cell(x, y))))
+
+Def CountCh(s As String, c As String) As Number
+    Let k = Instr(s, c)
+    If k = 0 Then
+        0
+    Else
+        1 + CountCh(Mid(s, k + 1, Len(s)), c)
+
+Def CellAt(b As Array Of String, x As Number, y As Number) As String
+    If x < 0 Or y < 0 Or x > BoardW() - 1 Or y > BoardH() - 1 Then
+        "#"
+    Else
+        Mid(Nth(b, y + 1), x + 1, 1)
+
+Def PutCell(b As Array Of String, x As Number, y As Number, c As String) As Array Of String
+    Let row = Nth(b, y + 1)
+    SetNth(b, y + 1, Left(row, x) & c & Mid(row, x + 2, Len(row)))
+
+Rem Scatter n cherries over random dot cells (rerolls anything else, so
+Rem walls and the cage are never hit). Uses Rnd; Seed first to reproduce.
+Def AddCherries(b As Array Of String, n As Number) As Array Of String
+    If n = 0 Then
+        b
+    Else
+        Let x = RandInt(0, BoardW() - 1)
+        Let y = RandInt(0, BoardH() - 1)
+        If CellAt(b, x, y) = "." Then
+            AddCherries(PutCell(b, x, y, "+"), n - 1)
+        Else
+            AddCherries(b, n)
+
+Def NewGame() As Game
+    Let rows = RawMaze()
+    Let start = First(CellsWith(rows, "S"))
+    Let ghosts = Map(CellsWith(rows, "G"), Fn(p) => Ghost(CellX(p), CellY(p), 0, CellX(p), CellY(p)))
+    Let clean = Map(rows, Fn(r) => BoardRow(r))
+    Let dots = Fold(clean, 0, Fn(a, r) => a + CountCh(r, "."))
+    Let b = AddCherries(ToArray(clean), CherryCount())
+    Game(b, CellX(start), CellY(start), 2, CellX(start), CellY(start), ghosts, 0, StartLives(), dots, 0, ScatterSteps(), 0, False, False)
+
+Rem ---- geometry ------------------------------------------------------
+
+Def DirDx(d As Number) As Number
+    Select Case d
+        Case 2
+            1
+        Case 4
+            -1
+        Case Else
+            0
+
+Def DirDy(d As Number) As Number
+    Select Case d
+        Case 1
+            -1
+        Case 3
+            1
+        Case Else
+            0
+
+Def IsWall(g As Game, x As Number, y As Number) As Boolean
+    CellAt(Board(g), x, y) = "#"
+
+Rem ---- ghost movement ------------------------------------------------
+Rem The C original's rule, kept exactly: a ghost holds its direction
+Rem until the way ahead is blocked (by a wall or another ghost); only
+Rem then does it choose again. While ScatterT runs the choice is random;
+Rem after that it is greedy toward the player (left/right first, then
+Rem up/down — the C's if-chain order), or greedy away while edible.
+
+Def GhostAtPos(gs As List Of Ghost, x As Number, y As Number) As Boolean
+    Any(gs, Fn(o) => Gx(o) = x And Gy(o) = y)
+
+Def CanGo(g As Game, others As List Of Ghost, gh As Ghost, d As Number) As Boolean
+    Let nx = Gx(gh) + DirDx(d)
+    Let ny = Gy(gh) + DirDy(d)
+    Not IsWall(g, nx, ny) And Not GhostAtPos(others, nx, ny)
+
+Def ChaseDir(g As Game, gh As Ghost, open As List Of Number) As Number
+    If Px(g) < Gx(gh) And Contains(open, 4) Then
+        4
+    Else
+        If Px(g) > Gx(gh) And Contains(open, 2) Then
+            2
+        Else
+            If Py(g) < Gy(gh) And Contains(open, 1) Then
+                1
+            Else
+                If Py(g) > Gy(gh) And Contains(open, 3) Then
+                    3
+                Else
+                    Pick(open)
+
+Def FleeDir(g As Game, gh As Ghost, open As List Of Number) As Number
+    If Px(g) < Gx(gh) And Contains(open, 2) Then
+        2
+    Else
+        If Px(g) > Gx(gh) And Contains(open, 4) Then
+            4
+        Else
+            If Py(g) < Gy(gh) And Contains(open, 3) Then
+                3
+            Else
+                If Py(g) > Gy(gh) And Contains(open, 1) Then
+                    1
+                Else
+                    Pick(open)
+
+Def ChooseDir(g As Game, gh As Ghost, open As List Of Number) As Number
+    If ScatterT(g) > 0 Then
+        Pick(open)
+    Else
+        If EdibleT(g) > 0 Then
+            FleeDir(g, gh, open)
+        Else
+            ChaseDir(g, gh, open)
+
+Def NextDir(g As Game, gh As Ghost, open As List Of Number) As Number
+    If Gd(gh) <> 0 And Contains(open, Gd(gh)) Then
+        Gd(gh)
+    Else
+        ChooseDir(g, gh, open)
+
+Def StepGhost(g As Game, others As List Of Ghost, gh As Ghost) As Ghost
+    Let open = Filter(Range(1, 4), Fn(d) => CanGo(g, others, gh, d))
+    If IsEmpty(open) Then
+        gh
+    Else
+        Let d = NextDir(g, gh, open)
+        With(gh, Gx = Gx(gh) + DirDx(d), Gy = Gy(gh) + DirDy(d), Gd = d)
+
+Rem Ghosts move one at a time, and each sees the others where they
+Rem stand right now — already-moved ghosts at their new cells, the rest
+Rem at their old ones — so two ghosts can never land on the same cell.
+Def MoveGhostList(g As Game, done As List Of Ghost, todo As List Of Ghost) As List Of Ghost
+    If IsEmpty(todo) Then
+        Reverse(done)
+    Else
+        Let stepped = StepGhost(g, Concat(done, Rest(todo)), First(todo))
+        MoveGhostList(g, Prepend(stepped, done), Rest(todo))
+
+Def MoveGhostsRound(g As Game) As Game
+    With(g, Ghosts = MoveGhostList(g, {}, Ghosts(g)), ScatterT = Max(0, ScatterT(g) - GhostCount()))
+
+Rem ---- collisions, eating, living and dying --------------------------
+
+Def SendHomeIfHit(g As Game, gh As Ghost) As Ghost
+    If Gx(gh) = Px(g) And Gy(gh) = Py(g) Then
+        With(gh, Gx = Hx(gh), Gy = Hy(gh), Gd = 0)
+    Else
+        gh
+
+Def LoseLife(g As Game) As Game
+    If Lives(g) = 1 Then
+        With(g, Lives = 0, Ended = True)
+    Else
+        With(g, Lives = Lives(g) - 1, Px = Sx(g), Py = Sy(g))
+
+Rem A ghost on the player's cell: while edible it is eaten (scored and
+Rem sent home to the cage), otherwise it costs a life and the player
+Rem respawns at the start; the last life ends the game.
+Def EatOrDie(g As Game) As Game
+    Let hit = Filter(Ghosts(g), Fn(gh) => Gx(gh) = Px(g) And Gy(gh) = Py(g))
+    If IsEmpty(hit) Then
+        g
+    Else
+        If EdibleT(g) > 0 Then
+            With(g, Score = Score(g) + GhostScore() * Length(hit), Ghosts = Map(Ghosts(g), Fn(gh) => SendHomeIfHit(g, gh)))
+        Else
+            LoseLife(g)
+
+Def WinCheck(g As Game) As Game
+    If Dots(g) = 0 Then
+        With(g, Score = Score(g) + Lives(g) * LifeBonus(), Won = True, Ended = True)
+    Else
+        g
+
+Rem Consume whatever the player is standing on: a dot scores one, a
+Rem cherry starts the fright timer instead; both count down Dots.
+Def Eat(g As Game) As Game
+    Let c = CellAt(Board(g), Px(g), Py(g))
+    If c = "." Then
+        WinCheck(With(g, Board = PutCell(Board(g), Px(g), Py(g), " "), Score = Score(g) + 1, Dots = Dots(g) - 1))
+    Else
+        If c = "+" Then
+            WinCheck(With(g, Board = PutCell(Board(g), Px(g), Py(g), " "), EdibleT = EdibleTicks(), Dots = Dots(g) - 1))
+        Else
+            g
+
+Rem A move always turns the sprite; a wall stops the step (same as the C).
+Def TryMove(g As Game, d As Number) As Game
+    Let nx = Px(g) + DirDx(d)
+    Let ny = Py(g) + DirDy(d)
+    If IsWall(g, nx, ny) Then
+        With(g, Pd = d)
+    Else
+        EatOrDie(Eat(With(g, Px = nx, Py = ny, Pd = d)))
+
+Rem ---- the tick ------------------------------------------------------
+Rem One engine tick: the fright timer runs down every tick; the ghosts
+Rem move (and are checked against the player) every GhostEvery ticks.
+
+Def GhostPhase(g As Game) As Game
+    If StepT(g) > 0 Then
+        With(g, StepT = StepT(g) - 1)
+    Else
+        EatOrDie(MoveGhostsRound(With(g, StepT = GhostEvery())))
+
+Def Advance(g As Game) As Game
+    If Ended(g) Then
+        g
+    Else
+        With(GhostPhase(g), EdibleT = Max(0, EdibleT(g) - 1))
+
+Rem ---- input actions -------------------------------------------------
+Rem The C original's keys: WASD, the numeric keypad 8/6/2/4, and — now
+Rem that InKey delivers them — the arrow keys, which arrive from EvalKey
+Rem as KeyUp/KeyRight/KeyDown/KeyLeft.
+
+Def Act(g As Game, k As Vt100Key) As Game
+    If Ended(g) Then
+        g
+    Else
+        Select Case k
+            Case KeyUp
+                TryMove(g, 1)
+            Case KeyRight
+                TryMove(g, 2)
+            Case KeyDown
+                TryMove(g, 3)
+            Case KeyLeft
+                TryMove(g, 4)
+            Case KeyPad(c) Where c = "8"
+                TryMove(g, 1)
+            Case KeyPad(c) Where c = "6"
+                TryMove(g, 2)
+            Case KeyPad(c) Where c = "2"
+                TryMove(g, 3)
+            Case KeyPad(c) Where c = "4"
+                TryMove(g, 4)
+            Case KeyUnknown(rw) Where Upper(rw) = "W"
+                TryMove(g, 1)
+            Case KeyUnknown(rw) Where Upper(rw) = "D"
+                TryMove(g, 2)
+            Case KeyUnknown(rw) Where Upper(rw) = "S"
+                TryMove(g, 3)
+            Case KeyUnknown(rw) Where Upper(rw) = "A"
+                TryMove(g, 4)
+            Case Else
+                g
+
+Def QuitKey(k As Vt100Key) As Boolean
+    Select Case k
+        Case KeyUnknown(rw) Where Upper(rw) = "Q"
+            True
+        Case KeyUnknown(rw) Where rw = Chr(27)
+            True
+        Case Else
+            False

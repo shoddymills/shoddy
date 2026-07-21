@@ -453,11 +453,12 @@ One live handle at a time; no crash safety, no concurrency.
   KeyUnknown(Raw)` and `EvalKey(raw As String) As Vt100Key`, which
   classifies one raw keystroke sequence from the VT100 "Special Key Codes"
   table, recognizing both cursor-key modes and both keypad modes for a
-  given logical key. **Not a live keyboard reader** — Shoddy's only input
-  builtin (`Input`) blocks on a whole line (`Console.In.ReadLine`); there is
-  no raw/no-echo read. `EvalKey` decodes a raw sequence the caller already
-  has in hand (captured externally, or a test fixture), it doesn't capture
-  one itself.
+  given logical key. Feed it live keys with the `InKey` builtin — a
+  non-blocking, unechoed read returning one pending keystroke (`""` when
+  none), arrows/PF1–4 encoded as the application-mode sequences `EvalKey`
+  recognizes — so `EvalKey(InKey())` polls the keyboard from a game loop
+  (see `mills/pacman-vt100`). `EvalKey` decodes replayed or hand-assembled
+  sequences just as well; blocking whole-line input remains `Input`.
 - Two rows in the source HTML table look like transcription slips against
   the real, well-established protocol and are implemented per the real spec
   instead, each flagged with a comment in the file: `RequestStatus`/
@@ -471,6 +472,7 @@ One live handle at a time; no crash safety, no concurrency.
 |---|---|---|
 | `Print(v)` | any value | Newline-terminated. Top-level: strings print **raw** (unquoted); everything else prints its `Repr` (§14). Effectful — convention keeps it inside `Main`. |
 | `Input(prompt)` | → `String` | Prints prompt (no newline), reads one line. `""` at EOF, never aborts. |
+| `InKey()` | → `String` | One pending keystroke, `""` if none. Non-blocking, no echo; arrows/PF1–4 arrive as VT100 application-mode sequences (pair with `EvalKey`). Redirected input: one char per call, `""` at EOF. |
 | `Error(msg)` | `( s -- )` | Aborts with msg + current line. |
 | `Assert(cond, msg)` | `( bool s -- )` | Aborts (`ASSERTION FAILED: msg`) unless cond. |
 | `ReadFile(path)` → `String` | whole file | Missing file: `READFILE: cannot open 'path'`. |

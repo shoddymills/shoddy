@@ -1,0 +1,126 @@
+Rem Copyright (c) 2026 Stephen Vincent Foster. All rights reserved.
+Rem
+Rem This file is part of the Shoddy Language project.
+Rem Licensed under the Shoddy Language License 1.0.0 (PolyForm Noncommercial
+Rem License 1.0.0 with Additional Use Grant). See the LICENSE file in the
+Rem project root for full terms.
+
+Rem ==================================================================
+Rem turtle.shoddy — Shoddy standard library: turtle graphics.
+Rem
+Rem A thin, purely functional turtle over the scribbler. LOGO's turtle is
+Rem the canonical mutable object; Shoddy has no mutation, so the turtle is
+Rem a VALUE threaded through the program exactly as the scribbler handle
+Rem is: every command takes a Turtle and returns a new one, drawing into
+Rem the shared pixel buffer as a side effect. LOGO's control half (REPEAT,
+Rem TO..END, IF) is not reimplemented — Shoddy already is that language:
+Rem   REPEAT 4 [FD 50 RT 90]  ==  Fold(Range(1,4), t, Fn(t,_) => TurnRight(Forward(t,50),90))
+Rem
+Rem Heading is in DEGREES, 0 = up (north), increasing CLOCKWISE — the
+Rem turtle convention. The scribbler's y grows downward, so the unit step
+Rem for heading h is (sin h, -cos h): h=0 up, h=90 east, h=180 down.
+Rem
+Rem Position is kept FRACTIONAL and rounded only when handing endpoints to
+Rem DrawLine. Snapping the pose to integers would compound error over many
+Rem small steps and a polygon would not close.
+Rem
+Rem The turn words are TurnLeft/TurnRight, not Left/Right: Left and Right
+Rem are the string builtins (Left$/Right$), and a Def silently shadows a
+Rem builtin. Windowed program (mill run) like every scribbler program.
+Rem ==================================================================
+
+Include "scribbler.shoddy"
+Include "math.shoddy"
+
+Type Turtle
+    Sc      As Scribbler   Rem the drawing surface (mutated in place)
+    X       As Number      Rem fractional pen position
+    Y       As Number
+    Heading As Number      Rem degrees, 0 = up, clockwise positive
+    Pen     As Boolean     Rem down = drawing
+    R       As Number
+    G       As Number
+    B       As Number
+
+Rem ---- construction & lifecycle --------------------------------------
+
+Rem Open a surface, park the turtle at its centre facing up, pen down,
+Rem drawing in white on black.
+Def NewTurtle(width As Number, height As Number) As Turtle
+    Let sc = ScribblerFill(ScribblerOpen(width, height), 0, 0, 0)
+    Turtle(sc, width / 2, height / 2, 0, True, 255, 255, 255)
+
+Rem Recentre on the surface facing up; pen and colour are kept.
+Def Home(t As Turtle) As Turtle
+    Turtle(Sc(t), ScribblerWidth(Sc(t)) / 2, ScribblerHeight(Sc(t)) / 2, 0, Pen(t), R(t), G(t), B(t))
+
+Rem Present the buffer. The drawing already happened in place, so the
+Rem turtle is unchanged — Blit only pushes pixels to the window.
+Def Blit(t As Turtle) As Turtle
+    Let shown = ScribblerBlit(Sc(t))
+    t
+
+Def Close(t As Turtle) As Turtle
+    Let closed = ScribblerClose(Sc(t))
+    t
+
+Def Title(t As Turtle, s As String) As Turtle
+    Let named = ScribblerTitle(Sc(t), s)
+    t
+
+Rem ---- motion --------------------------------------------------------
+
+Rem The shared core: move to (nx, ny), drawing the segment from the
+Rem current position first iff the pen is down, and carry the heading.
+Def MoveTo(t As Turtle, nx As Number, ny As Number) As Turtle
+    Let sc2 = PenSegment(t, nx, ny)
+    Turtle(sc2, nx, ny, Heading(t), Pen(t), R(t), G(t), B(t))
+
+Def PenSegment(t As Turtle, nx As Number, ny As Number) As Scribbler
+    If Pen(t) Then
+        DrawLine(Sc(t), Round(X(t)), Round(Y(t)), Round(nx), Round(ny), R(t), G(t), B(t))
+    Else
+        Sc(t)
+
+Def Forward(t As Turtle, d As Number) As Turtle
+    Let rad = Rad(Heading(t))
+    MoveTo(t, X(t) + d * Sin(rad), Y(t) - d * Cos(rad))
+
+Def Back(t As Turtle, d As Number) As Turtle
+    Forward(t, -d)
+
+Rem Jump/draw to an absolute point — respects the pen, exactly like Forward.
+Def SetXY(t As Turtle, x As Number, y As Number) As Turtle
+    MoveTo(t, x, y)
+
+Rem ---- turning -------------------------------------------------------
+
+Def SetHeading(t As Turtle, deg As Number) As Turtle
+    Turtle(Sc(t), X(t), Y(t), Wrap(deg, 360), Pen(t), R(t), G(t), B(t))
+
+Def TurnRight(t As Turtle, deg As Number) As Turtle
+    SetHeading(t, Heading(t) + deg)
+
+Def TurnLeft(t As Turtle, deg As Number) As Turtle
+    SetHeading(t, Heading(t) - deg)
+
+Rem Face an absolute point. In screen coords (y down) with heading 0 = up,
+Rem the heading toward (px, py) is atan2(dx, -dy). The target params are
+Rem px/py, not x/y: a param named x folds to X and would shadow the X
+Rem accessor, so X(t) would read the parameter instead of the field.
+Def SetTowards(t As Turtle, px As Number, py As Number) As Turtle
+    SetHeading(t, Deg(Atn2(px - X(t), Y(t) - py)))
+
+Def DistanceTo(t As Turtle, px As Number, py As Number) As Number
+    Dist(X(t), Y(t), px, py)
+
+Rem ---- pen -----------------------------------------------------------
+
+Def PenUp(t As Turtle) As Turtle
+    Turtle(Sc(t), X(t), Y(t), Heading(t), False, R(t), G(t), B(t))
+
+Def PenDown(t As Turtle) As Turtle
+    Turtle(Sc(t), X(t), Y(t), Heading(t), True, R(t), G(t), B(t))
+
+Def SetPenColor(t As Turtle, r As Number, g As Number, b As Number) As Turtle
+    Turtle(Sc(t), X(t), Y(t), Heading(t), Pen(t), r, g, b)

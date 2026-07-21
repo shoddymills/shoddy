@@ -409,6 +409,11 @@ public sealed class Parser
             /* CALL(F, args...) is sugar for args... F CALL, so its first
              * argument (the function) is emitted last. */
             bool isCall = name == "CALL";
+            /* IFTE(cond, t, f): the two arms are lazy. Wrap each as a
+             * quotation so IFTE calls only the taken one — exactly the
+             * c [ t ] [ f ] Ifte the block-If form desugars to. Without
+             * this the arms push bare values and IFTE pops a non-quotation. */
+            bool isIfte = name == "IFTE";
             Quot? first = null;
             int argIdx = 0;
             while (pos < l.Toks.Count && !Is(l.Toks[pos], ")"))
@@ -418,6 +423,12 @@ public sealed class Parser
                 {
                     first = new Quot();
                     CompileArg(l, ref pos, first, sc);
+                }
+                else if (isIfte && argIdx >= 1)
+                {
+                    var arm = new Node(NType.Quot, l.LineNo) { File = l.File, Q = new Quot() };
+                    CompileArg(l, ref pos, arm.Q, sc);
+                    outq.Add(arm);
                 }
                 else
                 {

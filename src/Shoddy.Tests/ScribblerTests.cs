@@ -28,6 +28,41 @@ public class ScribblerTests
     // ---- pure-buffer builtins, via woven programs ----------------------
 
     [Fact]
+    public void DrawLineAndFloodFillUseIfteInCallForm()
+    {
+        // DrawLine (Bresenham) and FloodFill are the only call-form Ifte(...)
+        // users in the stdlib; both step through LineStep/AddSeeds. A diagonal
+        // lights its endpoints and midpoint but not off-diagonal pixels; a
+        // flood from an interior seed recolours the whole black field. These
+        // are machine Defs, so the program Includes scribbler.shoddy.
+        string ws = MachineWorkspace();
+        string program = Path.Combine(ws, "draw.shoddy");
+        File.WriteAllText(program, string.Join('\n',
+            "Include \"machines/scribbler.shoddy\"",
+            "",
+            "Def Main()",
+            "    Let sc = ScribblerOpen(16, 16)",
+            "    Let a = DrawLine(sc, 0, 0, 5, 5, 255, 255, 255)",
+            "    Print(ScribblerGetPixel(a, 0, 0))",
+            "    Print(ScribblerGetPixel(a, 3, 3))",
+            "    Print(ScribblerGetPixel(a, 5, 5))",
+            "    Print(ScribblerGetPixel(a, 0, 5))",       // off the diagonal: black
+            "    Let b = FloodFill(a, 10, 10, 7, 8, 9)",   // fills the black region
+            "    Print(ScribblerGetPixel(b, 15, 15))",
+            "    Print(ScribblerGetPixel(b, 3, 3))",       // the white line survives
+            ""));
+        string output = RunFile(program);
+        Assert.Equal(string.Join('\n',
+            "Array(255, 255, 255)",
+            "Array(255, 255, 255)",
+            "Array(255, 255, 255)",
+            "Array(0, 0, 0)",
+            "Array(7, 8, 9)",
+            "Array(255, 255, 255)",
+            ""), output);
+    }
+
+    [Fact]
     public void FillGetPixelRoundTripAndBounds()
     {
         string output = RunHeadless(string.Join('\n',

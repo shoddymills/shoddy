@@ -67,11 +67,11 @@ with `F5`** (section 6), and mill commands — **Shoddy: Run File**
 File**, and **Show Generated C#**.
 
 The extension is plain JavaScript — no build step. A packaged
-`vscode-shoddy-0.9.0.vsix` ships in the folder; install it from the repo
+`vscode-shoddy-0.9.1.vsix` ships in the folder; install it from the repo
 root (works on macOS, Windows, and Linux):
 
 ```sh
-code --install-extension vscode-shoddy/vscode-shoddy-0.9.0.vsix
+code --install-extension vscode-shoddy/vscode-shoddy-0.9.1.vsix
 ```
 
 Or in VS Code: Extensions view → `···` menu → **Install from VSIX…** →
@@ -91,7 +91,8 @@ Extension Development Host with it loaded.
 
 Then reload VS Code (`Cmd+Shift+P` → **Developer: Reload Window**).
 The extension finds the mill via the `shoddy.millPath` setting, falling
-back to the workspace's `bin/mill`, then `mill` on your PATH.
+back to the workspace's `bin/mill` (`bin/mill.exe` on Windows), then
+`mill` on your PATH.
 
 The repo's `.vscode/settings.json` pins what matters either way:
 Shoddy's blocks are indentation-based (a tab counts as 4) and the whole

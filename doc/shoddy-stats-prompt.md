@@ -10,9 +10,11 @@ Two prompts, run in order. Prompt 1 is runtime (C#) work; Prompt 2 is machine
 are the shared spec both prompts refer to.
 
 Out of scope for both: visualizations (histogram, bar, box, scatter). Those
-become a separate `statplot.shoddy` machine after the turtle graphics machine
-lands, layered on turtle/scribbler. The visualization table stays here so the
-list is complete.
+were deferred until the turtle graphics machine landed, and have since
+shipped as `machines/plotter.shoddy` — layered on scribbler + stats, with
+headless pixel tests in `PlotterTests.cs`, a demo in
+`tst/plotter-demo.shoddy`, and `doc/machines/plotter.html`. The
+visualization table stays here so the list is complete.
 
 ---
 
@@ -167,12 +169,12 @@ Also in this prompt:
 |------|------|-------|
 | Random sampling / shuffling | Extended | Impure; lives in random.shoddy |
 
-### Visualizations — deferred to statplot.shoddy (after turtle)
+### Visualizations — shipped as plotter.shoddy
 
 | Item | Tier | Notes |
 |------|------|-------|
-| Histogram | Core | |
-| Bar chart | Core | |
-| Pie chart | Core | Often taught, even if not ideal |
-| Box plot | Core | For spread and outliers |
-| Scatter plot | Core | |
+| Histogram | Core | `Histogram(sc, xs, bins)` — equal-width bins, min to max |
+| Bar chart | Core | `BarChart(sc, labels, values)` |
+| Pie chart | Core | `PieChart(sc, labels, values)` — flood-filled wedges + legend |
+| Box plot | Core | `BoxPlot(sc, xs)` — 1.5×IQR whiskers, outliers dotted red |
+| Scatter plot | Core | `ScatterPlot(sc, xs, ys)` |

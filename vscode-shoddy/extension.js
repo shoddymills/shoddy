@@ -6,13 +6,15 @@ const fs = require('fs');
 const path = require('path');
 
 /** The mill executable: the shoddy.millPath setting, else the
- * workspace's bin/mill, else `mill` on PATH. */
+ * workspace's bin/mill (bin/mill.exe on Windows), else `mill` on PATH. */
 function millPath() {
     const configured = vscode.workspace.getConfiguration('shoddy').get('millPath');
     if (configured) return configured;
     for (const folder of vscode.workspace.workspaceFolders || []) {
         const candidate = path.join(folder.uri.fsPath, 'bin', 'mill');
         if (fs.existsSync(candidate)) return candidate;
+        if (process.platform === 'win32' && fs.existsSync(candidate + '.exe'))
+            return candidate + '.exe';
     }
     return 'mill';
 }
@@ -42,7 +44,10 @@ function millInTerminal(subcommand) {
         if (!file) return;
         const t = terminal();
         t.show(true);
-        t.sendText(`"${millPath()}" ${subcommand} "${file}"`);
+        // PowerShell needs the call operator to run a quoted path;
+        // cmd and POSIX shells choke on it.
+        const call = /powershell|pwsh/i.test(vscode.env.shell || '') ? '& ' : '';
+        t.sendText(`${call}"${millPath()}" ${subcommand} "${file}"`);
     };
 }
 

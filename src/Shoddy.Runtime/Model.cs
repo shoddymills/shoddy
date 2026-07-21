@@ -44,7 +44,7 @@ public sealed class Node
         new(NType.Word, line) { Str = name, File = file };
 }
 
-public enum VType { Num, Str, Bool, Quot, Rec, Arr }
+public enum VType { Num, Str, Bool, Quot, Rec, Arr, Scribbler }
 
 public sealed class TypeDef
 {
@@ -64,6 +64,7 @@ public sealed class Value
     public bool B;
     public TypeDef? RType;      // Rec: which TYPE this record is
     public Value[]? Elems;      // Rec field values / Arr elements
+    public ScribblerHandle? Scribbler;  // Scribbler: opaque mutable reference
 
     // Quotations are CLR closures: a body Action (null = push each item),
     // a QItem array for sequence ops and printing, and an identity object
@@ -80,6 +81,7 @@ public sealed class Value
         new() { T = VType.Quot, CId = id, CItems = items, Body = body };
     public static Value OfRec(TypeDef t, Value[] fields) => new() { T = VType.Rec, RType = t, Elems = fields };
     public static Value OfArr(Value[] elems) => new() { T = VType.Arr, Elems = elems };
+    public static Value OfScribbler(ScribblerHandle h) => new() { T = VType.Scribbler, Scribbler = h };
 
     public static string TypeName(VType t) => t switch
     {
@@ -89,6 +91,7 @@ public sealed class Value
         VType.Quot => "QUOTATION",
         VType.Rec => "RECORD",
         VType.Arr => "ARRAY",
+        VType.Scribbler => "SCRIBBLER",
         _ => "?",
     };
 }

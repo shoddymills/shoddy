@@ -20,7 +20,7 @@ public sealed partial class Engine
 {
     readonly List<Value> Stk = new();
     readonly FileStream?[] files = new FileStream?[16];
-    readonly Random rnd = new();
+    Random rnd = new();   // reassigned by SEED for reproducible runs
     readonly TextWriter O;
     readonly TextReader In;
 
@@ -167,6 +167,8 @@ public sealed partial class Engine
                 for (int k = 0; k < a.Elems.Length; k++)
                     if (!EqualValues(a.Elems[k], b.Elems[k])) return false;
                 return true;
+            case VType.Scribbler:               // opaque mutable reference
+                return ReferenceEquals(a.Scribbler, b.Scribbler);
         }
         return false;
     }
@@ -278,8 +280,17 @@ public sealed partial class Engine
                 if (b == 0) throw Die(line, "MOD by zero");
                 PushNum(a % b); return true;    // C fmod semantics
             }
+            case "WRAP":
+            {
+                // Floored modulo: result carries the divisor's sign, so
+                // Wrap(-10, 360) is 350, not -10 — angle and index wrapping.
+                double b = PopNum(line, w), a = PopNum(line, w);
+                if (b == 0) throw Die(line, "WRAP by zero");
+                PushNum(a - b * Math.Floor(a / b)); return true;
+            }
             case "NEGATE": PushNum(-PopNum(line, w)); return true;
             case "ABS": PushNum(Math.Abs(PopNum(line, w))); return true;
+            case "SGN": { double a = PopNum(line, w); PushNum(a < 0 ? -1 : a > 0 ? 1 : 0); return true; }
             case "MIN": { double b = PopNum(line, w), a = PopNum(line, w); PushNum(a < b ? a : b); return true; }
             case "MAX": { double b = PopNum(line, w), a = PopNum(line, w); PushNum(a > b ? a : b); return true; }
             case "SQR":
@@ -291,6 +302,7 @@ public sealed partial class Engine
             case "FLOOR": PushNum(Math.Floor(PopNum(line, w))); return true;
             case "CEIL": PushNum(Math.Ceiling(PopNum(line, w))); return true;
             case "ROUND": PushNum(Math.Floor(PopNum(line, w) + 0.5)); return true;   // half-up
+            case "FIX": PushNum(Math.Truncate(PopNum(line, w))); return true;   // toward zero, unlike FLOOR
             case "^":
             {
                 double b = PopNum(line, w), a = PopNum(line, w);
@@ -302,6 +314,19 @@ public sealed partial class Engine
             case "COS": PushNum(Math.Cos(PopNum(line, w))); return true;
             case "TAN": PushNum(Math.Tan(PopNum(line, w))); return true;
             case "ATN": PushNum(Math.Atan(PopNum(line, w))); return true;
+            case "ATN2": { double x = PopNum(line, w), y = PopNum(line, w); PushNum(Math.Atan2(y, x)); return true; }
+            case "ASIN":
+            {
+                double a = PopNum(line, w);
+                if (a < -1 || a > 1) throw Die(line, "ASIN outside [-1, 1]");
+                PushNum(Math.Asin(a)); return true;
+            }
+            case "ACOS":
+            {
+                double a = PopNum(line, w);
+                if (a < -1 || a > 1) throw Die(line, "ACOS outside [-1, 1]");
+                PushNum(Math.Acos(a)); return true;
+            }
             case "EXP": PushNum(Math.Exp(PopNum(line, w))); return true;
             case "LOG":
             {
@@ -309,8 +334,40 @@ public sealed partial class Engine
                 if (a <= 0) throw Die(line, "LOG of non-positive number");
                 PushNum(Math.Log(a)); return true;
             }
+            case "LOG10":
+            {
+                double a = PopNum(line, w);
+                if (a <= 0) throw Die(line, "LOG10 of non-positive number");
+                PushNum(Math.Log10(a)); return true;
+            }
             case "PI": PushNum(Math.PI); return true;
             case "RND": PushNum(rnd.NextDouble()); return true;   // ( -- x ), in [0,1)
+            case "SEED": rnd = new Random((int)PopNum(line, w)); return true;   // ( n -- ) reproducible RND
+
+            /* ---- special functions (stats CDFs; not in System.Math) ---- */
+            case "ERF":                         // ( x -- erf(x) ), odd, range (-1,1)
+            {
+                double x = PopNum(line, w);
+                double p = GammaP(0.5, x * x);  // erf(|x|) = P(1/2, x^2)
+                PushNum(x >= 0 ? p : -p);
+                return true;
+            }
+            case "GAMMAP":                      // ( a x -- P(a,x) ), regularized lower incomplete gamma
+            {
+                double x = PopNum(line, w), a = PopNum(line, w);
+                if (a <= 0) throw Die(line, "GAMMAP: A must be positive");
+                if (x < 0) throw Die(line, "GAMMAP: X must be non-negative");
+                PushNum(GammaP(a, x));
+                return true;
+            }
+            case "BETAI":                       // ( a b x -- I_x(a,b) ), regularized incomplete beta
+            {
+                double x = PopNum(line, w), bb = PopNum(line, w), aa = PopNum(line, w);
+                if (aa <= 0 || bb <= 0) throw Die(line, "BETAI: A and B must be positive");
+                if (x < 0 || x > 1) throw Die(line, "BETAI: X outside [0, 1]");
+                PushNum(BetaI(aa, bb, x));
+                return true;
+            }
 
             /* ---- errors and testing ---- */
             case "ERROR": throw Die(line, PopStr(line, w));
@@ -572,9 +629,49 @@ public sealed partial class Engine
             }
             case "INPUT":                       // ( prompt -- s )
             {
+                // The console and a scribbler window are separate input
+                // channels routed by OS focus; reading the console while a
+                // window is up silently hangs, so it is refused instead.
+                if (Volatile.Read(ref ScribblerRegistry.OpenCount) > 0)
+                    throw Die(line, "Input: cannot read the console while a scribbler window is open" +
+                                    " — read keystrokes with ScribblerWait or ScribblerPoll.");
                 O.Write(PopStr(line, w));
                 O.Flush();
                 PushStr(In.ReadLine() ?? "");
+                return true;
+            }
+            case "INKEY":                       // ( -- s ) one pending keystroke, "" if none
+            {
+                // Non-blocking and unechoed, unlike INPUT: returns at once
+                // with "" when nothing is pending, so a game loop can poll
+                // it between frames. Arrow keys and PF1-4 arrive as their
+                // VT100 application-mode sequences (ESC OA .. ESC OS), the
+                // exact strings machines/vt100.shoddy's EvalKey classifies.
+                if (Volatile.Read(ref ScribblerRegistry.OpenCount) > 0)
+                    throw Die(line, "InKey: cannot read the console while a scribbler window is open" +
+                                    " — read keystrokes with ScribblerWait or ScribblerPoll.");
+                if (!ReferenceEquals(In, Console.In) || Console.IsInputRedirected)
+                {
+                    // Redirected or test-supplied input: consume one pending
+                    // character; "" at end of input. Keeps INKEY testable
+                    // headless (feed a StringReader) and sane under pipes.
+                    PushStr(In.Peek() < 0 ? "" : ((char)In.Read()).ToString());
+                    return true;
+                }
+                if (!Console.KeyAvailable) { PushStr(""); return true; }
+                ConsoleKeyInfo k = Console.ReadKey(intercept: true);
+                PushStr(k.Key switch
+                {
+                    ConsoleKey.UpArrow => "\x1bOA",
+                    ConsoleKey.DownArrow => "\x1bOB",
+                    ConsoleKey.RightArrow => "\x1bOC",
+                    ConsoleKey.LeftArrow => "\x1bOD",
+                    ConsoleKey.F1 => "\x1bOP",
+                    ConsoleKey.F2 => "\x1bOQ",
+                    ConsoleKey.F3 => "\x1bOR",
+                    ConsoleKey.F4 => "\x1bOS",
+                    _ => k.KeyChar == '\0' ? "" : k.KeyChar.ToString(),
+                });
                 return true;
             }
             case "ARGS":                        // ( -- [args] ) program arguments
@@ -698,6 +795,26 @@ public sealed partial class Engine
                 }
                 return true;
             }
+            case "SORT":                        // ascending; result has the input's kind
+            {
+                Value l = PopSeq(line, w);
+                int n = SeqLen(l);
+                var vals = new Value[n];
+                bool nums = true, strs = true;
+                for (int k = 0; k < n; k++)
+                {
+                    vals[k] = SeqItem(l, k, line, w);
+                    nums &= vals[k].T == VType.Num;
+                    strs &= vals[k].T == VType.Str;
+                }
+                if (!nums && !strs)
+                    throw Die(line, "SORT expects all NUMBERs or all STRINGs");
+                if (nums) Array.Sort(vals, (a, b) => a.Num.CompareTo(b.Num));
+                else Array.Sort(vals, (a, b) => string.CompareOrdinal(a.Str, b.Str));
+                if (l.T == VType.Arr) Push(Value.OfArr(vals));
+                else Push(NewValueList(new List<Value>(vals), line));
+                return true;
+            }
             case "CONCAT":
             {
                 Value b = PopSeq(line, w), a = PopSeq(line, w);
@@ -805,18 +922,206 @@ public sealed partial class Engine
                 Push(Value.OfCQuot(res, res));
                 return true;
             }
+
+            /* ---- timing (no window required) ----
+               TICKS is for measuring (frame pacing, deltas) and is the only
+               clock animation may use; CLOCK is for stamping (logs, file
+               names) and jumps whenever the OS adjusts system time. */
+            case "TICKS":                       // ( -- n ) monotonic ms, fractional
+                PushNum(Ticker.Now);
+                return true;
+            case "SLEEP":                       // ( ms -- ) yield the calling thread
+            {
+                double ms = PopNum(line, w);
+                if (ms > 0) Thread.Sleep((int)Math.Min(ms, int.MaxValue));
+                return true;
+            }
+            case "CLOCK":                       // ( -- arr ) wall clock, 7 fields
+            {
+                DateTime t = DateTime.Now;
+                Push(Value.OfArr(new[]
+                {
+                    Value.OfNum(t.Year), Value.OfNum(t.Month), Value.OfNum(t.Day),
+                    Value.OfNum(t.Hour), Value.OfNum(t.Minute), Value.OfNum(t.Second),
+                    Value.OfNum(t.Millisecond),
+                }));
+                return true;
+            }
+
+            /* ---- scribblers ----
+               Every word leaves exactly one value (surface calls have no
+               arity check, and a word leaving two strands one per call
+               site); mutators return the scribbler so Let sc = ... reads
+               functionally even though the handle mutates in place. */
+            case "SCRIBBLEROPEN":               // ( width height -- scribbler )
+            {
+                int hgt = (int)PopNum(line, w), wid = (int)PopNum(line, w);
+                Func<int, int, ScribblerHandle>? create = ScribblerRegistry.CreateScribbler;
+                if (create == null)
+                    throw Die(line, "ScribblerOpen: no window backend — scribbler programs require `mill run`");
+                if (wid < 1 || hgt < 1)
+                    throw Die(line, $"ScribblerOpen: size must be at least 1x1, got {wid}x{hgt}");
+                ScribblerHandle h = create(wid, hgt);    // blocks until the window exists
+                h.Width = wid; h.Height = hgt;
+                if (h.Pixels.Length != wid * hgt * 4) h.Pixels = new byte[wid * hgt * 4];
+                Interlocked.Increment(ref ScribblerRegistry.OpenCount);
+                Push(Value.OfScribbler(h));
+                return true;
+            }
+            case "SCRIBBLERPIXEL":              // ( scribbler x y r g b -- scribbler )
+            {
+                byte b = Chan(PopNum(line, w)), g = Chan(PopNum(line, w)), r = Chan(PopNum(line, w));
+                int y = (int)PopNum(line, w), x = (int)PopNum(line, w);
+                Value v = PopScrib(line, w);
+                v.Scribbler!.SetPixelClamped(x, y, r, g, b);
+                Push(v);
+                return true;
+            }
+            case "SCRIBBLERFILL":               // ( scribbler r g b -- scribbler )
+            {
+                byte b = Chan(PopNum(line, w)), g = Chan(PopNum(line, w)), r = Chan(PopNum(line, w));
+                Value v = PopScrib(line, w);
+                byte[] px = v.Scribbler!.Pixels;
+                for (int i = 0; i < px.Length; i += 4)
+                {
+                    px[i] = r; px[i + 1] = g; px[i + 2] = b; px[i + 3] = 255;
+                }
+                Push(v);
+                return true;
+            }
+            case "SCRIBBLERTEXT":               // ( scribbler x y scale r g b text -- scribbler )
+            {
+                string text = PopStr(line, w);
+                byte b = Chan(PopNum(line, w)), g = Chan(PopNum(line, w)), r = Chan(PopNum(line, w));
+                int scale = (int)PopNum(line, w);
+                int y = (int)PopNum(line, w), x = (int)PopNum(line, w);
+                Value v = PopScrib(line, w);
+                Font8x8.DrawText(v.Scribbler!, text, x, y, scale, r, g, b);
+                Push(v);
+                return true;
+            }
+            case "SCRIBBLERGETPIXEL":           // ( scribbler x y -- arr ) r,g,b; OOB reads 0,0,0
+            {
+                int y = (int)PopNum(line, w), x = (int)PopNum(line, w);
+                ScribblerHandle h = PopScrib(line, w).Scribbler!;
+                double r = 0, g = 0, b = 0;
+                if (x >= 0 && y >= 0 && x < h.Width && y < h.Height)
+                {
+                    int i = (y * h.Width + x) * 4;
+                    r = h.Pixels[i]; g = h.Pixels[i + 1]; b = h.Pixels[i + 2];
+                }
+                Push(Value.OfArr(new[] { Value.OfNum(r), Value.OfNum(g), Value.OfNum(b) }));
+                return true;
+            }
+            case "SCRIBBLERWIDTH":              // ( scribbler -- n )
+                PushNum(PopScrib(line, w).Scribbler!.Width);
+                return true;
+            case "SCRIBBLERHEIGHT":             // ( scribbler -- n )
+                PushNum(PopScrib(line, w).Scribbler!.Height);
+                return true;
+            case "SCRIBBLERBLIT":               // ( scribbler -- scribbler )
+            {
+                Value v = PopScrib(line, w);
+                ScribblerHandle h = v.Scribbler!;
+                h.OnBlit?.Invoke(h.Pixels, h.Width, h.Height);   // headless: no-op
+                Push(v);
+                return true;
+            }
+            case "SCRIBBLERCLOSE":              // ( scribbler -- scribbler ) idempotent
+            {
+                Value v = PopScrib(line, w);
+                ScribblerHandle h = v.Scribbler!;
+                if (h.MarkClosed())             // exactly once, against window teardown too
+                {
+                    ScribblerRegistry.NoteClosed();
+                    h.OnClose?.Invoke();        // mill: destroy the window (bookkeeping done here)
+                    h.Signal.Release();         // teardown release — wake any waiter
+                }
+                Push(v);
+                return true;
+            }
+            case "SCRIBBLERTITLE":              // ( scribbler title -- scribbler )
+            {
+                string title = PopStr(line, w);
+                Value v = PopScrib(line, w);
+                v.Scribbler!.Title = title;
+                v.Scribbler.OnSetTitle?.Invoke(title);
+                Push(v);
+                return true;
+            }
+            case "SCRIBBLERPOLL":               // ( scribbler -- arr ) kind 0 = queue empty
+            {
+                ScribblerHandle h = PopScrib(line, w).Scribbler!;
+                Push(EventArray(h.TryTake(out ScribblerEvent ev) ? ev : null));
+                return true;
+            }
+            case "SCRIBBLERWAIT":               // ( scribbler -- arr ) zero CPU while waiting
+            {
+                ScribblerHandle h = PopScrib(line, w).Scribbler!;
+                while (true)
+                {
+                    if (h.TryTake(out ScribblerEvent ev)) { Push(EventArray(ev)); return true; }
+                    if (h.Closed)               // teardown wake with an empty queue
+                    {
+                        Push(EventArray(new ScribblerEvent
+                        {
+                            Type = ScribblerEvent.Kind.Quit, At = Ticker.Now,
+                        }));
+                        return true;
+                    }
+                    if (h.OnBlit == null)       // headless: nothing will ever wake it
+                        throw Die(line, "ScribblerWait: no window backs this scribbler — the wait would never wake");
+                    h.Signal.Wait();
+                }
+            }
+            case "SCRIBBLERSETINTERVAL":        // ( scribbler ms -- scribbler ) 0 = off
+            {
+                int ms = (int)PopNum(line, w);
+                Value v = PopScrib(line, w);
+                v.Scribbler!.OnSetInterval?.Invoke(Math.Max(ms, 0));   // headless: no-op
+                Push(v);
+                return true;
+            }
         }
         return false;
     }
+
+    Value PopScrib(int line, string who)
+    {
+        Value v = Pop(line);
+        if (v.T != VType.Scribbler)
+            throw Die(line, $"{who} expects a SCRIBBLER, got {Value.TypeName(v.T)}");
+        return v;
+    }
+
+    static byte Chan(double d) => (byte)Math.Clamp((int)d, 0, 255);
+
+    /// <summary>The 8-element event array SCRIBBLERPOLL and SCRIBBLERWAIT
+    /// return: kind, x, y, button, key, keyChar, mods, at. Null means the
+    /// queue was empty — kind 0 (None) with every field zeroed. A flat
+    /// Array, not a record: a builtin cannot reach a TypeDef, so decoding
+    /// into the sum type is machines/scribbler.shoddy's job.</summary>
+    static Value EventArray(ScribblerEvent? e) => Value.OfArr(new[]
+    {
+        Value.OfNum(e == null ? 0 : (int)e.Type),
+        Value.OfNum(e?.X ?? 0),
+        Value.OfNum(e?.Y ?? 0),
+        Value.OfNum(e?.Button ?? 0),
+        Value.OfNum(e?.Key ?? 0),
+        Value.OfStr(e?.KeyChar ?? ""),
+        Value.OfNum(e == null ? 0 : (int)e.Mods),
+        Value.OfNum(e?.At ?? 0),
+    });
 
     /// <summary>The full builtin vocabulary — used by the compiler to
     /// resolve words at weave time. Must match the switch above.</summary>
     public static readonly HashSet<string> BuiltinWords = new()
     {
         "DUP", "DROP", "SWAP", "OVER", "ROT", "NIP", "TUCK", "DEPTH",
-        "+", "-", "*", "/", "MOD", "NEGATE", "ABS", "MIN", "MAX", "SQR",
-        "FLOOR", "CEIL", "ROUND", "^", "SIN", "COS", "TAN", "ATN", "EXP",
-        "LOG", "PI", "RND",
+        "+", "-", "*", "/", "MOD", "WRAP", "NEGATE", "ABS", "SGN", "MIN", "MAX", "SQR",
+        "FLOOR", "CEIL", "ROUND", "FIX", "^", "SIN", "COS", "TAN", "ATN", "ATN2",
+        "ASIN", "ACOS", "EXP", "LOG", "LOG10", "PI", "RND", "SEED",
+        "ERF", "GAMMAP", "BETAI",
         "ERROR", "ASSERT", "INSTR",
         "=", "<>", "<", ">", "<=", ">=",
         "AND", "OR", "NOT", "TRUE", "FALSE",
@@ -825,12 +1130,114 @@ public sealed partial class Engine
         "PRINT", "READFILE", "WRITEFILE", "APPENDFILE", "FILEEXISTS",
         "DELETEFILE", "BOPEN", "BCLOSE", "SEEK", "BPOS", "BSIZE",
         "PUTNUM", "GETNUM", "PUTBOOL", "GETBOOL", "PUTSTR", "GETSTR",
-        "INPUT", "ARGS",
+        "INPUT", "INKEY", "ARGS",
         "CALL", "IFTE", "MAP", "FILTER", "FOLD", "EACH", "TIMES", "RANGE",
-        "LENGTH", "REVERSE", "CONCAT",
+        "LENGTH", "REVERSE", "CONCAT", "SORT",
         "ISEMPTY", "FIRST", "NTH", "SETNTH", "DIM", "TOARRAY", "TOLIST",
         "REST", "PREPEND",
+        "TICKS", "SLEEP", "CLOCK",
+        "SCRIBBLEROPEN", "SCRIBBLERPIXEL", "SCRIBBLERFILL", "SCRIBBLERTEXT",
+        "SCRIBBLERGETPIXEL", "SCRIBBLERWIDTH", "SCRIBBLERHEIGHT",
+        "SCRIBBLERBLIT", "SCRIBBLERCLOSE", "SCRIBBLERTITLE", "SCRIBBLERPOLL",
+        "SCRIBBLERWAIT", "SCRIBBLERSETINTERVAL",
     };
+
+    // ---- special functions ----------------------------------------------
+    // erf, the regularized lower incomplete gamma P(a,x), and the
+    // regularized incomplete beta I_x(a,b) are not in the BCL. These are
+    // the classic implementations — Lanczos log-gamma, power series and
+    // modified-Lentz continued fractions — accurate to ~1e-14 relative
+    // over the ranges the stats machine uses.
+
+    /// <summary>ln Γ(x) for x &gt; 0 (Lanczos, g=5, n=6).</summary>
+    static double GammLn(double x)
+    {
+        double y = x, tmp = x + 5.5;
+        tmp -= (x + 0.5) * Math.Log(tmp);
+        double ser = 1.000000000190015;
+        ser += 76.18009172947146 / ++y;
+        ser += -86.50532032941677 / ++y;
+        ser += 24.01409824083091 / ++y;
+        ser += -1.231739572450155 / ++y;
+        ser += 0.1208650973866179e-2 / ++y;
+        ser += -0.5395239384953e-5 / ++y;
+        return -tmp + Math.Log(2.5066282746310005 * ser / x);
+    }
+
+    /// <summary>Regularized lower incomplete gamma P(a, x), a &gt; 0, x ≥ 0.
+    /// Series for x &lt; a+1, continued fraction for the complement above.</summary>
+    static double GammaP(double a, double x)
+    {
+        if (x == 0) return 0;
+        if (x < a + 1)                          // series converges fast here
+        {
+            double ap = a, sum = 1 / a, del = sum;
+            for (int k = 0; k < 500; k++)
+            {
+                ap += 1;
+                del *= x / ap;
+                sum += del;
+                if (Math.Abs(del) < Math.Abs(sum) * 1e-16) break;
+            }
+            return sum * Math.Exp(-x + a * Math.Log(x) - GammLn(a));
+        }
+        else                                    // Lentz continued fraction for Q(a,x)
+        {
+            double b = x + 1 - a, c = 1 / 1e-300, d = 1 / b, h = d;
+            for (int k = 1; k <= 500; k++)
+            {
+                double an = -k * (k - a);
+                b += 2;
+                d = an * d + b; if (Math.Abs(d) < 1e-300) d = 1e-300;
+                c = b + an / c; if (Math.Abs(c) < 1e-300) c = 1e-300;
+                d = 1 / d;
+                double del = d * c;
+                h *= del;
+                if (Math.Abs(del - 1) < 1e-16) break;
+            }
+            return 1 - Math.Exp(-x + a * Math.Log(x) - GammLn(a)) * h;
+        }
+    }
+
+    /// <summary>Continued fraction for the incomplete beta (modified Lentz);
+    /// only valid on the fast-converging side, which BetaI arranges.</summary>
+    static double BetaCf(double a, double b, double x)
+    {
+        double qab = a + b, qap = a + 1, qam = a - 1;
+        double c = 1, d = 1 - qab * x / qap;
+        if (Math.Abs(d) < 1e-300) d = 1e-300;
+        d = 1 / d;
+        double h = d;
+        for (int m = 1; m <= 500; m++)
+        {
+            int m2 = 2 * m;
+            double aa = m * (b - m) * x / ((qam + m2) * (a + m2));
+            d = 1 + aa * d; if (Math.Abs(d) < 1e-300) d = 1e-300;
+            c = 1 + aa / c; if (Math.Abs(c) < 1e-300) c = 1e-300;
+            d = 1 / d;
+            h *= d * c;
+            aa = -(a + m) * (qab + m) * x / ((a + m2) * (qap + m2));
+            d = 1 + aa * d; if (Math.Abs(d) < 1e-300) d = 1e-300;
+            c = 1 + aa / c; if (Math.Abs(c) < 1e-300) c = 1e-300;
+            d = 1 / d;
+            double del = d * c;
+            h *= del;
+            if (Math.Abs(del - 1) < 1e-16) break;
+        }
+        return h;
+    }
+
+    /// <summary>Regularized incomplete beta I_x(a, b), a,b &gt; 0, x in [0,1].</summary>
+    static double BetaI(double a, double b, double x)
+    {
+        if (x == 0) return 0;
+        if (x == 1) return 1;
+        double bt = Math.Exp(GammLn(a + b) - GammLn(a) - GammLn(b)
+                             + a * Math.Log(x) + b * Math.Log(1 - x));
+        if (x < (a + 1) / (a + b + 2))
+            return bt * BetaCf(a, b, x) / a;
+        return 1 - bt * BetaCf(b, a, 1 - x) / b;    // symmetry: faster side
+    }
 
     /// <summary>C strtod semantics: parse the longest numeric prefix
     /// (sign, digits, decimal point, exponent); false if none.</summary>

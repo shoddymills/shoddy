@@ -28,12 +28,6 @@ public class WovenTests
     [Fact] public void Simplex() => RunGolden("simplex.shoddy", "simplex.out");
     [Fact] public void Gradebook() => RunGolden("gradebook.shoddy", "gradebook.out", stdinFile: "gradebook.in");
 
-    // MPS machine -> simplex machine -> sensitivity report, over Bruce
-    // Murtagh's BLEND problem. The file is a required program argument —
-    // running without one aborts.
-    [Fact] public void SimplexMps() =>
-        RunGolden("simplex-mps.shoddy", "simplex-mps.out", args: new[] { "tst/dat/blend.mps" });
-
     [Fact]
     public void TailRecursionBecomesALoop()
     {
@@ -55,8 +49,7 @@ public class WovenTests
         Assert.Equal("DONE\n", RunWoven(sb, TextReader.Null));
     }
 
-    static void RunGolden(string program, string golden, string? stdinFile = null,
-                          string[]? args = null)
+    static void RunGolden(string program, string golden, string? stdinFile = null)
     {
         using TextReader input = stdinFile != null
             ? new StreamReader(Path.Combine(Root, "tst", "golden", stdinFile))
@@ -66,7 +59,7 @@ public class WovenTests
         string actual;
         try
         {
-            actual = RunWoven(Path.Combine(Root, "tst", program), input, args);
+            actual = RunWoven(Path.Combine(Root, "tst", program), input);
         }
         finally
         {

@@ -1,0 +1,95 @@
+Rem Copyright (c) 2026 Stephen Vincent Foster. All rights reserved.
+Rem
+Rem This file is part of the Shoddy Language project.
+Rem Licensed under the Shoddy Language License 1.0.0 (PolyForm Noncommercial
+Rem License 1.0.0 with Additional Use Grant). See the LICENSE file in the
+Rem project root for full terms.
+
+Rem ==================================================================
+Rem clock.shoddy — Shoddy standard library: time
+Rem
+Rem The window-independent timing layer over the Ticks/Sleep/Clock
+Rem builtins, usable by any console program — the builtins are callable
+Rem without including anything; this machine is the derived layer, the
+Rem way vt100.shoddy is derived from Chr.
+Rem
+Rem Ticks() and Clock() are deliberately different clocks. Ticks() is
+Rem for MEASURING — frame pacing, deltas, benchmarks — monotonic
+Rem milliseconds since program start, and the only clock animation may
+Rem use. Clock() is for STAMPING — logs, filenames — a 7-element Array
+Rem [year, month, day, hour, minute, second, ms] of wall-clock time,
+Rem which jumps whenever the OS adjusts system time.
+Rem
+Rem No Def here may be named Ticks, Sleep, or Clock — a Def silently
+Rem shadows a builtin.
+Rem ==================================================================
+
+Rem ---- measuring -----------------------------------------------------
+
+Def Elapsed(since As Number) As Number
+    Ticks() - since
+
+Def TimeIt(f As [ -- ]) As Number
+    Let start = Ticks()
+    Call(f)
+    Ticks() - start
+
+Rem Sleep whatever remains until Ticks() reaches t (nothing if past).
+Def SleepUntil(t As Number)
+    Sleep(Max(0, t - Ticks()))
+
+Rem ---- stamping ------------------------------------------------------
+
+Rem ISO-8601, e.g. "2026-07-20T14:03:07.042" — one Clock() read, so the
+Rem date and time halves can never straddle midnight.
+Def Stamp() As String
+    Let c = Clock()
+    DateOf(c) & "T" & TimeOf(c)
+
+Def StampDate() As String
+    DateOf(Clock())
+
+Def StampTime() As String
+    TimeOf(Clock())
+
+Def DateOf(c As Array Of Number) As String
+    Str(Nth(c, 1)) & "-" & Pad2(Nth(c, 2)) & "-" & Pad2(Nth(c, 3))
+
+Def TimeOf(c As Array Of Number) As String
+    Pad2(Nth(c, 4)) & ":" & Pad2(Nth(c, 5)) & ":" & Pad2(Nth(c, 6)) & "." & Pad3(Nth(c, 7))
+
+Rem ---- formatting ----------------------------------------------------
+
+Rem "1m 04.2s" for 64200; "4.2s" under a minute.
+Def FormatDuration(ms As Number) As String
+    Let totalSecs = ms / 1000
+    Let mins = Floor(totalSecs / 60)
+    Let secs = totalSecs - mins * 60
+    If mins > 0 Then
+        Str(mins) & "m " & PadSecs(secs) & "s"
+    Else
+        SecsStr(secs) & "s"
+
+Rem Seconds to one decimal place, e.g. "4.2" ("4" when it lands whole).
+Def SecsStr(s As Number) As String
+    Str(Round(s * 10) / 10)
+
+Def PadSecs(s As Number) As String
+    If s < 10 Then
+        "0" & SecsStr(s)
+    Else
+        SecsStr(s)
+
+Rem ---- padding helpers -----------------------------------------------
+
+Def Pad2(n As Number) As String
+    If n < 10 Then
+        "0" & Str(n)
+    Else
+        Str(n)
+
+Def Pad3(n As Number) As String
+    If n < 100 Then
+        "0" & Pad2(n)
+    Else
+        Str(n)

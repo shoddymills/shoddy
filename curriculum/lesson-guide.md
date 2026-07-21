@@ -70,7 +70,7 @@ inherits at launch (restart VS Code once after setting it).
    work, not just files inside the source tree):
    - Create `C:\temp\shoddytest\check.shoddy`:
      ```
-     Include "seq.shoddy"
+     Include "stats.shoddy"
 
      Def Main()
          Print(Sum({ 1, 2, 3 }))
@@ -153,8 +153,8 @@ C:\apprentice\lesson-15\
 Two things to tell an apprentice once they reach this point (see
 `agent-context.md` §3 for the underlying rule): don't name a personal file
 the same as a real `machines/*.shoddy` file (`str.shoddy`, `seq.shoddy`,
-…) — the local one silently wins with no warning, so `Split` or `Sum`
-would quietly stop being the standard library's version. And there's no
+`stats.shoddy`, …) — the local one silently wins with no warning, so
+`Split` or `Sum` would quietly stop being the standard library's version. And there's no
 way to add a *second* `SHODDYLIB`-style fallback directory — only relative
 paths let them reuse a personal file across more than one lesson folder.
 

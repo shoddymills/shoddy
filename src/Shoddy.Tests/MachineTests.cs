@@ -13,20 +13,21 @@ using Shoddy.Runtime;
 namespace Shoddy.Tests;
 
 /// <summary>
-/// The machines-as-DLLs path: build all eight standard machines in
+/// The machines-as-DLLs path: build all nine standard machines in
 /// dependency order in an isolated workspace, weave libtest against them
 /// (no source splicing for the library), and demand the same golden
 /// bytes. libtest never includes seq.shoddy directly — its surface must
-/// arrive transitively through the matrix/dict/isam machine references.
+/// arrive transitively through the matrix/dict/stats/isam machine
+/// references.
 /// </summary>
 [Collection("golden")]
 public class MachineTests
 {
     static readonly string Root = RepoRoot.Dir;
 
-    // seq and str first; the rest reference them
+    // seq and str first; the rest reference them (stats also needs dict)
     static readonly string[] BuildOrder =
-        { "seq", "str", "matrix", "money", "file", "recio", "dict", "isam" };
+        { "seq", "str", "matrix", "money", "file", "recio", "dict", "stats", "isam" };
 
     [Fact]
     public void LibTestWovenAgainstMachines()
@@ -46,8 +47,9 @@ public class MachineTests
         }
 
         var (main, set) = ParseWithMachines(Path.Combine(ws, "tst", "libtest.shoddy"));
-        Assert.Equal(8, set.Machines.Count);        // all eight resolved, incl. transitive seq
-        Assert.True(main.ExternalDefs.ContainsKey("SUM"));   // seq arrived via references
+        Assert.Equal(9, set.Machines.Count);        // all nine resolved, incl. transitive seq
+        Assert.True(main.ExternalDefs.ContainsKey("SUM"));   // stats arrived via references
+        Assert.True(main.ExternalDefs.ContainsKey("ANY"));   // seq arrived transitively
 
         string dll = Path.Combine(ws, "out", "libtest.dll");
         Directory.CreateDirectory(Path.Combine(ws, "out"));

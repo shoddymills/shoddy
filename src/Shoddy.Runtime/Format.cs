@@ -85,6 +85,9 @@ public static class Printer
                 }
                 o.Write(')');
                 break;
+            case VType.Scribbler:
+                o.Write($"Scribbler({v.Scribbler!.Width}, {v.Scribbler.Height})");
+                break;
         }
     }
 

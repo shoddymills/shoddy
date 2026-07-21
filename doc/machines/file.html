@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
+<title>file — Line-Oriented Text Files | Shoddy Machines</title>
+<style>
+:root { --ink:#1a1d27; --accent:#1e3a8a; --code-bg:#f4f5f8; --rule:#d8dbe4; }
+html { font-size:17px; }
+body { font-family:Georgia,'Times New Roman',serif; color:var(--ink); max-width:46rem; margin:2.5rem auto; padding:0 1.25rem; line-height:1.6; }
+h1,h2,h3 { font-family:Verdana,Geneva,sans-serif; color:var(--accent); line-height:1.25; margin-top:2.2rem; }
+h1 { font-size:1.7rem; border-bottom:3px solid var(--accent); padding-bottom:.4rem; }
+h1 small { display:block; color:#667; font-size:.95rem; font-weight:normal; font-family:Verdana,Geneva,sans-serif; margin-top:.3rem; }
+h2 { font-size:1.25rem; border-bottom:1px solid var(--rule); padding-bottom:.25rem; }
+h3 { font-size:1.02rem; }
+code { font-family:'Consolas','Menlo',monospace; font-size:.85em; background:var(--code-bg); padding:.08em .3em; border-radius:3px; }
+pre { background:var(--code-bg); border:1px solid var(--rule); border-left:4px solid var(--accent); padding:.8rem 1rem; overflow-x:auto; border-radius:4px; }
+pre code { background:none; padding:0; font-size:.82rem; line-height:1.45; }
+table { border-collapse:collapse; width:100%; margin:1rem 0; font-size:.88rem; font-family:Verdana,Geneva,sans-serif; }
+th { background:var(--accent); color:#fff; font-size:.78rem; text-align:left; padding:.45rem .6rem; }
+td { border:1px solid var(--rule); padding:.4rem .6rem; vertical-align:top; }
+td:first-child { font-family:'Consolas','Menlo',monospace; font-size:.82rem; white-space:nowrap; }
+tr:nth-child(even) td { background:#fafbfd; }
+a { color:var(--accent); }
+.tag { font-family:Verdana,sans-serif; font-size:.7rem; color:#7a3b8f; font-weight:bold; text-transform:uppercase; letter-spacing:.03em; }
+.crumb { font-family:Verdana,Geneva,sans-serif; font-size:.85rem; color:#667; }
+footer { margin-top:2.5rem; padding-top:1rem; border-top:1px solid var(--rule); font-family:Verdana,Geneva,sans-serif; font-size:.78rem; color:#667; }
+</style>
+</head>
+<body>
+
+<p class="crumb"><a href="index.html">&larr; Machines</a></p>
+
+<h1>file <small>Line-Oriented Text Files — machines/file.shoddy</small></h1>
+
+<h2 id="summary">Summary</h2>
+<p><code>file</code> lets a Shoddy program treat a text file as what it
+usually is: a stack of lines. You hand it a path and get back a plain list of
+strings, one per line — or you hand it a list of strings and it lays them
+down as lines on disk. That's the whole idea. It sits on top of Shoddy's
+whole-file builtins (<code>ReadFile</code>, <code>WriteFile</code>,
+<code>AppendFile</code>) and does the two fiddly bits you'd otherwise do by
+hand: splitting the text on newlines, and tidying up the line endings so a
+file written on Windows reads back the same as one written anywhere else.
+Three words, no handles to open or close — you read the file all at once, or
+you write it all at once.</p>
+
+<h2 id="why">Why It's Useful</h2>
+<p>An enormous amount of everyday data is just lines of text: a list of
+names, a to-do file, a log, a little config, the output of yesterday's run
+that today's run needs to read back. Working with that as one giant string is
+awkward — you end up hunting for newlines and worrying about whether the last
+line has one. <code>file</code> takes that chore off your hands so you can
+think in lines: read a file into a list, loop over it, filter it, sort it,
+write it back. Reach for it whenever a program needs to remember something
+between runs and that something is naturally a list of lines — and reach for
+its bigger cousin <a href="isam.html">isam</a> instead when you need to look
+individual records up by key rather than read the whole thing top to
+bottom.</p>
+
+<h2 id="guide">User's Guide</h2>
+<p>There are only three words, and they do the three obvious things: read all
+the lines, write all the lines, or add one line to the end. Because reading
+and writing each touch the whole file in one go, there's nothing to open and
+nothing to close — you just call the word and you're done.</p>
+<pre><code>Include "file.shoddy"
+
+Def Main()
+    WriteLines("names.txt", { "ADA", "LIN", "GRACE" })
+    AppendLine("names.txt", "HEDY")
+
+    Let xs = ReadLines("names.txt")
+    Print(Len(xs))                      ' 4
+    Print(xs[1])                        ' ADA
+    Each(xs, Fn(s) => Print(s))         ' ADA LIN GRACE HEDY, one per line</code></pre>
+<p>A few things worth knowing:</p>
+<ul>
+<li><strong>Every line gets a newline, including the last.</strong>
+<code>WriteLines</code> joins your list with newlines <em>and</em> adds a
+final one, so the file ends cleanly. <code>ReadLines</code> knows this and
+quietly drops that trailing blank, so what you write is what you read back —
+no phantom empty line at the end.</li>
+<li><strong>Windows line endings are handled for you.</strong>
+<code>ReadLines</code> strips out carriage returns (<code>\r</code>) before
+splitting, so a file saved with <code>\r\n</code> endings comes back as the
+same clean list as one saved with plain <code>\n</code>. You never have to
+think about which machine wrote the file.</li>
+<li><strong>An empty file reads as an empty list.</strong> Reading a file
+whose contents are <code>""</code> gives you <code>{ }</code>, not a list
+containing one empty string — the sensible answer for "no lines here."</li>
+<li><strong>Writing replaces; appending adds.</strong>
+<code>WriteLines</code> overwrites whatever was there before with your whole
+list. <code>AppendLine</code> leaves the file alone and tacks one more line
+onto the end — handy for logs, where you want to keep adding without rereading
+and rewriting the lot each time.</li>
+<li><strong>These words touch the outside world.</strong> Like
+<code>Print</code> and <code>Input</code>, reading and writing files are
+effectful — they don't just compute a value, they change what's on disk. Keep
+them at the edges of your program, where the file-shuffling happens, and let
+the rest stay pure.</li>
+</ul>
+
+<h2 id="words">Word Reference</h2>
+<p class="tag">3 words</p>
+
+<h3>Reading and writing lines</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>ReadLines(path)</td><td>Reads the whole file at <code>path</code> and
+hands it back as a list of strings, one per line. Carriage returns
+(<code>\r</code>) are stripped first, so Windows-style files read back the
+same as any other, and a single trailing newline is dropped. An empty file
+gives you an empty list.</td></tr>
+<tr><td>WriteLines(path, xs)</td><td>Writes the list of strings <code>xs</code>
+to the file at <code>path</code>, one line each, with a newline after every
+line (including the last). Overwrites whatever was there before.</td></tr>
+<tr><td>AppendLine(path, s)</td><td>Adds the single string <code>s</code> as a
+new line at the end of the file at <code>path</code>, followed by a newline.
+Leaves the existing contents untouched — good for growing a log.</td></tr>
+</table>
+
+<footer>
+<p><em>Making useless things useful, through skill.</em> &mdash;
+<a href="index.html">Machines index</a> &middot;
+<a href="../GUIDE.html">Beginner's Guide</a> &middot;
+<a href="../SPEC.html">Language Spec</a> &middot;
+<a href="../QUICKREF.html">Quick Reference</a></p>
+</footer>
+
+</body>
+</html>

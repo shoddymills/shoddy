@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
+<title>random — Seedless Randomness | Shoddy Machines</title>
+<style>
+:root { --ink:#1a1d27; --accent:#1e3a8a; --code-bg:#f4f5f8; --rule:#d8dbe4; }
+html { font-size:17px; }
+body { font-family:Georgia,'Times New Roman',serif; color:var(--ink); max-width:46rem; margin:2.5rem auto; padding:0 1.25rem; line-height:1.6; }
+h1,h2,h3 { font-family:Verdana,Geneva,sans-serif; color:var(--accent); line-height:1.25; margin-top:2.2rem; }
+h1 { font-size:1.7rem; border-bottom:3px solid var(--accent); padding-bottom:.4rem; }
+h1 small { display:block; color:#667; font-size:.95rem; font-weight:normal; font-family:Verdana,Geneva,sans-serif; margin-top:.3rem; }
+h2 { font-size:1.25rem; border-bottom:1px solid var(--rule); padding-bottom:.25rem; }
+h3 { font-size:1.02rem; }
+code { font-family:'Consolas','Menlo',monospace; font-size:.85em; background:var(--code-bg); padding:.08em .3em; border-radius:3px; }
+pre { background:var(--code-bg); border:1px solid var(--rule); border-left:4px solid var(--accent); padding:.8rem 1rem; overflow-x:auto; border-radius:4px; }
+pre code { background:none; padding:0; font-size:.82rem; line-height:1.45; }
+table { border-collapse:collapse; width:100%; margin:1rem 0; font-size:.88rem; font-family:Verdana,Geneva,sans-serif; }
+th { background:var(--accent); color:#fff; font-size:.78rem; text-align:left; padding:.45rem .6rem; }
+td { border:1px solid var(--rule); padding:.4rem .6rem; vertical-align:top; }
+td:first-child { font-family:'Consolas','Menlo',monospace; font-size:.82rem; white-space:nowrap; }
+tr:nth-child(even) td { background:#fafbfd; }
+a { color:var(--accent); }
+.tag { font-family:Verdana,sans-serif; font-size:.7rem; color:#7a3b8f; font-weight:bold; text-transform:uppercase; letter-spacing:.03em; }
+.crumb { font-family:Verdana,Geneva,sans-serif; font-size:.85rem; color:#667; }
+footer { margin-top:2.5rem; padding-top:1rem; border-top:1px solid var(--rule); font-family:Verdana,Geneva,sans-serif; font-size:.78rem; color:#667; }
+</style>
+</head>
+<body>
+
+<p class="crumb"><a href="index.html">&larr; Machines</a></p>
+
+<h1>random <small>Seedless Randomness — machines/random.shoddy</small></h1>
+
+<h2 id="summary">Summary</h2>
+<p><code>random</code> gives you random numbers, plainly. Three number words
+&mdash; <code>Random</code> for a fraction between 0 and 1,
+<code>RandomRange</code> for a floating-point number between two bounds, and
+<code>RandomInt</code> for a whole number between two bounds &mdash; plus two
+list words, <code>Shuffle</code> for a random ordering and
+<code>Sample</code> for draws without replacement. All of them sit directly on the
+<code>Rnd</code> builtin, which draws uniform values from the engine's own
+generator. It is <strong>seedless by construction</strong>: there's no seed to
+create, store, or thread through your code. You call a word, you get a fresh
+random number. That's the whole thing — and the simplicity is the point.</p>
+
+<h2 id="why">Why It's Useful</h2>
+<p>Randomness is how a program stops being predictable. A dice roll, a shuffled
+deck, a coin flip, a wandering game character, a scattering of stars, a sampled
+guess — all of them need a source of numbers that isn't the same every time.
+<code>random</code> is that source, with the two shapes you almost always want:
+a number somewhere in a range, or a whole number somewhere in a range. Because
+it's seedless, there's nothing to set up and nothing to carry around — reach
+for it whenever you want a surprise and don't need to reproduce it exactly
+later. (When you <em>do</em> need reproducibility, the trade-off is spelled out
+below.)</p>
+
+<h2 id="guide">User's Guide</h2>
+<p>Include the file and call the words — there's no state to manage. The one
+thing worth understanding is what makes this machine unusual, so here it is
+plainly: <strong><code>Random()</code> is deliberately not a pure
+function.</strong> Everywhere else, Shoddy makes a firm promise — call a
+function twice with the same arguments and you get the same answer, every time,
+no exceptions. That predictability is the property the whole language is built
+to guarantee. <code>Random</code> is the one considered exception: call it
+twice with no arguments and it can, and should, give you two different numbers.
+It's an <em>effect</em>, living at the edge of your program in exactly the same
+family as <code>Print</code> — something that reaches out to the world (here,
+the engine's running generator) rather than a closed calculation. Treat it that
+way: keep it near the edges of your code, the way you'd keep printing there,
+and let the pure parts stay pure.</p>
+<pre><code>Include "random.shoddy"
+
+Def Main()
+    Print(Random())                 ' e.g. 0.417... — a fraction in [0, 1)
+    Print(RandomRange(1, 6))        ' e.g. 4.82...  — a float in [1, 6)
+    Print(RandomInt(1, 6))          ' e.g. 5        — a die roll, 1 to 6
+
+    ' Called twice, RandomInt gives two (probably) different answers —
+    ' that impurity is the whole point.
+    Print(RandomInt(1, 100))        ' e.g. 73
+    Print(RandomInt(1, 100))        ' e.g. 12
+
+    Let deck = Shuffle(Range(1, 10))    ' e.g. [ 7 2 9 ... ] — all ten, reordered
+    Let hand = Sample(deck, 3)          ' e.g. [ 4 9 1 ]     — three, no repeats
+    Print(hand)</code></pre>
+<p>A few things worth remembering:</p>
+<ul>
+<li><strong>Seedless, on purpose.</strong> <code>Rnd</code> draws from the
+engine's own auto-seeded generator, so there's no seed to pass in and no state
+to thread through your program. That convenience is exactly what costs you
+reproducibility — you can't rewind and get the same sequence again.</li>
+<li><strong>The bounds have an order.</strong> Both <code>RandomRange</code> and
+<code>RandomInt</code> stop the program with an error if you give them a
+<code>hi</code> that's below <code>lo</code>. Low bound first, high bound
+second.</li>
+<li><strong><code>RandomInt</code> includes both ends.</strong>
+<code>RandomInt(1, 6)</code> can return any of 1, 2, 3, 4, 5, or 6 — a fair
+six-sided die. <code>RandomRange(lo, hi)</code>, being a float, can reach
+<code>lo</code> but never quite touches <code>hi</code>.</li>
+<li><strong>Need it reproducible?</strong> A fully pure alternative is
+possible — an explicitly-seeded generator that threads its state through every
+call, the way <a href="isam.html">isam</a> threads its handle — but that is the
+exact opposite of seedless, so it isn't what this machine offers. If you want
+seeded, reproducible draws, the <a href="math.html">math</a> machine's random
+cluster works with the <code>Seed</code> builtin.</li>
+</ul>
+
+<h2 id="words">Word Reference</h2>
+<p class="tag">5 words (plus a helper), built on the Rnd builtin</p>
+
+<h3>Random numbers <span class="tag">effectful; not pure</span></h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>Random()</td><td>A random floating-point number in <code>[0, 1)</code>
+— 0 possible, 1 never. The <code>Rnd</code> builtin, given a plain name. Not a
+pure function: two calls can give two different answers.</td></tr>
+<tr><td>RandomRange(lo, hi)</td><td>A random floating-point number in
+<code>[lo, hi)</code>. Stops the program with an error if <code>hi</code> is
+below <code>lo</code>.</td></tr>
+<tr><td>RandomInt(lo, hi)</td><td>A random whole number in <code>[lo, hi]</code>,
+both ends included — a fair die between the two bounds. Stops the program with
+an error if <code>hi</code> is below <code>lo</code>.</td></tr>
+</table>
+
+<h3>Shuffling and sampling <span class="tag">effectful; not pure</span></h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>Shuffle(xs)</td><td>A new list with the items of <code>xs</code> in
+uniformly random order. The original is untouched, and every ordering is
+equally likely.</td></tr>
+<tr><td>Sample(xs, n)</td><td>A new list of <code>n</code> items drawn from
+<code>xs</code> <em>without replacement</em> — no item is picked twice. Ask
+for more than the list holds and you get all of it, shuffled.</td></tr>
+<tr><td>DropAt(xs, k)</td><td>Helper the two above share: <code>xs</code>
+without its <code>k</code>-th item. Pure, and occasionally handy on its
+own.</td></tr>
+</table>
+
+<footer>
+<p><em>Making useless things useful, through skill.</em> &mdash;
+<a href="index.html">Machines index</a> &middot;
+<a href="../GUIDE.html">Beginner's Guide</a> &middot;
+<a href="../SPEC.html">Language Spec</a> &middot;
+<a href="../QUICKREF.html">Quick Reference</a></p>
+</footer>
+
+</body>
+</html>

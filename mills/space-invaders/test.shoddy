@@ -1,0 +1,50 @@
+Rem Copyright (c) 2026 Stephen Vincent Foster. All rights reserved.
+Rem
+Rem This file is part of the Shoddy Language project.
+Rem Licensed under the Shoddy Language License 1.0.0 (PolyForm Noncommercial
+Rem License 1.0.0 with Additional Use Grant). See the LICENSE file in the
+Rem project root for full terms.
+
+Rem Headless checks for the Space Invaders pure model — no window. Run
+Rem with `./build.sh test` (or `mill run test.shoddy`). Mirrors the C#
+Rem InvadersTests; a quick confidence check that the simulation is intact.
+
+Include "invaders-core.shoddy"
+
+Def Main()
+    Let g = NewGame()
+    Assert(Cx(g) = GameW() / 2, "CANNON STARTS CENTRED")
+    Assert(Score(g) = 0 And Not Ended(g), "FRESH GAME")
+
+    Rem fire, then an alien on the shot: both clear, score one
+    Let shot = Fire(g)
+    Assert(Length(Lasers(shot)) = 1, "FIRE ADDS A LASER")
+    Let hit = Collide(With(shot, Aliens = { Alien(Cx(shot), CannonY() - CannonHalf(), 200, 200, 200) }))
+    Assert(Score(hit) = 1 And IsEmpty(Aliens(hit)) And IsEmpty(Lasers(hit)), "LASER CLEARS ALIEN AND SCORES")
+
+    Rem a far alien is missed
+    Let miss = Collide(With(shot, Aliens = { Alien(50, 50, 1, 2, 3) }))
+    Assert(Score(miss) = 0 And Length(Aliens(miss)) = 1, "FAR ALIEN SURVIVES")
+
+    Rem an alien reaching the cannon line ends the game; then Advance freezes
+    Let low = MoveAliens(With(g, Aliens = { Alien(100, CannonY(), 1, 2, 3) }))
+    Assert(Ended(low), "ALIEN AT THE LINE ENDS IT")
+    Assert(Ended(Advance(low, 999999)), "ADVANCE IS A NO-OP ONCE ENDED")
+
+    Rem input: left drives the cannon and clamps at the gutter; release stops it
+    Let far = MoveCannon(ActDown(g, ArrowLeft()))
+    Assert(Cx(far) = GameW() / 2 - CannonStep() And Vel(far) = -1, "LEFT MOVES THE CANNON")
+    Let clamped = MoveCannon(With(g, Cx = Gutter() + 3, Vel = -1))
+    Assert(Cx(clamped) = Gutter(), "CANNON CLAMPS AT THE GUTTER")
+    Assert(Vel(ActUp(far, ArrowLeft())) = 0, "RELEASE STOPS THE CANNON")
+
+    Rem spawn is due at/after NextSpawn and advances the timer
+    Let spawned = MaybeSpawn(g, 1000)
+    Assert(Length(Aliens(spawned)) = 1 And NextSpawn(spawned) = 1000 + SpawnMs(), "SPAWN WHEN DUE")
+    Assert(Length(Aliens(MaybeSpawn(spawned, 1000))) = 1, "NO SPAWN BEFORE DUE")
+
+    Rem the classifier drives the controls
+    Assert(QuitKey(ClassifyKey(27)) And QuitKey(ClassifyKey(Asc("Q"))), "ESC AND Q QUIT")
+    Assert(Not QuitKey(ClassifyKey(Asc("A"))), "OTHER KEYS DO NOT QUIT")
+
+    Print("ALL INVADERS CHECKS PASSED")

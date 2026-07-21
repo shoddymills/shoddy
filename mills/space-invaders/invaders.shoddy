@@ -1,0 +1,81 @@
+Rem Copyright (c) 2026 Stephen Vincent Foster. All rights reserved.
+Rem
+Rem This file is part of the Shoddy Language project.
+Rem Licensed under the Shoddy Language License 1.0.0 (PolyForm Noncommercial
+Rem License 1.0.0 with Additional Use Grant). See the LICENSE file in the
+Rem project root for full terms.
+
+Rem ==================================================================
+Rem invaders.shoddy — Space Invaders on the scribbler (window + loop).
+Rem
+Rem Run: mill run mills/space-invaders/invaders.shoddy
+Rem      Left / Right arrows move the cannon, Space fires, Q or Escape
+Rem      quits. Aliens descend at random; a laser that reaches one clears
+Rem      both and scores. An alien reaching the cannon line ends the game.
+Rem
+Rem The pure model — state, simulation, input actions — is in
+Rem invaders-core.shoddy and is unit-tested headless. This file is the
+Rem window half: drawing, and the event loop. Frames come from
+Rem ScribblerTick at a fixed FPS (SetFps), so the loop sits at zero CPU
+Rem between frames and input arrives on the same queue. Every branch of
+Rem Loop's Select Case calls Loop directly (or closes) — a genuine SELF
+Rem tail call, which CodeGen turns into a loop; a helper that called Loop
+Rem back would be mutual recursion and grow the stack one frame per tick.
+Rem ==================================================================
+
+Include "invaders-core.shoddy"
+Include "../../machines/scribbler.shoddy"
+
+Rem ---- rendering -----------------------------------------------------
+
+Def DrawAliens(sc As Scribbler, aliens As List Of Alien) As Scribbler
+    Fold(aliens, sc, Fn(s, a) => FillCircle(s, Round(Ax(a)), Round(Ay(a)), AlienR(), Cr(a), Cg(a), Cb(a)))
+
+Def DrawLasers(sc As Scribbler, lasers As List Of Laser) As Scribbler
+    Fold(lasers, sc, Fn(s, l) => FillRect(s, Round(Lx(l)) - 1, Round(Ly(l)) - 10, 3, 14, 255, 70, 70))
+
+Def DrawCannon(sc As Scribbler, cx As Number) As Scribbler
+    Let baseRow = FillRect(sc, Round(cx) - CannonHalf(), CannonY() - 6, CannonHalf() * 2, 12, 210, 210, 255)
+    FillRect(baseRow, Round(cx) - 2, CannonY() - CannonHalf(), 5, CannonHalf(), 210, 210, 255)
+
+Def ShowOver(sc As Scribbler, g As Game) As Scribbler
+    If Ended(g) Then
+        ScribblerText(sc, GameW() / 2 - 84, GameH() / 2 - 8, 3, 255, 90, 90, "GAME OVER")
+    Else
+        sc
+
+Def Draw(sc As Scribbler, g As Game) As Scribbler
+    Let bg = ScribblerFill(sc, 12, 12, 26)
+    Let a = DrawAliens(bg, Aliens(g))
+    Let la = DrawLasers(a, Lasers(g))
+    Let cn = DrawCannon(la, Cx(g))
+    Let hud = ScribblerText(cn, 8, 8, 2, 235, 235, 235, "SCORE " & Str(Score(g)))
+    ScribblerBlit(ShowOver(hud, g))
+
+Rem ---- the loop ------------------------------------------------------
+
+Def Loop(sc As Scribbler, g As Game) As Scribbler
+    Select Case NextEvent(sc)
+        Case ScribblerTick(at)
+            Let g2 = Advance(g, at)
+            Loop(Draw(sc, g2), g2)
+        Case ScribblerKeyDown(key, mods, at)
+            If QuitKey(ClassifyKey(key)) Then
+                ScribblerClose(sc)
+            Else
+                Loop(sc, ActDown(g, ClassifyKey(key)))
+        Case ScribblerKeyUp(key, mods, at)
+            Loop(sc, ActUp(g, ClassifyKey(key)))
+        Case ScribblerQuit
+            ScribblerClose(sc)
+        Case Else
+            Loop(sc, g)
+
+Def Main()
+    Let sc0 = ScribblerOpen(GameW(), GameH())
+    Let sc1 = ScribblerTitle(sc0, "Shoddy Invaders")
+    Let sc2 = SetFps(sc1, 30)
+    Print("Shoddy Invaders - Left/Right move, Space fires, Q quits")
+    Let g = NewGame()
+    Let done = Loop(Draw(sc2, g), g)
+    Print("game over")

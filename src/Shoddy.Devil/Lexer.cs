@@ -23,9 +23,12 @@ public sealed record Token(bool IsStr, string Text, string Orig)
     public override string ToString() => IsStr ? $"\"{Text}\"" : Text;
 }
 
-/// <summary>A tokenized source line that survived lexing (blank and
-/// comment-only lines are dropped). LineNo is within its own file,
-/// exactly as the C reports errors.</summary>
+/// <summary>A tokenized logical line that survived lexing (blank and
+/// comment-only lines are dropped). A logical line is one physical line,
+/// plus any following physical lines pulled in by an unclosed bracket.
+/// LineNo is the first physical line, within its own file, exactly as
+/// the C reports errors. Indent is the first physical line's — the
+/// indentation of continuation lines is ignored.</summary>
 public sealed record Line(string File, int LineNo, int Indent, List<Token> Toks);
 
 /// <summary>
@@ -33,10 +36,14 @@ public sealed record Line(string File, int LineNo, int Indent, List<Token> Toks)
 /// C's tokenizeLine/readProgram. Tokens are runs of characters delimited
 /// only by whitespace and the self-delimiting set "[](){},"; operators
 /// like &lt;= are ordinary words and must be space-separated in source.
+/// A line whose brackets are still open continues onto the next physical
+/// line — any long expression can be wrapped by parenthesizing it.
 /// </summary>
 public static class Lexer
 {
     const string SelfDelim = "[](){},";
+    const string Openers = "([{";
+    const string Closers = ")]}";
 
     /// <summary>Reads a program with Include splicing (include-once,
     /// resolved relative to the including file, then $SHODDYLIB).
@@ -66,17 +73,35 @@ public static class Lexer
 
         for (int lineno = 1; lineno <= raw.Length; lineno++)
         {
-            TokenizeLine(raw[lineno - 1], path, lineno, lines);
+            var toks = new List<Token>();
+            var open = new Stack<(char C, int Line)>();
+            int start = lineno;
+            int indent = TokenizeLine(raw[lineno - 1], lineno, toks, open);
+            if (toks.Count == 0) continue;
+
+            // An unclosed bracket pulls the following physical lines into
+            // this logical line; their indentation is not significant.
+            while (open.Count > 0)
+            {
+                (char c, int at) = open.Peek();
+                if (lineno >= raw.Length)
+                    throw new ShoddyError(at, $"unclosed '{c}'");
+                int before = toks.Count;
+                int contIndent = TokenizeLine(raw[lineno], lineno + 1, toks, open);
+                lineno++;
+                // A margin-level Def mid-continuation is a missing close
+                // bracket eating the next function, not a continuation.
+                if (toks.Count > before && contIndent == 0 &&
+                    !toks[before].IsStr && toks[before].Text == "DEF")
+                    throw new ShoddyError(at, $"unclosed '{c}'");
+            }
 
             // INCLUDE "FILE" — splice another source file in, right here.
-            if (lines.Count > 0 && !lines[^1].Toks[0].IsStr &&
-                lines[^1].Toks[0].Text == "INCLUDE")
+            if (!toks[0].IsStr && toks[0].Text == "INCLUDE")
             {
-                Line l = lines[^1];
-                lines.RemoveAt(lines.Count - 1);     // consume the directive
-                if (l.Indent != 0 || l.Toks.Count != 2 || !l.Toks[1].IsStr)
-                    throw new ShoddyError(lineno, "expected INCLUDE \"FILE\" at left margin");
-                string name = l.Toks[1].Text;
+                if (indent != 0 || toks.Count != 2 || !toks[1].IsStr)
+                    throw new ShoddyError(start, "expected INCLUDE \"FILE\" at left margin");
+                string name = toks[1].Text;
                 string cand = ResolveInclude(path, name);
                 if (!File.Exists(cand))
                 {
@@ -91,7 +116,10 @@ public static class Lexer
                     continue;
                 }
                 ReadFile(cand, lines, included, externalInclude);
+                continue;                        // the directive itself is consumed
             }
+
+            lines.Add(new Line(path, start, indent, toks));
         }
     }
 
@@ -105,9 +133,12 @@ public static class Lexer
         return from[..(slash + 1)] + name;
     }
 
-    static void TokenizeLine(string src, string file, int lineno, List<Line> lines)
+    /// <summary>Tokenize one physical line, appending to <paramref name="toks"/>
+    /// and maintaining the open-bracket stack that drives line continuation.
+    /// Returns the line's indent (spaces; a tab counts 4).</summary>
+    static int TokenizeLine(string src, int lineno, List<Token> toks,
+                            Stack<(char C, int Line)> open)
     {
-        var toks = new List<Token>();
         int i = 0, indent = 0;
         while (i < src.Length && (src[i] == ' ' || src[i] == '\t'))
             indent += src[i++] == '\t' ? 4 : 1;
@@ -141,6 +172,9 @@ public static class Lexer
             else if (SelfDelim.Contains(c))
             {
                 i++;
+                if (Openers.Contains(c)) open.Push((c, lineno));
+                else if (Closers.Contains(c) && open.Count > 0)
+                    open.Pop();                  // mismatches are the parser's
                 toks.Add(new Token(false, c.ToString(), c.ToString()));
             }
             else
@@ -170,8 +204,7 @@ public static class Lexer
             }
         }
 
-        if (toks.Count > 0)
-            lines.Add(new Line(file, lineno, indent, toks));
+        return indent;
     }
 
     /// <summary>ASCII-only case fold, matching C toupper in the C locale.</summary>

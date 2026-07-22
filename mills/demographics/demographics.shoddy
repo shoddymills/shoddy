@@ -1,0 +1,148 @@
+Rem Copyright (c) 2026 Stephen Vincent Foster. All rights reserved.
+Rem
+Rem This file is part of the Shoddy Language project.
+Rem Licensed under the Shoddy Language License 1.0.0 (PolyForm Noncommercial
+Rem License 1.0.0 with Additional Use Grant). See the LICENSE file in the
+Rem project root for full terms.
+
+Rem ==================================================================
+Rem demographics.shoddy — predict income from sex, age, state, and
+Rem political leaning with an 8-100-1 tanh/identity network from
+Rem neural.shoddy, trained by mini-batch SGD on the 200-row people
+Rem data set. A port of the classic C# demo kept beside this mill at
+Rem cs/NeuralRegressionProgram.cs.
+Rem
+Rem Build and run: build.cmd run          (Windows)
+Rem                ./build.sh run          (Unix)
+Rem Just run:      dotnet bin\demographics.dll
+Rem
+Rem Run from THIS directory — the data paths dat/training-people.dat
+Rem and dat/test-people.dat are relative, and the trained weights land
+Rem in dat/people-wts.txt.
+Rem
+Rem maxEpochs is 1600, not the C# demo's 2000. Measured with Ticks on
+Rem this data, one 8-100-1 epoch on 200 rows costs ~350 ms through the
+Rem machine's immutable matrix algebra, and a seeded convergence sweep
+Rem (E1200 acc 0.905/0.90, E1600 0.91/0.95, E2000 0.915/0.95 with MSE
+Rem identical to E1600 at four significant digits) shows training
+Rem plateaus by 1600 — so 1600 epochs trains in about nine minutes and
+Rem the extra 400 would buy nothing but wait. Seed(0) at the top of
+Rem Main makes every run identical.
+Rem
+Rem Known defects OF THE C# REFERENCE, deliberately not ported:
+Rem   * TrainBatch reads indices[ii] with ii in 0..batSize for EVERY
+Rem     batch of an epoch — never offset by batIdx * batSize — so it
+Rem     trains the first 10 shuffled rows 20 times per epoch and skips
+Rem     the rest. NetTrain tiles the whole shuffled epoch, so accuracy
+Rem     numbers here differ from published runs of the C# demo; that
+Rem     is the fix, not a regression.
+Rem   * Its commented-out LoadWeights doesn't compile (List<double>
+Rem     with no using System.Collections.Generic). Step 7 below
+Rem     exercises the save/load path for real.
+Rem   * Its Accuracy comment says "winner-takes-all"; the code (and
+Rem     NetAccuracy here) is percent-close accuracy — |pred - actual|
+Rem     within pctClose * |actual|.
+Rem ==================================================================
+
+Include "../../machines/neural.shoddy"
+Include "../../machines/math.shoddy"
+
+Rem ---- the loader (mill-local: column-picking numeric CSV) -----------
+
+Def DataLines(path As String) As List Of String
+    Filter(ReadLines(path), Fn(s) => Len(s) > 0 And Not StartsWith(s, "#"))
+
+Def ParseRow(line As String) As Array Of Number
+    ToArray(Map(Split(line, ","), Fn(t) => Val(Trim(t))))
+
+Rem Nine columns: sex, age/100, state one-hot (3), income/100000 (the
+Rem target), politics one-hot (3). X is columns 1-5 and 7-9, in order.
+Def RowX(cells As Array Of Number) As Array Of Number
+    ToArray({ Nth(cells, 1), Nth(cells, 2), Nth(cells, 3), Nth(cells, 4), Nth(cells, 5), Nth(cells, 7), Nth(cells, 8), Nth(cells, 9) })
+
+Def RowY(cells As Array Of Number) As Number
+    Nth(cells, 6)
+
+Rem ---- reporting -----------------------------------------------------
+
+Def F4(x As Number) As String
+    Str(RoundTo(x, 4))
+
+Rem Called after every epoch; prints (and pays for the metrics) only
+Rem every freq-th one.
+Def Progress(epoch As Number, net As Net, xs As List Of Array Of Number, ys As List Of Number, freq As Number)
+    If epoch Mod freq = 0 Then
+        Print("EPOCH: " & Str(epoch) & "  MSE = " & F4(NetMse(net, xs, ys)) & "  ACC = " & F4(NetAccuracy(net, xs, ys, 0.1)))
+
+Def Main()
+    Print("")
+    Print("NEURAL NETWORK REGRESSION - SHODDY")
+    Print("PREDICT INCOME FROM SEX, AGE, STATE, POLITICAL LEANING")
+
+    Print("")
+    Print("LOADING TRAIN AND TEST DATA FROM FILE")
+    Let trainRows = Map(DataLines("dat/training-people.dat"), ParseRow)
+    Let trainX = Map(trainRows, RowX)
+    Let trainY = Map(trainRows, RowY)
+    Let testRows = Map(DataLines("dat/test-people.dat"), ParseRow)
+    Let testX = Map(testRows, RowX)
+    Let testY = Map(testRows, RowY)
+    Print("DONE")
+
+    Print("")
+    Print("FIRST THREE X DATA:")
+    Each(Taken(trainX, 3), Print)
+    Print("")
+    Print("FIRST THREE TARGET Y:")
+    Each(Taken(trainY, 3), Print)
+
+    Rem one Seed call, so runs reproduce exactly
+    Seed(0)
+
+    Print("")
+    Print("CREATING 8-100-1 TANH IDENTITY NEURAL NETWORK")
+    Let net0 = NetNew(8, 100, 1)
+    Print("DONE")
+
+    Let maxEpochs = 1600
+    Let lrnRate = 0.01
+    Let batSize = 10
+    Let freq = maxEpochs / 10
+    Print("")
+    Print("PREPARING TRAIN PARAMETERS")
+    Print("MAXEPOCHS = " & Str(maxEpochs))
+    Print("LRNRATE = " & Str(lrnRate))
+    Print("BATSIZE = " & Str(batSize))
+
+    Print("")
+    Print("STARTING (BATCH) TRAINING")
+    Let net = NetTrain(net0, trainX, trainY, lrnRate, batSize, maxEpochs, Fn(epoch, nn) => Progress(epoch, nn, trainX, trainY, freq))
+    Print("DONE")
+
+    Print("")
+    Print("EVALUATING MODEL")
+    Print("ACCURACY ON TRAIN DATA = " & F4(NetAccuracy(net, trainX, trainY, 0.1)))
+    Print("ACCURACY ON TEST DATA  = " & F4(NetAccuracy(net, testX, testY, 0.1)))
+
+    Print("")
+    Print("PREDICTING INCOME FOR MALE 34 OKLAHOMA MODERATE")
+    Let x = ToArray({ 0, 0.34, 0, 0, 1, 0, 1, 0 })
+    Let y = NetOut(net, x)
+    Print("PREDICTED INCOME = " & Str(y))
+    Print("PREDICTED DOLLARS = " & Str(RoundTo(y * 100000, 2)))
+
+    Print("")
+    Print("SAVING MODEL WTS TO FILE")
+    NetSave("dat/people-wts.txt", net)
+    Print("DONE")
+
+    Print("")
+    Print("LOADING SAVED WTS INTO NEW NN")
+    Let net2 = NetLoad("dat/people-wts.txt", 8, 100, 1)
+    Let y2 = NetOut(net2, x)
+    Print("RE-PREDICTED INCOME = " & Str(y2))
+    Assert(Abs(y2 - y) < 0.00000001, "SAVE/LOAD ROUND TRIP PREDICTS ALIKE")
+    Print("DONE")
+
+    Print("")
+    Print("END DEMO")

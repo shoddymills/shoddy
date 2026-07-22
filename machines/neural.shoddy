@@ -1,0 +1,178 @@
+Rem Copyright (c) 2026 Stephen Vincent Foster. All rights reserved.
+Rem
+Rem This file is part of the Shoddy Language project.
+Rem Licensed under the Shoddy Language License 1.0.0 (PolyForm Noncommercial
+Rem License 1.0.0 with Additional Use Grant). See the LICENSE file in the
+Rem project root for full terms.
+
+Rem ==================================================================
+Rem neural.shoddy — Shoddy standard library: feed-forward neural nets
+Rem
+Rem One hidden layer, Tanh activation, identity output, trained by
+Rem mini-batch SGD on squared-error loss — the classic regression
+Rem network. A Net is a record of two weight matrices and two bias
+Rem vectors; a GRADIENT HAS THE SAME SHAPE AS THE NETWORK, so the same
+Rem record represents both and accumulate / average / apply-update all
+Rem fall out of NetAdd and NetScale — no zeroing loops, no mutable
+Rem scratch arrays.
+Rem
+Rem Scale: like stats.shoddy this is classroom-sized — hundreds of rows
+Rem and a few thousand epochs through immutable arrays, not bulk
+Rem training.
+Rem
+Rem Impure edges (the only two, both via random.shoddy): NetNew draws
+Rem its initial weights from Rnd, and NetTrain shuffles each epoch. A
+Rem caller wanting reproducible runs calls the Seed builtin once, at
+Rem the top of Main — the same edge random.shoddy documents.
+Rem
+Rem Serialization (NetSave/NetLoad) uses one number per line in the
+Rem classic demo order: input-hidden weights input-major, hidden
+Rem biases, hidden-output weights hidden-major, output biases — so
+Rem weight files interchange with the C# reference program. Str writes
+Rem 10 significant digits, so a save/load round trip reproduces
+Rem predictions to ~1e-10 relative, not to the last bit.
+Rem ==================================================================
+
+Include "matrix.shoddy"
+Include "random.shoddy"
+Include "file.shoddy"
+
+Rem W1 rows are hidden neurons: MatVec(W1, x) is the hidden pre-
+Rem activation in one word. NOTE this is the TRANSPOSE of the C#
+Rem reference's ihWeights (input-major) layout; NetMatSerial bridges.
+Type Net
+    W1 As Matrix              Rem nh x ni
+    B1 As Array Of Number     Rem nh
+    W2 As Matrix              Rem no x nh
+    B2 As Array Of Number     Rem no (1 for regression)
+
+Rem A forward pass keeps its post-tanh hidden activations — backprop
+Rem needs them, and NetOut throws them away for free.
+Type NetEval
+    Hidden As Array Of Number
+    Output As Array Of Number
+
+Rem ---- the gradient algebra: same shape, two words -------------------
+
+Def NetAdd(a As Net, b As Net) As Net
+    Net(MatAdd(W1(a), W1(b)), VAdd(B1(a), B1(b)), MatAdd(W2(a), W2(b)), VAdd(B2(a), B2(b)))
+
+Def NetScale(n As Net, s As Number) As Net
+    Net(MatScale(W1(n), s), VScale(B1(n), s), MatScale(W2(n), s), VScale(B2(n), s))
+
+Rem ---- construction (IMPURE: Rnd; Seed first for reproducibility) ----
+
+Def NetRandArray(n As Number) As Array Of Number
+    ToArray(Map(Range(1, n), Fn(k) => RandomRange(-0.01, 0.01)))
+
+Def NetNew(ni As Number, nh As Number, no As Number) As Net
+    Net(Matrix(nh, ni, NetRandArray(nh * ni)), NetRandArray(nh), Matrix(no, nh, NetRandArray(no * nh)), NetRandArray(no))
+
+Rem ---- forward -------------------------------------------------------
+
+Def NetEvalAt(n As Net, x As Array Of Number) As NetEval
+    Let h = Map(VAdd(MatVec(W1(n), x), B1(n)), Tanh)
+    NetEval(h, VAdd(MatVec(W2(n), h), B2(n)))
+
+Def NetOut(n As Net, x As Array Of Number) As Number
+    First(Output(NetEvalAt(n, x)))
+
+Rem ---- backward ------------------------------------------------------
+
+Rem One example's gradient of squared error (no 1/2 factor), identity
+Rem output. oSig = o - y; hSig = W2^T oSig  ⊙  (1 - h^2), with the tanh
+Rem derivative written (1-h)(1+h); the weight gradients are outer
+Rem products of a signal with the layer's input.
+Def NetGrad(n As Net, x As Array Of Number, y As Number) As Net
+    Let e = NetEvalAt(n, x)
+    Let h = Hidden(e)
+    Let oSig = Map(Output(e), Fn(v) => v - y)
+    Let hSig = VMul(MatVec(Transp(W2(n)), oSig), Map(h, Fn(v) => (1 - v) * (1 + v)))
+    Net(Outer(hSig, x), hSig, Outer(oSig, h), oSig)
+
+Rem One mini-batch step: average the per-example gradients, descend.
+Def NetStep(n As Net, xs As List Of Array Of Number, ys As List Of Number, lr As Number) As Net
+    Let grads = ZipWith(xs, ys, Fn(x, y) => NetGrad(n, x, y))
+    Let avg = NetScale(Fold(Rest(grads), First(grads), NetAdd), 1 / Length(grads))
+    NetAdd(n, NetScale(avg, Negate(lr)))
+
+Rem ---- training ------------------------------------------------------
+
+Def NetBatch(net As Net, xa As Array Of Array Of Number, ya As Array Of Number, perm As Array Of Number, b As Number, batSize As Number, lr As Number) As Net
+    Let idx = Map(Range((b - 1) * batSize + 1, b * batSize), Fn(k) => Nth(perm, k))
+    NetStep(net, Map(idx, Fn(i) => Nth(xa, i)), Map(idx, Fn(i) => Nth(ya, i)), lr)
+
+Rem One epoch: shuffle the row indices (IMPURE: Rnd), then tile the
+Rem whole permutation with Floor(n / batSize) consecutive chunks —
+Rem the remainder rows are dropped, matching the C# int division.
+Def NetEpoch(net As Net, xa As Array Of Array Of Number, ya As Array Of Number, lr As Number, batSize As Number) As Net
+    Let perm = ToArray(Shuffle(Range(1, Length(ya))))
+    Fold(Range(1, Floor(Length(ya) / batSize)), net, Fn(nn, b) => NetBatch(nn, xa, ya, perm, b, batSize, lr))
+
+Def NetReport(net As Net, epoch As Number, report As [ Number Net -- ]) As Net
+    Call(report, epoch, net)
+    net
+
+Rem Fold over epochs. report is called with (epoch, net) after EVERY
+Rem epoch — the caller decides when to print and pay for metrics, so
+Rem both the effect and the cost stay at the mill's edge.
+Def NetTrain(n As Net, xs As List Of Array Of Number, ys As List Of Number, lr As Number, batSize As Number, epochs As Number, report As [ Number Net -- ]) As Net
+    Let xa = ToArray(xs)
+    Let ya = ToArray(ys)
+    Fold(Range(1, epochs), n, Fn(net, epoch) => NetReport(NetEpoch(net, xa, ya, lr, batSize), epoch, report))
+
+Rem ---- metrics -------------------------------------------------------
+
+Def NetSqErr(n As Net, x As Array Of Number, y As Number) As Number
+    Let d = NetOut(n, x) - y
+    d * d
+
+Def NetMse(n As Net, xs As List Of Array Of Number, ys As List Of Number) As Number
+    Fold(ZipWith(xs, ys, Fn(x, y) => NetSqErr(n, x, y)), 0, +) / Length(ys)
+
+Rem The fraction of rows predicted within pctClose of the actual value
+Rem (|pred - actual| < pctClose * |actual|) — percent-close accuracy.
+Def NetClose(n As Net, x As Array Of Number, y As Number, pctClose As Number) As Number
+    If Abs(NetOut(n, x) - y) < Abs(pctClose * y) Then
+        1
+    Else
+        0
+
+Def NetAccuracy(n As Net, xs As List Of Array Of Number, ys As List Of Number, pctClose As Number) As Number
+    Fold(ZipWith(xs, ys, Fn(x, y) => NetClose(n, x, y, pctClose)), 0, +) / Length(ys)
+
+Rem ---- save / load (effectful, like all file words) ------------------
+
+Rem The C# demo serializes ih weights INPUT-major (for i in inputs, for
+Rem j in hidden) — that is column-major over our W1, whose layout is
+Rem the transpose of the C# ihWeights. Transp-then-flat-cells walks
+Rem exactly that order (and hidden-major over W2, likewise). This is
+Rem where a silent transpose bug would live; the finite-difference and
+Rem round-trip tests in tst/neuraltest.shoddy guard it.
+Def NetMatSerial(m As Matrix) As List Of Number
+    ToList(Cells(Transp(m)))
+
+Def NetWeightList(n As Net) As List Of Number
+    Concat(Concat(NetMatSerial(W1(n)), ToList(B1(n))), Concat(NetMatSerial(W2(n)), ToList(B2(n))))
+
+Def NetSave(path As String, n As Net)
+    WriteLines(path, Map(NetWeightList(n), Str))
+
+Def NetSlice(ws As Array Of Number, start As Number, count As Number) As Array Of Number
+    ToArray(Map(Range(start, start + count - 1), Fn(k) => Nth(ws, k)))
+
+Rem The inverse of NetWeightList: a Net from a flat weight array in the
+Rem serialization order above.
+Def NetFromList(ws As Array Of Number, ni As Number, nh As Number, no As Number) As Net
+    Let w1 = Transp(Matrix(ni, nh, NetSlice(ws, 1, ni * nh)))
+    Let b1 = NetSlice(ws, ni * nh + 1, nh)
+    Let w2 = Transp(Matrix(nh, no, NetSlice(ws, ni * nh + nh + 1, nh * no)))
+    Let b2 = NetSlice(ws, ni * nh + nh + nh * no + 1, no)
+    Net(w1, b1, w2, b2)
+
+Def NetLoad(path As String, ni As Number, nh As Number, no As Number) As Net
+    Let ws = ToArray(Map(ReadLines(path), Val))
+    If Length(ws) <> ni * nh + nh + nh * no + no Then
+        Error("NETLOAD: WRONG NUMBER OF WEIGHTS FOR " & Str(ni) & "-" & Str(nh) & "-" & Str(no))
+    Else
+        NetFromList(ws, ni, nh, no)

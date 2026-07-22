@@ -578,9 +578,12 @@ then delegate · `AppendRec` writes after `RecCount+1` · `AllRecs` maps
 `Mat(r,c,vals)` checks `Length(vals)=r*c`, else `MAT: WRONG NUMBER OF CELLS`
 · `MatFill(r,c,v)` · `Ident(n)` · `MatFromRows` · `MatGet/MatSet` O(1),
 1-based (`MatSet` is pure — `SetNth` under `With`) · `MatRow`/`MatCol` →
-`Array` · `Dot`/`VSub`/`VScale` flat-vector helpers · `MatMul` checks
-`Cols(a)=Rows(b)` → `MATMUL: DIMENSION MISMATCH` · `MatAdd` checks equal
-dims → `MATADD: DIMENSION MISMATCH` · `MatScale` · `Transp` · `MatVec`
+`Array` · `Dot`/`VAdd`/`VSub`/`VMul`/`VScale` flat-vector helpers (`VMul`
+is elementwise/Hadamard) · `Outer(u,v)` → `Length(u)×Length(v)` matrix,
+cell (i,j) = `u_i * v_j` · `MatMul` checks
+`Cols(a)=Rows(b)` → `MATMUL: DIMENSION MISMATCH` · `MatAdd`/`MatSub` check
+equal dims → `MATADD: DIMENSION MISMATCH` / `MATSUB: ...` · `MatScale` ·
+`Transp` · `MatVec`
 checks `Cols(m)=Length(v)` → `MATVEC: DIMENSION MISMATCH` · `MatShow`
 (effectful — prints each row).
 
@@ -613,6 +616,25 @@ One live handle at a time; no crash safety, no concurrency.
 | `Shuffle(xs)` | → `List Of t` | Uniform random permutation (pick-and-remove recursion). Impure. |
 | `Sample(xs, n)` | → `List Of t` | n draws **without replacement**; `n &lt;= 0` → `{ }`; n past the length → all of xs, shuffled. Impure. |
 | `DropAt(xs, k)` | → `List Of t` | Pure helper: xs without its k-th item. |
+
+**neural.shoddy** (includes matrix.shoddy, random.shoddy, file.shoddy) —
+feed-forward neural networks: one hidden `Tanh` layer, identity output,
+mini-batch SGD regression. `Type Net: W1 (nh×ni Matrix), B1, W2 (no×nh),
+B2` — a gradient has the same shape as the network, so `NetAdd`/`NetScale`
+(fieldwise) do all accumulation and updating. `Type NetEval: Hidden,
+Output`. `NetNew(ni,nh,no)` weights uniform in [-0.01, 0.01] (**impure:
+Rnd** — `Seed` first for reproducibility) · `NetEvalAt(n,x)` /
+`NetOut(n,x)` (first output element) · `NetGrad(n,x,y)` one example's
+gradient of half squared error · `NetStep(n,xs,ys,lr)` one averaged
+mini-batch step · `NetTrain(n,xs,ys,lr,batSize,epochs,report)` shuffles
+each epoch (**impure: Rnd**), tiles `Floor(n/batSize)` chunks (remainder
+dropped), calls `report [ Number Net -- ]` after every epoch (`[ Drop
+Drop ]` for silence) · `NetMse` · `NetAccuracy(n,xs,ys,pctClose)`
+percent-close fraction · `NetSave`/`NetLoad(path,ni,nh,no)` one number
+per line, C#-demo order (ih weights input-major, h biases, ho weights
+hidden-major, o biases; bad line count → `NETLOAD: WRONG NUMBER OF
+WEIGHTS ...`) · `NetWeightList`/`NetFromList` flat-list bridge.
+Classroom-scale: hundreds of rows, a few thousand epochs.
 
 **vt100.shoddy** (no dependencies) — VT100/VT52 terminal control, from
 the classic vt100.txt escape-code reference. Two halves:
@@ -903,7 +925,7 @@ All of the above are wrapped by the top-level handler as
 ```
 DUP DROP SWAP OVER ROT NIP TUCK DEPTH
 + - * / MOD WRAP NEGATE ABS SGN MIN MAX SQR FLOOR CEIL ROUND FIX ^
-SIN COS TAN ATN ATN2 ASIN ACOS EXP LOG LOG10 PI RND SEED
+SIN COS TAN ATN ATN2 ASIN ACOS TANH EXP LOG LOG10 PI RND SEED
 ERF GAMMAP BETAI
 ERROR ASSERT INSTR
 = &lt;&gt; &lt; &gt; &lt;= &gt;=

@@ -12,10 +12,11 @@ using Shoddy.Runtime;
 namespace Shoddy.Tests;
 
 /// <summary>
-/// The special-function builtins (ERF, GAMMAP, BETAI) and SORT. The
-/// special functions back the stats machine's CDFs and are exactly the
-/// kind of numerics where a sign error hides quietly, so they are pinned
-/// against known values and closed-form identities. SORT is checked on
+/// The special-function builtins (ERF, GAMMAP, BETAI, TANH) and SORT.
+/// The special functions back the stats machine's CDFs and the neural
+/// machine's activation and are exactly the kind of numerics where a
+/// sign error hides quietly, so they are pinned against known values
+/// and closed-form identities. SORT is checked on
 /// the inputs a naive quicksort gets wrong: already-sorted, reversed,
 /// duplicates, empty — plus kind preservation, List in, List out.
 /// (In "golden" because RunSrcError redirects Console.Error, which
@@ -88,6 +89,25 @@ public class SpecialTests
         Assert.Contains("GAMMAP: X must be non-negative", RunSrcError("Def Main()\n    Print(GammaP(1, -1))\n"));
         Assert.Contains("BETAI: A and B must be positive", RunSrcError("Def Main()\n    Print(BetaI(-1, 1, 0.5))\n"));
         Assert.Contains("BETAI: X outside [0, 1]", RunSrcError("Def Main()\n    Print(BetaI(1, 1, 2))\n"));
+    }
+
+    // ---- TANH ------------------------------------------------------------
+
+    [Fact]
+    public void TanhKnownValues()
+    {
+        // Reference value from Math.Tanh / scipy.special.tanh. TANH 500
+        // must saturate to exactly 1 — the derived (e^2x-1)/(e^2x+1)
+        // form overflows there, which is why this is a builtin.
+        string output = RunSrc(string.Join('\n',
+            "Def Main()",
+            "    Print(Tanh(0))",
+            "    Print(Abs(Tanh(1) - 0.76159415595576) < 0.000000000001)",
+            "    Print(Tanh(-1) + Tanh(1))",   // odd function, exactly
+            "    Print(Tanh(500))",
+            "    Print(Tanh(-500))",
+            ""));
+        Assert.Equal("0\nTrue\n0\n1\n-1\n", output);
     }
 
     // ---- SORT ------------------------------------------------------------

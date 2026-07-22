@@ -327,6 +327,7 @@ public sealed partial class Engine
                 if (a < -1 || a > 1) throw Die(line, "ACOS outside [-1, 1]");
                 PushNum(Math.Acos(a)); return true;
             }
+            case "TANH": PushNum(Math.Tanh(PopNum(line, w))); return true;   // saturates to ±1, never overflows
             case "EXP": PushNum(Math.Exp(PopNum(line, w))); return true;
             case "LOG":
             {
@@ -1209,7 +1210,7 @@ public sealed partial class Engine
         "DUP", "DROP", "SWAP", "OVER", "ROT", "NIP", "TUCK", "DEPTH",
         "+", "-", "*", "/", "MOD", "WRAP", "NEGATE", "ABS", "SGN", "MIN", "MAX", "SQR",
         "FLOOR", "CEIL", "ROUND", "FIX", "^", "SIN", "COS", "TAN", "ATN", "ATN2",
-        "ASIN", "ACOS", "EXP", "LOG", "LOG10", "PI", "RND", "SEED",
+        "ASIN", "ACOS", "TANH", "EXP", "LOG", "LOG10", "PI", "RND", "SEED",
         "ERF", "GAMMAP", "BETAI",
         "ERROR", "ASSERT", "INSTR",
         "=", "<>", "<", ">", "<=", ">=",

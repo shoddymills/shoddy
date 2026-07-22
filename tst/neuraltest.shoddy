@@ -1,0 +1,91 @@
+Rem Copyright (c) 2026 Stephen Vincent Foster. All rights reserved.
+Rem
+Rem This file is part of the Shoddy Language project.
+Rem Licensed under the Shoddy Language License 1.0.0 (PolyForm Noncommercial
+Rem License 1.0.0 with Additional Use Grant). See the LICENSE file in the
+Rem project root for full terms.
+
+Rem ==================================================================
+Rem neuraltest.shoddy — test program for neural.shoddy
+Rem
+Rem Training output is floating-point and Rnd-driven, so these are
+Rem CONTRACT checks in the randomtest.shoddy pattern, not golden bytes:
+Rem the analytic gradient against central finite differences (the one
+Rem test that catches nearly every possible backprop mistake, including
+Rem a silent serialization transpose), NetAdd/NetScale shape and value
+Rem checks, a seeded learns-a-line convergence bound, and the
+Rem NetSave/NetLoad round trip.
+Rem
+Rem Build (once): build.cmd build
+Rem Run:          bin\mill run tst\neuraltest.shoddy    (from repo root)
+Rem ==================================================================
+
+Include "../machines/seq.shoddy"
+Include "../machines/neural.shoddy"
+
+Rem A fixed 2-3-1 net with hand-picked weights large enough to push
+Rem tanh off its linear region — a tiny-weight net would pass the
+Rem gradient check even with a wrong derivative.
+Def TestWs() As Array Of Number
+    ToArray({ 0.5, -0.4, 0.3, 0.8, -0.7, 0.2, 0.1, -0.2, 0.3, 0.6, -0.5, 0.4, 0.05 })
+
+Def TestX() As Array Of Number
+    ToArray({ 0.9, -1.2 })
+
+Rem NetGrad's oSig is (o - y) — the gradient of HALF squared error
+Rem (the same convention as the C# reference, where the missing factor
+Rem of 2 is absorbed by the learning rate). The finite differences must
+Rem difference that same half loss or every component is off by 2x.
+Def HalfLoss(n As Net, x As Array Of Number, y As Number) As Number
+    Let d = NetOut(n, x) - y
+    d * d / 2
+
+Rem Central finite difference of HalfLoss along parameter k.
+Def FdAt(ws As Array Of Number, k As Number, x As Array Of Number, y As Number) As Number
+    Let eps = 0.00001
+    Let up = HalfLoss(NetFromList(SetNth(ws, k, Nth(ws, k) + eps), 2, 3, 1), x, y)
+    Let dn = HalfLoss(NetFromList(SetNth(ws, k, Nth(ws, k) - eps), 2, 3, 1), x, y)
+    (up - dn) / (2 * eps)
+
+Rem The gradient has the net's shape, so NetWeightList aligns its
+Rem components one-for-one with the parameter list being perturbed.
+Def CheckGrad(k As Number) As Boolean
+    Let g = Nth(ToArray(NetWeightList(NetGrad(NetFromList(TestWs(), 2, 3, 1), TestX(), 0.5))), k)
+    Abs(g - FdAt(TestWs(), k, TestX(), 0.5)) < 0.0001
+
+Def LineXs() As List Of Array Of Number
+    Map(Range(1, 12), Fn(k) => ToArray({ k / 12 }))
+
+Def LineYs() As List Of Number
+    Map(Range(1, 12), Fn(k) => 2 * (k / 12) + 1)
+
+Def Main()
+    Print("--- NEURAL ---")
+
+    Rem gradient vs central finite differences, all 13 parameters
+    Assert(All(Range(1, 13), CheckGrad), "NETGRAD MATCHES FINITE DIFFERENCES")
+
+    Rem NetAdd / NetScale: shape preserved, values fieldwise
+    Let n1 = NetFromList(ToArray(Range(1, 13)), 2, 3, 1)
+    Let doubled = NetAdd(n1, n1)
+    Assert(Rows(W1(doubled)) = 3 And Cols(W1(doubled)) = 2, "NETADD KEEPS W1 SHAPE")
+    Assert(Rows(W2(doubled)) = 1 And Cols(W2(doubled)) = 3, "NETADD KEEPS W2 SHAPE")
+    Assert(Length(B1(doubled)) = 3 And Length(B2(doubled)) = 1, "NETADD KEEPS BIAS LENGTHS")
+    Assert(ToArray(NetWeightList(doubled)) = ToArray(Map(NetWeightList(n1), *(2))), "NETADD IS FIELDWISE +")
+    Assert(ToArray(NetWeightList(NetScale(n1, 0.5))) = ToArray(Map(NetWeightList(n1), *(0.5))), "NETSCALE IS FIELDWISE *")
+
+    Rem learns y = 2x + 1: seeded, small, fast
+    Seed(1)
+    Let trained = NetTrain(NetNew(1, 4, 1), LineXs(), LineYs(), 0.1, 4, 500, [ Drop Drop ])
+    Assert(NetMse(trained, LineXs(), LineYs()) < 0.01, "LEARNS A LINE (MSE BOUND)")
+
+    Rem save/load round trip: 1*4 + 4 + 4*1 + 1 = 13 lines, and the
+    Rem reloaded net predicts within Str's 10-significant-digit limit
+    Let wtsPath = "tst/neuraltest-wts.tmp"
+    NetSave(wtsPath, trained)
+    Assert(Length(ReadLines(wtsPath)) = 13, "SAVE WRITES NI*NH + NH + NH*NO + NO LINES")
+    Let reloaded = NetLoad(wtsPath, 1, 4, 1)
+    Assert(Abs(NetOut(reloaded, ToArray({ 0.5 })) - NetOut(trained, ToArray({ 0.5 }))) < 0.00000001, "SAVE/LOAD ROUND TRIP PREDICTS ALIKE")
+    DeleteFile(wtsPath)
+
+    Print("ALL NEURAL CHECKS PASSED")

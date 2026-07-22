@@ -25,9 +25,11 @@ public class MachineTests
 {
     static readonly string Root = RepoRoot.Dir;
 
-    // seq and str first; the rest reference them (stats also needs dict)
+    // seq and str first; the rest reference them (stats also needs dict).
+    // neural is built last for compile coverage only — libtest does not
+    // include it, so it never joins the resolved-machine count below.
     static readonly string[] BuildOrder =
-        { "seq", "str", "matrix", "money", "file", "recio", "dict", "stats", "isam" };
+        { "seq", "str", "matrix", "money", "file", "recio", "dict", "stats", "isam", "neural" };
 
     [Fact]
     public void LibTestWovenAgainstMachines()

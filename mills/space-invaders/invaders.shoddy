@@ -15,16 +15,22 @@ Rem      both and scores. An alien reaching the cannon line ends the game.
 Rem
 Rem The pure model — state, simulation, input actions — is in
 Rem invaders-core.shoddy and is unit-tested headless. This file is the
-Rem window half: drawing, and the event loop. Frames come from
+Rem window half: drawing, sound, and the event loop. Frames come from
 Rem ScribblerTick at a fixed FPS (SetFps), so the loop sits at zero CPU
 Rem between frames and input arrives on the same queue. Every branch of
 Rem Loop's Select Case calls Loop directly (or closes) — a genuine SELF
 Rem tail call, which CodeGen turns into a loop; a helper that called Loop
 Rem back would be mutual recursion and grow the stack one frame per tick.
+Rem
+Rem Sound stays out of the core too: effects are inferred by comparing
+Rem the game before and after a step — a laser appearing is a shot, the
+Rem score rising is a hit, Ended flipping on is the end — so the pure
+Rem model needs no sound hooks and still tests headless.
 Rem ==================================================================
 
 Include "invaders-core.shoddy"
 Include "../../machines/scribbler.shoddy"
+Include "../../machines/buzzer.shoddy"
 
 Rem ---- rendering -----------------------------------------------------
 
@@ -52,22 +58,54 @@ Def Draw(sc As Scribbler, g As Game) As Scribbler
     Let hud = ScribblerText(cn, 8, 8, 2, 235, 235, 235, "SCORE " & Str(Score(g)))
     ScribblerBlit(ShowOver(hud, g))
 
+Rem ---- sound ---------------------------------------------------------
+Rem The shot is a fire-and-forget blip from the anonymous pool; the hit
+Rem is a two-step falling thud queued on channel 2 (SoundQueue plays the
+Rem pair in order); tunes own channel 1. Silent machines make every
+Rem sound word a no-op, so the game still runs everywhere it did.
+
+Def ShotSound(before As Game, after As Game)
+    If Length(Lasers(after)) > Length(Lasers(before)) Then
+        Sound(1200, 40)
+
+Def HitThud()
+    SoundQueue(2, 220, 50)
+    SoundQueue(2, 130, 90)
+
+Def GameOverTune()
+    Play(1, "T100 O3 L8 E D C < A2")
+
+Def TickSounds(before As Game, after As Game)
+    If Score(after) > Score(before) Then
+        HitThud()
+    If Ended(after) And Not Ended(before) Then
+        GameOverTune()
+
+Rem Stop anything still queued before the window goes.
+Def CloseDown(sc As Scribbler) As Scribbler
+    SoundStop(1)
+    SoundStop(2)
+    ScribblerClose(sc)
+
 Rem ---- the loop ------------------------------------------------------
 
 Def Loop(sc As Scribbler, g As Game) As Scribbler
     Select Case NextEvent(sc)
         Case ScribblerTick(at)
             Let g2 = Advance(g, at)
+            TickSounds(g, g2)
             Loop(Draw(sc, g2), g2)
         Case ScribblerKeyDown(key, mods, at)
             If QuitKey(ClassifyKey(key)) Then
-                ScribblerClose(sc)
+                CloseDown(sc)
             Else
-                Loop(sc, ActDown(g, ClassifyKey(key)))
+                Let g2 = ActDown(g, ClassifyKey(key))
+                ShotSound(g, g2)
+                Loop(sc, g2)
         Case ScribblerKeyUp(key, mods, at)
             Loop(sc, ActUp(g, ClassifyKey(key)))
         Case ScribblerQuit
-            ScribblerClose(sc)
+            CloseDown(sc)
         Case Else
             Loop(sc, g)
 
@@ -75,6 +113,7 @@ Def Main()
     Let sc0 = ScribblerOpen(GameW(), GameH())
     Let sc1 = ScribblerTitle(sc0, "Shoddy Invaders")
     Let sc2 = SetFps(sc1, 30)
+    Play(1, "T140 O4 L16 C E G > C8")
     Print("Shoddy Invaders - Left/Right move, Space fires, Q quits")
     Let g = NewGame()
     Let done = Loop(Draw(sc2, g), g)

@@ -1,6 +1,6 @@
 # Shoddy for VS Code
 
-*Making useless things useful, through skill.*
+*Useless Things Made Useful Through Skill*
 
 Language support for Shoddy — the purely functional BASIC — wired to
 the **mill** (the .NET toolchain).
@@ -90,5 +90,5 @@ Window** in that host — no re-copy needed.
 ## Requirements
 
 The mill, built from source into `bin/` (`./build.sh build`, or
-`./build.ps1 build` on Windows). See `doc/VSCODE.md` in the Shoddy
+`./build.ps1 build` on Windows). See `doc/build.html` in the Shoddy
 repository for full workspace setup.

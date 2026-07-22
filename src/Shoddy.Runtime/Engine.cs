@@ -327,6 +327,7 @@ public sealed partial class Engine
                 if (a < -1 || a > 1) throw Die(line, "ACOS outside [-1, 1]");
                 PushNum(Math.Acos(a)); return true;
             }
+            case "TANH": PushNum(Math.Tanh(PopNum(line, w))); return true;   // saturates to ±1, never overflows
             case "EXP": PushNum(Math.Exp(PopNum(line, w))); return true;
             case "LOG":
             {
@@ -1082,8 +1083,97 @@ public sealed partial class Engine
                 Push(v);
                 return true;
             }
+
+            /* ---- the buzzer (no window required) ----
+               All six words are zero-result and fire-and-forget: the
+               runtime validates — bad arguments are program bugs and
+               raise even in silence — then calls through BuzzerRegistry,
+               where null means headless and the word does nothing.
+               Nothing ever blocks or waits on sound. */
+            case "SOUND":                       // ( freq ms -- ) anonymous pool
+            {
+                double ms = PopNum(line, w), freq = PopNum(line, w);
+                if (freq <= 0)
+                    throw Die(line, $"Sound: frequency must be positive, got {Format.Num(freq)}");
+                if (ms < 0)
+                    throw Die(line, $"Sound: duration must be >= 0 ms, got {Format.Num(ms)}");
+                if (ms > 0) BuzzerRegistry.Sound?.Invoke(freq, ms);    // 0 ms: legal no-op
+                return true;
+            }
+            case "NOTEON":                      // ( ch freq -- ) hold until NOTEOFF
+            {
+                double freq = PopNum(line, w);
+                int ch = PopBuzzerChannel(line, w, "NoteOn");
+                if (freq <= 0)
+                    throw Die(line, $"NoteOn: frequency must be positive, got {Format.Num(freq)}");
+                buzzQueueEnd[ch] = 0;           // a held note flushes the channel's queue
+                BuzzerRegistry.NoteOn?.Invoke(ch, freq);
+                return true;
+            }
+            case "NOTEOFF":                     // ( ch -- ) nothing held: no-op
+            {
+                // Pop before the ?.Invoke — a null-conditional never
+                // evaluates its arguments, and validation must run in
+                // silence too.
+                int ch = PopBuzzerChannel(line, w, "NoteOff");
+                BuzzerRegistry.NoteOff?.Invoke(ch);
+                return true;
+            }
+            case "SOUNDQUEUE":                  // ( ch freq ms -- ) back-to-back; freq 0 = rest
+            {
+                double ms = PopNum(line, w), freq = PopNum(line, w);
+                int ch = PopBuzzerChannel(line, w, "SoundQueue");
+                if (freq < 0)
+                    throw Die(line, $"SoundQueue: frequency must be positive (or 0 for a rest), got {Format.Num(freq)}");
+                if (ms < 0)
+                    throw Die(line, $"SoundQueue: duration must be >= 0 ms, got {Format.Num(ms)}");
+                // The cap is queued-ahead TIME, tracked here so it raises
+                // headless too: the seam has no drain feedback, so pending
+                // notes cannot be counted — but the drain instant is exact,
+                // because playback is back-to-back from the moment of
+                // queueing. Blocking would violate "sound never blocks";
+                // dropping notes would corrupt the music; loud is right.
+                double now = Ticker.Now;
+                double end = Math.Max(buzzQueueEnd[ch], now) + ms;
+                if (end - now > BuzzerQueueCapMs)
+                    throw Die(line, $"SoundQueue: more than {BuzzerQueueCapMs / 60_000} minutes queued ahead on channel {ch} — feed long scores incrementally from Tick events");
+                buzzQueueEnd[ch] = end;
+                BuzzerRegistry.Queue?.Invoke(ch, freq, ms);
+                return true;
+            }
+            case "SOUNDSTOP":                   // ( ch -- ) release held note, flush queue
+            {
+                int ch = PopBuzzerChannel(line, w, "SoundStop");
+                buzzQueueEnd[ch] = 0;
+                BuzzerRegistry.Stop?.Invoke(ch);
+                return true;
+            }
+            case "SOUNDGAIN":                   // ( ch vol -- ) 0..1, sticky per channel
+            {
+                double vol = PopNum(line, w);
+                int ch = PopBuzzerChannel(line, w, "SoundGain");
+                if (vol < 0 || vol > 1)
+                    throw Die(line, $"SoundGain: volume must be 0..1, got {Format.Num(vol)}");
+                BuzzerRegistry.Gain?.Invoke(ch, vol);
+                return true;
+            }
         }
         return false;
+    }
+
+    // ---- buzzer bookkeeping ---------------------------------------------
+
+    // Per-channel Ticker instant the queue drains, indexed 1..8. The
+    // SOUNDQUEUE cap; NOTEON and SOUNDSTOP reset it (both flush the queue).
+    const double BuzzerQueueCapMs = 5 * 60_000;
+    readonly double[] buzzQueueEnd = new double[9];
+
+    int PopBuzzerChannel(int line, string w, string who)
+    {
+        double c = PopNum(line, w);
+        if (c < 1 || c > 8 || c != Math.Floor(c))
+            throw Die(line, $"{who}: channel must be 1..8, got {Format.Num(c)}");
+        return (int)c;
     }
 
     Value PopScrib(int line, string who)
@@ -1120,7 +1210,7 @@ public sealed partial class Engine
         "DUP", "DROP", "SWAP", "OVER", "ROT", "NIP", "TUCK", "DEPTH",
         "+", "-", "*", "/", "MOD", "WRAP", "NEGATE", "ABS", "SGN", "MIN", "MAX", "SQR",
         "FLOOR", "CEIL", "ROUND", "FIX", "^", "SIN", "COS", "TAN", "ATN", "ATN2",
-        "ASIN", "ACOS", "EXP", "LOG", "LOG10", "PI", "RND", "SEED",
+        "ASIN", "ACOS", "TANH", "EXP", "LOG", "LOG10", "PI", "RND", "SEED",
         "ERF", "GAMMAP", "BETAI",
         "ERROR", "ASSERT", "INSTR",
         "=", "<>", "<", ">", "<=", ">=",
@@ -1140,6 +1230,7 @@ public sealed partial class Engine
         "SCRIBBLERGETPIXEL", "SCRIBBLERWIDTH", "SCRIBBLERHEIGHT",
         "SCRIBBLERBLIT", "SCRIBBLERCLOSE", "SCRIBBLERTITLE", "SCRIBBLERPOLL",
         "SCRIBBLERWAIT", "SCRIBBLERSETINTERVAL",
+        "SOUND", "NOTEON", "NOTEOFF", "SOUNDQUEUE", "SOUNDSTOP", "SOUNDGAIN",
     };
 
     // ---- special functions ----------------------------------------------

@@ -1,6 +1,6 @@
 # The Invention of Shoddy — A Conversation Record
 
-*Making useless things useful, through skill.*
+*Useless Things Made Useful Through Skill*
 
 This document is the record of the conversation in which the Shoddy
 language was invented, specified, implemented, and grown into the tree

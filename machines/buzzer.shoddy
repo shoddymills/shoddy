@@ -1,0 +1,216 @@
+Rem Copyright (c) 2026 Stephen Vincent Foster. All rights reserved.
+Rem
+Rem This file is part of the Shoddy Language project.
+Rem Licensed under the Shoddy Language License 1.0.0 (PolyForm Noncommercial
+Rem License 1.0.0 with Additional Use Grant). See the LICENSE file in the
+Rem project root for full terms.
+
+Rem ==================================================================
+Rem buzzer.shoddy — Shoddy standard library: the buzzer
+Rem
+Rem A West Riding mill ran on sound, and the buzzer was the one sound
+Rem the mill made on purpose. This machine is the derived layer over
+Rem the sound builtins (Sound, NoteOn, NoteOff, SoundQueue, SoundStop,
+Rem SoundGain): note names, MIDI numbers, and a GW-BASIC-subset MML
+Rem player — Play(1, "T120 O4 L8 C D E F G2").
+Rem
+Rem Sound is audible under `mill run` and `mill dap`. Woven output run
+Rem via bare `dotnet`, and any machine with no audio device, is SILENT:
+Rem every sound word is a no-op there, never an error — though bad
+Rem arguments (channel 0, negative duration) raise even in silence.
+Rem
+Rem The frequency word is MidiFreq, never Freq — stats.shoddy exports
+Rem Freq and both would fold to FREQ. The note record's fields are
+Rem FreqHz and Ms for the same reason.
+Rem
+Rem MmlNotes is PURE — MML string in, note list out, no I/O — so scores
+Rem parse and test headless. Play is just SoundQueue over its output:
+Rem it returns as soon as the tune is queued, which is immediately.
+Rem ==================================================================
+
+Include "seq.shoddy"
+
+Rem ---- notes and frequencies ------------------------------------------
+
+Type BuzzerNote
+    FreqHz As Number            Rem 0 = rest
+    Ms As Number
+
+Rem A4 = MIDI 69 = 440 Hz, equal temperament. Fractional MIDI numbers
+Rem are legal (quarter-tones, pitch bends) — nothing here rounds.
+Def MidiFreq(midi As Number) As Number
+    440 * 2 ^ ((midi - 69) / 12)
+
+Rem "C4" -> 60, "F#3" -> 54, "Bb5" -> 82. Scientific pitch: C4 is middle
+Rem C. Letters A-G, "#" sharp, "b" flat, octave digit 0-8 required.
+Def NoteMidi(name As String) As Number
+    Let u = Upper(name)
+    If Len(u) < 2 Or Instr("ABCDEFG", Mid(u, 1, 1)) = 0 Then
+        Error("NOTEMIDI: BAD NOTE NAME '" & name & "'")
+    Else
+        Let acc = MmlAccVal(u, 2, "#B")
+        Let ka = 2 + MmlAccLen(u, 2, "#B")
+        If Len(u) <> ka Or Instr("012345678", Mid(u, ka, 1)) = 0 Then
+            Error("NOTEMIDI: BAD NOTE NAME '" & name & "'")
+        Else
+            12 * (Val(Mid(u, ka, 1)) + 1) + MmlBase(Mid(u, 1, 1)) + acc
+
+Def NoteFreq(name As String) As Number
+    MidiFreq(NoteMidi(name))
+
+Rem ---- MML (Music Macro Language), GW-BASIC subset ---------------------
+Rem Case-insensitive, whitespace ignored.
+Rem   A-G   a note; optional # or + (sharp), - (flat); optional length
+Rem         (4 = quarter, 8 = eighth...); optional trailing . (x1.5)
+Rem   On    octave 0-8, default 4 (scientific: O4 contains middle C —
+Rem         GW-BASIC's octaves sat one lower)
+Rem   < >   octave down / up
+Rem   Ln    default length, default 4
+Rem   Tn    tempo in quarter notes per minute, default 120
+Rem   Pn Rn a rest of length n (dotted allowed)
+Rem   ,     a quarter-note rest — always length 4, whatever Ln says
+Rem A whole note is 4 * 60000 / T ms; length n divides it. A malformed
+Rem string raises naming the offending position. GW-BASIC's MN/ML/MS
+Rem articulation modes, Nn, and per-note volume are left for later.
+
+Rem PURE: parse MML to a note list, no I/O.
+Def MmlNotes(mml As String) As List Of BuzzerNote
+    MmlRun(Upper(mml), 1, 4, 4, 120)
+
+Rem Queue every note of an MML string onto channel ch. Fire-and-forget.
+Def Play(ch As Number, mml As String)
+    PlayNotes(ch, MmlNotes(mml))
+
+Rem The queue half of Play, for programmatically built scores.
+Def PlayNotes(ch As Number, notes As List Of BuzzerNote)
+    If Not IsEmpty(notes) Then
+        SoundQueue(ch, FreqHz(First(notes)), Ms(First(notes)))
+        PlayNotes(ch, Rest(notes))
+
+Rem ---- the parser (internal; s is already uppercased) ------------------
+
+Def MmlRun(s As String, k As Number, oct As Number, dlen As Number, tempo As Number) As List Of BuzzerNote
+    If k > Len(s) Then
+        { }
+    Else
+        If Mid(s, k, 1) = " " Or Mid(s, k, 1) = Chr(9) Then
+            MmlRun(s, k + 1, oct, dlen, tempo)
+        Else
+            MmlCmd(Mid(s, k, 1), s, k, oct, dlen, tempo)
+
+Def MmlCmd(c As String, s As String, k As Number, oct As Number, dlen As Number, tempo As Number) As List Of BuzzerNote
+    Select Case c
+        Case "T"
+            MmlRun(s, MmlDigitEnd(s, k + 1), oct, dlen, MmlArg(s, k, "T"))
+        Case "L"
+            MmlRun(s, MmlDigitEnd(s, k + 1), oct, MmlArg(s, k, "L"), tempo)
+        Case "O"
+            MmlRun(s, MmlDigitEnd(s, k + 1), MmlMustOct(MmlArg(s, k, "O") - 1, k), dlen, tempo)
+        Case "<"
+            MmlRun(s, k + 1, MmlMustOct(oct - 1, k), dlen, tempo)
+        Case ">"
+            MmlRun(s, k + 1, MmlMustOct(oct + 1, k), dlen, tempo)
+        Case "P", "R"
+            MmlStep(s, k, k + 1, 0, oct, dlen, tempo)
+        Case ","
+            Prepend(BuzzerNote(0, MmlMs(tempo, 4, 0)), MmlRun(s, k + 1, oct, dlen, tempo))
+        Case "A", "B", "C", "D", "E", "F", "G"
+            MmlStep(s, k, k + 1 + MmlAccLen(s, k + 1, "#+-"), 12 * (oct + 1) + MmlBase(c) + MmlAccVal(s, k + 1, "#+-"), oct, dlen, tempo)
+        Case Else
+            Error("MML: UNEXPECTED '" & c & "' AT POSITION " & Str(k))
+
+Rem One note (midi > 0) or rest (midi 0) starting at k, its optional
+Rem length digits starting at kl: read length and dot, emit, carry on.
+Def MmlStep(s As String, k As Number, kl As Number, midi As Number, oct As Number, dlen As Number, tempo As Number) As List Of BuzzerNote
+    Let ke = MmlDigitEnd(s, kl)
+    Let n = MmlLenAt(s, kl, ke, dlen, k)
+    Let dots = MmlDots(s, ke)
+    Prepend(BuzzerNote(MmlPitch(midi), MmlMs(tempo, n, dots)), MmlRun(s, ke + dots, oct, dlen, tempo))
+
+Def MmlPitch(midi As Number) As Number
+    If midi = 0 Then
+        0
+    Else
+        MidiFreq(midi)
+
+Def MmlMs(tempo As Number, n As Number, dots As Number) As Number
+    (4 * 60000 / tempo) / n * (1 + dots * 0.5)
+
+Def MmlLenAt(s As String, kl As Number, ke As Number, dlen As Number, k As Number) As Number
+    If ke = kl Then
+        dlen
+    Else
+        If Val(Mid(s, kl, ke - kl)) < 1 Then
+            Error("MML: BAD LENGTH AT POSITION " & Str(k))
+        Else
+            Val(Mid(s, kl, ke - kl))
+
+Rem A command's required numeric argument (T, L, O), validated >= 1 —
+Rem O is passed shifted by one so O0 survives the check.
+Def MmlArg(s As String, k As Number, what As String) As Number
+    Let e = MmlDigitEnd(s, k + 1)
+    If e = k + 1 Then
+        Error("MML: " & what & " NEEDS A NUMBER AT POSITION " & Str(k))
+    Else
+        If what = "O" Then
+            Val(Mid(s, k + 1, e - k - 1)) + 1
+        Else
+            If Val(Mid(s, k + 1, e - k - 1)) < 1 Then
+                Error("MML: " & what & " MUST BE AT LEAST 1 AT POSITION " & Str(k))
+            Else
+                Val(Mid(s, k + 1, e - k - 1))
+
+Def MmlMustOct(oct As Number, k As Number) As Number
+    If oct < 0 Or oct > 8 Then
+        Error("MML: OCTAVE OUT OF RANGE 0-8 AT POSITION " & Str(k))
+    Else
+        oct
+
+Def MmlBase(c As String) As Number
+    Select Case c
+        Case "C"
+            0
+        Case "D"
+            2
+        Case "E"
+            4
+        Case "F"
+            5
+        Case "G"
+            7
+        Case "A"
+            9
+        Case Else
+            11
+
+Rem accs is the accidental set: "#+-" in MML (where B is a note), "#B"
+Rem in note names (where b uppercases to B and - never appears).
+Def MmlAccLen(s As String, k As Number, accs As String) As Number
+    If k <= Len(s) And Instr(accs, Mid(s, k, 1)) > 0 Then
+        1
+    Else
+        0
+
+Def MmlAccVal(s As String, k As Number, accs As String) As Number
+    If MmlAccLen(s, k, accs) = 0 Then
+        0
+    Else
+        If Instr("#+", Mid(s, k, 1)) > 0 Then
+            1
+        Else
+            -1
+
+Def MmlDots(s As String, k As Number) As Number
+    If k <= Len(s) And Mid(s, k, 1) = "." Then
+        1
+    Else
+        0
+
+Def MmlDigitEnd(s As String, k As Number) As Number
+    If k > Len(s) Then
+        k
+    Else
+        If Instr("0123456789", Mid(s, k, 1)) > 0 Then
+            MmlDigitEnd(s, k + 1)
+        Else
+            k

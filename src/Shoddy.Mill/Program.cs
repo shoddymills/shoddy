@@ -24,6 +24,16 @@ using Shoddy.Runtime;
 // An Include resolves to Shoddy.Machines.<Name>.dll beside the source if
 // present — compiled include-once — and splices the source otherwise.
 
+// --allow-net arms the gated TCP/IP builtins for this run (and any woven
+// program it spawns in-process) by setting the ambient switch the Engine
+// reads at construction. Stripped from args so it never disturbs the
+// positional command/file parsing below, nor a program's own arguments.
+if (args.Contains("--allow-net"))
+{
+    Environment.SetEnvironmentVariable("SHODDY_ALLOW_NET", "1");
+    args = args.Where(a => a != "--allow-net").ToArray();
+}
+
 if (args.Length == 1 && args[0] == "dap")
     // The perch: DAP over stdio for the editor. The serve loop runs on a
     // background thread so this (the main) thread can serve scribbler

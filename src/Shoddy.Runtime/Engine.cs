@@ -6,6 +6,8 @@
 // project root for full terms.
 
 using System.Globalization;
+using System.Net;
+using System.Net.Sockets;
 using System.Text;
 
 namespace Shoddy.Runtime;
@@ -20,6 +22,14 @@ public sealed partial class Engine
 {
     readonly List<Value> Stk = new();
     readonly FileStream?[] files = new FileStream?[16];
+    readonly Socket?[] socks = new Socket?[16];   // TCP: connected sockets and listeners share the table
+    // The network is a gated capability — off unless the mill was armed
+    // with --allow-net (which sets SHODDY_ALLOW_NET=1 in the environment,
+    // so a standalone woven exe honors the same switch). Read once at
+    // construction: policy is fixed for the life of a run.
+    readonly bool netOK = Environment.GetEnvironmentVariable("SHODDY_ALLOW_NET") == "1";
+    const int ConnectTimeoutMs = 10_000;          // TCPCONNECT: bounded handshake wait
+    const int SendPollMicros = 5_000_000;         // TCPSEND: bounded wait for a full send buffer to drain
     Random rnd = new();   // reassigned by SEED for reproducible runs
     readonly TextWriter O;
     readonly TextReader In;
@@ -246,6 +256,33 @@ public sealed partial class Engine
         if (k < 1 || k > files.Length || files[k - 1] == null)
             throw Die(line, $"{w}: bad file handle");
         return files[k - 1]!;
+    }
+
+    // ---- TCP/IP sockets ----
+
+    // A socket handle is a 1-based index into socks, exactly like a file
+    // handle. A slot holds either a listener (from TCPLISTEN) or a
+    // connected socket (from TCPCONNECT / TCPACCEPT); both are raw Sockets,
+    // so one table and one validator serve both roles.
+    Socket SockHandle(double h, int line, string w)
+    {
+        int k = (int)h;
+        if (k < 1 || k > socks.Length || socks[k - 1] == null)
+            throw Die(line, $"{w}: bad socket handle");
+        return socks[k - 1]!;
+    }
+
+    int SockSlot(int line, string w)
+    {
+        int slot = Array.IndexOf(socks, null);
+        if (slot < 0) throw Die(line, $"{w}: too many open sockets");
+        return slot;
+    }
+
+    void RequireNet(int line, string w)
+    {
+        if (!netOK)
+            throw Die(line, $"{w}: network is disabled — run the mill with --allow-net");
     }
 
     /// <summary>All builtin words, dispatched by folded name.
@@ -626,6 +663,179 @@ public sealed partial class Engine
                 string s = Bytes.GetString(buf);
                 int z = s.IndexOf('\0');        // C strings end at the first NUL
                 PushStr(z < 0 ? s : s[..z]);
+                return true;
+            }
+            /* ---- TCP/IP sockets ----------------------------------------
+             * Handles are NUMBERs, like file handles. Payloads cross as
+             * STRINGs through the Latin1 Bytes codec (1 char = 1 byte), the
+             * same binary-safe convention ReadFile and PutStr use. Every
+             * readiness op is NON-BLOCKING: TCPRECV yields "" when no data
+             * has arrived, TCPACCEPT yields 0 when no client is waiting, so
+             * a program polls (optionally around Sleep) and never freezes a
+             * scribbler window or a debug session. TCPRECV returns "" for
+             * both "nothing yet" and "peer closed" — TCPEOF tells them
+             * apart. The whole family is gated behind --allow-net. */
+            case "TCPCONNECT":                  // ( host port -- h )
+            {
+                RequireNet(line, w);
+                int port = (int)PopNum(line, w);
+                string host = PopStr(line, w);
+                int slot = SockSlot(line, w);
+                Socket sk = new(SocketType.Stream, ProtocolType.Tcp);
+                try
+                {
+                    // Bounded handshake: a dead host must not hang the run.
+                    if (!sk.ConnectAsync(host, port).Wait(ConnectTimeoutMs))
+                    {
+                        sk.Dispose();
+                        throw Die(line, $"TCPCONNECT: '{host}:{port}' timed out");
+                    }
+                    sk.Blocking = false;        // every op hereafter returns at once
+                }
+                catch (Exception e) when (e is not ShoddyError)
+                {
+                    sk.Dispose();
+                    throw Die(line, $"TCPCONNECT: cannot reach '{host}:{port}'");
+                }
+                socks[slot] = sk;
+                PushNum(slot + 1);
+                return true;
+            }
+            case "TCPLISTEN":                   // ( host port -- h ), host is an IP literal
+            {
+                RequireNet(line, w);
+                int port = (int)PopNum(line, w);
+                string host = PopStr(line, w);
+                int slot = SockSlot(line, w);
+                Socket sk = new(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+                try
+                {
+                    if (!IPAddress.TryParse(host, out IPAddress? ip))
+                        throw Die(line, $"TCPLISTEN: '{host}' is not an IP address (try \"127.0.0.1\")");
+                    sk.Bind(new IPEndPoint(ip, port));
+                    sk.Listen(16);
+                    sk.Blocking = false;
+                }
+                catch (Exception e) when (e is not ShoddyError)
+                {
+                    sk.Dispose();
+                    throw Die(line, $"TCPLISTEN: cannot bind {host}:{port}");
+                }
+                socks[slot] = sk;
+                PushNum(slot + 1);
+                return true;
+            }
+            case "TCPACCEPT":                   // ( h -- connH ), 0 when none pending
+            {
+                RequireNet(line, w);
+                Socket srv = SockHandle(PopNum(line, w), line, w);
+                Socket? c = null;
+                try
+                {
+                    if (srv.Poll(0, SelectMode.SelectRead))   // a client is waiting?
+                        c = srv.Accept();
+                }
+                catch (SocketException) { c = null; }
+                if (c == null) { PushNum(0); return true; }
+                int slot = Array.IndexOf(socks, null);
+                if (slot < 0) { c.Dispose(); throw Die(line, "TCPACCEPT: too many open sockets"); }
+                c.Blocking = false;
+                socks[slot] = c;
+                PushNum(slot + 1);
+                return true;
+            }
+            case "TCPSEND":                     // ( h s -- )
+            {
+                RequireNet(line, w);
+                string s = PopStr(line, w);
+                Socket sk = SockHandle(PopNum(line, w), line, w);
+                byte[] data = Bytes.GetBytes(s);
+                int sent = 0;
+                try
+                {
+                    while (sent < data.Length)
+                    {
+                        int n = sk.Send(data, sent, data.Length - sent,
+                                        SocketFlags.None, out SocketError err);
+                        if (n > 0) { sent += n; continue; }
+                        if (err == SocketError.WouldBlock)
+                        {
+                            // Send buffer full: wait (bounded) for it to drain
+                            // rather than spin or drop bytes.
+                            if (!sk.Poll(SendPollMicros, SelectMode.SelectWrite))
+                                throw Die(line, "TCPSEND: send timed out");
+                            continue;
+                        }
+                        throw Die(line, $"TCPSEND: {err}");
+                    }
+                }
+                catch (SocketException e)
+                {
+                    throw Die(line, $"TCPSEND: {e.SocketErrorCode}");
+                }
+                return true;
+            }
+            case "TCPRECV":                     // ( h max -- s ), "" when nothing pending
+            {
+                RequireNet(line, w);
+                int max = (int)PopNum(line, w);
+                Socket sk = SockHandle(PopNum(line, w), line, w);
+                if (max < 1) throw Die(line, "TCPRECV: byte count must be >= 1");
+                var buf = new byte[max];
+                int n;
+                try
+                {
+                    n = sk.Receive(buf, 0, max, SocketFlags.None, out SocketError err);
+                    if (err == SocketError.WouldBlock) { PushStr(""); return true; }
+                    if (err != SocketError.Success) throw Die(line, $"TCPRECV: {err}");
+                }
+                catch (SocketException e) when (e.SocketErrorCode == SocketError.WouldBlock)
+                {
+                    PushStr(""); return true;   // no data available right now
+                }
+                // n == 0 is a clean peer close: also "", disambiguated by TCPEOF
+                PushStr(Bytes.GetString(buf, 0, n));
+                return true;
+            }
+            case "TCPEOF":                      // ( h -- bool ), has the peer closed?
+            {
+                RequireNet(line, w);
+                Socket sk = SockHandle(PopNum(line, w), line, w);
+                bool closed;
+                // Readable with nothing buffered is the standard closed signal.
+                try { closed = sk.Poll(0, SelectMode.SelectRead) && sk.Available == 0; }
+                catch (SocketException) { closed = true; }
+                PushBool(closed);
+                return true;
+            }
+            case "TCPPOLL":                     // ( h -- bool ), would recv/accept find something now?
+            {
+                RequireNet(line, w);
+                Socket sk = SockHandle(PopNum(line, w), line, w);
+                bool ready;
+                try { ready = sk.Poll(0, SelectMode.SelectRead); }
+                catch (SocketException) { ready = true; }
+                PushBool(ready);
+                return true;
+            }
+            case "TCPPEER":                     // ( h -- s ), remote "ip:port" or ""
+            {
+                RequireNet(line, w);
+                Socket sk = SockHandle(PopNum(line, w), line, w);
+                string who;
+                try { who = sk.RemoteEndPoint?.ToString() ?? ""; }
+                catch (SocketException) { who = ""; }
+                PushStr(who);
+                return true;
+            }
+            case "TCPCLOSE":                    // ( h -- )
+            {
+                RequireNet(line, w);
+                int k = (int)PopNum(line, w);
+                Socket sk = SockHandle(k, line, w);
+                try { sk.Shutdown(SocketShutdown.Both); } catch (SocketException) { }
+                sk.Dispose();
+                socks[k - 1] = null;
                 return true;
             }
             case "INPUT":                       // ( prompt -- s )
@@ -1220,6 +1430,8 @@ public sealed partial class Engine
         "PRINT", "READFILE", "WRITEFILE", "APPENDFILE", "FILEEXISTS",
         "DELETEFILE", "BOPEN", "BCLOSE", "SEEK", "BPOS", "BSIZE",
         "PUTNUM", "GETNUM", "PUTBOOL", "GETBOOL", "PUTSTR", "GETSTR",
+        "TCPCONNECT", "TCPLISTEN", "TCPACCEPT", "TCPSEND", "TCPRECV",
+        "TCPEOF", "TCPPOLL", "TCPPEER", "TCPCLOSE",
         "INPUT", "INKEY", "ARGS",
         "CALL", "IFTE", "MAP", "FILTER", "FOLD", "EACH", "TIMES", "RANGE",
         "LENGTH", "REVERSE", "CONCAT", "SORT",

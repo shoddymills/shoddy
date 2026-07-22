@@ -223,6 +223,15 @@ public class BuzzerTests
         AssertNotes(notes, (277.1826, 250), (0, 750), (369.9944, 1000));
     }
 
+    [Fact]
+    public void MmlCommaIsAQuarterRest()
+    {
+        // GW-BASIC's comma: a quarter-note rest, always length 4 — the L8
+        // default in force does not shorten it (T120: quarter = 500 ms).
+        var notes = ParseNotes(RunMml("T120 L8 C, D ,"));
+        AssertNotes(notes, (261.6256, 250), (0, 500), (293.6648, 250), (0, 500));
+    }
+
     [Theory]
     [InlineData("C X", "POSITION 3")]
     [InlineData("T C", "T NEEDS A NUMBER AT POSITION 1")]

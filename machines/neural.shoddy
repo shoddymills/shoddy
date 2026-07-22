@@ -25,17 +25,23 @@ Rem its initial weights from Rnd, and NetTrain shuffles each epoch. A
 Rem caller wanting reproducible runs calls the Seed builtin once, at
 Rem the top of Main — the same edge random.shoddy documents.
 Rem
-Rem Serialization (NetSave/NetLoad) uses one number per line in the
-Rem classic demo order: input-hidden weights input-major, hidden
-Rem biases, hidden-output weights hidden-major, output biases — so
-Rem weight files interchange with the C# reference program. Str writes
-Rem 10 significant digits, so a save/load round trip reproduces
-Rem predictions to ~1e-10 relative, not to the last bit.
+Rem Serialization, two formats over one canonical weight order (input-
+Rem hidden weights input-major, hidden biases, hidden-output weights
+Rem hidden-major, output biases):
+Rem   * NetSave/NetLoad — text, one number per line, so weight files
+Rem     interchange with the C# reference program. Str writes 10
+Rem     significant digits, so a round trip reproduces predictions to
+Rem     ~1e-10 relative, not to the last bit.
+Rem   * NetSaveBin/NetLoadBin — binary over recio, a self-describing
+Rem     header (magic, ni, nh, no) then raw 8-byte IEEE doubles, so a
+Rem     round trip is BIT-EXACT and loading needs no architecture
+Rem     arguments.
 Rem ==================================================================
 
 Include "matrix.shoddy"
 Include "random.shoddy"
 Include "file.shoddy"
+Include "recio.shoddy"
 
 Rem W1 rows are hidden neurons: MatVec(W1, x) is the hidden pre-
 Rem activation in one word. NOTE this is the TRANSPOSE of the C#
@@ -176,3 +182,49 @@ Def NetLoad(path As String, ni As Number, nh As Number, no As Number) As Net
         Error("NETLOAD: WRONG NUMBER OF WEIGHTS FOR " & Str(ni) & "-" & Str(nh) & "-" & Str(no))
     Else
         NetFromList(ws, ni, nh, no)
+
+Rem ---- binary save / load (over recio; bit-exact) --------------------
+
+Rem A model file is a stream of 8-byte doubles: a 4-double header —
+Rem the magic (1986, backpropagation's year), then ni, nh, no — then
+Rem the weights in the canonical order above. Every double is read and
+Rem written through recio's PutRec/GetRec at an explicit 1-based slot,
+Rem so nothing leans on sequential file-position state.
+
+Def NetBinMagic() As Number
+    1986
+
+Def NetPutAt(f As Number, k As Number, v As Number)
+    PutRec(f, k, 8, PutNum, v)
+
+Def NetGetAt(f As Number, k As Number) As Number
+    GetRec(f, k, 8, GetNum)
+
+Def NetSaveBin(path As String, n As Net)
+    If FileExists(path) Then
+        DeleteFile(path)
+    Let f = BOpen(path)
+    NetPutAt(f, 1, NetBinMagic())
+    NetPutAt(f, 2, Cols(W1(n)))
+    NetPutAt(f, 3, Rows(W1(n)))
+    NetPutAt(f, 4, Rows(W2(n)))
+    Let ws = ToArray(NetWeightList(n))
+    Each(Range(1, Length(ws)), Fn(k) => NetPutAt(f, k + 4, Nth(ws, k)))
+    BClose(f)
+
+Rem Self-describing: the header carries the architecture, so no
+Rem ni/nh/no arguments. The magic and the exact byte size are checked
+Rem before any weight is trusted.
+Def NetLoadBin(path As String) As Net
+    Let f = BOpen(path)
+    If BSize(f) < 32 Or NetGetAt(f, 1) <> NetBinMagic() Then
+        Error("NETLOADBIN: NOT A NEURAL MODEL FILE: " & path)
+    Let ni = NetGetAt(f, 2)
+    Let nh = NetGetAt(f, 3)
+    Let no = NetGetAt(f, 4)
+    Let count = ni * nh + nh + nh * no + no
+    If BSize(f) <> 8 * (4 + count) Then
+        Error("NETLOADBIN: WRONG SIZE FOR " & Str(ni) & "-" & Str(nh) & "-" & Str(no) & " MODEL: " & path)
+    Let ws = ToArray(Map(Range(1, count), Fn(k) => NetGetAt(f, k + 4)))
+    BClose(f)
+    NetFromList(ws, ni, nh, no)

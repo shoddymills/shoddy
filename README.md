@@ -49,7 +49,7 @@ This language is built the same way: old ideas — BASIC, Forth, Joy,
 ISAM — reclaimed, blended with new wool, and woven into something
 useful. Hence the **mill** (the executable), its **machines** (the
 libraries), and the tagline, meant literally. The full story is in
-[doc/HERITAGE.md](doc/HERITAGE.md).
+[doc/heritage.html](doc/heritage.html).
 
 ## Layout
 
@@ -58,7 +58,7 @@ libraries), and the tagline, meant literally. The full story is in
 | `src/`| The .NET solution: `Shoddy.Runtime` · `Shoddy.Devil` (front-end) · `Shoddy.Mill` · `Shoddy.Compiler` · `Shoddy.Tests` |
 | `bin/`| Build output — the published `mill` toolchain lands here after `dotnet publish` (not committed; build it, then run `bin/mill`) |
 | `machines/`| Standard library (the machines): `seq` `str` `math` `matrix` `stats` `random` `money` `file` `recio` `dict` `isam` `simplex` `mps` `clock` `vt100` `keys` `scribbler` `turtle` `plotter` `buzzer` |
-| `doc/`| `GUIDE.html` (start here) · `SPEC.html` · `QUICKREF.html` · `machines/` (one page per machine) · `VSCODE.html` · `logs/DEVLOG.md`  |
+| `doc/`| `index.html` (start here) · `guide.html` · `spec.html` · `quickref.html` · `machines/` (one page per machine) · `vscode.html` · `logs/DEVLOG.md`  |
 | `tst/`| `libtest.shoddy` (assertion suite) · `examples.shoddy` · `gradebook.shoddy` · `simplex.shoddy` · demos (`scribbler-` `turtle-` `plotter-` `buzzer-demo.shoddy`) · `golden/` (the constitution) |
 | `vscode-shoddy/`| VS Code extension: highlighting, snippets, mill commands |
 
@@ -123,11 +123,14 @@ Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned
 
 ## Documentation
 
-- **doc/GUIDE** — the beginner's guide; assumes no prior knowledge.
-- **doc/SPEC** — the language specification, including the concatenative
+- **doc/index.html** — the front door: every guide and reference,
+  organized by what you came for (including the beginner curriculum in
+  `curriculum/`).
+- **doc/guide.html** — the beginner's guide; assumes no prior knowledge.
+- **doc/spec.html** — the language specification, including the concatenative
   core (Appendix A) and design rationale (Appendix B).
-- **doc/QUICKREF.html** — one-page reference of every word, type, and
-  syntax form.
+- **doc/quickref.html** — one-page reference of every builtin word, type,
+  and syntax form, plus a map of the machines.
 
 ## Language at a glance
 

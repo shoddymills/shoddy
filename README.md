@@ -58,7 +58,7 @@ libraries), and the tagline, meant literally. The full story is in
 | `src/`| The .NET solution: `Shoddy.Runtime` · `Shoddy.Devil` (front-end) · `Shoddy.Mill` · `Shoddy.Compiler` · `Shoddy.Tests` |
 | `bin/`| Build output — the published `mill` toolchain lands here after `dotnet publish` (not committed; build it, then run `bin/mill`) |
 | `machines/`| Standard library (the machines): `seq` `str` `math` `matrix` `stats` `random` `neural` `money` `file` `recio` `dict` `isam` `simplex` `mps` `clock` `vt100` `keys` `scribbler` `turtle` `plotter` `buzzer` |
-| `doc/`| `index.html` (start here) · `guide.html` · `spec.html` · `quickref.html` · `machines/` (one page per machine) · `build.html` · `logs/DEVLOG.md`  |
+| `doc/`| `index.html` (start here) · `guide.html` · `spec.html` · `quickref.html` · `machines/` (one page per machine) · `build.html` |
 | `tst/`| `libtest.shoddy` (assertion suite) · `examples.shoddy` · `gradebook.shoddy` · `simplex.shoddy` · demos (`scribbler-` `turtle-` `plotter-` `buzzer-demo.shoddy`) · `golden/` (the constitution) |
 | `vscode-shoddy/`| VS Code extension: highlighting, snippets, mill commands |
 
@@ -124,8 +124,7 @@ Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned
 ## Documentation
 
 - **doc/index.html** — the front door: every guide and reference,
-  organized by what you came for (including the beginner curriculum in
-  `curriculum/`).
+  organized by what you came for.
 - **doc/guide.html** — the beginner's guide; assumes no prior knowledge.
 - **doc/spec.html** — the language specification, including the concatenative
   core (Appendix A) and design rationale (Appendix B).

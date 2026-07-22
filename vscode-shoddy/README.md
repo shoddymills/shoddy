@@ -1,6 +1,6 @@
 # Shoddy for VS Code
 
-*Making useless things useful, through skill.*
+*Useless Things Made Useful Through Skill*
 
 Language support for Shoddy — the purely functional BASIC — wired to
 the **mill** (the .NET toolchain).

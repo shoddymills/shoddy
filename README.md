@@ -1,6 +1,6 @@
 # Shoddy
 
-*Making useless things useful, through skill.*
+*Useless Things Made Useful Through Skill*
 
 A purely functional BASIC. Friendly typed syntax on the surface —
 parenthesized calls, infix operators, `Let`, records, `Select Case`

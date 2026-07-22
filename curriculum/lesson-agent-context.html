@@ -173,7 +173,7 @@ footer{margin-top:3rem; font-size:.82rem; color:var(--ink-soft); border-top:1px 
 
 Single reference file for any Craftsman lesson prompt. Ground-truthed against
 the C# reference implementation (`src/Shoddy.Devil` lexer/parser,
-`src/Shoddy.Runtime` engine) as of 2026-07-19, not just the prose docs — where
+`src/Shoddy.Runtime` engine) as of 2026-07-22, not just the prose docs — where
 `doc/guide.html`, `doc/quickref.html`, `doc/spec.html` were imprecise or
 silent, this file follows the implementation and flags the gap in §18.
 No heritage/backstory content; no marketing prose.
@@ -187,9 +187,10 @@ No heritage/backstory content; no marketing prose.
   concepts early.
 - §17's scope map ties every Phase‑1 lesson to the sections it needs.
   Sections marked **[unscheduled]** (records, sum types, the stack dialect,
-  the `machines/` library) are real, correct, and used in Phase 1's own
-  worked examples for internal consistency — but no lesson has been written
-  for them yet (see `roadmap.html` §6 open items).
+  the `machines/` library, the timing/sound/graphics builtins) are real,
+  correct, and used in Phase 1's own worked examples for internal
+  consistency — but no lesson has been written for them yet (see
+  `roadmap.html` §6 open items).
 
 ## 1. Toolchain
 
@@ -205,7 +206,9 @@ mill dap                         DAP server (editor-launched, not by hand)
 VS Code extension (`vscode-shoddy/`): **Ctrl+Shift+B** or the ▶ button runs
 the current file (`Cmd` on macOS); **F5** starts the native debugger (the
 *perch*) — breakpoints, step over/into/out (F10/F11/Shift+F11), call stack,
-Locals/Globals/Value-Stack panes. `Input` reads EOF under the perch; run
+Locals/Globals/Value-Stack panes. Scribbler windows open and sound plays
+under both `mill run` and the perch; woven output run via bare `dotnet` has
+neither backend (§13). `Input` reads EOF under the perch; run
 interactive programs with Ctrl+Shift+B instead. All errors print to the
 terminal as `ERROR (line N): message`, exit code 1; line 0 (no line) omits
 the parenthetical.
@@ -225,6 +228,16 @@ sibling `Shoddy.Machines.&lt;Name&gt;.dll` over splicing source. Include-once.
   `&lt;=` must be written with no space, and operators like `&gt;=` are ordinary
   space-separated words, not glued to neighbors (`x&gt;=y` fails to lex as
   intended; write `x &gt;= y`).
+- **Line continuation** (added 2026-07-21): a physical line with an unclosed
+  `(`, `[`, or `{` pulls the following physical line(s) into the same
+  *logical* line until the bracket closes — so any long expression can be
+  wrapped by parenthesizing it, and quotations may now span physical lines.
+  Continuation indent is not significant; the logical line's indent and
+  reported line number are its first physical line's. A bracket still open
+  at end of file — or a margin-level `Def` starting mid-continuation (a
+  missing close bracket about to eat the next function) — is
+  `unclosed '('` / `'['` / `'{'`, reported at the opener's line. Strings
+  remain single-line.
 - **Numbers**: sign, digits, optional `.digits`, optional exponent — no hex,
   no `inf`/`nan` literals.
 - **Strings**: double-quoted, single line only. Escapes: `\" \\ \n \t \r`.
@@ -594,7 +607,7 @@ One live handle at a time; no crash safety, no concurrency.
 **random.shoddy** (no dependencies) — thin wrapper over the `Rnd` builtin
 | Word | Signature | Notes |
 |---|---|---|
-| `Random()` | → `Number` in `[0,1)` | `Rnd()` directly. **Impure and seedless** — same "effects at the edge" category as `Print`; two calls with the same (no) arguments can differ on purpose. No pure/seeded alternative is provided — that would require threading generator state through every call, the opposite of seedless. |
+| `Random()` | → `Number` in `[0,1)` | `Rnd()` directly. **Impure and seedless** — same "effects at the edge" category as `Print`; two calls with the same (no) arguments can differ on purpose. "Seedless" means no generator state to create, store, or thread through calls — **the `Seed(n)` builtin does exist** and reseeds the engine's shared generator, so a whole run can be made exactly reproducible; what's not provided is a pure generator that threads its state through the program. |
 | `RandomRange(lo, hi)` | → `Number` in `[lo, hi)` | `lo + Random()*(hi-lo)`. `hi &lt; lo` → `Error("RANDOMRANGE: HI &lt; LO")`. |
 | `RandomInt(lo, hi)` | → `Number` in `[lo, hi]`, integral | `lo + Floor(Random()*(hi-lo+1))`. Same `hi &lt; lo` guard. |
 | `Shuffle(xs)` | → `List Of t` | Uniform random permutation (pick-and-remove recursion). Impure. |
@@ -629,7 +642,145 @@ the classic vt100.txt escape-code reference. Two halves:
   omits the `Y` and the `+32` per-coordinate offset — reconstructed from the
   VT52 spec, not literally transcribed; verify against the target terminal).
 
-## 13. I/O, errors, program args
+**math.shoddy** (no dependencies) — the derived math layer over the numeric
+builtins. No word here shadows a builtin (a `Def` silently outranks one),
+which is why the base-10 log stays the `Log10` builtin and this file adds
+only `Log2`/`LogBase`.
+| Word | Notes |
+|---|---|
+| `E()` `Tau()` | `Exp(1)`; `2 * Pi()` — zero-argument functions, like `Pi()` |
+| `Rad(deg)` / `Deg(rad)` | Trig builtins take radians; these bridge to degrees |
+| `Angle(dx, dy)` | Vector direction, radians in (−Pi, Pi] — `Atn2(dy, dx)` with the natural argument order |
+| `Frac(x)` | `x - Fix(x)`; sign follows x (`-3.25` → `-0.25`) |
+| `RoundTo(x, n)` | n decimal places (inherits `Round`'s half-up, §19) |
+| `Clamp(x, lo, hi)` | |
+| `Lerp(a, b, t)` `InvLerp(a, b, x)` `Remap(x, inLo, inHi, outLo, outHi)` | Linear interpolation, its inverse, range-to-range map |
+| `Smoothstep(edge0, edge1, x)` | Hermite ease, clamped to [0, 1] |
+| `Hypot(x, y)` / `Dist(x0, y0, x1, y1)` | |
+| `Log2(x)` / `LogBase(base, x)` | `Log(x) / Log(2)` etc. |
+| `RandRange(lo, hi)` `RandInt(lo, hi)` `Pick(xs)` `Chance(p)` | Thin over `Rnd()`: float in [lo, hi), inclusive integer, uniform element of a non-empty sequence, `True` with probability p. `Seed(n)` makes all four reproducible. **Overlap warning**: random.shoddy exports `RandomRange`/`RandomInt` — different names, and *those* abort on `hi &lt; lo` where these don't guard. Including both files is legal; pick one style per program. |
+
+**clock.shoddy** (no dependencies) — the derived layer over the
+`Ticks`/`Sleep`/`Clock` builtins (§13). Ticks is for *measuring* (monotonic,
+the only clock animation may use), Clock for *stamping* (wall time, jumps
+when the OS adjusts) — never mix them.
+| Word | Notes |
+|---|---|
+| `Elapsed(since)` | `Ticks() - since` |
+| `TimeIt(f)` | Run the quotation → elapsed ms |
+| `SleepUntil(t)` | Sleep whatever remains until `Ticks()` reaches t (nothing if past) |
+| `Stamp()` | ISO-8601, e.g. `"2026-07-20T14:03:07.042"` — one `Clock()` read, so the date and time halves can never straddle midnight |
+| `StampDate()` / `StampTime()` / `DateOf(c)` / `TimeOf(c)` | The halves; the last two format a `Clock()` array |
+| `FormatDuration(ms)` | `"1m 04.2s"`; `"4.2s"` under a minute |
+
+**buzzer.shoddy** (includes seq.shoddy) — notes and music over the sound
+builtins (§13). The frequency word is `MidiFreq`, never `Freq` —
+stats.shoddy exports `Freq` and both fold to `FREQ`; the note record's
+fields are `FreqHz`/`Ms` for the same reason.
+| Word | Notes |
+|---|---|
+| `Type BuzzerNote: FreqHz, Ms` | `FreqHz` 0 = rest |
+| `MidiFreq(midi)` | `440 * 2^((m-69)/12)`, A4 = MIDI 69 = 440 Hz, equal temperament; fractional MIDI numbers are legal — nothing rounds |
+| `NoteMidi(name)` | `"C4"` → 60, `"F#3"` → 54, `"Bb5"` → 82 — scientific pitch, C4 = middle C; octave digit 0–8 required. Bad name aborts `NOTEMIDI: BAD NOTE NAME 'x'` |
+| `NoteFreq(name)` | `MidiFreq(NoteMidi(name))` |
+| `MmlNotes(mml)` | **Pure**: GW-BASIC-subset MML string → `List Of BuzzerNote`, no I/O — scores parse and test headless. `A`–`G` notes (`#`/`+` sharp, `-` flat, optional length digits, trailing `.` dots ×1.5 each), `On` octave 0–8 (default O4, which *contains middle C* — GW-BASIC's octaves sat one lower), `&lt;` `&gt;` octave down/up, `Ln` default length (default 4), `Tn` tempo in quarter notes/min (default 120), `Pn`/`Rn` rests (dotted allowed), `,` a quarter-note rest — always length 4, whatever `Ln` says. Whole note = `4 * 60000 / T` ms. Malformed raises naming the offending position. GW-BASIC's MN/ML/MS modes, `Nn`, per-note volume: left for later. |
+| `Play(ch, mml)` | `SoundQueue` over `MmlNotes` — returns as soon as the tune is queued, which is immediately |
+| `PlayNotes(ch, notes)` | The queue half of Play, for programmatically built scores |
+
+**scribbler.shoddy** (includes seq.shoddy, clock.shoddy) — the typed-event
+and shape-drawing layer over the `Scribbler*` builtins (§13).
+- `Type ScribblerEvent = ScribblerNone | ScribblerMouseDown(X, Y, Button,
+  Mods, At) | ScribblerMouseMove(X, Y, Mods, At) | ScribblerMouseUp(X, Y,
+  Button, Mods, At) | ScribblerKeyDown(Key, Mods, At) | ScribblerKeyUp(Key,
+  Mods, At) | ScribblerTyped(Ch, Mods, At) | ScribblerTick(At) |
+  ScribblerQuit` — `DecodeEvent` builds it from the raw 8-element
+  `[kind, x, y, button, key, keyChar, mods, at]` array of
+  `ScribblerPoll`/`ScribblerWait`.
+- `NextEvent(sc)` blocking, never `ScribblerNone`; `PeekEvent(sc)`
+  non-blocking, `ScribblerNone` when the queue is empty. `SetFps(sc, fps)` ≡
+  `ScribblerSetInterval(sc, Round(1000 / fps))`; `SinceLast(e, prev)` reads
+  the drift-free frame delta from `At`.
+- `Key` is a stable *physical*-key code: letters and digits on their ASCII
+  codes; Enter 13, Esc 27, Backspace 8, Tab 9, Space 32; Insert 256, Delete
+  257, Home 258, End 259, PageUp 260, PageDown 261, Left 262, Right 263,
+  Up 264, Down 265; F1–F12 281–292; modifiers 301–308; unmapped 0. `Ch` in
+  `ScribblerTyped` is the *character* produced — layout/shift/IME already
+  applied, never derived from `Key`. `Mods` bitfield: 1 Shift, 2 Ctrl,
+  4 Alt, 8 Super. `At` = `Ticks()` when the event was generated (the field
+  is `At`, not `Ticks` — a builtin outranks a field accessor).
+- Drawing, all built on `ScribblerPixel`, all return the scribbler:
+  `DrawHLine` `DrawVLine` `DrawLine` (Bresenham) `DrawRect` `FillRect`
+  (w/h are pixel sizes — a 1×1 rect is one pixel) `DrawCircle` (midpoint)
+  `FillCircle` `DrawPolyline` (open; takes `List Of Point` — `Type Point:
+  X, Y`) `DrawPolygon` (closed) `FloodFill`.
+
+**keys.shoddy** (no dependencies) — folds a raw `ScribblerKeyDown`/`Up`
+code into a friendly key. `Type GameKey = ArrowLeft | ArrowRight | ArrowUp
+| ArrowDown | SpaceBar | EnterKey | EscKey | TabKey | BackKey |
+CharKey(Code) | OtherKey(Code)`; `ClassifyKey(code)` → `GameKey`;
+`KeyGlyph(k)` → `"A"`..`"Z"`/`"0"`..`"9"`, `""` for named/unmapped keys;
+`IsKey(k, "q")` case-insensitive glyph test. This is the *physical*-key
+question only — the character question is `ScribblerTyped`. Constructor
+names dodge vt100.shoddy's `KeyUp`/`KeyDown` and the `Left`/`Right` string
+builtins, so it coexists with either.
+
+**turtle.shoddy** (includes scribbler.shoddy, math.shoddy) — a purely
+functional turtle: every command takes a `Turtle` and returns a new one,
+drawing into the shared pixel buffer as a side effect. Heading in
+**degrees, 0 = up (north), clockwise**; position kept fractional and
+rounded only when handed to `DrawLine`, so polygons close over many small
+steps. Turn words are `TurnLeft`/`TurnRight` — `Left`/`Right` are the
+string builtins. LOGO's control half isn't reimplemented; Shoddy already is
+that language: `REPEAT 4 [FD 50 RT 90]` ≡
+`Fold(Range(1, 4), t, Fn(t, _) =&gt; TurnRight(Forward(t, 50), 90))`.
+`NewTurtle(w, h)` (centred, facing up, pen down, white on black) · `Home` ·
+`Blit` · `Close` · `Title` · `Forward(t, d)`/`Back` · `SetXY`/`MoveTo`
+(absolute; respects the pen, exactly like Forward) · `SetHeading` ·
+`TurnRight`/`TurnLeft` · `SetTowards(t, px, py)` · `DistanceTo` ·
+`PenUp`/`PenDown` · `SetPenColor(t, r, g, b)`.
+
+**plotter.shoddy** (includes scribbler.shoddy, stats.shoddy) — the five
+classroom charts drawn onto a scribbler, stats.shoddy doing the arithmetic.
+Every chart word takes the `Scribbler` first and returns it, so charts
+chain like any drawing. `NewPlot(w, h)` opens a white canvas; chart words
+never clear (a `PlotTitle(sc, s)` or a second pass can share the surface);
+fixed margins (left 46, right 12, top 14, bottom 28), black axes, min/max
+labels in the 8×8 font; bar and histogram heights measure from zero; series
+colours cycle a fixed six-colour `Palette()`. **Nothing blits** — call
+`ScribblerBlit` when the picture is ready (tests read pixels headless).
+`Histogram(sc, xs, n)` (n equal-width bins, min to max, scaled to the
+fullest bin) · `BarChart(sc, labels, values)` (values non-negative) ·
+`PieChart(sc, labels, values)` (values positive; wedges flood-fill from
+their midpoints — slices thinner than a few degrees may not fill cleanly) ·
+`BoxPlot(sc, xs)` (1.5×IQR fences, points beyond them dotted red — same
+rule as stats' `Outliers`) · `ScatterPlot(sc, xs, ys)`.
+
+**simplex.shoddy** (includes matrix.shoddy) — linear programming.
+`Problem(Costs, A, Rhs)`: minimize `Costs . x` s.t. `A x &gt;= Rhs`,
+`x &gt;= 0`. `Optimize(p)` → `Solution(Status, X, Cost, DualPrices, Reduced,
+Iterations)` — `DualPrices` are the shadow prices (change in Cost per unit
+of Rhs; the sensitivity analysis), `Reduced` the per-variable reduced
+costs. Revised simplex solved via the dual; negative cost coefficients get
+big-M artificial variables (every cost ≥ 0 → the classic slack start, no
+artificials). Honest statuses: `"OPTIMAL"`, `"UNBOUNDED"`, `"MAXITER"`,
+`"INFEASIBLE"` (the dual is unbounded — no feasible point), and
+`"UNBOUNDED-OR-INFEASIBLE"` (artificials cannot be driven out). Pure
+throughout; effects stay with the caller.
+
+**mps.shoddy** (includes str.shoddy, simplex.shoddy) — MPS
+linear-programming files → simplex `Problem`s. `LoadMps(path)` /
+`ParseMps(text)`; `LoadMpsZeroLower`/`ParseMpsZeroLower` (a BOUNDS section
+is skipped instead of rejected, every variable forced to `x &gt;= 0`);
+`LoadMpsModel(path, zeroLower)`/`ParseMpsModel` → `MpsModel`: the Problem
+plus variable names and normalised constraint labels (an E row appears as
+its `NAME+`/`NAME-` pair) for reporting tools. Free-format reading;
+supported sections NAME, OBJSENSE (MIN only), ROWS, COLUMNS, RHS, ENDATA.
+L rows are negated, E rows become a `&gt;=` pair, the first N row is the
+objective, unmentioned coefficients and right-hand sides default to zero.
+RANGES, BOUNDS and integer MARKERs are **rejected honestly** — variables
+are non-negative, exactly as `Optimize` assumes.
+
+## 13. I/O, time, sound, graphics, errors, program args
 
 | Word | Signature | Notes |
 |---|---|---|
@@ -652,6 +803,56 @@ advance the position; up to 16 files open at once.
 `sb.Length &gt; len` aborts — **never silently truncates**) · `GetStr(h,len)`
 (reads `len` bytes, strips at first NUL). Reading past EOF always aborts
 (`... : read past end of file`).
+
+**Timing** — no window required; callable from any program. Derived layer
+(`Elapsed`, `TimeIt`, `Stamp`, `FormatDuration`): clock.shoddy (§12).
+
+| Word | Notes |
+|---|---|
+| `Ticks()` | → monotonic milliseconds since program start, fractional. For *measuring* (frame pacing, deltas, benchmarks) — the only clock animation may use. |
+| `Sleep(ms)` | Yield the thread for ms; `&lt;= 0` is a no-op. |
+| `Clock()` | → 7-element `Array` `[year, month, day, hour, minute, second, ms]`, wall-clock time. For *stamping* (logs, filenames); jumps whenever the OS adjusts system time. |
+
+**Sound** — six builtins, channels 1–8; zero-result, fire-and-forget,
+**never block or wait**. Audible under `mill run` and the perch
+(`mill dap`); **silent no-ops** when no audio backend is in the process
+(woven output via bare `dotnet`, machines with no audio device) — but bad
+arguments raise even in silence. Derived layer (note names, MIDI, MML):
+buzzer.shoddy (§12).
+
+| Word | Notes |
+|---|---|
+| `Sound(freq, ms)` | Fire-and-forget blip from an anonymous voice pool (pool full: oldest stolen, silently). freq &gt; 0; ms = 0 is a legal no-op. |
+| `NoteOn(ch, freq)` | Hold freq until `NoteOff`; flushes the channel's queue. On an already-sounding channel: retunes in place, no re-attack. |
+| `NoteOff(ch)` | Release the held note (nothing held: no-op). |
+| `SoundQueue(ch, freq, ms)` | Append to the channel's queue; notes play back-to-back, sample-accurate. freq 0 = a rest. More than **5 minutes queued ahead** on one channel aborts — feed long scores incrementally from Tick events. |
+| `SoundStop(ch)` | Silence now: release the held note, flush the queue. |
+| `SoundGain(ch, vol)` | Channel volume 0–1, sticky until set again. |
+
+**Scribbler (graphics window)** — a pixel buffer shown in a window; y grows
+**downward**, colours r,g,b 0–255. Every word leaves exactly one value —
+mutators return the scribbler, so `Let sc = ...` rebinding keeps chains
+reading functionally even though the handle mutates in place. Nothing shows
+until `ScribblerBlit`: draw the whole frame, blit once. The window backend
+exists under `mill run` **and the perch** (`mill dap`); under bare `dotnet`
+(woven output) `ScribblerOpen` aborts. Everything that only touches the
+buffer — drawing, `ScribblerGetPixel`, Width/Height — works headless.
+Typed events and shape drawing: scribbler.shoddy (§12); key
+classification: keys.shoddy (§12).
+
+| Word | Notes |
+|---|---|
+| `ScribblerOpen(w, h)` | → handle; opens the window. |
+| `ScribblerClose(sc)` | Close; idempotent. |
+| `ScribblerTitle(sc, s)` | Window title. |
+| `ScribblerPixel(sc, x, y, r, g, b)` | The one drawing primitive. |
+| `ScribblerGetPixel(sc, x, y)` | → 3-element `Array` r,g,b (out of bounds reads 0,0,0). |
+| `ScribblerFill(sc, r, g, b)` | Flood the whole buffer. |
+| `ScribblerText(sc, x, y, scale, r, g, b, s)` | Builtin 8×8 font, integer scale. |
+| `ScribblerWidth(sc)` / `ScribblerHeight(sc)` | Buffer size. |
+| `ScribblerBlit(sc)` | Push the buffer to the window. |
+| `ScribblerPoll(sc)` / `ScribblerWait(sc)` | → raw 8-element event array (kind 0 = none); Wait blocks at zero CPU (headless it aborts — nothing would ever wake it). Prefer `NextEvent`/`PeekEvent` (§12). |
+| `ScribblerSetInterval(sc, ms)` | Tick events every ms (0 = off) — prefer `SetFps` (§12). |
 
 ## 14. Value formatting (for "predict before you run")
 
@@ -689,7 +890,10 @@ advance the position; up to 16 files open at once.
 | `!  %  #  $  ?` in a word | `'tok': the characters ! % # $ ? are reserved and may not appear in words` |
 | Redeclaration | `duplicate definition of X`, `duplicate binding`, `duplicate field X` |
 | Bad `SELECT CASE` | no match with no `Case Else` → `SELECT CASE: no matching CASE` |
-| Layout errors | `unexpected indent`, `ELSE without matching IF`, `missing ] (quotations may not span lines)`, `expected indented block after IF/ELSE` |
+| Layout errors | `unexpected indent`, `ELSE without matching IF`, `missing ]` (mismatched brackets within one logical line), `expected indented block after IF/ELSE` |
+| Bracket still open at EOF, or margin-level `Def` mid-continuation | `unclosed '('` / `'['` / `'{'` — reported at the opener's line (§2) |
+| Sound argument errors (raise even when sound is silent) | `NoteOn: channel must be 1..8, got X` (same shape for all six words), `Sound: frequency must be positive, got X`, `Sound: duration must be &gt;= 0 ms, got X`, `SoundGain: volume must be 0..1, got X`, `SoundQueue: more than 5 minutes queued ahead on channel N — feed long scores incrementally from Tick events` |
+| Scribbler without a window backend | `ScribblerOpen: no window backend — scribbler programs require ...` (names `mill run`; the perch works too), `ScribblerWait: no window backs this scribbler — the wait would never wake` |
 
 All of the above are wrapped by the top-level handler as
 `ERROR (line N): message` (§1).
@@ -707,13 +911,14 @@ AND OR NOT TRUE FALSE
 &amp; LEN STR VAL LEFT RIGHT MID CHR ASC UPPER LOWER
 PRINT READFILE WRITEFILE APPENDFILE FILEEXISTS DELETEFILE
 BOPEN BCLOSE SEEK BPOS BSIZE PUTNUM GETNUM PUTBOOL GETBOOL PUTSTR GETSTR
-INPUT ARGS
+INPUT INKEY ARGS
 CALL IFTE MAP FILTER FOLD EACH TIMES RANGE LENGTH REVERSE CONCAT SORT
 ISEMPTY FIRST NTH SETNTH DIM TOARRAY TOLIST REST PREPEND
 TICKS SLEEP CLOCK
 SCRIBBLEROPEN SCRIBBLERPIXEL SCRIBBLERFILL SCRIBBLERTEXT SCRIBBLERGETPIXEL
 SCRIBBLERWIDTH SCRIBBLERHEIGHT SCRIBBLERBLIT SCRIBBLERCLOSE SCRIBBLERTITLE
 SCRIBBLERPOLL SCRIBBLERWAIT SCRIBBLERSETINTERVAL
+SOUND NOTEON NOTEOFF SOUNDQUEUE SOUNDSTOP SOUNDGAIN
 ```
 Everything else callable (`Sum`, `Split`, `MatMul`, ...) is library Shoddy
 from `machines/`, not a builtin.
@@ -734,13 +939,22 @@ from `machines/`, not a builtin.
 uses records) but no lesson exists yet per `roadmap.html` §6/§7: records &amp;
 `Type` (§10), sum types &amp; pattern matching (§6, §10), the concatenative
 stack dialect (§11), the `machines/` standard library (§12), binary/ISAM
-file I/O (§13). Flag to the curriculum author before citing these in a
+file I/O (§13), and the timing, sound, and scribbler-graphics builtins
+(§13) with their machines — clock, buzzer, scribbler, keys, turtle,
+plotter (§12). Flag to the curriculum author before citing these in a
 lesson prompt — see recommendation in the accompanying chat response.
 
 ## 18. Gotchas (deduped from `guide.html` §10, source-verified)
 
-- A call must finish on the line it starts; only a *statement* (pipeline)
-  may continue on deeper-indented lines.
+- Two ways to wrap a long line, nothing else: an unclosed `(`/`[`/`{`
+  continues the *same logical line* onto following physical lines at any
+  indent (§2, added 2026-07-21), and a *statement* (pipeline) may continue
+  on deeper-indented lines. Before the first existed, a call had to finish
+  on the line it started — retire that phrasing.
+- A `Def` silently outranks a builtin of the same folded name — the
+  machines rename to dodge this (`TurnLeft`/`TurnRight` because
+  `Left`/`Right` are builtins; `ReverseVideo`, `MidiFreq`). A record
+  *field* is the opposite: the builtin wins over the accessor (§10).
 - `Type` and `Include` must appear before first use; `Def`s may forward-call.
 - `Maximum({ })`/`First({ })`/`Last({ })` all abort — no identity element.
 - In argument position a bare name is passed, not called (§8) — no
@@ -760,6 +974,15 @@ lesson prompt — see recommendation in the accompanying chat response.
   or start positions (e.g. `Mid("HI", 99, 3)` → `""`, not an error).
 - **`Chr(0)` returns `""`**, not a one-character NUL string (mirrors C
   string semantics from the reference implementation).
+- **`guide.html` §10 still states the pre-continuation rule** ("a call must
+  finish on the line it starts, one `f(...)` can't be split
+  mid-parenthesis") — superseded by bracket line continuation
+  (2026-07-21, `Lexer.cs`; §2 here). `quickref.html` and `spec.html` are
+  updated; the guide is not.
+- **`machines/scribbler.shoddy`'s header comment still says `ScribblerOpen`
+  raises under `mill dap`** — stale since the perch gained a window backend;
+  the debugger serves scribbler windows now (`Dap.cs`). Only bare `dotnet`
+  on woven output is windowless.
 
 Resolved directly in `doc/quickref.html` (2026-07-19): `Pi` is now listed as
 `Pi()` with a note that it's a zero-argument function, not a bare constant;

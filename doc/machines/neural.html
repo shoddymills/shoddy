@@ -111,8 +111,10 @@ classroom hardware in classroom time. Reach for <code>neural</code> when you
 have a table of numeric inputs, a numeric target, and a suspicion the mapping
 between them bends. It builds on <a href="matrix.html">matrix</a> (the forward
 pass is a <code>MatVec</code>, the weight gradients are <code>Outer</code>
-products), <a href="random.html">random</a> (each epoch shuffles), and
-<a href="file.html">file</a> (weights save and load as plain text).</p>
+products), <a href="random.html">random</a> (each epoch shuffles),
+<a href="file.html">file</a> (weights save and load as plain text), and
+<a href="recio.html">recio</a> (the binary model format underneath
+<code>NetSaveBin</code>/<code>NetLoadBin</code>).</p>
 
 <div class="note"><strong>Scale, and the two impure edges.</strong> Like
 stats, this machine is classroom-sized — hundreds of rows and a few thousand
@@ -175,12 +177,15 @@ remainder each time, since the shuffle is fresh.</li>
 targets somewhere near [-1, 1] (divide ages by 100, incomes by 100&thinsp;000)
 keep the gradients alive. This is standard practice for every network of this
 family, not a quirk of this machine.</li>
-<li><strong>Weight files interchange with the classic C# demo.</strong>
-<code>NetSave</code> writes one number per line in the traditional order —
+<li><strong>Two serialization formats, one canonical order.</strong>
+<code>NetSave</code> writes text, one number per line in the traditional order —
 input-hidden weights input-major, hidden biases, hidden-output weights
-hidden-major, output biases. <code>Str</code> writes 10 significant digits, so
-a round trip reproduces predictions to about 1e-10 relative, not to the last
-bit.</li>
+hidden-major, output biases — so weight files interchange with the classic C#
+demo (<code>Str</code> writes 10 significant digits, so a text round trip
+reproduces predictions to about 1e-10 relative). <code>NetSaveBin</code> writes
+the same sequence as raw 8-byte doubles behind a self-describing header, so
+<code>NetLoadBin(path)</code> needs no architecture arguments and the round
+trip is <em>bit-exact</em>.</li>
 </ul>
 
 <h2 id="hood">Under the Hood: Gradients With the Net's Shape</h2>
@@ -212,7 +217,7 @@ a runtime builtin (it needs native precision and saturates safely at
 runtime supplies the primitives, Shoddy derives the rest.</p>
 
 <h2 id="words">Word Reference</h2>
-<p class="tag">14 words, plus the Net and NetEval types</p>
+<p class="tag">16 words, plus the Net and NetEval types</p>
 
 <h3>The types</h3>
 <table>
@@ -293,6 +298,15 @@ interchange with the C# reference program.</td></tr>
 <code>NetSave</code> back into a net. Stops the program with an error if the
 file's line count doesn't match the <code>ni</code>-<code>nh</code>-<code>no</code>
 architecture.</td></tr>
+<tr><td>NetSaveBin(path, n)</td><td>Writes the net as binary — a
+self-describing header (a magic number, then <code>ni</code>, <code>nh</code>,
+<code>no</code>), then every weight as a raw 8-byte double in the same
+canonical order, through <a href="recio.html">recio</a>. Nothing is rounded,
+so the round trip is bit-exact.</td></tr>
+<tr><td>NetLoadBin(path)</td><td>Reads a binary model back into a net. The
+header carries the architecture, so no dimension arguments; the magic number
+and the exact byte size are checked before any weight is trusted, and a wrong
+or truncated file stops the program with a clear error.</td></tr>
 </table>
 
 

@@ -88,4 +88,18 @@ Def Main()
     Assert(Abs(NetOut(reloaded, ToArray({ 0.5 })) - NetOut(trained, ToArray({ 0.5 }))) < 0.00000001, "SAVE/LOAD ROUND TRIP PREDICTS ALIKE")
     DeleteFile(wtsPath)
 
+    Rem binary save/load: self-describing header (no dims passed), the
+    Rem exact byte size (4 header doubles + 13 weights, 8 bytes each),
+    Rem and BIT-EXACT predictions — raw doubles lose nothing
+    Let binPath = "tst/neuraltest-model.tmp"
+    NetSaveBin(binPath, trained)
+    Let bf = BOpen(binPath)
+    Assert(BSize(bf) = 8 * (4 + 13), "BINARY MODEL IS EXACTLY 8 * (HEADER + WEIGHTS) BYTES")
+    BClose(bf)
+    Let binNet = NetLoadBin(binPath)
+    Assert(Rows(W1(binNet)) = 4 And Cols(W1(binNet)) = 1 And Rows(W2(binNet)) = 1, "BINARY HEADER CARRIES THE ARCHITECTURE")
+    Assert(NetOut(binNet, ToArray({ 0.5 })) = NetOut(trained, ToArray({ 0.5 })), "BINARY ROUND TRIP IS BIT-EXACT")
+    Assert(ToArray(NetWeightList(binNet)) = ToArray(NetWeightList(trained)), "BINARY ROUND TRIP KEEPS EVERY WEIGHT BIT-EXACT")
+    DeleteFile(binPath)
+
     Print("ALL NEURAL CHECKS PASSED")

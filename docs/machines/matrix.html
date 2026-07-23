@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
+<meta name="description" content="Dense Linear Algebra — machines/matrix.shoddy">
+<link rel="stylesheet" href="../style.css">
+<link rel="icon" href="../favicon.svg" type="image/svg+xml">
+<title>matrix — Dense Linear Algebra | Shoddy Machines</title>
+</head>
+<body>
+<div class="topbar"><div class="inner">
+  <a class="phase" href="index.html">Shoddy · The Machines</a>
+  <span class="spacer"></span>
+  <nav class="docnav" aria-label="Documentation"><a href="../heritage.html">Story</a><a href="../guide.html">Guide</a><a href="../quickref.html">Reference</a><span class="here">Machines</span><a href="../mills/index.html">Mills</a><a href="../stack.html">Stack</a><a href="../spec.html">Spec</a><a href="../setup.html">Setup</a><a href="../vscode.html">VS Code</a><a href="../build.html">Toolchain</a></nav>
+</div></div>
+<div class="wrap">
+
+
+<header class="mast"><p class="eyebrow"><a href="index.html#numbers-math">The Machines &middot; Numbers &amp; math</a></p><h1>matrix</h1><p class="kicker">Dense Linear Algebra — machines/matrix.shoddy</p></header>
+<nav class="pagertop" aria-label="Machines, in catalog order"><a href="money.html">&larr; money</a><a href="index.html">All machines</a><a href="stats.html">stats &rarr;</a></nav>
+
+<h2 id="summary">Summary</h2>
+<p><code>matrix</code> gives Shoddy a proper grid of numbers — rows and
+columns, the thing you drew in school algebra — and the everyday operations
+that go with one: read a cell, change a cell, pull out a row or a column,
+add two grids, multiply them, scale them, flip them on their side. A matrix
+here is a small bundle: how many rows it has, how many columns, and one long
+line of numbers holding all the cells. That last part is the trick. The cells
+aren't stored as a grid at all — they're laid out end to end, one row after
+another, in a single flat list. Because they're stored that way, finding the
+cell at row <code>r</code>, column <code>c</code> is a single sum and a single
+lookup, no searching involved. Every word here is pure: <code>MatSet</code>
+and its friends never scribble on the matrix you handed them, they hand back
+a brand-new one with the change made.</p>
+
+<h2 id="why">Why It's Useful</h2>
+<p>Grids of numbers turn out to be almost everywhere once you start looking.
+A page of a spreadsheet is a matrix. A photo is a matrix of brightnesses. The
+rotation that spins a shape on screen is a matrix; so is the little system of
+equations that says "three apples and two pears cost this much, one apple and
+four pears cost that much — so what's an apple?" Solving those, transforming
+those, combining those is what linear algebra is, and a matrix is the box you
+keep the numbers in while you do it. Reach for <code>matrix</code> whenever a
+problem is naturally a table of numbers rather than a single one: coordinates
+to rotate or project, weights to combine, a set of linear equations to shuffle
+around. It builds on <a href="seq.html">seq</a> for its list machinery
+(<code>Map</code>, <code>Fold</code>, <code>Range</code>, <code>ZipWith</code>),
+so the operations read like the maths they stand for.</p>
+
+<h2 id="history">A Brief History of Row-Major Storage</h2>
+<p>A matrix is a two-dimensional thing, but a computer's memory is a
+one-dimensional thing — just a long row of numbered boxes, one after another,
+with no notion of "up" or "across." So the very first question anyone building
+matrices on a computer has to answer is: how do you fold a grid down into a
+line? The answer that won, and kept winning, is almost embarrassingly simple.
+Write out the first row, then the second row right after it, then the third,
+and so on, until the whole grid is one long strip. That's <strong>row-major
+storage</strong>: rows laid end to end. (There's a rival, <strong>column-major</strong>,
+which lays the columns end to end instead — Fortran chose it back in the 1950s,
+and it still lingers in the numerical-computing world because of that head
+start. C, and most languages since, went row-major, which is the convention
+this machine follows too.)</p>
+<p>Why does the choice matter so much that people still argue about it? Because
+once you've picked a layout, finding any cell becomes pure arithmetic instead
+of searching. In row-major, the cell at row <code>r</code>, column <code>c</code>
+lives at position <code>(r - 1) &times; columns + c</code> in the strip — count
+past all the whole rows above it, then step across to the column you want.
+No scanning, no bookkeeping, the same tiny cost whether the grid is
+three-by-three or three thousand square. That single-multiply-and-add is the
+quiet engine underneath essentially all of dense linear algebra: the classic
+number-crunching libraries (BLAS and LAPACK), the array in NumPy, the buffer
+behind a game's transform maths — all of them are, at bottom, a flat block of
+numbers plus a rule for turning a row and a column into an offset. The idea is
+old and it never got replaced because there was nothing to replace it with:
+it is already the most direct thing you can do. Everything fancy — cache
+tricks, block algorithms, GPUs — is built on top of this same flat strip, not
+instead of it.</p>
+<p>This machine borrows exactly that: a grid is remembered as its dimensions
+plus one flat, row-major line of cells, and every cell lookup is the same
+one-line sum. No cleverness, nothing you couldn't have worked out yourself —
+which is the point.</p>
+
+<h2 id="guide">User's Guide</h2>
+<p>You build a matrix from its dimensions and its cells, listed row by row —
+the same order you'd read them off the page. <code>Mat(rows, cols, vals)</code>
+checks that you handed it exactly <code>rows &times; cols</code> numbers and
+complains loudly if you didn't, because a grid with the wrong number of cells
+is a bug you want caught now, not three operations later. Indexes are 1-based
+throughout, like the rest of Shoddy: row 1 is the top row, column 1 is the
+leftmost.</p>
+<pre><code>Include "matrix.shoddy"
+
+Def Main()
+    Let a = Mat(2, 3, { 1, 2, 3,
+                        4, 5, 6 })
+
+    Print(MatGet(a, 2, 3))          ' 6   — row 2, column 3
+    Print(MatRow(a, 1))             ' { 1, 2, 3 }
+    Print(MatCol(a, 1))             ' { 1, 4 }
+
+    Let b = MatSet(a, 1, 1, 99)     ' a is untouched; b is the new grid
+    Print(MatGet(a, 1, 1))          ' 1   — still the original
+    Print(MatGet(b, 1, 1))          ' 99
+
+    Let i = Ident(2)                ' the 2x2 identity
+    MatShow(MatMul(i, a))           ' i times a is just a, printed row by row
+    MatShow(Transp(a))             ' a flipped: now 3 rows, 2 columns
+
+    Print(Dot({ 1, 2, 3 }, { 4, 5, 6 }))   ' 32 — a plain vector dot product</code></pre>
+<p>A few things worth remembering:</p>
+<ul>
+<li><strong>Everything is pure, nothing is mutated.</strong>
+<code>MatSet</code>, <code>MatAdd</code>, <code>MatScale</code>,
+<code>Transp</code> and the rest never change the matrix you pass in — they
+return a fresh one. So the original is always safe to keep using, exactly like
+<code>a</code> above staying <code>1</code> after <code>b</code> changed it to
+<code>99</code>.</li>
+<li><strong>The dimensions have to line up.</strong> <code>MatMul</code> needs
+the first matrix's column count to equal the second's row count;
+<code>MatAdd</code> needs both matrices the same shape; <code>MatVec</code>
+needs the vector as long as the matrix is wide. If they don't match, the word
+stops your program with a "DIMENSION MISMATCH" error rather than quietly
+producing nonsense.</li>
+<li><strong>Vectors are just flat arrays of numbers.</strong> The vector
+helpers — <code>Dot</code>, <code>VAdd</code>, <code>VSub</code>,
+<code>VMul</code>, <code>VScale</code>, <code>Outer</code> — and
+<code>MatVec</code> work on ordinary <code>Array Of Number</code> values, not
+on matrices. A row you pull out with <code>MatRow</code> is exactly that kind
+of array, so it drops straight into <code>Dot</code>.</li>
+<li><strong>Printing is the one effect.</strong> <code>MatShow</code> is the
+only word here that does anything visible — it prints the grid one row per
+line. Everything else just computes and returns, so it's happy to be used deep
+inside other expressions. Call <code>MatShow</code> from <code>Main</code>,
+where effects belong.</li>
+</ul>
+
+<h2 id="hood">Under the Hood: Flat Cells and Dimensions</h2>
+<p>You don't need any of this to use the machine — it's here for the curious.</p>
+<p>A <code>Matrix</code> is a plain record with three fields:
+<code>Rows</code>, <code>Cols</code>, and <code>Cells</code>, where
+<code>Cells</code> is an <code>Array Of Number</code>. The whole grid lives in
+that one flat array, stored row-major — all of row 1, then all of row 2, and
+so on to the end. Nothing in the value remembers "where the second row begins";
+that's recovered by arithmetic whenever it's needed, from the <code>Cols</code>
+count. Storing the dimensions alongside the cells is what lets the machine
+check shapes before it works (and raise a clear <code>Error</code> when they
+don't fit) instead of running off the end of the array.</p>
+<p><strong>Reading a cell</strong> is the heart of the whole design.
+<code>MatGet(m, r, c)</code> is just <code>Nth(Cells(m), (r - 1) * Cols(m) + c)</code>
+— skip past the <code>r - 1</code> whole rows above, then step across to
+column <code>c</code>, and look that one spot up in the flat array. Because the
+cells sit in a real array, that lookup is O(1): the same constant cost no matter
+how big the grid is. No loop, no search, one multiply and one add.</p>
+<p><strong>Writing a cell</strong> keeps the purity promise.
+<code>MatSet</code> computes the very same offset and calls <code>SetNth</code>,
+which returns a new array with that one position replaced, leaving the old one
+intact; that new array is wrapped back up with <code>With</code> into a new
+<code>Matrix</code>. So a "change" is really a copy-with-one-difference, and the
+matrix you started with never moves.</p>
+<p><strong>The bigger operations are all expressed as index arithmetic over
+the flat strip.</strong> <code>MatMul</code> builds its result cell by cell,
+turning each output position <code>k</code> back into a row and column with a
+divide and a modulo, and summing the matching row-of-<code>a</code> against
+column-of-<code>b</code> products. <code>Transp</code> walks the output
+positions and reads each from the transposed spot in the source.
+<code>MatAdd</code> and <code>MatScale</code> don't even need the geometry —
+adding two grids or scaling one is just working straight down the two flat
+arrays with <code>ZipWith</code> and <code>Map</code>, because same-shaped
+grids have their cells in exactly the same order. The flat layout is what makes
+those the short, obvious one-liners they are. Shoddy by name.</p>
+
+<h2 id="words">Word Reference</h2>
+<p class="tag">22 words, plus the Matrix type</p>
+
+<h3>The type</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>Matrix</td><td>A grid of numbers: <code>Rows</code> and
+<code>Cols</code> counts, plus <code>Cells</code>, one flat
+<code>Array Of Number</code> holding every cell in row-major order (all of
+row 1, then row 2, and so on). You'll rarely build one by hand — use
+<code>Mat</code> and friends — but this is what they hand back.</td></tr>
+</table>
+
+<h3>Building matrices</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>Mat(r, c, vals)</td><td>Builds an <code>r</code>&times;<code>c</code>
+matrix from <code>vals</code>, a list of numbers given row by row. Stops the
+program with an error if you didn't supply exactly <code>r &times; c</code>
+cells.</td></tr>
+<tr><td>MatFill(r, c, v)</td><td>An <code>r</code>&times;<code>c</code> matrix
+with every cell set to <code>v</code> — handy for a grid of zeros to fill in
+later.</td></tr>
+<tr><td>Ident(n)</td><td>The <code>n</code>&times;<code>n</code> identity
+matrix: 1s down the diagonal, 0s everywhere else. Multiplying by it leaves a
+matrix unchanged, the way multiplying a number by 1 does.</td></tr>
+<tr><td>MatFromRows(rs)</td><td>Builds a matrix from a list of rows, each row
+being an <code>Array Of Number</code>. The number of rows and the width of the
+first row set the dimensions.</td></tr>
+<tr><td>Kron(a, b)</td><td>The Kronecker delta: <code>1</code> when
+<code>a</code> equals <code>b</code>, <code>0</code> otherwise. A small number
+helper — it's what <code>Ident</code> uses to place its diagonal — but it
+stands on its own if you need it.</td></tr>
+</table>
+
+<h3>Reading and changing cells <span class="tag">1-based, O(1)</span></h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>MatGet(m, r, c)</td><td>The number in row <code>r</code>, column
+<code>c</code>. A single flat-array lookup — the same fast cost whatever the
+size of the grid.</td></tr>
+<tr><td>MatSet(m, r, c, v)</td><td>A new matrix, identical to <code>m</code>
+but with row <code>r</code>, column <code>c</code> set to <code>v</code>. The
+original <code>m</code> is left untouched.</td></tr>
+<tr><td>MatRow(m, r)</td><td>Row <code>r</code> as a flat
+<code>Array Of Number</code> — ready to drop into <code>Dot</code> or the
+other vector helpers.</td></tr>
+<tr><td>MatCol(m, c)</td><td>Column <code>c</code> as a flat
+<code>Array Of Number</code>.</td></tr>
+</table>
+
+<h3>Vectors <span class="tag">plain flat arrays</span></h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>Dot(xs, ys)</td><td>The dot product of two equal-length number arrays:
+multiply them position by position and add it all up, giving a single
+number.</td></tr>
+<tr><td>VAdd(xs, ys)</td><td>Adds two number arrays position by position,
+giving a new array — the sibling of <code>VSub</code>.</td></tr>
+<tr><td>VSub(xs, ys)</td><td>Subtracts one number array from another, position
+by position, giving a new array.</td></tr>
+<tr><td>VMul(xs, ys)</td><td>Multiplies two number arrays position by position
+(the Hadamard, or elementwise, product), giving a new array.</td></tr>
+<tr><td>VScale(xs, s)</td><td>Multiplies every element of the array
+<code>xs</code> by the scalar <code>s</code>, giving a new array.</td></tr>
+<tr><td>Outer(u, v)</td><td>The outer product of two vectors: a
+<code>Length(u)</code>&times;<code>Length(v)</code> matrix whose cell
+<code>(i, j)</code> is <code>u<sub>i</sub> &times; v<sub>j</sub></code>.</td></tr>
+</table>
+
+<h3>Matrix arithmetic</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>MatMul(a, b)</td><td>The matrix product of <code>a</code> and
+<code>b</code>. Stops the program with a "DIMENSION MISMATCH" error unless
+<code>a</code>'s column count equals <code>b</code>'s row count.</td></tr>
+<tr><td>MatAdd(a, b)</td><td>Adds two matrices cell by cell. Stops the program
+with an error unless they're the same shape.</td></tr>
+<tr><td>MatSub(a, b)</td><td>Subtracts one matrix from another cell by cell,
+dimension-checked the same way as <code>MatAdd</code>.</td></tr>
+<tr><td>MatScale(m, s)</td><td>Multiplies every cell of <code>m</code> by the
+scalar <code>s</code>, giving a new matrix.</td></tr>
+<tr><td>Transp(m)</td><td>The transpose: <code>m</code> flipped over its
+diagonal, so its rows become columns and its columns become rows. An
+<code>r</code>&times;<code>c</code> matrix comes back
+<code>c</code>&times;<code>r</code>.</td></tr>
+<tr><td>MatVec(m, v)</td><td>Multiplies matrix <code>m</code> by the vector
+<code>v</code> (a flat number array), giving a new vector. Stops the program
+with an error unless <code>v</code> is as long as <code>m</code> is
+wide.</td></tr>
+</table>
+
+<h3>Showing a matrix <span class="tag">effectful; call from Main</span></h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>MatShow(m)</td><td>Prints the matrix one row per line. The only word
+here that does anything visible — everything else just returns a value.</td></tr>
+</table>
+
+
+<nav class="pager" aria-label="Machines, in catalog order">
+  <a href="money.html"><span class="dir">&larr; Previous machine</span><span class="ttl">money</span></a>
+  <a class="next" href="stats.html"><span class="dir">Next machine &rarr;</span><span class="ttl">stats</span></a>
+</nav>
+<footer>Named for the shoddy mills of the West Riding: Useless Things Made
+Useful Through Skill (<a href="../heritage.html">the full story</a>).<br>
+&copy; 2026 Stephen Vincent Foster</footer>
+</div>
+</body>
+</html>

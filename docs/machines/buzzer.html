@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
+<meta name="description" content="The Mill's Voice — machines/buzzer.shoddy">
+<link rel="stylesheet" href="../style.css">
+<link rel="icon" href="../favicon.svg" type="image/svg+xml">
+<title>buzzer — The Mill's Voice | Shoddy Machines</title>
+</head>
+<body>
+<div class="topbar"><div class="inner">
+  <a class="phase" href="index.html">Shoddy · The Machines</a>
+  <span class="spacer"></span>
+  <nav class="docnav" aria-label="Documentation"><a href="../heritage.html">Story</a><a href="../guide.html">Guide</a><a href="../quickref.html">Reference</a><span class="here">Machines</span><a href="../mills/index.html">Mills</a><a href="../stack.html">Stack</a><a href="../spec.html">Spec</a><a href="../setup.html">Setup</a><a href="../vscode.html">VS Code</a><a href="../build.html">Toolchain</a></nav>
+</div></div>
+<div class="wrap">
+
+
+<header class="mast"><p class="eyebrow"><a href="index.html#sound">The Machines &middot; Sound</a></p><h1>buzzer</h1><p class="kicker">The Mill's Voice — machines/buzzer.shoddy</p></header>
+<nav class="pagertop" aria-label="Machines, in catalog order"><a href="clock.html">&larr; clock</a><a href="index.html">All machines</a><a href="scribbler.html">scribbler &rarr;</a></nav>
+
+<h2 id="summary">Summary</h2>
+<p>A West Riding mill ran on sound, and the buzzer — the steam hooter on the
+engine house roof, heard across the whole valley — was the one sound the mill
+made <em>on purpose</em>. The <code>buzzer</code> is Shoddy's sound device.
+Six built-in words (<code>Sound</code>, <code>NoteOn</code>,
+<code>NoteOff</code>, <code>SoundQueue</code>, <code>SoundStop</code>,
+<code>SoundGain</code>) make the mill beep, hold, and sing; this machine is
+the musical layer on top, written in ordinary Shoddy: note names
+(<code>NoteFreq("C4")</code>), MIDI numbers (<code>MidiFreq(69)</code> is
+A&nbsp;440), and a <code>Play</code> word that reads a tune written in
+GW-BASIC's Music Macro Language — <code>Play(1, "T120 O4 L8 C D E F G2")</code>
+— and queues it, note by note, onto a channel. There is no handle and no
+window: a console program may beep, and a chord is just three calls in a
+row.</p>
+
+<h2 id="why">Why It's Useful</h2>
+<p>Sound is the cheapest feedback there is. A game wants a blip when the
+player jumps and a buzz when they fall; a long-running job wants to announce
+that it's done; a toy synthesizer wants to sing under the mouse; and some
+programs just want to play a tune because playing a tune is a delight. Doing
+any of that from first principles means an audio library, a mixer, a thread,
+and a pile of format negotiation — none of which has anything to do with the
+program you were writing. The buzzer gives you the three things you actually
+mean — <em>beep now</em>, <em>hold this note until I say stop</em>, and
+<em>here is a tune, play it while I get on with something else</em> — as one
+word each, and this machine adds the vocabulary music is written in: letters,
+octaves, and note lengths instead of hertz and milliseconds.</p>
+
+<h2 id="history">A Brief History of the Beep</h2>
+<p>Early computers were silent on purpose and noisy by accident — you could
+hear the fans and the line printer, and operators famously learned to tell a
+healthy run from a crashed one by the <em>sound</em> of the machine room, or
+by parking an AM radio on the cabinet and listening to the interference. The
+first deliberate computer sound was a speaker wired to a single bit: flip the
+bit fast enough and regularly enough and the cone's clicks blur into a tone.
+That is a <strong>square wave</strong> — the voltage is either on or off,
+nothing in between — and it is why every early machine from the PDP-1 to the
+IBM PC had the same reedy, insistent voice. The PC's own speaker was exactly
+this: one bit, toggled by a timer chip, no volume control. BASIC put a
+friendly face on it: <code>SOUND freq, duration</code> and, from IBM's BASICA
+and Microsoft's GW-BASIC in the early 1980s, <code>PLAY</code> with its
+<strong>Music Macro Language</strong> — <code>"T120 O4 L8 C D E F G2"</code> —
+a tiny notation for tempo, octave, length, and note that let a schoolchild
+type in a tune from a magazine. Shoddy's buzzer keeps both words and the
+notation; its MML is a faithful subset of GW-BASIC's, with one deliberate
+correction (octaves are numbered so that <code>O4</code> contains middle C,
+matching modern scientific pitch — GW-BASIC's sat one lower).</p>
+<p>Home computers of the same years did better than one bit: they carried
+<strong>sound chips</strong> — the TI SN76489, the AY-3-8910, Commodore's
+famous SID — which offered a handful of independent <em>channels</em>, each
+holding one tone at a time, mixed in hardware. A chip with three channels
+could play a chord, or a melody over a bass line. The buzzer's eight numbered
+channels are exactly this idea, kept because it is a good one: a channel is
+an address for a note, so a program can retune it, silence it, or queue more
+music onto it, deterministically, without a heap of handles. What replaced
+the chips is what runs underneath here: software mixing. Since the late
+1990s (the buzzer uses OpenAL, from 2000) the machine's audio hardware just
+streams samples, and a library mixes any number of voices in its own output
+thread — which is why the anonymous <code>Sound</code> pool can afford ~16
+simultaneous blips where the SID owned exactly three.</p>
+<p>One more inheritance, this time from music itself. Western tuning divides
+the octave into twelve <strong>equal-tempered</strong> semitones — each step
+multiplies the frequency by 2<sup>1/12</sup> — anchored at
+A&nbsp;=&nbsp;440&nbsp;Hz, an international standard since 1939. MIDI (1983)
+numbered those semitones, calling A&nbsp;440 note 69, and that numbering is
+now how software talks about pitch. <code>MidiFreq</code> is the whole scheme
+in one line: <code>440&nbsp;*&nbsp;2&nbsp;^&nbsp;((midi&nbsp;-&nbsp;69)&nbsp;/&nbsp;12)</code>.
+Equal temperament comes out irrational, and the buzzer never rounds it —
+fractional MIDI numbers are legal, which is what makes the demo's mouse
+glissando glide instead of step.</p>
+
+<h2 id="guide">User's Guide</h2>
+<p>Everything in the API falls out of one question: <em>who owns a note's
+lifetime?</em> There are three answers, and each gets its own words.</p>
+<ul>
+<li><strong>Fire-and-forget — the runtime owns it.</strong>
+<code>Sound(freq, ms)</code> plays a blip from an anonymous pool of voices
+and returns immediately. Game effects. If every voice is busy the oldest is
+quietly stolen — classic sound-chip behaviour: never block, never error. A
+chord is three consecutive calls; they start within microseconds and the
+mixer does the rest.</li>
+<li><strong>Key-state — the program owns it.</strong>
+<code>NoteOn(ch, freq)</code> starts a note that has no duration: it sounds
+until <code>NoteOff(ch)</code>. This is a held key on a synthesizer.
+<code>NoteOn</code> on a channel already holding a note retunes it
+<em>in place</em>, with no re-attack — exactly what a pitch bend or a
+glissando wants.</li>
+<li><strong>Sequenced — the score owns it.</strong>
+<code>SoundQueue(ch, freq, ms)</code> appends a note to a channel's queue;
+queued notes play strictly back-to-back, sample-accurately, with no further
+help from the program. A frequency of 0 is a rest. This is how you play a
+melody: hand the whole tune over and go back to your event loop. (Don't
+drive a melody from timer ticks — tick timing is for animation and is
+audibly lumpy for rhythm.)</li>
+</ul>
+<p>Channels are numbered <strong>1–8</strong> (Shoddy is 1-based everywhere)
+and serve the second and third models; the anonymous pool serves the first;
+they coexist. <code>SoundStop(ch)</code> silences a channel now — releases
+any held note, flushes any queue. <code>SoundGain(ch, vol)</code> sets a
+channel's volume, 0–1, and is sticky until set again.</p>
+<p>This machine turns music notation into those calls:</p>
+<pre><code>Include "buzzer.shoddy"
+
+Def Main()
+    Play(1, "T160 O4 L8 C E G > C4")    ' a jingle, queued and forgotten
+    Sound(NoteFreq("A5"), 100)          ' one blip, by note name
+    Sleep(2000)                         ' let it ring before Main returns
+</code></pre>
+<p><code>Play(ch, mml)</code> parses a Music Macro Language string and queues
+every note onto channel <code>ch</code>; it returns as soon as the tune is
+queued, which is immediately. The MML subset, case-insensitive, whitespace
+ignored:</p>
+<table>
+<tr><th>Notation</th><th>Meaning</th></tr>
+<tr><td>C D E F G A B</td><td>A note. Optional <code>#</code> or <code>+</code> (sharp), <code>-</code> (flat); optional length number (<code>4</code> = quarter, <code>8</code> = eighth…); optional trailing <code>.</code> (dotted, ×1.5). <code>G2</code> is a half-note G.</td></tr>
+<tr><td>On</td><td>Octave 0–8, default 4. Scientific pitch: <code>O4</code> contains middle C.</td></tr>
+<tr><td>&lt; &gt;</td><td>Octave down / up.</td></tr>
+<tr><td>Ln</td><td>Default note length, default 4 (quarter notes).</td></tr>
+<tr><td>Tn</td><td>Tempo in quarter notes per minute, default 120.</td></tr>
+<tr><td>Pn Rn</td><td>A rest of length n (dotted allowed).</td></tr>
+<tr><td>,</td><td>A quarter-note rest — always length 4, whatever <code>Ln</code> says. Handy between phrases: <code>"L8 C C C, C C C"</code>.</td></tr>
+</table>
+<p>A whole note lasts <code>4&nbsp;*&nbsp;60000&nbsp;/&nbsp;T</code>
+milliseconds and a length-<code>n</code> note divides that. A malformed
+string raises an error naming the offending position. (GW-BASIC's
+<code>MN</code>/<code>ML</code>/<code>MS</code> articulation modes,
+<code>Nn</code>, and per-note volume are deliberately left for later.)</p>
+<p>A few things worth knowing:</p>
+<ul>
+<li><strong>Sound never blocks and never fails the program.</strong> Every
+sound word returns immediately; a beep cannot stall a game loop, and a
+machine with no sound card cannot kill a program whose logic is fine.
+Argument errors — channel 0, a negative duration, a frequency of 0 where a
+pitch is required — still raise, because those are program bugs, and they
+raise even when the program runs silently.</li>
+<li><strong>Where sound is audible.</strong> Under <code>mill run</code> and
+<code>mill dap</code> (yes, sound works under the debugger). Woven output run
+via bare <code>dotnet</code>, and any machine with no audio device, is
+<em>silent</em>: every sound word is a no-op there, never an error. This is
+the one deliberate divergence from the <a href="scribbler.html">scribbler</a>,
+which fails loudly headless — it must, because a headless
+<code>ScribblerWait</code> would hang forever. Sound has no wait, so silence
+is safe, and your tests never fail because the build agent has no
+speakers.</li>
+<li><strong>Queue a tune, return from Main — that's a complete program.</strong>
+The mill lets queued notes finish before it exits (held notes stop
+immediately; they would never end). The audio sibling of "draw a picture,
+return".</li>
+<li><strong>The queue looks ahead five minutes, no more.</strong> Queueing
+more than five minutes of music ahead on one channel raises, with the fix in
+the message: feed long scores incrementally from Tick events. Blocking would
+break "sound never blocks"; dropping notes would corrupt the music; loud is
+right.</li>
+<li><strong>Mixing rules.</strong> A held note and a queue are alternatives
+for a channel: <code>NoteOn</code> onto a channel with a queue flushes the
+queue; <code>SoundQueue</code> onto a channel holding a note releases the
+note. Deterministic replace, your own choice — no stealing heuristics on
+channels.</li>
+</ul>
+
+<h2 id="under">Under the Hood</h2>
+<p><strong>The pure half and the noisy half.</strong> <code>MmlNotes</code> —
+MML string in, <code>List Of BuzzerNote</code> out — does no I/O at all, so
+scores parse, print, and test headless; <code>Play</code> is nothing but
+<code>SoundQueue</code> folded over its output (via <code>PlayNotes</code>,
+which you can also feed a list you built yourself). The parser is a chain of
+small tail-recursive words (<code>MmlRun</code>, <code>MmlCmd</code>,
+<code>MmlStep</code>… — the <code>Mml</code>-prefixed words are internal)
+threading octave, default length, and tempo through as arguments, the way a
+purely functional language carries state: in plain sight.</p>
+<p><strong>The seam.</strong> The runtime validates arguments and calls
+through six nullable delegates (<code>BuzzerRegistry</code>, the
+<code>ScribblerRegistry</code> precedent); the mill installs them at startup
+and owns the audio library — OpenAL, which mixes all voices in its own
+output thread — entirely. Null delegates are what "silent" means: headless,
+every word validates and then does nothing. The audio device opens lazily on
+the first sound call, so a program that never beeps never pays for one; if
+the device fails to open (a server, a container, CI), the buzzer degrades to
+permanent silence rather than an error — indistinguishable from headless,
+which is the point.</p>
+<p><strong>Square waves, softened.</strong> Notes are synthesized square
+waves — the PC-speaker voice, on purpose — at a deliberately modest
+amplitude so that eight channels plus the effect pool can sum without
+clipping. Each fixed-duration note bakes in a few milliseconds of attack and
+release ramp (without them every note edge clicks); held notes loop a buffer
+of whole periods so the seam is phase-continuous, and a retune just changes
+the playback pitch of the buffer already looping — which is why
+<code>NoteOn</code> on a sounding channel glides with no re-attack.</p>
+<p><strong>A note on names.</strong> The frequency word is
+<code>MidiFreq</code>, never <code>Freq</code> —
+<a href="stats.html">stats</a> already exports <code>Freq</code>, Shoddy
+folds names case-insensitively, and both would land on <code>FREQ</code>.
+The note record's fields are <code>FreqHz</code> and <code>Ms</code> for the
+same reason (a Def outranks a record field accessor, so a program including
+stats would silently break a <code>Freq</code> field). Small deliberate
+choices — the kind that keep the useless useful. Shoddy by name.</p>
+
+<h2 id="words">Word Reference</h2>
+<p class="tag">6 machine words plus the BuzzerNote type, over 6 built-in words</p>
+
+<h3>The type</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>BuzzerNote</td><td>One note of a score: <code>FreqHz</code> (0 means
+a rest) and <code>Ms</code>. What <code>MmlNotes</code> produces and
+<code>PlayNotes</code> consumes.</td></tr>
+</table>
+
+<h3>Built-in words <span class="tag">available without Include — the sound device itself</span></h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>Sound(freq, ms)</td><td>Fire-and-forget blip from the anonymous
+voice pool. <code>freq</code> must be positive; <code>ms</code> ≥ 0 (0 is a
+legal no-op). Pool full: the oldest blip is quietly stolen.</td></tr>
+<tr><td>NoteOn(ch, freq)</td><td>Channel <code>ch</code> starts sounding
+<code>freq</code> and holds it until <code>NoteOff</code>. On a channel
+already holding a note: retune in place, no re-attack. On a channel with a
+queue: the queue is flushed first.</td></tr>
+<tr><td>NoteOff(ch)</td><td>Release channel <code>ch</code>'s held note.
+Nothing held: no-op.</td></tr>
+<tr><td>SoundQueue(ch, freq, ms)</td><td>Append a note to channel
+<code>ch</code>'s queue; queued notes play strictly back-to-back,
+sample-accurate. <code>freq</code> 0 is a rest of <code>ms</code>
+milliseconds. Queueing onto a held note releases it first. More than five
+minutes queued ahead raises.</td></tr>
+<tr><td>SoundStop(ch)</td><td>Silence channel <code>ch</code> now: release
+any held note, flush any queue. (The anonymous <code>Sound</code> pool is
+not addressable and cannot be stopped.)</td></tr>
+<tr><td>SoundGain(ch, vol)</td><td>Set channel <code>ch</code>'s volume,
+0–1, default 1. Sticky: applies to what's playing and everything after,
+until set again — <code>SoundStop</code> flushes notes, not gain. The
+anonymous pool always plays at full gain.</td></tr>
+</table>
+
+<h3>Notes and frequencies</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>MidiFreq(midi)</td><td>MIDI note number to frequency in Hz:
+<code>440 * 2 ^ ((midi - 69) / 12)</code>, A4 = 69 = 440&nbsp;Hz, equal
+temperament. Fractional numbers are legal (quarter-tones, pitch bends) —
+nothing rounds.</td></tr>
+<tr><td>NoteMidi(name)</td><td>Note name to MIDI number: <code>"C4"</code>
+→ 60, <code>"F#3"</code> → 54, <code>"Bb5"</code> → 82. Scientific pitch —
+C4 is middle C. Letters A–G, <code>#</code> sharp, <code>b</code> flat,
+octave digit 0–8 required. A bad name raises.</td></tr>
+<tr><td>NoteFreq(name)</td><td>Note name straight to Hz —
+<code>MidiFreq(NoteMidi(name))</code>.</td></tr>
+</table>
+
+<h3>Tunes</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>MmlNotes(mml)</td><td>Parse a Music Macro Language string to a
+<code>List Of BuzzerNote</code>. <em>Pure</em> — no I/O — so scores parse
+and test headless. A malformed string raises, naming the offending
+position.</td></tr>
+<tr><td>Play(ch, mml)</td><td>Queue every note of an MML string onto channel
+<code>ch</code>. Fire-and-forget: returns as soon as the tune is queued,
+which is immediately.</td></tr>
+<tr><td>PlayNotes(ch, notes)</td><td>The queue half of <code>Play</code>,
+for programmatically built scores: <code>SoundQueue</code> each
+<code>BuzzerNote</code> in order onto <code>ch</code>.</td></tr>
+</table>
+
+
+<nav class="pager" aria-label="Machines, in catalog order">
+  <a href="clock.html"><span class="dir">&larr; Previous machine</span><span class="ttl">clock</span></a>
+  <a class="next" href="scribbler.html"><span class="dir">Next machine &rarr;</span><span class="ttl">scribbler</span></a>
+</nav>
+<footer>Named for the shoddy mills of the West Riding: Useless Things Made
+Useful Through Skill (<a href="../heritage.html">the full story</a>).<br>
+&copy; 2026 Stephen Vincent Foster</footer>
+</div>
+</body>
+</html>

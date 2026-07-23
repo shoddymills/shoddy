@@ -47,9 +47,33 @@ case "${1:-help}" in
         ;;
     machines)
         ensure_mill
-        for m in machines/*.shoddy; do
-            echo "==> $m"
-            "$MILL" machine "$m"
+        # Dependency order: an Include "x.shoddy" resolves to the machine DLL
+        # only if Shoddy.Machines.X.dll is already built — otherwise the
+        # source is spliced in and its defs re-exported, which collides with
+        # the real machine downstream (duplicate definition of ANY, etc.).
+        pending=$(echo machines/*.shoddy)
+        built=" "
+        while [ -n "$pending" ]; do
+            progress=
+            remaining=
+            for m in $pending; do
+                stem=$(basename "$m" .shoddy | tr 'A-Z' 'a-z')
+                unmet=
+                for d in $(sed -n 's/^[[:space:]]*Include[[:space:]]*"\(.*\)\.shoddy".*/\1/p' "$m" | tr 'A-Z' 'a-z'); do
+                    [ -f "machines/$d.shoddy" ] || continue
+                    case "$built" in *" $d "*) ;; *) unmet=1 ;; esac
+                done
+                if [ -z "$unmet" ]; then
+                    echo "==> $m"
+                    "$MILL" machine "$m"
+                    built="$built$stem "
+                    progress=1
+                else
+                    remaining="$remaining $m"
+                fi
+            done
+            [ -n "$progress" ] || { echo "include cycle among machines:$remaining" >&2; exit 1; }
+            pending=$remaining
         done
         ;;
     vsix)
@@ -66,7 +90,7 @@ case "${1:-help}" in
         )
         ;;
     clean)
-        rm -rf bin artifacts
+        rm -rf bin artifacts machines/bin
         find src -type d \( -name bin -o -name obj \) -prune -exec rm -rf {} +
         echo "cleaned."
         ;;

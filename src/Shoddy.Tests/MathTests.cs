@@ -169,7 +169,7 @@ public class MathTests
         var prog = new ShoddyProgram();
         machines.SeedInto(prog);
         Weaver.WeaveMachine(Parser.Parse(lines, prog), sb, machines.Machines);
-        Assert.True(File.Exists(Path.Combine(ws, "machines", "Shoddy.Machines.Math.dll")));
+        Assert.True(File.Exists(MachineSet.DllPathFor(sb)));
     }
 
     // ---- helpers --------------------------------------------------------

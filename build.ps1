@@ -53,9 +53,37 @@ switch ($Command) {
     }
     'machines' {
         Assert-Mill
-        Get-ChildItem machines/*.shoddy | ForEach-Object {
-            Write-Host "==> $($_.Name)"
-            & $Mill machine $_.FullName
+        # Dependency order: an Include "x.shoddy" resolves to the machine DLL
+        # only if Shoddy.Machines.X.dll is already built — otherwise the
+        # source is spliced in and its defs re-exported, which collides with
+        # the real machine downstream (duplicate definition of ANY, etc.).
+        $files = @(Get-ChildItem machines/*.shoddy | Sort-Object Name)
+        $deps = @{}
+        foreach ($f in $files) {
+            $deps[$f.BaseName] = @(
+                Select-String -Path $f.FullName -Pattern '^\s*Include\s+"(.+)\.shoddy"' |
+                    ForEach-Object { $_.Matches[0].Groups[1].Value.ToLowerInvariant() })
+        }
+        $built = New-Object 'System.Collections.Generic.HashSet[string]'
+        $pending = [System.Collections.ArrayList]$files
+        while ($pending.Count -gt 0) {
+            $ready = @($pending | Where-Object {
+                $unmet = @($deps[$_.BaseName] |
+                    Where-Object { $deps.ContainsKey($_) -and -not $built.Contains($_) })
+                $unmet.Count -eq 0
+            })
+            if ($ready.Count -eq 0) {
+                Write-Error ('include cycle among machines: ' +
+                    (($pending | ForEach-Object BaseName) -join ', '))
+                exit 1
+            }
+            foreach ($f in $ready) {
+                Write-Host "==> $($f.Name)"
+                & $Mill machine $f.FullName
+                if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+                [void]$built.Add($f.BaseName.ToLowerInvariant())
+                $pending.Remove($f)
+            }
         }
     }
     'vsix' {
@@ -73,6 +101,7 @@ switch ($Command) {
     'clean' {
         if (Test-Path bin) { Remove-Item -Recurse -Force bin }
         if (Test-Path artifacts) { Remove-Item -Recurse -Force artifacts }
+        if (Test-Path machines/bin) { Remove-Item -Recurse -Force machines/bin }
         Get-ChildItem src -Recurse -Directory -Include bin, obj |
             ForEach-Object { Remove-Item -Recurse -Force $_.FullName }
         Write-Host 'cleaned.'

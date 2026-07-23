@@ -369,8 +369,10 @@ public class ScribblerTests
             var (prog, machines) = ParseWithMachines(sb);
             Weaver.WeaveMachine(prog, sb, machines.Machines);
         }
-        Assert.True(File.Exists(Path.Combine(ws, "machines", "Shoddy.Machines.Scribbler.dll")));
-        Assert.True(File.Exists(Path.Combine(ws, "machines", "Shoddy.Machines.Clock.dll")));
+        Assert.True(File.Exists(
+            MachineSet.DllPathFor(Path.Combine(ws, "machines", "scribbler.shoddy"))));
+        Assert.True(File.Exists(
+            MachineSet.DllPathFor(Path.Combine(ws, "machines", "clock.shoddy"))));
     }
 
     // ---- helpers --------------------------------------------------------

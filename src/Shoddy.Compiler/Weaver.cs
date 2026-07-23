@@ -89,6 +89,7 @@ public static class Weaver
     {
         string outDll = MachineSet.DllPathFor(sbPath);
         string cls = MachineSet.ClassNameFor(sbPath);
+        Directory.CreateDirectory(Path.GetDirectoryName(outDll)!);
         using var pe = File.Create(outDll);
         Compile(GenerateSource(prog, cls), pe, OutputKind.DynamicallyLinkedLibrary,
                 machines, $"Shoddy.Machines.{cls}");

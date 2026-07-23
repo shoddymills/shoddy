@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
+<meta name="description" content="Linear Programming — machines/simplex.shoddy">
+<link rel="stylesheet" href="../style.css">
+<link rel="icon" href="../favicon.svg" type="image/svg+xml">
+<title>simplex — Linear Programming | Shoddy Machines</title>
+</head>
+<body>
+<div class="topbar"><div class="inner">
+  <a class="phase" href="index.html">Shoddy · The Machines</a>
+  <span class="spacer"></span>
+  <nav class="docnav" aria-label="Documentation"><a href="../heritage.html">Story</a><a href="../guide.html">Guide</a><a href="../quickref.html">Reference</a><span class="here">Machines</span><a href="../mills/index.html">Mills</a><a href="../stack.html">Stack</a><a href="../spec.html">Spec</a><a href="../setup.html">Setup</a><a href="../vscode.html">VS Code</a><a href="../build.html">Toolchain</a></nav>
+</div></div>
+<div class="wrap">
+
+
+<header class="mast"><p class="eyebrow"><a href="index.html#optimization">The Machines &middot; Optimization</a></p><h1>simplex</h1><p class="kicker">Linear Programming — machines/simplex.shoddy</p></header>
+<nav class="pagertop" aria-label="Machines, in catalog order"><a href="neural.html">&larr; neural</a><a href="index.html">All machines</a><a href="mps.html">mps &rarr;</a></nav>
+
+<h2 id="summary">Summary</h2>
+<p><code>simplex</code> solves the kind of problem where you're trying to do
+something as cheaply as possible while still meeting a list of hard
+requirements. You hand it three things: a list of <strong>costs</strong> (how
+much each ingredient adds to the bill), a grid of <strong>numbers</strong>
+saying how much each ingredient contributes to each requirement, and the
+<strong>requirements</strong> themselves (you must end up with at least this
+much of each). It hands back the cheapest mix that satisfies every
+requirement — the exact amounts to use, the total cost, and a little extra
+bookkeeping that tells you how sensitive that answer is to the numbers you
+gave it. Under the covers it runs the <em>simplex method</em>, the
+seventy-year-old workhorse algorithm for exactly this shape of problem, built
+on top of the <a href="matrix.html">matrix</a> machine for the arithmetic.</p>
+
+<h2 id="why">Why It's Useful</h2>
+<p>An enormous number of real decisions have the same shape: you have some
+knobs you can turn, each knob costs something, and turning them affects a
+handful of things that all have to come out right. A cafeteria wants the
+cheapest menu that still hits everyone's calorie and protein targets. A
+refinery wants the most profitable blend of crude oils that still meets the
+octane spec. A delivery company wants to move goods between warehouses for the
+least fuel while still getting enough to each shop. Written down, these are all
+the same puzzle — <strong>minimise a cost, subject to a set of "at least this
+much" constraints, with nothing allowed to go negative</strong> — and that
+puzzle is called a <em>linear program</em>. It's one of the most solved
+problems in all of computing precisely because it turns up everywhere. Reach
+for <code>simplex</code> whenever you can phrase your question as "what's the
+cheapest way to satisfy all of these at once?" and the relationships between
+your knobs and your requirements are straight-line ones (double an ingredient,
+double its contribution). If your problem also lives in a file, the
+<a href="mps.html">mps</a> machine reads the standard file format for these
+problems and hands you exactly the value this machine expects.</p>
+
+<h2 id="history">A Brief History of Linear Programming</h2>
+<p>The story starts in 1947 with an American mathematician named
+<strong>George Dantzig</strong>, who was working for the U.S. Air Force on the
+dreary-sounding but genuinely enormous problem of <em>planning</em> — how to
+schedule the training, supply, and deployment of an entire military without
+wasting men, money, or materiel. Problems like that have thousands of
+interlocking choices and thousands of constraints, and until then there was no
+general way to find the best answer rather than merely a workable one. Dantzig
+framed the whole thing as what we now call a <strong>linear program</strong>:
+a linear cost to minimise, and a wall of linear inequalities to respect. Then
+he invented a method to actually solve it, and called it the
+<strong>simplex method</strong>.</p>
+<p>The geometric picture is lovely, and worth carrying in your head. Every
+constraint is a flat wall. Together, all the walls enclose a shape — a
+many-sided crystal called a <em>polytope</em> — and every point inside that
+shape is an allowed answer, a menu that breaks none of the rules. The magic
+fact Dantzig leaned on is that the very best answer is never floating somewhere
+in the middle; it always sits at a <strong>corner</strong> of that crystal,
+where several walls meet. So instead of searching the whole interior, the
+simplex method just visits corners. It starts at one corner, looks along each
+edge leading away from it, and walks to whichever neighbouring corner improves
+the cost the most. It keeps stepping from corner to better corner along the
+edges of the polytope until no neighbour is any better — and then, by that same
+magic fact, it's standing on the answer.</p>
+<p>It worked, and it kept working, on problems far larger than anyone in 1947
+would have believed. The simplex method is routinely named one of the most
+important algorithms of the twentieth century; it quietly underpins logistics,
+manufacturing, finance, and airline scheduling to this day. The theory grew up
+around it too — the Soviet mathematician Leonid Kantorovich had reached related
+ideas independently in 1939, and much later, in 1984, Narendra Karmarkar found
+a rival family of methods that cut <em>through</em> the interior of the polytope
+rather than walking its corners. But the corner-walking simplex method never
+retired; it remains one of the two algorithms every serious solver still ships.
+This machine implements it in a few hundred lines of Shoddy — no punch cards,
+no Pentagon.</p>
+
+<h2 id="guide">User's Guide</h2>
+<p>You describe a problem with three pieces, and they must line up. The
+<code>Costs</code> are one number per variable — what a unit of each variable
+adds to the total you're minimising. <code>A</code> is a
+<a href="matrix.html">matrix</a> with one row per requirement and one column
+per variable, saying how much each variable contributes to that requirement.
+<code>Rhs</code> ("right-hand side") is one number per requirement — the amount
+you must reach. The machine reads every constraint as
+<code>A x &gt;= Rhs</code> (at least this much), with every variable held at
+zero or above.</p>
+<pre><code>Include "simplex.shoddy"
+
+Def Main()
+    ' Cheapest mix of two foods that meets two nutrient targets.
+    ' minimize 4*meat + 2*bean
+    '   meat + bean &gt;= 10     (bulk)
+    ' 3*meat + bean &gt;= 18     (protein)
+    Let costs = { 4, 2 }
+    Let a     = MatFromRows({ { 1, 1 }, { 3, 1 } })
+    Let rhs   = { 10, 18 }
+
+    Let sol = Optimize(Problem(costs, a, rhs))
+
+    Print(Status(sol))                       ' OPTIMAL
+    Print("cost " &amp; Str(Cost(sol)))          ' cost 28
+    Each(X(sol), Fn(v) => Print(Str(v)))     ' 4 then 6  (meat, bean)
+    Each(DualPrices(sol), Fn(v) => Print(Str(v)))  ' 1 then 1 (shadow prices)</code></pre>
+<p>The answer says: use 4 of the first food and 6 of the second, for a total
+cost of 28, and there's no cheaper way to hit both targets. A few things worth
+remembering:</p>
+<ul>
+<li><strong>Everything is "at least."</strong> Constraints are always read as
+<code>A x &gt;= Rhs</code>. If your real requirement is an upper limit ("no more
+than 18"), negate that row and its right-hand side to flip it around; if it's an
+exact equality, supply it as two rows — one <code>&gt;=</code> and one
+<code>&lt;=</code> of the same thing. The <a href="mps.html">mps</a> machine
+does exactly this bookkeeping for you when it reads a file, so you rarely have
+to do it by hand.</li>
+<li><strong>Variables never go negative.</strong> Every variable is held at
+zero or above automatically — you don't add those constraints yourself. That's
+the standard convention for linear programs, and it's baked in.</li>
+<li><strong>Always check the <code>Status</code> first.</strong> A healthy
+answer comes back <code>"OPTIMAL"</code>. But not every problem has a good
+answer: if your requirements contradict each other so that no mix can satisfy
+them all, you'll get <code>"INFEASIBLE"</code>; if the problem is malformed in a
+way that lets cost run off to nothing, you'll get
+<code>"UNBOUNDED-OR-INFEASIBLE"</code>; and in the very rare case a problem is
+so large or awkward that the search doesn't settle, you'll get
+<code>"MAXITER"</code>. In all those cases the <code>X</code>, <code>Cost</code>,
+and the rest are empty or meaningless — the status is telling you not to trust
+them.</li>
+<li><strong>The extra numbers are worth reading.</strong> Alongside the answer
+you get <code>DualPrices</code> — one <em>shadow price</em> per requirement,
+telling you how much the total cost would move if you nudged that requirement up
+by one unit. In the example, both prices are 1, meaning each extra unit of
+either target would cost you one more. That's the "sensitivity analysis"
+managers pay real money for: it tells you which constraint is really pinching.
+<code>Reduced</code> does the mirror-image thing per variable, and
+<code>Iterations</code> reports how many corners the method had to walk.</li>
+</ul>
+
+<h2 id="hood">Under the Hood: Walking the Corners</h2>
+<p>You don't need any of this to use the machine — it's here for the curious,
+and for anyone who has met the simplex method before and wants to know which
+variant this is.</p>
+<p><strong>It's the revised simplex method, and it solves the dual.</strong>
+The plain simplex method keeps a big rectangular <em>tableau</em> and pivots on
+it. The <em>revised</em> method — what this machine uses — keeps only the small
+square that matters: the inverse of the current basis, a
+<a href="matrix.html">matrix</a> called <code>binv</code>. Rather than rewrite a
+whole table each step, it updates that one inverse with an eta-style row
+operation (<code>UpdateBinv</code>), which is the same pivot in cheaper
+clothing. And rather than attack your problem head-on, it solves its
+<em>dual</em>: the mirror-image problem <code>max Rhs.y</code> subject to
+<code>Transp(A) y &lt;= Costs</code>. This isn't a detour — it's a shortcut. At
+the optimum of that dual, the simplex multipliers turn out to be exactly the
+primal answer <code>x</code> you were after, so one solve gives you both sides
+at once.</p>
+<p><strong>Each step is a price, a pick, and a pivot.</strong> The loop
+(<code>Solve</code>) prices out every non-basic variable to find the one with
+the most positive reduced cost — the steepest downhill edge — in
+<code>PickEnter</code>. That's the corner-to-corner walk from the history
+section, made arithmetic. Then <code>PickLeave</code> runs the <em>ratio
+test</em>: as the entering variable grows, it finds which basic variable hits
+zero first, and that's the one that leaves. Swap the two, update the basis
+inverse, and step to the next corner. When no variable has a positive reduced
+cost, there's no downhill edge left: you're on the answer, and the loop reads
+the optimal basis back out.</p>
+<p><strong>Getting a feasible start with big-M.</strong> The simplex method has
+to begin standing on <em>some</em> valid corner, and finding one isn't always
+free. If every cost is zero or positive, the obvious slack start is already
+valid and the machine uses it directly — no fuss, exactly the classic textbook
+run. But a negative cost makes the dual's slack start infeasible, so for each
+such variable the machine negates that row and adds an <em>artificial</em>
+variable with a huge penalty coefficient (<code>bigM</code>, scaled to your
+data). The penalty is so steep that the method is driven to push every
+artificial back down to zero on its way to the optimum. If it manages that, the
+artificials vanish and the answer is honest. If one stubbornly refuses to
+leave, that's the tell-tale of a problem with no real solution, and you get
+<code>"UNBOUNDED-OR-INFEASIBLE"</code> rather than a confident lie.</p>
+<p><strong>Reading the answer back.</strong> At the optimum the dual's
+structural variables (the first <code>m</code> of them, one per requirement) are
+the primal constraints' shadow prices — that's <code>DualPrices</code>. Its
+slack variables (the next <code>n</code>, one per variable) are the primal
+variables' reduced costs — that's <code>Reduced</code>. The primal answer
+<code>X</code> itself is read from the simplex multipliers, with the sign flips
+from the big-M start undone. Everything is pure: <code>Optimize</code> reads its
+<code>Problem</code>, does its arithmetic, and hands back a <code>Solution</code>,
+touching nothing outside itself. Shoddy by name — but the algorithm inside is
+the real thing.</p>
+
+<h2 id="words">Word Reference</h2>
+<p class="tag">1 word, plus the Problem and Solution types</p>
+
+<h3>The types</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>Problem(Costs, A, Rhs)</td><td>A linear program to solve.
+<code>Costs</code> is an array of numbers, one per variable, to be minimised.
+<code>A</code> is a <a href="matrix.html">Matrix</a> with one row per constraint
+and one column per variable. <code>Rhs</code> is an array of numbers, one per
+constraint. The problem is read as: minimise <code>Costs . x</code> subject to
+<code>A x &gt;= Rhs</code> and <code>x &gt;= 0</code>.</td></tr>
+<tr><td>Solution(Status, X, Cost, DualPrices, Reduced, Iterations)</td><td>What
+<code>Optimize</code> hands back. <code>Status</code> is a string
+(<code>"OPTIMAL"</code>, <code>"INFEASIBLE"</code>,
+<code>"UNBOUNDED-OR-INFEASIBLE"</code>, or <code>"MAXITER"</code>). <code>X</code>
+is the array of optimal variable values; <code>Cost</code> its total cost.
+<code>DualPrices</code> is the shadow price per constraint (how much
+<code>Cost</code> moves per unit of that <code>Rhs</code> — the sensitivity
+analysis); <code>Reduced</code> the reduced cost per variable;
+<code>Iterations</code> the number of simplex steps taken. When
+<code>Status</code> isn't <code>"OPTIMAL"</code>, the numeric fields are empty
+or meaningless.</td></tr>
+</table>
+
+<h3>Solving</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>Optimize(p)</td><td>Solves the <code>Problem</code> <code>p</code> and
+returns a <code>Solution</code>. Runs the revised simplex method internally;
+pure, with no side effects. Always check <code>Status</code> before trusting the
+rest. This is the whole public surface of the machine — everything else is
+internal plumbing.</td></tr>
+</table>
+
+
+<nav class="pager" aria-label="Machines, in catalog order">
+  <a href="neural.html"><span class="dir">&larr; Previous machine</span><span class="ttl">neural</span></a>
+  <a class="next" href="mps.html"><span class="dir">Next machine &rarr;</span><span class="ttl">mps</span></a>
+</nav>
+<footer>Named for the shoddy mills of the West Riding: Useless Things Made
+Useful Through Skill (<a href="../heritage.html">the full story</a>).<br>
+&copy; 2026 Stephen Vincent Foster</footer>
+</div>
+</body>
+</html>

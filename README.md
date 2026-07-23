@@ -49,7 +49,7 @@ This language is built the same way: old ideas — BASIC, Forth, Joy,
 ISAM — reclaimed, blended with new wool, and woven into something
 useful. Hence the **mill** (the executable), its **machines** (the
 libraries), and the tagline, meant literally. The full story is in
-[doc/heritage.html](doc/heritage.html).
+[docs/heritage.html](docs/heritage.html).
 
 ## Layout
 
@@ -59,9 +59,9 @@ libraries), and the tagline, meant literally. The full story is in
 | `bin/`| Build output — the published `mill` toolchain lands here after `dotnet publish` (not committed; build it, then run `bin/mill`) |
 | `machines/`| Standard library (the machines): `seq` `str` `math` `matrix` `stats` `random` `neural` `money` `file` `recio` `dict` `isam` `net` `simplex` `mps` `clock` `vt100` `keys` `scribbler` `turtle` `plotter` `buzzer` |
 | `mills/`| Complete example programs (the mills), each with its own build wrapper: `oregon` (The Oregon Trail, 1971) · `pacman-vt100` · `space-invaders` · `demographics` (neural income model) · `simplex-from-mps` (LP solver) |
-| `doc/`| `index.html` (start here) · `guide.html` · `setup.html` (one-time machine setup) · `vscode.html` (editor) · `build.html` (the toolchain) · `stack.html` (the stack, traced) · `spec.html` · `quickref.html` · `machines/` and `mills/` (one page each) |
+| `docs/`| `index.html` (start here) · `guide.html` · `setup.html` (one-time machine setup) · `vscode.html` (editor) · `build.html` (the toolchain) · `stack.html` (the stack, traced) · `spec.html` · `quickref.html` · `machines/` and `mills/` (one page each) |
 | `tst/`| `libtest.shoddy` (assertion suite) · `examples.shoddy` · `gradebook.shoddy` · `simplex.shoddy` · demos (`scribbler-` `turtle-` `plotter-` `buzzer-` `net-demo.shoddy`) · `golden/` (the constitution) |
-| `vscode-shoddy/`| VS Code extension: highlighting, snippets, mill commands |
+| `vscode-shoddy/`| VS Code extension: highlighting, snippets, debugging, mill commands |
 
 ## Build and run
 
@@ -124,10 +124,10 @@ Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned
 
 ## Documentation
 
-- **doc/index.html** — the front door: every guide and reference,
+- **docs/index.html** — the front door: every guide and reference,
   organized by what you came for.
-- **doc/guide.html** — the beginner's guide; assumes no prior knowledge.
-- **doc/spec.html** — the language specification, including the concatenative
+- **docs/guide.html** — the beginner's guide; assumes no prior knowledge.
+- **docs/spec.html** — the language specification, including the concatenative
   core (Appendix A) and design rationale (Appendix B).
 - **doc/quickref.html** — one-page reference of every builtin word, type,
   and syntax form, plus a map of the machines.

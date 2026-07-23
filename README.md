@@ -51,7 +51,7 @@ useful. Hence the **mill** (the executable) and its **machines** (the
 libraries). And the tagline is Ossett's own: *Useless Things Made Useful
 Through Skill* renders that town's civic motto, *Inutile Utile Ex Arte*
 ("the useless made useful by skill"), meant here literally. The full story
-is in [the heritage of the name](https://stephenvfoster.github.io/shoddy/heritage.html).
+is in [the heritage of the name](https://shoddymills.github.io/shoddy/heritage.html).
 
 ## Layout
 
@@ -81,16 +81,16 @@ Or use the build wrapper — `./build.sh <cmd>` on Linux/macOS/WSL,
 `test`, `run FILE`, `machines`, `vsix`, `clean`.
 
 The full toolchain — weaving to an assembly, building library machines, and
-the Windows PowerShell notes — is in [the toolchain guide](https://stephenvfoster.github.io/shoddy/build.html).
+the Windows PowerShell notes — is in [the toolchain guide](https://shoddymills.github.io/shoddy/build.html).
 
 ## Documentation
 
-- [docs/index.html](https://stephenvfoster.github.io/shoddy/index.html) — the front door: every guide and reference,
+- [docs/index.html](https://shoddymills.github.io/shoddy/index.html) — the front door: every guide and reference,
   organized by what you came for.
-- [docs/guide.html](https://stephenvfoster.github.io/shoddy/guide.html) — the beginner's guide; assumes no prior knowledge.
-- [docs/spec.html](https://stephenvfoster.github.io/shoddy/spec.html) — the language specification, including the concatenative
+- [docs/guide.html](https://shoddymills.github.io/shoddy/guide.html) — the beginner's guide; assumes no prior knowledge.
+- [docs/spec.html](https://shoddymills.github.io/shoddy/spec.html) — the language specification, including the concatenative
   core (Appendix A) and design rationale (Appendix B).
-- [docs/quickref.html](https://stephenvfoster.github.io/shoddy/quickref.html) — one-page reference of every builtin word, type,
+- [docs/quickref.html](https://shoddymills.github.io/shoddy/quickref.html) — one-page reference of every builtin word, type,
   and syntax form, plus a map of the machines.
 
 ## Language at a glance

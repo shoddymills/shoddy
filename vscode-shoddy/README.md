@@ -69,10 +69,10 @@ vsce package patch --no-git-tag-version   # e.g. 0.9.1 -> 0.9.2
 ```
 
 To force a completely clean reinstall — old copy removed, cache
-overwritten (the extension ID is `shoddy-mill.vscode-shoddy`):
+overwritten (the extension ID is `shoddymills.vscode-shoddy`):
 
 ```sh
-code --uninstall-extension shoddy-mill.vscode-shoddy   # remove the old install
+code --uninstall-extension shoddymills.vscode-shoddy   # remove the old install
 rm -f *.vsix                                           # drop stale packages
 vsce package patch --no-git-tag-version                # repackage at a new version
 code --install-extension vscode-shoddy-<new-version>.vsix --force
@@ -93,5 +93,5 @@ Window** in that host — no re-copy needed.
 ## Requirements
 
 The mill, built from source into `bin/` (`./build.sh build`, or
-`./build.ps1 build` on Windows). See [the toolchain guide](https://stephenvfoster.github.io/shoddy/build.html)
+`./build.ps1 build` on Windows). See [the toolchain guide](https://shoddymills.github.io/shoddy/build.html)
 for full workspace setup.

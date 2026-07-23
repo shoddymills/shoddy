@@ -1,0 +1,638 @@
+Rem Copyright (c) 2026 Stephen Vincent Foster. All rights reserved.
+Rem
+Rem This file is part of the Shoddy Language project.
+Rem Licensed under the Shoddy Language License 1.0.0 (PolyForm Noncommercial
+Rem License 1.0.0 with Additional Use Grant). See the LICENSE file in the
+Rem project root for full terms.
+
+Rem ==================================================================
+Rem oregon.shoddy — The Oregon Trail at the console (prompts + loop).
+Rem
+Rem Run: mill run mills/oregon/oregon.shoddy
+Rem      Outfit the wagon, then survive twenty fortnights of prompts.
+Rem      When told to TYPE a word (BANG, BLAM, POW, WHAM), type it fast
+Rem      and press Enter — the clock is your marksmanship.
+Rem
+Rem The pure model — the Trail record, every formula and misfortune —
+Rem is in oregon-core.shoddy and is unit-tested headless. This file is
+Rem the console half: instructions, Input prompts, the timed shooting
+Rem (Ticks around a blocking Input, exactly the original's CLK trick),
+Rem and the turn loop. Each turn is a pipeline of phases; every phase
+Rem starts by standing aside if the Trail's fate is already sealed, so
+Rem a death anywhere falls straight through to the funeral. Turn's only
+Rem recursion is the genuine SELF tail call at the bottom.
+Rem
+Rem Ported from oregon.bas (Bill Heinemann, 1971, MECC) in this folder.
+Rem ==================================================================
+
+Include "oregon-core.shoddy"
+Include "../../machines/math.shoddy"
+
+Rem ---- outfitting ----------------------------------------------------
+
+Def Instructions()
+    Print("")
+    Print("")
+    Print("THIS PROGRAM SIMULATES A TRIP OVER THE OREGON TRAIL FROM")
+    Print("INDEPENDENCE, MISSOURI TO OREGON CITY, OREGON IN 1847.")
+    Print("YOUR FAMILY OF FIVE WILL COVER THE 2040 MILE OREGON TRAIL")
+    Print("IN 5-6 MONTHS --- IF YOU MAKE IT ALIVE.")
+    Print("")
+    Print("YOU HAD SAVED $900 TO SPEND FOR THE TRIP, AND YOU'VE JUST")
+    Print("   PAID $200 FOR A WAGON.")
+    Print("YOU WILL NEED TO SPEND THE REST OF YOUR MONEY ON THE")
+    Print("   FOLLOWING ITEMS:")
+    Print("")
+    Print("     OXEN - YOU CAN SPEND $200-$300 ON YOUR TEAM")
+    Print("            THE MORE YOU SPEND, THE FASTER YOU'LL GO")
+    Print("               BECAUSE YOU'LL HAVE BETTER ANIMALS")
+    Print("")
+    Print("     FOOD - THE MORE YOU HAVE, THE LESS CHANCE THERE")
+    Print("               IS OF GETTING SICK")
+    Print("")
+    Print("     AMMUNITION - $1 BUYS A BELT OF 50 BULLETS")
+    Print("            YOU WILL NEED BULLETS FOR ATTACKS BY ANIMALS")
+    Print("               AND BANDITS, AND FOR HUNTING FOOD")
+    Print("")
+    Print("     CLOTHING - THIS IS ESPECIALLY IMPORTANT FOR THE COLD")
+    Print("               WEATHER YOU WILL ENCOUNTER WHEN CROSSING")
+    Print("               THE MOUNTAINS")
+    Print("")
+    Print("     MISCELLANEOUS SUPPLIES - THIS INCLUDES MEDICINE AND")
+    Print("               OTHER THINGS YOU WILL NEED FOR SICKNESS")
+    Print("               AND EMERGENCY REPAIRS")
+    Print("")
+    Print("")
+    Print("YOU CAN SPEND ALL YOUR MONEY BEFORE YOU START YOUR TRIP -")
+    Print("OR YOU CAN SAVE SOME OF YOUR CASH TO SPEND AT FORTS ALONG")
+    Print("THE WAY WHEN YOU RUN LOW. HOWEVER, ITEMS COST MORE AT")
+    Print("THE FORTS. YOU CAN ALSO GO HUNTING ALONG THE WAY TO GET")
+    Print("MORE FOOD.")
+    Print("WHENEVER YOU HAVE TO USE YOUR TRUSTY RIFLE ALONG THE WAY,")
+    Print("YOU WILL BE TOLD TO TYPE IN A WORD (ONE THAT SOUNDS LIKE A")
+    Print("GUN SHOT). THE FASTER YOU TYPE IN THAT WORD AND HIT THE")
+    Print("RETURN KEY, THE BETTER LUCK YOU'LL HAVE WITH YOUR GUN.")
+    Print("")
+    Print("AT EACH TURN, ALL ITEMS ARE SHOWN IN DOLLAR AMOUNTS")
+    Print("EXCEPT BULLETS")
+    Print("WHEN ASKED TO ENTER MONEY AMOUNTS, DON'T USE A DOLLAR SIGN.")
+    Print("")
+    Print("GOOD LUCK!!!")
+    Print("")
+
+Def MaybeInstructions()
+    If Upper(Input("DO YOU NEED INSTRUCTIONS (YES/NO)? ")) = "NO" Then
+        Print("")
+    Else
+        Instructions()
+
+Def AskSkill() As Number
+    Print("HOW GOOD A SHOT ARE YOU WITH YOUR RIFLE?")
+    Print("  (1) ACE MARKSMAN,  (2) GOOD SHOT,  (3) FAIR TO MIDDLIN'")
+    Print("         (4) NEED MORE PRACTICE,  (5) SHAKY KNEES")
+    Print("ENTER ONE OF THE ABOVE -- THE BETTER YOU CLAIM YOU ARE, THE")
+    Print("FASTER YOU'LL HAVE TO BE WITH YOUR GUN TO BE SUCCESSFUL.")
+    Let d = Floor(Val(Input("? ")))
+    If d > 5 Or d < 1 Then
+        0
+    Else
+        d
+
+Def AskOxen() As Number
+    Let a = Val(Input("HOW MUCH DO YOU WANT TO SPEND ON YOUR OXEN TEAM? "))
+    If a < 200 Then
+        Print("NOT ENOUGH")
+        AskOxen()
+    Else
+        If a > 300 Then
+            Print("TOO MUCH")
+            AskOxen()
+        Else
+            a
+
+Def AskSupply(what As String) As Number
+    Let p = Val(Input("HOW MUCH DO YOU WANT TO SPEND ON " & what & "? "))
+    If p < 0 Then
+        Print("IMPOSSIBLE")
+        AskSupply(what)
+    Else
+        p
+
+Def AskPurchases(skill As Number) As Trail
+    Let a = AskOxen()
+    Let f = AskSupply("FOOD")
+    Let b = AskSupply("AMMUNITION")
+    Let c = AskSupply("CLOTHING")
+    Let m1 = AskSupply("MISCELLANEOUS SUPPLIES")
+    If a + f + b + c + m1 > StartBudget() Then
+        Print("YOU OVERSPENT--YOU ONLY HAD $700 TO SPEND.  BUY AGAIN")
+        Print("")
+        AskPurchases(skill)
+    Else
+        NewTrail(a, f, b, c, m1, skill)
+
+Rem ---- shooting ------------------------------------------------------
+Rem The original timed CLK(0) around an INPUT; here it is Ticks around
+Rem a blocking Input. Typing the word wrong is the worst possible shot.
+
+Def ShotWords() As List Of String
+    { "BANG", "BLAM", "POW", "WHAM" }
+
+Def TakeShot(skill As Number) As Number
+    Let word = Pick(ShotWords())
+    Print("TYPE " & word)
+    Let started = Ticks()
+    Let typed = Input("? ")
+    Let quality = ShotQuality((Ticks() - started) / 1000, Upper(typed) = word, skill)
+    Print("")
+    quality
+
+Rem ---- morning: books, doctor, the trail report ----------------------
+
+Def WarnFood(t As Trail)
+    If Food(t) < LowFood() Then
+        Print("YOU'D BETTER DO SOME HUNTING OR BUY FOOD AND SOON!!!!")
+
+Def DoctorPhase(t As Trail) As Trail
+    If Not NeedsDoctor(t) Then
+        t
+    Else
+        Let d = PayDoctor(t)
+        If IsRolling(d) Then
+            Print("DOCTOR'S BILL IS $" & Str(DoctorFee()))
+            d
+        Else
+            d
+
+Def StatusPhase(t As Trail) As Trail
+    If Not IsRolling(t) Then
+        t
+    Else
+        Let a = ClampSupplies(t)
+        WarnFood(a)
+        Let b = DoctorPhase(a)
+        If Not IsRolling(b) Then
+            b
+        Else
+            Print("TOTAL MILEAGE: " & Str(ShownMiles(b)))
+            Print("FOOD: " & Str(Food(b)))
+            Print("BULLETS: " & Str(Bullets(b)))
+            Print("CLOTHING: " & Str(Clothing(b)))
+            Print("MISC. SUPPLIES: " & Str(Misc(b)))
+            Print("CASH: $" & Str(Cash(b)))
+            With(b, ShowPass = False)
+
+Rem ---- the turn's action: fort, hunt, or press on --------------------
+
+Def AskFort(t As Trail, what As String) As Number
+    Let p = Val(Input(what & "? "))
+    If p < 0 Then
+        0
+    Else
+        If p > Cash(t) Then
+            Print("YOU DON'T HAVE THAT MUCH--KEEP YOUR SPENDING DOWN")
+            0
+        Else
+            p
+
+Def VisitFort(t As Trail) As Trail
+    Print("ENTER WHAT YOU WISH TO SPEND ON THE FOLLOWING")
+    Let a = BuyFood(t, AskFort(t, "FOOD"))
+    Let b = BuyAmmo(a, AskFort(a, "AMMUNITION"))
+    Let c = BuyClothes(b, AskFort(b, "CLOTHING"))
+    Let d = BuyMisc(c, AskFort(c, "MISCELLANEOUS SUPPLIES"))
+    Detour(d)
+
+Def GoHunting(t As Trail) As Trail
+    Let out = Detour(t)
+    Let b1 = TakeShot(Skill(out))
+    If b1 <= 1 Then
+        Print("RIGHT BETWEEN THE EYES---YOU GOT A BIG ONE!!!!")
+        Print("FULL BELLIES TONIGHT!")
+        BigKill(out)
+    Else
+        If GameGotAway(b1, Rnd()) Then
+            Print("YOU MISSED---AND YOUR DINNER GOT AWAY.....")
+            out
+        Else
+            Print("NICE SHOT--RIGHT ON TARGET--GOOD EATIN' TONIGHT!!")
+            GoodShot(out, b1)
+
+Def FortMenu(t As Trail) As Trail
+    Print("DO YOU WANT TO (1) STOP AT THE NEXT FORT, (2) HUNT, OR (3) CONTINUE")
+    Select Case Floor(Val(Input("? ")))
+        Case 1
+            VisitFort(t)
+        Case 2
+            If CanHunt(t) Then
+                GoHunting(t)
+            Else
+                Print("TOUGH---YOU NEED MORE BULLETS TO GO HUNTING")
+                FortMenu(t)
+        Case Else
+            t
+
+Def PlainMenu(t As Trail) As Trail
+    Print("DO YOU WANT TO (1) HUNT, OR (2) CONTINUE")
+    Select Case Floor(Val(Input("? ")))
+        Case 1
+            If CanHunt(t) Then
+                GoHunting(t)
+            Else
+                Print("TOUGH---YOU NEED MORE BULLETS TO GO HUNTING")
+                PlainMenu(t)
+        Case Else
+            t
+
+Rem Forts alternate fortnights, as they always have.
+Def ActionPhase(t As Trail) As Trail
+    If Not IsRolling(t) Then
+        t
+    Else
+        If FortDue(t) Then
+            FortMenu(With(t, FortDue = False))
+        Else
+            PlainMenu(With(t, FortDue = True))
+
+Rem ---- supper --------------------------------------------------------
+
+Def AskEating(t As Trail) As Trail
+    Print("DO YOU WANT TO EAT (1) POORLY  (2) MODERATELY")
+    Let e = Floor(Val(Input("OR (3) WELL? ")))
+    If e < 1 Or e > 3 Then
+        AskEating(t)
+    Else
+        If CanEat(t, e) Then
+            Eat(t, e)
+        Else
+            Print("YOU CAN'T EAT THAT WELL")
+            AskEating(t)
+
+Def EatingPhase(t As Trail) As Trail
+    If Not IsRolling(t) Then
+        t
+    Else
+        If Starved(t) Then
+            Kill(t, "YOU RAN OUT OF FOOD AND STARVED TO DEATH")
+        Else
+            AskEating(t)
+
+Def TravelPhase(t As Trail) As Trail
+    If Not IsRolling(t) Then
+        t
+    Else
+        Travel(t, Rnd())
+
+Rem ---- riders --------------------------------------------------------
+
+Def LookMessage(lookFriendly As Boolean)
+    If lookFriendly Then
+        Print("RIDERS AHEAD.  THEY DON'T LOOK HOSTILE")
+    Else
+        Print("RIDERS AHEAD.  THEY LOOK HOSTILE")
+
+Def AskTactics() As Number
+    Print("TACTICS")
+    Let x = Floor(Val(Input("(1) RUN  (2) ATTACK  (3) CONTINUE  (4) CIRCLE WAGONS? ")))
+    If x < 1 Or x > 4 Then
+        AskTactics()
+    Else
+        x
+
+Def RateShootout(t As Trail, b1 As Number) As Trail
+    If b1 <= 1 Then
+        Print("NICE SHOOTING---YOU DROVE THEM OFF")
+        t
+    Else
+        If b1 <= 4 Then
+            Print("KINDA SLOW WITH YOUR COLT .45")
+            t
+        Else
+            Print("LOUSY SHOT---YOU GOT KNIFED")
+            Print("YOU HAVE TO SEE OL' DOC BLANCHARD")
+            Knifed(t)
+
+Def HostileSummary(t As Trail) As Trail
+    Print("RIDERS WERE HOSTILE--CHECK FOR LOSSES")
+    If Massacred(t) Then
+        Kill(t, "YOU RAN OUT OF BULLETS AND GOT MASSACRED BY THE RIDERS")
+    Else
+        t
+
+Def FriendlyRiders(t As Trail, tactic As Number) As Trail
+    Select Case tactic
+        Case 1
+            FriendlyRun(t)
+        Case 2
+            FriendlyAttack(t)
+        Case 3
+            t
+        Case Else
+            FriendlyCircle(t)
+
+Def HostileRiders(t As Trail, tactic As Number) As Trail
+    Select Case tactic
+        Case 1
+            HostileSummary(HostileRun(t))
+        Case 2
+            Let b1 = TakeShot(Skill(t))
+            HostileSummary(RateShootout(HostileShootout(t, b1), b1))
+        Case 3
+            If Rnd() > 0.8 Then
+                Print("THEY DID NOT ATTACK")
+                t
+            Else
+                HostileSummary(RidersSneak(t))
+        Case Else
+            Let b1 = TakeShot(Skill(t))
+            HostileSummary(RateShootout(HostileCircle(t, b1), b1))
+
+Def MeetRiders(t As Trail) As Trail
+    Let lookFriendly = Rnd() >= 0.8
+    LookMessage(lookFriendly)
+    Let tactic = AskTactics()
+    If ActualMood(lookFriendly, Rnd()) Then
+        Let f = FriendlyRiders(t, tactic)
+        Print("RIDERS WERE FRIENDLY, BUT CHECK FOR POSSIBLE LOSSES")
+        f
+    Else
+        HostileRiders(t, tactic)
+
+Def RidersPhase(t As Trail) As Trail
+    If Not IsRolling(t) Then
+        t
+    Else
+        If RidersApproach(Miles(t), Rnd()) Then
+            MeetRiders(t)
+        Else
+            t
+
+Rem ---- the misfortune of the fortnight -------------------------------
+
+Def CatchIllness(t As Trail) As Trail
+    Let kind = IllKind(Eating(t), Rnd(), Rnd())
+    Select Case kind
+        Case 1
+            Print("WILD ILLNESS---MEDICINE USED")
+        Case 2
+            Print("BAD ILLNESS---MEDICINE USED")
+        Case Else
+            Print("SERIOUS ILLNESS---")
+            Print("YOU MUST STOP FOR MEDICAL ATTENTION")
+    Illness(t, kind)
+
+Def ColdSnap(t As Trail) As Trail
+    If ClothesEnough(Clothing(t), Rnd()) Then
+        Print("COLD WEATHER---BRRRRRRR!---YOU HAVE ENOUGH CLOTHING TO KEEP YOU WARM")
+        t
+    Else
+        Print("COLD WEATHER---BRRRRRRR!---YOU DON'T HAVE ENOUGH CLOTHING TO KEEP YOU WARM")
+        CatchIllness(t)
+
+Def IllnessRoulette(t As Trail) As Trail
+    If IllnessDue(Eating(t), Rnd()) Then
+        CatchIllness(t)
+    Else
+        t
+
+Def BanditsWoundYou(t As Trail) As Trail
+    Print("YOU GOT SHOT IN THE LEG AND THEY TOOK ONE OF YOUR OXEN")
+    Print("BETTER HAVE A DOC LOOK AT YOUR WOUND")
+    BanditsWound(t)
+
+Def Bandits(t As Trail) As Trail
+    Let b1 = TakeShot(Skill(t))
+    Let shot = BanditsShoot(t, b1)
+    If Bullets(shot) < 0 Then
+        Print("YOU RAN OUT OF BULLETS---THEY GET LOTS OF CASH")
+        BanditsWoundYou(BanditsRob(shot))
+    Else
+        If b1 <= 1 Then
+            Print("QUICKEST DRAW OUTSIDE OF DODGE CITY!!!")
+            Print("YOU GOT 'EM!")
+            shot
+        Else
+            BanditsWoundYou(shot)
+
+Def WolfWords(b1 As Number)
+    If b1 <= 2 Then
+        Print("NICE SHOOTIN' PARTNER---THEY DIDN'T GET MUCH")
+    Else
+        Print("SLOW ON THE DRAW---THEY GOT AT YOUR FOOD AND CLOTHES")
+
+Def Wolves(t As Trail) As Trail
+    Let b1 = TakeShot(Skill(t))
+    If Bullets(t) <= FewBullets() Then
+        Print("YOU WERE TOO LOW ON BULLETS--")
+        Print("THE WOLVES OVERPOWERED YOU")
+        Kill(Knifed(t), DiedOf(Knifed(t)))
+    Else
+        WolfWords(b1)
+        WolvesLoot(t, b1)
+
+Def RunEvent(t As Trail, k As Number) As Trail
+    Select Case k
+        Case 1
+            Print("WAGON BREAKS DOWN--LOSE TIME AND SUPPLIES FIXING IT")
+            WagonBreaks(t)
+        Case 2
+            Print("OX INJURES LEG---SLOWS YOU DOWN REST OF TRIP")
+            OxLeg(t)
+        Case 3
+            Print("BAD LUCK---YOUR DAUGHTER BROKE HER ARM")
+            Print("YOU HAD TO STOP AND USE SUPPLIES TO MAKE A SLING")
+            BrokenArm(t)
+        Case 4
+            Print("OX WANDERS OFF---SPEND TIME LOOKING FOR IT")
+            OxWanders(t)
+        Case 5
+            Print("YOUR SON GETS LOST---SPEND HALF THE DAY LOOKING FOR HIM")
+            SonLost(t)
+        Case 6
+            Print("UNSAFE WATER--LOSE TIME LOOKING FOR CLEAN SPRING")
+            UnsafeWater(t)
+        Case 7
+            If InMountains(Miles(t)) Then
+                ColdSnap(t)
+            Else
+                Print("HEAVY RAINS---TIME AND SUPPLIES LOST")
+                HeavyRains(t)
+        Case 8
+            Print("BANDITS ATTACK")
+            Bandits(t)
+        Case 9
+            Print("THERE WAS A FIRE IN YOUR WAGON--FOOD AND SUPPLIES DAMAGED!")
+            WagonFire(t)
+        Case 10
+            Print("LOSE YOUR WAY IN HEAVY FOG---TIME IS LOST")
+            HeavyFog(t)
+        Case 11
+            Print("YOU KILLED A POISONOUS SNAKE AFTER IT BIT YOU")
+            Snakebite(t)
+        Case 12
+            Print("WAGON GETS SWAMPED FORDING RIVER--LOSE FOOD AND CLOTHES")
+            SwampedWagon(t)
+        Case 13
+            Print("WILD ANIMALS ATTACK!")
+            Wolves(t)
+        Case 14
+            Print("HAIL STORM---SUPPLIES DAMAGED")
+            HailStorm(t)
+        Case 15
+            IllnessRoulette(t)
+        Case Else
+            Print("HELPFUL INDIANS SHOW YOU WHERE TO FIND MORE FOOD")
+            HelpfulIndians(t)
+
+Def EventPhase(t As Trail) As Trail
+    If Not IsRolling(t) Then
+        t
+    Else
+        RunEvent(t, PickEvent(100 * Rnd()))
+
+Rem ---- mountains -----------------------------------------------------
+
+Def DoBlizzard(t As Trail) As Trail
+    Print("BLIZZARD IN MOUNTAIN PASS--TIME AND SUPPLIES LOST")
+    Let hit = Blizzard(t)
+    If ColdInBlizzard(Clothing(hit), Rnd()) Then
+        CatchIllness(hit)
+    Else
+        hit
+
+Def RuggedRoll(t As Trail) As Trail
+    If Rnd() <= 0.1 Then
+        Print("YOU GOT LOST---LOSE VALUABLE TIME TRYING TO FIND TRAIL!")
+        GetLost(t)
+    Else
+        If Rnd() <= 0.11 Then
+            Print("WAGON DAMAGED!---LOSE TIME AND SUPPLIES")
+            WagonDamage(t)
+        Else
+            Print("THE GOING GETS SLOW")
+            SlowGoing(t)
+
+Def RuggedSection(t As Trail) As Trail
+    If RoughGoing(Miles(t), Rnd()) Then
+        Print("RUGGED MOUNTAINS")
+        RuggedRoll(t)
+    Else
+        t
+
+Rem A South Pass blizzard uses up the fortnight: no Blue Mountains too.
+Def BlueSection(t As Trail) As Trail
+    If Miles(t) < 1700 Or ClearedBlue(t) Then
+        t
+    Else
+        If BlueSnowed(Rnd()) Then
+            DoBlizzard(MarkBlue(t))
+        Else
+            MarkBlue(t)
+
+Def PassSection(t As Trail) As Trail
+    If ClearedPass(t) Then
+        BlueSection(t)
+    Else
+        If PassSnowed(Rnd()) Then
+            DoBlizzard(MarkPass(t))
+        Else
+            Print("YOU MADE IT SAFELY THROUGH SOUTH PASS--NO SNOW")
+            BlueSection(MarkPass(t))
+
+Def MountainPhase(t As Trail) As Trail
+    If Not IsRolling(t) Then
+        t
+    Else
+        If InMountains(Miles(t)) Then
+            CheckPass(PassSection(RuggedSection(t)))
+        Else
+            t
+
+Rem ---- endings -------------------------------------------------------
+
+Def KinReply(ans As String)
+    If ans = "YES" Then
+        Print("THAT WILL BE $4.50 FOR THE TELEGRAPH CHARGE.")
+        Print("")
+    Else
+        Print("BUT YOUR AUNT SADIE IN ST. LOUIS IS REALLY WORRIED ABOUT YOU")
+        Print("")
+
+Def Funeral(msg As String)
+    Print(msg)
+    Print("")
+    Print("DUE TO YOUR UNFORTUNATE SITUATION, THERE ARE A FEW")
+    Print("FORMALITIES WE MUST GO THROUGH")
+    Print("")
+    Let minister = Input("WOULD YOU LIKE A MINISTER? ")
+    Let fancy = Input("WOULD YOU LIKE A FANCY FUNERAL? ")
+    Let kin = Input("WOULD YOU LIKE US TO INFORM YOUR NEXT OF KIN? ")
+    KinReply(Upper(kin))
+    Print("WE THANK YOU FOR THIS INFORMATION AND WE ARE SORRY YOU")
+    Print("DIDN'T MAKE IT TO THE GREAT TERRITORY OF OREGON")
+    Print("BETTER LUCK NEXT TIME")
+    Print("")
+    Print("")
+    Print("                              SINCERELY")
+    Print("")
+    Print("                 THE OREGON CITY CHAMBER OF COMMERCE")
+
+Def Arrive(t As Trail)
+    Let frac = ArrivalFraction(PrevMiles(t), Miles(t))
+    Let fed = ClampFinal(ArrivalFood(t, frac))
+    Print("")
+    Print("YOU FINALLY ARRIVED AT OREGON CITY")
+    Print("AFTER 2040 LONG MILES---HOORAY!!!!!")
+    Print("A REAL PIONEER!")
+    Print("")
+    Print(WeekdayName(frac) & " " & ArrivalDate(ArrivalDays(TurnNo(t), frac)))
+    Print("")
+    Print("FOOD: " & Str(Food(fed)))
+    Print("BULLETS: " & Str(Bullets(fed)))
+    Print("CLOTHING: " & Str(Clothing(fed)))
+    Print("MISC. SUPP.: " & Str(Misc(fed)))
+    Print("CASH: " & Str(Cash(fed)))
+    Print("")
+    Print("           PRESIDENT JAMES K. POLK SENDS YOU HIS")
+    Print("                 HEARTIEST CONGRATULATIONS")
+    Print("")
+    Print("           AND WISHES YOU A PROSPEROUS LIFE AHEAD")
+    Print("")
+    Print("                      AT YOUR NEW HOME")
+
+Rem ---- the turn loop -------------------------------------------------
+Rem One fortnight per call: books, action, supper, travel, riders,
+Rem misfortune, mountains — then either the funeral, Oregon City, or
+Rem the next date and the SELF tail call.
+
+Def Turn(t As Trail)
+    Let g = MountainPhase(EventPhase(RidersPhase(TravelPhase(EatingPhase(ActionPhase(StatusPhase(t)))))))
+    Select Case Fate(g)
+        Case Dead(m)
+            Funeral(m)
+        Case Else
+            If Miles(g) >= TotalMiles() Then
+                Arrive(g)
+            Else
+                Let h = With(g, TurnNo = TurnNo(g) + 1)
+                If OutOfTime(TurnNo(h)) Then
+                    Funeral("YOU HAVE BEEN ON THE TRAIL TOO LONG  ------\nYOUR FAMILY DIES IN THE FIRST BLIZZARD OF WINTER")
+                Else
+                    Print("")
+                    Print(TurnDate(TurnNo(h)))
+                    Print("")
+                    Turn(h)
+
+Def Main()
+    MaybeInstructions()
+    Print("")
+    Print("")
+    Let skill = AskSkill()
+    Print("")
+    Print("")
+    Let t = AskPurchases(skill)
+    Print("AFTER ALL YOUR PURCHASES, YOU NOW HAVE " & Str(Cash(t)) & " DOLLARS LEFT")
+    Print("")
+    Print("MONDAY MARCH 29 1847")
+    Print("")
+    Turn(t)

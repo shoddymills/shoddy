@@ -48,12 +48,18 @@ public sealed class MachineInfo
 
 /// <summary>
 /// Resolves Include paths to precompiled machine DLLs. A machine for
-/// lib/seq.shoddy is Shoddy.Machines.Seq.dll beside it; loading one pulls in
+/// lib/seq.shoddy is Shoddy.Machines.Seq.dll in a "bin" subdirectory beside
+/// it (lib/bin/, mirroring how each mill drops its woven output in bin/ and
+/// keeping the source tree clear of build artifacts); loading one pulls in
 /// the manifests of the machines it references (compiled include-once —
 /// an assembly is loaded at most once, however many routes reach it).
 /// </summary>
 public sealed class MachineSet
 {
+    /// <summary>Subdirectory beside a machine's source that holds its
+    /// compiled DLL — build output, gitignored via the global bin/ rule.</summary>
+    public const string BinDir = "bin";
+
     public readonly List<MachineInfo> Machines = new();
     readonly HashSet<string> loaded = new();
 
@@ -65,6 +71,7 @@ public sealed class MachineSet
 
     public static string DllPathFor(string sbPath) =>
         Path.Combine(Path.GetDirectoryName(Path.GetFullPath(sbPath))!,
+                     BinDir,
                      $"Shoddy.Machines.{ClassNameFor(sbPath)}.dll");
 
     /// <summary>The Lexer's externalInclude hook: true = a machine DLL

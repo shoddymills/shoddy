@@ -121,7 +121,8 @@ public class TurtleTests
         var prog = new ShoddyProgram();
         machines.SeedInto(prog);
         Weaver.WeaveMachine(Parser.Parse(lines, prog), sb, machines.Machines);
-        Assert.True(File.Exists(Path.Combine(ws, "machines", "Shoddy.Machines.Turtle.dll")));
+        // The DLL lands where the Include resolver looks for it (machines/bin/).
+        Assert.True(File.Exists(MachineSet.DllPathFor(sb)));
     }
 
     // ---- helpers --------------------------------------------------------

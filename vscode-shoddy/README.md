@@ -47,7 +47,7 @@ your PATH.
 A packaged `.vsix` ships in this folder. From here:
 
 ```sh
-code --install-extension vscode-shoddy-0.9.2.vsix
+code --install-extension vscode-shoddy-1.0.0.vsix
 ```
 
 The extension then appears in the Extensions view and can be updated

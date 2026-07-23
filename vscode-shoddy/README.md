@@ -93,5 +93,5 @@ Window** in that host — no re-copy needed.
 ## Requirements
 
 The mill, built from source into `bin/` (`./build.sh build`, or
-`./build.ps1 build` on Windows). See `docs/build.html` in the Shoddy
-repository for full workspace setup.
+`./build.ps1 build` on Windows). See [the toolchain guide](https://stephenvfoster.github.io/shoddy/build.html)
+for full workspace setup.

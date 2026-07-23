@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
+<meta name="description" content="TCP/IP Client &amp; Server — machines/net.shoddy">
+<link rel="stylesheet" href="../style.css">
+<link rel="icon" href="../favicon.svg" type="image/svg+xml">
+<title>net — TCP/IP Client &amp; Server | Shoddy Machines</title>
+</head>
+<body>
+<div class="topbar"><div class="inner">
+  <a class="phase" href="index.html">Shoddy · The Machines</a>
+  <span class="spacer"></span>
+  <nav class="docnav" aria-label="Documentation"><a href="../heritage.html">Story</a><a href="../guide.html">Guide</a><a href="../quickref.html">Reference</a><span class="here">Machines</span><a href="../mills/index.html">Mills</a><a href="../stack.html">Stack</a><a href="../spec.html">Spec</a><a href="../setup.html">Setup</a><a href="../vscode.html">VS Code</a><a href="../build.html">Toolchain</a></nav>
+</div></div>
+<div class="wrap">
+
+
+<header class="mast"><p class="eyebrow"><a href="index.html#networking">The Machines &middot; Networking</a></p><h1>net</h1><p class="kicker">TCP/IP Client &amp; Server — machines/net.shoddy</p></header>
+<nav class="pagertop" aria-label="Machines, in catalog order"><a href="isam.html">&larr; isam</a><a href="index.html">All machines</a><a href="simplex.html">simplex &rarr;</a></nav>
+
+<h2 id="summary">Summary</h2>
+<p><code>net</code> lets a Shoddy program talk over a TCP/IP socket — as a
+client dialing out to a server, or as a server listening for clients. You hand
+<code>Connect</code> a host and a port and get back a handle, a plain Number
+just like a file handle; then you <code>Send</code> strings down it and
+<code>Recv</code> strings back, and <code>Close</code> it when you're done. On
+the server side, <code>Listen</code> gives you a handle you can
+<code>Accept</code> connections on. The bytes on the wire arrive as ordinary
+Shoddy strings — one character per byte — so <code>&amp;</code>, <code>Mid</code>,
+<code>Asc</code> and <code>Chr</code> all work on them the same way they work on
+anything else.</p>
+<p>It sits on top of the raw <code>TCP*</code> builtins and adds the two things
+you'd otherwise write by hand: the polite polling loop that turns the
+never-blocking primitives into read-until-done convenience
+(<code>RecvAll</code>, <code>WaitAccept</code>), and the connect/do/close dance
+(<code>Request</code>, <code>Serve1</code>) that makes sure a handle always gets
+closed.</p>
+
+<div class="note"><strong>The network is a gated capability.</strong> Every
+<code>TCP*</code> word is off by default and raises <em>"network is disabled"</em>
+unless the mill was run with <code>--allow-net</code>:
+<pre><code>bin/mill run --allow-net myprogram.shoddy</code></pre>
+This is the only builtin family that reaches past the machine's own files and
+console, so it's opt-in on purpose. The flag sets <code>SHODDY_ALLOW_NET</code>
+in the environment, so a woven standalone program (<code>dotnet myprogram.dll</code>)
+honours the same switch — set that variable to <code>1</code> before running
+it.</div>
+
+<h2 id="why">Why It's Useful</h2>
+<p>A great deal of what a program wants to do lives on the other end of a
+socket: fetch a page, hit a small HTTP API, talk to a database or a message
+broker, or stand up a tiny server of your own so two programs on the same
+machine can talk. <code>net</code> is the door to all of that. Reach for it
+whenever your program needs to send bytes to, or receive bytes from, something
+that isn't a local file — and stay on the loopback address
+(<code>127.0.0.1</code>) while you're learning, where the only thing that can
+connect is you.</p>
+
+<h2 id="blocking">The one thing to understand: nothing blocks</h2>
+<p>Every socket word returns <em>immediately</em>. This is the deliberate heart
+of the design, and it shapes how you use the machine:</p>
+<ul>
+<li><code>TCPRecv</code> hands back <code>""</code> the instant there's nothing to
+read <em>right now</em> — it never waits for the other side to say something.</li>
+<li><code>TCPAccept</code> hands back <code>0</code> the instant no client is
+queued — it never waits for one to knock.</li>
+</ul>
+<p>Blocking would freeze the program on its single thread, and with it any open
+scribbler window or debug session — the same reason <code>InKey</code> never
+blocks either. The cost is that <code>""</code> from <code>TCPRecv</code> is
+ambiguous: it means both "nothing has arrived yet" <em>and</em> "the peer has
+closed." <code>TCPEof</code> tells the two apart — it's <code>True</code> only
+once the far end has actually hung up.</p>
+<p>You rarely touch that ambiguity directly, because the machine's
+<code>Wait*</code> helpers wrap it up: <code>WaitRecv</code> and
+<code>RecvAll</code> poll (yielding 5&nbsp;ms between tries with
+<code>Sleep</code>, so they don't spin the CPU) until data arrives or the peer
+closes, and <code>WaitAccept</code> polls until a client connects. They read as
+if they blocked, but a game loop or a busy server can still poll by hand with
+<code>Recv</code>, <code>Ready</code> and <code>Accept</code> when it needs the
+thread back between frames.</p>
+
+<h2 id="guide">User's Guide</h2>
+
+<h3>A client: fetch something</h3>
+<p><code>Request</code> is the whole client story in one word — it connects,
+sends your message, reads the entire reply until the server closes, and closes
+the handle for you:</p>
+<pre><code>Include "net.shoddy"
+
+Def Main()
+    Let page = HttpGet("example.com", "/")
+    Print(page)                              ' status line, headers, body</code></pre>
+<p><code>HttpGet</code> is just a thin wrapper over <code>Request</code> — here's
+the same call written out, which is the shape of any request/response protocol:</p>
+<pre><code>Def Main()
+    Let reply = Request("example.com", 80,
+        "GET / HTTP/1.0\r\nHost: example.com\r\n\r\n")
+    Print(reply)</code></pre>
+<p>When you want the handle in your own hands — to send several messages, or
+read in pieces — open it yourself and close it yourself:</p>
+<pre><code>Def Main()
+    Let s = Connect("127.0.0.1", 7000)
+    SendLine(s, "HELLO")                     ' appends \r\n
+    Print(WaitRecv(s))                       ' block-until-something, politely
+    Close(s)</code></pre>
+
+<h3>A server: answer one client</h3>
+<p><code>Listen</code> binds the loopback address and returns a server handle;
+<code>Serve1</code> waits for one client, hands the connection to your function,
+and closes it afterwards. Here's an echo server that shouts a line back
+upper-cased:</p>
+<pre><code>Include "net.shoddy"
+Include "str.shoddy"
+
+Def Main()
+    Let srv = Listen(7000)
+    Serve1(srv, Fn(c) => Send(c, Upper(RecvAll(c))))
+    Close(srv)</code></pre>
+<p>To serve more than one client, call <code>Serve1</code> in a recursion of
+your own; to reach beyond this machine, bind an explicit address with
+<code>ListenOn("0.0.0.0", 7000)</code> instead of <code>Listen</code> — but do
+that only when you mean to be reachable from the network.</p>
+
+<h3>Polling by hand</h3>
+<p>When you can't give up the thread — inside an animation loop, say — skip the
+<code>Wait*</code> helpers and poll:</p>
+<pre><code>' once per frame, never blocking:
+Let c = Accept(srv)                          ' 0 if nobody knocked
+If c &lt;&gt; 0 Then
+    Each(...)                                ' register the new client
+Let msg = Recv(client, 4096)                 ' "" if nothing this frame
+If msg &lt;&gt; "" Then
+    ...                                      ' handle it</code></pre>
+
+<p>A few things worth knowing:</p>
+<ul>
+<li><strong>Handles are Numbers, and there are 16 of them.</strong> A connection
+and a listener are both just handles, exactly like file handles; up to sixteen
+can be open at once across files and sockets.</li>
+<li><strong>Payloads are byte-strings.</strong> One character carries one byte,
+so binary is safe and text is fine — but a string read off a socket is bytes,
+not decoded Unicode. Sizes and offsets are byte counts.</li>
+<li><strong>Connecting waits, briefly and boundedly.</strong>
+<code>Connect</code> is the one word that pauses — for the TCP handshake — and it
+gives up after ten seconds so a dead host can't hang your program. Everything
+after it returns at once.</li>
+<li><strong>Loopback is the safe default.</strong> <code>Listen</code> binds
+<code>127.0.0.1</code>, reachable only from this machine. Widening that to the
+network is a deliberate <code>ListenOn</code> call.</li>
+<li><strong>These words touch the outside world.</strong> Like
+<code>Print</code> and the file words, sending and receiving are effectful. Keep
+them at the edges of your program and let the rest stay pure.</li>
+<li><strong>Close what you open.</strong> A forgotten listener holds its port
+until the program exits. <code>Request</code> and <code>Serve1</code> close for
+you; when you hold a handle yourself, <code>Close</code> it yourself.</li>
+</ul>
+
+<h2 id="words">Word Reference</h2>
+<p class="tag">17 words</p>
+
+<h3>Client</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>Connect(host, port)</td><td>Dials <code>host:port</code> and returns a
+connection handle. Blocks only for the handshake, giving up after ten seconds;
+aborts if the host can't be reached.</td></tr>
+<tr><td>Send(sock, s)</td><td>Sends every byte of <code>s</code>.</td></tr>
+<tr><td>SendLine(sock, s)</td><td>Sends <code>s</code> followed by
+<code>\r\n</code> — the line terminator most text protocols expect.</td></tr>
+<tr><td>Recv(sock, n)</td><td>Reads up to <code>n</code> bytes and returns them,
+or <code>""</code> if none have arrived yet. Never blocks.</td></tr>
+<tr><td>WaitRecv(sock)</td><td>Polls (yielding 5&nbsp;ms between tries) until at
+least one chunk is readable, then returns it; <code>""</code> once the peer has
+closed.</td></tr>
+<tr><td>RecvAll(sock)</td><td>Reads the whole response, chunk by chunk, until the
+peer closes, and returns it as one string.</td></tr>
+<tr><td>Request(host, port, msg)</td><td>Connect, send <code>msg</code>, read the
+full reply, close — the request/response shape with the handle managed for
+you.</td></tr>
+<tr><td>HttpGet(host, path)</td><td>A toy HTTP/1.0 <code>GET</code> of
+<code>path</code> from <code>host</code> on port 80, returning the raw response.
+Proof the stack works end to end.</td></tr>
+</table>
+
+<h3>Server</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>Listen(port)</td><td>Binds <code>127.0.0.1:port</code> — loopback only —
+and returns a server handle.</td></tr>
+<tr><td>ListenOn(host, port)</td><td>Binds an explicit IP literal, e.g.
+<code>ListenOn("0.0.0.0", 8080)</code> to accept from anywhere. Use only when
+you mean to be reachable.</td></tr>
+<tr><td>Accept(server)</td><td>Returns a connection handle for a waiting client,
+or <code>0</code> if none is queued. Never blocks.</td></tr>
+<tr><td>WaitAccept(server)</td><td>Polls (yielding 5&nbsp;ms between tries) until
+a client connects, then returns its connection handle.</td></tr>
+<tr><td>Serve1(server, handler)</td><td>Waits for one client, calls
+<code>handler</code> with the connection, then closes it.</td></tr>
+</table>
+
+<h3>Common to both</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>Ready(sock)</td><td>&rarr; Boolean. True when a <code>Recv</code> (or
+<code>Accept</code>, on a listener) would find something now.</td></tr>
+<tr><td>Eof(sock)</td><td>&rarr; Boolean. True once the peer has closed — what
+tells <code>""</code>-from-recv apart from "nothing yet."</td></tr>
+<tr><td>Peer(sock)</td><td>&rarr; the remote end as <code>"ip:port"</code>, or
+<code>""</code>. Handy for logging.</td></tr>
+<tr><td>Close(sock)</td><td>Shuts the socket down and frees its handle. Works on a
+connection or a listener.</td></tr>
+</table>
+
+<p class="note">These wrap the raw builtins <code>TCPConnect</code>,
+<code>TCPListen</code>, <code>TCPAccept</code>, <code>TCPSend</code>,
+<code>TCPRecv</code>, <code>TCPEof</code>, <code>TCPPoll</code>,
+<code>TCPPeer</code> and <code>TCPClose</code> — reach for those directly if you
+want the primitives without the polling helpers.</p>
+
+
+<nav class="pager" aria-label="Machines, in catalog order">
+  <a href="isam.html"><span class="dir">&larr; Previous machine</span><span class="ttl">isam</span></a>
+  <a class="next" href="simplex.html"><span class="dir">Next machine &rarr;</span><span class="ttl">simplex</span></a>
+</nav>
+<footer>Named for the shoddy mills of the West Riding: Useless Things Made
+Useful Through Skill (<a href="../heritage.html">the full story</a>).<br>
+&copy; 2026 Stephen Vincent Foster</footer>
+</div>
+</body>
+</html>

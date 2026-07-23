@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
+<meta name="description" content="Derived Maths — machines/math.shoddy">
+<link rel="stylesheet" href="../style.css">
+<link rel="icon" href="../favicon.svg" type="image/svg+xml">
+<title>math — Derived Maths | Shoddy Machines</title>
+</head>
+<body>
+<div class="topbar"><div class="inner">
+  <a class="phase" href="index.html">Shoddy · The Machines</a>
+  <span class="spacer"></span>
+  <nav class="docnav" aria-label="Documentation"><a href="../heritage.html">Story</a><a href="../guide.html">Guide</a><a href="../quickref.html">Reference</a><span class="here">Machines</span><a href="../mills/index.html">Mills</a><a href="../stack.html">Stack</a><a href="../spec.html">Spec</a><a href="../setup.html">Setup</a><a href="../vscode.html">VS Code</a><a href="../build.html">Toolchain</a></nav>
+</div></div>
+<div class="wrap">
+
+
+<header class="mast"><p class="eyebrow"><a href="index.html#numbers-math">The Machines &middot; Numbers &amp; math</a></p><h1>math</h1><p class="kicker">Derived Maths — machines/math.shoddy</p></header>
+<nav class="pagertop" aria-label="Machines, in catalog order"><a href="str.html">&larr; str</a><a href="index.html">All machines</a><a href="money.html">money &rarr;</a></nav>
+
+<h2 id="summary">Summary</h2>
+<p><code>math</code> is the comfortable middle layer of Shoddy's number work.
+The runtime already hands you the hard primitives — the ones that need real
+numerical precision baked into the machine, like <code>Sin</code>,
+<code>Cos</code>, <code>Sqr</code> (square root), <code>Exp</code>,
+<code>Log</code>, <code>Pi</code>, and the arithmetic and rounding words. This
+machine doesn't reimplement any of those; it sits on top of them and adds the
+everyday conveniences you'd otherwise write out by hand every time: the
+constant <code>E</code>, a whole <code>Tau</code> instead of two Pis, degrees-
+to-radians, clamping and interpolation, a distance formula, base-2 logs. Nice,
+small, obvious things — each one just a line or two over a builtin you already
+had. It includes nothing else, so a program can pull in <code>math</code> on
+its own.</p>
+
+<h2 id="why">Why It's Useful</h2>
+<p>Real programs are forever needing the same little scraps of arithmetic.
+You want to keep a value inside sensible bounds (<code>Clamp</code>). You want
+to slide smoothly from one number to another — a fade, a camera move, a
+progress bar (<code>Lerp</code>). You have an angle in degrees but the trig
+builtins speak radians (<code>Rad</code>). You want the distance between two
+points (<code>Dist</code>), or a random number in a range, or a log in some
+base that isn't 10 or <em>e</em>. None of these is hard, but writing them out
+inline every time is tedious and easy to fumble — is it <code>lo + (hi - lo)
+* t</code> or the other way round? <code>math</code> gives each a plain name
+you can trust, so the arithmetic reads like what it means. Reach for it any
+time you're doing more than plus and minus: graphics, animation, geometry,
+simulation, or just tidying a raw number into a rounded, bounded one.</p>
+
+<h2 id="guide">User's Guide</h2>
+<p>Everything here is a plain function over numbers — pass numbers in, get a
+number (or, for <code>Chance</code>, a Boolean) back. There's nothing to open
+or set up; just include the file and call the words. The one wrinkle to know
+is a rule the machine sets for itself: <strong>no word here may share a name
+with a builtin.</strong> In Shoddy a <code>Def</code> silently outranks a
+builtin of the same name, so redefining, say, <code>Log</code> would quietly
+hijack it everywhere — a nasty surprise. That's why the natural log stays the
+<code>Log</code> builtin and the base-10 log stays <code>Log10</code>, and this
+file adds only the ones the runtime doesn't already provide:
+<code>Log2</code> and <code>LogBase</code>.</p>
+<pre><code>Include "math.shoddy"
+
+Def Main()
+    Print(Tau())                    ' 6.283... — a full turn, in radians
+    Print(Rad(180))                 ' 3.14159... — 180 degrees as radians
+
+    Print(Clamp(42, 0, 10))         ' 10  — pinned to the top of the range
+    Print(Lerp(0, 100, 0.25))       ' 25  — a quarter of the way from 0 to 100
+    Print(RoundTo(3.14159, 2))      ' 3.14
+
+    Print(Dist(0, 0, 3, 4))         ' 5   — Pythagoras, done for you
+    Print(Log2(8))                  ' 3
+
+    If Chance(0.5) Then             ' heads-or-tails, true half the time
+        Print("heads")
+    Else
+        Print("tails")</code></pre>
+<p>A few things worth remembering:</p>
+<ul>
+<li><strong>Angles: builtins speak radians, this machine bridges to
+degrees.</strong> <code>Rad</code> and <code>Deg</code> convert between the
+two; <code>Angle(dx, dy)</code> gives the direction of a vector as a radian
+angle, taking its arguments in the natural <code>(dx, dy)</code> order (it
+wraps the <code>Atn2</code> builtin, which wants them the other way
+round).</li>
+<li><strong>The interpolation family fits together.</strong> <code>Lerp</code>
+slides from <code>a</code> to <code>b</code> by a fraction <code>t</code>;
+<code>InvLerp</code> is its exact opposite, telling you what fraction a value
+sits at; <code>Remap</code> chains the two to move a number from one range onto
+another; <code>Smoothstep</code> is the eased version, clamped at the edges for
+gentle fades.</li>
+<li><strong>There's a small random cluster here too.</strong>
+<code>RandRange</code>, <code>RandInt</code>, <code>Pick</code>, and
+<code>Chance</code> are built on the <code>Rnd</code> builtin, and the
+<code>Seed</code> builtin makes any of them reproducible. If random numbers are
+the main thing you want — deliberately seedless, treated as an effect at the
+edge of your program — see the dedicated <a href="random.html">random</a>
+machine instead; the words here are the convenience versions for when you're
+already reaching for <code>math</code>.</li>
+<li><strong>Fractions and truncation follow the builtins.</strong>
+<code>Frac</code> uses the <code>Fix</code> builtin, which truncates toward
+zero — so <code>Frac(-3.25)</code> is <code>-0.25</code>, not
+<code>0.75</code>. Keep that sign in mind for negatives.</li>
+</ul>
+
+<h2 id="words">Word Reference</h2>
+<p class="tag">20 words, all pure functions over numbers</p>
+
+<h3>Constants</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>E()</td><td>Euler's number, about 2.71828 — computed as
+<code>Exp(1)</code>. The base of the natural log.</td></tr>
+<tr><td>Tau()</td><td>A full turn in radians, about 6.28318 —
+<code>2 &times; Pi</code>. Often the friendlier circle constant when you're
+thinking in whole turns.</td></tr>
+</table>
+
+<h3>Angles <span class="tag">builtins speak radians</span></h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>Rad(deg)</td><td>Converts an angle in degrees to radians, ready for the
+trig builtins.</td></tr>
+<tr><td>Deg(rad)</td><td>Converts an angle in radians back to degrees, for
+display or turtle-style headings.</td></tr>
+<tr><td>Angle(dx, dy)</td><td>The direction of a vector <code>(dx, dy)</code> as
+a radian angle in the range (-Pi, Pi]. Argument order reads naturally, left to
+right.</td></tr>
+</table>
+
+<h3>Parts and rounding</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>Frac(x)</td><td>The fractional part of <code>x</code> — what's left
+after truncating toward zero. So <code>Frac(-3.25)</code> is
+<code>-0.25</code>.</td></tr>
+<tr><td>RoundTo(x, n)</td><td>Rounds <code>x</code> to <code>n</code> decimal
+places.</td></tr>
+</table>
+
+<h3>Shaping a range</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>Clamp(x, lo, hi)</td><td>Pins <code>x</code> into the range
+<code>lo</code>..<code>hi</code>: below <code>lo</code> becomes
+<code>lo</code>, above <code>hi</code> becomes <code>hi</code>.</td></tr>
+<tr><td>Lerp(a, b, t)</td><td>Linear interpolation: the point a fraction
+<code>t</code> of the way from <code>a</code> to <code>b</code>.
+<code>t = 0</code> gives <code>a</code>, <code>t = 1</code> gives
+<code>b</code>.</td></tr>
+<tr><td>InvLerp(a, b, x)</td><td>The inverse of <code>Lerp</code>: what fraction
+of the way from <code>a</code> to <code>b</code> the value <code>x</code> sits
+at.</td></tr>
+<tr><td>Remap(x, inLo, inHi, outLo, outHi)</td><td>Moves <code>x</code> linearly
+from the input range onto the output range — <code>InvLerp</code> then
+<code>Lerp</code>, in one step.</td></tr>
+<tr><td>Smoothstep(edge0, edge1, x)</td><td>Smooth (Hermite) interpolation from
+<code>edge0</code> to <code>edge1</code>, clamped to [0, 1] at the edges — an
+eased ramp instead of a straight one.</td></tr>
+</table>
+
+<h3>Geometry</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>Hypot(x, y)</td><td>The length of the hypotenuse —
+<code>Sqr(x&sup2; + y&sup2;)</code> — i.e. the distance from the origin to the
+point <code>(x, y)</code>.</td></tr>
+<tr><td>Dist(x0, y0, x1, y1)</td><td>The straight-line distance between two
+points.</td></tr>
+</table>
+
+<h3>Logarithms <span class="tag">natural and base-10 are builtins</span></h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>Log2(x)</td><td>The base-2 logarithm of <code>x</code>.</td></tr>
+<tr><td>LogBase(base, x)</td><td>The logarithm of <code>x</code> in any
+<code>base</code> you name.</td></tr>
+</table>
+
+<h3>Random <span class="tag">on the Rnd builtin; Seed reproduces</span></h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>RandRange(lo, hi)</td><td>A random floating-point number in
+<code>[lo, hi)</code> — <code>lo</code> possible, <code>hi</code> never
+quite.</td></tr>
+<tr><td>RandInt(lo, hi)</td><td>A random whole number in <code>[lo, hi]</code>,
+both ends included.</td></tr>
+<tr><td>Pick(xs)</td><td>A uniformly-chosen element of a non-empty list or
+array.</td></tr>
+<tr><td>Chance(p)</td><td>True with probability <code>p</code>:
+<code>p &le; 0</code> never, <code>p &ge; 1</code> always. A weighted
+coin.</td></tr>
+</table>
+
+
+<nav class="pager" aria-label="Machines, in catalog order">
+  <a href="str.html"><span class="dir">&larr; Previous machine</span><span class="ttl">str</span></a>
+  <a class="next" href="money.html"><span class="dir">Next machine &rarr;</span><span class="ttl">money</span></a>
+</nav>
+<footer>Named for the shoddy mills of the West Riding: Useless Things Made
+Useful Through Skill (<a href="../heritage.html">the full story</a>).<br>
+&copy; 2026 Stephen Vincent Foster</footer>
+</div>
+</body>
+</html>

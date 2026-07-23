@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
+<meta name="description" content="Exact Money — machines/money.shoddy">
+<link rel="stylesheet" href="../style.css">
+<link rel="icon" href="../favicon.svg" type="image/svg+xml">
+<title>money — Exact Money | Shoddy Machines</title>
+</head>
+<body>
+<div class="topbar"><div class="inner">
+  <a class="phase" href="index.html">Shoddy · The Machines</a>
+  <span class="spacer"></span>
+  <nav class="docnav" aria-label="Documentation"><a href="../heritage.html">Story</a><a href="../guide.html">Guide</a><a href="../quickref.html">Reference</a><span class="here">Machines</span><a href="../mills/index.html">Mills</a><a href="../stack.html">Stack</a><a href="../spec.html">Spec</a><a href="../setup.html">Setup</a><a href="../vscode.html">VS Code</a><a href="../build.html">Toolchain</a></nav>
+</div></div>
+<div class="wrap">
+
+
+<header class="mast"><p class="eyebrow"><a href="index.html#numbers-math">The Machines &middot; Numbers &amp; math</a></p><h1>money</h1><p class="kicker">Exact Money — machines/money.shoddy</p></header>
+<nav class="pagertop" aria-label="Machines, in catalog order"><a href="math.html">&larr; math</a><a href="index.html">All machines</a><a href="matrix.html">matrix &rarr;</a></nav>
+
+<h2 id="summary">Summary</h2>
+<p><code>money</code> holds an amount of money <strong>exactly</strong>, so the
+pennies always add up. The trick is simple: instead of storing $19.99 as the
+fraction 19.99, it stores it as the whole number <strong>1999</strong> — a
+count of cents. Whole numbers a computer can hold perfectly; fractions of a
+dollar it cannot, and the tiny errors that creep in from those fractions are
+exactly what makes a total come out a penny wrong. By keeping everything in
+whole cents, <code>money</code> sidesteps that entirely. You build amounts from
+dollars or from a typed-in string, add and subtract and compare them, multiply
+by a rate (tax, interest) with the rounding made explicit, split a sum into
+even shares without losing or inventing a penny, and format the result back into
+a familiar <code>$12.34</code>. Everything is <strong>pure</strong> — each word
+hands you back a new <code>Money</code> and never changes the one you gave
+it.</p>
+
+<h2 id="why">Why It's Useful</h2>
+<p>Here is the problem this machine exists to solve. A computer stores ordinary
+decimal numbers in <strong>floating point</strong> — binary fractions — and
+binary simply cannot write down most decimal amounts exactly, in the same way
+you can't write one-third as a finite decimal (0.3333… never ends). The value
+$0.10 has no exact binary form; what the computer actually stores is a number a
+hair's breadth away from a tenth. Each such amount is off by a sliver far too
+small to see, and on its own it's harmless. But arithmetic <em>piles those
+slivers up</em>. Add $0.10 to itself again and again, or run a few thousand
+prices through a till, and the slivers accumulate until the total lands a whole
+cent — sometimes more — off from what a person adding the same figures on paper
+would get. The classic demonstration is that on most computers <code>0.1 + 0.2</code>
+does not equal <code>0.3</code>; it comes out as <code>0.30000000000000004</code>.
+For a physics simulation, nobody cares. For money, a total that's a penny wrong
+is a bug report, an unbalanced ledger, an audit that doesn't reconcile.</p>
+<p>The cure is to stop storing fractions at all. A dollar is a hundred cents,
+and a cent is a whole thing — you never need to represent half a cent to a
+customer. So <code>money</code> keeps the amount as a whole number of cents and
+does all its sums on those whole numbers. Whole numbers add, subtract, and
+compare with no drift whatsoever, because there are no fractions left to be
+inexact about. Rounding still has to happen the moment you multiply by a rate
+(8.75% tax on $19.99 genuinely lands between two cents), but here the rounding
+is done <strong>once, on purpose, to the nearest cent</strong>, where you can
+see it — not scattered invisibly through every operation. That's the whole idea:
+exact where exactness is free, and honest, deliberate rounding only where the
+arithmetic truly forces a choice. Reach for <code>money</code> any time real
+money is involved — prices, totals, invoices, splitting a bill — and reach for
+it instead of, never alongside, plain decimal dollars.</p>
+
+<h2 id="guide">User's Guide</h2>
+<p>You make a <code>Money</code> from a number of dollars with
+<code>Dollars</code>, or from a string a person typed with
+<code>MoneyVal</code>. From there you add, subtract, sum a whole list,
+compare, multiply by a rate, split into shares, and format for display. Because
+every word is pure, you keep the result in a variable rather than expecting the
+original to change.</p>
+<pre><code>Include "money.shoddy"
+
+Def Main()
+    Let price = Dollars(19.99)            ' 1999 cents, held exactly
+    Let tax   = MoneyMul(price, 0.0875)   ' 8.75% tax, rounded to the nearest cent
+    Let total = MoneyAdd(price, tax)
+
+    Print(MoneyFmt(price))                ' $19.99
+    Print(MoneyFmt(tax))                  ' $1.75
+    Print(MoneyFmt(total))                ' $21.74
+
+    ' Split a bill three ways with no penny lost:
+    Let shares = MoneySplit(Dollars(10.00), 3)
+    Each(shares, Fn(s) => Print(MoneyFmt(s)))   ' $3.34, $3.33, $3.33
+
+    Print(MoneyLt(tax, price))            ' True
+    Print(MoneyFmt(MoneySum(shares)))     ' $10.00  (the parts add back up)</code></pre>
+<p>A few things worth remembering:</p>
+<ul>
+<li><strong>Build amounts, don't do decimal maths yourself.</strong> The
+whole point is to get your dollars into whole cents at the edge —
+<code>Dollars</code> and <code>MoneyVal</code> do that for you — and then stay
+in <code>Money</code> for every sum after. Adding raw decimal numbers before
+you wrap them just reintroduces the drift you came here to avoid.</li>
+<li><strong>Rounding lives in one place: <code>MoneyMul</code>.</strong> Adding,
+subtracting, and summing are exact and never round, because whole cents don't
+need to. Multiplying by a rate is the only operation that can land between two
+cents, and it rounds to the nearest one, explicitly. If you multiply, know that
+a rounding happened there and nowhere else.</li>
+<li><strong>Splitting never loses a penny.</strong> <code>MoneySplit</code>
+divides a sum into <code>n</code> shares as evenly as whole cents allow, then
+hands the leftover pennies out one each to the earliest shares — so ten dollars
+in three comes back as $3.34, $3.33, $3.33, which sums back to exactly $10.00.
+No penny is created, none vanishes.</li>
+<li><strong>Negative amounts are fine.</strong> <code>MoneySub</code> can go
+below zero (a refund, a balance owed), and <code>MoneyFmt</code> formats a
+negative amount with a leading minus, like <code>-$4.50</code>.</li>
+<li><strong>Exact past astronomical sums.</strong> Because whole numbers stay
+exact up to 2<sup>53</sup>, a <code>Money</code> is precise well past $90
+trillion — you'll run out of realistic amounts long before you run out of
+exactness, and no separate decimal type is needed.</li>
+</ul>
+
+<h2 id="words">Word Reference</h2>
+<p class="tag">9 words, plus the Money type</p>
+
+<h3>The type</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>Money</td><td>An amount of money, held as a whole number of cents in its
+<code>Cents</code> field. That's the entire representation — no fractions, no
+hidden decimal. You rarely build one by hand; use <code>Dollars</code> or
+<code>MoneyVal</code>.</td></tr>
+</table>
+
+<h3>Making money</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>Dollars(d)</td><td>Turns a number of dollars into a <code>Money</code>,
+rounding to the nearest cent as it converts — <code>Dollars(19.99)</code> is
+1999 cents. The usual way to start.</td></tr>
+<tr><td>MoneyVal(s)</td><td>Turns a string a person typed (like
+<code>"19.99"</code>) into a <code>Money</code>, by reading it as a number of
+dollars and then converting exactly as <code>Dollars</code> does.</td></tr>
+</table>
+
+<h3>Arithmetic</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>MoneyAdd(a, b)</td><td>Adds two amounts. Exact — whole cents plus whole
+cents, no rounding, no drift.</td></tr>
+<tr><td>MoneySub(a, b)</td><td>Subtracts <code>b</code> from <code>a</code>.
+Exact, and may go negative (a refund or a balance owed).</td></tr>
+<tr><td>MoneyMul(a, f)</td><td>Multiplies an amount by a plain number
+<code>f</code> — a tax rate, an interest rate, a quantity — and rounds the
+result to the nearest cent. This is the one word that rounds, and it does so
+explicitly.</td></tr>
+<tr><td>MoneySum(xs)</td><td>Adds up a whole list of <code>Money</code> values
+into one total. Exact. An empty list sums to zero.</td></tr>
+</table>
+
+<h3>Comparing</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>MoneyLt(a, b)</td><td>True or False: is <code>a</code> less than
+<code>b</code>? (Since amounts are whole cents, equality is just plain
+<code>=</code> on the values themselves.)</td></tr>
+</table>
+
+<h3>Splitting and formatting</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>MoneySplit(m, n)</td><td>Divides <code>m</code> into <code>n</code>
+shares as evenly as whole cents allow, handing the leftover pennies to the
+earliest shares one apiece. The parts always sum back to exactly
+<code>m</code> — no penny lost, none invented.</td></tr>
+<tr><td>MoneyFmt(m)</td><td>Formats an amount as a familiar dollar string, like
+<code>$12.34</code>, always with two decimal places. Negative amounts get a
+leading minus, like <code>-$4.50</code>.</td></tr>
+</table>
+
+
+<nav class="pager" aria-label="Machines, in catalog order">
+  <a href="math.html"><span class="dir">&larr; Previous machine</span><span class="ttl">math</span></a>
+  <a class="next" href="matrix.html"><span class="dir">Next machine &rarr;</span><span class="ttl">matrix</span></a>
+</nav>
+<footer>Named for the shoddy mills of the West Riding: Useless Things Made
+Useful Through Skill (<a href="../heritage.html">the full story</a>).<br>
+&copy; 2026 Stephen Vincent Foster</footer>
+</div>
+</body>
+</html>

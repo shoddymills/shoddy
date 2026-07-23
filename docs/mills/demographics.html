@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
+<meta name="description" content="Neural income prediction — mills/demographics">
+<link rel="stylesheet" href="../style.css">
+<link rel="icon" href="../favicon.svg" type="image/svg+xml">
+<title>demographics — Neural Income Prediction | Shoddy Mills</title>
+</head>
+<body>
+<div class="topbar"><div class="inner">
+  <a class="phase" href="index.html">Shoddy · The Mills</a>
+  <span class="spacer"></span>
+  <nav class="docnav" aria-label="Documentation"><a href="../heritage.html">Story</a><a href="../guide.html">Guide</a><a href="../quickref.html">Reference</a><a href="../machines/index.html">Machines</a><span class="here">Mills</span><a href="../stack.html">Stack</a><a href="../spec.html">Spec</a><a href="../setup.html">Setup</a><a href="../vscode.html">VS Code</a><a href="../build.html">Toolchain</a></nav>
+</div></div>
+<div class="wrap">
+
+<header class="mast"><p class="eyebrow"><a href="index.html#learning">The Mills &middot; Machine learning</a></p><h1>demographics</h1><p class="kicker">Neural income prediction — mills/demographics</p></header>
+<nav class="pagertop" aria-label="Mills, in catalog order"><a href="space-invaders.html">&larr; space-invaders</a><a href="index.html">All mills</a><a href="simplex-from-mps.html">simplex-from-mps &rarr;</a></nav>
+
+<h2 id="summary">Summary</h2>
+<p><code>demographics</code> is two programs sharing one model.
+<code>demographics-train.shoddy</code> fits an 8-100-1 tanh/identity neural
+network from the <a href="../machines/neural.html">neural</a> machine to a
+200-row people data set by mini-batch SGD, evaluates it against 40 held-out
+test rows, and serializes the trained model — binary, bit-exact,
+self-describing — to <code>dat/people-model.bin</code>.
+<code>demographics.shoddy</code> then loads that model and predicts
+interactively: it prompts for a person — sex, age, state, political
+leaning — builds the model's 8-element input vector (age scaled by 100,
+state and politics one-hot), and prints the predicted income. Answer
+<code>N</code> at the <code>ANOTHER</code> prompt to exit.</p>
+
+<h2 id="history">The Original</h2>
+<p>This mill is a port of James McCaffrey's classic C# walkthrough,
+<em>Neural Network Regression from Scratch with Batch Training</em>
+(September 2023), and the original program travels beside the port as
+<code>cs/NeuralRegressionProgram.cs</code> — as <code>oregon.bas</code> does
+for the Oregon mill. The port is faithful to the architecture but not to
+the bugs: the C# reference's <code>TrainBatch</code> reads its shuffled
+indices without ever offsetting by the batch number, so it trains the first
+ten shuffled rows twenty times per epoch and skips the rest — a defect the
+header of <code>demographics-train.shoddy</code> documents and deliberately
+does not port. The epoch count changed too, on evidence: a seeded
+convergence sweep showed training plateaus by epoch 1600, so the port stops
+there instead of the original's 2000 — same accuracy, four minutes less
+waiting.</p>
+
+<h2 id="run">Running It</h2>
+<p>From <code>mills/demographics/</code> — the wrapper is
+<code>build.cmd</code> on Windows, <code>./build.sh</code> on
+Linux/macOS/WSL, same subcommands:</p>
+<pre><code>./build.sh build    # weave both programs into bin/ (plain ./build.sh works too)
+./build.sh train    # train the model — writes dat/people-model.bin, ~9 minutes
+./build.sh run      # predict interactively from the trained model
+./build.sh clean    # remove built binaries</code></pre>
+<p>Unlike the games, this mill is <em>woven</em>: the build compiles both
+programs to self-contained assemblies in <code>bin/</code>, so once built
+they run with no toolchain at all — <code>dotnet bin/demographics.dll</code>.
+Run from the mill's own directory: the data and model paths under
+<code>dat/</code> are relative. Train before you predict; the predictor
+aborts politely without a model. <code>Seed(0)</code> at the top of training
+makes every run identical.</p>
+<p>Mind the data's edges: the model was trained on 25&ndash;66-year-olds
+from Michigan, Nebraska, and Oklahoma with incomes scaled by $100,000 —
+predictions outside that neighborhood are extrapolation, and priced
+accordingly.</p>
+
+<h2 id="built">How It's Built</h2>
+<p>Everything neural comes from the
+<a href="../machines/neural.html">neural</a> machine: the 8-100-1 network,
+mini-batch SGD with gradients as net-shaped values, and the
+<code>NetSaveBin</code>/<code>NetLoadBin</code> pair whose binary format is
+self-describing and bit-exact — what the trainer writes, the predictor
+reproduces digit for digit. The epoch budget is itself a worked example of
+measuring before tuning: one 8-100-1 epoch on 200 rows costs about 350 ms
+through the machine's immutable matrix algebra, and the header of
+<code>demographics-train.shoddy</code> records the convergence sweep
+(accuracy at epochs 1200, 1600, and 2000) that justified stopping at
+1600.</p>
+
+<h2 id="split">Why More Than One File</h2>
+<p>The game mills split along the effect line — pure core, thin shell.
+This mill splits along a different and equally classic seam:
+<strong>train once, predict many</strong>. Training costs nine minutes of
+matrix algebra; a prediction costs a keystroke. Bolting them into one
+program would mean either retraining on every launch or carrying the whole
+training apparatus — data loading, shuffling, the SGD loop, the
+convergence report — inside a program whose job is to ask four questions
+and print a number.</p>
+<p>So <code>demographics-train.shoddy</code> and
+<code>demographics.shoddy</code> are two separate programs, woven to two
+separate assemblies, and the <em>interface between them is a file</em>:
+<code>dat/people-model.bin</code>, written by <code>NetSaveBin</code> and
+read by <code>NetLoadBin</code>, whose self-describing binary format is
+bit-exact — the predictor computes with precisely the weights the trainer
+found, digit for digit. That's the same shape every production ML system
+takes — a training pipeline, a serialized model artifact, and a lean
+inference program — at a scale where you can read all of both sides in one
+sitting.</p>
+
+<h2 id="machines">The Machines It Uses</h2>
+<table>
+<tr><th>Machine</th><th>Why</th></tr>
+<tr><td><a href="../machines/neural.html">neural</a></td><td>Both programs;
+the reason the mill exists. The <code>Net</code> record and the 8-100-1
+tanh/identity architecture, mini-batch SGD with gradients as net-shaped
+values for the trainer, and the <code>NetSaveBin</code> /
+<code>NetLoadBin</code> pair whose bit-exact format is the contract
+between the two programs. (It brings
+<a href="../machines/matrix.html">matrix</a>,
+<a href="../machines/random.html">random</a>,
+<a href="../machines/file.html">file</a>, and
+<a href="../machines/recio.html">recio</a> along with it — the algebra,
+the shuffling, and the model file's binary I/O.)</td></tr>
+<tr><td><a href="../machines/math.html">math</a></td><td>Both programs:
+<code>RoundTo</code> trims raw model output to printable precision — in
+the trainer's accuracy report and the predictor's income line.</td></tr>
+<tr><td><a href="../machines/money.html">money</a></td><td>Predictor only:
+<code>Dollars</code> and <code>MoneyFmt</code> turn the model's scaled
+output (income &times; $100,000) into an exact, readable dollar figure
+beside the raw prediction.</td></tr>
+</table>
+
+<nav class="pager" aria-label="Mills, in catalog order">
+  <a href="space-invaders.html"><span class="dir">&larr; Previous mill</span><span class="ttl">space-invaders</span></a>
+  <a class="next" href="simplex-from-mps.html"><span class="dir">Next mill &rarr;</span><span class="ttl">simplex-from-mps</span></a>
+</nav>
+<footer>Named for the shoddy mills of the West Riding: Useless Things Made
+Useful Through Skill (<a href="../heritage.html">the full story</a>).<br>
+&copy; 2026 Stephen Vincent Foster</footer>
+</div>
+</body>
+</html>

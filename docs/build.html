@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="The mill from the command line — every command, wrapper, and convention.">
+<title>The Toolchain | Shoddy</title>
+<link rel="stylesheet" href="style.css">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+</head>
+<body>
+<div class="topbar"><div class="inner">
+  <a class="phase" href="index.html">Shoddy · Documentation</a>
+  <span class="spacer"></span>
+  <nav class="docnav" aria-label="Documentation"><a href="heritage.html">Story</a><a href="guide.html">Guide</a><a href="quickref.html">Reference</a><a href="machines/index.html">Machines</a><a href="mills/index.html">Mills</a><a href="stack.html">Stack</a><a href="spec.html">Spec</a><a href="setup.html">Setup</a><a href="vscode.html">VS Code</a><span class="here">Toolchain</span></nav>
+</div></div>
+<div class="wrap">
+<header class="mast">
+<p class="eyebrow">Shoddy Documentation</p>
+<h1 id="toolchain">The Toolchain</h1>
+<p class="kicker">The mill from the command line — every command, wrapper, and convention.</p>
+</header>
+
+<p>This is the reference for working with the mill directly: its commands,
+the repo's build wrappers, how weaving and machines fit together, and the
+testing rules. It assumes the toolchain is already built and on your
+PATH — that's <a href="setup.html">One-Time Machine Setup</a>. For the
+editor side — tasks, the Run button, debugging — see
+<a href="vscode.html">VS Code</a>.</p>
+
+<h2 id="commands">1. The mill's commands</h2>
+<pre><code class="language-sh">mill run x.shoddy        # compile in memory and run (default: mill x.shoddy)
+mill weave x.shoddy      # compile -&gt; x.dll (+ runtimeconfig + runtime dlls)
+dotnet x.dll             # run the woven program
+mill machine lib.shoddy  # compile a library to a machine DLL
+mill gen x.shoddy        # print the generated C#
+mill lex x.shoddy        # dump token lines (debug)
+mill dap                 # DAP server — the perch (the editor launches this)
+</code></pre>
+<p><code>mill run</code> and <code>mill weave</code> are the same compiler
+with a different destination: <code>run</code> weaves to memory and
+executes; <code>weave</code> writes the assembly to disk. Everything is
+compiled — there is no interpreter. <code>mill run FILE args...</code>
+passes the remaining arguments through to the program.</p>
+<p>One platform note: programs that open a scribbler window must run under
+<code>mill run</code> — a woven <code>dotnet FILE.dll</code> has no window
+backend. Console programs weave and run anywhere .NET runs.</p>
+
+<h2 id="wrappers">2. The build wrappers</h2>
+<p>Thin convenience wrappers at the repo root bundle the common commands —
+<code>build.ps1</code> on Windows, <code>build.sh</code> on
+Linux/macOS/WSL, same subcommands:</p>
+<pre><code class="language-sh">./build.sh build                 # build the mill into bin/
+./build.sh test                  # golden suite + libtest assertions
+./build.sh run tst/examples.shoddy
+./build.sh weave tst/simplex.shoddy
+./build.sh machines              # compile every machine to a DLL
+./build.sh vsix                  # package the VS Code extension (.vsix)
+./build.sh vsix patch            # bump version, then package
+./build.sh clean
+</code></pre>
+<p>On Windows, run <code>build.cmd</code> in place of
+<code>./build.sh</code> (e.g. <code>build.cmd build</code>). It's a shim
+that invokes <code>build.ps1</code> with an execution-policy bypass, so the
+unsigned script runs regardless of the machine's PowerShell policy. (To
+call the script directly:
+<code>powershell -ExecutionPolicy Bypass -File .\build.ps1 build</code>.)</p>
+<p>Each mill under <code>mills/</code> carries its own
+<code>build.cmd</code>/<code>build.sh</code> pair with the same spirit —
+see <a href="mills/index.html">the mills catalog</a>.</p>
+
+<h2 id="rebuild">3. Rebuilding the mill</h2>
+<p><code>./build.sh build</code> runs
+<code>dotnet publish src/Shoddy.Mill -c Release -o bin</code> — a folder
+publish, not single-file, and that's load-bearing: the weaver references
+<code>Shoddy.Runtime.dll</code> from disk when compiling generated code.
+The executable lands at <code>bin/mill</code> (<code>bin\mill.exe</code> on
+Windows). Re-run it after touching anything under <code>src/</code>.</p>
+
+<h2 id="machines">4. Includes and machines</h2>
+<ul>
+<li><p><code>Include &quot;FILE.shoddy&quot;</code> resolves relative to the <em>including file</em>, then
+the <code>SHODDYLIB</code> directory. Include-once: a file arrives at most once.</p>
+</li>
+<li><p>Both <code>mill run</code> and <code>mill weave</code> link against a
+precompiled <strong>machine</strong> (<code>Shoddy.Machines.&lt;Name&gt;.dll</code> beside the
+<code>.shoddy</code>) when one exists, and splice the source otherwise. Build
+machines in dependency order (<code>seq</code> and <code>str</code> before the machines
+that include them):</p>
+<pre><code class="language-sh">for m in seq str matrix money file recio dict random neural isam simplex mps; do
+    bin/mill machine machines/$m.shoddy
+done
+</code></pre>
+<p>(or just <code>./build.sh machines</code>, which knows the order).</p>
+</li>
+<li><p>Curious what your program compiles to? <code>mill gen file.shoddy</code>
+prints the generated C#. Self-tail-recursive defs show
+<code>continue;  // self tail call — the loop is the TCO</code>.</p>
+</li>
+</ul>
+
+<h2 id="testing">5. Errors and testing</h2>
+<p>Runtime and parse errors print <code>ERROR (line N): message</code> to the
+terminal and exit 1 — the line number is within the file that defines
+the failing code. <code>Assert(cond, &quot;MSG&quot;)</code> is built in.</p>
+<p>The conformance rule of the whole project: <code>tst/golden/</code> is the
+constitution. After touching anything under <code>src/</code>, run
+<code>dotnet test src/Shoddy.Tests</code> (or <code>./build.sh test</code>) —
+the five goldens compiled and run in-process, the machines path, and the
+TCO check, all byte-identical. Green means the mill is honest.</p>
+
+<p>The language itself is documented in the
+<a href="guide.html">guide</a>, the <a href="spec.html">spec</a>, the
+<a href="quickref.html">quick reference</a>, and the
+<a href="machines/index.html">machine pages</a>; this page is only the
+loom-side of the workshop.</p>
+
+<footer>Named for the shoddy mills of the West Riding: Useless Things Made
+Useful Through Skill (<a href="heritage.html">the full story</a>).<br>
+&copy; 2026 Stephen Vincent Foster</footer>
+</div>
+</body>
+</html>

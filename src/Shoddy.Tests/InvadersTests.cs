@@ -1,9 +1,5 @@
-// Copyright (c) 2026 Stephen Vincent Foster. All rights reserved.
-//
-// This file is part of the Shoddy Language project.
-// Licensed under the Shoddy Language License 1.0.0 (PolyForm Noncommercial
-// License 1.0.0 with Additional Use Grant). See the LICENSE file in the
-// project root for full terms.
+// Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+// Licensed under the MIT License. See the LICENSE file in the project root.
 
 using Shoddy.Compiler;
 using Shoddy.Devil;
@@ -12,11 +8,11 @@ using Shoddy.Runtime;
 namespace Shoddy.Tests;
 
 /// <summary>
-/// The Space Invaders pure model (mills/space-invaders/invaders-core.shoddy):
+/// The Space Invaders pure model (mills/invaders/invaders-core.shoddy):
 /// state, per-frame simulation, and input actions, none of which touch a
 /// window. The windowed half (drawing + the event loop, in invaders.shoddy)
 /// is left to manual play. The workspace mirrors the repo's
-/// mills/space-invaders layout so the core's ../../machines includes resolve.
+/// mills/invaders layout so the core's ../../machines includes resolve.
 /// </summary>
 public class InvadersTests
 {
@@ -109,20 +105,20 @@ public class InvadersTests
     // ---- helper --------------------------------------------------------
 
     /// <summary>Weave and run a Main body against invaders-core.shoddy,
-    /// with the repo's mills/space-invaders layout reproduced in a temp
+    /// with the repo's mills/invaders layout reproduced in a temp
     /// workspace so the core's ../../machines includes resolve. No window:
     /// the core includes no scribbler.</summary>
     static string Probe(params string[] body)
     {
         string ws = Path.Combine(Path.GetTempPath(), "shoddy-invaders", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(Path.Combine(ws, "machines"));
-        Directory.CreateDirectory(Path.Combine(ws, "mills", "space-invaders"));
+        Directory.CreateDirectory(Path.Combine(ws, "mills", "invaders"));
         foreach (string f in Directory.GetFiles(Path.Combine(Root, "machines"), "*.shoddy"))
             File.Copy(f, Path.Combine(ws, "machines", Path.GetFileName(f)));
-        File.Copy(Path.Combine(Root, "mills", "space-invaders", "invaders-core.shoddy"),
-                  Path.Combine(ws, "mills", "space-invaders", "invaders-core.shoddy"));
+        File.Copy(Path.Combine(Root, "mills", "invaders", "invaders-core.shoddy"),
+                  Path.Combine(ws, "mills", "invaders", "invaders-core.shoddy"));
 
-        string sb = Path.Combine(ws, "mills", "space-invaders", "probe.shoddy");
+        string sb = Path.Combine(ws, "mills", "invaders", "probe.shoddy");
         File.WriteAllText(sb,
             "Include \"invaders-core.shoddy\"\n\n"
             + "Def YN(b As Boolean) As String\n    If b Then\n        \"Y\"\n    Else\n        \"N\"\n\n"

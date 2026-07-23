@@ -58,7 +58,7 @@ libraries), and the tagline, meant literally. The full story is in
 | `src/`| The .NET solution: `Shoddy.Runtime` · `Shoddy.Devil` (front-end) · `Shoddy.Mill` · `Shoddy.Compiler` · `Shoddy.Tests` |
 | `bin/`| Build output — the published `mill` toolchain lands here after `dotnet publish` (not committed; build it, then run `bin/mill`) |
 | `machines/`| Standard library (the machines): `seq` `str` `math` `matrix` `stats` `random` `neural` `money` `file` `recio` `dict` `isam` `net` `simplex` `mps` `clock` `vt100` `keys` `scribbler` `turtle` `plotter` `buzzer` |
-| `mills/`| Complete example programs (the mills), each with its own build wrapper: `oregon` (The Oregon Trail, 1971) · `pacman-vt100` · `space-invaders` · `demographics` (neural income model) · `simplex-from-mps` (LP solver) |
+| `mills/`| Complete example programs (the mills), each with its own build wrapper: `oregon` (overland-trail game, after MECC's 1971 original) · `pac-vt100` · `invaders` · `demographics` (neural income model) · `simplex-from-mps` (LP solver) |
 | `docs/`| `index.html` (start here) · `guide.html` · `setup.html` (one-time machine setup) · `vscode.html` (editor) · `build.html` (the toolchain) · `stack.html` (the stack, traced) · `spec.html` · `quickref.html` · `machines/` and `mills/` (one page each) |
 | `tst/`| `libtest.shoddy` (assertion suite) · `examples.shoddy` · `gradebook.shoddy` · `simplex.shoddy` · demos (`scribbler-` `turtle-` `plotter-` `buzzer-` `net-demo.shoddy`) · `golden/` (the constitution) |
 | `vscode-shoddy/`| VS Code extension: highlighting, snippets, debugging, mill commands |
@@ -129,7 +129,7 @@ Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned
 - **docs/guide.html** — the beginner's guide; assumes no prior knowledge.
 - **docs/spec.html** — the language specification, including the concatenative
   core (Appendix A) and design rationale (Appendix B).
-- **doc/quickref.html** — one-page reference of every builtin word, type,
+- **docs/quickref.html** — one-page reference of every builtin word, type,
   and syntax form, plus a map of the machines.
 
 ## Language at a glance
@@ -151,21 +151,17 @@ Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned
 
 ## License
 
-Shoddy is licensed under the **Shoddy Language License 1.0.0** — the
-[PolyForm Noncommercial License 1.0.0](https://polyformproject.org/licenses/noncommercial/1.0.0/)
-with an Additional Use Grant. In short:
+Shoddy is free and open source under the **[MIT License](LICENSE)** — use it
+for anything, including commercially, with attribution.
 
-- **Noncommercial use** (personal, research, education, evaluation) is free.
-- **Commercial use is also free** if both you (the individual or entity) and
-  the compiled application each earn **less than $50,000 USD** in gross annual
-  revenue.
-- Above either threshold you need a **Commercial Production License**.
+Third-party dependencies and the historical/homage example programs (OREGON,
+the Pac-Man and Space Invaders homages, and a neural-net reference) remain
+under their own licenses and their owners' trademarks; see
+[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
 
-See [LICENSE](LICENSE) for the full terms. To purchase a Commercial Production
-License, contact Stephen Vincent Foster at **svfoster@gmail.com**.
-
-Contributions are governed by the CLA in
-[CONTRIBUTING.md](CONTRIBUTING.md).
+Contributions are welcome under the MIT License; see
+[CONTRIBUTING.md](CONTRIBUTING.md) and the [Code of Conduct](CODE_OF_CONDUCT.md).
+This project intends to join the [.NET Foundation](https://dotnetfoundation.org/).
 
 ## Status
 

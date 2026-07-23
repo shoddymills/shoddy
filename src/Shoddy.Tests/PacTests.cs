@@ -1,9 +1,5 @@
-// Copyright (c) 2026 Stephen Vincent Foster. All rights reserved.
-//
-// This file is part of the Shoddy Language project.
-// Licensed under the Shoddy Language License 1.0.0 (PolyForm Noncommercial
-// License 1.0.0 with Additional Use Grant). See the LICENSE file in the
-// project root for full terms.
+// Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+// Licensed under the MIT License. See the LICENSE file in the project root.
 
 using Shoddy.Compiler;
 using Shoddy.Devil;
@@ -12,12 +8,12 @@ using Shoddy.Runtime;
 namespace Shoddy.Tests;
 
 /// <summary>
-/// The Pac pure model (mills/pacman-vt100/pac-core.shoddy): maze, per-tick
+/// The Pac pure model (mills/pac-vt100/pac-core.shoddy): maze, per-tick
 /// simulation, collisions and input actions, none of which touch a
 /// terminal. The VT100 half (painting + the loop, in pac.shoddy) is left
 /// to manual play. Cherries land randomly, so every assertion here depends
 /// only on how many there are, never on where. The workspace mirrors the
-/// repo's mills/pacman-vt100 layout so the core's ../../machines includes
+/// repo's mills/pac-vt100 layout so the core's ../../machines includes
 /// resolve.
 /// </summary>
 public class PacTests
@@ -127,20 +123,20 @@ public class PacTests
     // ---- helper --------------------------------------------------------
 
     /// <summary>Weave and run a Main body against pac-core.shoddy, with the
-    /// repo's mills/pacman-vt100 layout reproduced in a temp workspace so
+    /// repo's mills/pac-vt100 layout reproduced in a temp workspace so
     /// the core's ../../machines includes resolve. No terminal: the core
     /// emits no escape sequences and reads no keys.</summary>
     static string Probe(params string[] body)
     {
         string ws = Path.Combine(Path.GetTempPath(), "shoddy-pac", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(Path.Combine(ws, "machines"));
-        Directory.CreateDirectory(Path.Combine(ws, "mills", "pacman-vt100"));
+        Directory.CreateDirectory(Path.Combine(ws, "mills", "pac-vt100"));
         foreach (string f in Directory.GetFiles(Path.Combine(Root, "machines"), "*.shoddy"))
             File.Copy(f, Path.Combine(ws, "machines", Path.GetFileName(f)));
-        File.Copy(Path.Combine(Root, "mills", "pacman-vt100", "pac-core.shoddy"),
-                  Path.Combine(ws, "mills", "pacman-vt100", "pac-core.shoddy"));
+        File.Copy(Path.Combine(Root, "mills", "pac-vt100", "pac-core.shoddy"),
+                  Path.Combine(ws, "mills", "pac-vt100", "pac-core.shoddy"));
 
-        string sb = Path.Combine(ws, "mills", "pacman-vt100", "probe.shoddy");
+        string sb = Path.Combine(ws, "mills", "pac-vt100", "probe.shoddy");
         File.WriteAllText(sb,
             "Include \"pac-core.shoddy\"\n\n"
             + "Def YN(b As Boolean) As String\n    If b Then\n        \"Y\"\n    Else\n        \"N\"\n\n"

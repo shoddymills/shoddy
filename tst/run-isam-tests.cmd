@@ -1,10 +1,6 @@
 @echo off
-rem Copyright (c) 2026 Stephen Vincent Foster. All rights reserved.
-rem
-rem This file is part of the Shoddy Language project.
-rem Licensed under the Shoddy Language License 1.0.0 (PolyForm Noncommercial
-rem License 1.0.0 with Additional Use Grant). See the LICENSE file in the
-rem project root for full terms.
+rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+rem Licensed under the MIT License. See the LICENSE file in the project root.
 rem
 rem Runs the machines/isam.shoddy test suite in order, then deletes the
 rem test data files the run produced (_isamtest.tmp, the _err_*.tmp

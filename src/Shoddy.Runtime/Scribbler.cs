@@ -1,9 +1,5 @@
-// Copyright (c) 2026 Stephen Vincent Foster. All rights reserved.
-//
-// This file is part of the Shoddy Language project.
-// Licensed under the Shoddy Language License 1.0.0 (PolyForm Noncommercial
-// License 1.0.0 with Additional Use Grant). See the LICENSE file in the
-// project root for full terms.
+// Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+// Licensed under the MIT License. See the LICENSE file in the project root.
 
 using System.Collections.Concurrent;
 using System.Diagnostics;

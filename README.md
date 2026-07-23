@@ -38,8 +38,8 @@ stack code you can also write directly: `Def Square ( Number -- Number )`
 ## The name
 
 Shoddy takes its name from the shoddy trade of the West Riding of
-Yorkshire. From 1813, the mills of Batley and Dewsbury did what the wool
-trade thought impossible: they took worn-out rags, tore them back to
+Yorkshire. From 1813, the mills of Ossett, Morley, and Wakefield did what
+the wool trade thought impossible: they took worn-out rags, tore them back to
 fiber in a grinding machine called the devil, blended the reclaimed
 stock with new wool, and spun and wove it into cloth again — blankets,
 working clothes, and the uniforms of half the world's armies. The
@@ -47,9 +47,11 @@ American Civil War made the word a slur; the mills went on making honest
 cloth for a century regardless, until synthetic fibers ended the trade.
 This language is built the same way: old ideas — BASIC, Forth, Joy,
 ISAM — reclaimed, blended with new wool, and woven into something
-useful. Hence the **mill** (the executable), its **machines** (the
-libraries), and the tagline, meant literally. The full story is in
-[docs/heritage.html](docs/heritage.html).
+useful. Hence the **mill** (the executable) and its **machines** (the
+libraries). And the tagline is Ossett's own: *Useless Things Made Useful
+Through Skill* renders that town's civic motto, *Inutile Utile Ex Arte*
+("the useless made useful by skill"), meant here literally. The full story
+is in [docs/heritage.html](docs/heritage.html).
 
 ## Layout
 
@@ -65,62 +67,21 @@ libraries), and the tagline, meant literally. The full story is in
 
 ## Build and run
 
-Requires the .NET 10 SDK. Build the mill first — it is not committed:
+Requires the .NET 10 SDK. Build the mill (it isn't committed), then run a
+program and the tests:
 
 ```
 dotnet publish src/Shoddy.Mill -c Release -o bin   # build the mill into bin/
+bin/mill run tst/examples.shoddy                   # compile in memory and run
+dotnet test src/Shoddy.Tests                       # golden conformance suite
 ```
 
-Then:
+Or use the build wrapper — `./build.sh <cmd>` on Linux/macOS/WSL,
+`build.cmd <cmd>` on Windows — which bundles the common tasks: `build`,
+`test`, `run FILE`, `machines`, `vsix`, `clean`.
 
-```
-bin/mill run tst/examples.shoddy     # compile in memory and run
-bin/mill run tst/gradebook.shoddy    # interactive demo
-bin/mill run tst/libtest.shoddy      # assertion suite - ends ALL ASSERTIONS PASSED
-bin/mill weave tst/simplex.shoddy    # compile; then: dotnet tst/simplex.dll
-bin/mill machine machines/seq.shoddy # compile a library to a machine DLL
-
-dotnet test src/Shoddy.Tests     # the golden conformance suite
-```
-
-To rebuild the mill: `dotnet publish src/Shoddy.Mill -c Release -o bin`
-(a folder publish — the weaver references `Shoddy.Runtime.dll` from
-disk when compiling generated code).
-
-### Build wrapper
-
-Thin convenience wrappers bundle the commands above — `build.ps1` on
-Windows, `build.sh` on Linux/macOS/WSL (same subcommands):
-
-```
-./build.sh build                 # build the mill into bin/
-./build.sh test                  # golden suite + libtest assertions
-./build.sh run tst/examples.shoddy
-./build.sh machines              # compile every machine to a DLL
-./build.sh vsix                  # package the VS Code extension (.vsix)
-./build.sh vsix patch            # bump version, then package
-./build.sh clean
-```
-
-On Windows, run `build.cmd` in place of `./build.sh` (e.g.
-`build.cmd build`). It's a shim that invokes `build.ps1` with an
-execution-policy bypass, so the unsigned script runs regardless of the
-machine's PowerShell policy.
-
-To call `build.ps1` directly instead, either bypass the policy per run:
-
-```
-powershell -ExecutionPolicy Bypass -File .\build.ps1 build
-```
-
-or allow local unsigned scripts for your user once:
-
-```
-Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned
-```
-
-(If `AllSigned` is enforced by Group Policy on a managed machine, use
-`build.cmd` or the per-run bypass above.)
+The full toolchain — weaving to an assembly, building library machines, and
+the Windows PowerShell notes — is in [docs/build.html](docs/build.html).
 
 ## Documentation
 

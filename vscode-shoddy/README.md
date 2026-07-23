@@ -50,6 +50,9 @@ A packaged `.vsix` ships in this folder. From here:
 code --install-extension vscode-shoddy-1.0.0.vsix
 ```
 
+(To rebuild it yourself: `./build.sh vsix` from the repo root, or
+`build.cmd vsix` on Windows.)
+
 The extension then appears in the Extensions view and can be updated
 or uninstalled from there like any other. (If `code` isn't on your
 PATH: `Cmd+Shift+P` → **Shell Command: Install 'code' command in
@@ -90,5 +93,5 @@ Window** in that host — no re-copy needed.
 ## Requirements
 
 The mill, built from source into `bin/` (`./build.sh build`, or
-`./build.ps1 build` on Windows). See `doc/build.html` in the Shoddy
+`./build.ps1 build` on Windows). See `docs/build.html` in the Shoddy
 repository for full workspace setup.

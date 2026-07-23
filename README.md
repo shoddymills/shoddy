@@ -59,7 +59,7 @@ libraries), and the tagline, meant literally. The full story is in
 | `bin/`| Build output — the published `mill` toolchain lands here after `dotnet publish` (not committed; build it, then run `bin/mill`) |
 | `machines/`| Standard library (the machines): `seq` `str` `math` `matrix` `stats` `random` `neural` `money` `file` `recio` `dict` `isam` `net` `simplex` `mps` `clock` `vt100` `keys` `scribbler` `turtle` `plotter` `buzzer` |
 | `mills/`| Complete example programs (the mills), each with its own build wrapper: `oregon` (The Oregon Trail, 1971) · `pacman-vt100` · `space-invaders` · `demographics` (neural income model) · `simplex-from-mps` (LP solver) |
-| `doc/`| `index.html` (start here) · `guide.html` · `setup.html` (one-time machine setup) · `vscode.html` (editor) · `build.html` (the toolchain) · `spec.html` · `quickref.html` · `machines/` and `mills/` (one page each) |
+| `doc/`| `index.html` (start here) · `guide.html` · `setup.html` (one-time machine setup) · `vscode.html` (editor) · `build.html` (the toolchain) · `stack.html` (the stack, traced) · `spec.html` · `quickref.html` · `machines/` and `mills/` (one page each) |
 | `tst/`| `libtest.shoddy` (assertion suite) · `examples.shoddy` · `gradebook.shoddy` · `simplex.shoddy` · demos (`scribbler-` `turtle-` `plotter-` `buzzer-` `net-demo.shoddy`) · `golden/` (the constitution) |
 | `vscode-shoddy/`| VS Code extension: highlighting, snippets, mill commands |
 
@@ -135,11 +135,16 @@ Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned
 ## Language at a glance
 
 - Types: Number, String, Boolean, Quotation (closures), List, Array, and
-  user records via `Type`. No NULL. Booleans are not numbers.
+  user records via `Type` — every field name becomes an accessor function
+  (`Score(s)`), composable like any other (`Map(class, Score)`). No NULL:
+  variant types (`Type Option = Some(v) | None`) make "maybe nothing" a
+  value you pattern-match, not a check you can forget. Booleans are not
+  numbers.
 - Purity: no assignment, no `goto`, no `for`; `Print`/`Input`/`Rnd` are
   the only effects, kept at the edges by convention.
 - `Select Case` matches values, ranges (`4 To 10`), comparisons
-  (`Is >= 90`), and destructures records with `Where` guards.
+  (`Is >= 90`), and destructures records and variants (`Case Some(v)`,
+  `Case None`) with `Where` guards.
 - `Include "FILE.SHODDY"` splices files (include-once, path relative to the
   including file).
 - Errors carry source line numbers; `Assert` and `Error` are built in.

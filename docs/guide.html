@@ -294,7 +294,7 @@ print: <em>building</em> an empty variant takes parentheses
 <li><strong>seq.shoddy</strong> — list helpers: <code>Any</code>, <code>All</code>, <code>CountIf</code>, <code>Contains</code>, <code>IndexOf</code>, <code>Taken</code>/<code>DropN</code> (first N / all but), <code>Append</code>, <code>Last</code>, <code>Flatten</code>, <code>Zip</code>/<code>ZipWith</code>.</li>
 <li><strong>stats.shoddy</strong> — the aggregation words (<code>Sum</code>, <code>Average</code>, <code>Maximum</code>, <code>Minimum</code>, <code>Median</code>…) and, when you’re ready for them, real statistics: correlation, regression, and the classic tests.</li>
 <li><strong>str.shoddy</strong> — string helpers: <code>Split</code>, <code>Join</code>, <code>Trim</code>, <code>Replace</code>, <code>StartsWith</code>, <code>EndsWith</code>, <code>StrRep</code>.</li>
-<li><strong>file.shoddy</strong> — text files by lines: <code>ReadLines("notes.txt")</code> gives you a list of strings (then <code>Map</code>/<code>Filter</code> away); <code>WriteLines</code> and <code>AppendLine</code> go the other way. Under them sit the builtins <code>ReadFile</code>, <code>WriteFile</code>, <code>AppendFile</code>, <code>FileExists</code>, <code>DeleteFile</code>.</li>
+<li><strong>file.shoddy</strong> — text files by lines: <code>ReadLines("notes.txt")</code> gives you a list of strings (then <code>Map</code>/<code>Filter</code> away); <code>WriteLines</code> and <code>AppendLine</code> go the other way. Under them sit the builtins <code>ReadFile</code>, <code>WriteFile</code>, <code>AppendFile</code>, <code>FileExists</code>, <code>DeleteFile</code>. Chapter 10 puts all of them to work.</li>
 </ul>
 <p>And the shed is bigger than that. <strong>math</strong>, <strong>random</strong>, and <strong>clock</strong> round out numbers, chance, and time; <strong>money</strong> keeps currency exact; <strong>dict</strong> is key/value lookup; <strong>matrix</strong> is a full <code>Matrix</code> type, with <strong>simplex</strong> (linear programming), <strong>mps</strong>, and <strong>neural</strong> (a trainable feed-forward network) on top; <strong>recio</strong> and <strong>isam</strong> are record files up to a real keyed database; <strong>vt100</strong> and <strong>keys</strong> talk to terminals and keyboards. And the show-off wing: <strong>scribbler</strong> opens a window of pixels you can draw on (run those with <code>mill run</code>), <strong>turtle</strong> walks a pen around it, <strong>plotter</strong> draws charts, and <strong>buzzer</strong> plays actual music — <code>Play(1, "T120 O4 L8 C D E F G2")</code>. Every machine has its own page — summary, history, guide, and word reference — in <a href="machines/index.html">the machines catalog</a>.</p>
 <p>Taste test:</p>
@@ -354,7 +354,76 @@ Def Main()
         Print(&quot;HONOR ROLL:&quot;)
         Each(Filter(roster, Fn(s) =&gt; Score(s) &gt;= 90), ShowStudent)</code></pre>
 <p>Worth pausing on: the “input loop” is <code>ReadStudents</code> calling itself with a longer list each time — recursion doing the job a <code>while</code> loop would do elsewhere. And the whole report at the bottom is chapter 4’s vocabulary pointed at chapter 6’s records: <code>Map</code> a field out, <code>Filter</code> by a condition, aggregate. Once the roster exists, no line of the report could possibly disturb it.</p>
-<h2 id="gotchas-error-messages-and-basic-veteran-notes">10. Gotchas, error messages, and BASIC-veteran notes</h2>
+<h2 id="keeping-things-files">10. Keeping things: files</h2>
+<p>The grade book has one embarrassment: amnesia. You type in the whole roster, admire the report, the program ends — and the roster is gone. Files are the cure, and Shoddy has two kinds: <em>text</em> files, read and written whole, and <em>binary</em> files, reached into byte by byte. One convention before either: every file word is <strong>effectful</strong>, like <code>Print</code> and <code>Input</code> — it changes the world outside the program — so keep file words at the edges, on <code>Main</code>’s side, and let pure functions do the thinking in between.</p>
+<p><strong>Text, whole files at once.</strong> Five builtins, no handles, no ceremony — a text file goes down or comes up in one gulp:</p>
+<pre class="basic"><code>WriteFile(&quot;motto.txt&quot;, &quot;USELESS THINGS MADE USEFUL&quot;)   &#39; replaces the file
+AppendFile(&quot;motto.txt&quot;, &quot; THROUGH SKILL&quot;)              &#39; adds to the end
+Print(ReadFile(&quot;motto.txt&quot;))                           &#39; the whole file as one String
+DeleteFile(&quot;motto.txt&quot;)</code></pre>
+<p>Paths resolve against the working directory. The rule to respect: <code>ReadFile</code> on a missing file is an error, not an empty string — ask <code>FileExists(path)</code> first.</p>
+<p><strong>Text, line by line.</strong> Most text files are really lists of lines, and <code>file.shoddy</code> (chapter 8) turns them into exactly that: <code>ReadLines</code> gives a <code>List Of String</code>, <code>WriteLines</code> writes one back, <code>AppendLine</code> adds to the end. And once a file is a list, chapter 4 takes over. Here is the grade book’s cure, in three short functions:</p>
+<pre class="basic"><code>Include &quot;file.shoddy&quot;                &#39; brings str.shoddy&#39;s Split along for free
+
+Def SaveRoster(path As String, roster As List Of Student)
+    WriteLines(path, Map(roster, Fn(s) =&gt; Name(s) &amp; &quot;,&quot; &amp; Str(Score(s))))
+
+Def ParseStudent(line As String) As Student
+    Let bits = Split(line, &quot;,&quot;)
+    Student(First(bits), Val(Nth(bits, 2)))
+
+Def LoadRoster(path As String) As List Of Student
+    If FileExists(path) Then
+        Map(ReadLines(path), ParseStudent)
+    Else
+        { }</code></pre>
+<p>Have <code>Main</code> call <code>LoadRoster</code> before asking for students and <code>SaveRoster</code> after the report, and the roster survives between runs — as ordinary text (<code>ADA,96</code> per line) you can open in any editor. Notice the shape: a record becomes a string with <code>&amp;</code>, a string becomes a record with <code>Split</code> and <code>Val</code>, and <code>Map</code> carries the whole roster each way.</p>
+<p>But text has a limit: to change one score you load, change, and rewrite <em>the whole file</em>. For thirty students, fine. For a million records, there’s the other kind.</p>
+<p><strong>Binary, random access.</strong> Straight out of classic BASIC’s record files. <code>BOpen(path)</code> opens a file for reading <em>and</em> writing (creating it if absent) and hands back a handle — a Number you pass to every other word, with up to 16 open at once until <code>BClose(h)</code>. Inside the file every byte has a position, numbered from 1: <code>Seek(h, pos)</code> jumps to one, <code>BPos(h)</code> says where you are, <code>BSize(h)</code> how big the file is. Reading and writing go through typed pairs that advance the position as they work: <code>PutNum</code>/<code>GetNum</code> move a Number as 8 bytes, <code>PutBool</code>/<code>GetBool</code> a Boolean as 1, and <code>PutStr(h, s, Len)</code>/<code>GetStr(h, Len)</code> move a <em>fixed-length</em> field — exactly <code>Len</code> bytes, zero-padded on the way in, padding stripped on the way out. A string too long for its field is an error — Shoddy aborts rather than silently truncate your data. So is reading past the end of the file.</p>
+<p>Why fixed lengths? Because they make every record the same size, and same-size records make finding one <em>arithmetic</em>. A Name(12) + Score(8) student is 20 bytes, so record <em>k</em> starts at byte <code>1 + (k - 1) * 20</code>:</p>
+<pre class="basic"><code>Def WrStudent(f As Number, s As Student)
+    PutStr(f, Name(s), 12)               &#39; exactly 12 bytes, zero-padded
+    PutNum(f, Score(s))                  &#39; exactly 8
+
+Def RdStudent(f As Number) As Student
+    Student(GetStr(f, 12), GetNum(f))
+
+Def SaveClass(path As String, roster As List Of Student)
+    If FileExists(path) Then
+        DeleteFile(path)                 &#39; BOpen never truncates - start clean
+    Let f = BOpen(path)
+    Each(roster, Fn(s) =&gt; WrStudent(f, s))
+    BClose(f)
+
+Def SetScore(path As String, k As Number, score As Number)
+    Let f = BOpen(path)
+    Seek(f, 1 + (k - 1) * 20 + 12)       &#39; record k, skip past the name
+    PutNum(f, score)
+    BClose(f)</code></pre>
+<p>Look at <code>SetScore</code>: it changes student <em>k</em>’s score by writing <strong>eight bytes</strong>, wherever they live — record 3 of 30 or record 900,000 of a million — without reading, rewriting, or even glancing at the rest of the file. That trick is the foundation every database stands on, and you just wrote it in five lines. When you do this in earnest, <code>recio.shoddy</code> does the offset sums for you (<code>GetRec</code>, <code>PutRec</code>, <code>AppendRec</code>, <code>AllRecs</code> — <a href="machines/recio.html">its page</a> works this very student file), and <code>isam.shoddy</code> goes one further, finding records by <em>key</em> (“GRACE”) instead of by number.</p>
+<p><strong>A file format of your own.</strong> Records aren’t the only thing binary files are for — the same words <em>serialize</em>: turn a value into bytes today and back into the value tomorrow. Every binary format ever designed follows the same recipe: a <em>header</em> saying what the file is and how much follows, then the payload — and a loader that checks the header before trusting a single byte. In full:</p>
+<pre class="basic"><code>Let numsMagic = 12648430                 &#39; C0FFEE, in hexadecimal
+
+Def SaveNums(path As String, xs As List Of Number)
+    If FileExists(path) Then
+        DeleteFile(path)
+    Let f = BOpen(path)
+    PutNum(f, numsMagic)                 &#39; &quot;this is one of ours&quot;
+    PutNum(f, Length(xs))                &#39; how many numbers follow
+    Each(xs, Fn(x) =&gt; PutNum(f, x))
+    BClose(f)
+
+Def LoadNums(path As String) As List Of Number
+    Let f = BOpen(path)
+    If BSize(f) &lt; 16 Or GetNum(f) &lt;&gt; numsMagic Then
+        Error(&quot;NOT A NUMS FILE: &quot; &amp; path)
+    Let n = GetNum(f)
+    Let xs = Map(Range(1, n), Fn(k) =&gt; GetNum(f))
+    BClose(f)
+    xs</code></pre>
+<p>The magic number is the handshake: every honest nums-file starts with those 8 bytes, so <code>LoadNums</code> fed somebody’s holiday photos stops with a clear error instead of reading garbage. This is no toy pattern — it is exactly how <code>neural.shoddy</code> saves a trained network: <code>NetSaveBin</code> writes a magic number, the three layer sizes, then every weight as raw 8-byte doubles, so <code>NetLoadBin</code> needs nothing but the path and the round trip is bit-exact (it even re-checks the file’s byte size against the header before trusting a weight). The <a href="mills/demographics.html">demographics mill</a> ships its trained model in precisely that format — train on Tuesday, predict on Friday. That’s serialization.</p>
+<p>The complete binary-file word list, sizes and all, is one table in <a href="quickref.html">quickref.html</a>.</p>
+<h2 id="gotchas-error-messages-and-basic-veteran-notes">11. Gotchas, error messages, and BASIC-veteran notes</h2>
 <p><strong>Reading errors.</strong> Every runtime error names its line.</p>
 <ul>
 <li><code>unknown word: x</code> — you used a name that isn’t defined (typo, or you forgot an <code>Include</code>, or you used a name before its <code>Def</code>… actually order only matters for <code>Type</code> and <code>Include</code> — DEFs can call later DEFs).</li>
@@ -391,7 +460,7 @@ word-by-word reference — every builtin, every form — is
 <p><strong>Variants</strong> <code>Type Option = Some(v) | None</code> · build with <code>Some(x)</code> / <code>None()</code> · take apart with <code>Case Some(v)</code> / <code>Case None</code> — the no-NULL way to say “maybe nothing”</p>
 <p><strong>Strings</strong> <code>&amp; Len Str Val Left Right Mid Instr Chr Asc Upper Lower</code> · escapes <code>\n \t \" \\</code> · more (Split, Join, Trim…) in <a href="machines/str.html">str.shoddy</a></p>
 <p><strong>Math</strong> <code>Abs Min Max Sqr Floor Ceil Round Sin Cos Tan Atn Exp Log Pi Rnd</code></p>
-<p><strong>I/O &amp; checks</strong> <code>Print(v)</code> · <code>Input(prompt)</code> → String · <code>ReadFile WriteFile AppendFile FileExists DeleteFile</code> · <code>Error(MSG)</code> · <code>Assert(COND, MSG)</code> · line and binary-record files: <a href="machines/file.html">file.shoddy</a>, <a href="machines/recio.html">recio.shoddy</a>, and <a href="quickref.html">QUICKREF</a>’s binary-file table</p>
+<p><strong>I/O &amp; checks</strong> <code>Print(v)</code> · <code>Input(prompt)</code> → String · text: <code>ReadFile WriteFile AppendFile FileExists DeleteFile</code> (lines: <a href="machines/file.html">file.shoddy</a>) · binary: <code>BOpen BClose Seek BPos BSize</code> · <code>PutNum/GetNum PutBool/GetBool PutStr/GetStr</code> (records: <a href="machines/recio.html">recio.shoddy</a>) · <code>Error(MSG)</code> · <code>Assert(COND, MSG)</code> — chapter 10 walks through the files; the full table is in <a href="quickref.html">QUICKREF</a></p>
 <p><strong>The machines</strong> seq · str · stats · math · random · neural · money · dict · matrix · file · recio · isam · simplex · mps · clock · vt100 · keys · scribbler · turtle · plotter · buzzer — one <code>Include</code> each; every one has a page in <a href="machines/index.html">the machines catalog</a></p>
 <p><strong>Machine dialect</strong> <code>Def Name ( in -- out )</code> · <code>[ code ]</code> quotes · <code>Dup Drop Swap Over Rot</code> shuffle · <code>Take a, b</code> names stack values · adjacency = pipeline</p>
 <footer>Named for the shoddy mills of the West Riding: Useless Things Made

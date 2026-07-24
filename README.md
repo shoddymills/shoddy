@@ -65,8 +65,8 @@ unit-tested pure core and a thin I/O shell. Click through to the docs.
       <b>Simplex · BLEND</b><br><sub>83-var LP, solved from MPS</sub>
     </td>
     <td width="33%" align="center" valign="top">
-      <a href="https://shoddymills.github.io/shoddy/index.html"><img src="docs/media/docs.svg" alt="The Shoddy documentation set" width="100%"></a><br>
-      <b>The docs</b><br><sub>guide · spec · quickref</sub>
+      <a href="https://shoddymills.github.io/shoddy/vscode.html"><img src="docs/media/vscode-debug.svg" alt="Debugging invaders in VS Code, stopped at the collision-scoring line" width="100%"></a><br>
+      <b>Debug in VS Code</b><br><sub>breakpoints, variables, call stack</sub>
     </td>
   </tr>
 </table>

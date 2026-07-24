@@ -35,6 +35,42 @@ is recursion and `Map`/`Filter`/`Fold`. And the whole surface desugars to
 stack code you can also write directly: `Def Square ( Number -- Number )`
 / `Dup *`.
 
+## See it run
+
+Complete programs woven from the machines — each split into a headless,
+unit-tested pure core and a thin I/O shell. Click through to the docs.
+
+<table>
+  <tr>
+    <td width="33%" align="center" valign="top">
+      <a href="https://shoddymills.github.io/shoddy/mills/invaders.html"><img src="docs/media/invaders.svg" alt="Space Invaders in a scribbler window" width="100%"></a><br>
+      <b>Invaders</b><br><sub>graphical window · colour + sound</sub>
+    </td>
+    <td width="33%" align="center" valign="top">
+      <a href="https://shoddymills.github.io/shoddy/mills/oregon.html"><img src="docs/media/oregon.svg" alt="The Oregon Trail in a terminal" width="100%"></a><br>
+      <b>The Oregon Trail</b><br><sub>the 1971 classic, reclaimed</sub>
+    </td>
+    <td width="33%" align="center" valign="top">
+      <a href="https://shoddymills.github.io/shoddy/mills/pac-vt100.html"><img src="docs/media/pac-vt100.svg" alt="Pac-Man drawn with VT100 escapes" width="100%"></a><br>
+      <b>Pac-VT100</b><br><sub>arcade chase in the terminal</sub>
+    </td>
+  </tr>
+  <tr>
+    <td width="33%" align="center" valign="top">
+      <a href="https://shoddymills.github.io/shoddy/mills/demographics.html"><img src="docs/media/demographics.svg" alt="Neural income model chart" width="100%"></a><br>
+      <b>Demographics</b><br><sub>from-scratch neural net</sub>
+    </td>
+    <td width="33%" align="center" valign="top">
+      <a href="https://shoddymills.github.io/shoddy/mills/simplex-from-mps.html"><img src="docs/media/simplex-blend.svg" alt="Terminal output solving the BLEND linear program" width="100%"></a><br>
+      <b>Simplex · BLEND</b><br><sub>83-var LP, solved from MPS</sub>
+    </td>
+    <td width="33%" align="center" valign="top">
+      <a href="https://shoddymills.github.io/shoddy/index.html"><img src="docs/media/docs.svg" alt="The Shoddy documentation set" width="100%"></a><br>
+      <b>The docs</b><br><sub>guide · spec · quickref</sub>
+    </td>
+  </tr>
+</table>
+
 ## The name
 
 Shoddy takes its name from the shoddy trade of the West Riding of

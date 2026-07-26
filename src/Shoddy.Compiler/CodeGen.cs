@@ -384,11 +384,31 @@ public sealed class CodeGen
         return b.ToString();
     }
 
+    /// <summary>A word that names more than one namespace's declaration is
+    /// refused before it can fall through to a builtin or a field accessor,
+    /// which would silently pick a meaning the writer did not choose.</summary>
+    void RefuseAmbiguity(Node n)
+    {
+        List<string>? amb = prog.Ambiguity(n.Str!, n.File);
+        if (amb == null) return;
+        throw new ShoddyError(n.Line, n.File,
+            $"'{n.Str}' is ambiguous — it names " + string.Join(" and ",
+                amb.Select(c => $"{c} ({prog.DescribeSite(c)})")) +
+            $"; write '{n.Str} In <namespace>' to choose");
+    }
+
     void EmitWord(Node n, Scope sc, string? tailDef)
     {
-        string name = n.Str!;
-        string? loc = sc.Find(name);
+        string written = n.Str!;
+        // Locals are looked up as written: a parameter is never namespaced.
+        string? loc = sc.Find(written);
         if (loc != null) { W($"rt.Push({loc});"); return; }
+
+        // Everything below is a top-level name, so it resolves through the
+        // namespace the use site is written in.
+        RefuseAmbiguity(n);
+        string name = prog.ResolveName(written, n.File);
+
         if (GlobalVisible(name)) { W($"rt.Push({globalIds[name]});"); return; }
         if (defIds.TryGetValue(name, out string? d))
         {
@@ -399,7 +419,9 @@ public sealed class CodeGen
         if (prog.ExternalDefs.TryGetValue(name, out string? x)) { W($"{x}(rt);"); return; }
         if (typeExpr.TryGetValue(name, out string? t)) { W($"rt.Ctor({t}, {n.Line});"); return; }
         if (Engine.BuiltinWords.Contains(name)) { W($"rt.Op({StrLit(name)}, {n.Line});"); return; }
-        if (prog.AnyTypeHasField(name)) { W($"rt.Field({StrLit(name)}, {n.Line});"); return; }
+        // The accessor word may be namespaced; the field it reads is not.
+        if (prog.Accessors.TryGetValue(name, out string? fld) || prog.AnyTypeHasField(name))
+            { W($"rt.Field({StrLit(fld ?? name)}, {n.Line});"); return; }
         W($"rt.UnknownWord({StrLit(name)}, {n.Line});");
     }
 
@@ -451,13 +473,16 @@ public sealed class CodeGen
             case NType.Bool: W($"{tgt} = QItem.OfValue(Value.OfBool({(item.BVal ? "true" : "false")}));"); return;
             case NType.Word:
             {
-                string name = item.Str!;
+                RefuseAmbiguity(item);
+                string name = prog.ResolveName(item.Str!, item.File);
                 string act;
                 if (GlobalVisible(name)) act = $"() => rt.Push({globalIds[name]})";
                 else if (defIds.TryGetValue(name, out string? d)) act = $"() => {d}(rt)";
                 else if (prog.ExternalDefs.TryGetValue(name, out string? x)) act = $"() => {x}(rt)";
                 else if (typeExpr.TryGetValue(name, out string? t)) act = $"() => rt.Ctor({t}, {item.Line})";
                 else if (Engine.BuiltinWords.Contains(name)) act = $"() => rt.Op({StrLit(name)}, {item.Line})";
+                else if (prog.Accessors.TryGetValue(name, out string? qf))
+                    act = $"() => rt.Field({StrLit(qf)}, {item.Line})";
                 else if (prog.AnyTypeHasField(name)) act = $"() => rt.Field({StrLit(name)}, {item.Line})";
                 else act = $"() => rt.UnknownWord({StrLit(name)}, {item.Line})";
                 W($"{tgt} = QItem.OfCode({act}, {StrLit(name)});");

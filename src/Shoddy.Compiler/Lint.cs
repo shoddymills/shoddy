@@ -42,6 +42,11 @@ public static class Lint
             {
                 string folded = t.Fields[i];
                 if (owner.ContainsKey(folded)) continue;
+                // A namespaced accessor is not reachable by the bare field
+                // name in the first place, so shadowing that name costs
+                // nothing: 'Key In Vocab' still reads the field, and no
+                // local can be spelled that way.
+                if (!prog.Accessors.ContainsKey(folded)) continue;
                 owner[folded] = new Owner(t.Disp ?? t.Name,
                                           i < t.FDisp.Count ? t.FDisp[i] : folded);
             }

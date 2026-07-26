@@ -24,8 +24,14 @@ public sealed record Token(bool IsStr, string Text, string Orig)
 /// plus any following physical lines pulled in by an unclosed bracket.
 /// LineNo is the first physical line, within its own file, exactly as
 /// the C reports errors. Indent is the first physical line's — the
-/// indentation of continuation lines is ignored.</summary>
-public sealed record Line(string File, int LineNo, int Indent, List<Token> Toks);
+/// indentation of continuation lines is ignored.
+///
+/// Qual is the namespace prefix this line's file was included under
+/// (INCLUDE "F" AS Q), or null at the top level. Include splices every
+/// file into one flat line list, so this tag is the only surviving trace
+/// of where a line came from once parsing begins.</summary>
+public sealed record Line(string File, int LineNo, int Indent, List<Token> Toks,
+                          string? Qual = null);
 
 /// <summary>
 /// The devil: grinds source files to token lines. A straight port of the
@@ -46,20 +52,30 @@ public static class Lexer
     /// When <paramref name="externalInclude"/> is given, it is offered
     /// each resolved include path first; returning true means the include
     /// is satisfied externally (a precompiled machine) and is not
-    /// spliced. The interpreter never passes it — it always splices.</summary>
-    public static List<Line> ReadProgram(string path, Func<string, bool>? externalInclude = null)
+    /// spliced. The interpreter never passes it — it always splices.
+    ///
+    /// <paramref name="onQualified"/> is told (path, qualifier) for every
+    /// include that carried an AS and was satisfied externally, so the
+    /// machine layer can qualify a DLL's surface it never sees as source.</summary>
+    public static List<Line> ReadProgram(string path, Func<string, bool>? externalInclude = null,
+                                         Action<string, string>? onQualified = null)
     {
         var lines = new List<Line>();
-        var included = new List<string>();
-        ReadFile(path, lines, included, externalInclude);
+        var included = new Dictionary<string, string?>();
+        ReadFile(path, lines, included, externalInclude, null, onQualified);
         return lines;
     }
 
-    static void ReadFile(string path, List<Line> lines, List<string> included,
-                         Func<string, bool>? externalInclude = null)
+    /// <summary><paramref name="qual"/> is the namespace this file was
+    /// included under. Qualifiers do not compose through a chain of
+    /// includes: a file that carries its own AS wins for its whole subtree,
+    /// so a name never depends on who included the includer.</summary>
+    static void ReadFile(string path, List<Line> lines, Dictionary<string, string?> included,
+                         Func<string, bool>? externalInclude = null, string? qual = null,
+                         Action<string, string>? onQualified = null)
     {
-        if (included.Contains(path)) return;         // include-once semantics
-        included.Add(path);
+        if (included.ContainsKey(path)) return;      // include-once semantics
+        included[path] = qual;
 
         string[] raw;
         try { raw = File.ReadAllLines(path); }
@@ -87,17 +103,29 @@ public static class Lexer
                 lineno++;
                 // A margin-level Def mid-continuation is a missing close
                 // bracket eating the next function, not a continuation.
-                if (toks.Count > before && contIndent == 0 &&
-                    !toks[before].IsStr && toks[before].Text == "DEF")
+                if (toks.Count > before && contIndent == 0 && !toks[before].IsStr &&
+                    (toks[before].Text == "DEF" || toks[before].Text == "REDEF"))
                     throw new ShoddyError(at, $"unclosed '{c}'");
             }
 
-            // INCLUDE "FILE" — splice another source file in, right here.
+            // INCLUDE "FILE" [AS Q] — splice another source file in, right
+            // here, optionally under a namespace prefix.
             if (!toks[0].IsStr && toks[0].Text == "INCLUDE")
             {
-                if (indent != 0 || toks.Count != 2 || !toks[1].IsStr)
-                    throw new ShoddyError(start, "expected INCLUDE \"FILE\" at left margin");
+                bool bare = toks.Count == 2;
+                bool qualified = toks.Count == 4 && !toks[2].IsStr &&
+                                 toks[2].Text == "AS" && !toks[3].IsStr;
+                if (indent != 0 || !toks[1].IsStr || !(bare || qualified))
+                    throw new ShoddyError(start, path,
+                        "expected INCLUDE \"FILE\" or INCLUDE \"FILE\" AS NAMESPACE "
+                        + "at left margin");
                 string name = toks[1].Text;
+                // Inner wins: a file's own AS governs its whole subtree.
+                string? sub = qualified ? toks[3].Text : qual;
+                if (qualified && !IsPlainWord(toks[3].Text))
+                    throw new ShoddyError(start, path,
+                        $"'{toks[3].Orig}' is not usable as a namespace — "
+                        + "a namespace is a plain word");
                 string cand = ResolveInclude(path, name);
                 if (!File.Exists(cand))
                 {
@@ -105,17 +133,26 @@ public static class Lexer
                     if (libdir != null && File.Exists($"{libdir}/{name}"))
                         cand = $"{libdir}/{name}";
                 }
-                if (externalInclude != null && !included.Contains(cand) &&
+                // Include-once is silent when the namespace agrees. When it
+                // does not, one of the two spellings the program uses would
+                // resolve to nothing, and which one depends on include order.
+                if (included.TryGetValue(cand, out string? had) && had != sub)
+                    throw new ShoddyError(start, path,
+                        $"'{name}' is included twice under different namespaces "
+                        + $"({Show(had)} and {Show(sub)})");
+                if (externalInclude != null && !included.ContainsKey(cand) &&
                     externalInclude(cand))
                 {
-                    included.Add(cand);          // satisfied by a machine DLL
+                    included[cand] = sub;        // satisfied by a machine DLL
+                    if (qualified) onQualified?.Invoke(cand, sub!);
                     continue;
                 }
-                ReadFile(cand, lines, included, externalInclude);
+                ReadFile(cand, lines, included, externalInclude, sub, onQualified);
                 continue;                        // the directive itself is consumed
             }
 
-            lines.Add(new Line(path, start, indent, toks));
+            FuseQualified(toks, start, path);
+            lines.Add(new Line(path, start, indent, toks, qual));
         }
     }
 
@@ -201,6 +238,48 @@ public static class Lexer
         }
 
         return indent;
+    }
+
+    /// <summary>NAME IN NAMESPACE collapses to the single word NAMESPACENAME
+    /// — the same name the include already built, so nothing downstream
+    /// learns a new shape and both spellings mean one thing.
+    ///
+    /// This runs here, on the assembled logical line, because the expression
+    /// parser decides a word is a call by peeking at the very next token: if
+    /// IN were still sitting between the name and its '(', `Split In Str(s)`
+    /// would not read as a call at all.</summary>
+    static void FuseQualified(List<Token> toks, int lineno, string path)
+    {
+        for (int k = 1; k + 1 < toks.Count; k++)
+        {
+            if (toks[k].IsStr || toks[k].Text != "IN") continue;
+            Token nm = toks[k - 1], q = toks[k + 1];
+            if (nm.IsStr || q.IsStr || !IsPlainWord(nm.Text) || !IsPlainWord(q.Text))
+                throw new ShoddyError(lineno, path,
+                    "IN wants a plain name on each side, as in 'CaveNearby In Msg'");
+            toks[k - 1] = new Token(false, q.Text + nm.Text, q.Orig + nm.Orig);
+            toks.RemoveRange(k, 2);
+            k--;                         // fuse again from the same slot
+        }
+        // A survivor is an IN with nothing usable beside it.
+        foreach (Token t in toks)
+            if (!t.IsStr && t.Text == "IN")
+                throw new ShoddyError(lineno, path,
+                    "IN wants a plain name on each side, as in 'CaveNearby In Msg'");
+    }
+
+    static string Show(string? qual) => qual == null ? "unqualified" : $"AS {qual}";
+
+    /// <summary>A namespace must be a plain word: it is pasted onto every
+    /// name the file declares, so anything the lexer treats specially — a
+    /// number, an operator, a bracket — would build names nothing can
+    /// spell.</summary>
+    static bool IsPlainWord(string s)
+    {
+        if (s.Length == 0 || IsNumber(s, out _)) return false;
+        foreach (char c in s)
+            if (!(c is (>= 'A' and <= 'Z') or (>= '0' and <= '9') or '_')) return false;
+        return true;
     }
 
     /// <summary>ASCII-only case fold, matching C toupper in the C locale.</summary>

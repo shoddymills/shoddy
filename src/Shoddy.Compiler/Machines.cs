@@ -59,6 +59,22 @@ public sealed class MachineSet
     public readonly List<MachineInfo> Machines = new();
     readonly HashSet<string> loaded = new();
 
+    /// <summary>DLL path -> the namespace its INCLUDE carried. A machine is
+    /// never read as source, so its surface cannot be qualified the way a
+    /// spliced file's is; the Lexer reports the AS here instead.
+    ///
+    /// This is what makes two machines that export the same word usable in
+    /// one program. Unqualified, clock and money both export PAD2 (as do
+    /// net and turtle with CLOSE) and including both is a hard error.</summary>
+    readonly Dictionary<string, string> qualByDll = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>The Lexer's onQualified hook: this machine's include said
+    /// AS <paramref name="qual"/>. Only the directly-included machine is
+    /// qualified — the machines it pulls in as dependencies keep their own
+    /// names, since the including program never named them.</summary>
+    public void SetQualifier(string sbPath, string qual) =>
+        qualByDll[DllPathFor(sbPath)] = qual;
+
     public static string ClassNameFor(string sbPath)
     {
         string stem = Path.GetFileNameWithoutExtension(sbPath);
@@ -104,17 +120,25 @@ public sealed class MachineSet
     {
         foreach (MachineInfo m in Machines)
         {
-            foreach ((string name, string method) in m.Defs)
+            string? q = qualByDll.GetValueOrDefault(m.DllPath);
+            foreach ((string bare, string method) in m.Defs)
             {
+                string name = ShoddyProgram.Qualify(q, bare);
                 if (prog.ExternalDefs.ContainsKey(name))
-                    throw new ShoddyError(0, $"duplicate definition of {name} across machines");
+                    throw new ShoddyError(0, $"duplicate definition of {name} across machines" +
+                        (q == null ? " — include one of them under a namespace (AS)" : ""));
                 prog.ExternalDefs[name] = $"{m.ClassName}.{method}";
+                prog.NoteBare(bare, name);
             }
-            foreach ((string name, (string field, TypeDef shape)) in m.Types)
+            foreach ((string bare, (string field, TypeDef shape)) in m.Types)
             {
+                string name = ShoddyProgram.Qualify(q, bare);
                 if (prog.ExternalTypes.ContainsKey(name))
-                    throw new ShoddyError(0, $"duplicate definition of {name} across machines");
+                    throw new ShoddyError(0, $"duplicate definition of {name} across machines" +
+                        (q == null ? " — include one of them under a namespace (AS)" : ""));
                 prog.ExternalTypes[name] = new ExternalType(shape, $"{m.ClassName}.{field}");
+                prog.NoteBare(bare, name);
+                foreach (string f in shape.Fields) prog.NoteAccessor(q, f);
             }
         }
     }

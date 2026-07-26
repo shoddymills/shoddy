@@ -8,10 +8,22 @@ namespace Shoddy.Runtime;
 /// at top level and prints "ERROR (line N): message" to stderr, exit 1 —
 /// the same contract as the C interpreter's die(). Line 0 means "no line"
 /// and suppresses the parenthetical, as in the C.
+///
+/// <see cref="File"/> is optional and names the source file the line is in.
+/// Include splices every file into one line list, so "line 3" alone can mean
+/// line 3 of any of them; errors that can fire across an include boundary
+/// carry the file so the reader knows which one.
 /// </summary>
 public sealed class ShoddyError : Exception
 {
     public int Line { get; }
+    public string? File { get; }
 
     public ShoddyError(int line, string message) : base(message) => Line = line;
+
+    public ShoddyError(int line, string? file, string message) : base(message)
+    {
+        Line = line;
+        File = file;
+    }
 }

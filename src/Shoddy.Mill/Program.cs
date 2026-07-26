@@ -107,7 +107,9 @@ try
 catch (ShoddyError e)
 {
     Console.Error.Write("ERROR");
-    if (e.Line > 0) Console.Error.Write($" (line {e.Line})");
+    if (e.Line > 0 && e.File != null)
+        Console.Error.Write($" ({Path.GetFileName(e.File)}:{e.Line})");
+    else if (e.Line > 0) Console.Error.Write($" (line {e.Line})");
     Console.Error.WriteLine($": {e.Message}");
     return 1;
 }
@@ -115,7 +117,7 @@ catch (ShoddyError e)
 static (ShoddyProgram, MachineSet) ParseWithMachines(string file)
 {
     var machines = new MachineSet();
-    List<Line> lines = Lexer.ReadProgram(file, machines.TryResolve);
+    List<Line> lines = Lexer.ReadProgram(file, machines.TryResolve, machines.SetQualifier);
     var prog = new ShoddyProgram();
     machines.SeedInto(prog);
     ShoddyProgram parsed = Parser.Parse(lines, prog);

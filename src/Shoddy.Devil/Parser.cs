@@ -64,6 +64,49 @@ public sealed class Parser
 
     static ShoddyError Die(int line, string msg) => new(line, msg);
 
+    static ShoddyError Die(Line l, string msg) => new(l.LineNo, l.File, msg);
+
+    /// <summary>A type named from within <paramref name="l"/>, resolved
+    /// through that file's namespace. Constructors and patterns need the
+    /// TypeDef at parse time, so they cannot wait for CodeGen's resolver.
+    /// </summary>
+    TypeDef? FindTypeIn(Line l, string name) =>
+        prog.FindType(prog.ResolveName(name, l.File));
+
+    /// <summary>Reject a top-level name that is already spoken for, and
+    /// record where this one was declared so the *next* collision can point
+    /// back here. Defs, Types, and top-level Lets share one namespace, and
+    /// so do the builtins: a Def outranks a builtin in the resolution chain
+    /// (CodeGen.EmitWord), so `Def Length` silently retires the builtin for
+    /// the whole program. That is the same silent-overwrite failure the
+    /// duplicate check already prevents between two Defs, so it is refused
+    /// on the same terms. REDEF says you meant it.
+    ///
+    /// Returns the name as actually declared: a file included AS Q declares
+    /// QNAME, so everything downstream — Defs, Types, globalScope — keys on
+    /// the qualified spelling and nothing below here needs to know about
+    /// namespaces at all.</summary>
+    string ClaimName(Line l, string name, string kind, bool redef = false)
+    {
+        string full = ShoddyProgram.Qualify(l.Qual, name);
+        if (!redef)
+        {
+            if (prog.HasDef(full) || prog.FindType(full) != null ||
+                globalScope.Contains(full))
+                throw Die(l, $"duplicate definition of {full} — " +
+                             $"already declared as {prog.DescribeSite(full)}");
+            // A namespace does not license shadowing a builtin: the fused
+            // name is what the program says, and QLENGTH is not LENGTH.
+            if (Engine.BuiltinWords.Contains(full))
+                throw Die(l, $"{full} is a builtin — a Def of that name would " +
+                             "shadow it everywhere; rename it, or write " +
+                             $"'Redef {full}' if that is deliberate");
+        }
+        prog.RecordSite(full, kind, l.File, l.LineNo);
+        prog.NoteBare(name, full);
+        return full;
+    }
+
     static Node LiteralOrWord(Token t, int lineno, string? file)
     {
         if (t.IsStr) return new Node(NType.Str, lineno) { File = file,  Str = t.Text };
@@ -391,14 +434,15 @@ public sealed class Parser
         if (Is(tok, "FN")) { CompileFn(l, ref pos, outq, sc); return; }
 
         if (IsPunct(tok) || Is(tok, "IF") || Is(tok, "THEN") || Is(tok, "ELSE") ||
-            Is(tok, "LET") || Is(tok, "DEF") || Is(tok, "AS") || Is(tok, "=>"))
+            Is(tok, "LET") || Is(tok, "DEF") || Is(tok, "REDEF") ||
+            Is(tok, "AS") || Is(tok, "=>"))
             throw Die(l.LineNo, $"unexpected '{tok.Text}' in expression");
 
         Token? next = pos + 1 < l.Toks.Count ? l.Toks[pos + 1] : null;
         if (next != null && Is(next, "("))       // call: F(a, b)
         {
             if (Is(tok, "WITH")) { CompileWith(l, ref pos, outq, sc); return; }
-            TypeDef? ct = prog.FindType(tok.Text);
+            TypeDef? ct = FindTypeIn(l, tok.Text);
             if (ct != null) { CompileCtor(l, ref pos, outq, sc, ct); return; }
             string name = tok.Text;
             pos += 2;
@@ -501,9 +545,13 @@ public sealed class Parser
         var p = new Pat();
         if (next != null && Is(next, "("))
         {
-            TypeDef? t = prog.FindType(tok.Text);
+            // Key on the resolved *name*, not the shape's own: a machine's
+            // TypeDef carries the name the machine was built under, while
+            // the program reaches it by the name its INCLUDE gave it.
+            string tn = prog.ResolveName(tok.Text, c.File);
+            TypeDef? t = prog.FindType(tn);
             if (t == null) throw Die(line, $"unknown type '{tok.Text}' in pattern");
-            p.Type = tok.Text;
+            p.Type = tn;
             cp += 2;
             while (cp < c.Toks.Count && !Is(c.Toks[cp], ")"))
             {
@@ -571,7 +619,7 @@ public sealed class Parser
                 hasElse = true;
             }
             else if (c.Toks.Count > 2 && !c.Toks[1].IsStr &&
-                     prog.FindType(c.Toks[1].Text) != null && Is(c.Toks[2], "("))
+                     FindTypeIn(c, c.Toks[1].Text) != null && Is(c.Toks[2], "("))
             {
                 /* destructuring pattern: CASE TYPE(pat, ...) [WHERE expr]
                  * Binders are in scope for the guard and the body; a
@@ -791,11 +839,11 @@ public sealed class Parser
 
     // ---- top-level parser --------------------------------------------
 
-    /* DEF NAME(P1 AS T1, ...) AS R — applicative definition */
-    void ParseApplicativeDef()
+    /* DEF NAME(P1 AS T1, ...) AS R — applicative definition. `name` is the
+       already-claimed (namespace-qualified) spelling. */
+    void ParseApplicativeDef(string name)
     {
         Line l = lines[i];
-        string name = l.Toks[1].Text;
         int pos = 3;                             // after '('
         var take = new Node(NType.Take, l.LineNo) { File = l.File };
         var sc = new HashSet<string>(globalScope);   // constants are in scope
@@ -845,6 +893,11 @@ public sealed class Parser
 
     void ParseProgram()
     {
+        // Every Node carries the file it was written in, so recording the
+        // file's namespace once here is all resolution needs to tell which
+        // namespace a use site is spelled in.
+        foreach (Line ln in lines) prog.FileQual[ln.File] = ln.Qual;
+
         i = 0;
         while (i < lines.Count)
         {
@@ -861,10 +914,7 @@ public sealed class Parser
                 Token gtok = l.Toks[1];
                 if (gtok.IsStr || IsNum(gtok, out _) || IsPunct(gtok))
                     throw Die(l.LineNo, $"Let expects a name, got '{gtok.Text}'");
-                string gname = gtok.Text;
-                if (prog.HasDef(gname) || prog.FindType(gname) != null ||
-                    globalScope.Contains(gname))
-                    throw Die(l.LineNo, $"duplicate definition of {gname}");
+                string gname = ClaimName(l, gtok.Text, "Let");
                 prog.InitQuot ??= new Quot();
                 int pos = 3;
                 CompileExpr(l, ref pos, 1, prog.InitQuot, globalScope);
@@ -884,14 +934,13 @@ public sealed class Parser
                 continue;
             }
 
-            if (!Is(l.Toks[0], "DEF"))
+            // REDEF is DEF with the duplicate/builtin check waived.
+            bool redef = Is(l.Toks[0], "REDEF");
+            if (!Is(l.Toks[0], "DEF") && !redef)
                 throw Die(l.LineNo, "expected DEF at top level");
             if (l.Toks.Count < 2)
                 throw Die(l.LineNo, "DEF needs a name");
-            string name = l.Toks[1].Text;
-            if (prog.HasDef(name) || prog.FindType(name) != null ||
-                globalScope.Contains(name))
-                throw Die(l.LineNo, $"duplicate definition of {name}");
+            string name = ClaimName(l, l.Toks[1].Text, "Def", redef);
 
             /* Dispatch on the header:
              *   DEF NAME                   -> concatenative body
@@ -916,7 +965,7 @@ public sealed class Parser
 
             if (applicative)
             {
-                ParseApplicativeDef();
+                ParseApplicativeDef(name);
                 continue;
             }
 
@@ -932,10 +981,7 @@ public sealed class Parser
         Line l = lines[i];
         if (l.Toks.Count != 2 && !(l.Toks.Count > 3 && Is(l.Toks[2], "=")))
             throw Die(l.LineNo, "expected TYPE NAME or TYPE NAME = VARIANT | ...");
-        string tname = l.Toks[1].Text;
-        if (prog.FindType(tname) != null || prog.HasDef(tname) ||
-            globalScope.Contains(tname))
-            throw Die(l.LineNo, $"duplicate definition of {tname}");
+        string tname = ClaimName(l, l.Toks[1].Text, "Type");
 
         if (l.Toks.Count > 2 && Is(l.Toks[2], "="))
         {
@@ -948,10 +994,9 @@ public sealed class Parser
                 Token vt0 = l.Toks[p];
                 if (vt0.IsStr || IsNum(vt0, out _) || IsPunct(vt0) || Is(vt0, "|"))
                     throw Die(l.LineNo, $"expected variant name, got '{vt0.Text}'");
-                string vn = vt0.Text;
-                if (prog.FindType(vn) != null || prog.HasDef(vn) ||
-                    globalScope.Contains(vn))
-                    throw Die(l.LineNo, $"duplicate definition of {vn}");
+                // Each variant is its own constructor, so each claims a name
+                // of its own — and each gets the file's namespace.
+                string vn = ClaimName(l, vt0.Text, "Type");
                 var vt = new TypeDef { Name = vn, Disp = vt0.Orig };
                 prog.Types.Add(vt);
                 p++;
@@ -969,6 +1014,7 @@ public sealed class Parser
                             throw Die(l.LineNo, $"duplicate field {fn.Text}");
                         vt.FDisp.Add(fn.Orig);
                         vt.Fields.Add(fn.Text);
+                        prog.NoteAccessor(l.Qual, fn.Text);
                         p++;
                     }
                     if (p >= l.Toks.Count)
@@ -1009,6 +1055,7 @@ public sealed class Parser
                 throw Die(f.LineNo, "expected AS after field name");
             t.FDisp.Add(fn.Orig);
             t.Fields.Add(fn.Text);
+            prog.NoteAccessor(f.Qual, fn.Text);
             i++;
         }
         if (i < lines.Count && lines[i].Indent != 0)

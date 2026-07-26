@@ -121,6 +121,10 @@ public sealed class Pat
 /// time shape plus the C# expression the weave emits to reach it.</summary>
 public sealed record ExternalType(TypeDef Shape, string FieldRef);
 
+/// <summary>Where a top-level name was declared. Kind reads as a noun
+/// phrase in the duplicate message: "Def", "Type", "Let".</summary>
+public readonly record struct DeclSite(string Kind, string? File, int Line);
+
 /// <summary>A parsed program: what the front-end hands to a back-end.
 /// The External* maps carry the surface of referenced machine DLLs when
 /// weaving; they are empty when interpreting (which always splices).</summary>
@@ -132,6 +136,117 @@ public sealed class ShoddyProgram
 
     public readonly Dictionary<string, string> ExternalDefs = new();      // name -> call target
     public readonly Dictionary<string, ExternalType> ExternalTypes = new();
+
+    /// <summary>Where each top-level name was declared, for the duplicate
+    /// diagnostic. Include splices every file into one line list, so a
+    /// collision usually spans two files and the second one alone does not
+    /// tell you what you collided with.</summary>
+    public readonly Dictionary<string, DeclSite> Sites = new();
+
+    /// <summary>Source file -> the namespace it was included under. Word
+    /// nodes carry their file, so this is how resolution recovers which
+    /// namespace a use site is written in without threading the qualifier
+    /// through every Node.</summary>
+    public readonly Dictionary<string, string?> FileQual = new();
+
+    /// <summary>Unqualified name -> every qualified name declared under it.
+    /// A bare word resolves while this holds exactly one entry; more than
+    /// one is the ambiguity that forces an explicit IN.</summary>
+    public readonly Dictionary<string, List<string>> ByBare = new();
+
+    /// <summary>Accessor word -> the field it reads. A type declared in a
+    /// file included AS Q is read with QSHORT, not SHORT, so field names
+    /// stop being words the whole program can see.
+    ///
+    /// Only the *word* is namespaced. The field's identity inside the
+    /// record is untouched, because WITH names fields directly rather than
+    /// resolving them as words — `With(g, Dflag = 3)` keeps working with no
+    /// namespace on Dflag, and the runtime still dispatches on the record's
+    /// own type.</summary>
+    public readonly Dictionary<string, string> Accessors = new();
+
+    public void NoteAccessor(string? qual, string field)
+    {
+        string word = Qualify(qual, field);
+        Accessors.TryAdd(word, field);
+        NoteBare(field, word);
+    }
+
+    /// <summary>A namespace is pasted straight onto the name, so a file
+    /// included AS MSG declaring CAVENEARBY yields MSGCAVENEARBY — the same
+    /// name a hand-written prefix would have produced.</summary>
+    public static string Qualify(string? qual, string name) =>
+        qual == null ? name : qual + name;
+
+    public void NoteBare(string bare, string full)
+    {
+        if (bare == full) return;
+        if (!ByBare.TryGetValue(bare, out List<string>? l))
+            ByBare[bare] = l = new List<string>();
+        if (!l.Contains(full)) l.Add(full);
+    }
+
+    /// <summary>The namespace a word written in <paramref name="file"/> is
+    /// spelled in, or null at the top level.</summary>
+    public string? QualOf(string? file) =>
+        file != null && FileQual.TryGetValue(file, out string? q) ? q : null;
+
+    /// <summary>What a bare word written in <paramref name="file"/> names,
+    /// as actually declared — or the word itself when nothing claims it
+    /// (builtins and field accessors are resolved further down the chain).
+    ///
+    /// Qualification is not required at the use site. A bare word resolves
+    /// while its meaning is unambiguous, and only a genuine collision
+    /// between two namespaces forces an explicit IN. The order is:
+    ///
+    ///   1. the writer's own namespace  — a file's own names come first, so
+    ///      qualifying two files that share a helper name breaks neither
+    ///   2. an exact declaration        — what is literally written wins
+    ///   3. a unique namespaced name    — the convenience case
+    ///   4. ambiguous                   — reported by <see cref="Ambiguity"/>
+    /// </summary>
+    public string ResolveName(string name, string? file)
+    {
+        string? q = QualOf(file);
+        if (q != null)
+        {
+            string own = q + name;
+            if (Declares(own)) return own;
+        }
+        if (Declares(name)) return name;
+        if (ByBare.TryGetValue(name, out List<string>? cands) && cands.Count == 1)
+            return cands[0];
+        return name;
+    }
+
+    /// <summary>The candidates when a bare word names more than one thing,
+    /// or null when it does not. Checked before falling through to builtins
+    /// so that an ambiguity is never silently resolved as something else.</summary>
+    public List<string>? Ambiguity(string name, string? file)
+    {
+        string? q = QualOf(file);
+        if (q != null && Declares(q + name)) return null;
+        if (Declares(name)) return null;
+        return ByBare.TryGetValue(name, out List<string>? c) && c.Count > 1 ? c : null;
+    }
+
+    public bool Declares(string name) =>
+        HasDef(name) || FindType(name) != null || Sites.ContainsKey(name) ||
+        Accessors.ContainsKey(name);
+
+    public void RecordSite(string name, string kind, string? file, int line) =>
+        Sites[name] = new DeclSite(kind, file, line);
+
+    /// <summary>"Def 'HINTS' (cave-tables.shoddy:14)", or a bare kind when
+    /// the name came from a machine DLL and has no source line.</summary>
+    public string DescribeSite(string name)
+    {
+        if (!Sites.TryGetValue(name, out DeclSite s))
+            return ExternalDefs.ContainsKey(name) || ExternalTypes.ContainsKey(name)
+                ? "a machine" : "an earlier declaration";
+        string where = s.File == null ? "" : $" ({Path.GetFileName(s.File)}:{s.Line})";
+        return $"{s.Kind}{where}";
+    }
 
     public TypeDef? FindType(string name)
     {

@@ -12,9 +12,7 @@ namespace Shoddy.Tests;
 /// simulation, collisions and input actions, none of which touch a
 /// terminal. The VT100 half (painting + the loop, in pac.shoddy) is left
 /// to manual play. Cherries land randomly, so every assertion here depends
-/// only on how many there are, never on where. The workspace mirrors the
-/// repo's mills/pac-vt100 layout so the core's ../../machines includes
-/// resolve.
+/// only on how many there are, never on where.
 /// </summary>
 public class PacTests
 {
@@ -122,21 +120,25 @@ public class PacTests
 
     // ---- helper --------------------------------------------------------
 
-    /// <summary>Weave and run a Main body against pac-core.shoddy, with the
-    /// repo's mills/pac-vt100 layout reproduced in a temp workspace so
-    /// the core's ../../machines includes resolve. No terminal: the core
-    /// emits no escape sequences and reads no keys.</summary>
+    /// <summary>Weave and run a Main body against pac-core.shoddy. The
+    /// core's includes are bare — a mill reaches its machines through the
+    /// library search path, not a relative walk — so the probe and the
+    /// core sit in the machines directory of a temp workspace, where the
+    /// includes resolve beside the file with no $SHODDYLIB in play (this
+    /// test runs in-process, so there is no mill to resolve against).
+    /// No terminal: the core emits no escape sequences and reads no
+    /// keys.</summary>
     static string Probe(params string[] body)
     {
         string ws = Path.Combine(Path.GetTempPath(), "shoddy-pac", Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(Path.Combine(ws, "machines"));
-        Directory.CreateDirectory(Path.Combine(ws, "mills", "pac-vt100"));
+        string lib = Path.Combine(ws, "machines");
+        Directory.CreateDirectory(lib);
         foreach (string f in Directory.GetFiles(Path.Combine(Root, "machines"), "*.shoddy"))
-            File.Copy(f, Path.Combine(ws, "machines", Path.GetFileName(f)));
+            File.Copy(f, Path.Combine(lib, Path.GetFileName(f)));
         File.Copy(Path.Combine(Root, "mills", "pac-vt100", "pac-core.shoddy"),
-                  Path.Combine(ws, "mills", "pac-vt100", "pac-core.shoddy"));
+                  Path.Combine(lib, "pac-core.shoddy"));
 
-        string sb = Path.Combine(ws, "mills", "pac-vt100", "probe.shoddy");
+        string sb = Path.Combine(lib, "probe.shoddy");
         File.WriteAllText(sb,
             "Include \"pac-core.shoddy\"\n\n"
             + "Def YN(b As Boolean) As String\n    If b Then\n        \"Y\"\n    Else\n        \"N\"\n\n"

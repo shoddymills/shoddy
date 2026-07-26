@@ -128,11 +128,16 @@ public static class Lexer
                         + "a namespace is a plain word");
                 string cand = ResolveInclude(path, name);
                 if (!File.Exists(cand))
-                {
-                    string? libdir = Environment.GetEnvironmentVariable("SHODDYLIB");
-                    if (libdir != null && File.Exists($"{libdir}/{name}"))
-                        cand = $"{libdir}/{name}";
-                }
+                    foreach (string dir in LibDirs())
+                    {
+                        string alt = Path.Combine(dir, name);
+                        if (!File.Exists(alt)) continue;
+                        // Normalized, so the ../machines route and a direct
+                        // one spell the same file identically — include-once
+                        // is keyed on the path.
+                        cand = Path.GetFullPath(alt);
+                        break;
+                    }
                 // Include-once is silent when the namespace agrees. When it
                 // does not, one of the two spellings the program uses would
                 // resolve to nothing, and which one depends on include order.
@@ -154,6 +159,25 @@ public static class Lexer
             FuseQualified(toks, start, path);
             lines.Add(new Line(path, start, indent, toks, qual));
         }
+    }
+
+    /// <summary>Where an INCLUDE that isn't beside its includer is looked
+    /// for, in order: $SHODDYLIB, then the machine library shipped with
+    /// the running mill — beside it, then one level up, beside its bin/.
+    ///
+    /// The mill-relative pair is what lets a program keep a bare
+    /// Include "seq.shoddy" wherever it is copied: the repo's bin/mill
+    /// finds machines/ at the root, and the mill bundled in the VS Code
+    /// extension finds the machines/ staged beside it — neither needs
+    /// anything set. SHODDYLIB comes first so a checkout can still be
+    /// pinned to its own machines.</summary>
+    static IEnumerable<string> LibDirs()
+    {
+        string? env = Environment.GetEnvironmentVariable("SHODDYLIB");
+        if (env != null) yield return env;
+        string mill = AppContext.BaseDirectory;
+        yield return Path.Combine(mill, "machines");
+        yield return Path.Combine(mill, "..", "machines");
     }
 
     /// <summary>Resolve an INCLUDE name relative to the including file's

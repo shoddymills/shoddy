@@ -22,10 +22,10 @@
 </header>
 
 <p>Everything about writing Shoddy in VS Code: installing the extension,
-pointing it at the mill, the tasks, native debugging (the perch), and the
-one environment wrinkle worth understanding. Assumes the mill is already
-built and <code>SHODDYLIB</code> is set — that's
-<a href="setup.html">One-Time Machine Setup</a>; do it first.</p>
+the tasks, native debugging (the perch), and the one environment wrinkle
+worth understanding. The extension carries its own mill and machines, so
+the only prerequisite is the .NET 10 runtime —
+<a href="setup.html">Setup</a>, Track A, two steps.</p>
 <p>Only two sections here ask you to <em>do</em> anything:
 <a href="#install">installing the extension</a> (required, once) and the
 <a href="#smoke">smoke test</a> (recommended, a minute). Everything else is
@@ -42,30 +42,34 @@ every platform.</p>
 </blockquote>
 
 <h2 id="install">1. Install the extension <span class="badge req">Required · once</span></h2>
-<p>The repo ships its own extension in <a href="../vscode-shoddy/"><code>vscode-shoddy/</code></a>:
-real Shoddy highlighting (keywords, builtins, quotations, stack-effect
-signatures, <code>Rem</code>/<code>'</code> comments, all case-insensitive), block-aware
-indentation, snippets (<code>def</code>, <code>select</code>, <code>fn</code>, ...), <strong>native debugging
-with <code>F5</code></strong> (<a href="#perch">section 3</a>), and mill commands — <strong>Shoddy: Run File</strong>
+<p>Shoddy has its own extension: real highlighting (keywords, builtins,
+quotations, stack-effect signatures, <code>Rem</code>/<code>'</code> comments, all
+case-insensitive), block-aware indentation, snippets (<code>def</code>,
+<code>select</code>, <code>fn</code>, ...), <strong>native debugging with
+<code>F5</code></strong> (<a href="#perch">section 3</a>), and mill commands — <strong>Shoddy: Run File</strong>
 (<code>ctrl+r</code>, plus the ▶ button), <strong>Weave File</strong>, <strong>Build Machine from
 File</strong>, and <strong>Show Generated C#</strong>.</p>
-<p>The extension is plain JavaScript — no build step. A packaged
-<code>vscode-shoddy-1.0.0.vsix</code> ships in the folder; install it from the repo
-root (works on macOS, Windows, and Linux):</p>
-<pre><code class="language-sh">code --install-extension vscode-shoddy/vscode-shoddy-1.0.0.vsix
+<p>It also carries a complete toolchain: a mill and every machine ride
+inside the package, so installing it is the whole install. Download the
+<code>.vsix</code> from
+<a href="https://github.com/shoddymills/shoddy/releases">the Releases page</a>
+(one package, every platform) and:</p>
+<pre><code class="language-sh">code --install-extension vscode-shoddy-1.1.0.vsix
 </code></pre>
-<p>To rebuild it yourself, run <code>./build.sh vsix</code>
-(<code>build.cmd vsix</code> on Windows).</p>
 <p>Or in VS Code: Extensions view → <code>···</code> menu → <strong>Install from VSIX…</strong> →
 pick the file. Reload when prompted. (If <code>code</code> isn't on your PATH: on
 macOS press <code>Cmd+Shift+P</code> and run <strong>Shell Command: Install
 &lsquo;code&rsquo; command in PATH</strong> once; the Windows installer adds it by
 default.)</p>
+<p>The bundled mill is portable .NET: <code>mill.exe</code> on Windows, and
+<code>dotnet mill.dll</code> everywhere else, through the runtime
+<a href="setup.html">Setup</a> had you install. The machines travel with it,
+which is why a bare <code>Include "seq.shoddy"</code> resolves in any folder
+you open, with nothing set.</p>
 <p><strong>Optional</strong> — only if you've <em>edited</em> the extension:
-repackage before installing (the committed <code>.vsix</code> may be
-stale):</p>
-<pre><code class="language-sh">npm install -g @vscode/vsce
-cd vscode-shoddy &amp;&amp; vsce package        # emits a fresh .vsix
+repackage from the repo root, which stages a fresh mill and freshly built
+machines into the package first:</p>
+<pre><code class="language-sh">./build.sh vsix          # build.cmd vsix on Windows
 </code></pre>
 <p><strong>Optional</strong> — only if you're <em>developing</em> the
 extension: to iterate without packaging at all, open the
@@ -73,15 +77,17 @@ extension: to iterate without packaging at all, open the
 Extension Development Host with it loaded.</p>
 
 <h2 id="millpath">2. Point it at the mill <span class="badge opt">Optional</span></h2>
-<p>The extension finds the mill via the <code>shoddy.millPath</code> setting, falling
-back to the workspace's <code>bin/mill</code> (<code>bin/mill.exe</code> on
-Windows), then <code>mill</code> on your PATH. <strong>If Setup's step A3
-put the repo's <code>bin</code> on your PATH, that last fallback already
-works everywhere and you can skip this section.</strong> Set
-<code>millPath</code> when one of these is true: you skipped the PATH step;
-you keep several checkouts and want the editor pinned to one of them
-regardless of PATH; or something else named <code>mill</code> shadows the
-real one.</p>
+<p>The extension looks for a mill in four places, in order: the
+<code>shoddy.millPath</code> setting, the workspace's <code>bin/mill</code>
+(<code>bin/mill.exe</code> on Windows), its own bundled copy, then
+<code>mill</code> on your PATH. <strong>The bundled copy means this section is
+skippable for almost everyone.</strong></p>
+<p>The one ordering to know: a workspace's own <code>bin/mill</code> beats the
+bundled one. That is deliberate — when the repo is your open folder, the mill
+you just built is the one you want tested, not the one that shipped. Set
+<code>millPath</code> explicitly when you keep several checkouts and want the
+editor pinned to one regardless of which is open, or when something else named
+<code>mill</code> shadows the real one.</p>
 <p>If you do set it, set it in <strong>User</strong>
 settings, not per-workspace, so every folder you ever open — inside the
 repo or out — finds it with zero per-folder setup:
@@ -207,27 +213,31 @@ weave's readable output.</li>
 </ul>
 
 <h2 id="environment">5. How the extension sees your environment <span class="badge info">Background · no action</span></h2>
-<p>Nothing to configure here if you followed <a href="setup.html">Setup</a> —
-this section explains <em>why</em> Setup put <code>SHODDYLIB</code> where it
-did. Read it when F5 or Show Generated C# fails while ▶ Run works, or when
-you're tempted to set environment in workspace settings.</p>
+<p>Nothing to configure here. This section explains what the extension does
+with <code>SHODDYLIB</code> on your behalf, and matters only if you decide to
+set one yourself.</p>
 <p>The extension invokes <code>mill</code> five different ways — Run, Weave,
 Machine, Show Generated C#, and F5 Debug — and they don't all inherit
 environment identically. Run/Weave/Machine go through VS Code's integrated
 terminal (which inherits <code>terminal.integrated.env.*</code> from
 workspace settings); Show Generated C# and F5 Debug spawn the process
 directly from the extension host, which inherits <strong>only</strong> the
-environment the VS Code process itself was launched with.</p>
-<p>The practical consequence is about <code>SHODDYLIB</code>: setting it in
-a workspace's <code>terminal.integrated.env</code> would make Run work
-while silently breaking F5 debugging on the first Include-using program. So
-set it where the VS Code <em>process</em> will see it — a User environment
-variable on Windows, a shell-profile <code>export</code> on macOS (VS Code
-resolves your login-shell environment at launch, Dock launches included) —
-which is exactly what <a href="setup.html">Setup</a> has you do. And
-<strong>restart VS Code fully</strong> after setting it (macOS:
-<code>Cmd+Q</code>, relaunch): environment is snapshotted at process
-launch.</p>
+environment the VS Code process itself was launched with. Historically that
+split was a trap: a <code>SHODDYLIB</code> set in workspace settings made ▶ Run
+work while silently breaking F5 on the first Include-using program.</p>
+<p>The extension now closes that gap itself. It points <code>SHODDYLIB</code>
+at its own bundled machines by both routes at once — a terminal environment
+collection for the terminal commands, and an explicit environment for the two
+processes it spawns — so all five behave identically out of the box.</p>
+<p>If you set <code>SHODDYLIB</code> yourself, the extension steps aside
+entirely and yours wins everywhere. Set it where the VS Code <em>process</em>
+will see it — a User environment variable on Windows, a shell-profile
+<code>export</code> on macOS (VS Code resolves your login-shell environment at
+launch, Dock launches included) — and <strong>restart VS Code fully</strong>
+afterward (macOS: <code>Cmd+Q</code>, relaunch): environment is snapshotted at
+process launch. Setting it in a workspace's
+<code>terminal.integrated.env</code> reopens exactly the split described
+above, so don't.</p>
 
 <h2 id="interactive">6. Interactive programs <span class="badge info">Usage · nothing to configure</span></h2>
 <p>Tasks run in the integrated terminal, so programs that use <code>Input</code>
@@ -239,10 +249,10 @@ instead (a command-line affair — the only one on this page):</p>
 
 <h2 id="smoke">7. Smoke-test the whole chain <span class="badge req">Recommended · once</span></h2>
 <p>Do this once after installing the extension — and again whenever
-<code>SHODDYLIB</code> or <code>millPath</code> changes, or the mill is
-rebuilt at a new path. From a scratch folder <em>outside</em> the repo —
-the real test: it proves a program folder anywhere on disk will work, not
-just files inside the source tree.</p>
+<code>SHODDYLIB</code> or <code>millPath</code> changes, or a mill you build
+yourself moves. From a scratch folder <em>outside</em> any checkout — the
+real test: it proves a program folder anywhere on disk will work, not just
+files inside the source tree.</p>
 <ol>
 <li>Create <code>check.shoddy</code> in a scratch folder:
 <pre><code>Include "stats.shoddy"
@@ -269,28 +279,31 @@ before the editor.</p>
 <tr><th>Symptom</th><th>Likely cause</th></tr>
 <tr><td>Works on ▶ (Run) but fails only on F5 or
 &ldquo;Show Generated C#&rdquo;</td>
-<td><code>SHODDYLIB</code> was set only in a workspace's
-<code>terminal.integrated.env</code>, not where the VS Code process sees it —
-<a href="#environment">section 5</a></td></tr>
+<td>A <code>SHODDYLIB</code> of your own was set only in a workspace's
+<code>terminal.integrated.env</code>, where the two spawned processes never
+see it — <a href="#environment">section 5</a></td></tr>
 <tr><td><code>unknown word: Sum</code> (or any library word) on Run
 <em>and</em> F5 alike</td>
-<td><code>SHODDYLIB</code> not set, or VS Code wasn't restarted after setting
-it (Windows: after <code>setx</code>; macOS: after editing
-<code>~/.zshrc</code> — fully quit with <code>Cmd+Q</code>)</td></tr>
+<td>A <code>SHODDYLIB</code> left over from an older install points somewhere
+that no longer holds the machines — it overrides the bundled ones. Clear it
+and fully restart VS Code (macOS: <code>Cmd+Q</code>); with it unset the
+extension supplies its own</td></tr>
 <tr><td>macOS: works when VS Code is launched from a terminal
 (<code>code .</code>) but not from the Dock</td>
-<td>The login-shell environment wasn't resolved — make sure the
-<code>export</code> is in <code>~/.zshrc</code> or
-<code>~/.zprofile</code> and fully relaunch; as a fallback, run
-<code>launchctl setenv SHODDYLIB …</code> and relaunch (re-run after each
-login)</td></tr>
+<td>Only possible with a <code>SHODDYLIB</code> or <code>PATH</code> of your
+own: the login-shell environment wasn't resolved. Keep the
+<code>export</code> in <code>~/.zshrc</code> or <code>~/.zprofile</code> and
+fully relaunch — or drop it and let the bundled toolchain answer, which no
+Dock launch can miss</td></tr>
+<tr><td>&ldquo;The framework <code>Microsoft.NETCore.App</code> version 10 was
+not found&rdquo;</td>
+<td>The .NET 10 runtime isn't installed, or VS Code predates the install —
+<a href="setup.html">Setup</a> step A1, then restart VS Code</td></tr>
 <tr><td>Mill not found at all</td>
-<td>None of the three lookups reached it: <code>shoddy.millPath</code> is
-unset or wrong (check it's in <em>User</em> settings, not lost in a
-workspace override, pointing at <code>bin\mill.exe</code> /
-<code>bin/mill</code>), the workspace isn't the repo, <em>and</em> the
-repo's <code>bin</code> isn't on the PATH the VS Code process inherited —
-if you just did Setup's A3, restart VS Code</td></tr>
+<td>All four lookups missed, which normally means the package was built
+without its mill staged. Check <code>shoddy.millPath</code> isn't set to a
+stale path (it's checked first, and a wrong value beats the bundled copy),
+then reinstall the <code>.vsix</code> from the Releases page</td></tr>
 <tr><td><code>Ctrl+Shift+B</code> does nothing outside the repo</td>
 <td>Expected — the six tasks live in the repo's
 <code>.vscode/tasks.json</code>. Use the ▶ Run button or

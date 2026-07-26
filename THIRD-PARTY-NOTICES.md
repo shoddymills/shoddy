@@ -15,6 +15,11 @@ remain under their own licenses and the copyrights of their respective owners.
 | `xunit`, `xunit.runner.visualstudio` | Apache-2.0 / MIT | tests only (not distributed) |
 | `Microsoft.NET.Test.Sdk`, `coverlet.collector` | MIT | tests only (not distributed) |
 
+Everything above except the test-only rows is **redistributed in binary form**
+inside the packaged VS Code extension (`vscode-shoddy-*.vsix`), which carries a
+copy of the mill under `extension/mill/`. This notices file ships in that
+package for the same reason.
+
 ### OpenAL Soft (LGPL)
 
 `Silk.NET.OpenAL.Soft.Native` redistributes **OpenAL Soft**, which is licensed
@@ -61,7 +66,7 @@ The `cave*.shoddy` files are a Shoddy port of that work. The generated tables
 copyright as their source. **The C sources are not redistributed here**; only the YAML
 database the port is generated from.
 
-### Pac-Man homage (`mills/pacman-vt100/`)
+### Pac-Man homage (`mills/pac-vt100/`)
 
 The `pac*.shoddy` files are an original reimplementation, ported by hand from a
 compact C terminal rendition. **The original C source is not redistributed in
@@ -70,7 +75,7 @@ trademark of Bandai Namco Entertainment Inc. This project is an educational
 homage and is not affiliated with, endorsed by, or sponsored by the trademark
 owner.
 
-### Space Invaders homage (`mills/space-invaders/`)
+### Space Invaders homage (`mills/invaders/`)
 
 The `invaders*.shoddy` files are an original reimplementation. *SPACE INVADERS*
 is a trademark of Taito Corporation / Square Enix. This project is an

@@ -11,8 +11,7 @@ namespace Shoddy.Tests;
 /// The Space Invaders pure model (mills/invaders/invaders-core.shoddy):
 /// state, per-frame simulation, and input actions, none of which touch a
 /// window. The windowed half (drawing + the event loop, in invaders.shoddy)
-/// is left to manual play. The workspace mirrors the repo's
-/// mills/invaders layout so the core's ../../machines includes resolve.
+/// is left to manual play.
 /// </summary>
 public class InvadersTests
 {
@@ -104,21 +103,24 @@ public class InvadersTests
 
     // ---- helper --------------------------------------------------------
 
-    /// <summary>Weave and run a Main body against invaders-core.shoddy,
-    /// with the repo's mills/invaders layout reproduced in a temp
-    /// workspace so the core's ../../machines includes resolve. No window:
-    /// the core includes no scribbler.</summary>
+    /// <summary>Weave and run a Main body against invaders-core.shoddy.
+    /// The core's includes are bare — a mill reaches its machines through
+    /// the library search path, not a relative walk — so the probe and the
+    /// core sit in the machines directory of a temp workspace, where the
+    /// includes resolve beside the file with no $SHODDYLIB in play (this
+    /// test runs in-process, so there is no mill to resolve against).
+    /// No window: the core includes no scribbler.</summary>
     static string Probe(params string[] body)
     {
         string ws = Path.Combine(Path.GetTempPath(), "shoddy-invaders", Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(Path.Combine(ws, "machines"));
-        Directory.CreateDirectory(Path.Combine(ws, "mills", "invaders"));
+        string lib = Path.Combine(ws, "machines");
+        Directory.CreateDirectory(lib);
         foreach (string f in Directory.GetFiles(Path.Combine(Root, "machines"), "*.shoddy"))
-            File.Copy(f, Path.Combine(ws, "machines", Path.GetFileName(f)));
+            File.Copy(f, Path.Combine(lib, Path.GetFileName(f)));
         File.Copy(Path.Combine(Root, "mills", "invaders", "invaders-core.shoddy"),
-                  Path.Combine(ws, "mills", "invaders", "invaders-core.shoddy"));
+                  Path.Combine(lib, "invaders-core.shoddy"));
 
-        string sb = Path.Combine(ws, "mills", "invaders", "probe.shoddy");
+        string sb = Path.Combine(lib, "probe.shoddy");
         File.WriteAllText(sb,
             "Include \"invaders-core.shoddy\"\n\n"
             + "Def YN(b As Boolean) As String\n    If b Then\n        \"Y\"\n    Else\n        \"N\"\n\n"

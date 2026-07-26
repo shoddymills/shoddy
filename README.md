@@ -101,8 +101,24 @@ is in [the heritage of the name](https://shoddymills.github.io/shoddy/heritage.h
 | `tst/`| `libtest.shoddy` (assertion suite) · `examples.shoddy` · `gradebook.shoddy` · `simplex.shoddy` · demos (`scribbler-` `turtle-` `plotter-` `buzzer-` `net-demo.shoddy`) · `golden/` (the constitution) |
 | `vscode-shoddy/`| VS Code extension: highlighting, snippets, debugging, mill commands |
 
-## Build and run
+## Install
 
+Most people want the VS Code extension. It carries its own mill and the whole
+machine library, so it is the entire install — grab the `.vsix` from
+[Releases](https://github.com/shoddymills/shoddy/releases) and:
+
+```
+code --install-extension vscode-shoddy-1.1.0.vsix
+```
+
+The only prerequisite is the [.NET 10 runtime](https://dotnet.microsoft.com/download/dotnet/10.0)
+(the runtime, not the SDK). Nothing to clone, nothing to build, no environment to
+set: a bare `Include "seq.shoddy"` resolves in any folder you open. See
+[the setup guide](https://shoddymills.github.io/shoddy/setup.html).
+
+## Build from source
+
+For working on the language itself, or to get `mill` on your command line.
 Requires the .NET 10 SDK. Build the mill (it isn't committed), then run a
 program and the tests:
 
@@ -114,7 +130,11 @@ dotnet test src/Shoddy.Tests                       # golden conformance suite
 
 Or use the build wrapper — `./build.sh <cmd>` on Linux/macOS/WSL,
 `build.cmd <cmd>` on Windows — which bundles the common tasks: `build`,
-`test`, `run FILE`, `machines`, `vsix`, `clean`.
+`test`, `run FILE`, `machines`, `stage`, `vsix`, `clean`.
+
+`vsix` packages a self-contained VS Code extension: it stages the mill and
+every machine into the package, so installing the `.vsix` needs only the
+.NET 10 *runtime* — no SDK, no checkout, no `SHODDYLIB`.
 
 The full toolchain — weaving to an assembly, building library machines, and
 the Windows PowerShell notes — is in [the toolchain guide](https://shoddymills.github.io/shoddy/build.html).
@@ -142,8 +162,9 @@ the Windows PowerShell notes — is in [the toolchain guide](https://shoddymills
 - `Select Case` matches values, ranges (`4 To 10`), comparisons
   (`Is >= 90`), and destructures records and variants (`Case Some(v)`,
   `Case None`) with `Where` guards.
-- `Include "FILE.SHODDY"` splices files (include-once, path relative to the
-  including file).
+- `Include "FILE.SHODDY"` splices files (include-once) — resolved beside the
+  including file, then `SHODDYLIB`, then the machine library beside the running
+  mill, so a bare `Include "seq.shoddy"` works from any folder.
 - Errors carry source line numbers; `Assert` and `Error` are built in.
 
 ## License

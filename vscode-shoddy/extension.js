@@ -5,18 +5,62 @@ const cp = require('child_process');
 const fs = require('fs');
 const path = require('path');
 
-/** The mill executable: the shoddy.millPath setting, else the
- * workspace's bin/mill (bin/mill.exe on Windows), else `mill` on PATH. */
-function millPath() {
+// This extension ships a mill and the machines under its own directory
+// (see `build.ps1 stage`), so installing the .vsix is the whole install.
+// A workspace that builds its own mill still wins: a Shoddy hacker's
+// bin/mill is the one they just changed, and the bundled copy is only
+// the fallback for everyone else.
+let bundleRoot = null;
+
+/** How to launch the mill bundled with this extension — a command and
+ * the arguments that must precede the subcommand — or null when it
+ * wasn't staged.
+ *
+ * The staged build is framework-dependent and built without a runtime
+ * identifier, so the only native launcher in it is the Windows
+ * mill.exe. Everywhere else the portable mill.dll is run through the
+ * `dotnet` muxer, which the .NET runtime this extension already
+ * requires puts on PATH. */
+function bundledMill() {
+    if (!bundleRoot) return null;
+    const dir = path.join(bundleRoot, 'mill');
+    const exe = path.join(dir, process.platform === 'win32' ? 'mill.exe' : 'mill');
+    if (fs.existsSync(exe)) return { cmd: exe, args: [] };
+    const dll = path.join(dir, 'mill.dll');
+    return fs.existsSync(dll) ? { cmd: 'dotnet', args: [dll] } : null;
+}
+
+/** The machines bundled with this extension, or null when not staged. */
+function bundledLib() {
+    if (!bundleRoot) return null;
+    const dir = path.join(bundleRoot, 'machines');
+    return fs.existsSync(dir) ? dir : null;
+}
+
+/** How to launch the mill: the shoddy.millPath setting, else the
+ * workspace's bin/mill (bin/mill.exe on Windows), else the bundled
+ * copy, else `mill` on PATH. Returns {cmd, args} — args is empty for
+ * every route but the bundled `dotnet mill.dll` one. */
+function millCommand() {
     const configured = vscode.workspace.getConfiguration('shoddy').get('millPath');
-    if (configured) return configured;
+    if (configured) return { cmd: configured, args: [] };
     for (const folder of vscode.workspace.workspaceFolders || []) {
         const candidate = path.join(folder.uri.fsPath, 'bin', 'mill');
-        if (fs.existsSync(candidate)) return candidate;
+        if (fs.existsSync(candidate)) return { cmd: candidate, args: [] };
         if (process.platform === 'win32' && fs.existsSync(candidate + '.exe'))
-            return candidate + '.exe';
+            return { cmd: candidate + '.exe', args: [] };
     }
-    return 'mill';
+    return bundledMill() || { cmd: 'mill', args: [] };
+}
+
+/** The environment for a mill we spawn ourselves. An Include the mill
+ * can't find beside its source falls back to $SHODDYLIB, so pointing
+ * that at the bundled machines/ makes `Include "seq.shoddy"` work in a
+ * scratch file anywhere. A SHODDYLIB the user set is theirs — we never
+ * override it, since it's how a checkout is pinned to its own machines. */
+function millEnv() {
+    const lib = bundledLib();
+    return (lib && !process.env.SHODDYLIB) ? { SHODDYLIB: lib } : {};
 }
 
 let term;
@@ -47,7 +91,9 @@ function millInTerminal(subcommand) {
         // PowerShell needs the call operator to run a quoted path;
         // cmd and POSIX shells choke on it.
         const call = /powershell|pwsh/i.test(vscode.env.shell || '') ? '& ' : '';
-        t.sendText(`${call}"${millPath()}" ${subcommand} "${file}"`);
+        const { cmd, args } = millCommand();
+        const lead = [cmd, ...args].map((a) => `"${a}"`).join(' ');
+        t.sendText(`${call}${lead} ${subcommand} "${file}"`);
     };
 }
 
@@ -55,7 +101,9 @@ function millInTerminal(subcommand) {
 async function showGenerated() {
     const file = await activeFile();
     if (!file) return;
-    cp.execFile(millPath(), ['gen', file], { maxBuffer: 64 * 1024 * 1024 },
+    const { cmd, args } = millCommand();
+    cp.execFile(cmd, [...args, 'gen', file],
+        { maxBuffer: 64 * 1024 * 1024, env: { ...process.env, ...millEnv() } },
         async (err, stdout, stderr) => {
             if (err || !stdout) {
                 vscode.window.showErrorMessage(
@@ -69,6 +117,22 @@ async function showGenerated() {
 }
 
 exports.activate = (ctx) => {
+    bundleRoot = ctx.extensionPath;
+    // A .vsix is a zip, and the executable bit doesn't survive every route
+    // through one. Restoring it costs nothing when it was already set, and
+    // there is nothing to restore on the `dotnet mill.dll` route.
+    const mill = bundledMill();
+    if (mill && mill.cmd !== 'dotnet' && process.platform !== 'win32') {
+        try { fs.chmodSync(mill.cmd, 0o755); } catch { /* read-only install */ }
+    }
+    // Terminals are launched by VS Code, not by us, so the terminal
+    // commands get SHODDYLIB through the environment collection instead.
+    // The collection is persisted across restarts — clear it when the
+    // user has their own SHODDYLIB, or a stale one would shadow it.
+    const lib = millEnv().SHODDYLIB;
+    if (lib) ctx.environmentVariableCollection.replace('SHODDYLIB', lib);
+    else ctx.environmentVariableCollection.delete('SHODDYLIB');
+
     ctx.subscriptions.push(
         vscode.commands.registerCommand('shoddy.run', millInTerminal('run')),
         vscode.commands.registerCommand('shoddy.weave', millInTerminal('weave')),
@@ -77,8 +141,11 @@ exports.activate = (ctx) => {
 
         // The perch: `mill dap` speaks the Debug Adapter Protocol.
         vscode.debug.registerDebugAdapterDescriptorFactory('shoddy', {
-            createDebugAdapterDescriptor: () =>
-                new vscode.DebugAdapterExecutable(millPath(), ['dap']),
+            createDebugAdapterDescriptor: () => {
+                const { cmd, args } = millCommand();
+                return new vscode.DebugAdapterExecutable(cmd, [...args, 'dap'],
+                    { env: millEnv() });
+            },
         }),
         // Zero-config F5: debug the current .shoddy file. We resolve
         // "${file}" ourselves (active editor, else any visible .shoddy

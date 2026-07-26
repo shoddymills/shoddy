@@ -1,0 +1,280 @@
+Rem ===================================================================
+Rem cave-core.shoddy -- the pure model of Colossal Cave.
+Rem
+Rem Nothing here prints or reads: no Print, no Input. Every rule of the
+Rem cave lives in this file so that test.shoddy can drive it headless,
+Rem and cave.shoddy adds the prompts and the transcript on top.
+Rem
+Rem Ported from open-adventure (Eric S. Raymond, BSD-2-Clause), itself a
+Rem forward-port of Crowther & Woods Adventure 2.5. Section comments
+Rem carry the C file and line the rule came from, so the two can be
+Rem diffed by hand.
+Rem ===================================================================
+
+Include "../../machines/str.shoddy"
+Include "../../machines/seq.shoddy"
+Include "cave-messages.shoddy"
+Include "cave-locations.shoddy"
+Include "cave-travel.shoddy"
+Include "cave-objects.shoddy"
+Include "cave-vocab.shoddy"
+Include "cave-tables.shoddy"
+
+Rem ---- the random number generator -----------------------------------
+Rem advent.h:15-19, misc.c:750-777.
+Rem
+Rem Adventure has carried the same linear congruential generator since
+Rem the 1970s: x' = (1093x + 221587) mod 2^20. It matters far more than
+Rem it looks. Ninety-two of the hundred-odd recorded test transcripts
+Rem pin the stream with an in-band "seed" command, so the whole corpus is
+Rem only usable as an oracle if this reproduces bit for bit.
+Rem
+Rem It does, and the reason is worth writing down: the largest value the
+Rem recurrence ever forms is 1093 * 1048575, about 1.15e9, and randrange
+Rem never multiplies by more than 1000. Both stay far below 2^53, where
+Rem Shoddy's Numbers are still exact integers. So this is not an
+Rem approximation of the C -- it is the same arithmetic.
+
+Def LcgA() As Number
+    1093
+
+Def LcgC() As Number
+    221587
+
+Def LcgM() As Number
+    1048576
+
+Rem The C returns the value BEFORE stepping (misc.c:764-772), so a draw
+Rem is always "read x, then advance". Keeping those two halves separate
+Rem is what lets the caller thread the state purely.
+
+Def LcgNext(x As Number) As Number
+    (LcgA() * x + LcgC()) Mod LcgM()
+
+Rem randrange(n) = n * x / 2^20 in truncating integer arithmetic
+Rem (misc.c:774-777). Floor is exact here because the product is exact.
+
+Def RandRange(x As Number, n As Number) As Number
+    Floor(n * x / LcgM())
+
+Rem PCT(n) is randrange(100) < n -- advent.h:126.
+
+Def Pct(x As Number, n As Number) As Boolean
+    RandRange(x, 100) < n
+
+Rem ---- seeding --------------------------------------------------------
+Rem misc.c:750-762. set_seed reduces the seed mod 2^20, corrects a
+Rem negative, and then consumes exactly five randrange(26) draws to build
+Rem the magic word before returning. Those five draws are part of the
+Rem stream: skip them and every seeded transcript diverges immediately.
+Rem The second character is then overwritten with an apostrophe.
+
+Def SeedX(seed As Number) As Number
+    Let r = seed Mod LcgM()
+    If r < 0 Then
+        r + LcgM()
+    Else
+        r
+
+Rem Returns the LCG state left behind after the five zzword draws.
+
+Def SeedAdvance(x As Number, n As Number) As Number
+    If n = 0 Then
+        x
+    Else
+        SeedAdvance(LcgNext(x), n - 1)
+
+Def SeedState(seed As Number) As Number
+    SeedAdvance(SeedX(seed), 5)
+
+Rem The magic word itself: five letters drawn from the stream, with the
+Rem second forced to an apostrophe. Adventure calls it the zzword.
+
+Def ZzLetters(x As Number, n As Number, acc As String) As String
+    If n = 0 Then
+        acc
+    Else
+        ZzLetters(LcgNext(x), n - 1, acc & Chr(65 + RandRange(x, 26)))
+
+Def ZzWord(seed As Number) As String
+    Let w = ZzLetters(SeedX(seed), 5, "")
+    Left(w, 1) & "'" & Mid(w, 3, 3)
+
+Rem ---- small helpers ---------------------------------------------------
+Rem Written against Nth rather than First/Rest: a Shoddy list is an array
+Rem and Rest copies it, so structural recursion over one is quadratic.
+
+Def IndexIn(xs As List, i As Number, n As Number, want As String) As Number
+    If i > n Then
+        0
+    Else
+        If Nth(xs, i) = want Then
+            i
+        Else
+            IndexIn(xs, i + 1, n, want)
+
+Rem ---- the parser -----------------------------------------------------
+Rem misc.c:380-599. Adventure's grammar is two words and no more, and a
+Rem word is significant to its first five letters -- which is why the
+Rem game tells you to type "ne" rather than "northeast". The vocabulary
+Rem in cave-vocab.shoddy is already stored truncated, so matching is a
+Rem plain comparison once both sides are folded.
+
+Def TokLen() As Number
+    5
+
+Def Norm(w As String) As String
+    Lower(Left(Trim(w), TokLen()))
+
+Rem Word kinds, in the order misc.c:454-505 tries them. The order is not
+Rem cosmetic: a word that is both a motion and an object resolves as a
+Rem motion, and that shadowing is part of the game's behaviour.
+Type Kind = KMotion(Id) | KObject(Id) | KAction(Id) | KMagic | KNumeric(N) | KUnknown
+
+Rem Does this vocabulary entry list the word among its synonyms?
+Def HasWord(ws As List, w As String) As Boolean
+    If IsEmpty(ws) Then
+        False
+    Else
+        Contains(ws, w)
+
+Def ScanVocab(vs As List, i As Number, n As Number, w As String) As Number
+    If i > n Then
+        0 - 1
+    Else
+        If HasWord(Words(Nth(vs, i)), w) Then
+            i - 1
+        Else
+            ScanVocab(vs, i + 1, n, w)
+
+Def ScanObjects(os As List, i As Number, n As Number, w As String) As Number
+    If i > n Then
+        0 - 1
+    Else
+        If HasWord(Words(Nth(os, i)), w) Then
+            i - 1
+        Else
+            ScanObjects(os, i + 1, n, w)
+
+Def MotionOf(w As String) As Number
+    ScanVocab(Motions(), 1, Length(Motions()), w)
+
+Def ObjectOf(w As String) As Number
+    ScanObjects(Objects(), 1, Length(Objects()), w)
+
+Def ActionOf(w As String) As Number
+    ScanVocab(Actions(), 1, Length(Actions()), w)
+
+Rem A whole-string digit test; Val aborts on anything else, so nothing
+Rem may reach it unguarded.
+Def AllDigits(s As String, i As Number, n As Number) As Boolean
+    If i > n Then
+        True
+    Else
+        Let c = Mid(s, i, 1)
+        If c >= "0" And c <= "9" Then
+            AllDigits(s, i + 1, n)
+        Else
+            False
+
+Def IsInteger(s As String) As Boolean
+    If Len(s) = 0 Then
+        False
+    Else
+        If Left(s, 1) = "-" Then
+            If Len(s) = 1 Then
+                False
+            Else
+                AllDigits(s, 2, Len(s))
+        Else
+            AllDigits(s, 1, Len(s))
+
+Rem misc.c:454-505. The magic word is per-game state, drawn from the seed,
+Rem so the tokenizer has to be told what it is this time round.
+Rem misc.c:386-388 and 417-419. In oldstyle the one-letter abbreviations
+Rem of words marked `oldstyle: false` are not words at all -- l, x, g, z
+Rem and i were added long after 1977, so the emulation refuses them. The
+Rem test only guards motions and actions; objects keep their short forms.
+Def Ignored(w As String, old As Boolean) As Boolean
+    (old And Len(w) = 1 And Instr(IgnoreSet(), Upper(w)) > 0)
+
+Def Classify(raw As String, magic As String) As Kind
+    ClassifyOld(raw, magic, False)
+
+Def ClassifyOld(raw As String, magic As String, old As Boolean) As Kind
+    Let w = Norm(raw)
+    If Len(w) = 0 Then
+        KUnknown()
+    Else
+        Let m = MotionOf(w)
+        If m >= 0 And Not Ignored(w, old) Then
+            KMotion(m)
+        Else
+            Let o = ObjectOf(w)
+            If o >= 0 Then
+                KObject(o)
+            Else
+                Let a = ActionOf(w)
+                Rem The reservoir word's vocab entry is the placeholder
+                Rem z'zzz; the C overwrites it with the seeded word at
+                Rem startup, so typing the literal placeholder is unknown.
+                If a >= 0 And Not Ignored(w, old) And w <> "z'zzz" Then
+                    KAction(a)
+                Else
+                    If Lower(Trim(raw)) = Lower(magic) Then
+                        KMagic()
+                    Else
+                        If IsInteger(Trim(raw)) Then
+                            KNumeric(Val(Trim(raw)))
+                        Else
+                            KUnknown()
+
+Rem misc.c:507-555. Two words, whitespace separated; anything beyond the
+Rem second is refused by word_count before we get here.
+Def Tokens(line As String) As List
+    Filter(Map(Split(Trim(line), " "), Fn(w) => Trim(w)), Fn(w) => Len(w) > 0)
+
+Def WordAt(ts As List, i As Number) As String
+    If Length(ts) < i Then
+        ""
+    Else
+        Nth(ts, i)
+
+Rem misc.c:539-545. Oldstyle mangles the raw token the way packing it into
+Rem sixbit characters, five to a 32-bit word, once did: upper-cased and cut
+Rem to ten. Not authorial intent -- a limitation of archaic FORTRAN that
+Rem Don Wood's translation carried forward -- but the emulation keeps it,
+Rem which is why oldstyle scolds you about the word "I" and not "i".
+Def RawAt(ts As List, i As Number, old As Boolean) As String
+    Let w = WordAt(ts, i)
+    If old Then
+        Upper(Left(w, 10))
+    Else
+        w
+
+Rem make_dungeon.py:301-305 and 336-340 build this by walking motions then
+Rem actions and collecting the one-letter synonyms of every entry marked
+Rem `oldstyle: false`, uppercased. Derived here rather than generated,
+Rem since the Oldstyle flag already rides along in the vocabulary tables.
+Def IgnoreSet() As String
+    IgnoreFrom(Actions(), 1, Length(Actions()),
+               IgnoreFrom(Motions(), 1, Length(Motions()), ""))
+
+Def IgnoreFrom(vs As List, i As Number, n As Number, acc As String) As String
+    If i > n Then
+        acc
+    Else
+        Let v = Nth(vs, i)
+        If Oldstyle(v) Then
+            IgnoreFrom(vs, i + 1, n, acc)
+        Else
+            IgnoreFrom(vs, i + 1, n, Singles(Words(v), 1, Length(Words(v)), acc))
+
+Def Singles(ws As List, i As Number, n As Number, acc As String) As String
+    If i > n Then
+        acc
+    Else
+        If Len(Nth(ws, i)) = 1 Then
+            Singles(ws, i + 1, n, acc & Upper(Nth(ws, i)))
+        Else
+            Singles(ws, i + 1, n, acc)

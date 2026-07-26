@@ -545,6 +545,27 @@ public sealed partial class Engine
                 }
                 return true;
             }
+            case "TRYWRITEFILE":                // ( path s -- ok )
+            {
+                // WRITEFILE with the failure reported rather than fatal.
+                // Shoddy has no catchable errors, so without this "can this
+                // path be written?" is an unaskable question -- FILEEXISTS
+                // cannot answer it, since a directory reports false and an
+                // unwritable existing file reports true.
+                string s = PopStr(line, w);
+                string path = PopStr(line, w);
+                try
+                {
+                    using var f = new FileStream(path, FileMode.Create, FileAccess.Write);
+                    f.Write(Bytes.GetBytes(s));
+                    PushBool(true);
+                }
+                catch (Exception e) when (e is not ShoddyError)
+                {
+                    PushBool(false);
+                }
+                return true;
+            }
             case "FILEEXISTS":                  // ( path -- bool )
                 PushBool(File.Exists(PopStr(line, w)));
                 return true;
@@ -845,6 +866,27 @@ public sealed partial class Engine
                 O.Write(PopStr(line, w));
                 O.Flush();
                 PushStr(In.ReadLine() ?? "");
+                return true;
+            }
+            case "INPUTLINE":                   // ( prompt -- [atEof, text] )
+            {
+                // Like INPUT, but says whether the read hit end of stream.
+                // INPUT collapses EOF and a blank line into "", so a program
+                // reading a redirected script can either reprompt on a blank
+                // line or terminate at EOF, never both. A flat Array carrier,
+                // not a record: a builtin cannot reach a TypeDef, so lifting
+                // this into a sum type is the Shoddy wrapper's job.
+                if (Volatile.Read(ref ScribblerRegistry.OpenCount) > 0)
+                    throw Die(line, "InputLine: cannot read the console while a scribbler window is open" +
+                                    " — read keystrokes with ScribblerWait or ScribblerPoll.");
+                O.Write(PopStr(line, w));
+                O.Flush();
+                string? got = In.ReadLine();
+                Push(Value.OfArr(new[]
+                {
+                    Value.OfBool(got == null),
+                    Value.OfStr(got ?? ""),
+                }));
                 return true;
             }
             case "INKEY":                       // ( -- s ) one pending keystroke, "" if none
@@ -1423,12 +1465,12 @@ public sealed partial class Engine
         "AND", "OR", "NOT", "TRUE", "FALSE",
         "&", "LEN", "STR", "VAL", "LEFT", "RIGHT", "MID", "CHR", "ASC",
         "UPPER", "LOWER",
-        "PRINT", "READFILE", "WRITEFILE", "APPENDFILE", "FILEEXISTS",
+        "PRINT", "READFILE", "WRITEFILE", "APPENDFILE", "TRYWRITEFILE", "FILEEXISTS",
         "DELETEFILE", "BOPEN", "BCLOSE", "SEEK", "BPOS", "BSIZE",
         "PUTNUM", "GETNUM", "PUTBOOL", "GETBOOL", "PUTSTR", "GETSTR",
         "TCPCONNECT", "TCPLISTEN", "TCPACCEPT", "TCPSEND", "TCPRECV",
         "TCPEOF", "TCPPOLL", "TCPPEER", "TCPCLOSE",
-        "INPUT", "INKEY", "ARGS",
+        "INPUT", "INPUTLINE", "INKEY", "ARGS",
         "CALL", "IFTE", "MAP", "FILTER", "FOLD", "EACH", "TIMES", "RANGE",
         "LENGTH", "REVERSE", "CONCAT", "SORT",
         "ISEMPTY", "FIRST", "NTH", "SETNTH", "DIM", "TOARRAY", "TOLIST",

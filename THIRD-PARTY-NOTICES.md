@@ -40,6 +40,27 @@ educational and historical purposes. *The Oregon Trail* is a trademark of
 Houghton Mifflin Harcourt. This project is not affiliated with, endorsed by, or
 sponsored by the trademark owner.
 
+### Colossal Cave Adventure (`mills/open-cave/`)
+
+`mills/open-cave/adventure.yaml` is the dungeon database from **Open Adventure** by
+Eric S. Raymond (https://gitlab.com/esr/open-adventure), which is licensed under the
+**BSD 2-Clause License** and is redistributed here under that license. Open Adventure is
+itself a forward-port of *Adventure* 2.5 (1995) by Will Crowther and Don Woods, released
+with the original authors' permission and encouragement.
+
+The copy here is **modified**: the cave's little knife-throwing folk are called
+curmudgeons rather than by their upstream name, which renames one vocabulary word,
+the symbols built from it, and the messages and room descriptions that mention
+them. Nothing else about the database differs from upstream, and the game plays
+identically otherwise.
+
+The `cave*.shoddy` files are a Shoddy port of that work. The generated tables
+(`cave-locations.shoddy`, `cave-objects.shoddy`, `cave-messages.shoddy`,
+`cave-travel.shoddy`, `cave-vocab.shoddy`, `cave-tables.shoddy`) are derived from
+`adventure.yaml` by `gen.shoddy` and therefore carry the same BSD-2-Clause terms and
+copyright as their source. **The C sources are not redistributed here**; only the YAML
+database the port is generated from.
+
 ### Pac-Man homage (`mills/pacman-vt100/`)
 
 The `pac*.shoddy` files are an original reimplementation, ported by hand from a

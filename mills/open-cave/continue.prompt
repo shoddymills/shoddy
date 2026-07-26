@@ -1,0 +1,116 @@
+# open-cave port: COMPLETE — 107/107, then the curmudgeon rename
+
+## What this is
+
+`c:\github\shoddy\mills\open-cave\` is a from-scratch port of ESR's open-adventure
+(BSD-2-Clause C, at `c:\github\open-adventure-master`) into Shoddy. The goal was
+**107/107 byte-exact** against the C's recorded test transcripts in
+`c:\github\open-adventure-master\tests\*.chk`.
+
+**Achieved: 107/107, mean prefix 1255 (full length). Both suites green:**
+`dotnet test src/Shoddy.Tests/Shoddy.Tests.csproj` 112/112, and
+`mill run test.shoddy` passes. `SHODDY_LINT=1` shows 66 warnings, all
+pre-existing and benign (string constants that case-fold onto accessors).
+
+## The curmudgeon rename (2026-07-26)
+
+The cave's little knife-throwing cave folk are curmudgeons now. Upstream's
+name for them is gone from the mill everywhere — data, generated tables,
+code, comments and prose — and this file keeps it that way, so it is spelled
+nowhere below. Find it with a case-insensitive grep of
+`c:\github\open-adventure-master\` when you need it.
+
+Consequence: **`*.chk` is no longer the pass/fail oracle.** 107/107 was
+re-verified by diffing this build against a pre-rename build of the same
+sources, not against upstream. Any future re-measure must do the same, or
+substitute the new name into the `.chk` files first.
+
+Five upstream logs *type* the old name (grep the `tests/` directory for
+it), so they now draw `Sorry, I don't know the word ...`; substituting the
+new name into the log restores the old transcript exactly. `saveresume.4`
+needs its own working directory — save files collide if the suite is run in
+parallel from one cwd.
+
+Two details the rename turned up and that are easy to get wrong again:
+
+- Vocabulary is stored **already cut to five letters**, so the object's old
+  two-word synonym list collapses to the single stem `{ "curmu" }`. A
+  longer spelling in a `words:` list would silently match nothing;
+  test.shoddy now asserts both singular and plural classify as an object.
+- The prose in `adventure.yaml` is hand-wrapped at ~70 columns and is
+  printed verbatim, so lengthening a word means re-wrapping its paragraph.
+  Nine message blocks and two room descriptions were reflowed, which is
+  why `cave-locations.shoddy` grew two lines.
+
+## How to re-measure
+
+Harness (persists from earlier sessions):
+
+    C:\Users\foster\AppData\Local\Temp\claude\c--github-shoddy\708844e1-7031-471d-be5c-03126ba68699\scratchpad\
+
+    powershell -NoProfile -ExecutionPolicy Bypass -File "<scratchpad>\measure.ps1" -Out rNN.txt -Throttle 8
+
+Latest result file: r61.txt (`== PASS 107 / 107  mean-prefix 1255`).
+Always compare mean prefix as well as pass count; diagnose only at the
+first divergence; run the real `advent` under WSL rather than reasoning
+about C behaviour (misc.c:769 is patched to trace random draws — restore
+from misc.c.bak before any upstream diffing).
+
+## What the final session fixed (46 → 107)
+
+In rough order: Destroy now sweeps every room list (two-ended objects);
+troll payment juggles CHASM and leaves prop UNPAID; chain()/unlock-chain;
+game.panic + exit-closed gating in do_move and grate; drop specials
+(gem-in-cavity + rug hover with a movable second placement, coins→batteries,
+bear-routs-troll, cage-drops-bird, bird-vs-dragon); FEE FIE FOE FOO egg
+message indices; urn fill/light/extinguish/pour; FLY and the hovering rug
+(which is immovable while hovering); gem take re-opens the cavity;
+lampcheck runs during closing (skipped only on the two transition turns,
+and the cave-closed turn swallows the typed command); repository stocking
+stashifies props (negative) with the per-prompt unstash pass and oyster
+clue line; ObjectWord alias chain in C order (curmudgeon, liquids-unless-closed,
+oil→urn, plant2, knife, rod→rod2); death by travel to location 0; BLAST +
+bonus + full closing/closed/Witt's-End/clue scoring; bird weightlessness;
+GO intransitive "Where?"; per-prompt knife expiry and no phantom-knife
+revival; attack target ambiguity counting (enemies outrank bird/vend/clam,
+throw excludes bird/vend); silent_yes_or_no retry loop; throw-axe at
+dragon/troll/ogre/bear; "west"×10 counts second words too; enter-water;
+>2-word and empty-line input handling at the prompt (no turn cost);
+z'zzz placeholder is not a vocab word; BREAK (mirror/vase) and WAKE curmudgeon
+→ GO_CURMUDGEONWAKE endings; SCORE verb; WASTE verb; INVENTORY-with-object is
+FIND, listing skips the bear but appends the tame-bear line; read-oyster
+endgame clue (Clshnt, −10); croak during closng is final; floor→ground
+rewrite when outdoors (listing only — C does it in speak(); extend
+Grounded() to other sites if a new divergence ever shows it); SlayDragon
+sweeps everything in the canyon to LOC_SECRET5; stashed caged bird taking;
+ordinary travel now maintains OldLc2 so "back" can retrace through Foof
+rooms; plover transport (special 2) drops the emerald and re-travels;
+MESSAG take; repository sign prop is 1 (ENDGAME_SIGN); RunVerb records
+the object into PendObj so Cleared can move it to OldObj (the bird hint
+reads it there).
+
+New Game fields this session: Panic, Bonus, Clshnt (Panic is persisted in
+the save format; Bonus/Clshnt are not — blast and the clue can't survive
+into a save that matters). Fate gained `Won` (endgame mode: +4 like Died).
+
+## Language traps that cost time (all still true)
+
+- `Else` requires an indented block; no `else if` — use helper Defs.
+- `mill run test.shoddy` does NOT parse cave.shoddy. After every edit:
+  `cd <sandbox>/tests && echo n | mill run <abs path>/cave.shoddy | head -2`
+- Field accessors lose every name contest (run SHODDY_LINT=1 after adding
+  Defs/Types; 66 pre-existing warnings is the baseline).
+- Record constructors are positional — NewGame is the single positional
+  Game() site; adding a field means one insertion there too.
+- **Always verify a tag exists before dispatching on it** — this session
+  `MotionNamed("PLOVE")` silently missed (tag is "PLOVER") and cost a run.
+- A recursive void Def's base case must emit nothing.
+
+## Repo state
+
+Modified: `THIRD-PARTY-NOTICES.md`, `src/Shoddy.Mill/Program.cs`,
+`src/Shoddy.Runtime/Engine.cs`. New: `src/Shoddy.Compiler/Lint.cs`,
+`mills/open-cave/` (untracked, no build artifacts left behind). Runtime
+additions across the project: `InputLine`, `TryWriteFile`, shadowing lint.
+Nothing is committed yet — the whole port plus the runtime/compiler
+changes await a commit/PR decision from the owner.

@@ -118,5 +118,12 @@ static (ShoddyProgram, MachineSet) ParseWithMachines(string file)
     List<Line> lines = Lexer.ReadProgram(file, machines.TryResolve);
     var prog = new ShoddyProgram();
     machines.SeedInto(prog);
-    return (Parser.Parse(lines, prog), machines);
+    ShoddyProgram parsed = Parser.Parse(lines, prog);
+    // Shadowed field accessors are silent at both weave and run time, so
+    // this is the only place they surface. Warnings on stderr: they never
+    // stop a build, and stdout belongs to the program.
+    if (Environment.GetEnvironmentVariable("SHODDY_LINT") is not null)
+        foreach (string w in Lint.ShadowedAccessors(parsed))
+            Console.Error.WriteLine(w);
+    return (parsed, machines);
 }

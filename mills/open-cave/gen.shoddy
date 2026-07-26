@@ -1,0 +1,1677 @@
+Rem ===================================================================
+Rem gen.shoddy -- turn adventure.yaml into Shoddy source.
+Rem
+Rem   build.cmd gen       (Windows)
+Rem   ./build.sh gen      (Unix)
+Rem
+Rem This runs once and its output is committed, so playing the game needs
+Rem nothing but the mill. It replaces upstream's make_dungeon.py, which
+Rem wants Python and PyYAML.
+Rem
+Rem It is not a YAML parser and does not try to be. adventure.yaml is a
+Rem narrow, hand-maintained subset -- !!omap sections, block scalars,
+Rem single-quoted scalars, flow sequences, and two dozen anchors -- and
+Rem this reads exactly that subset. Anything it does not recognise is an
+Rem Error with the offending line, because a generator that guesses is
+Rem worse than one that stops.
+Rem
+Rem Two rules keep it fast on a 157K file. Lines are indexed with Nth,
+Rem never walked with First/Rest, because a Shoddy list is an array and
+Rem Rest copies it. Output is accumulated as a list of lines and joined
+Rem once, because & in a loop is quadratic.
+Rem ===================================================================
+
+Include "../../machines/str.shoddy"
+Include "../../machines/seq.shoddy"
+Include "../../machines/file.shoddy"
+
+Def SourceYaml() As String
+    "adventure.yaml"
+
+Rem ---- line primitives -----------------------------------------------
+
+Rem Leading-space count. Tabs never appear as indentation in this file.
+Def IndentFrom(s As String, k As Number) As Number
+    If k > Len(s) Then
+        k - 1
+    Else
+        If Mid(s, k, 1) = " " Then
+            IndentFrom(s, k + 1)
+        Else
+            k - 1
+
+Def Indent(s As String) As Number
+    IndentFrom(s, 1)
+
+Def IsBlank(s As String) As Boolean
+    Len(Trim(s)) = 0
+
+Def IsComment(s As String) As Boolean
+    Left(Trim(s), 1) = "#"
+
+Rem Booleans are not numbers in Shoddy, so Str won't take one.
+Def YN(b As Boolean) As String
+    If b Then
+        "Y"
+    Else
+        "N"
+
+Def Bool(b As Boolean) As String
+    If b Then
+        "True"
+    Else
+        "False"
+
+Rem Drop n leading characters.
+Def Dedent(s As String, n As Number) As String
+    If Len(s) <= n Then
+        ""
+    Else
+        Mid(s, n + 1, Len(s))
+
+Rem Trailing-space strip; Trim in str.shoddy does both ends, which is
+Rem what we want everywhere here.
+Def Line(ls As Array, i As Number) As String
+    Nth(ls, i)
+
+Def Count(ls As Array) As Number
+    Length(ls)
+
+Rem ---- scalar decoding -----------------------------------------------
+
+Rem The end of a single-quoted scalar, skipping the doubled quotes that
+Rem YAML uses for a literal apostrophe. Zero if it never closes.
+Def QuotedEnd(s As String, i As Number, n As Number) As Number
+    If i > n Then
+        0
+    Else
+        If Mid(s, i, 1) <> "'" Then
+            QuotedEnd(s, i + 1, n)
+        Else
+            If i < n And Mid(s, i + 1, 1) = "'" Then
+                QuotedEnd(s, i + 2, n)
+            Else
+                i
+
+Rem Four sequence items in adventure.yaml carry a trailing comment --
+Rem  - '' # described with dragon
+Rem -- and the comment is not part of the value. Cutting at the closing
+Rem quote rather than at the first # keeps apostrophes inside the text.
+Def StripComment(s As String) As String
+    Let t = Trim(s)
+    If Left(t, 1) <> "'" Then
+        t
+    Else
+        Let e = QuotedEnd(t, 2, Len(t))
+        If e = 0 Then
+            t
+        Else
+            Left(t, e)
+
+Rem A single-quoted YAML scalar: strip the quotes and turn '' into '.
+Def Unquote(s As String) As String
+    Let t = StripComment(s)
+    If Left(t, 1) = "'" And Right(t, 1) = "'" And Len(t) >= 2 Then
+        Replace(Mid(t, 2, Len(t) - 2), "''", "'")
+    Else
+        t
+
+Rem Everything after the first colon of a "- NAME: value" line.
+Def AfterColon(s As String) As String
+    Let k = Instr(s, ":")
+    If k = 0 Then
+        Error("GEN: EXPECTED A COLON IN: " & s)
+    Else
+        Trim(Mid(s, k + 1, Len(s)))
+
+Rem The NAME of a "- NAME: value" line, quotes stripped if present
+Rem (actions.yaml has one entry spelled - "YES": to dodge YAML's bool).
+Def EntryName(s As String) As String
+    Let t = Trim(s)
+    If Left(t, 2) <> "- " Then
+        Error("GEN: NOT AN ENTRY LINE: " & s)
+    Else
+        Let k = Instr(t, ":")
+        If k = 0 Then
+            Error("GEN: ENTRY HAS NO COLON: " & s)
+        Else
+            Let raw = Trim(Mid(t, 3, k - 3))
+            If Left(raw, 1) = Chr(34) And Right(raw, 1) = Chr(34) Then
+                Mid(raw, 2, Len(raw) - 2)
+            Else
+                raw
+
+Rem ---- block scalars --------------------------------------------------
+Rem A "|-" scalar runs until the next non-blank line indented no deeper
+Rem than the entry that introduced it. The block's own indent is set by
+Rem its first line and stripped from every line.
+
+Def BlockEnd(ls As Array, i As Number, n As Number, owner As Number) As Number
+    If i > n Then
+        i
+    Else
+        Let s = Line(ls, i)
+        If IsBlank(s) Then
+            BlockEnd(ls, i + 1, n, owner)
+        Else
+            If Indent(s) > owner Then
+                BlockEnd(ls, i + 1, n, owner)
+            Else
+                i
+
+Def BlockBody(ls As Array, i As Number, stop As Number, strip As Number, acc As List) As List
+    If i >= stop Then
+        acc
+    Else
+        Let s = Line(ls, i)
+        If IsBlank(s) Then
+            BlockBody(ls, i + 1, stop, strip, Append(acc, ""))
+        Else
+            BlockBody(ls, i + 1, stop, strip, Append(acc, Dedent(s, strip)))
+
+Rem A "|-" block strips the final newline, so blank lines separating it
+Rem from whatever follows are not part of it. Keeping them would leave a
+Rem trailing \n on the message and print an extra blank line at the very
+Rem end of every such text.
+Def DropTrailingBlanks(xs As List) As List
+    If IsEmpty(xs) Then
+        xs
+    Else
+        If IsBlank(Nth(xs, Length(xs))) Then
+            DropTrailingBlanks(Taken(xs, Length(xs) - 1))
+        Else
+            xs
+
+Def BlockLines(ls As Array, i As Number, stop As Number, strip As Number, acc As List) As List
+    DropTrailingBlanks(BlockBody(ls, i, stop, strip, acc))
+
+Rem ---- emitting Shoddy string literals --------------------------------
+Rem The YAML already contains \n and \t sequences meant to survive into
+Rem the generated source (upstream relies on the same trick to reach C),
+Rem and both are legal Shoddy escapes, so they pass through untouched.
+Rem The only character that must be escaped is the double quote. There
+Rem are no other backslashes in the file; if one ever appears, say so.
+
+Rem The two characters backslash-n, to be written into the generated
+Rem source as an escape. Writing "\n" here would embed a real newline and
+Rem break the literal across physical lines, which the lexer rejects.
+Def Nl() As String
+    Chr(92) & "n"
+
+Def EscBody(s As String) As String
+    Replace(s, Chr(34), Chr(92) & Chr(34))
+
+Def Quoted(s As String) As String
+    Chr(34) & EscBody(s) & Chr(34)
+
+Rem A multi-line message becomes one &-joined literal, one physical line
+Rem per source line, so the generated file still reads like the original
+Rem text. Every line but the last carries its newline. Returns finished,
+Rem indented output lines.
+Def ContinueLines(xs As List, i As Number, n As Number, pad As String, acc As List) As List
+    If i > n Then
+        acc
+    Else
+        If i = n Then
+            Rem the last line carries no newline
+            Append(acc, pad & "  & " & Quoted(Nth(xs, i)))
+        Else
+            ContinueLines(xs, i + 1, n, pad, Append(acc, pad & "  & " & Quoted(Nth(xs, i) & Nl())))
+
+Def LiteralLines(xs As List, pad As String) As List
+    If IsEmpty(xs) Then
+        { pad & Quoted("") }
+    Else
+        If Length(xs) = 1 Then
+            { pad & Quoted(First(xs)) }
+        Else
+            Let head = pad & "    " & Quoted(First(xs) & Nl())
+            Concat({ head }, ContinueLines(xs, 2, Length(xs), pad, {}))
+
+Rem ---- entries and their sub-keys -------------------------------------
+Rem Every !!omap section is a run of "- NAME:" lines at column zero, each
+Rem owning the indented lines beneath it. Ent records that span so the
+Rem sub-key readers can work inside it without rescanning.
+
+Type Ent
+    Name As String
+    From As Number
+    To   As Number
+
+Rem The line that ends the entry starting at i: the next line indented no
+Rem deeper than the dash that opened it, ignoring blanks and comments.
+Def EntryEnd(ls As Array, i As Number, n As Number, at As Number) As Number
+    If i > n Then
+        n + 1
+    Else
+        Let s = Line(ls, i)
+        If IsBlank(s) Or IsComment(s) Then
+            EntryEnd(ls, i + 1, n, at)
+        Else
+            If Indent(s) <= at Then
+                i
+            Else
+                EntryEnd(ls, i + 1, n, at)
+
+Rem Sections put their dashes at different depths: the !!omap sections at
+Rem column zero, hints and obituaries indented two.
+Def ReadEntriesAt(ls As Array, i As Number, n As Number, at As Number, acc As List) As List
+    If i > n Then
+        acc
+    Else
+        Let s = Line(ls, i)
+        If IsBlank(s) Or IsComment(s) Then
+            ReadEntriesAt(ls, i + 1, n, at, acc)
+        Else
+            If Indent(s) < at Then
+                Rem back out to a shallower level: this section is done
+                acc
+            Else
+                If Indent(s) > at Or Left(Trim(s), 2) <> "- " Then
+                    acc
+                Else
+                    Let stop = EntryEnd(ls, i + 1, n, at)
+                    ReadEntriesAt(ls, stop, n, at, Append(acc, Ent(EntryName(s), i, stop - 1)))
+
+Def ReadEntries(ls As Array, i As Number, n As Number, acc As List) As List
+    ReadEntriesAt(ls, i, n, 0, acc)
+
+Rem ---- values carried on the dash line ---------------------------------
+Rem "- threshold: 45" and "- query: |-" put the first key on the dash
+Rem itself, where the sub-key readers (which start one line in) can't see
+Rem it. Hints rely on that: their inner "hint:" is the text, while the
+Rem dash line's "hint:" only carries the anchor.
+
+Def DashValue(ls As Array, e As Ent) As String
+    Let v = AfterColon(Line(ls, From(e)))
+    If v = "!!null" Then
+        ""
+    Else
+        v
+
+Def DashText(ls As Array, e As Ent) As List
+    Let head = Line(ls, From(e))
+    Let rest = AfterColon(head)
+    If rest = "!!null" Then
+        { }
+    Else
+        If EndsWith(rest, "|-") Then
+            Rem the key sits two columns right of the dash, and it is the
+            Rem key's depth that bounds the block -- sibling keys line up
+            Rem with it, so measuring from the dash would swallow them
+            Let stop = BlockEnd(ls, From(e) + 1, To(e), Indent(head) + 2)
+            Let strip = Indent(Line(ls, From(e) + 1))
+            BlockLines(ls, From(e) + 1, stop, strip, {})
+        Else
+            If Len(rest) = 0 Then
+                { }
+            Else
+                { Unquote(StripAnchor(rest)) }
+
+Rem The line index of "key:" inside an entry, or 0 if absent.
+Def SubLineFrom(ls As Array, i As Number, to As Number, want As String) As Number
+    If i > to Then
+        0
+    Else
+        Let t = Trim(Line(ls, i))
+        If StartsWith(t, want & ":") Then
+            i
+        Else
+            SubLineFrom(ls, i + 1, to, want)
+
+Def SubLine(ls As Array, e As Ent, want As String) As Number
+    SubLineFrom(ls, From(e) + 1, To(e), want)
+
+Rem The scalar after "key:", "" when the key is absent or !!null.
+Def SubScalar(ls As Array, e As Ent, want As String) As String
+    Let k = SubLine(ls, e, want)
+    If k = 0 Then
+        ""
+    Else
+        Let v = AfterColon(Line(ls, k))
+        If v = "!!null" Then
+            ""
+        Else
+            v
+
+Def HasSub(ls As Array, e As Ent, want As String) As Boolean
+    SubLine(ls, e, want) <> 0
+
+Rem ---- flow sequences -------------------------------------------------
+Rem words: ['g', 'carry', 'take', ...] -- may wrap onto further lines, so
+Rem gather text until the brackets balance, then split on commas. No
+Rem value in this file contains a comma inside quotes, and the reader
+Rem checks that assumption rather than trusting it.
+
+Def GatherFlow(ls As Array, i As Number, to As Number, acc As String) As String
+    If Instr(acc, "]") > 0 Then
+        acc
+    Else
+        If i > to Then
+            Error("GEN: UNCLOSED FLOW SEQUENCE: " & acc)
+        Else
+            GatherFlow(ls, i + 1, to, acc & " " & Trim(Line(ls, i)))
+
+Def Bracketed(s As String) As String
+    Let a = Instr(s, "[")
+    Let b = Instr(s, "]")
+    If a = 0 Or b = 0 Then
+        Error("GEN: NOT A FLOW SEQUENCE: " & s)
+    Else
+        Mid(s, a + 1, b - a - 1)
+
+Def SubList(ls As Array, e As Ent, want As String) As List
+    Let k = SubLine(ls, e, want)
+    If k = 0 Then
+        { }
+    Else
+        Let head = AfterColon(Line(ls, k))
+        If head = "!!null" Or Len(head) = 0 Then
+            { }
+        Else
+            Let whole = Bracketed(GatherFlow(ls, k + 1, To(e), head))
+            Let parts = Map(Split(whole, ","), Fn(x) => Unquote(Trim(x)))
+            Filter(parts, Fn(x) => Len(x) > 0)
+
+Rem ---- scalars that may be blocks --------------------------------------
+Rem Returns the value of `want` as a list of lines: empty for !!null or a
+Rem missing key, one line for a plain scalar, many for a |- block. This
+Rem is the same shape LiteralLines wants, so descriptions, room text and
+Rem messages all emit through one path.
+
+Def SubText(ls As Array, e As Ent, want As String) As List
+    Let k = SubLine(ls, e, want)
+    If k = 0 Then
+        { }
+    Else
+        Let rest = AfterColon(Line(ls, k))
+        If rest = "!!null" Then
+            { }
+        Else
+            If EndsWith(rest, "|-") Then
+                Let stop = BlockEnd(ls, k + 1, To(e), Indent(Line(ls, k)))
+                Let strip = Indent(Line(ls, k + 1))
+                BlockLines(ls, k + 1, stop, strip, {})
+            Else
+                If Len(rest) = 0 Then
+                    { }
+                Else
+                    { Unquote(StripAnchor(rest)) }
+
+Rem ---- block sequences -------------------------------------------------
+Rem     descriptions:
+Rem     - 'There is a shiny brass lamp nearby.'
+Rem     - |-
+Rem       a two-line description
+Rem Items sit at the same indent as the key that introduces them, which
+Rem YAML permits and this file uses throughout. An item written as a |-
+Rem block keeps its newlines; the caller splits them back out to emit.
+
+Def SeqItems(ls As Array, i As Number, to As Number, at As Number, acc As List) As List
+    If i > to Then
+        acc
+    Else
+        Let s = Line(ls, i)
+        If IsBlank(s) Or IsComment(s) Then
+            SeqItems(ls, i + 1, to, at, acc)
+        Else
+            If Indent(s) <> at Then
+                acc
+            Else
+                If Left(Trim(s), 2) <> "- " Then
+                    Rem the next key at this level: the sequence is done
+                    acc
+                Else
+                    Let body = Trim(Mid(Trim(s), 3, Len(s)))
+                    If EndsWith(body, "|-") Then
+                        Let stop = BlockEnd(ls, i + 1, to, at)
+                        Let strip = Indent(Line(ls, i + 1))
+                        Let text = BlockLines(ls, i + 1, stop, strip, {})
+                        SeqItems(ls, stop, to, at, Append(acc, Join(text, Chr(10))))
+                    Else
+                        SeqItems(ls, i + 1, to, at, Append(acc, Unquote(body)))
+
+Def SubSeq(ls As Array, e As Ent, want As String) As List
+    Let k = SubLine(ls, e, want)
+    If k = 0 Then
+        { }
+    Else
+        If AfterColon(Line(ls, k)) = "!!null" Then
+            { }
+        Else
+            SeqItems(ls, k + 1, To(e), Indent(Line(ls, k)), {})
+
+Rem ---- section location ----------------------------------------------
+
+Def FindSection(ls As Array, i As Number, n As Number, want As String) As Number
+    If i > n Then
+        Error("GEN: SECTION NOT FOUND: " & want)
+    Else
+        If StartsWith(Line(ls, i), want & ":") Then
+            i
+        Else
+            FindSection(ls, i + 1, n, want)
+
+Rem ---- arbitrary_messages ---------------------------------------------
+Rem 213 entries of NAME -> text. Three shapes appear: !!null, a
+Rem single-quoted scalar (sometimes carrying an &anchor), and a |- block.
+
+Type Msg
+    Name As String
+    Body As List
+    Anch As String
+
+Def ReadMessages(ls As Array, i As Number, n As Number, acc As List) As List
+    If i > n Then
+        acc
+    Else
+        Let s = Line(ls, i)
+        If IsBlank(s) Or IsComment(s) Then
+            Rem adventure.yaml keeps two retired messages commented out at
+            Rem column zero; they are not entries and not the section end
+            ReadMessages(ls, i + 1, n, acc)
+        Else
+            If Indent(s) > 0 Then
+                Error("GEN: UNEXPECTED INDENT IN MESSAGES: " & s)
+            Else
+                If Left(Trim(s), 2) <> "- " Then
+                    Rem the section ended: next top-level key
+                    acc
+                Else
+                    Let name = EntryName(s)
+                    Let rest = AfterColon(s)
+                    Let anch = AnchorName(rest)
+                    If rest = "!!null" Then
+                        ReadMessages(ls, i + 1, n, Append(acc, Msg(name, {}, "")))
+                    Else
+                        If EndsWith(rest, "|-") Then
+                            Rem a literal block: newlines are significant
+                            Let stop = BlockEnd(ls, i + 1, n, 0)
+                            Let strip = Indent(Line(ls, i + 1))
+                            Let body = BlockLines(ls, i + 1, stop, strip, {})
+                            ReadMessages(ls, stop, n, Append(acc, Msg(name, body, anch)))
+                        Else
+                            If Len(rest) = 0 Then
+                                Rem a plain scalar continued on the following
+                                Rem indented lines: YAML folds those to spaces
+                                Let stop = BlockEnd(ls, i + 1, n, 0)
+                                Let strip = Indent(Line(ls, i + 1))
+                                Let raw = BlockLines(ls, i + 1, stop, strip, {})
+                                Let one = Trim(Join(Map(raw, Fn(x) => Trim(x)), " "))
+                                ReadMessages(ls, stop, n, Append(acc, Msg(name, { one }, "")))
+                            Else
+                                ReadMessages(ls, i + 1, n, Append(acc, Msg(name, { Unquote(StripAnchor(rest)) }, anch)))
+
+Rem "&am_game 'I''m game...'" -- drop the anchor, keep the scalar.
+Def StripAnchor(s As String) As String
+    If Left(s, 1) = "&" Then
+        Let k = Instr(s, " ")
+        If k = 0 Then
+            Error("GEN: ANCHOR WITH NO VALUE: " & s)
+        Else
+            Trim(Mid(s, k + 1, Len(s)))
+    Else
+        s
+
+Rem ---- emitting cave-messages.shoddy ----------------------------------
+
+Def Banner(what As String, notes As List) As List
+    Let head = { "Rem ===================================================================",
+                 "Rem " & what & " -- generated from adventure.yaml by gen.shoddy.",
+                 "Rem Do not edit by hand: run  build.cmd gen  (./build.sh gen) instead.",
+                 "Rem" }
+    Let body = Map(notes, Fn(x) => "Rem " & x)
+    Concat(Concat(head, body),
+           { "Rem ===================================================================", "" })
+
+Rem One message: a Rem naming it, then its literal, then a comma unless
+Rem it is the last of the table.
+Def EmitMsg(m As Msg, idx As Number, last As Boolean, acc As List) As List
+    Let head = Append(acc, "      Rem " & Str(idx) & "  " & Name(m))
+    Let lits = LiteralLines(Body(m), "      ")
+    Let body = Concat(head, lits)
+    If last Then
+        Append(body, "")
+    Else
+        Rem hang the comma off the final physical line of the literal
+        Let k = Length(body)
+        Concat(Concat(Taken(body, k - 1), { Nth(body, k) & "," }), { "" })
+
+Def EmitMsgs(ms As List, i As Number, n As Number, acc As List) As List
+    If i > n Then
+        acc
+    Else
+        EmitMsgs(ms, i + 1, n, EmitMsg(Nth(ms, i), i - 1, i = n, acc))
+
+Rem The symbolic names, so cave-core can say MsgCurmudgeonBlock() rather than
+Rem a bare 2. Adventure leans on these names heavily; keeping them is
+Rem most of what makes the port readable against the C.
+Def EmitNames(ms As List, i As Number, n As Number, acc As List) As List
+    If i > n Then
+        acc
+    Else
+        Let m = Nth(ms, i)
+        Let d = { "Def Msg" & Pascal(Name(m)) & "() As Number",
+                  "    " & Str(i - 1),
+                  "" }
+        EmitNames(ms, i + 1, n, Concat(acc, d))
+
+Rem CURMUDGEON_BLOCK -> CurmudgeonBlock
+Def PascalFrom(parts As List, i As Number, n As Number, acc As String) As String
+    If i > n Then
+        acc
+    Else
+        Let w = Nth(parts, i)
+        If Len(w) = 0 Then
+            PascalFrom(parts, i + 1, n, acc)
+        Else
+            PascalFrom(parts, i + 1, n, acc & Upper(Left(w, 1)) & Lower(Mid(w, 2, Len(w))))
+
+Def Pascal(s As String) As String
+    Let parts = Split(s, "_")
+    PascalFrom(parts, 1, Length(parts), "")
+
+Def MessagesFile(ms As List) As List
+    Let head = Banner("cave-messages.shoddy",
+                      { Str(Length(ms)) & " arbitrary messages, in declaration order.",
+                        "Messages() is indexed from zero, matching rspeak(n) in the C.",
+                        "The Msg* words below give every message its name back." })
+    Let head2 = Concat(head, { "Def Messages() As List", "    {" })
+    Let body = EmitMsgs(ms, 1, Length(ms), {})
+    Let tail = { "    }", "" }
+    Concat(Concat(head2, body), Concat(tail, EmitNames(ms, 1, Length(ms), {})))
+
+Rem ---- the anchor table -----------------------------------------------
+Rem Twenty-four YAML anchors, all defined in arbitrary_messages, and
+Rem referenced from actions and objects as *name. An alias in YAML is the
+Rem same node, so resolving one just means substituting the text.
+
+Type Anchor
+    Key  As String
+    Text As String
+
+Rem "&already_carrying 'You are already carrying it!'" -> the name.
+Def AnchorName(s As String) As String
+    If Left(s, 1) <> "&" Then
+        ""
+    Else
+        Let k = Instr(s, " ")
+        If k = 0 Then
+            Mid(s, 2, Len(s))
+        Else
+            Trim(Mid(s, 2, k - 2))
+
+Def CollectAnchors(ms As List, i As Number, n As Number, acc As List) As List
+    If i > n Then
+        acc
+    Else
+        Let m = Nth(ms, i)
+        If Len(Anch(m)) = 0 Then
+            CollectAnchors(ms, i + 1, n, acc)
+        Else
+            CollectAnchors(ms, i + 1, n, Append(acc, Anchor(Anch(m), Join(Body(m), Nl()))))
+
+Def LookupAnchor(tbl As List, i As Number, n As Number, want As String) As String
+    If i > n Then
+        Error("GEN: UNKNOWN ANCHOR: *" & want)
+    Else
+        If Key(Nth(tbl, i)) = want Then
+            Text(Nth(tbl, i))
+        Else
+            LookupAnchor(tbl, i + 1, n, want)
+
+Rem A scalar that may be an alias, an anchor definition, or plain text.
+Def Resolve(tbl As List, s As String) As String
+    If Left(s, 1) = "*" Then
+        LookupAnchor(tbl, 1, Length(tbl), Trim(Mid(s, 2, Len(s))))
+    Else
+        Unquote(StripAnchor(s))
+
+Rem ---- motions and actions --------------------------------------------
+Rem Both are vocabulary: a name, its synonyms, and whether the
+Rem single-letter forms survive in oldstyle mode. Actions also carry a
+Rem default message and a noaction flag.
+
+Type Word
+    Name     As String
+    Words    As List
+    Oldstyle As Boolean
+    Message  As String
+    NoAction As Boolean
+
+Rem An action's message is an alias, an inline scalar, or a |- block.
+Def VocabMessage(ls As Array, e As Ent, tbl As List, raw As String) As String
+    If Left(raw, 1) = "*" Then
+        Resolve(tbl, raw)
+    Else
+        Join(SubText(ls, e, "message"), Chr(10))
+
+Def ReadVocab(ls As Array, es As List, tbl As List, i As Number, n As Number, wantMsg As Boolean, acc As List) As List
+    If i > n Then
+        acc
+    Else
+        Let e = Nth(es, i)
+        Let ws = SubList(ls, e, "words")
+        Let old = SubScalar(ls, e, "oldstyle") <> "false"
+        If wantMsg Then
+            Rem Several action messages are |- blocks rather than inline
+            Rem scalars, so reading only the text after the colon yields
+            Rem the block marker instead of the message.
+            Let raw = SubScalar(ls, e, "message")
+            Let msg = VocabMessage(ls, e, tbl, raw)
+            Let noact = HasSub(ls, e, "noaction")
+            ReadVocab(ls, es, tbl, i + 1, n, wantMsg, Append(acc, Word(Name(e), ws, old, msg, noact)))
+        Else
+            ReadVocab(ls, es, tbl, i + 1, n, wantMsg, Append(acc, Word(Name(e), ws, old, "", False)))
+
+Rem ---- objects ---------------------------------------------------------
+Rem Seventy of them, NO_OBJECT first. `locations` is either one location
+Rem name or a two-element list for the objects that exist in two places
+Rem at once (the grate, the troll, the beanstalk); the C addresses the
+Rem second placement as obj + NOBJECTS, which the core will model as a
+Rem proper Fixed/Free distinction rather than index arithmetic.
+
+Type Obj
+    Name      As String
+    Words     As List
+    Inventory As String
+    Places    As List
+    States    As List
+    Descs     As List
+    Changes   As List
+    Sounds    As List
+    Texts     As List
+    Immovable As Boolean
+    Treasure  As Boolean
+
+Rem locations: LOC_BUILDING   or   locations: [LOC_GRATE, LOC_BELOWGRATE]
+Def PlacesOf(ls As Array, e As Ent) As List
+    Let k = SubLine(ls, e, "locations")
+    If k = 0 Then
+        { }
+    Else
+        Let rest = AfterColon(Line(ls, k))
+        If rest = "!!null" Or Len(rest) = 0 Then
+            { }
+        Else
+            If Left(rest, 1) = "[" Then
+                SubList(ls, e, "locations")
+            Else
+                { rest }
+
+Def ReadObjects(ls As Array, es As List, i As Number, n As Number, acc As List) As List
+    If i > n Then
+        acc
+    Else
+        Let e = Nth(es, i)
+        Let inv = SubText(ls, e, "inventory")
+        Let o = Obj(Name(e),
+                    SubList(ls, e, "words"),
+                    Join(inv, Chr(10)),
+                    PlacesOf(ls, e),
+                    SubList(ls, e, "states"),
+                    SubSeq(ls, e, "descriptions"),
+                    SubSeq(ls, e, "changes"),
+                    SubSeq(ls, e, "sounds"),
+                    SubSeq(ls, e, "texts"),
+                    HasSub(ls, e, "immovable"),
+                    HasSub(ls, e, "treasure"))
+        ReadObjects(ls, es, i + 1, n, Append(acc, o))
+
+Rem ---- string scanning helpers -----------------------------------------
+Rem Instr only searches from the start, so anything that walks a string
+Rem needs an explicit offset.
+
+Def FindFrom(s As String, sub As String, from As Number) As Number
+    If from > Len(s) Then
+        0
+    Else
+        Let k = Instr(Mid(s, from, Len(s)), sub)
+        If k = 0 Then
+            0
+        Else
+            k + from - 1
+
+Rem Strip either quote style; the travel table quotes a few words
+Rem ("special", "with", "nocurmudgeons") only to dodge YAML keywords.
+Def Unquote2(s As String) As String
+    Let t = Trim(s)
+    If Left(t, 1) = Chr(34) And Right(t, 1) = Chr(34) And Len(t) >= 2 Then
+        Mid(t, 2, Len(t) - 2)
+    Else
+        Unquote(t)
+
+Rem ---- travel ----------------------------------------------------------
+Rem     travel: [
+Rem       {verbs: [ROAD, WEST, UPWAR], action: [goto, LOC_HILL]},
+Rem       {verbs: [UPWAR], cond: [pct, 60], action: [speak, FUTILE_CRAWL]},
+Rem     ]
+Rem Most rules sit on one line but thirty wrap, so rules are separated by
+Rem brace balance rather than by line. Square brackets inside a rule never
+Rem nest, so a field's closing bracket is simply the next one.
+
+Def GatherTravel(ls As Array, i As Number, to As Number, at As Number, acc As String) As String
+    If i > to Then
+        acc
+    Else
+        Let s = Line(ls, i)
+        If Indent(s) <= at And Trim(s) = "]" Then
+            acc
+        Else
+            GatherTravel(ls, i + 1, to, at, acc & " " & Trim(s))
+
+Def RuleSplit(s As String, i As Number, n As Number, depth As Number, start As Number, acc As List) As List
+    If i > n Then
+        acc
+    Else
+        Let c = Mid(s, i, 1)
+        If c = "{" Then
+            If depth = 0 Then
+                RuleSplit(s, i + 1, n, 1, i, acc)
+            Else
+                RuleSplit(s, i + 1, n, depth + 1, start, acc)
+        Else
+            If c = "}" Then
+                If depth = 1 Then
+                    RuleSplit(s, i + 1, n, 0, 0, Append(acc, Mid(s, start, i - start + 1)))
+                Else
+                    RuleSplit(s, i + 1, n, depth - 1, start, acc)
+            Else
+                RuleSplit(s, i + 1, n, depth, start, acc)
+
+Rem The [...] after "name:" inside one rule, as a list of bare words.
+Def RuleField(rule As String, want As String) As List
+    Let k = Instr(rule, want & ":")
+    If k = 0 Then
+        { }
+    Else
+        Let open = FindFrom(rule, "[", k)
+        If open = 0 Then
+            Error("GEN: TRAVEL FIELD IS NOT A LIST: " & rule)
+        Else
+            Let close = FindFrom(rule, "]", open)
+            If close = 0 Then
+                Error("GEN: UNCLOSED TRAVEL FIELD: " & rule)
+            Else
+                Let inner = Mid(rule, open + 1, close - open - 1)
+                Filter(Map(Split(inner, ","), Fn(x) => Unquote2(x)), Fn(x) => Len(x) > 0)
+
+Def HasField(rule As String, want As String) As Boolean
+    Instr(rule, want & ":") <> 0
+
+Type Rule
+    Verbs  As List
+    Cond   As List
+    Action As List
+
+Def ReadRules(rs As List, i As Number, n As Number, acc As List) As List
+    If i > n Then
+        acc
+    Else
+        Let r = Nth(rs, i)
+        ReadRules(rs, i + 1, n,
+                  Append(acc, Rule(RuleField(r, "verbs"), RuleField(r, "cond"), RuleField(r, "action"))))
+
+Def TravelOf(ls As Array, e As Ent) As List
+    Let k = SubLine(ls, e, "travel")
+    If k = 0 Then
+        { }
+    Else
+        Let text = GatherTravel(ls, k + 1, To(e), Indent(Line(ls, k)), "")
+        Let rs = RuleSplit(text, 1, Len(text), 0, 0, {})
+        ReadRules(rs, 1, Length(rs), {})
+
+Rem ---- locations -------------------------------------------------------
+
+Type Loc
+    Name  As String
+    Long  As List
+    Short As List
+    Conds As List
+    Noise As String
+    Loud  As Boolean
+    Hints As List
+    Trav  As List
+
+Rem conditions: {FLUID: true, ABOVE: true, LIT: true} -> the true names.
+Def CondFlags(ls As Array, e As Ent) As List
+    Let k = SubLine(ls, e, "conditions")
+    If k = 0 Then
+        { }
+    Else
+        Let rest = AfterColon(Line(ls, k))
+        Let a = Instr(rest, "{")
+        Let b = Instr(rest, "}")
+        If a = 0 Or b = 0 Then
+            Error("GEN: CONDITIONS IS NOT A FLOW MAP: " & rest)
+        Else
+            Let inner = Mid(rest, a + 1, b - a - 1)
+            Let pairs = Filter(Map(Split(inner, ","), Fn(x) => Trim(x)), Fn(x) => Len(x) > 0)
+            Map(Filter(pairs, Fn(p) => EndsWith(p, "true")),
+                Fn(p) => Trim(Left(p, Instr(p, ":") - 1)))
+
+Def ReadLocations(ls As Array, es As List, i As Number, n As Number, acc As List) As List
+    If i > n Then
+        acc
+    Else
+        Let e = Nth(es, i)
+        Let l = Loc(Name(e),
+                    SubText(ls, e, "long"),
+                    SubText(ls, e, "short"),
+                    CondFlags(ls, e),
+                    SubScalar(ls, e, "sound"),
+                    HasSub(ls, e, "loud"),
+                    Map(SubList(ls, e, "hints"), Fn(h) => Trim(Mid(h, 2, Len(h)))),
+                    TravelOf(ls, e))
+        ReadLocations(ls, es, i + 1, n, Append(acc, l))
+
+Rem A rule with no verbs is a forced move; the C gives it the magic
+Rem motion HERE (index 1) and init.c later turns that into COND_FORCED.
+Def OpsIn(r As Rule) As Number
+    If IsEmpty(Verbs(r)) Then
+        1
+    Else
+        Length(Verbs(r))
+
+Def CountOps(rs As List, i As Number, n As Number, acc As Number) As Number
+    If i > n Then
+        acc
+    Else
+        CountOps(rs, i + 1, n, acc + OpsIn(Nth(rs, i)))
+
+Rem ---- hints, classes, thresholds, obituaries, curmudgeons ------------------
+Rem The small tail sections. Their dashes sit at mixed depths and two of
+Rem them carry the first key on the dash line itself, which is the only
+Rem reason DashValue and DashText exist.
+
+Type Hint
+    Anch     As String
+    Name     As String
+    Number   As Number
+    Turns    As Number
+    Penalty  As Number
+    Question As List
+    Text     As List
+
+Def ReadHints(ls As Array, es As List, i As Number, n As Number, acc As List) As List
+    If i > n Then
+        acc
+    Else
+        Let e = Nth(es, i)
+        Let h = Hint(AnchorName(DashValue(ls, e)),
+                     SubScalar(ls, e, "name"),
+                     Val(SubScalar(ls, e, "number")),
+                     Val(SubScalar(ls, e, "turns")),
+                     Val(SubScalar(ls, e, "penalty")),
+                     SubText(ls, e, "question"),
+                     SubText(ls, e, "hint"))
+        ReadHints(ls, es, i + 1, n, Append(acc, h))
+
+Type Klass
+    Threshold As Number
+    Message   As List
+
+Def ReadClasses(ls As Array, es As List, i As Number, n As Number, acc As List) As List
+    If i > n Then
+        acc
+    Else
+        Let e = Nth(es, i)
+        ReadClasses(ls, es, i + 1, n,
+                    Append(acc, Klass(Val(DashValue(ls, e)), SubText(ls, e, "message"))))
+
+Type Thresh
+    Threshold As Number
+    PointLoss As Number
+    Message   As List
+
+Def ReadThresholds(ls As Array, es As List, i As Number, n As Number, acc As List) As List
+    If i > n Then
+        acc
+    Else
+        Let e = Nth(es, i)
+        ReadThresholds(ls, es, i + 1, n,
+                       Append(acc, Thresh(Val(DashValue(ls, e)),
+                                          Val(SubScalar(ls, e, "point_loss")),
+                                          SubText(ls, e, "message"))))
+
+Type Obit
+    Query As List
+    Yes   As List
+
+Def ReadObituaries(ls As Array, es As List, i As Number, n As Number, acc As List) As List
+    If i > n Then
+        acc
+    Else
+        Let e = Nth(es, i)
+        ReadObituaries(ls, es, i + 1, n,
+                       Append(acc, Obit(DashText(ls, e), SubText(ls, e, "yes_response"))))
+
+Rem curmudgeonlocs is one multi-line flow sequence at column zero.
+Def ReadCurmudgeonLocs(ls As Array, at As Number, n As Number) As List
+    Let head = AfterColon(Line(ls, at))
+    Let whole = Bracketed(GatherFlow(ls, at + 1, n, head))
+    Filter(Map(Split(whole, ","), Fn(x) => Unquote2(x)), Fn(x) => Len(x) > 0)
+
+Rem ---- name to index ---------------------------------------------------
+Rem Every symbol in the YAML -- LOC_HILL, LAMP, FUTILE_CRAWL, UPWAR --
+Rem has to become the integer the tables are indexed by, and the order of
+Rem declaration is the numbering. Written against Nth so it stays linear;
+Rem seq's IndexOf walks with Rest, which copies.
+
+Def IndexIn(xs As List, i As Number, n As Number, want As String) As Number
+    If i > n Then
+        0
+    Else
+        If Nth(xs, i) = want Then
+            i
+        Else
+            IndexIn(xs, i + 1, n, want)
+
+Rem Zero-based, to match the C tables. Aborts rather than guessing.
+Def IdOf(names As List, want As String, what As String) As Number
+    Let k = IndexIn(names, 1, Length(names), want)
+    If k = 0 Then
+        Error("GEN: UNKNOWN " & what & ": " & want)
+    Else
+        k - 1
+
+Rem Motion words are grouped into synonyms, and travel rules name the
+Rem group by its first word (ROAD, UPWAR), not by the motion's own name.
+Def MotionIndexIn(ms As List, i As Number, n As Number, want As String) As Number
+    If i > n Then
+        0
+    Else
+        If Contains(Words(Nth(ms, i)), Lower(want)) Then
+            i
+        Else
+            MotionIndexIn(ms, i + 1, n, want)
+
+Def MotionId(ms As List, want As String) As Number
+    Let k = MotionIndexIn(ms, 1, Length(ms), want)
+    If k = 0 Then
+        Error("GEN: UNKNOWN MOTION WORD: " & want)
+    Else
+        k - 1
+
+Rem ---- flattening the travel table --------------------------------------
+Rem The C stores one row per (rule, verb) pair rather than per rule, with
+Rem tkey[loc] pointing at a location's first row and a stop flag marking
+Rem its last. Row zero is a dummy so that tkey = 0 can mean "no travel".
+Rem
+Rem condtype: 0 none  1 pct  2 carry  3 with  4 not
+Rem desttype: 0 goto  1 special  2 speak
+
+Type Op
+    Motion    As Number
+    CondType  As Number
+    CondArg1  As Number
+    CondArg2  As Number
+    DestType  As Number
+    DestVal   As Number
+    NoCurmudgeons As Boolean
+    Stop      As Boolean
+    Note      As String
+
+Rem A state name in [not, OBJ, STATE] is either a number, a label from
+Rem that object's states list, or -- for the few objects with no states --
+Rem an index into its descriptions.
+Def StateValue(objs As List, objNames As List, obj As String, state As String) As Number
+    If IsNumeric(state) Then
+        Val(state)
+    Else
+        Let o = Nth(objs, IdOf(objNames, obj, "OBJECT") + 1)
+        Let k = IndexIn(States(o), 1, Length(States(o)), state)
+        If k > 0 Then
+            k - 1
+        Else
+            Error("GEN: UNKNOWN STATE " & state & " ON OBJECT " & obj)
+
+Def IsDigit(c As String) As Boolean
+    c >= "0" And c <= "9"
+
+Def IsNumeric(s As String) As Boolean
+    If Len(s) = 0 Then
+        False
+    Else
+        IsDigit(Left(s, 1))
+
+Rem cond: [] | [pct,N] | [carry,OBJ] | [with,OBJ] | [not,OBJ,STATE] | [nocurmudgeons]
+Def CondTypeOf(c As List) As Number
+    If IsEmpty(c) Then
+        0
+    Else
+        Let head = Lower(First(c))
+        If head = "pct" Then
+            1
+        Else
+            If head = "carry" Then
+                2
+            Else
+                If head = "with" Then
+                    3
+                Else
+                    If head = "not" Then
+                        4
+                    Else
+                        If head = "nocurmudgeons" Then
+                            0
+                        Else
+                            Error("GEN: UNKNOWN TRAVEL CONDITION: " & Join(c, " "))
+
+Def CondArg1Of(c As List, objs As List, objNames As List) As Number
+    If IsEmpty(c) Then
+        0
+    Else
+        Let head = Lower(First(c))
+        If head = "pct" Then
+            Val(Nth(c, 2))
+        Else
+            If head = "carry" Or head = "with" Or head = "not" Then
+                IdOf(objNames, Nth(c, 2), "OBJECT")
+            Else
+                Rem make_dungeon.py:441 encodes `nocurmudgeons` as the number 100,
+                Rem which decodes to cond_goto with an argument of 100 rather
+                Rem than the 0 an unconditional rule carries. That difference
+                Rem is not cosmetic: main.c:719-723 rolls PCT(condarg1) for
+                Rem any non-zero argument, so the rule always passes and still
+                Rem spends a draw. Emit the 100 so the tables say so.
+                If head = "nocurmudgeons" Then
+                    100
+                Else
+                    0
+
+Def CondArg2Of(c As List, objs As List, objNames As List) As Number
+    If IsEmpty(c) Then
+        0
+    Else
+        If Lower(First(c)) = "not" Then
+            StateValue(objs, objNames, Nth(c, 2), Nth(c, 3))
+        Else
+            0
+
+Rem action: [goto,LOC] | [speak,MSG] | [special,N]
+Def DestTypeOf(a As List) As Number
+    Let head = Lower(First(a))
+    If head = "goto" Then
+        0
+    Else
+        If head = "special" Then
+            1
+        Else
+            If head = "speak" Then
+                2
+            Else
+                Error("GEN: UNKNOWN TRAVEL ACTION: " & Join(a, " "))
+
+Def DestValOf(a As List, locNames As List, msgNames As List) As Number
+    Let head = Lower(First(a))
+    If head = "goto" Then
+        IdOf(locNames, Nth(a, 2), "LOCATION")
+    Else
+        If head = "special" Then
+            Val(Nth(a, 2))
+        Else
+            IdOf(msgNames, Nth(a, 2), "MESSAGE")
+
+Rem One rule expands to one row per verb; a rule with no verbs is a forced
+Rem move and takes the magic motion HERE, which is index 1.
+Def ExpandVerbs(r As Rule, vs As List, i As Number, n As Number, motions As List,
+                objs As List, objNames As List, locNames As List, msgNames As List,
+                acc As List) As List
+    If i > n Then
+        acc
+    Else
+        Let verb = Nth(vs, i)
+        Let m = MotionId(motions, verb)
+        Let op = Op(m,
+                    CondTypeOf(Cond(r)),
+                    CondArg1Of(Cond(r), objs, objNames),
+                    CondArg2Of(Cond(r), objs, objNames),
+                    DestTypeOf(Action(r)),
+                    DestValOf(Action(r), locNames, msgNames),
+                    Not IsEmpty(Cond(r)) And Lower(First(Cond(r))) = "nocurmudgeons",
+                    False,
+                    verb & " -> " & Join(Action(r), " "))
+        ExpandVerbs(r, vs, i + 1, n, motions, objs, objNames, locNames, msgNames, Append(acc, op))
+
+Def ExpandRule(r As Rule, motions As List, objs As List, objNames As List,
+               locNames As List, msgNames As List) As List
+    If IsEmpty(Verbs(r)) Then
+        Let op = Op(1,
+                    CondTypeOf(Cond(r)),
+                    CondArg1Of(Cond(r), objs, objNames),
+                    CondArg2Of(Cond(r), objs, objNames),
+                    DestTypeOf(Action(r)),
+                    DestValOf(Action(r), locNames, msgNames),
+                    Not IsEmpty(Cond(r)) And Lower(First(Cond(r))) = "nocurmudgeons",
+                    False,
+                    "forced -> " & Join(Action(r), " "))
+        { op }
+    Else
+        ExpandVerbs(r, Verbs(r), 1, Length(Verbs(r)), motions, objs, objNames, locNames, msgNames, {})
+
+Def ConcatRules(rs As List, i As Number, n As Number, motions As List, objs As List,
+                objNames As List, locNames As List, msgNames As List, acc As List) As List
+    If i > n Then
+        acc
+    Else
+        ConcatRules(rs, i + 1, n, motions, objs, objNames, locNames, msgNames,
+                    Concat(acc, ExpandRule(Nth(rs, i), motions, objs, objNames, locNames, msgNames)))
+
+Rem The last row of a location's block carries the stop flag; the C scans
+Rem forward from tkey until it sees one.
+Def MarkStop(ops As List) As List
+    If IsEmpty(ops) Then
+        ops
+    Else
+        Let k = Length(ops)
+        Concat(Taken(ops, k - 1), { With(Nth(ops, k), Stop = True) })
+
+Type Travel
+    Ops  As List
+    Tkey As List
+
+Rem Row zero is a dummy, so tkey = 0 reads as "this location has no
+Rem travel rules" -- which is true only of LOC_NOWHERE.
+Def BuildTravel(locs As List, i As Number, n As Number, motions As List, objs As List,
+                objNames As List, locNames As List, msgNames As List,
+                ops As List, tkey As List) As Travel
+    If i > n Then
+        Travel(ops, tkey)
+    Else
+        Let l = Nth(locs, i)
+        Let rs = Trav(l)
+        If IsEmpty(rs) Then
+            BuildTravel(locs, i + 1, n, motions, objs, objNames, locNames, msgNames,
+                        ops, Append(tkey, 0))
+        Else
+            Let block = MarkStop(ConcatRules(rs, 1, Length(rs), motions, objs,
+                                             objNames, locNames, msgNames, {}))
+            BuildTravel(locs, i + 1, n, motions, objs, objNames, locNames, msgNames,
+                        Concat(ops, block), Append(tkey, Length(ops)))
+
+Rem ---- emitting the data files -----------------------------------------
+Rem The C packs location flags into a bitmask because it was counting
+Rem bytes. We are not, so the flags stay as names and the core asks
+Rem Contains(Conds(l), "LIT"). Same information, and it reads.
+
+Def QuotedList(xs As List) As String
+    If IsEmpty(xs) Then
+        "{ }"
+    Else
+        "{ " & Join(Map(xs, Fn(x) => Quoted(x)), ", ") & " }"
+
+Def NumList(xs As List) As String
+    If IsEmpty(xs) Then
+        "{ }"
+    Else
+        "{ " & Join(Map(xs, Fn(x) => Str(x)), ", ") & " }"
+
+Rem A record spread over several lines, with the trailing comma hung off
+Rem the last one unless this is the final entry of the table.
+Def CloseEntry(lines As List, last As Boolean) As List
+    Let k = Length(lines)
+    If last Then
+        Append(Concat(Taken(lines, k - 1), { Nth(lines, k) & ")" }), "")
+    Else
+        Append(Concat(Taken(lines, k - 1), { Nth(lines, k) & ")," }), "")
+
+Rem ---- locations file --------------------------------------------------
+
+Def EmitLoc(l As Loc, idx As Number, msgNames As List, hintNames As List, last As Boolean) As List
+    Let head = { "      Rem " & Str(idx) & "  " & Name(l)
+                 & "  " & Join(Conds(l), " "),
+                 "      Room(" & Quoted(Name(l)) & "," }
+    Let lng = LiteralLines(Long(l), "          ")
+    Let shrt = LiteralLines(Short(l), "          ")
+    Let hints = Map(Hints(l), Fn(h) => IdOf(hintNames, h, "HINT"))
+    Let tailNoise = SubMsgId(msgNames, Noise(l))
+    Let tail = { "          " & QuotedList(Conds(l)) & ",",
+                 "          " & Str(tailNoise) & ", " & Bool(Loud(l)) & ", " & NumList(hints) }
+    CloseEntry(Concat(Concat(head, MidComma(lng)), Concat(MidComma(shrt), tail)), last)
+
+Rem A literal block used as one field needs a comma after its last line.
+Def MidComma(lines As List) As List
+    Let k = Length(lines)
+    Concat(Taken(lines, k - 1), { Nth(lines, k) & "," })
+
+Rem sound: is a message name, or absent.
+Def SubMsgId(msgNames As List, want As String) As Number
+    If Len(want) = 0 Then
+        0 - 1
+    Else
+        IdOf(msgNames, want, "MESSAGE")
+
+Def EmitLocs(ls As List, i As Number, n As Number, msgNames As List,
+             hintNames As List, acc As List) As List
+    If i > n Then
+        acc
+    Else
+        EmitLocs(ls, i + 1, n, msgNames, hintNames,
+                 Concat(acc, EmitLoc(Nth(ls, i), i - 1, msgNames, hintNames, i = n)))
+
+Def LocationsFile(ls As List, msgNames As List, hintNames As List) As List
+    Let head = Banner("cave-locations.shoddy",
+                      { Str(Length(ls)) & " locations, in declaration order, LOC_NOWHERE first.",
+                        "Conds carries the condition flags by name; the C packs the same",
+                        "information into a bitmask, which we have no reason to do.",
+                        "Noise indexes Messages(), -1 when the room is silent." })
+    Let decl = { "Type Room",
+                 "    Tag   As String",
+                 "    Long  As String",
+                 "    Short As String",
+                 "    Conds As List",
+                 "    Noise As Number",
+                 "    Loud  As Boolean",
+                 "    RoomHints As List",
+                 "",
+                 "Def Locations() As List",
+                 "    {" }
+    Concat(Concat(head, decl),
+           Concat(EmitLocs(ls, 1, Length(ls), msgNames, hintNames, {}), { "    }", "" }))
+
+Rem ---- travel file -----------------------------------------------------
+
+Def EmitOp(o As Op, last As Boolean) As String
+    Let body = ("      Op(" & Str(Motion(o)) & ", " & Str(CondType(o)) & ", "
+                & Str(CondArg1(o)) & ", " & Str(CondArg2(o)) & ", "
+                & Str(DestType(o)) & ", " & Str(DestVal(o)) & ", "
+                & Bool(NoCurmudgeons(o)) & ", " & Bool(Stop(o)) & ")")
+    If last Then
+        body & "   Rem " & Note(o)
+    Else
+        body & ",  Rem " & Note(o)
+
+Def EmitOps(os As List, i As Number, n As Number, acc As List) As List
+    If i > n Then
+        acc
+    Else
+        EmitOps(os, i + 1, n, Append(acc, EmitOp(Nth(os, i), i = n)))
+
+Def TravelFile(tv As Travel) As List
+    Let head = Banner("cave-travel.shoddy",
+                      { "The travel table, flattened one row per (rule, verb) pair.",
+                        "Row 0 is a dummy so that Tkey 0 can mean 'no travel here'.",
+                        "Tkey(loc) is the first row for a location; scan forward until",
+                        "a row with Stop set. CondType: 0 none 1 pct 2 carry 3 with",
+                        "4 not.  DestType: 0 goto 1 special 2 speak." })
+    Let decl = { "Type Op",
+                 "    Motion    As Number",
+                 "    CondType  As Number",
+                 "    CondArg1  As Number",
+                 "    CondArg2  As Number",
+                 "    DestType  As Number",
+                 "    DestVal   As Number",
+                 "    NoCurmudgeons As Boolean",
+                 "    Stop      As Boolean",
+                 "",
+                 "Def Travels() As List",
+                 "    {" }
+    Let body = EmitOps(Ops(tv), 1, Length(Ops(tv)), {})
+    Let keys = { "    }", "",
+                 "Rem The first travel row for each location, 0 for none.",
+                 "Def Tkey() As List",
+                 "    " & NumList(Tkey(tv)), "" }
+    Concat(Concat(head, decl), Concat(body, keys))
+
+Rem ---- objects file ----------------------------------------------------
+Rem Object prose is mostly one line each, so these go out as a plain list
+Rem of literals with \n escapes rather than the &-continuation the room
+Rem descriptions get.
+
+Def OneLine(s As String) As String
+    Quoted(Replace(s, Chr(10), Nl()))
+
+Def TextList(xs As List, pad As String) As List
+    If IsEmpty(xs) Then
+        { pad & "{ }," }
+    Else
+        Let k = Length(xs)
+        Let lead = Taken(Map(xs, Fn(x) => pad & "  " & OneLine(x) & ","), k - 1)
+        Concat(Concat({ pad & "{" }, lead),
+               { pad & "  " & OneLine(Nth(xs, k)) & " }," })
+
+Def EmitObj(o As Obj, idx As Number, locNames As List, last As Boolean) As List
+    Let places = Map(Places(o), Fn(p) => IdOf(locNames, p, "LOCATION"))
+    Let head = { "      Rem " & Str(idx) & "  " & Name(o)
+                 & "  " & Join(States(o), " "),
+                 "      Obj(" & Quoted(Name(o)) & ", " & OneLine(Inventory(o)) & ",",
+                 "          " & QuotedList(Words(o)) & ",",
+                 "          " & NumList(places) & ", " & Bool(Immovable(o))
+                 & ", " & Bool(Treasure(o)) & ",",
+                 "          " & QuotedList(States(o)) & "," }
+    Let rest = Concat(Concat(TextList(Descs(o), "          "),
+                             TextList(Changes(o), "          ")),
+                      Concat(TextList(Sounds(o), "          "),
+                             TextList(Texts(o), "          ")))
+    Let all = Concat(head, rest)
+    Let k = Length(all)
+    Rem the last field must not carry a trailing comma
+    Let fixed = Concat(Taken(all, k - 1), { Left(Nth(all, k), Len(Nth(all, k)) - 1) })
+    CloseEntry(fixed, last)
+
+Def EmitObjs(os As List, i As Number, n As Number, locNames As List, acc As List) As List
+    If i > n Then
+        acc
+    Else
+        EmitObjs(os, i + 1, n, locNames, Concat(acc, EmitObj(Nth(os, i), i - 1, locNames, i = n)))
+
+Def ObjectsFile(os As List, locNames As List) As List
+    Let head = Banner("cave-objects.shoddy",
+                      { Str(Length(os)) & " objects, in declaration order, NO_OBJECT first.",
+                        "Places holds one location index, or two for the objects that",
+                        "exist in two rooms at once (the grate, the troll, the chasm).",
+                        "The C addresses that second placement as obj + NOBJECTS; the",
+                        "core models it as a placement instead of index arithmetic." })
+    Let decl = { "Type Obj",
+                 "    Tag       As String",
+                 "    Inventory As String",
+                 "    Words     As List",
+                 "    Places    As List",
+                 "    Fixed     As Boolean",
+                 "    Treasure  As Boolean",
+                 "    States    As List",
+                 "    Descs     As List",
+                 "    Changes   As List",
+                 "    Sounds    As List",
+                 "    Texts     As List",
+                 "",
+                 "Def Objects() As List",
+                 "    {" }
+    Concat(Concat(head, decl),
+           Concat(EmitObjs(os, 1, Length(os), locNames, {}), { "    }", "" }))
+
+Rem ---- vocabulary file -------------------------------------------------
+
+Def EmitVocab(w As Word, idx As Number, withMsg As Boolean, last As Boolean) As List
+    If withMsg Then
+        Let body = { "      Rem " & Str(idx) & "  " & Name(w),
+                     "      Vocab(" & Quoted(Name(w)) & ", " & QuotedList(Words(w)) & ",",
+                     "            " & Bool(Oldstyle(w)) & ", " & Bool(NoAction(w)) & ",",
+                     "            " & OneLine(Message(w)) }
+        CloseEntry(body, last)
+    Else
+        Let body = { "      Rem " & Str(idx) & "  " & Name(w),
+                     "      Vocab(" & Quoted(Name(w)) & ", " & QuotedList(Words(w)) & ",",
+                     "            " & Bool(Oldstyle(w)) & ", False, " & Quoted("") }
+        CloseEntry(body, last)
+
+Def EmitVocabs(ws As List, i As Number, n As Number, withMsg As Boolean, acc As List) As List
+    If i > n Then
+        acc
+    Else
+        EmitVocabs(ws, i + 1, n, withMsg,
+                   Concat(acc, EmitVocab(Nth(ws, i), i - 1, withMsg, i = n)))
+
+Def VocabFile(motions As List, acts As List) As List
+    Let head = Banner("cave-vocab.shoddy",
+                      { Str(Length(motions)) & " motion words and " & Str(Length(acts))
+                        & " action words, each with its synonyms.",
+                        "Words are matched on their first five letters, so the synonym",
+                        "lists are already truncated to five in the source data.",
+                        "Oldstyle is False where the single-letter form is suppressed",
+                        "under the -o flag. NoAction marks the verbs that only speak." })
+    Let decl = { "Type Vocab",
+                 "    Tag      As String",
+                 "    Words    As List",
+                 "    Oldstyle As Boolean",
+                 "    NoAction As Boolean",
+                 "    Message  As String",
+                 "",
+                 "Def Motions() As List",
+                 "    {" }
+    Let mid = { "    }", "", "Def Actions() As List", "    {" }
+    Concat(Concat(Concat(head, decl), EmitVocabs(motions, 1, Length(motions), False, {})),
+           Concat(mid, Concat(EmitVocabs(acts, 1, Length(acts), True, {}), { "    }", "" })))
+
+Rem ---- the small tables ------------------------------------------------
+Rem Hints, score classes, turn thresholds, obituaries and the curmudgeons'
+Rem starting rooms. Small enough to share one file.
+
+Def EmitHint(h As Hint, idx As Number, last As Boolean) As List
+    Let body = { "      Rem " & Str(idx) & "  " & Name(h),
+                 "      Hint(" & Quoted(Name(h)) & ", " & Str(Number(h)) & ", "
+                 & Str(Turns(h)) & ", " & Str(Penalty(h)) & ",",
+                 "           " & OneLine(Join(Question(h), Chr(10))) & ",",
+                 "           " & OneLine(Join(Text(h), Chr(10))) }
+    CloseEntry(body, last)
+
+Def EmitHints(hs As List, i As Number, n As Number, acc As List) As List
+    If i > n Then
+        acc
+    Else
+        EmitHints(hs, i + 1, n, Concat(acc, EmitHint(Nth(hs, i), i - 1, i = n)))
+
+Def EmitPairs(xs As List, i As Number, n As Number, ctor As String,
+              f As Quotation, acc As List) As List
+    If i > n Then
+        acc
+    Else
+        Let tail = ","
+        If i = n Then
+            EmitPairs(xs, i + 1, n, ctor, f, Append(acc, "      " & ctor & Call(f, Nth(xs, i)) & ")"))
+        Else
+            EmitPairs(xs, i + 1, n, ctor, f, Append(acc, "      " & ctor & Call(f, Nth(xs, i)) & "),"))
+
+Def TablesFile(hs As List, ks As List, ts As List, obs As List, dw As List, locNames As List) As List
+    Let head = Banner("cave-tables.shoddy",
+                      { Str(Length(hs)) & " hints, " & Str(Length(ks)) & " score classes, "
+                        & Str(Length(ts)) & " turn thresholds,",
+                        Str(Length(obs)) & " obituaries and the " & Str(Length(dw))
+                        & " curmudgeon starting rooms (the last is the pirate)." })
+    Let hdecl = { "Type Hint",
+                  "    Tag      As String",
+                  "    Number   As Number",
+                  "    Turns    As Number",
+                  "    Penalty  As Number",
+                  "    Question As String",
+                  "    Text     As String",
+                  "",
+                  "Def Hints() As List",
+                  "    {" }
+    Let kdecl = { "    }", "",
+                  "Type Klass",
+                  "    Threshold As Number",
+                  "    Message   As String",
+                  "",
+                  "Def Classes() As List",
+                  "    {" }
+    Let tdecl = { "    }", "",
+                  "Type Thresh",
+                  "    Threshold As Number",
+                  "    PointLoss As Number",
+                  "    Message   As String",
+                  "",
+                  "Def TurnThresholds() As List",
+                  "    {" }
+    Let odecl = { "    }", "",
+                  "Type Obit",
+                  "    Query As String",
+                  "    Yes   As String",
+                  "",
+                  "Def Obituaries() As List",
+                  "    {" }
+    Let ddecl = { "    }", "",
+                  "Rem Curmudgeon starting rooms; the sixth is the pirate's.",
+                  "Def CurmudgeonLocs() As List",
+                  "    " & NumList(Map(dw, Fn(d) => IdOf(locNames, d, "LOCATION"))), "" }
+    Concat(Concat(Concat(head, hdecl), EmitHints(hs, 1, Length(hs), {})),
+           Concat(Concat(kdecl, EmitPairs(ks, 1, Length(ks), "Klass(",
+                                          Fn(k) => Str(Threshold(k)) & ", " & OneLine(Join(Message(k), Chr(10))), {})),
+                  Concat(Concat(tdecl, EmitPairs(ts, 1, Length(ts), "Thresh(",
+                                                 Fn(t) => Str(Threshold(t)) & ", " & Str(PointLoss(t)) & ", "
+                                                          & OneLine(Join(Message(t), Chr(10))), {})),
+                         Concat(Concat(odecl, EmitPairs(obs, 1, Length(obs), "Obit(",
+                                                        Fn(o) => OneLine(Join(Query(o), Chr(10))) & ", "
+                                                                 & OneLine(Join(Yes(o), Chr(10))), {})),
+                                ddecl))))
+
+Def Main()
+    Let t0 = Ticks()
+    Let ls = ToArray(ReadLines(SourceYaml()))
+    Let n = Count(ls)
+    Print("read " & Str(n) & " lines in " & Str(Ticks() - t0) & "ms")
+
+    Let at = FindSection(ls, 1, n, "arbitrary_messages")
+    Let msgs = ReadMessages(ls, at + 1, n, {})
+    Print("arbitrary_messages: " & Str(Length(msgs)) & " entries (expected 213)")
+    Assert(Length(msgs) = 213, "GEN: WRONG MESSAGE COUNT")
+
+    Let anchors = CollectAnchors(msgs, 1, Length(msgs), {})
+    Print("anchors: " & Str(Length(anchors)) & " entries (expected 14)")
+
+    Let mo = FindSection(ls, 1, n, "motions")
+    Let motions = ReadVocab(ls, ReadEntries(ls, mo + 1, n, {}), anchors, 1,
+                            Length(ReadEntries(ls, mo + 1, n, {})), False, {})
+    Print("motions: " & Str(Length(motions)) & " entries (expected 76)")
+    Assert(Length(motions) = 76, "GEN: WRONG MOTION COUNT")
+
+    Let ac = FindSection(ls, 1, n, "actions")
+    Let acts = ReadVocab(ls, ReadEntries(ls, ac + 1, n, {}), anchors, 1,
+                         Length(ReadEntries(ls, ac + 1, n, {})), True, {})
+    Print("actions: " & Str(Length(acts)) & " entries (expected 58)")
+    Assert(Length(acts) = 58, "GEN: WRONG ACTION COUNT")
+    Print("  CARRY words=" & Join(Words(Nth(acts, 2)), " ") & " oldstyle=" & YN(Oldstyle(Nth(acts, 2))))
+    Print("  CARRY message=" & Message(Nth(acts, 2)))
+
+    Let ob = FindSection(ls, 1, n, "objects")
+    Let oes = ReadEntries(ls, ob + 1, n, {})
+    Let objs = ReadObjects(ls, oes, 1, Length(oes), {})
+    Print("objects: " & Str(Length(objs)) & " entries (expected 70)")
+    Assert(Length(objs) = 70, "GEN: WRONG OBJECT COUNT")
+    Let lamp = Nth(objs, 3)
+    Print("  LAMP inv=" & Inventory(lamp) & " states=" & Str(Length(States(lamp)))
+          & " descs=" & Str(Length(Descs(lamp))) & " changes=" & Str(Length(Changes(lamp))))
+    Let bird = First(Filter(objs, Fn(o) => Name(o) = "BIRD"))
+    Print("  BIRD sounds=" & Str(Length(Sounds(bird))) & " (expected 6; BIRD_ENDSTATE is one less)")
+    Assert(Length(Sounds(bird)) = 6, "GEN: BIRD SOUND COUNT DRIVES BIRD_ENDSTATE")
+    Let grate = Nth(objs, 4)
+    Print("  GRATE places=" & Str(Length(Places(grate))) & " immovable=" & YN(Immovable(grate)))
+    Print("  treasures=" & Str(Length(Filter(objs, Fn(o) => Treasure(o)))) & " (expected 20)")
+
+    Let lo = FindSection(ls, 1, n, "locations")
+    Let les = ReadEntries(ls, lo + 1, n, {})
+    Let locs = ReadLocations(ls, les, 1, Length(les), {})
+    Print("locations: " & Str(Length(locs)) & " entries (expected 185)")
+    Assert(Length(locs) = 185, "GEN: WRONG LOCATION COUNT")
+
+    Let ruleCount = Fold(locs, 0, Fn(a, l) => a + Length(Trav(l)))
+    Let opCount = Fold(locs, 0, Fn(a, l) => a + CountOps(Trav(l), 1, Length(Trav(l)), 0))
+    Print("  travel rules=" & Str(ruleCount) & " (expected 623)")
+    Print("  travel ops=" & Str(opCount) & " (expected 877; the C table is this plus a dummy row)")
+    Assert(ruleCount = 623, "GEN: WRONG TRAVEL RULE COUNT")
+    Assert(opCount = 877, "GEN: WRONG TRAVEL OP COUNT")
+
+    Rem Condition and action shapes, counted per rule (not per expanded
+    Rem row), which is how upstream's own tally reads.
+    Let allRules = Fold(locs, { }, Fn(a, l) => Concat(a, Trav(l)))
+    Print("  rules by cond: pct=" & Str(Length(Filter(allRules, Fn(r) => CondTypeOf(Cond(r)) = 1)))
+          & " carry=" & Str(Length(Filter(allRules, Fn(r) => CondTypeOf(Cond(r)) = 2)))
+          & " with=" & Str(Length(Filter(allRules, Fn(r) => CondTypeOf(Cond(r)) = 3)))
+          & " not=" & Str(Length(Filter(allRules, Fn(r) => CondTypeOf(Cond(r)) = 4)))
+          & "  (expected 12 7 4 25)")
+    Assert(Length(Filter(allRules, Fn(r) => CondTypeOf(Cond(r)) = 1)) = 12, "GEN: PCT RULE COUNT")
+    Assert(Length(Filter(allRules, Fn(r) => CondTypeOf(Cond(r)) = 2)) = 7, "GEN: CARRY RULE COUNT")
+    Assert(Length(Filter(allRules, Fn(r) => CondTypeOf(Cond(r)) = 3)) = 4, "GEN: WITH RULE COUNT")
+    Assert(Length(Filter(allRules, Fn(r) => CondTypeOf(Cond(r)) = 4)) = 25, "GEN: NOT RULE COUNT")
+    Print("  rules by action: goto=" & Str(Length(Filter(allRules, Fn(r) => DestTypeOf(Action(r)) = 0)))
+          & " special=" & Str(Length(Filter(allRules, Fn(r) => DestTypeOf(Action(r)) = 1)))
+          & " speak=" & Str(Length(Filter(allRules, Fn(r) => DestTypeOf(Action(r)) = 2)))
+          & "  (expected 583 6 34)")
+    Assert(Length(Filter(allRules, Fn(r) => DestTypeOf(Action(r)) = 0)) = 583, "GEN: GOTO RULE COUNT")
+    Assert(Length(Filter(allRules, Fn(r) => DestTypeOf(Action(r)) = 1)) = 6, "GEN: SPECIAL RULE COUNT")
+    Assert(Length(Filter(allRules, Fn(r) => DestTypeOf(Action(r)) = 2)) = 34, "GEN: SPEAK RULE COUNT")
+    Print("  rules with no verbs (forced)=" & Str(Length(Filter(allRules, Fn(r) => IsEmpty(Verbs(r)))))
+          & " (expected 23)")
+    Assert(Length(Filter(allRules, Fn(r) => IsEmpty(Verbs(r)))) = 23, "GEN: FORCED RULE COUNT")
+
+    Let start = Nth(locs, 2)
+    Print("  LOC_START conds=" & Join(Conds(start), " ") & " sound=" & Noise(start))
+    Print("  LOC_START long lines=" & Str(Length(Long(start))) & " rules=" & Str(Length(Trav(start))))
+    Print("  LOC_START rule1 verbs=" & Join(Verbs(First(Trav(start))), " ")
+          & " action=" & Join(Action(First(Trav(start))), " "))
+    Print("  conds tally: DEEP=" & Str(Length(Filter(locs, Fn(l) => Contains(Conds(l), "DEEP"))))
+          & " (expected 144)  LIT=" & Str(Length(Filter(locs, Fn(l) => Contains(Conds(l), "LIT"))))
+          & " (expected 37)")
+    Print("  hinted locations=" & Str(Length(Filter(locs, Fn(l) => Not IsEmpty(Hints(l))))) & " (expected 55)")
+
+    Let hi = FindSection(ls, 1, n, "hints")
+    Let hes = ReadEntriesAt(ls, hi + 1, n, 2, {})
+    Let hints = ReadHints(ls, hes, 1, Length(hes), {})
+    Print("hints: " & Str(Length(hints)) & " entries (expected 10)")
+    Assert(Length(hints) = 10, "GEN: WRONG HINT COUNT")
+    Print("  hint1 anchor=" & Anch(First(hints)) & " name=" & Name(First(hints))
+          & " turns=" & Str(Turns(First(hints))) & " penalty=" & Str(Penalty(First(hints)))
+          & " textlines=" & Str(Length(Text(First(hints)))))
+
+    Let cl = FindSection(ls, 1, n, "classes")
+    Let ces = ReadEntriesAt(ls, cl + 1, n, 0, {})
+    Let klasses = ReadClasses(ls, ces, 1, Length(ces), {})
+    Print("classes: " & Str(Length(klasses)) & " entries (expected 11)")
+    Assert(Length(klasses) = 11, "GEN: WRONG CLASS COUNT")
+    Print("  last threshold=" & Str(Threshold(Nth(klasses, 11))) & " (expected 9999)")
+
+    Let tt = FindSection(ls, 1, n, "turn_thresholds")
+    Let tes = ReadEntriesAt(ls, tt + 1, n, 0, {})
+    Let threshes = ReadThresholds(ls, tes, 1, Length(tes), {})
+    Print("turn_thresholds: " & Str(Length(threshes)) & " entries (expected 4)")
+    Assert(Length(threshes) = 4, "GEN: WRONG THRESHOLD COUNT")
+    Print("  first=" & Str(Threshold(First(threshes))) & " loss=" & Str(PointLoss(First(threshes))))
+
+    Let obs = FindSection(ls, 1, n, "obituaries")
+    Let oes2 = ReadEntriesAt(ls, obs + 1, n, 2, {})
+    Let obits = ReadObituaries(ls, oes2, 1, Length(oes2), {})
+    Print("obituaries: " & Str(Length(obits)) & " entries (expected 3)")
+    Assert(Length(obits) = 3, "GEN: WRONG OBITUARY COUNT")
+    Print("  obit1 query lines=" & Str(Length(Query(First(obits))))
+          & " yes lines=" & Str(Length(Yes(First(obits)))))
+
+    Let dw = FindSection(ls, 1, n, "curmudgeonlocs")
+    Let curmudgeons = ReadCurmudgeonLocs(ls, dw, n)
+    Print("curmudgeonlocs: " & Str(Length(curmudgeons)) & " entries (expected 6)")
+    Assert(Length(curmudgeons) = 6, "GEN: WRONG CURMUDGEON LOCATION COUNT")
+    Print("  " & Join(curmudgeons, " "))
+
+    Rem ---- resolve every symbol to its index and flatten travel --------
+    Let locNames = Map(locs, Fn(l) => Name(l))
+    Let objNames = Map(objs, Fn(o) => Name(o))
+    Let msgNames = Map(msgs, Fn(m) => Name(m))
+    Let dummy = Op(0, 0, 0, 0, 0, 0, False, False, "dummy row 0")
+    Let tv = BuildTravel(locs, 1, Length(locs), motions, objs, objNames, locNames, msgNames,
+                         { dummy }, {})
+    Print("travel table: " & Str(Length(Ops(tv))) & " rows (expected 878 with the dummy)")
+    Assert(Length(Ops(tv)) = 878, "GEN: WRONG TRAVEL TABLE SIZE")
+    Print("  tkey entries=" & Str(Length(Tkey(tv))) & " (expected 185), zero="
+          & Str(Length(Filter(Tkey(tv), Fn(k) => k = 0))) & " (expected 1: LOC_NOWHERE)")
+    Print("  stops=" & Str(Length(Filter(Ops(tv), Fn(o) => Stop(o)))) & " (expected 184)")
+    Let op1 = Nth(Ops(tv), 2)
+    Print("  row1 motion=" & Str(Motion(op1)) & " dest=" & Str(DestVal(op1)) & "  " & Note(op1))
+
+    Rem ---- write the generated files -----------------------------------
+    Let hintNames = Map(hints, Fn(h) => Anch(h))
+
+    Let mOut = MessagesFile(msgs)
+    WriteLines("cave-messages.shoddy", mOut)
+    Print("wrote cave-messages.shoddy   " & Str(Length(mOut)) & " lines")
+
+    Let lOut = LocationsFile(locs, msgNames, hintNames)
+    WriteLines("cave-locations.shoddy", lOut)
+    Print("wrote cave-locations.shoddy  " & Str(Length(lOut)) & " lines")
+
+    Let tOut = TravelFile(tv)
+    WriteLines("cave-travel.shoddy", tOut)
+    Print("wrote cave-travel.shoddy     " & Str(Length(tOut)) & " lines")
+
+    Let oOut = ObjectsFile(objs, locNames)
+    WriteLines("cave-objects.shoddy", oOut)
+    Print("wrote cave-objects.shoddy    " & Str(Length(oOut)) & " lines")
+
+    Let vOut = VocabFile(motions, acts)
+    WriteLines("cave-vocab.shoddy", vOut)
+    Print("wrote cave-vocab.shoddy      " & Str(Length(vOut)) & " lines")
+
+    Let bOut = TablesFile(hints, klasses, threshes, obits, curmudgeons, locNames)
+    WriteLines("cave-tables.shoddy", bOut)
+    Print("wrote cave-tables.shoddy     " & Str(Length(bOut)) & " lines")
+
+    Print("total time " & Str(Ticks() - t0) & "ms")

@@ -28,6 +28,8 @@ public sealed class ScribblerWindow
     readonly GL gl;
     readonly uint texture, shader, vao;
 
+    readonly string glsl;           // #version line matching the context we got
+
     volatile bool dirty;            // OnBlit (Shoddy thread) sets; pump clears
     bool destroyed;                 // main thread only
     int intervalMs;                 // main thread only (set via posted action)
@@ -38,18 +40,48 @@ public sealed class ScribblerWindow
     ScribblerEvent? lastEnqueued;
     ScribblerEvent? lastTick;
 
+    /// <summary>The context to ask for, and the GLSL version that goes with
+    /// it. Linux asks for 3.1; macOS and Windows keep 3.3 core
+    /// forward-compatible.
+    ///
+    /// Linux is the exception because of the Raspberry Pi: the v3d driver
+    /// (Pi 4 and 5) tops out at desktop GL 3.1, and vc4 (Pi 3 and earlier)
+    /// at 2.1, so a 3.3 request cannot be met there. Desktop Mesa satisfies
+    /// 3.1 without complaint, so one Linux branch covers both. macOS keeps
+    /// 3.3 because Apple offers 2.1 legacy or 3.2+ core and nothing in
+    /// between — 3.1 is not merely lower there, it does not exist. Windows
+    /// keeps it because its vendor drivers have always answered 3.3 core and
+    /// there is nothing to gain by asking for less on a platform where the
+    /// failure would be invisible until a user hit it.
+    ///
+    /// This is a decision, not a probe, and it has to be: GLFW does not
+    /// throw when it cannot honour a context request — Silk.NET calls on
+    /// through the null window and the process dies in native code with no
+    /// managed frame to catch. (Verified twice over: 3.3 core segfaults on a
+    /// Pi, and 3.1 segfaults on macOS.) There is no fallback ladder to
+    /// write, so the first request must be one the driver can actually meet.
+    ///
+    /// GLSL 1.40 keeps everything the presentation path needs — gl_VertexID,
+    /// VAOs, texture(), in/out, integer bit operators — so only the #version
+    /// line differs between the two.</summary>
+    static (GraphicsAPI Api, string Glsl) ContextChoice() =>
+        OperatingSystem.IsLinux()
+            ? (new GraphicsAPI(ContextAPI.OpenGL, ContextProfile.Compatability,
+                               ContextFlags.Default, new APIVersion(3, 1)), "#version 140")
+            : (new GraphicsAPI(ContextAPI.OpenGL, ContextProfile.Core,
+                               ContextFlags.ForwardCompatible, new APIVersion(3, 3)), "#version 330 core");
+
     public ScribblerWindow(MainThreadDispatcher dispatcher, int width, int height)
     {
         this.dispatcher = dispatcher;
 
-        // Explicit 3.3 core, forward-compatible: macOS caps at 4.1 core and
-        // refuses a compatibility context — the default profile won't do.
+        (GraphicsAPI api, string version) = ContextChoice();
+        glsl = version;
         WindowOptions opts = WindowOptions.Default with
         {
             Size = new Vector2D<int>(width, height),
             Title = "Scribbler",
-            API = new GraphicsAPI(ContextAPI.OpenGL, ContextProfile.Core,
-                                  ContextFlags.ForwardCompatible, new APIVersion(3, 3)),
+            API = api,
             WindowBorder = WindowBorder.Fixed,
             VSync = false,
             ShouldSwapAutomatically = false,
@@ -328,8 +360,8 @@ public sealed class ScribblerWindow
         // Fullscreen triangle from gl_VertexID — no vertex buffer, but core
         // profile still requires a bound VAO. Pixels is row-major top-down
         // while GL texture space is bottom-up, so V flips in the UV here.
-        const string vsSrc = """
-            #version 330 core
+        string vsSrc = $$"""
+            {{glsl}}
             out vec2 uv;
             void main() {
                 vec2 p = vec2(float((gl_VertexID << 1) & 2), float(gl_VertexID & 2));
@@ -337,8 +369,8 @@ public sealed class ScribblerWindow
                 gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);
             }
             """;
-        const string fsSrc = """
-            #version 330 core
+        string fsSrc = $$"""
+            {{glsl}}
             in vec2 uv;
             out vec4 color;
             uniform sampler2D tex;

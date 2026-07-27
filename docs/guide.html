@@ -289,14 +289,14 @@ print: <em>building</em> an empty variant takes parentheses
 <h2 id="bigger-programs-include-and-the-library">8. Bigger programs: Include and the library</h2>
 <p>Split programs across files with <code>Include</code> (left margin, near the top):</p>
 <pre class="basic"><code>Include &quot;seq.shoddy&quot;</code></pre>
-<p>A whole standard library ships with the language — twenty-one <em>machines</em>, every one written <em>in</em> the language. Open them up; they’re readable with what you know now. Four to start with:</p>
+<p>A whole standard library ships with the language — twenty-two <em>machines</em>, every one written <em>in</em> the language. Open them up; they’re readable with what you know now. Four to start with:</p>
 <ul>
 <li><strong>seq.shoddy</strong> — list helpers: <code>Any</code>, <code>All</code>, <code>CountIf</code>, <code>Contains</code>, <code>IndexOf</code>, <code>Taken</code>/<code>DropN</code> (first N / all but), <code>Append</code>, <code>Last</code>, <code>Flatten</code>, <code>Zip</code>/<code>ZipWith</code>.</li>
 <li><strong>stats.shoddy</strong> — the aggregation words (<code>Sum</code>, <code>Average</code>, <code>Maximum</code>, <code>Minimum</code>, <code>Median</code>…) and, when you’re ready for them, real statistics: correlation, regression, and the classic tests.</li>
 <li><strong>str.shoddy</strong> — string helpers: <code>Split</code>, <code>Join</code>, <code>Trim</code>, <code>Replace</code>, <code>StartsWith</code>, <code>EndsWith</code>, <code>StrRep</code>.</li>
 <li><strong>file.shoddy</strong> — text files by lines: <code>ReadLines("notes.txt")</code> gives you a list of strings (then <code>Map</code>/<code>Filter</code> away); <code>WriteLines</code> and <code>AppendLine</code> go the other way. Under them sit the builtins <code>ReadFile</code>, <code>WriteFile</code>, <code>AppendFile</code>, <code>FileExists</code>, <code>DeleteFile</code>. Chapter 10 puts all of them to work.</li>
 </ul>
-<p>And the shed is bigger than that. <strong>math</strong>, <strong>random</strong>, and <strong>clock</strong> round out numbers, chance, and time; <strong>money</strong> keeps currency exact; <strong>dict</strong> is key/value lookup; <strong>matrix</strong> is a full <code>Matrix</code> type, with <strong>simplex</strong> (linear programming), <strong>mps</strong>, and <strong>neural</strong> (a trainable feed-forward network) on top; <strong>recio</strong> and <strong>isam</strong> are record files up to a real keyed database; <strong>vt100</strong> and <strong>keys</strong> talk to terminals and keyboards. And the show-off wing: <strong>scribbler</strong> opens a window of pixels you can draw on (run those with <code>mill run</code>), <strong>turtle</strong> walks a pen around it, <strong>plotter</strong> draws charts, and <strong>buzzer</strong> plays actual music — <code>Play(1, "T120 O4 L8 C D E F G2")</code>. Every machine has its own page — summary, history, guide, and word reference — in <a href="machines/index.html">the machines catalog</a>.</p>
+<p>And the shed is bigger than that. <strong>math</strong>, <strong>random</strong>, and <strong>clock</strong> round out numbers, chance, and time; <strong>money</strong> keeps currency exact; <strong>dict</strong> is key/value lookup; <strong>matrix</strong> is a full <code>Matrix</code> type, with <strong>simplex</strong> (linear programming), <strong>mps</strong>, and <strong>neural</strong> (a trainable feed-forward network) on top; <strong>recio</strong> and <strong>isam</strong> are record files up to a real keyed database; <strong>vt100</strong> and <strong>keys</strong> talk to terminals and keyboards; <strong>net</strong> speaks TCP/IP, once you've armed it with <code>--allow-net</code>. And the show-off wing: <strong>scribbler</strong> opens a window of pixels you can draw on (run those with <code>mill run</code>), <strong>turtle</strong> walks a pen around it, <strong>plotter</strong> draws charts, and <strong>buzzer</strong> plays actual music — <code>Play(1, "T120 O4 L8 C D E F G2")</code>. Every machine has its own page — summary, history, guide, and word reference — in <a href="machines/index.html">the machines catalog</a>.</p>
 <p>Taste test:</p>
 <pre class="basic"><code>Include &quot;seq.shoddy&quot;
 Include &quot;str.shoddy&quot;
@@ -306,6 +306,25 @@ Def Main()
     Print(Join(Split(&quot;A,B,C&quot;, &quot;,&quot;), &quot; AND &quot;))     &#39; A AND B AND C
     Print(CountIf(Range(1, 100), Fn(n) =&gt; n Mod 7 = 0))    &#39; 14</code></pre>
 <p>And some personality from inside the library — <code>Flatten</code> is genuinely this one line: <code>Fold(xss, { }, Concat)</code>.</p>
+
+<h3 id="two-machines-same-word">When two machines want the same word</h3>
+<p>Pull in enough of the shed and sooner or later two machines will have had the same good idea about a name. <strong>turtle</strong> has a <code>Close</code> — it shuts the drawing window. <strong>net</strong> has a <code>Close</code> too — it hangs up a socket. Include both and Shoddy stops rather than guessing:</p>
+<pre class="basic"><code>ERROR: duplicate definition of CLOSE across machines — include one of them under a namespace (AS)</code></pre>
+<p>That&#39;s deliberate. Silently picking a winner is how you spend an afternoon wondering why closing a socket redrew your window. The fix is to say which one you meant, by giving one of the two machines a <em>namespace</em> when you include it:</p>
+<pre class="basic"><code>Include &quot;net.shoddy&quot; As Sock
+Include &quot;turtle.shoddy&quot;
+
+Def PackUp(t As Turtle) As Turtle
+    Close(t)                 &#39; bare Close — the turtle&#39;s
+
+Def Hangup(s As Number)
+    SockClose(s)             &#39; net&#39;s, under its namespace</code></pre>
+<p><code>As Sock</code> puts a <code>Sock</code> in front of everything that file declares, so net&#39;s <code>Close</code> becomes <code>SockClose</code> and <code>Connect</code> becomes <code>SockConnect</code>. It collapses to one plain word, so there&#39;s a second spelling for the same thing when it reads better with the arguments in view — <code>Close In Sock (s)</code>. Use whichever suits the line.</p>
+<p>Three things that stop this being a nuisance. <strong>You almost never have to write the namespace.</strong> A bare word resolves whenever its meaning is unambiguous, so <code>Connect</code>, <code>Send</code> and the rest still answer to their plain names — only <code>Close</code>, the word actually in dispute, needs the prefix. <strong>The <code>As</code> goes on the machine with the more common-sounding words.</strong> net&#39;s surface is all plain verbs — <code>Connect</code>, <code>Send</code>, <code>Recv</code>, <code>Listen</code>, <code>Accept</code> — so one prefix there settles every argument it will ever have; qualifying turtle instead would settle only this one. <strong>And it doesn&#39;t spread.</strong> A namespace covers the file you put it on and everything that file includes, and no further — a name never changes meaning because of who included the includer.</p>
+<p>Your own code gets the same kind of scrutiny, from two guards that have nothing to do with namespaces: declaring a name twice is an error that names the earlier file and line, and a <code>Def</code> whose name is already a builtin is refused outright — <code>ROUND is a builtin — a Def of that name would shadow it everywhere</code>. A <code>Def</code> outranks a builtin across the whole program, so Shoddy makes you say you meant it. Write <code>Redef</code> in place of <code>Def</code> when you mean it:</p>
+<pre class="basic"><code>Redef Round(x As Number) As Number       &#39; yes, really, mine</code></pre>
+<p>There&#39;s more on all of this — the full resolution order, and how namespaced record accessors behave — in <a href="spec.html#namespaces">the spec</a>.</p>
+
 <h2 id="a-real-program-the-grade-book">9. A real program: the grade book</h2>
 <p>Everything so far, in ~50 lines. This is <code>gradebook.shoddy</code> in your folder — run it and type a few students in:</p>
 <pre class="basic"><code>Include &quot;seq.shoddy&quot;

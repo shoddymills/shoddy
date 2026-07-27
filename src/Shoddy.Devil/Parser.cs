@@ -374,7 +374,7 @@ public sealed class Parser
         }
         if ((isop && atEnd) ||
             (atEnd && !IsPunct(tok) && !tok.IsStr && !IsNum(tok, out _) &&
-             !sc.Contains(tok.Text) && tok.Text != "TRUE" && tok.Text != "FALSE"))
+             !InScope(sc, l, tok.Text) && tok.Text != "TRUE" && tok.Text != "FALSE"))
         {
             pos++;
             var n = new Node(NType.Quot, l.LineNo) { File = l.File,  Q = new Quot() };
@@ -384,6 +384,18 @@ public sealed class Parser
         }
         CompileExpr(l, ref pos, 1, outq, sc);
     }
+
+    /// <summary>Is this bare word already something in scope, rather than a
+    /// function name to be lifted into a quotation?
+    ///
+    /// Locals are looked up as written and are never namespaced. Top-level
+    /// Lets are not: ClaimName declares them qualified, so a file included
+    /// AS Q contributes QNAME to the scope while the use site still writes
+    /// NAME. Testing only the written spelling misses, the word is taken
+    /// for a function, and `Length(Names)` quietly becomes the length of a
+    /// one-item quotation instead of the length of the list.</summary>
+    bool InScope(HashSet<string> sc, Line l, string name) =>
+        sc.Contains(name) || sc.Contains(ShoddyProgram.Qualify(l.Qual, name));
 
     void CompilePrimary(Line l, ref int pos, Quot outq, HashSet<string> sc)
     {

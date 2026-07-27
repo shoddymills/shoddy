@@ -202,6 +202,54 @@ public class NamespaceTests
             ("prog.shoddy", "Include \"lib.shoddy\" As 42\n\nDef Main()\n    Print(\"x\")\n")));
     }
 
+    // ---- top-level Let under a namespace ---------------------------------
+
+    [Fact]
+    public void NamespacedGlobalIsAValueInArgumentPosition()
+    {
+        // A bare word in argument position is lifted into a quotation when
+        // it names a function. A top-level Let is not a function -- but it
+        // is declared qualified, so testing only the written spelling used
+        // to miss it, lift it, and hand Length a one-item quotation. The
+        // answer was 1 rather than 3, silently.
+        const string lib = "Let Names = { \"alpha\", \"beta\", \"gamma\" }\n\n" +
+                           "Def Count() As Number\n    Length(Names)\n";
+        Assert.Equal("3\n", RunFiles(
+            ("lib.shoddy", lib),
+            ("prog.shoddy", "Include \"lib.shoddy\" As Lib\n\nDef Main()\n    Print(Str(Count()))\n")));
+    }
+
+    [Fact]
+    public void NamespacedGlobalReadsTheSameFlatOrNot()
+    {
+        // The same source, included both ways, has to answer alike.
+        const string lib = "Let Names = { \"alpha\", \"beta\", \"gamma\" }\n\n" +
+                           "Def Second() As String\n    Nth(Names, 2)\n";
+        const string main = "\nDef Main()\n    Print(Second())\n";
+        string flat = RunFiles(("lib.shoddy", lib),
+                               ("prog.shoddy", "Include \"lib.shoddy\"" + main));
+        string named = RunFiles(("lib.shoddy", lib),
+                                ("prog.shoddy", "Include \"lib.shoddy\" As Lib" + main));
+        Assert.Equal("beta\n", flat);
+        Assert.Equal(flat, named);
+    }
+
+    [Fact]
+    public void FunctionNamesStillLiftUnderANamespace()
+    {
+        // The other half: fixing the above must not stop a bare function
+        // name being passed as a quotation, which is what the pipeline
+        // dialect is built on.
+        const string lib = "Def IsEven(n As Number) As Boolean\n    Mod(n, 2) = 0\n\n" +
+                           "Def Square(n As Number) As Number\n    n * n\n\n" +
+                           "Def EvenSquareSum(n As Number) As Number\n" +
+                           "    Range(1, n)\n        Filter(IsEven)\n" +
+                           "        Map(Square)\n        Fold(0, +)\n";
+        Assert.Equal("20\n", RunFiles(
+            ("lib.shoddy", lib),
+            ("prog.shoddy", "Include \"lib.shoddy\" As Lib\n\nDef Main()\n    Print(Str(EvenSquareSum(4)))\n")));
+    }
+
     // ---- helpers --------------------------------------------------------
 
     /// <summary>Write a set of files into one directory and run the last.

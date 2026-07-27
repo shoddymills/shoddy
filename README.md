@@ -174,7 +174,10 @@ for anything, including commercially, with attribution.
 
 Third-party dependencies and the historical/homage example programs (OREGON,
 the Pac-Man and Space Invaders homages, and a neural-net reference) remain
-under their own licenses and their owners' trademarks; see
+under their own licenses and their owners' trademarks. The Colossal Cave
+Adventure port ([mills/open-cave/](mills/open-cave/)) derives from Crowther &
+Woods via Eric Raymond's Open Adventure and is **BSD-2-Clause**; see its
+[LICENSE](mills/open-cave/LICENSE) and
 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
 
 Contributions are welcome under the MIT License; see

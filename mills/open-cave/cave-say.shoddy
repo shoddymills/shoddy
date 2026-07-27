@@ -1,0 +1,164 @@
+Rem ===================================================================
+Rem cave-say.shoddy -- rendering messages, and putting them out.
+Rem 
+Rem misc.c:37-147. Everything the game says passes through here. Speak
+Rem and SpeakFlat differ only in the leading blank line, and that
+Rem difference is load-bearing: the recorded transcripts grade it.
+Rem ===================================================================
+
+Rem ---- rendering messages ------------------------------------------------
+Rem misc.c:37-147. %d and %s substitute positionally; %S is Adventure's
+Rem own invention -- it pluralizes against the *previous* %d, so one
+Rem message can say "1 turn" and "4 turns" without a second template.
+
+Rem Arguments arrive already rendered as strings: Shoddy has no way to
+Rem ask a value its type, so the caller decides how each one prints and
+Rem %S just asks whether the last number came out as "1".
+Def ArgStr(a As Number, args As List) As String
+    If a > Length(args) Then
+        ""
+    Else
+        Nth(args, a)
+
+Def Plural(a As Number, args As List) As String
+    If a < 1 Or a > Length(args) Then
+        "s"
+    Else
+        If Nth(args, a) = "1" Then
+            ""
+        Else
+            "s"
+
+Rem Walks the template once, carrying the index of the next argument and
+Rem the index of the last %d seen (which is what %S looks back at).
+Def RenderAt(msg As String, i As Number, n As Number, args As List,
+             a As Number, lastNum As Number, acc As String) As String
+    If i > n Then
+        acc
+    Else
+        If Mid(msg, i, 1) <> "%" Then
+            RenderAt(msg, i + 1, n, args, a, lastNum, acc & Mid(msg, i, 1))
+        Else
+            Let c = Mid(msg, i + 1, 1)
+            If c = "d" Then
+                RenderAt(msg, i + 2, n, args, a + 1, a, acc & ArgStr(a, args))
+            Else
+                If c = "s" Then
+                    RenderAt(msg, i + 2, n, args, a + 1, lastNum, acc & ArgStr(a, args))
+                Else
+                    If c = "S" Then
+                        RenderAt(msg, i + 2, n, args, a, lastNum, acc & Plural(lastNum, args))
+                    Else
+                        RenderAt(msg, i + 1, n, args, a, lastNum, acc & "%")
+
+Def Render(msg As String, args As List) As String
+    RenderAt(msg, 1, Len(msg), args, 1, 0, "")
+
+Rem ---- output ------------------------------------------------------------
+Rem An empty message prints nothing at all, not even the blank line --
+Rem several tables are sparse and rely on that.
+
+Def Speak(msg As String)
+    If Len(msg) > 0 Then
+        Print("\n" & msg)
+
+Rem pspeak(..., blank = false): the inventory list runs flush under its
+Rem heading with no blank between the lines.
+Def SpeakFlat(msg As String)
+    If Len(msg) > 0 Then
+        Print(msg)
+
+Def SpeakId(n As Number)
+    If n >= 0 Then
+        Speak(Nth(Messages(), n + 1))
+
+Def SpeakArgs(n As Number, args As List)
+    If n >= 0 Then
+        Speak(Render(Nth(Messages(), n + 1), args))
+
+Rem ---- output as a value --------------------------------------------------
+Rem The Speak words above print where they stand, which is why the rules
+Rem cannot be tested without a console: cave-core promises "nothing here
+Rem prints or reads" and one level up that promise is broken in a hundred
+Rem and sixty places.
+Rem
+Rem The words below say the same things as values instead. A rule that
+Rem returns its output rather than emitting it is a function, and a turn
+Rem built from those is Game and Command in, Game and text out -- which
+Rem makes the recorded transcripts a pure-function test rather than a
+Rem console-capture one.
+Rem
+Rem Output is a list of chunks, each exactly what Print would have been
+Rem given, so Voice keeps the leading blank line and VoiceFlat does not.
+Rem Modules move across one at a time: a converted rule hands its output
+Rem back to its caller, which Utters it at the point it used to print, so
+Rem message order is preserved the whole way through the conversion.
+
+Def Silent() As List Of String
+    { }
+
+Def Voice(msg As String) As List Of String
+    If Len(msg) > 0 Then
+        { "\n" & msg }
+    Else
+        { }
+
+Def VoiceFlat(msg As String) As List Of String
+    If Len(msg) > 0 Then
+        { msg }
+    Else
+        { }
+
+Def VoiceId(n As Number) As List Of String
+    If n >= 0 Then
+        Voice(Nth(Messages(), n + 1))
+    Else
+        { }
+
+Def VoiceArgs(n As Number, args As List) As List Of String
+    If n >= 0 Then
+        Voice(Render(Nth(Messages(), n + 1), args))
+    Else
+        { }
+
+Rem One utterance after another.
+Def Both(a As List Of String, b As List Of String) As List Of String
+    Flatten({ a, b })
+
+Rem ---- output carried on the game ----------------------------------------
+Rem The rules already thread a Game through every call, so the simplest
+Rem place to accumulate what they say is on the Game itself. A rule that
+Rem used to print becomes one that returns a Game with more to say, and
+Rem stays a function.
+Rem
+Rem Adventure asks questions mid-turn -- for a hint, to confirm a quit, to
+Rem offer a resurrection -- and each is a read between two writes, so those
+Rem ten sites cannot be pure however the rest is arranged. They Flush what
+Rem has been said and then read, which keeps the order exact and keeps the
+Rem dialogue honestly interactive.
+
+Def Voiced(g As Game, msg As String) As Game
+    With(g, Output = Both(Output(g), Voice(msg)))
+
+Def VoicedFlat(g As Game, msg As String) As Game
+    With(g, Output = Both(Output(g), VoiceFlat(msg)))
+
+Def VoicedId(g As Game, n As Number) As Game
+    With(g, Output = Both(Output(g), VoiceId(n)))
+
+Def VoicedArgs(g As Game, n As Number, args As List) As Game
+    With(g, Output = Both(Output(g), VoiceArgs(n, args)))
+
+Def Flushed(g As Game) As Game
+    Utter(Output(g))
+    With(g, Output = Silent())
+
+Rem The one place output becomes an effect.
+Def Utter(out As List Of String)
+    UtterFrom(out, 1, Length(out))
+
+Def UtterFrom(out As List Of String, i As Number, n As Number)
+    If i <= n Then
+        Print(Nth(out, i))
+        UtterFrom(out, i + 1, n)
+

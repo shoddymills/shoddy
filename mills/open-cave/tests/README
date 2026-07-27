@@ -1,0 +1,71 @@
+= The transcript harness =
+
+open-cave is a port, so its specification is not a description of what
+the game should do -- it is a recording of what the original does.  The
+C original ships ~107 of those recordings in its own tests/ directory,
+each a .log of commands paired with the .chk of exact output they
+produce.  This directory replays them against open-cave.
+
+Ninety-two of the transcripts open with an in-band "seed" command that
+pins the linear congruential generator.  That is what makes them worth
+more than golden files snapshotted from the current build: a change that
+draws one extra random number, or skips one draw, diverges every seeded
+game from that point onward and is caught here.  A golden file taken
+from today's open-cave would happily bless the divergence.
+
+== Running ==
+
+    ./run.sh                 all transcripts        (~18 minutes)
+    ./run.sh --smoke         16 transcripts         (~3 minutes)
+    ./run.sh axebear pirate_carry
+    ./run.sh --keep ...      keep the work directory
+
+Or, from the mill directory, "build.cmd check" / "./build.sh check" for
+the full sweep and "build.cmd smoke" / "./build.sh smoke" for the
+subset.  Runtime is dominated by mill startup, about ten seconds per
+transcript, so the subset is the one to use between edits and the full
+sweep the one to use before calling a change finished.
+
+Set OPENADV if the C source tree is not beside the repository.  The
+default is ../../../../open-adventure-master.
+
+== The two adjustments ==
+
+open-cave renamed the dwarves to curmudgeons.  The rename is total --
+dwarf/dwarves/dwarvish map onto curmudgeon/curmudgeons/curmudgeonish and
+nothing else moved -- so run.sh substitutes in both directions.  It has
+to be both: the output mentions curmudgeons, but so does the input,
+because several transcripts type "eat dwarf" or "kill dwarf" and the
+port's own vocabulary no longer holds that word.  The substitutions run
+longest-form-first, or "curmudgeons" comes back as "dwarfs".
+
+Because "curmudgeon" is five characters longer than "dwarf", stored
+message text wraps at different columns than the C's recorded output.
+Both sides are therefore reflowed paragraph-by-paragraph before the diff
+-- see reflow.awk, which also states what that costs.
+
+== What the harness sets up ==
+
+Transcripts run in a scratch directory rather than in place, because the
+save tests write .adv files and the reference tree should not collect
+them.  Two details of the C's layout are reproduced there:
+
+  - badmagic feeds the game "../main.o" and expects to open a real file
+    that is not a save, so a junk file sits one level above.
+  - four transcripts resume from a save with one field forced to an
+    impossible value.  The C writes those with a second binary, cheat;
+    open-cave has the same generator behind -cheat, so run.sh writes the
+    fixtures itself in open-cave's save format.  The two formats are not
+    byte-compatible and were never intended to be.
+
+Command-line options travel with the transcript that needs them, in a
+"#options:" line the C's own Makefile reads the same way.  Three
+transcripts use one: -o for the 4.30-style interface, -r to resume at
+startup, -l to tee the session to a file.
+
+== Order ==
+
+Transcripts run in alphabetical order, as they do upstream, because
+saveresume.1 through saveresume.4 are a sequence: the first suspends a
+game to a file that the later ones resume.  Naming is the only thing
+sequencing them.

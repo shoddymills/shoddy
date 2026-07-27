@@ -1,904 +1,918 @@
 Rem ===================================================================
-Rem cave-travel.shoddy -- generated from adventure.yaml by gen.shoddy.
-Rem Do not edit by hand: run  build.cmd gen  (./build.sh gen) instead.
+Rem cave-travel.shoddy -- how the rooms connect. Hand-edited source.
+Rem First written by a generator from adventure.yaml; both are in
+Rem obsolete/ now and neither is run. The C is the reference.
 Rem
 Rem The travel table, flattened one row per (rule, verb) pair.
 Rem Row 0 is a dummy so that Tkey 0 can mean 'no travel here'.
 Rem Tkey(loc) is the first row for a location; scan forward until
-Rem a row with Stop set. CondType: 0 none 1 pct 2 carry 3 with
-Rem 4 not.  DestType: 0 goto 1 special 2 speak.
+Rem a row with Stop set.
 Rem ===================================================================
 
+Rem main.c:719-723 folds cond_goto and cond_pct into one branch:
+Rem
+Rem     if (condarg1 == 0 || PCT(condarg1)) break;
+Rem
+Rem so the C's two condition codes are really three cases, and the split
+Rem that matters is not which code was written but whether an argument is
+Rem there to roll against. Always passes for free; Chance rolls, and the
+Rem roll costs a draw from the generator even when it cannot fail -- a
+Rem nocurmudgeons rule is exactly that, Chance(100), and skipping its draw
+Rem puts every seeded game one behind. Naming the two apart is what keeps
+Rem that from looking like a redundant test somebody could tidy away.
+Type TravelCond = Always | Chance(Percent As Number) | Carrying(Obj As Number) | CarriedOrHere(Obj As Number) | NotInState(Obj As Number, State As Number)
+
+Rem Where a row sends you: another room, a message and no movement, or
+Rem one of the three hardcoded passages at main.c:765-870.
+Type TravelDest = ToRoom(Room As Number) | ToMessage(Msg As Number) | ToSpecial(Which As Number)
+
 Type Op
-    Motion    As Number
-    CondType  As Number
-    CondArg1  As Number
-    CondArg2  As Number
-    DestType  As Number
-    DestVal   As Number
+    Motion        As Number
+    Condition     As TravelCond
+    Destination   As TravelDest
     NoCurmudgeons As Boolean
-    Stop      As Boolean
+    Stop          As Boolean
 
 Def Travels() As List
     {
-      Op(0, 0, 0, 0, 0, 0, False, False),  Rem dummy row 0
-      Op(2, 0, 0, 0, 0, 2, False, False),  Rem ROAD -> goto LOC_HILL
-      Op(44, 0, 0, 0, 0, 2, False, False),  Rem WEST -> goto LOC_HILL
-      Op(29, 0, 0, 0, 0, 2, False, False),  Rem UPWAR -> goto LOC_HILL
-      Op(3, 0, 0, 0, 0, 3, False, False),  Rem ENTER -> goto LOC_BUILDING
-      Op(12, 0, 0, 0, 0, 3, False, False),  Rem BUILD -> goto LOC_BUILDING
-      Op(19, 0, 0, 0, 0, 3, False, False),  Rem INWAR -> goto LOC_BUILDING
-      Op(43, 0, 0, 0, 0, 3, False, False),  Rem EAST -> goto LOC_BUILDING
-      Op(5, 0, 0, 0, 0, 4, False, False),  Rem DOWNS -> goto LOC_VALLEY
-      Op(13, 0, 0, 0, 0, 4, False, False),  Rem GULLY -> goto LOC_VALLEY
-      Op(14, 0, 0, 0, 0, 4, False, False),  Rem STREA -> goto LOC_VALLEY
-      Op(46, 0, 0, 0, 0, 4, False, False),  Rem SOUTH -> goto LOC_VALLEY
-      Op(30, 0, 0, 0, 0, 4, False, False),  Rem DOWN -> goto LOC_VALLEY
-      Op(6, 0, 0, 0, 0, 145, False, False),  Rem FORES -> goto LOC_FOREST1
-      Op(45, 0, 0, 0, 0, 145, False, False),  Rem NORTH -> goto LOC_FOREST1
-      Op(63, 0, 0, 0, 0, 8, False, True),  Rem DEPRE -> goto LOC_GRATE
-      Op(12, 0, 0, 0, 0, 1, False, False),  Rem BUILD -> goto LOC_START
-      Op(43, 0, 0, 0, 0, 1, False, False),  Rem EAST -> goto LOC_START
-      Op(44, 0, 0, 0, 0, 5, False, False),  Rem WEST -> goto LOC_ROADEND
-      Op(45, 0, 0, 0, 0, 164, False, False),  Rem NORTH -> goto LOC_FOREST20
-      Op(46, 0, 0, 0, 0, 157, False, False),  Rem SOUTH -> goto LOC_FOREST13
-      Op(6, 0, 0, 0, 0, 157, False, False),  Rem FORES -> goto LOC_FOREST13
-      Op(30, 0, 0, 0, 2, 58, False, True),  Rem DOWN -> speak WHICH_WAY
-      Op(11, 0, 0, 0, 0, 1, False, False),  Rem OUT -> goto LOC_START
-      Op(32, 0, 0, 0, 0, 1, False, False),  Rem OUTDO -> goto LOC_START
-      Op(44, 0, 0, 0, 0, 1, False, False),  Rem WEST -> goto LOC_START
-      Op(62, 0, 0, 0, 0, 179, False, False),  Rem XYZZY -> goto LOC_FOOF1
-      Op(65, 0, 0, 0, 0, 181, False, False),  Rem PLUGH -> goto LOC_FOOF3
-      Op(5, 0, 0, 0, 0, 79, False, False),  Rem DOWNS -> goto LOC_SEWER
-      Op(14, 0, 0, 0, 0, 79, False, True),  Rem STREA -> goto LOC_SEWER
-      Op(4, 0, 0, 0, 0, 1, False, False),  Rem UPSTR -> goto LOC_START
-      Op(12, 0, 0, 0, 0, 1, False, False),  Rem BUILD -> goto LOC_START
-      Op(45, 0, 0, 0, 0, 1, False, False),  Rem NORTH -> goto LOC_START
-      Op(43, 0, 0, 0, 0, 150, False, False),  Rem EAST -> goto LOC_FOREST6
-      Op(6, 0, 0, 0, 0, 150, False, False),  Rem FORES -> goto LOC_FOREST6
-      Op(44, 0, 0, 0, 0, 156, False, False),  Rem WEST -> goto LOC_FOREST12
-      Op(5, 0, 0, 0, 0, 7, False, False),  Rem DOWNS -> goto LOC_SLIT
-      Op(46, 0, 0, 0, 0, 7, False, False),  Rem SOUTH -> goto LOC_SLIT
-      Op(30, 0, 0, 0, 0, 7, False, False),  Rem DOWN -> goto LOC_SLIT
-      Op(63, 0, 0, 0, 0, 8, False, False),  Rem DEPRE -> goto LOC_GRATE
-      Op(14, 0, 0, 0, 2, 185, False, True),  Rem STREA -> speak UPSTREAM_DOWNSTREAM
-      Op(2, 0, 0, 0, 0, 2, False, False),  Rem ROAD -> goto LOC_HILL
-      Op(43, 0, 0, 0, 0, 2, False, False),  Rem EAST -> goto LOC_HILL
-      Op(29, 0, 0, 0, 0, 2, False, False),  Rem UPWAR -> goto LOC_HILL
-      Op(12, 0, 0, 0, 0, 1, False, False),  Rem BUILD -> goto LOC_START
-      Op(46, 0, 0, 0, 0, 158, False, False),  Rem SOUTH -> goto LOC_FOREST14
-      Op(6, 0, 0, 0, 0, 158, False, False),  Rem FORES -> goto LOC_FOREST14
-      Op(44, 0, 0, 0, 0, 159, False, False),  Rem WEST -> goto LOC_FOREST15
-      Op(45, 0, 0, 0, 0, 165, False, True),  Rem NORTH -> goto LOC_FOREST21
-      Op(46, 0, 0, 0, 0, 161, False, False),  Rem SOUTH -> goto LOC_FOREST17
-      Op(6, 0, 0, 0, 0, 161, False, False),  Rem FORES -> goto LOC_FOREST17
-      Op(43, 0, 0, 0, 0, 163, False, False),  Rem EAST -> goto LOC_FOREST19
-      Op(39, 0, 0, 0, 0, 21, False, True),  Rem JUMP -> goto LOC_NOMAKE
-      Op(12, 0, 0, 0, 0, 1, False, False),  Rem BUILD -> goto LOC_START
-      Op(4, 0, 0, 0, 0, 4, False, False),  Rem UPSTR -> goto LOC_VALLEY
-      Op(45, 0, 0, 0, 0, 4, False, False),  Rem NORTH -> goto LOC_VALLEY
-      Op(43, 0, 0, 0, 0, 150, False, False),  Rem EAST -> goto LOC_FOREST6
-      Op(6, 0, 0, 0, 0, 150, False, False),  Rem FORES -> goto LOC_FOREST6
-      Op(44, 0, 0, 0, 0, 154, False, False),  Rem WEST -> goto LOC_FOREST10
-      Op(5, 0, 0, 0, 0, 8, False, False),  Rem DOWNS -> goto LOC_GRATE
-      Op(16, 0, 0, 0, 0, 8, False, False),  Rem BED -> goto LOC_GRATE
-      Op(46, 0, 0, 0, 0, 8, False, False),  Rem SOUTH -> goto LOC_GRATE
-      Op(63, 0, 0, 0, 0, 8, False, False),  Rem DEPRE -> goto LOC_GRATE
-      Op(60, 0, 0, 0, 2, 63, False, False),  Rem SLIT -> speak DONT_FIT
-      Op(14, 0, 0, 0, 2, 63, False, False),  Rem STREA -> speak DONT_FIT
-      Op(30, 0, 0, 0, 2, 63, False, False),  Rem DOWN -> speak DONT_FIT
-      Op(19, 0, 0, 0, 2, 63, False, False),  Rem INWAR -> speak DONT_FIT
-      Op(3, 0, 0, 0, 2, 63, False, True),  Rem ENTER -> speak DONT_FIT
-      Op(43, 0, 0, 0, 0, 151, False, False),  Rem EAST -> goto LOC_FOREST7
-      Op(6, 0, 0, 0, 0, 151, False, False),  Rem FORES -> goto LOC_FOREST7
-      Op(46, 0, 0, 0, 0, 154, False, False),  Rem SOUTH -> goto LOC_FOREST10
-      Op(44, 0, 0, 0, 0, 153, False, False),  Rem WEST -> goto LOC_FOREST9
-      Op(12, 0, 0, 0, 0, 1, False, False),  Rem BUILD -> goto LOC_START
-      Op(4, 0, 0, 0, 0, 7, False, False),  Rem UPSTR -> goto LOC_SLIT
-      Op(13, 0, 0, 0, 0, 7, False, False),  Rem GULLY -> goto LOC_SLIT
-      Op(45, 0, 0, 0, 0, 7, False, False),  Rem NORTH -> goto LOC_SLIT
-      Op(3, 4, 3, 0, 0, 9, False, False),  Rem ENTER -> goto LOC_BELOWGRATE
-      Op(19, 4, 3, 0, 0, 9, False, False),  Rem INWAR -> goto LOC_BELOWGRATE
-      Op(30, 4, 3, 0, 0, 9, False, False),  Rem DOWN -> goto LOC_BELOWGRATE
-      Op(3, 0, 0, 0, 2, 61, False, True),  Rem ENTER -> speak GRATE_NOWAY
-      Op(11, 4, 3, 0, 0, 8, False, False),  Rem OUT -> goto LOC_GRATE
-      Op(29, 4, 3, 0, 0, 8, False, False),  Rem UPWAR -> goto LOC_GRATE
-      Op(11, 0, 0, 0, 2, 61, False, False),  Rem OUT -> speak GRATE_NOWAY
-      Op(17, 0, 0, 0, 0, 10, False, False),  Rem CRAWL -> goto LOC_COBBLE
-      Op(18, 0, 0, 0, 0, 10, False, False),  Rem COBBL -> goto LOC_COBBLE
-      Op(19, 0, 0, 0, 0, 10, False, False),  Rem INWAR -> goto LOC_COBBLE
-      Op(44, 0, 0, 0, 0, 10, False, False),  Rem WEST -> goto LOC_COBBLE
-      Op(31, 0, 0, 0, 0, 14, False, False),  Rem PIT -> goto LOC_PITTOP
-      Op(51, 0, 0, 0, 0, 11, False, True),  Rem DEBRI -> goto LOC_DEBRIS
-      Op(11, 0, 0, 0, 0, 9, False, False),  Rem OUT -> goto LOC_BELOWGRATE
-      Op(20, 0, 0, 0, 0, 9, False, False),  Rem SURFA -> goto LOC_BELOWGRATE
-      Op(43, 0, 0, 0, 0, 9, False, False),  Rem EAST -> goto LOC_BELOWGRATE
-      Op(19, 0, 0, 0, 0, 11, False, False),  Rem INWAR -> goto LOC_DEBRIS
-      Op(22, 0, 0, 0, 0, 11, False, False),  Rem DARK -> goto LOC_DEBRIS
-      Op(44, 0, 0, 0, 0, 11, False, False),  Rem WEST -> goto LOC_DEBRIS
-      Op(51, 0, 0, 0, 0, 11, False, False),  Rem DEBRI -> goto LOC_DEBRIS
-      Op(31, 0, 0, 0, 0, 14, False, True),  Rem PIT -> goto LOC_PITTOP
-      Op(63, 4, 3, 0, 0, 8, False, False),  Rem DEPRE -> goto LOC_GRATE
-      Op(64, 0, 0, 0, 0, 9, False, False),  Rem ENTRA -> goto LOC_BELOWGRATE
-      Op(17, 0, 0, 0, 0, 10, False, False),  Rem CRAWL -> goto LOC_COBBLE
-      Op(18, 0, 0, 0, 0, 10, False, False),  Rem COBBL -> goto LOC_COBBLE
-      Op(23, 0, 0, 0, 0, 10, False, False),  Rem PASSA -> goto LOC_COBBLE
-      Op(24, 0, 0, 0, 0, 10, False, False),  Rem LOW -> goto LOC_COBBLE
-      Op(43, 0, 0, 0, 0, 10, False, False),  Rem EAST -> goto LOC_COBBLE
-      Op(25, 0, 0, 0, 0, 12, False, False),  Rem CANYO -> goto LOC_AWKWARD
-      Op(19, 0, 0, 0, 0, 12, False, False),  Rem INWAR -> goto LOC_AWKWARD
-      Op(29, 0, 0, 0, 0, 12, False, False),  Rem UPWAR -> goto LOC_AWKWARD
-      Op(44, 0, 0, 0, 0, 12, False, False),  Rem WEST -> goto LOC_AWKWARD
-      Op(62, 0, 0, 0, 0, 180, False, False),  Rem XYZZY -> goto LOC_FOOF2
-      Op(31, 0, 0, 0, 0, 14, False, True),  Rem PIT -> goto LOC_PITTOP
-      Op(63, 4, 3, 0, 0, 8, False, False),  Rem DEPRE -> goto LOC_GRATE
-      Op(64, 0, 0, 0, 0, 9, False, False),  Rem ENTRA -> goto LOC_BELOWGRATE
-      Op(30, 0, 0, 0, 0, 11, False, False),  Rem DOWN -> goto LOC_DEBRIS
-      Op(43, 0, 0, 0, 0, 11, False, False),  Rem EAST -> goto LOC_DEBRIS
-      Op(51, 0, 0, 0, 0, 11, False, False),  Rem DEBRI -> goto LOC_DEBRIS
-      Op(19, 0, 0, 0, 0, 13, False, False),  Rem INWAR -> goto LOC_BIRDCHAMBER
-      Op(29, 0, 0, 0, 0, 13, False, False),  Rem UPWAR -> goto LOC_BIRDCHAMBER
-      Op(44, 0, 0, 0, 0, 13, False, False),  Rem WEST -> goto LOC_BIRDCHAMBER
-      Op(31, 0, 0, 0, 0, 14, False, True),  Rem PIT -> goto LOC_PITTOP
-      Op(63, 4, 3, 0, 0, 8, False, False),  Rem DEPRE -> goto LOC_GRATE
-      Op(64, 0, 0, 0, 0, 9, False, False),  Rem ENTRA -> goto LOC_BELOWGRATE
-      Op(51, 0, 0, 0, 0, 11, False, False),  Rem DEBRI -> goto LOC_DEBRIS
-      Op(25, 0, 0, 0, 0, 12, False, False),  Rem CANYO -> goto LOC_AWKWARD
-      Op(43, 0, 0, 0, 0, 12, False, False),  Rem EAST -> goto LOC_AWKWARD
-      Op(23, 0, 0, 0, 0, 14, False, False),  Rem PASSA -> goto LOC_PITTOP
-      Op(31, 0, 0, 0, 0, 14, False, False),  Rem PIT -> goto LOC_PITTOP
-      Op(44, 0, 0, 0, 0, 14, False, True),  Rem WEST -> goto LOC_PITTOP
-      Op(63, 4, 3, 0, 0, 8, False, False),  Rem DEPRE -> goto LOC_GRATE
-      Op(64, 0, 0, 0, 0, 9, False, False),  Rem ENTRA -> goto LOC_BELOWGRATE
-      Op(51, 0, 0, 0, 0, 11, False, False),  Rem DEBRI -> goto LOC_DEBRIS
-      Op(23, 0, 0, 0, 0, 13, False, False),  Rem PASSA -> goto LOC_BIRDCHAMBER
-      Op(43, 0, 0, 0, 0, 13, False, False),  Rem EAST -> goto LOC_BIRDCHAMBER
-      Op(30, 2, 50, 0, 0, 20, False, False),  Rem DOWN -> goto LOC_NECKBROKE
-      Op(31, 2, 50, 0, 0, 20, False, False),  Rem PIT -> goto LOC_NECKBROKE
-      Op(34, 2, 50, 0, 0, 20, False, False),  Rem STEPS -> goto LOC_NECKBROKE
-      Op(30, 0, 0, 0, 0, 15, False, False),  Rem DOWN -> goto LOC_MISTHALL
-      Op(33, 0, 0, 0, 0, 16, False, False),  Rem CRACK -> goto LOC_CRACK
-      Op(44, 0, 0, 0, 0, 16, False, True),  Rem WEST -> goto LOC_CRACK
-      Op(36, 0, 0, 0, 0, 18, False, False),  Rem LEFT -> goto LOC_NUGGET
-      Op(46, 0, 0, 0, 0, 18, False, False),  Rem SOUTH -> goto LOC_NUGGET
-      Op(7, 0, 0, 0, 0, 17, False, False),  Rem FORWA -> goto LOC_EASTBANK
-      Op(38, 0, 0, 0, 0, 17, False, False),  Rem HALL -> goto LOC_EASTBANK
-      Op(44, 0, 0, 0, 0, 17, False, False),  Rem WEST -> goto LOC_EASTBANK
-      Op(10, 0, 0, 0, 0, 19, False, False),  Rem STAIR -> goto LOC_KINGHALL
-      Op(30, 0, 0, 0, 0, 19, False, False),  Rem DOWN -> goto LOC_KINGHALL
-      Op(45, 0, 0, 0, 0, 19, False, False),  Rem NORTH -> goto LOC_KINGHALL
-      Op(29, 2, 50, 0, 0, 22, False, False),  Rem UPWAR -> goto LOC_DOME
-      Op(31, 2, 50, 0, 0, 22, False, False),  Rem PIT -> goto LOC_DOME
-      Op(34, 2, 50, 0, 0, 22, False, False),  Rem STEPS -> goto LOC_DOME
-      Op(35, 2, 50, 0, 0, 22, False, False),  Rem DOME -> goto LOC_DOME
-      Op(23, 2, 50, 0, 0, 22, False, False),  Rem PASSA -> goto LOC_DOME
-      Op(43, 2, 50, 0, 0, 22, False, False),  Rem EAST -> goto LOC_DOME
-      Op(29, 0, 0, 0, 0, 14, False, False),  Rem UPWAR -> goto LOC_PITTOP
-      Op(55, 0, 0, 0, 0, 34, False, True),  Rem Y2 -> goto LOC_JUMBLE
-      Op(1, 0, 0, 0, 0, 14, False, True),  Rem forced -> goto LOC_PITTOP
-      Op(38, 0, 0, 0, 0, 15, False, False),  Rem HALL -> goto LOC_MISTHALL
-      Op(43, 0, 0, 0, 0, 15, False, False),  Rem EAST -> goto LOC_MISTHALL
-      Op(39, 4, 12, 0, 2, 64, False, False),  Rem JUMP -> speak CROSS_BRIDGE
-      Op(7, 4, 12, 1, 0, 21, False, False),  Rem FORWA -> goto LOC_NOMAKE
-      Op(41, 4, 12, 1, 2, 65, False, False),  Rem OVER -> speak NO_CROSS
-      Op(42, 4, 12, 1, 2, 65, False, False),  Rem ACROS -> speak NO_CROSS
-      Op(44, 4, 12, 1, 2, 65, False, False),  Rem WEST -> speak NO_CROSS
-      Op(68, 4, 12, 1, 2, 65, False, False),  Rem CROSS -> speak NO_CROSS
-      Op(41, 0, 0, 0, 0, 27, False, True),  Rem OVER -> goto LOC_WESTBANK
-      Op(38, 0, 0, 0, 0, 15, False, False),  Rem HALL -> goto LOC_MISTHALL
-      Op(11, 0, 0, 0, 0, 15, False, False),  Rem OUT -> goto LOC_MISTHALL
-      Op(45, 0, 0, 0, 0, 15, False, True),  Rem NORTH -> goto LOC_MISTHALL
-      Op(10, 0, 0, 0, 0, 15, False, False),  Rem STAIR -> goto LOC_MISTHALL
-      Op(29, 0, 0, 0, 0, 15, False, False),  Rem UPWAR -> goto LOC_MISTHALL
-      Op(43, 0, 0, 0, 0, 15, False, False),  Rem EAST -> goto LOC_MISTHALL
-      Op(45, 4, 11, 0, 0, 28, False, False),  Rem NORTH -> goto LOC_FLOORHOLE
-      Op(37, 4, 11, 0, 0, 28, False, False),  Rem RIGHT -> goto LOC_FLOORHOLE
-      Op(46, 4, 11, 0, 0, 29, False, False),  Rem SOUTH -> goto LOC_SOUTHSIDE
-      Op(36, 4, 11, 0, 0, 29, False, False),  Rem LEFT -> goto LOC_SOUTHSIDE
-      Op(44, 4, 11, 0, 0, 30, False, False),  Rem WEST -> goto LOC_WESTSIDE
-      Op(7, 4, 11, 0, 0, 30, False, False),  Rem FORWA -> goto LOC_WESTSIDE
-      Op(45, 0, 0, 0, 0, 32, False, False),  Rem NORTH -> goto LOC_SNAKEBLOCK
-      Op(49, 1, 35, 0, 0, 74, False, False),  Rem SW -> goto LOC_SECRET3
-      Op(49, 3, 11, 0, 0, 32, False, False),  Rem SW -> goto LOC_SNAKEBLOCK
-      Op(66, 0, 0, 0, 0, 74, False, True),  Rem SECRE -> goto LOC_SECRET3
-      Op(1, 0, 0, 0, 0, 0, False, True),  Rem forced -> goto LOC_NOWHERE
-      Op(1, 0, 0, 0, 0, 0, False, True),  Rem forced -> goto LOC_NOWHERE
-      Op(1, 0, 0, 0, 0, 15, False, True),  Rem forced -> goto LOC_MISTHALL
-      Op(43, 0, 0, 0, 0, 67, False, False),  Rem EAST -> goto LOC_EASTEND
-      Op(42, 0, 0, 0, 0, 67, False, False),  Rem ACROS -> goto LOC_EASTEND
-      Op(44, 0, 0, 0, 0, 68, False, False),  Rem WEST -> goto LOC_SLAB
-      Op(61, 0, 0, 0, 0, 68, False, False),  Rem SLAB -> goto LOC_SLAB
-      Op(30, 0, 0, 0, 0, 25, False, False),  Rem DOWN -> goto LOC_WESTPIT
-      Op(31, 0, 0, 0, 0, 25, False, False),  Rem PIT -> goto LOC_WESTPIT
-      Op(52, 0, 0, 0, 2, 109, False, True),  Rem HOLE -> speak TOO_FAR
-      Op(29, 0, 0, 0, 0, 67, False, False),  Rem UPWAR -> goto LOC_EASTEND
-      Op(11, 0, 0, 0, 0, 67, False, True),  Rem OUT -> goto LOC_EASTEND
-      Op(29, 0, 0, 0, 0, 23, False, False),  Rem UPWAR -> goto LOC_WESTEND
-      Op(11, 0, 0, 0, 0, 23, False, False),  Rem OUT -> goto LOC_WESTEND
-      Op(56, 4, 24, 2, 0, 31, False, False),  Rem CLIMB -> goto LOC_BUILDING1
-      Op(56, 0, 0, 0, 0, 26, False, True),  Rem CLIMB -> goto LOC_CLIMBSTALK
-      Op(1, 0, 0, 0, 0, 88, False, True),  Rem forced -> goto LOC_NARROW
-      Op(39, 4, 12, 0, 2, 64, False, False),  Rem JUMP -> speak CROSS_BRIDGE
-      Op(7, 4, 12, 1, 0, 21, False, False),  Rem FORWA -> goto LOC_NOMAKE
-      Op(41, 4, 12, 1, 2, 65, False, False),  Rem OVER -> speak NO_CROSS
-      Op(42, 4, 12, 1, 2, 65, False, False),  Rem ACROS -> speak NO_CROSS
-      Op(43, 4, 12, 1, 2, 65, False, False),  Rem EAST -> speak NO_CROSS
-      Op(68, 4, 12, 1, 2, 65, False, False),  Rem CROSS -> speak NO_CROSS
-      Op(41, 0, 0, 0, 0, 17, False, False),  Rem OVER -> goto LOC_EASTBANK
-      Op(45, 0, 0, 0, 0, 40, False, False),  Rem NORTH -> goto LOC_PARALLEL1
-      Op(44, 0, 0, 0, 0, 41, False, True),  Rem WEST -> goto LOC_MISTWEST
-      Op(38, 0, 0, 0, 0, 19, False, False),  Rem HALL -> goto LOC_KINGHALL
-      Op(11, 0, 0, 0, 0, 19, False, False),  Rem OUT -> goto LOC_KINGHALL
-      Op(46, 0, 0, 0, 0, 19, False, False),  Rem SOUTH -> goto LOC_KINGHALL
-      Op(45, 0, 0, 0, 0, 33, False, False),  Rem NORTH -> goto LOC_Y2
-      Op(55, 0, 0, 0, 0, 33, False, False),  Rem Y2 -> goto LOC_Y2
-      Op(30, 0, 0, 0, 0, 36, False, False),  Rem DOWN -> goto LOC_BROKEN
-      Op(52, 0, 0, 0, 0, 36, False, True),  Rem HOLE -> goto LOC_BROKEN
-      Op(38, 0, 0, 0, 0, 19, False, False),  Rem HALL -> goto LOC_KINGHALL
-      Op(11, 0, 0, 0, 0, 19, False, False),  Rem OUT -> goto LOC_KINGHALL
-      Op(45, 0, 0, 0, 0, 19, False, True),  Rem NORTH -> goto LOC_KINGHALL
-      Op(38, 0, 0, 0, 0, 19, False, False),  Rem HALL -> goto LOC_KINGHALL
-      Op(11, 0, 0, 0, 0, 19, False, False),  Rem OUT -> goto LOC_KINGHALL
-      Op(43, 0, 0, 0, 0, 19, False, False),  Rem EAST -> goto LOC_KINGHALL
-      Op(44, 0, 0, 0, 0, 62, False, False),  Rem WEST -> goto LOC_CROSSOVER
-      Op(29, 0, 0, 0, 0, 62, False, True),  Rem UPWAR -> goto LOC_CROSSOVER
-      Op(1, 4, 24, 1, 0, 89, False, False),  Rem forced -> goto LOC_NOCLIMB
-      Op(1, 0, 0, 0, 0, 90, False, True),  Rem forced -> goto LOC_PLANTTOP
-      Op(1, 0, 0, 0, 0, 19, False, True),  Rem forced -> goto LOC_KINGHALL
-      Op(65, 0, 0, 0, 0, 182, False, False),  Rem PLUGH -> goto LOC_FOOF4
-      Op(46, 0, 0, 0, 0, 28, False, False),  Rem SOUTH -> goto LOC_FLOORHOLE
-      Op(43, 0, 0, 0, 0, 34, False, False),  Rem EAST -> goto LOC_JUMBLE
-      Op(53, 0, 0, 0, 0, 34, False, False),  Rem WALL -> goto LOC_JUMBLE
-      Op(54, 0, 0, 0, 0, 34, False, False),  Rem BROKE -> goto LOC_JUMBLE
-      Op(44, 0, 0, 0, 0, 35, False, False),  Rem WEST -> goto LOC_WINDOW1
-      Op(70, 2, 59, 0, 1, 2, False, False),  Rem PLOVE -> special 2
-      Op(70, 0, 0, 0, 0, 183, False, True),  Rem PLOVE -> goto LOC_FOOF5
-      Op(30, 0, 0, 0, 0, 33, False, False),  Rem DOWN -> goto LOC_Y2
-      Op(55, 0, 0, 0, 0, 33, False, False),  Rem Y2 -> goto LOC_Y2
-      Op(29, 0, 0, 0, 0, 15, False, True),  Rem UPWAR -> goto LOC_MISTHALL
-      Op(43, 0, 0, 0, 0, 33, False, False),  Rem EAST -> goto LOC_Y2
-      Op(55, 0, 0, 0, 0, 33, False, False),  Rem Y2 -> goto LOC_Y2
-      Op(39, 0, 0, 0, 0, 20, False, True),  Rem JUMP -> goto LOC_NECKBROKE
-      Op(43, 0, 0, 0, 0, 37, False, False),  Rem EAST -> goto LOC_SMALLPITBRINK
-      Op(17, 0, 0, 0, 0, 37, False, False),  Rem CRAWL -> goto LOC_SMALLPITBRINK
-      Op(29, 0, 0, 0, 0, 28, False, False),  Rem UPWAR -> goto LOC_FLOORHOLE
-      Op(52, 0, 0, 0, 0, 28, False, False),  Rem HOLE -> goto LOC_FLOORHOLE
-      Op(44, 0, 0, 0, 0, 39, False, False),  Rem WEST -> goto LOC_DUSTY
-      Op(69, 0, 0, 0, 0, 65, False, True),  Rem BEDQU -> goto LOC_BEDQUILT
-      Op(44, 0, 0, 0, 0, 36, False, False),  Rem WEST -> goto LOC_BROKEN
-      Op(17, 0, 0, 0, 0, 36, False, False),  Rem CRAWL -> goto LOC_BROKEN
-      Op(30, 0, 0, 0, 0, 38, False, False),  Rem DOWN -> goto LOC_SMALLPIT
-      Op(31, 0, 0, 0, 0, 38, False, False),  Rem PIT -> goto LOC_SMALLPIT
-      Op(56, 0, 0, 0, 0, 38, False, True),  Rem CLIMB -> goto LOC_SMALLPIT
-      Op(56, 0, 0, 0, 0, 37, False, False),  Rem CLIMB -> goto LOC_SMALLPITBRINK
-      Op(29, 0, 0, 0, 0, 37, False, False),  Rem UPWAR -> goto LOC_SMALLPITBRINK
-      Op(11, 0, 0, 0, 0, 37, False, False),  Rem OUT -> goto LOC_SMALLPITBRINK
-      Op(60, 0, 0, 0, 2, 63, False, False),  Rem SLIT -> speak DONT_FIT
-      Op(14, 0, 0, 0, 2, 63, False, False),  Rem STREA -> speak DONT_FIT
-      Op(30, 0, 0, 0, 2, 63, False, False),  Rem DOWN -> speak DONT_FIT
-      Op(4, 0, 0, 0, 2, 63, False, False),  Rem UPSTR -> speak DONT_FIT
-      Op(5, 0, 0, 0, 2, 63, False, False),  Rem DOWNS -> speak DONT_FIT
-      Op(3, 0, 0, 0, 2, 63, False, False),  Rem ENTER -> speak DONT_FIT
-      Op(19, 0, 0, 0, 2, 63, False, True),  Rem INWAR -> speak DONT_FIT
-      Op(43, 0, 0, 0, 0, 36, False, False),  Rem EAST -> goto LOC_BROKEN
-      Op(23, 0, 0, 0, 0, 36, False, False),  Rem PASSA -> goto LOC_BROKEN
-      Op(30, 0, 0, 0, 0, 64, False, False),  Rem DOWN -> goto LOC_COMPLEX
-      Op(52, 0, 0, 0, 0, 64, False, False),  Rem HOLE -> goto LOC_COMPLEX
-      Op(58, 0, 0, 0, 0, 64, False, False),  Rem FLOOR -> goto LOC_COMPLEX
-      Op(69, 0, 0, 0, 0, 65, False, True),  Rem BEDQU -> goto LOC_BEDQUILT
-      Op(1, 0, 0, 0, 0, 41, False, True),  Rem forced -> goto LOC_MISTWEST
-      Op(46, 0, 0, 0, 0, 42, False, False),  Rem SOUTH -> goto LOC_ALIKE1
-      Op(29, 0, 0, 0, 0, 42, False, False),  Rem UPWAR -> goto LOC_ALIKE1
-      Op(23, 0, 0, 0, 0, 42, False, False),  Rem PASSA -> goto LOC_ALIKE1
-      Op(56, 0, 0, 0, 0, 42, False, False),  Rem CLIMB -> goto LOC_ALIKE1
-      Op(43, 0, 0, 0, 0, 27, False, False),  Rem EAST -> goto LOC_WESTBANK
-      Op(45, 0, 0, 0, 0, 59, False, False),  Rem NORTH -> goto LOC_PARALLEL2
-      Op(44, 0, 0, 0, 0, 60, False, False),  Rem WEST -> goto LOC_LONGEAST
-      Op(17, 0, 0, 0, 0, 60, False, True),  Rem CRAWL -> goto LOC_LONGEAST
-      Op(29, 0, 0, 0, 0, 41, False, False),  Rem UPWAR -> goto LOC_MISTWEST
-      Op(45, 0, 0, 0, 0, 42, False, False),  Rem NORTH -> goto LOC_ALIKE1
-      Op(43, 0, 0, 0, 0, 43, False, False),  Rem EAST -> goto LOC_ALIKE2
-      Op(46, 0, 0, 0, 0, 45, False, False),  Rem SOUTH -> goto LOC_ALIKE4
-      Op(44, 0, 0, 0, 0, 80, False, True),  Rem WEST -> goto LOC_ALIKE11
-      Op(44, 0, 0, 0, 0, 42, False, False),  Rem WEST -> goto LOC_ALIKE1
-      Op(46, 0, 0, 0, 0, 44, False, False),  Rem SOUTH -> goto LOC_ALIKE3
-      Op(43, 0, 0, 0, 0, 45, False, True),  Rem EAST -> goto LOC_ALIKE4
-      Op(43, 0, 0, 0, 0, 43, False, False),  Rem EAST -> goto LOC_ALIKE2
-      Op(30, 0, 0, 0, 0, 48, False, False),  Rem DOWN -> goto LOC_MAZEEND3
-      Op(46, 0, 0, 0, 0, 50, False, False),  Rem SOUTH -> goto LOC_ALIKE6
-      Op(45, 0, 0, 0, 0, 82, False, True),  Rem NORTH -> goto LOC_MAZEEND9
-      Op(44, 0, 0, 0, 0, 42, False, False),  Rem WEST -> goto LOC_ALIKE1
-      Op(45, 0, 0, 0, 0, 43, False, False),  Rem NORTH -> goto LOC_ALIKE2
-      Op(43, 0, 0, 0, 0, 46, False, False),  Rem EAST -> goto LOC_MAZEEND1
-      Op(46, 0, 0, 0, 0, 47, False, False),  Rem SOUTH -> goto LOC_MAZEEND2
-      Op(29, 0, 0, 0, 0, 87, False, False),  Rem UPWAR -> goto LOC_ALIKE14
-      Op(30, 0, 0, 0, 0, 87, False, True),  Rem DOWN -> goto LOC_ALIKE14
-      Op(44, 0, 0, 0, 0, 45, False, False),  Rem WEST -> goto LOC_ALIKE4
-      Op(11, 0, 0, 0, 0, 45, False, True),  Rem OUT -> goto LOC_ALIKE4
-      Op(43, 0, 0, 0, 0, 45, False, False),  Rem EAST -> goto LOC_ALIKE4
-      Op(11, 0, 0, 0, 0, 45, False, True),  Rem OUT -> goto LOC_ALIKE4
-      Op(29, 0, 0, 0, 0, 44, False, False),  Rem UPWAR -> goto LOC_ALIKE3
-      Op(11, 0, 0, 0, 0, 44, False, True),  Rem OUT -> goto LOC_ALIKE3
-      Op(43, 0, 0, 0, 0, 50, False, False),  Rem EAST -> goto LOC_ALIKE6
-      Op(44, 0, 0, 0, 0, 51, False, True),  Rem WEST -> goto LOC_ALIKE7
-      Op(43, 0, 0, 0, 0, 44, False, False),  Rem EAST -> goto LOC_ALIKE3
-      Op(44, 0, 0, 0, 0, 49, False, False),  Rem WEST -> goto LOC_ALIKE5
-      Op(30, 0, 0, 0, 0, 51, False, False),  Rem DOWN -> goto LOC_ALIKE7
-      Op(46, 0, 0, 0, 0, 52, False, True),  Rem SOUTH -> goto LOC_ALIKE8
-      Op(44, 0, 0, 0, 0, 49, False, False),  Rem WEST -> goto LOC_ALIKE5
-      Op(29, 0, 0, 0, 0, 50, False, False),  Rem UPWAR -> goto LOC_ALIKE6
-      Op(43, 0, 0, 0, 0, 52, False, False),  Rem EAST -> goto LOC_ALIKE8
-      Op(46, 0, 0, 0, 0, 53, False, True),  Rem SOUTH -> goto LOC_ALIKE9
-      Op(44, 0, 0, 0, 0, 50, False, False),  Rem WEST -> goto LOC_ALIKE6
-      Op(43, 0, 0, 0, 0, 51, False, False),  Rem EAST -> goto LOC_ALIKE7
-      Op(46, 0, 0, 0, 0, 52, False, False),  Rem SOUTH -> goto LOC_ALIKE8
-      Op(29, 0, 0, 0, 0, 53, False, False),  Rem UPWAR -> goto LOC_ALIKE9
-      Op(45, 0, 0, 0, 0, 55, False, False),  Rem NORTH -> goto LOC_ALIKE10
-      Op(30, 0, 0, 0, 0, 86, False, True),  Rem DOWN -> goto LOC_MAZEEND11
-      Op(44, 0, 0, 0, 0, 51, False, False),  Rem WEST -> goto LOC_ALIKE7
-      Op(45, 0, 0, 0, 0, 52, False, False),  Rem NORTH -> goto LOC_ALIKE8
-      Op(46, 0, 0, 0, 0, 54, False, True),  Rem SOUTH -> goto LOC_MAZEEND4
-      Op(44, 0, 0, 0, 0, 53, False, False),  Rem WEST -> goto LOC_ALIKE9
-      Op(11, 0, 0, 0, 0, 53, False, True),  Rem OUT -> goto LOC_ALIKE9
-      Op(44, 0, 0, 0, 0, 52, False, False),  Rem WEST -> goto LOC_ALIKE8
-      Op(45, 0, 0, 0, 0, 55, False, False),  Rem NORTH -> goto LOC_ALIKE10
-      Op(30, 0, 0, 0, 0, 56, False, False),  Rem DOWN -> goto LOC_MAZEEND5
-      Op(43, 0, 0, 0, 0, 57, False, True),  Rem EAST -> goto LOC_PITBRINK
-      Op(29, 0, 0, 0, 0, 55, False, False),  Rem UPWAR -> goto LOC_ALIKE10
-      Op(11, 0, 0, 0, 0, 55, False, True),  Rem OUT -> goto LOC_ALIKE10
-      Op(30, 0, 0, 0, 0, 13, False, False),  Rem DOWN -> goto LOC_BIRDCHAMBER
-      Op(56, 0, 0, 0, 0, 13, False, False),  Rem CLIMB -> goto LOC_BIRDCHAMBER
-      Op(44, 0, 0, 0, 0, 55, False, False),  Rem WEST -> goto LOC_ALIKE10
-      Op(46, 0, 0, 0, 0, 58, False, False),  Rem SOUTH -> goto LOC_MAZEEND6
-      Op(45, 0, 0, 0, 0, 83, False, False),  Rem NORTH -> goto LOC_ALIKE12
-      Op(43, 0, 0, 0, 0, 84, False, True),  Rem EAST -> goto LOC_ALIKE13
-      Op(43, 0, 0, 0, 0, 57, False, False),  Rem EAST -> goto LOC_PITBRINK
-      Op(11, 0, 0, 0, 0, 57, False, True),  Rem OUT -> goto LOC_PITBRINK
-      Op(1, 0, 0, 0, 0, 27, False, True),  Rem forced -> goto LOC_WESTBANK
-      Op(43, 0, 0, 0, 0, 41, False, False),  Rem EAST -> goto LOC_MISTWEST
-      Op(29, 0, 0, 0, 0, 41, False, False),  Rem UPWAR -> goto LOC_MISTWEST
-      Op(17, 0, 0, 0, 0, 41, False, False),  Rem CRAWL -> goto LOC_MISTWEST
-      Op(44, 0, 0, 0, 0, 61, False, False),  Rem WEST -> goto LOC_LONGWEST
-      Op(45, 0, 0, 0, 0, 62, False, False),  Rem NORTH -> goto LOC_CROSSOVER
-      Op(30, 0, 0, 0, 0, 62, False, False),  Rem DOWN -> goto LOC_CROSSOVER
-      Op(52, 0, 0, 0, 0, 62, False, True),  Rem HOLE -> goto LOC_CROSSOVER
-      Op(43, 0, 0, 0, 0, 60, False, False),  Rem EAST -> goto LOC_LONGEAST
-      Op(45, 0, 0, 0, 0, 62, False, False),  Rem NORTH -> goto LOC_CROSSOVER
-      Op(46, 0, 100, 0, 0, 107, True, True),  Rem SOUTH -> goto LOC_DIFFERENT1
-      Op(44, 0, 0, 0, 0, 60, False, False),  Rem WEST -> goto LOC_LONGEAST
-      Op(45, 0, 0, 0, 0, 63, False, False),  Rem NORTH -> goto LOC_DEADEND7
-      Op(43, 0, 0, 0, 0, 30, False, False),  Rem EAST -> goto LOC_WESTSIDE
-      Op(46, 0, 0, 0, 0, 61, False, True),  Rem SOUTH -> goto LOC_LONGWEST
-      Op(46, 0, 0, 0, 0, 62, False, False),  Rem SOUTH -> goto LOC_CROSSOVER
-      Op(11, 0, 0, 0, 0, 62, False, True),  Rem OUT -> goto LOC_CROSSOVER
-      Op(29, 0, 0, 0, 0, 39, False, False),  Rem UPWAR -> goto LOC_DUSTY
-      Op(56, 0, 0, 0, 0, 39, False, False),  Rem CLIMB -> goto LOC_DUSTY
-      Op(59, 0, 0, 0, 0, 39, False, False),  Rem ROOM -> goto LOC_DUSTY
-      Op(44, 0, 0, 0, 0, 65, False, False),  Rem WEST -> goto LOC_BEDQUILT
-      Op(69, 0, 0, 0, 0, 65, False, False),  Rem BEDQU -> goto LOC_BEDQUILT
-      Op(45, 0, 0, 0, 0, 103, False, False),  Rem NORTH -> goto LOC_SHELLROOM
-      Op(73, 0, 0, 0, 0, 103, False, False),  Rem SHELL -> goto LOC_SHELLROOM
-      Op(43, 0, 0, 0, 0, 106, False, True),  Rem EAST -> goto LOC_ANTEROOM
-      Op(43, 0, 0, 0, 0, 64, False, False),  Rem EAST -> goto LOC_COMPLEX
-      Op(44, 0, 0, 0, 0, 66, False, False),  Rem WEST -> goto LOC_SWISSCHEESE
-      Op(46, 1, 65, 0, 2, 44, False, False),  Rem SOUTH -> speak FUTILE_CRAWL
-      Op(61, 0, 0, 0, 0, 68, False, False),  Rem SLAB -> goto LOC_SLAB
-      Op(29, 1, 60, 0, 2, 44, False, False),  Rem UPWAR -> speak FUTILE_CRAWL
-      Op(29, 1, 70, 0, 0, 70, False, False),  Rem UPWAR -> goto LOC_SECRET2
-      Op(29, 0, 0, 0, 0, 39, False, False),  Rem UPWAR -> goto LOC_DUSTY
-      Op(45, 1, 50, 0, 2, 44, False, False),  Rem NORTH -> speak FUTILE_CRAWL
-      Op(45, 1, 75, 0, 0, 72, False, False),  Rem NORTH -> goto LOC_LOWROOM
-      Op(45, 0, 0, 0, 0, 71, False, False),  Rem NORTH -> goto LOC_THREEJUNCTION
-      Op(30, 1, 65, 0, 2, 44, False, False),  Rem DOWN -> speak FUTILE_CRAWL
-      Op(30, 0, 0, 0, 0, 106, False, True),  Rem DOWN -> goto LOC_ANTEROOM
-      Op(47, 0, 0, 0, 0, 65, False, False),  Rem NE -> goto LOC_BEDQUILT
-      Op(44, 0, 0, 0, 0, 67, False, False),  Rem WEST -> goto LOC_EASTEND
-      Op(46, 1, 80, 0, 2, 44, False, False),  Rem SOUTH -> speak FUTILE_CRAWL
-      Op(25, 0, 0, 0, 0, 77, False, False),  Rem CANYO -> goto LOC_TALL
-      Op(43, 0, 0, 0, 0, 96, False, False),  Rem EAST -> goto LOC_SOFTROOM
-      Op(50, 1, 50, 0, 2, 44, False, False),  Rem NW -> speak FUTILE_CRAWL
-      Op(71, 0, 0, 0, 0, 97, False, True),  Rem ORIEN -> goto LOC_ORIENTAL
-      Op(43, 0, 0, 0, 0, 66, False, False),  Rem EAST -> goto LOC_SWISSCHEESE
-      Op(44, 0, 0, 0, 0, 23, False, False),  Rem WEST -> goto LOC_WESTEND
-      Op(42, 0, 0, 0, 0, 23, False, False),  Rem ACROS -> goto LOC_WESTEND
-      Op(30, 0, 0, 0, 0, 24, False, False),  Rem DOWN -> goto LOC_EASTPIT
-      Op(31, 0, 0, 0, 0, 24, False, True),  Rem PIT -> goto LOC_EASTPIT
-      Op(46, 0, 0, 0, 0, 23, False, False),  Rem SOUTH -> goto LOC_WESTEND
-      Op(29, 0, 0, 0, 0, 69, False, False),  Rem UPWAR -> goto LOC_SECRET1
-      Op(56, 0, 0, 0, 0, 69, False, False),  Rem CLIMB -> goto LOC_SECRET1
-      Op(45, 0, 0, 0, 0, 65, False, True),  Rem NORTH -> goto LOC_BEDQUILT
-      Op(30, 0, 0, 0, 0, 68, False, False),  Rem DOWN -> goto LOC_SLAB
-      Op(61, 0, 0, 0, 0, 68, False, False),  Rem SLAB -> goto LOC_SLAB
-      Op(46, 4, 31, 0, 0, 120, False, False),  Rem SOUTH -> goto LOC_SECRET5
-      Op(46, 0, 0, 0, 0, 119, False, False),  Rem SOUTH -> goto LOC_SECRET4
-      Op(45, 0, 0, 0, 0, 109, False, False),  Rem NORTH -> goto LOC_MIRRORCANYON
-      Op(74, 0, 0, 0, 0, 113, False, True),  Rem RESER -> goto LOC_RESERVOIR
-      Op(45, 0, 0, 0, 0, 71, False, False),  Rem NORTH -> goto LOC_THREEJUNCTION
-      Op(30, 0, 0, 0, 0, 65, False, False),  Rem DOWN -> goto LOC_BEDQUILT
-      Op(23, 0, 0, 0, 0, 65, False, False),  Rem PASSA -> goto LOC_BEDQUILT
-      Op(46, 0, 0, 0, 0, 111, False, True),  Rem SOUTH -> goto LOC_TOPSTALACTITE
-      Op(48, 0, 0, 0, 0, 65, False, False),  Rem SE -> goto LOC_BEDQUILT
-      Op(46, 0, 0, 0, 0, 70, False, False),  Rem SOUTH -> goto LOC_SECRET2
-      Op(45, 0, 0, 0, 0, 110, False, True),  Rem NORTH -> goto LOC_WINDOW2
-      Op(69, 0, 0, 0, 0, 65, False, False),  Rem BEDQU -> goto LOC_BEDQUILT
-      Op(49, 0, 0, 0, 0, 118, False, False),  Rem SW -> goto LOC_WINDING
-      Op(45, 0, 0, 0, 0, 73, False, False),  Rem NORTH -> goto LOC_DEADCRAWL
-      Op(48, 0, 0, 0, 0, 97, False, False),  Rem SE -> goto LOC_ORIENTAL
-      Op(71, 0, 0, 0, 0, 97, False, True),  Rem ORIEN -> goto LOC_ORIENTAL
-      Op(46, 0, 0, 0, 0, 72, False, False),  Rem SOUTH -> goto LOC_LOWROOM
-      Op(17, 0, 0, 0, 0, 72, False, False),  Rem CRAWL -> goto LOC_LOWROOM
-      Op(11, 0, 0, 0, 0, 72, False, True),  Rem OUT -> goto LOC_LOWROOM
-      Op(43, 0, 0, 0, 0, 19, False, False),  Rem EAST -> goto LOC_KINGHALL
-      Op(44, 4, 31, 0, 0, 120, False, False),  Rem WEST -> goto LOC_SECRET5
-      Op(44, 0, 0, 0, 0, 121, False, False),  Rem WEST -> goto LOC_SECRET6
-      Op(30, 0, 0, 0, 0, 75, False, True),  Rem DOWN -> goto LOC_WIDEPLACE
-      Op(46, 0, 0, 0, 0, 76, False, False),  Rem SOUTH -> goto LOC_TIGHTPLACE
-      Op(45, 0, 0, 0, 0, 77, False, True),  Rem NORTH -> goto LOC_TALL
-      Op(45, 0, 0, 0, 0, 75, False, True),  Rem NORTH -> goto LOC_WIDEPLACE
-      Op(43, 0, 0, 0, 0, 75, False, False),  Rem EAST -> goto LOC_WIDEPLACE
-      Op(44, 0, 0, 0, 0, 78, False, False),  Rem WEST -> goto LOC_BOULDERS1
-      Op(45, 0, 0, 0, 0, 66, False, False),  Rem NORTH -> goto LOC_SWISSCHEESE
-      Op(17, 0, 0, 0, 0, 66, False, True),  Rem CRAWL -> goto LOC_SWISSCHEESE
-      Op(46, 0, 0, 0, 0, 77, False, True),  Rem SOUTH -> goto LOC_TALL
-      Op(1, 0, 0, 0, 0, 3, False, True),  Rem forced -> goto LOC_BUILDING
-      Op(45, 0, 0, 0, 0, 42, False, False),  Rem NORTH -> goto LOC_ALIKE1
-      Op(44, 0, 0, 0, 0, 80, False, False),  Rem WEST -> goto LOC_ALIKE11
-      Op(46, 0, 0, 0, 0, 80, False, False),  Rem SOUTH -> goto LOC_ALIKE11
-      Op(43, 0, 0, 0, 0, 81, False, True),  Rem EAST -> goto LOC_MAZEEND8
-      Op(44, 0, 0, 0, 0, 80, False, False),  Rem WEST -> goto LOC_ALIKE11
-      Op(11, 0, 0, 0, 0, 80, False, True),  Rem OUT -> goto LOC_ALIKE11
-      Op(46, 0, 0, 0, 0, 44, False, False),  Rem SOUTH -> goto LOC_ALIKE3
-      Op(11, 0, 0, 0, 0, 44, False, True),  Rem OUT -> goto LOC_ALIKE3
-      Op(46, 0, 0, 0, 0, 57, False, False),  Rem SOUTH -> goto LOC_PITBRINK
-      Op(43, 0, 0, 0, 0, 84, False, False),  Rem EAST -> goto LOC_ALIKE13
-      Op(44, 0, 0, 0, 0, 85, False, True),  Rem WEST -> goto LOC_MAZEEND10
-      Op(45, 0, 0, 0, 0, 57, False, False),  Rem NORTH -> goto LOC_PITBRINK
-      Op(44, 0, 0, 0, 0, 83, False, False),  Rem WEST -> goto LOC_ALIKE12
-      Op(50, 0, 0, 0, 0, 114, False, True),  Rem NW -> goto LOC_MAZEEND12
-      Op(43, 0, 0, 0, 0, 83, False, False),  Rem EAST -> goto LOC_ALIKE12
-      Op(11, 0, 0, 0, 0, 83, False, True),  Rem OUT -> goto LOC_ALIKE12
-      Op(29, 0, 0, 0, 0, 52, False, False),  Rem UPWAR -> goto LOC_ALIKE8
-      Op(11, 0, 0, 0, 0, 52, False, True),  Rem OUT -> goto LOC_ALIKE8
-      Op(29, 0, 0, 0, 0, 45, False, False),  Rem UPWAR -> goto LOC_ALIKE4
-      Op(30, 0, 0, 0, 0, 45, False, True),  Rem DOWN -> goto LOC_ALIKE4
-      Op(30, 0, 0, 0, 0, 25, False, False),  Rem DOWN -> goto LOC_WESTPIT
-      Op(56, 0, 0, 0, 0, 25, False, False),  Rem CLIMB -> goto LOC_WESTPIT
-      Op(43, 0, 0, 0, 0, 25, False, False),  Rem EAST -> goto LOC_WESTPIT
-      Op(39, 0, 0, 0, 0, 20, False, False),  Rem JUMP -> goto LOC_NECKBROKE
-      Op(44, 0, 0, 0, 0, 92, False, False),  Rem WEST -> goto LOC_GIANTROOM
-      Op(27, 0, 0, 0, 0, 92, False, True),  Rem GIANT -> goto LOC_GIANTROOM
-      Op(1, 0, 0, 0, 0, 25, False, True),  Rem forced -> goto LOC_WESTPIT
-      Op(1, 0, 0, 0, 0, 23, False, True),  Rem forced -> goto LOC_WESTEND
-      Op(45, 0, 0, 0, 0, 95, False, False),  Rem NORTH -> goto LOC_WATERFALL
-      Op(72, 0, 0, 0, 0, 95, False, False),  Rem CAVER -> goto LOC_WATERFALL
-      Op(23, 0, 0, 0, 0, 95, False, False),  Rem PASSA -> goto LOC_WATERFALL
-      Op(30, 0, 0, 0, 0, 72, False, False),  Rem DOWN -> goto LOC_LOWROOM
-      Op(56, 0, 0, 0, 0, 72, False, True),  Rem CLIMB -> goto LOC_LOWROOM
-      Op(46, 0, 0, 0, 0, 88, False, False),  Rem SOUTH -> goto LOC_NARROW
-      Op(43, 0, 0, 0, 0, 93, False, False),  Rem EAST -> goto LOC_CAVEIN
-      Op(45, 0, 0, 0, 0, 94, False, True),  Rem NORTH -> goto LOC_IMMENSE
-      Op(46, 0, 0, 0, 0, 92, False, False),  Rem SOUTH -> goto LOC_GIANTROOM
-      Op(27, 0, 0, 0, 0, 92, False, False),  Rem GIANT -> goto LOC_GIANTROOM
-      Op(11, 0, 0, 0, 0, 92, False, True),  Rem OUT -> goto LOC_GIANTROOM
-      Op(46, 0, 0, 0, 0, 92, False, False),  Rem SOUTH -> goto LOC_GIANTROOM
-      Op(27, 0, 0, 0, 0, 92, False, False),  Rem GIANT -> goto LOC_GIANTROOM
-      Op(23, 0, 0, 0, 0, 92, False, False),  Rem PASSA -> goto LOC_GIANTROOM
-      Op(45, 4, 9, 0, 0, 95, False, False),  Rem NORTH -> goto LOC_WATERFALL
-      Op(3, 4, 9, 0, 0, 95, False, False),  Rem ENTER -> goto LOC_WATERFALL
-      Op(72, 4, 9, 0, 0, 95, False, False),  Rem CAVER -> goto LOC_WATERFALL
-      Op(45, 0, 0, 0, 2, 76, False, True),  Rem NORTH -> speak RUSTY_DOOR
-      Op(46, 0, 0, 0, 0, 94, False, False),  Rem SOUTH -> goto LOC_IMMENSE
-      Op(11, 0, 0, 0, 0, 94, False, False),  Rem OUT -> goto LOC_IMMENSE
-      Op(27, 0, 0, 0, 0, 92, False, False),  Rem GIANT -> goto LOC_GIANTROOM
-      Op(44, 0, 0, 0, 0, 91, False, True),  Rem WEST -> goto LOC_INCLINE
-      Op(44, 0, 0, 0, 0, 66, False, False),  Rem WEST -> goto LOC_SWISSCHEESE
-      Op(11, 0, 0, 0, 0, 66, False, True),  Rem OUT -> goto LOC_SWISSCHEESE
-      Op(48, 0, 0, 0, 0, 66, False, False),  Rem SE -> goto LOC_SWISSCHEESE
-      Op(44, 0, 0, 0, 0, 72, False, False),  Rem WEST -> goto LOC_LOWROOM
-      Op(17, 0, 0, 0, 0, 72, False, False),  Rem CRAWL -> goto LOC_LOWROOM
-      Op(29, 0, 0, 0, 0, 98, False, False),  Rem UPWAR -> goto LOC_MISTY
-      Op(45, 0, 0, 0, 0, 98, False, False),  Rem NORTH -> goto LOC_MISTY
-      Op(72, 0, 0, 0, 0, 98, False, True),  Rem CAVER -> goto LOC_MISTY
-      Op(46, 0, 0, 0, 0, 97, False, False),  Rem SOUTH -> goto LOC_ORIENTAL
-      Op(71, 0, 0, 0, 0, 97, False, False),  Rem ORIEN -> goto LOC_ORIENTAL
-      Op(44, 0, 0, 0, 0, 99, False, True),  Rem WEST -> goto LOC_ALCOVE
-      Op(50, 0, 0, 0, 0, 98, False, False),  Rem NW -> goto LOC_MISTY
-      Op(72, 0, 0, 0, 0, 98, False, False),  Rem CAVER -> goto LOC_MISTY
-      Op(43, 0, 0, 0, 1, 1, False, False),  Rem EAST -> special 1
-      Op(23, 0, 0, 0, 1, 1, False, False),  Rem PASSA -> special 1
-      Op(43, 0, 0, 0, 0, 100, False, True),  Rem EAST -> goto LOC_PLOVER
-      Op(44, 0, 0, 0, 1, 1, False, False),  Rem WEST -> special 1
-      Op(23, 0, 0, 0, 1, 1, False, False),  Rem PASSA -> special 1
-      Op(11, 0, 0, 0, 1, 1, False, False),  Rem OUT -> special 1
-      Op(44, 0, 0, 0, 0, 99, False, False),  Rem WEST -> goto LOC_ALCOVE
-      Op(70, 2, 59, 0, 1, 2, False, False),  Rem PLOVE -> special 2
-      Op(70, 0, 0, 0, 0, 184, False, False),  Rem PLOVE -> goto LOC_FOOF6
-      Op(47, 0, 0, 0, 0, 101, False, False),  Rem NE -> goto LOC_DARKROOM
-      Op(22, 0, 0, 0, 0, 101, False, True),  Rem DARK -> goto LOC_DARKROOM
-      Op(46, 0, 0, 0, 0, 100, False, False),  Rem SOUTH -> goto LOC_PLOVER
-      Op(70, 0, 0, 0, 0, 100, False, False),  Rem PLOVE -> goto LOC_PLOVER
-      Op(11, 0, 0, 0, 0, 100, False, True),  Rem OUT -> goto LOC_PLOVER
-      Op(30, 0, 0, 0, 0, 103, False, False),  Rem DOWN -> goto LOC_SHELLROOM
-      Op(73, 0, 0, 0, 0, 103, False, False),  Rem SHELL -> goto LOC_SHELLROOM
-      Op(11, 0, 0, 0, 0, 103, False, True),  Rem OUT -> goto LOC_SHELLROOM
-      Op(29, 0, 0, 0, 0, 102, False, False),  Rem UPWAR -> goto LOC_ARCHED
-      Op(38, 0, 0, 0, 0, 102, False, False),  Rem HALL -> goto LOC_ARCHED
-      Op(30, 0, 0, 0, 0, 104, False, False),  Rem DOWN -> goto LOC_SLOPING1
-      Op(46, 2, 14, 0, 2, 81, False, False),  Rem SOUTH -> speak CLAM_BLOCKER
-      Op(46, 2, 15, 0, 2, 82, False, False),  Rem SOUTH -> speak OYSTER_BLOCKER
-      Op(46, 0, 0, 0, 0, 64, False, True),  Rem SOUTH -> goto LOC_COMPLEX
-      Op(29, 0, 0, 0, 0, 103, False, False),  Rem UPWAR -> goto LOC_SHELLROOM
-      Op(73, 0, 0, 0, 0, 103, False, False),  Rem SHELL -> goto LOC_SHELLROOM
-      Op(30, 0, 0, 0, 0, 105, False, True),  Rem DOWN -> goto LOC_CULDESAC
-      Op(29, 0, 0, 0, 0, 104, False, False),  Rem UPWAR -> goto LOC_SLOPING1
-      Op(11, 0, 0, 0, 0, 104, False, False),  Rem OUT -> goto LOC_SLOPING1
-      Op(73, 0, 0, 0, 0, 103, False, True),  Rem SHELL -> goto LOC_SHELLROOM
-      Op(29, 0, 0, 0, 0, 64, False, False),  Rem UPWAR -> goto LOC_COMPLEX
-      Op(44, 0, 0, 0, 0, 65, False, False),  Rem WEST -> goto LOC_BEDQUILT
-      Op(43, 0, 0, 0, 0, 108, False, True),  Rem EAST -> goto LOC_WITTSEND
-      Op(46, 0, 0, 0, 0, 131, False, False),  Rem SOUTH -> goto LOC_DIFFERENT3
-      Op(49, 0, 0, 0, 0, 132, False, False),  Rem SW -> goto LOC_DIFFERENT4
-      Op(47, 0, 0, 0, 0, 133, False, False),  Rem NE -> goto LOC_DIFFERENT5
-      Op(48, 0, 0, 0, 0, 134, False, False),  Rem SE -> goto LOC_DIFFERENT6
-      Op(29, 0, 0, 0, 0, 135, False, False),  Rem UPWAR -> goto LOC_DIFFERENT7
-      Op(50, 0, 0, 0, 0, 136, False, False),  Rem NW -> goto LOC_DIFFERENT8
-      Op(43, 0, 0, 0, 0, 137, False, False),  Rem EAST -> goto LOC_DIFFERENT9
-      Op(44, 0, 0, 0, 0, 138, False, False),  Rem WEST -> goto LOC_DIFFERENT10
-      Op(45, 0, 0, 0, 0, 139, False, False),  Rem NORTH -> goto LOC_DIFFERENT11
-      Op(30, 0, 0, 0, 0, 61, False, True),  Rem DOWN -> goto LOC_LONGWEST
-      Op(43, 1, 95, 0, 2, 44, False, False),  Rem EAST -> speak FUTILE_CRAWL
-      Op(45, 1, 95, 0, 2, 44, False, False),  Rem NORTH -> speak FUTILE_CRAWL
-      Op(46, 1, 95, 0, 2, 44, False, False),  Rem SOUTH -> speak FUTILE_CRAWL
-      Op(47, 1, 95, 0, 2, 44, False, False),  Rem NE -> speak FUTILE_CRAWL
-      Op(48, 1, 95, 0, 2, 44, False, False),  Rem SE -> speak FUTILE_CRAWL
-      Op(49, 1, 95, 0, 2, 44, False, False),  Rem SW -> speak FUTILE_CRAWL
-      Op(50, 1, 95, 0, 2, 44, False, False),  Rem NW -> speak FUTILE_CRAWL
-      Op(29, 1, 95, 0, 2, 44, False, False),  Rem UPWAR -> speak FUTILE_CRAWL
-      Op(30, 1, 95, 0, 2, 44, False, False),  Rem DOWN -> speak FUTILE_CRAWL
-      Op(43, 0, 0, 0, 0, 106, False, False),  Rem EAST -> goto LOC_ANTEROOM
-      Op(44, 0, 0, 0, 2, 89, False, True),  Rem WEST -> speak WAY_BLOCKED
-      Op(46, 0, 0, 0, 0, 69, False, False),  Rem SOUTH -> goto LOC_SECRET1
-      Op(45, 0, 0, 0, 0, 113, False, False),  Rem NORTH -> goto LOC_RESERVOIR
-      Op(74, 0, 0, 0, 0, 113, False, True),  Rem RESER -> goto LOC_RESERVOIR
-      Op(44, 0, 0, 0, 0, 71, False, False),  Rem WEST -> goto LOC_THREEJUNCTION
-      Op(39, 0, 0, 0, 0, 20, False, True),  Rem JUMP -> goto LOC_NECKBROKE
-      Op(45, 0, 0, 0, 0, 70, False, False),  Rem NORTH -> goto LOC_SECRET2
-      Op(30, 1, 40, 0, 0, 50, False, False),  Rem DOWN -> goto LOC_ALIKE6
-      Op(39, 1, 40, 0, 0, 50, False, False),  Rem JUMP -> goto LOC_ALIKE6
-      Op(56, 1, 40, 0, 0, 50, False, False),  Rem CLIMB -> goto LOC_ALIKE6
-      Op(30, 1, 50, 0, 0, 53, False, False),  Rem DOWN -> goto LOC_ALIKE9
-      Op(30, 0, 0, 0, 0, 45, False, True),  Rem DOWN -> goto LOC_ALIKE4
-      Op(49, 0, 0, 0, 0, 131, False, False),  Rem SW -> goto LOC_DIFFERENT3
-      Op(45, 0, 0, 0, 0, 132, False, False),  Rem NORTH -> goto LOC_DIFFERENT4
-      Op(43, 0, 0, 0, 0, 133, False, False),  Rem EAST -> goto LOC_DIFFERENT5
-      Op(50, 0, 0, 0, 0, 134, False, False),  Rem NW -> goto LOC_DIFFERENT6
-      Op(48, 0, 0, 0, 0, 135, False, False),  Rem SE -> goto LOC_DIFFERENT7
-      Op(47, 0, 0, 0, 0, 136, False, False),  Rem NE -> goto LOC_DIFFERENT8
-      Op(44, 0, 0, 0, 0, 137, False, False),  Rem WEST -> goto LOC_DIFFERENT9
-      Op(30, 0, 0, 0, 0, 138, False, False),  Rem DOWN -> goto LOC_DIFFERENT10
-      Op(29, 0, 0, 0, 0, 139, False, False),  Rem UPWAR -> goto LOC_DIFFERENT11
-      Op(46, 0, 0, 0, 0, 140, False, True),  Rem SOUTH -> goto LOC_DEADEND13
-      Op(46, 0, 0, 0, 0, 109, False, False),  Rem SOUTH -> goto LOC_MIRRORCANYON
-      Op(11, 0, 0, 0, 0, 109, False, False),  Rem OUT -> goto LOC_MIRRORCANYON
-      Op(45, 4, 45, 1, 2, 40, False, False),  Rem NORTH -> speak BAD_DIRECTION
-      Op(42, 4, 45, 1, 2, 40, False, False),  Rem ACROS -> speak BAD_DIRECTION
-      Op(68, 4, 45, 1, 2, 40, False, False),  Rem CROSS -> speak BAD_DIRECTION
-      Op(45, 0, 0, 0, 0, 168, False, True),  Rem NORTH -> goto LOC_RESBOTTOM
-      Op(48, 0, 0, 0, 0, 84, False, True),  Rem SE -> goto LOC_ALIKE13
-      Op(49, 0, 0, 0, 0, 116, False, True),  Rem SW -> goto LOC_SW
-      Op(47, 0, 0, 0, 0, 115, False, False),  Rem NE -> goto LOC_NE
-      Op(30, 0, 0, 0, 2, 61, False, True),  Rem DOWN -> speak GRATE_NOWAY
-      Op(49, 0, 0, 0, 0, 118, False, False),  Rem SW -> goto LOC_WINDING
-      Op(41, 3, 33, 0, 2, 121, False, False),  Rem OVER -> speak TROLL_BLOCKS
-      Op(42, 3, 33, 0, 2, 121, False, False),  Rem ACROS -> speak TROLL_BLOCKS
-      Op(68, 3, 33, 0, 2, 121, False, False),  Rem CROSS -> speak TROLL_BLOCKS
-      Op(47, 3, 33, 0, 2, 121, False, False),  Rem NE -> speak TROLL_BLOCKS
-      Op(41, 4, 32, 0, 2, 122, False, False),  Rem OVER -> speak BRIDGE_GONE
-      Op(41, 0, 0, 0, 1, 3, False, False),  Rem OVER -> special 3
-      Op(39, 4, 32, 0, 0, 21, False, False),  Rem JUMP -> goto LOC_NOMAKE
-      Op(39, 0, 0, 0, 2, 64, False, True),  Rem JUMP -> speak CROSS_BRIDGE
-      Op(30, 0, 0, 0, 0, 72, False, False),  Rem DOWN -> goto LOC_LOWROOM
-      Op(29, 0, 0, 0, 0, 117, False, True),  Rem UPWAR -> goto LOC_SWCHASM
-      Op(45, 0, 0, 0, 0, 69, False, False),  Rem NORTH -> goto LOC_SECRET1
-      Op(11, 0, 0, 0, 0, 69, False, False),  Rem OUT -> goto LOC_SECRET1
-      Op(43, 0, 0, 0, 2, 115, False, False),  Rem EAST -> speak NASTY_DRAGON
-      Op(7, 0, 0, 0, 2, 115, False, True),  Rem FORWA -> speak NASTY_DRAGON
-      Op(45, 0, 0, 0, 0, 69, False, False),  Rem NORTH -> goto LOC_SECRET1
-      Op(43, 0, 0, 0, 0, 74, False, True),  Rem EAST -> goto LOC_SECRET3
-      Op(43, 0, 0, 0, 0, 74, False, False),  Rem EAST -> goto LOC_SECRET3
-      Op(11, 0, 0, 0, 0, 74, False, False),  Rem OUT -> goto LOC_SECRET3
-      Op(45, 0, 0, 0, 2, 115, False, False),  Rem NORTH -> speak NASTY_DRAGON
-      Op(7, 0, 0, 0, 2, 115, False, True),  Rem FORWA -> speak NASTY_DRAGON
-      Op(47, 0, 0, 0, 0, 123, False, False),  Rem NE -> goto LOC_CORRIDOR
-      Op(41, 3, 33, 0, 2, 121, False, False),  Rem OVER -> speak TROLL_BLOCKS
-      Op(42, 3, 33, 0, 2, 121, False, False),  Rem ACROS -> speak TROLL_BLOCKS
-      Op(68, 3, 33, 0, 2, 121, False, False),  Rem CROSS -> speak TROLL_BLOCKS
-      Op(49, 3, 33, 0, 2, 121, False, False),  Rem SW -> speak TROLL_BLOCKS
-      Op(41, 0, 0, 0, 1, 3, False, False),  Rem OVER -> special 3
-      Op(39, 0, 0, 0, 2, 64, False, False),  Rem JUMP -> speak CROSS_BRIDGE
-      Op(15, 0, 0, 0, 0, 124, False, False),  Rem FORK -> goto LOC_FORK
-      Op(28, 0, 0, 0, 0, 126, False, False),  Rem VIEW -> goto LOC_BREATHTAKING
-      Op(40, 0, 0, 0, 0, 129, False, True),  Rem BARRE -> goto LOC_BARRENFRONT
-      Op(44, 0, 0, 0, 0, 122, False, False),  Rem WEST -> goto LOC_NECHASM
-      Op(43, 0, 0, 0, 0, 124, False, False),  Rem EAST -> goto LOC_FORK
-      Op(15, 0, 0, 0, 0, 124, False, False),  Rem FORK -> goto LOC_FORK
-      Op(28, 0, 0, 0, 0, 126, False, False),  Rem VIEW -> goto LOC_BREATHTAKING
-      Op(40, 0, 0, 0, 0, 129, False, True),  Rem BARRE -> goto LOC_BARRENFRONT
-      Op(44, 0, 0, 0, 0, 123, False, False),  Rem WEST -> goto LOC_CORRIDOR
-      Op(47, 0, 0, 0, 0, 125, False, False),  Rem NE -> goto LOC_WARMWALLS
-      Op(36, 0, 0, 0, 0, 125, False, False),  Rem LEFT -> goto LOC_WARMWALLS
-      Op(48, 0, 0, 0, 0, 128, False, False),  Rem SE -> goto LOC_LIMESTONE
-      Op(37, 0, 0, 0, 0, 128, False, False),  Rem RIGHT -> goto LOC_LIMESTONE
-      Op(30, 0, 0, 0, 0, 128, False, False),  Rem DOWN -> goto LOC_LIMESTONE
-      Op(28, 0, 0, 0, 0, 126, False, False),  Rem VIEW -> goto LOC_BREATHTAKING
-      Op(40, 0, 0, 0, 0, 129, False, True),  Rem BARRE -> goto LOC_BARRENFRONT
-      Op(46, 0, 0, 0, 0, 124, False, False),  Rem SOUTH -> goto LOC_FORK
-      Op(15, 0, 0, 0, 0, 124, False, False),  Rem FORK -> goto LOC_FORK
-      Op(45, 0, 0, 0, 0, 126, False, False),  Rem NORTH -> goto LOC_BREATHTAKING
-      Op(28, 0, 0, 0, 0, 126, False, False),  Rem VIEW -> goto LOC_BREATHTAKING
-      Op(43, 0, 0, 0, 0, 127, False, False),  Rem EAST -> goto LOC_BOULDERS2
-      Op(17, 0, 0, 0, 0, 127, False, True),  Rem CRAWL -> goto LOC_BOULDERS2
-      Op(46, 0, 0, 0, 0, 125, False, False),  Rem SOUTH -> goto LOC_WARMWALLS
-      Op(23, 0, 0, 0, 0, 125, False, False),  Rem PASSA -> goto LOC_WARMWALLS
-      Op(11, 0, 0, 0, 0, 125, False, False),  Rem OUT -> goto LOC_WARMWALLS
-      Op(15, 0, 0, 0, 0, 124, False, False),  Rem FORK -> goto LOC_FORK
-      Op(30, 0, 0, 0, 2, 75, False, False),  Rem DOWN -> speak RIDICULOUS_ATTEMPT
-      Op(39, 0, 0, 0, 0, 178, False, True),  Rem JUMP -> goto LOC_GRUESOME
-      Op(44, 0, 0, 0, 0, 125, False, False),  Rem WEST -> goto LOC_WARMWALLS
-      Op(11, 0, 0, 0, 0, 125, False, False),  Rem OUT -> goto LOC_WARMWALLS
-      Op(17, 0, 0, 0, 0, 125, False, False),  Rem CRAWL -> goto LOC_WARMWALLS
-      Op(15, 0, 0, 0, 0, 124, False, False),  Rem FORK -> goto LOC_FORK
-      Op(28, 0, 0, 0, 0, 126, False, True),  Rem VIEW -> goto LOC_BREATHTAKING
-      Op(45, 0, 0, 0, 0, 124, False, False),  Rem NORTH -> goto LOC_FORK
-      Op(29, 0, 0, 0, 0, 124, False, False),  Rem UPWAR -> goto LOC_FORK
-      Op(15, 0, 0, 0, 0, 124, False, False),  Rem FORK -> goto LOC_FORK
-      Op(46, 0, 0, 0, 0, 129, False, False),  Rem SOUTH -> goto LOC_BARRENFRONT
-      Op(30, 0, 0, 0, 0, 129, False, False),  Rem DOWN -> goto LOC_BARRENFRONT
-      Op(40, 0, 0, 0, 0, 129, False, False),  Rem BARRE -> goto LOC_BARRENFRONT
-      Op(28, 0, 0, 0, 0, 126, False, True),  Rem VIEW -> goto LOC_BREATHTAKING
-      Op(44, 0, 0, 0, 0, 128, False, False),  Rem WEST -> goto LOC_LIMESTONE
-      Op(29, 0, 0, 0, 0, 128, False, False),  Rem UPWAR -> goto LOC_LIMESTONE
-      Op(15, 0, 0, 0, 0, 124, False, False),  Rem FORK -> goto LOC_FORK
-      Op(43, 0, 0, 0, 0, 130, False, False),  Rem EAST -> goto LOC_BARRENROOM
-      Op(19, 0, 0, 0, 0, 130, False, False),  Rem INWAR -> goto LOC_BARRENROOM
-      Op(40, 0, 0, 0, 0, 130, False, False),  Rem BARRE -> goto LOC_BARRENROOM
-      Op(3, 0, 0, 0, 0, 130, False, False),  Rem ENTER -> goto LOC_BARRENROOM
-      Op(28, 0, 0, 0, 0, 126, False, True),  Rem VIEW -> goto LOC_BREATHTAKING
-      Op(44, 0, 0, 0, 0, 129, False, False),  Rem WEST -> goto LOC_BARRENFRONT
-      Op(11, 0, 0, 0, 0, 129, False, False),  Rem OUT -> goto LOC_BARRENFRONT
-      Op(15, 0, 0, 0, 0, 124, False, False),  Rem FORK -> goto LOC_FORK
-      Op(28, 0, 0, 0, 0, 126, False, True),  Rem VIEW -> goto LOC_BREATHTAKING
-      Op(44, 0, 0, 0, 0, 107, False, False),  Rem WEST -> goto LOC_DIFFERENT1
-      Op(48, 0, 0, 0, 0, 132, False, False),  Rem SE -> goto LOC_DIFFERENT4
-      Op(50, 0, 0, 0, 0, 133, False, False),  Rem NW -> goto LOC_DIFFERENT5
-      Op(49, 0, 0, 0, 0, 134, False, False),  Rem SW -> goto LOC_DIFFERENT6
-      Op(47, 0, 0, 0, 0, 135, False, False),  Rem NE -> goto LOC_DIFFERENT7
-      Op(29, 0, 0, 0, 0, 136, False, False),  Rem UPWAR -> goto LOC_DIFFERENT8
-      Op(30, 0, 0, 0, 0, 137, False, False),  Rem DOWN -> goto LOC_DIFFERENT9
-      Op(45, 0, 0, 0, 0, 138, False, False),  Rem NORTH -> goto LOC_DIFFERENT10
-      Op(46, 0, 0, 0, 0, 139, False, False),  Rem SOUTH -> goto LOC_DIFFERENT11
-      Op(43, 0, 0, 0, 0, 112, False, True),  Rem EAST -> goto LOC_DIFFERENT2
-      Op(50, 0, 0, 0, 0, 107, False, False),  Rem NW -> goto LOC_DIFFERENT1
-      Op(29, 0, 0, 0, 0, 131, False, False),  Rem UPWAR -> goto LOC_DIFFERENT3
-      Op(45, 0, 0, 0, 0, 133, False, False),  Rem NORTH -> goto LOC_DIFFERENT5
-      Op(46, 0, 0, 0, 0, 134, False, False),  Rem SOUTH -> goto LOC_DIFFERENT6
-      Op(44, 0, 0, 0, 0, 135, False, False),  Rem WEST -> goto LOC_DIFFERENT7
-      Op(49, 0, 0, 0, 0, 136, False, False),  Rem SW -> goto LOC_DIFFERENT8
-      Op(47, 0, 0, 0, 0, 137, False, False),  Rem NE -> goto LOC_DIFFERENT9
-      Op(43, 0, 0, 0, 0, 138, False, False),  Rem EAST -> goto LOC_DIFFERENT10
-      Op(30, 0, 0, 0, 0, 139, False, False),  Rem DOWN -> goto LOC_DIFFERENT11
-      Op(48, 0, 0, 0, 0, 112, False, True),  Rem SE -> goto LOC_DIFFERENT2
-      Op(29, 0, 0, 0, 0, 107, False, False),  Rem UPWAR -> goto LOC_DIFFERENT1
-      Op(30, 0, 0, 0, 0, 131, False, False),  Rem DOWN -> goto LOC_DIFFERENT3
-      Op(44, 0, 0, 0, 0, 132, False, False),  Rem WEST -> goto LOC_DIFFERENT4
-      Op(47, 0, 0, 0, 0, 134, False, False),  Rem NE -> goto LOC_DIFFERENT6
-      Op(49, 0, 0, 0, 0, 135, False, False),  Rem SW -> goto LOC_DIFFERENT7
-      Op(43, 0, 0, 0, 0, 136, False, False),  Rem EAST -> goto LOC_DIFFERENT8
-      Op(45, 0, 0, 0, 0, 137, False, False),  Rem NORTH -> goto LOC_DIFFERENT9
-      Op(50, 0, 0, 0, 0, 138, False, False),  Rem NW -> goto LOC_DIFFERENT10
-      Op(48, 0, 0, 0, 0, 139, False, False),  Rem SE -> goto LOC_DIFFERENT11
-      Op(46, 0, 0, 0, 0, 112, False, True),  Rem SOUTH -> goto LOC_DIFFERENT2
-      Op(47, 0, 0, 0, 0, 107, False, False),  Rem NE -> goto LOC_DIFFERENT1
-      Op(45, 0, 0, 0, 0, 131, False, False),  Rem NORTH -> goto LOC_DIFFERENT3
-      Op(50, 0, 0, 0, 0, 132, False, False),  Rem NW -> goto LOC_DIFFERENT4
-      Op(48, 0, 0, 0, 0, 133, False, False),  Rem SE -> goto LOC_DIFFERENT5
-      Op(43, 0, 0, 0, 0, 135, False, False),  Rem EAST -> goto LOC_DIFFERENT7
-      Op(30, 0, 0, 0, 0, 136, False, False),  Rem DOWN -> goto LOC_DIFFERENT8
-      Op(46, 0, 0, 0, 0, 137, False, False),  Rem SOUTH -> goto LOC_DIFFERENT9
-      Op(29, 0, 0, 0, 0, 138, False, False),  Rem UPWAR -> goto LOC_DIFFERENT10
-      Op(44, 0, 0, 0, 0, 139, False, False),  Rem WEST -> goto LOC_DIFFERENT11
-      Op(49, 0, 0, 0, 0, 112, False, True),  Rem SW -> goto LOC_DIFFERENT2
-      Op(45, 0, 0, 0, 0, 107, False, False),  Rem NORTH -> goto LOC_DIFFERENT1
-      Op(48, 0, 0, 0, 0, 131, False, False),  Rem SE -> goto LOC_DIFFERENT3
-      Op(30, 0, 0, 0, 0, 132, False, False),  Rem DOWN -> goto LOC_DIFFERENT4
-      Op(46, 0, 0, 0, 0, 133, False, False),  Rem SOUTH -> goto LOC_DIFFERENT5
-      Op(43, 0, 0, 0, 0, 134, False, False),  Rem EAST -> goto LOC_DIFFERENT6
-      Op(44, 0, 0, 0, 0, 136, False, False),  Rem WEST -> goto LOC_DIFFERENT8
-      Op(49, 0, 0, 0, 0, 137, False, False),  Rem SW -> goto LOC_DIFFERENT9
-      Op(47, 0, 0, 0, 0, 138, False, False),  Rem NE -> goto LOC_DIFFERENT10
-      Op(50, 0, 0, 0, 0, 139, False, False),  Rem NW -> goto LOC_DIFFERENT11
-      Op(29, 0, 0, 0, 0, 112, False, True),  Rem UPWAR -> goto LOC_DIFFERENT2
-      Op(43, 0, 0, 0, 0, 107, False, False),  Rem EAST -> goto LOC_DIFFERENT1
-      Op(44, 0, 0, 0, 0, 131, False, False),  Rem WEST -> goto LOC_DIFFERENT3
-      Op(29, 0, 0, 0, 0, 132, False, False),  Rem UPWAR -> goto LOC_DIFFERENT4
-      Op(49, 0, 0, 0, 0, 133, False, False),  Rem SW -> goto LOC_DIFFERENT5
-      Op(30, 0, 0, 0, 0, 134, False, False),  Rem DOWN -> goto LOC_DIFFERENT6
-      Op(46, 0, 0, 0, 0, 135, False, False),  Rem SOUTH -> goto LOC_DIFFERENT7
-      Op(50, 0, 0, 0, 0, 137, False, False),  Rem NW -> goto LOC_DIFFERENT9
-      Op(48, 0, 0, 0, 0, 138, False, False),  Rem SE -> goto LOC_DIFFERENT10
-      Op(47, 0, 0, 0, 0, 139, False, False),  Rem NE -> goto LOC_DIFFERENT11
-      Op(45, 0, 0, 0, 0, 112, False, True),  Rem NORTH -> goto LOC_DIFFERENT2
-      Op(48, 0, 0, 0, 0, 107, False, False),  Rem SE -> goto LOC_DIFFERENT1
-      Op(47, 0, 0, 0, 0, 131, False, False),  Rem NE -> goto LOC_DIFFERENT3
-      Op(46, 0, 0, 0, 0, 132, False, False),  Rem SOUTH -> goto LOC_DIFFERENT4
-      Op(30, 0, 0, 0, 0, 133, False, False),  Rem DOWN -> goto LOC_DIFFERENT5
-      Op(29, 0, 0, 0, 0, 134, False, False),  Rem UPWAR -> goto LOC_DIFFERENT6
-      Op(50, 0, 0, 0, 0, 135, False, False),  Rem NW -> goto LOC_DIFFERENT7
-      Op(45, 0, 0, 0, 0, 136, False, False),  Rem NORTH -> goto LOC_DIFFERENT8
-      Op(49, 0, 0, 0, 0, 138, False, False),  Rem SW -> goto LOC_DIFFERENT10
-      Op(43, 0, 0, 0, 0, 139, False, False),  Rem EAST -> goto LOC_DIFFERENT11
-      Op(44, 0, 0, 0, 0, 112, False, True),  Rem WEST -> goto LOC_DIFFERENT2
-      Op(30, 0, 0, 0, 0, 107, False, False),  Rem DOWN -> goto LOC_DIFFERENT1
-      Op(43, 0, 0, 0, 0, 131, False, False),  Rem EAST -> goto LOC_DIFFERENT3
-      Op(47, 0, 0, 0, 0, 132, False, False),  Rem NE -> goto LOC_DIFFERENT4
-      Op(29, 0, 0, 0, 0, 133, False, False),  Rem UPWAR -> goto LOC_DIFFERENT5
-      Op(44, 0, 0, 0, 0, 134, False, False),  Rem WEST -> goto LOC_DIFFERENT6
-      Op(45, 0, 0, 0, 0, 135, False, False),  Rem NORTH -> goto LOC_DIFFERENT7
-      Op(46, 0, 0, 0, 0, 136, False, False),  Rem SOUTH -> goto LOC_DIFFERENT8
-      Op(48, 0, 0, 0, 0, 137, False, False),  Rem SE -> goto LOC_DIFFERENT9
-      Op(49, 0, 0, 0, 0, 139, False, False),  Rem SW -> goto LOC_DIFFERENT11
-      Op(50, 0, 0, 0, 0, 112, False, True),  Rem NW -> goto LOC_DIFFERENT2
-      Op(49, 0, 0, 0, 0, 107, False, False),  Rem SW -> goto LOC_DIFFERENT1
-      Op(50, 0, 0, 0, 0, 131, False, False),  Rem NW -> goto LOC_DIFFERENT3
-      Op(43, 0, 0, 0, 0, 132, False, False),  Rem EAST -> goto LOC_DIFFERENT4
-      Op(44, 0, 0, 0, 0, 133, False, False),  Rem WEST -> goto LOC_DIFFERENT5
-      Op(45, 0, 0, 0, 0, 134, False, False),  Rem NORTH -> goto LOC_DIFFERENT6
-      Op(30, 0, 0, 0, 0, 135, False, False),  Rem DOWN -> goto LOC_DIFFERENT7
-      Op(48, 0, 0, 0, 0, 136, False, False),  Rem SE -> goto LOC_DIFFERENT8
-      Op(29, 0, 0, 0, 0, 137, False, False),  Rem UPWAR -> goto LOC_DIFFERENT9
-      Op(46, 0, 0, 0, 0, 138, False, False),  Rem SOUTH -> goto LOC_DIFFERENT10
-      Op(47, 0, 0, 0, 0, 112, False, True),  Rem NE -> goto LOC_DIFFERENT2
-      Op(45, 0, 0, 0, 0, 112, False, False),  Rem NORTH -> goto LOC_DIFFERENT2
-      Op(11, 0, 0, 0, 0, 112, False, False),  Rem OUT -> goto LOC_DIFFERENT2
-      Op(46, 4, 38, 0, 0, 141, False, False),  Rem SOUTH -> goto LOC_ROUGHHEWN
-      Op(46, 0, 0, 0, 0, 142, False, True),  Rem SOUTH -> goto LOC_BADDIRECTION
-      Op(45, 0, 0, 0, 0, 140, False, False),  Rem NORTH -> goto LOC_DEADEND13
-      Op(46, 0, 0, 0, 0, 143, False, True),  Rem SOUTH -> goto LOC_LARGE
-      Op(1, 0, 0, 0, 0, 140, False, True),  Rem forced -> goto LOC_DEADEND13
-      Op(44, 0, 0, 0, 0, 141, False, False),  Rem WEST -> goto LOC_ROUGHHEWN
-      Op(45, 3, 41, 0, 2, 48, False, False),  Rem NORTH -> speak OGRE_SNARL
-      Op(45, 0, 0, 0, 0, 144, False, True),  Rem NORTH -> goto LOC_STOREROOM
-      Op(46, 0, 0, 0, 0, 143, False, False),  Rem SOUTH -> goto LOC_LARGE
-      Op(11, 0, 0, 0, 0, 143, False, True),  Rem OUT -> goto LOC_LARGE
-      Op(43, 0, 0, 0, 0, 1, False, False),  Rem EAST -> goto LOC_START
-      Op(44, 0, 0, 0, 0, 157, False, False),  Rem WEST -> goto LOC_FOREST13
-      Op(45, 0, 0, 0, 0, 146, False, False),  Rem NORTH -> goto LOC_FOREST2
-      Op(46, 0, 0, 0, 0, 147, False, True),  Rem SOUTH -> goto LOC_FOREST3
-      Op(43, 0, 0, 0, 0, 145, False, False),  Rem EAST -> goto LOC_FOREST1
-      Op(44, 0, 0, 0, 0, 163, False, False),  Rem WEST -> goto LOC_FOREST19
-      Op(45, 0, 0, 0, 0, 147, False, False),  Rem NORTH -> goto LOC_FOREST3
-      Op(46, 0, 0, 0, 0, 162, False, True),  Rem SOUTH -> goto LOC_FOREST18
-      Op(43, 0, 0, 0, 0, 148, False, False),  Rem EAST -> goto LOC_FOREST4
-      Op(44, 0, 0, 0, 0, 148, False, False),  Rem WEST -> goto LOC_FOREST4
-      Op(45, 0, 0, 0, 0, 146, False, False),  Rem NORTH -> goto LOC_FOREST2
-      Op(46, 0, 0, 0, 0, 145, False, True),  Rem SOUTH -> goto LOC_FOREST1
-      Op(43, 0, 0, 0, 0, 147, False, False),  Rem EAST -> goto LOC_FOREST3
-      Op(45, 0, 0, 0, 0, 147, False, False),  Rem NORTH -> goto LOC_FOREST3
-      Op(44, 0, 0, 0, 0, 149, False, False),  Rem WEST -> goto LOC_FOREST5
-      Op(46, 0, 0, 0, 0, 149, False, True),  Rem SOUTH -> goto LOC_FOREST5
-      Op(43, 0, 0, 0, 0, 148, False, False),  Rem EAST -> goto LOC_FOREST4
-      Op(45, 0, 0, 0, 0, 148, False, False),  Rem NORTH -> goto LOC_FOREST4
-      Op(44, 0, 0, 0, 0, 151, False, False),  Rem WEST -> goto LOC_FOREST7
-      Op(46, 0, 0, 0, 0, 150, False, True),  Rem SOUTH -> goto LOC_FOREST6
-      Op(43, 0, 0, 0, 0, 149, False, False),  Rem EAST -> goto LOC_FOREST5
-      Op(44, 0, 0, 0, 0, 151, False, False),  Rem WEST -> goto LOC_FOREST7
-      Op(45, 0, 0, 0, 0, 4, False, False),  Rem NORTH -> goto LOC_VALLEY
-      Op(46, 0, 0, 0, 0, 7, False, True),  Rem SOUTH -> goto LOC_SLIT
-      Op(43, 0, 0, 0, 0, 149, False, False),  Rem EAST -> goto LOC_FOREST5
-      Op(44, 0, 0, 0, 0, 150, False, False),  Rem WEST -> goto LOC_FOREST6
-      Op(45, 0, 0, 0, 0, 8, False, False),  Rem NORTH -> goto LOC_GRATE
-      Op(46, 0, 0, 0, 0, 152, False, True),  Rem SOUTH -> goto LOC_FOREST8
-      Op(43, 0, 0, 0, 0, 153, False, False),  Rem EAST -> goto LOC_FOREST9
-      Op(44, 0, 0, 0, 0, 155, False, False),  Rem WEST -> goto LOC_FOREST11
-      Op(45, 0, 0, 0, 0, 166, False, False),  Rem NORTH -> goto LOC_FOREST22
-      Op(46, 0, 0, 0, 0, 151, False, True),  Rem SOUTH -> goto LOC_FOREST7
-      Op(43, 0, 0, 0, 0, 155, False, False),  Rem EAST -> goto LOC_FOREST11
-      Op(44, 0, 0, 0, 0, 152, False, False),  Rem WEST -> goto LOC_FOREST8
-      Op(45, 0, 0, 0, 0, 154, False, False),  Rem NORTH -> goto LOC_FOREST10
-      Op(46, 0, 0, 0, 0, 8, False, True),  Rem SOUTH -> goto LOC_GRATE
-      Op(43, 0, 0, 0, 0, 7, False, False),  Rem EAST -> goto LOC_SLIT
-      Op(44, 0, 0, 0, 0, 155, False, False),  Rem WEST -> goto LOC_FOREST11
-      Op(45, 0, 0, 0, 0, 153, False, False),  Rem NORTH -> goto LOC_FOREST9
-      Op(46, 0, 0, 0, 0, 8, False, True),  Rem SOUTH -> goto LOC_GRATE
-      Op(43, 0, 0, 0, 0, 154, False, False),  Rem EAST -> goto LOC_FOREST10
-      Op(44, 0, 0, 0, 0, 152, False, False),  Rem WEST -> goto LOC_FOREST8
-      Op(45, 0, 0, 0, 0, 166, False, False),  Rem NORTH -> goto LOC_FOREST22
-      Op(46, 0, 0, 0, 0, 153, False, True),  Rem SOUTH -> goto LOC_FOREST9
-      Op(43, 0, 0, 0, 0, 157, False, False),  Rem EAST -> goto LOC_FOREST13
-      Op(44, 0, 0, 0, 0, 158, False, False),  Rem WEST -> goto LOC_FOREST14
-      Op(45, 0, 0, 0, 0, 166, False, False),  Rem NORTH -> goto LOC_FOREST22
-      Op(46, 0, 0, 0, 0, 4, False, True),  Rem SOUTH -> goto LOC_VALLEY
-      Op(43, 0, 0, 0, 0, 145, False, False),  Rem EAST -> goto LOC_FOREST1
-      Op(44, 0, 0, 0, 0, 156, False, False),  Rem WEST -> goto LOC_FOREST12
-      Op(45, 0, 0, 0, 0, 164, False, False),  Rem NORTH -> goto LOC_FOREST20
-      Op(46, 0, 0, 0, 0, 2, False, True),  Rem SOUTH -> goto LOC_HILL
-      Op(43, 0, 0, 0, 0, 5, False, False),  Rem EAST -> goto LOC_ROADEND
-      Op(44, 0, 0, 0, 0, 160, False, False),  Rem WEST -> goto LOC_FOREST16
-      Op(45, 0, 0, 0, 0, 159, False, False),  Rem NORTH -> goto LOC_FOREST15
-      Op(46, 0, 0, 0, 0, 156, False, True),  Rem SOUTH -> goto LOC_FOREST12
-      Op(43, 0, 0, 0, 0, 160, False, False),  Rem EAST -> goto LOC_FOREST16
-      Op(44, 0, 0, 0, 0, 166, False, False),  Rem WEST -> goto LOC_FOREST22
-      Op(45, 0, 0, 0, 0, 5, False, False),  Rem NORTH -> goto LOC_ROADEND
-      Op(46, 0, 0, 0, 0, 158, False, True),  Rem SOUTH -> goto LOC_FOREST14
-      Op(43, 0, 0, 0, 0, 161, False, False),  Rem EAST -> goto LOC_FOREST17
-      Op(45, 0, 0, 0, 0, 161, False, False),  Rem NORTH -> goto LOC_FOREST17
-      Op(44, 0, 0, 0, 0, 158, False, False),  Rem WEST -> goto LOC_FOREST14
-      Op(46, 0, 0, 0, 0, 159, False, True),  Rem SOUTH -> goto LOC_FOREST15
-      Op(43, 0, 0, 0, 0, 162, False, False),  Rem EAST -> goto LOC_FOREST18
-      Op(44, 0, 0, 0, 0, 160, False, False),  Rem WEST -> goto LOC_FOREST16
-      Op(46, 0, 0, 0, 0, 160, False, False),  Rem SOUTH -> goto LOC_FOREST16
-      Op(45, 0, 0, 0, 0, 6, False, True),  Rem NORTH -> goto LOC_CLIFF
-      Op(43, 0, 0, 0, 0, 163, False, False),  Rem EAST -> goto LOC_FOREST19
-      Op(44, 0, 0, 0, 0, 161, False, False),  Rem WEST -> goto LOC_FOREST17
-      Op(45, 0, 0, 0, 0, 146, False, False),  Rem NORTH -> goto LOC_FOREST2
-      Op(46, 0, 0, 0, 0, 165, False, True),  Rem SOUTH -> goto LOC_FOREST21
-      Op(43, 0, 0, 0, 0, 146, False, False),  Rem EAST -> goto LOC_FOREST2
-      Op(44, 0, 0, 0, 0, 162, False, False),  Rem WEST -> goto LOC_FOREST18
-      Op(45, 0, 0, 0, 0, 6, False, False),  Rem NORTH -> goto LOC_CLIFF
-      Op(46, 0, 0, 0, 0, 164, False, True),  Rem SOUTH -> goto LOC_FOREST20
-      Op(43, 0, 0, 0, 0, 2, False, False),  Rem EAST -> goto LOC_HILL
-      Op(44, 0, 0, 0, 0, 165, False, False),  Rem WEST -> goto LOC_FOREST21
-      Op(45, 0, 0, 0, 0, 163, False, False),  Rem NORTH -> goto LOC_FOREST19
-      Op(46, 0, 0, 0, 0, 157, False, True),  Rem SOUTH -> goto LOC_FOREST13
-      Op(43, 0, 0, 0, 0, 164, False, False),  Rem EAST -> goto LOC_FOREST20
-      Op(44, 0, 0, 0, 0, 5, False, False),  Rem WEST -> goto LOC_ROADEND
-      Op(45, 0, 0, 0, 0, 162, False, False),  Rem NORTH -> goto LOC_FOREST18
-      Op(46, 0, 0, 0, 0, 165, False, True),  Rem SOUTH -> goto LOC_FOREST21
-      Op(43, 0, 0, 0, 0, 152, False, False),  Rem EAST -> goto LOC_FOREST8
-      Op(44, 0, 0, 0, 0, 155, False, False),  Rem WEST -> goto LOC_FOREST11
-      Op(45, 0, 0, 0, 0, 159, False, False),  Rem NORTH -> goto LOC_FOREST15
-      Op(46, 0, 0, 0, 0, 156, False, True),  Rem SOUTH -> goto LOC_FOREST12
-      Op(39, 0, 0, 0, 0, 21, False, True),  Rem JUMP -> goto LOC_NOMAKE
-      Op(45, 0, 0, 0, 0, 169, False, False),  Rem NORTH -> goto LOC_RESNORTH
-      Op(46, 0, 0, 0, 0, 113, False, True),  Rem SOUTH -> goto LOC_RESERVOIR
-      Op(46, 4, 45, 1, 2, 40, False, False),  Rem SOUTH -> speak BAD_DIRECTION
-      Op(42, 4, 45, 1, 2, 40, False, False),  Rem ACROS -> speak BAD_DIRECTION
-      Op(68, 4, 45, 1, 2, 40, False, False),  Rem CROSS -> speak BAD_DIRECTION
-      Op(46, 0, 0, 0, 0, 168, False, False),  Rem SOUTH -> goto LOC_RESBOTTOM
-      Op(50, 0, 0, 0, 0, 170, False, False),  Rem NW -> goto LOC_TREACHEROUS
-      Op(29, 0, 0, 0, 0, 170, False, False),  Rem UPWAR -> goto LOC_TREACHEROUS
-      Op(11, 0, 0, 0, 0, 170, False, True),  Rem OUT -> goto LOC_TREACHEROUS
-      Op(29, 0, 0, 0, 0, 171, False, False),  Rem UPWAR -> goto LOC_STEEP
-      Op(50, 0, 0, 0, 0, 171, False, False),  Rem NW -> goto LOC_STEEP
-      Op(30, 0, 0, 0, 0, 169, False, False),  Rem DOWN -> goto LOC_RESNORTH
-      Op(48, 0, 0, 0, 0, 169, False, True),  Rem SE -> goto LOC_RESNORTH
-      Op(30, 0, 0, 0, 0, 170, False, False),  Rem DOWN -> goto LOC_TREACHEROUS
-      Op(48, 0, 0, 0, 0, 170, False, False),  Rem SE -> goto LOC_TREACHEROUS
-      Op(29, 0, 0, 0, 0, 172, False, False),  Rem UPWAR -> goto LOC_CLIFFBASE
-      Op(50, 0, 0, 0, 0, 172, False, True),  Rem NW -> goto LOC_CLIFFBASE
-      Op(30, 0, 0, 0, 0, 171, False, False),  Rem DOWN -> goto LOC_STEEP
-      Op(48, 0, 0, 0, 0, 171, False, False),  Rem SE -> goto LOC_STEEP
-      Op(29, 0, 0, 0, 0, 173, False, False),  Rem UPWAR -> goto LOC_CLIFFACE
-      Op(56, 0, 0, 0, 0, 173, False, True),  Rem CLIMB -> goto LOC_CLIFFACE
-      Op(30, 0, 0, 0, 0, 172, False, False),  Rem DOWN -> goto LOC_CLIFFBASE
-      Op(29, 2, 46, 0, 0, 175, False, False),  Rem UPWAR -> goto LOC_CLIFFTOP
-      Op(29, 0, 0, 0, 0, 174, False, True),  Rem UPWAR -> goto LOC_FOOTSLIP
-      Op(1, 0, 0, 0, 0, 0, False, True),  Rem forced -> goto LOC_NOWHERE
-      Op(1, 0, 0, 0, 0, 176, False, True),  Rem forced -> goto LOC_CLIFFLEDGE
-      Op(56, 0, 0, 0, 0, 173, False, False),  Rem CLIMB -> goto LOC_CLIFFACE
-      Op(30, 0, 0, 0, 0, 173, False, False),  Rem DOWN -> goto LOC_CLIFFACE
-      Op(47, 0, 0, 0, 0, 177, False, False),  Rem NE -> goto LOC_REACHDEAD
-      Op(17, 0, 0, 0, 0, 177, False, True),  Rem CRAWL -> goto LOC_REACHDEAD
-      Op(49, 0, 0, 0, 0, 176, False, False),  Rem SW -> goto LOC_CLIFFLEDGE
-      Op(11, 0, 0, 0, 0, 176, False, False),  Rem OUT -> goto LOC_CLIFFLEDGE
-      Op(17, 0, 0, 0, 0, 176, False, True),  Rem CRAWL -> goto LOC_CLIFFLEDGE
-      Op(1, 0, 0, 0, 0, 0, False, True),  Rem forced -> goto LOC_NOWHERE
-      Op(1, 0, 0, 0, 0, 11, False, True),  Rem forced -> goto LOC_DEBRIS
-      Op(1, 0, 0, 0, 0, 3, False, True),  Rem forced -> goto LOC_BUILDING
-      Op(1, 0, 0, 0, 0, 33, False, True),  Rem forced -> goto LOC_Y2
-      Op(1, 0, 0, 0, 0, 3, False, True),  Rem forced -> goto LOC_BUILDING
-      Op(1, 0, 0, 0, 0, 100, False, True),  Rem forced -> goto LOC_PLOVER
-      Op(1, 0, 0, 0, 0, 33, False, True)   Rem forced -> goto LOC_Y2
+      Op(0, Always(), ToRoom(0), False, False),  Rem dummy row 0
+      Op(2, Always(), ToRoom(2), False, False),  Rem ROAD -> goto LOC_HILL
+      Op(44, Always(), ToRoom(2), False, False),  Rem WEST -> goto LOC_HILL
+      Op(29, Always(), ToRoom(2), False, False),  Rem UPWAR -> goto LOC_HILL
+      Op(3, Always(), ToRoom(3), False, False),  Rem ENTER -> goto LOC_BUILDING
+      Op(12, Always(), ToRoom(3), False, False),  Rem BUILD -> goto LOC_BUILDING
+      Op(19, Always(), ToRoom(3), False, False),  Rem INWAR -> goto LOC_BUILDING
+      Op(43, Always(), ToRoom(3), False, False),  Rem EAST -> goto LOC_BUILDING
+      Op(5, Always(), ToRoom(4), False, False),  Rem DOWNS -> goto LOC_VALLEY
+      Op(13, Always(), ToRoom(4), False, False),  Rem GULLY -> goto LOC_VALLEY
+      Op(14, Always(), ToRoom(4), False, False),  Rem STREA -> goto LOC_VALLEY
+      Op(46, Always(), ToRoom(4), False, False),  Rem SOUTH -> goto LOC_VALLEY
+      Op(30, Always(), ToRoom(4), False, False),  Rem DOWN -> goto LOC_VALLEY
+      Op(6, Always(), ToRoom(145), False, False),  Rem FORES -> goto LOC_FOREST1
+      Op(45, Always(), ToRoom(145), False, False),  Rem NORTH -> goto LOC_FOREST1
+      Op(63, Always(), ToRoom(8), False, True),  Rem DEPRE -> goto LOC_GRATE
+      Op(12, Always(), ToRoom(1), False, False),  Rem BUILD -> goto LOC_START
+      Op(43, Always(), ToRoom(1), False, False),  Rem EAST -> goto LOC_START
+      Op(44, Always(), ToRoom(5), False, False),  Rem WEST -> goto LOC_ROADEND
+      Op(45, Always(), ToRoom(164), False, False),  Rem NORTH -> goto LOC_FOREST20
+      Op(46, Always(), ToRoom(157), False, False),  Rem SOUTH -> goto LOC_FOREST13
+      Op(6, Always(), ToRoom(157), False, False),  Rem FORES -> goto LOC_FOREST13
+      Op(30, Always(), ToMessage(58), False, True),  Rem DOWN -> speak WHICH_WAY
+      Op(11, Always(), ToRoom(1), False, False),  Rem OUT -> goto LOC_START
+      Op(32, Always(), ToRoom(1), False, False),  Rem OUTDO -> goto LOC_START
+      Op(44, Always(), ToRoom(1), False, False),  Rem WEST -> goto LOC_START
+      Op(62, Always(), ToRoom(179), False, False),  Rem XYZZY -> goto LOC_FOOF1
+      Op(65, Always(), ToRoom(181), False, False),  Rem PLUGH -> goto LOC_FOOF3
+      Op(5, Always(), ToRoom(79), False, False),  Rem DOWNS -> goto LOC_SEWER
+      Op(14, Always(), ToRoom(79), False, True),  Rem STREA -> goto LOC_SEWER
+      Op(4, Always(), ToRoom(1), False, False),  Rem UPSTR -> goto LOC_START
+      Op(12, Always(), ToRoom(1), False, False),  Rem BUILD -> goto LOC_START
+      Op(45, Always(), ToRoom(1), False, False),  Rem NORTH -> goto LOC_START
+      Op(43, Always(), ToRoom(150), False, False),  Rem EAST -> goto LOC_FOREST6
+      Op(6, Always(), ToRoom(150), False, False),  Rem FORES -> goto LOC_FOREST6
+      Op(44, Always(), ToRoom(156), False, False),  Rem WEST -> goto LOC_FOREST12
+      Op(5, Always(), ToRoom(7), False, False),  Rem DOWNS -> goto LOC_SLIT
+      Op(46, Always(), ToRoom(7), False, False),  Rem SOUTH -> goto LOC_SLIT
+      Op(30, Always(), ToRoom(7), False, False),  Rem DOWN -> goto LOC_SLIT
+      Op(63, Always(), ToRoom(8), False, False),  Rem DEPRE -> goto LOC_GRATE
+      Op(14, Always(), ToMessage(185), False, True),  Rem STREA -> speak UPSTREAM_DOWNSTREAM
+      Op(2, Always(), ToRoom(2), False, False),  Rem ROAD -> goto LOC_HILL
+      Op(43, Always(), ToRoom(2), False, False),  Rem EAST -> goto LOC_HILL
+      Op(29, Always(), ToRoom(2), False, False),  Rem UPWAR -> goto LOC_HILL
+      Op(12, Always(), ToRoom(1), False, False),  Rem BUILD -> goto LOC_START
+      Op(46, Always(), ToRoom(158), False, False),  Rem SOUTH -> goto LOC_FOREST14
+      Op(6, Always(), ToRoom(158), False, False),  Rem FORES -> goto LOC_FOREST14
+      Op(44, Always(), ToRoom(159), False, False),  Rem WEST -> goto LOC_FOREST15
+      Op(45, Always(), ToRoom(165), False, True),  Rem NORTH -> goto LOC_FOREST21
+      Op(46, Always(), ToRoom(161), False, False),  Rem SOUTH -> goto LOC_FOREST17
+      Op(6, Always(), ToRoom(161), False, False),  Rem FORES -> goto LOC_FOREST17
+      Op(43, Always(), ToRoom(163), False, False),  Rem EAST -> goto LOC_FOREST19
+      Op(39, Always(), ToRoom(21), False, True),  Rem JUMP -> goto LOC_NOMAKE
+      Op(12, Always(), ToRoom(1), False, False),  Rem BUILD -> goto LOC_START
+      Op(4, Always(), ToRoom(4), False, False),  Rem UPSTR -> goto LOC_VALLEY
+      Op(45, Always(), ToRoom(4), False, False),  Rem NORTH -> goto LOC_VALLEY
+      Op(43, Always(), ToRoom(150), False, False),  Rem EAST -> goto LOC_FOREST6
+      Op(6, Always(), ToRoom(150), False, False),  Rem FORES -> goto LOC_FOREST6
+      Op(44, Always(), ToRoom(154), False, False),  Rem WEST -> goto LOC_FOREST10
+      Op(5, Always(), ToRoom(8), False, False),  Rem DOWNS -> goto LOC_GRATE
+      Op(16, Always(), ToRoom(8), False, False),  Rem BED -> goto LOC_GRATE
+      Op(46, Always(), ToRoom(8), False, False),  Rem SOUTH -> goto LOC_GRATE
+      Op(63, Always(), ToRoom(8), False, False),  Rem DEPRE -> goto LOC_GRATE
+      Op(60, Always(), ToMessage(63), False, False),  Rem SLIT -> speak DONT_FIT
+      Op(14, Always(), ToMessage(63), False, False),  Rem STREA -> speak DONT_FIT
+      Op(30, Always(), ToMessage(63), False, False),  Rem DOWN -> speak DONT_FIT
+      Op(19, Always(), ToMessage(63), False, False),  Rem INWAR -> speak DONT_FIT
+      Op(3, Always(), ToMessage(63), False, True),  Rem ENTER -> speak DONT_FIT
+      Op(43, Always(), ToRoom(151), False, False),  Rem EAST -> goto LOC_FOREST7
+      Op(6, Always(), ToRoom(151), False, False),  Rem FORES -> goto LOC_FOREST7
+      Op(46, Always(), ToRoom(154), False, False),  Rem SOUTH -> goto LOC_FOREST10
+      Op(44, Always(), ToRoom(153), False, False),  Rem WEST -> goto LOC_FOREST9
+      Op(12, Always(), ToRoom(1), False, False),  Rem BUILD -> goto LOC_START
+      Op(4, Always(), ToRoom(7), False, False),  Rem UPSTR -> goto LOC_SLIT
+      Op(13, Always(), ToRoom(7), False, False),  Rem GULLY -> goto LOC_SLIT
+      Op(45, Always(), ToRoom(7), False, False),  Rem NORTH -> goto LOC_SLIT
+      Op(3, NotInState(3, 0), ToRoom(9), False, False),  Rem ENTER -> goto LOC_BELOWGRATE
+      Op(19, NotInState(3, 0), ToRoom(9), False, False),  Rem INWAR -> goto LOC_BELOWGRATE
+      Op(30, NotInState(3, 0), ToRoom(9), False, False),  Rem DOWN -> goto LOC_BELOWGRATE
+      Op(3, Always(), ToMessage(61), False, True),  Rem ENTER -> speak GRATE_NOWAY
+      Op(11, NotInState(3, 0), ToRoom(8), False, False),  Rem OUT -> goto LOC_GRATE
+      Op(29, NotInState(3, 0), ToRoom(8), False, False),  Rem UPWAR -> goto LOC_GRATE
+      Op(11, Always(), ToMessage(61), False, False),  Rem OUT -> speak GRATE_NOWAY
+      Op(17, Always(), ToRoom(10), False, False),  Rem CRAWL -> goto LOC_COBBLE
+      Op(18, Always(), ToRoom(10), False, False),  Rem COBBL -> goto LOC_COBBLE
+      Op(19, Always(), ToRoom(10), False, False),  Rem INWAR -> goto LOC_COBBLE
+      Op(44, Always(), ToRoom(10), False, False),  Rem WEST -> goto LOC_COBBLE
+      Op(31, Always(), ToRoom(14), False, False),  Rem PIT -> goto LOC_PITTOP
+      Op(51, Always(), ToRoom(11), False, True),  Rem DEBRI -> goto LOC_DEBRIS
+      Op(11, Always(), ToRoom(9), False, False),  Rem OUT -> goto LOC_BELOWGRATE
+      Op(20, Always(), ToRoom(9), False, False),  Rem SURFA -> goto LOC_BELOWGRATE
+      Op(43, Always(), ToRoom(9), False, False),  Rem EAST -> goto LOC_BELOWGRATE
+      Op(19, Always(), ToRoom(11), False, False),  Rem INWAR -> goto LOC_DEBRIS
+      Op(22, Always(), ToRoom(11), False, False),  Rem DARK -> goto LOC_DEBRIS
+      Op(44, Always(), ToRoom(11), False, False),  Rem WEST -> goto LOC_DEBRIS
+      Op(51, Always(), ToRoom(11), False, False),  Rem DEBRI -> goto LOC_DEBRIS
+      Op(31, Always(), ToRoom(14), False, True),  Rem PIT -> goto LOC_PITTOP
+      Op(63, NotInState(3, 0), ToRoom(8), False, False),  Rem DEPRE -> goto LOC_GRATE
+      Op(64, Always(), ToRoom(9), False, False),  Rem ENTRA -> goto LOC_BELOWGRATE
+      Op(17, Always(), ToRoom(10), False, False),  Rem CRAWL -> goto LOC_COBBLE
+      Op(18, Always(), ToRoom(10), False, False),  Rem COBBL -> goto LOC_COBBLE
+      Op(23, Always(), ToRoom(10), False, False),  Rem PASSA -> goto LOC_COBBLE
+      Op(24, Always(), ToRoom(10), False, False),  Rem LOW -> goto LOC_COBBLE
+      Op(43, Always(), ToRoom(10), False, False),  Rem EAST -> goto LOC_COBBLE
+      Op(25, Always(), ToRoom(12), False, False),  Rem CANYO -> goto LOC_AWKWARD
+      Op(19, Always(), ToRoom(12), False, False),  Rem INWAR -> goto LOC_AWKWARD
+      Op(29, Always(), ToRoom(12), False, False),  Rem UPWAR -> goto LOC_AWKWARD
+      Op(44, Always(), ToRoom(12), False, False),  Rem WEST -> goto LOC_AWKWARD
+      Op(62, Always(), ToRoom(180), False, False),  Rem XYZZY -> goto LOC_FOOF2
+      Op(31, Always(), ToRoom(14), False, True),  Rem PIT -> goto LOC_PITTOP
+      Op(63, NotInState(3, 0), ToRoom(8), False, False),  Rem DEPRE -> goto LOC_GRATE
+      Op(64, Always(), ToRoom(9), False, False),  Rem ENTRA -> goto LOC_BELOWGRATE
+      Op(30, Always(), ToRoom(11), False, False),  Rem DOWN -> goto LOC_DEBRIS
+      Op(43, Always(), ToRoom(11), False, False),  Rem EAST -> goto LOC_DEBRIS
+      Op(51, Always(), ToRoom(11), False, False),  Rem DEBRI -> goto LOC_DEBRIS
+      Op(19, Always(), ToRoom(13), False, False),  Rem INWAR -> goto LOC_BIRDCHAMBER
+      Op(29, Always(), ToRoom(13), False, False),  Rem UPWAR -> goto LOC_BIRDCHAMBER
+      Op(44, Always(), ToRoom(13), False, False),  Rem WEST -> goto LOC_BIRDCHAMBER
+      Op(31, Always(), ToRoom(14), False, True),  Rem PIT -> goto LOC_PITTOP
+      Op(63, NotInState(3, 0), ToRoom(8), False, False),  Rem DEPRE -> goto LOC_GRATE
+      Op(64, Always(), ToRoom(9), False, False),  Rem ENTRA -> goto LOC_BELOWGRATE
+      Op(51, Always(), ToRoom(11), False, False),  Rem DEBRI -> goto LOC_DEBRIS
+      Op(25, Always(), ToRoom(12), False, False),  Rem CANYO -> goto LOC_AWKWARD
+      Op(43, Always(), ToRoom(12), False, False),  Rem EAST -> goto LOC_AWKWARD
+      Op(23, Always(), ToRoom(14), False, False),  Rem PASSA -> goto LOC_PITTOP
+      Op(31, Always(), ToRoom(14), False, False),  Rem PIT -> goto LOC_PITTOP
+      Op(44, Always(), ToRoom(14), False, True),  Rem WEST -> goto LOC_PITTOP
+      Op(63, NotInState(3, 0), ToRoom(8), False, False),  Rem DEPRE -> goto LOC_GRATE
+      Op(64, Always(), ToRoom(9), False, False),  Rem ENTRA -> goto LOC_BELOWGRATE
+      Op(51, Always(), ToRoom(11), False, False),  Rem DEBRI -> goto LOC_DEBRIS
+      Op(23, Always(), ToRoom(13), False, False),  Rem PASSA -> goto LOC_BIRDCHAMBER
+      Op(43, Always(), ToRoom(13), False, False),  Rem EAST -> goto LOC_BIRDCHAMBER
+      Op(30, Carrying(50), ToRoom(20), False, False),  Rem DOWN -> goto LOC_NECKBROKE
+      Op(31, Carrying(50), ToRoom(20), False, False),  Rem PIT -> goto LOC_NECKBROKE
+      Op(34, Carrying(50), ToRoom(20), False, False),  Rem STEPS -> goto LOC_NECKBROKE
+      Op(30, Always(), ToRoom(15), False, False),  Rem DOWN -> goto LOC_MISTHALL
+      Op(33, Always(), ToRoom(16), False, False),  Rem CRACK -> goto LOC_CRACK
+      Op(44, Always(), ToRoom(16), False, True),  Rem WEST -> goto LOC_CRACK
+      Op(36, Always(), ToRoom(18), False, False),  Rem LEFT -> goto LOC_NUGGET
+      Op(46, Always(), ToRoom(18), False, False),  Rem SOUTH -> goto LOC_NUGGET
+      Op(7, Always(), ToRoom(17), False, False),  Rem FORWA -> goto LOC_EASTBANK
+      Op(38, Always(), ToRoom(17), False, False),  Rem HALL -> goto LOC_EASTBANK
+      Op(44, Always(), ToRoom(17), False, False),  Rem WEST -> goto LOC_EASTBANK
+      Op(10, Always(), ToRoom(19), False, False),  Rem STAIR -> goto LOC_KINGHALL
+      Op(30, Always(), ToRoom(19), False, False),  Rem DOWN -> goto LOC_KINGHALL
+      Op(45, Always(), ToRoom(19), False, False),  Rem NORTH -> goto LOC_KINGHALL
+      Op(29, Carrying(50), ToRoom(22), False, False),  Rem UPWAR -> goto LOC_DOME
+      Op(31, Carrying(50), ToRoom(22), False, False),  Rem PIT -> goto LOC_DOME
+      Op(34, Carrying(50), ToRoom(22), False, False),  Rem STEPS -> goto LOC_DOME
+      Op(35, Carrying(50), ToRoom(22), False, False),  Rem DOME -> goto LOC_DOME
+      Op(23, Carrying(50), ToRoom(22), False, False),  Rem PASSA -> goto LOC_DOME
+      Op(43, Carrying(50), ToRoom(22), False, False),  Rem EAST -> goto LOC_DOME
+      Op(29, Always(), ToRoom(14), False, False),  Rem UPWAR -> goto LOC_PITTOP
+      Op(55, Always(), ToRoom(34), False, True),  Rem Y2 -> goto LOC_JUMBLE
+      Op(1, Always(), ToRoom(14), False, True),  Rem forced -> goto LOC_PITTOP
+      Op(38, Always(), ToRoom(15), False, False),  Rem HALL -> goto LOC_MISTHALL
+      Op(43, Always(), ToRoom(15), False, False),  Rem EAST -> goto LOC_MISTHALL
+      Op(39, NotInState(12, 0), ToMessage(64), False, False),  Rem JUMP -> speak CROSS_BRIDGE
+      Op(7, NotInState(12, 1), ToRoom(21), False, False),  Rem FORWA -> goto LOC_NOMAKE
+      Op(41, NotInState(12, 1), ToMessage(65), False, False),  Rem OVER -> speak NO_CROSS
+      Op(42, NotInState(12, 1), ToMessage(65), False, False),  Rem ACROS -> speak NO_CROSS
+      Op(44, NotInState(12, 1), ToMessage(65), False, False),  Rem WEST -> speak NO_CROSS
+      Op(68, NotInState(12, 1), ToMessage(65), False, False),  Rem CROSS -> speak NO_CROSS
+      Op(41, Always(), ToRoom(27), False, True),  Rem OVER -> goto LOC_WESTBANK
+      Op(38, Always(), ToRoom(15), False, False),  Rem HALL -> goto LOC_MISTHALL
+      Op(11, Always(), ToRoom(15), False, False),  Rem OUT -> goto LOC_MISTHALL
+      Op(45, Always(), ToRoom(15), False, True),  Rem NORTH -> goto LOC_MISTHALL
+      Op(10, Always(), ToRoom(15), False, False),  Rem STAIR -> goto LOC_MISTHALL
+      Op(29, Always(), ToRoom(15), False, False),  Rem UPWAR -> goto LOC_MISTHALL
+      Op(43, Always(), ToRoom(15), False, False),  Rem EAST -> goto LOC_MISTHALL
+      Op(45, NotInState(11, 0), ToRoom(28), False, False),  Rem NORTH -> goto LOC_FLOORHOLE
+      Op(37, NotInState(11, 0), ToRoom(28), False, False),  Rem RIGHT -> goto LOC_FLOORHOLE
+      Op(46, NotInState(11, 0), ToRoom(29), False, False),  Rem SOUTH -> goto LOC_SOUTHSIDE
+      Op(36, NotInState(11, 0), ToRoom(29), False, False),  Rem LEFT -> goto LOC_SOUTHSIDE
+      Op(44, NotInState(11, 0), ToRoom(30), False, False),  Rem WEST -> goto LOC_WESTSIDE
+      Op(7, NotInState(11, 0), ToRoom(30), False, False),  Rem FORWA -> goto LOC_WESTSIDE
+      Op(45, Always(), ToRoom(32), False, False),  Rem NORTH -> goto LOC_SNAKEBLOCK
+      Op(49, Chance(35), ToRoom(74), False, False),  Rem SW -> goto LOC_SECRET3
+      Op(49, CarriedOrHere(11), ToRoom(32), False, False),  Rem SW -> goto LOC_SNAKEBLOCK
+      Op(66, Always(), ToRoom(74), False, True),  Rem SECRE -> goto LOC_SECRET3
+      Op(1, Always(), ToRoom(0), False, True),  Rem forced -> goto LOC_NOWHERE
+      Op(1, Always(), ToRoom(0), False, True),  Rem forced -> goto LOC_NOWHERE
+      Op(1, Always(), ToRoom(15), False, True),  Rem forced -> goto LOC_MISTHALL
+      Op(43, Always(), ToRoom(67), False, False),  Rem EAST -> goto LOC_EASTEND
+      Op(42, Always(), ToRoom(67), False, False),  Rem ACROS -> goto LOC_EASTEND
+      Op(44, Always(), ToRoom(68), False, False),  Rem WEST -> goto LOC_SLAB
+      Op(61, Always(), ToRoom(68), False, False),  Rem SLAB -> goto LOC_SLAB
+      Op(30, Always(), ToRoom(25), False, False),  Rem DOWN -> goto LOC_WESTPIT
+      Op(31, Always(), ToRoom(25), False, False),  Rem PIT -> goto LOC_WESTPIT
+      Op(52, Always(), ToMessage(109), False, True),  Rem HOLE -> speak TOO_FAR
+      Op(29, Always(), ToRoom(67), False, False),  Rem UPWAR -> goto LOC_EASTEND
+      Op(11, Always(), ToRoom(67), False, True),  Rem OUT -> goto LOC_EASTEND
+      Op(29, Always(), ToRoom(23), False, False),  Rem UPWAR -> goto LOC_WESTEND
+      Op(11, Always(), ToRoom(23), False, False),  Rem OUT -> goto LOC_WESTEND
+      Op(56, NotInState(24, 2), ToRoom(31), False, False),  Rem CLIMB -> goto LOC_BUILDING1
+      Op(56, Always(), ToRoom(26), False, True),  Rem CLIMB -> goto LOC_CLIMBSTALK
+      Op(1, Always(), ToRoom(88), False, True),  Rem forced -> goto LOC_NARROW
+      Op(39, NotInState(12, 0), ToMessage(64), False, False),  Rem JUMP -> speak CROSS_BRIDGE
+      Op(7, NotInState(12, 1), ToRoom(21), False, False),  Rem FORWA -> goto LOC_NOMAKE
+      Op(41, NotInState(12, 1), ToMessage(65), False, False),  Rem OVER -> speak NO_CROSS
+      Op(42, NotInState(12, 1), ToMessage(65), False, False),  Rem ACROS -> speak NO_CROSS
+      Op(43, NotInState(12, 1), ToMessage(65), False, False),  Rem EAST -> speak NO_CROSS
+      Op(68, NotInState(12, 1), ToMessage(65), False, False),  Rem CROSS -> speak NO_CROSS
+      Op(41, Always(), ToRoom(17), False, False),  Rem OVER -> goto LOC_EASTBANK
+      Op(45, Always(), ToRoom(40), False, False),  Rem NORTH -> goto LOC_PARALLEL1
+      Op(44, Always(), ToRoom(41), False, True),  Rem WEST -> goto LOC_MISTWEST
+      Op(38, Always(), ToRoom(19), False, False),  Rem HALL -> goto LOC_KINGHALL
+      Op(11, Always(), ToRoom(19), False, False),  Rem OUT -> goto LOC_KINGHALL
+      Op(46, Always(), ToRoom(19), False, False),  Rem SOUTH -> goto LOC_KINGHALL
+      Op(45, Always(), ToRoom(33), False, False),  Rem NORTH -> goto LOC_Y2
+      Op(55, Always(), ToRoom(33), False, False),  Rem Y2 -> goto LOC_Y2
+      Op(30, Always(), ToRoom(36), False, False),  Rem DOWN -> goto LOC_BROKEN
+      Op(52, Always(), ToRoom(36), False, True),  Rem HOLE -> goto LOC_BROKEN
+      Op(38, Always(), ToRoom(19), False, False),  Rem HALL -> goto LOC_KINGHALL
+      Op(11, Always(), ToRoom(19), False, False),  Rem OUT -> goto LOC_KINGHALL
+      Op(45, Always(), ToRoom(19), False, True),  Rem NORTH -> goto LOC_KINGHALL
+      Op(38, Always(), ToRoom(19), False, False),  Rem HALL -> goto LOC_KINGHALL
+      Op(11, Always(), ToRoom(19), False, False),  Rem OUT -> goto LOC_KINGHALL
+      Op(43, Always(), ToRoom(19), False, False),  Rem EAST -> goto LOC_KINGHALL
+      Op(44, Always(), ToRoom(62), False, False),  Rem WEST -> goto LOC_CROSSOVER
+      Op(29, Always(), ToRoom(62), False, True),  Rem UPWAR -> goto LOC_CROSSOVER
+      Op(1, NotInState(24, 1), ToRoom(89), False, False),  Rem forced -> goto LOC_NOCLIMB
+      Op(1, Always(), ToRoom(90), False, True),  Rem forced -> goto LOC_PLANTTOP
+      Op(1, Always(), ToRoom(19), False, True),  Rem forced -> goto LOC_KINGHALL
+      Op(65, Always(), ToRoom(182), False, False),  Rem PLUGH -> goto LOC_FOOF4
+      Op(46, Always(), ToRoom(28), False, False),  Rem SOUTH -> goto LOC_FLOORHOLE
+      Op(43, Always(), ToRoom(34), False, False),  Rem EAST -> goto LOC_JUMBLE
+      Op(53, Always(), ToRoom(34), False, False),  Rem WALL -> goto LOC_JUMBLE
+      Op(54, Always(), ToRoom(34), False, False),  Rem BROKE -> goto LOC_JUMBLE
+      Op(44, Always(), ToRoom(35), False, False),  Rem WEST -> goto LOC_WINDOW1
+      Op(70, Carrying(59), ToSpecial(2), False, False),  Rem PLOVE -> special 2
+      Op(70, Always(), ToRoom(183), False, True),  Rem PLOVE -> goto LOC_FOOF5
+      Op(30, Always(), ToRoom(33), False, False),  Rem DOWN -> goto LOC_Y2
+      Op(55, Always(), ToRoom(33), False, False),  Rem Y2 -> goto LOC_Y2
+      Op(29, Always(), ToRoom(15), False, True),  Rem UPWAR -> goto LOC_MISTHALL
+      Op(43, Always(), ToRoom(33), False, False),  Rem EAST -> goto LOC_Y2
+      Op(55, Always(), ToRoom(33), False, False),  Rem Y2 -> goto LOC_Y2
+      Op(39, Always(), ToRoom(20), False, True),  Rem JUMP -> goto LOC_NECKBROKE
+      Op(43, Always(), ToRoom(37), False, False),  Rem EAST -> goto LOC_SMALLPITBRINK
+      Op(17, Always(), ToRoom(37), False, False),  Rem CRAWL -> goto LOC_SMALLPITBRINK
+      Op(29, Always(), ToRoom(28), False, False),  Rem UPWAR -> goto LOC_FLOORHOLE
+      Op(52, Always(), ToRoom(28), False, False),  Rem HOLE -> goto LOC_FLOORHOLE
+      Op(44, Always(), ToRoom(39), False, False),  Rem WEST -> goto LOC_DUSTY
+      Op(69, Always(), ToRoom(65), False, True),  Rem BEDQU -> goto LOC_BEDQUILT
+      Op(44, Always(), ToRoom(36), False, False),  Rem WEST -> goto LOC_BROKEN
+      Op(17, Always(), ToRoom(36), False, False),  Rem CRAWL -> goto LOC_BROKEN
+      Op(30, Always(), ToRoom(38), False, False),  Rem DOWN -> goto LOC_SMALLPIT
+      Op(31, Always(), ToRoom(38), False, False),  Rem PIT -> goto LOC_SMALLPIT
+      Op(56, Always(), ToRoom(38), False, True),  Rem CLIMB -> goto LOC_SMALLPIT
+      Op(56, Always(), ToRoom(37), False, False),  Rem CLIMB -> goto LOC_SMALLPITBRINK
+      Op(29, Always(), ToRoom(37), False, False),  Rem UPWAR -> goto LOC_SMALLPITBRINK
+      Op(11, Always(), ToRoom(37), False, False),  Rem OUT -> goto LOC_SMALLPITBRINK
+      Op(60, Always(), ToMessage(63), False, False),  Rem SLIT -> speak DONT_FIT
+      Op(14, Always(), ToMessage(63), False, False),  Rem STREA -> speak DONT_FIT
+      Op(30, Always(), ToMessage(63), False, False),  Rem DOWN -> speak DONT_FIT
+      Op(4, Always(), ToMessage(63), False, False),  Rem UPSTR -> speak DONT_FIT
+      Op(5, Always(), ToMessage(63), False, False),  Rem DOWNS -> speak DONT_FIT
+      Op(3, Always(), ToMessage(63), False, False),  Rem ENTER -> speak DONT_FIT
+      Op(19, Always(), ToMessage(63), False, True),  Rem INWAR -> speak DONT_FIT
+      Op(43, Always(), ToRoom(36), False, False),  Rem EAST -> goto LOC_BROKEN
+      Op(23, Always(), ToRoom(36), False, False),  Rem PASSA -> goto LOC_BROKEN
+      Op(30, Always(), ToRoom(64), False, False),  Rem DOWN -> goto LOC_COMPLEX
+      Op(52, Always(), ToRoom(64), False, False),  Rem HOLE -> goto LOC_COMPLEX
+      Op(58, Always(), ToRoom(64), False, False),  Rem FLOOR -> goto LOC_COMPLEX
+      Op(69, Always(), ToRoom(65), False, True),  Rem BEDQU -> goto LOC_BEDQUILT
+      Op(1, Always(), ToRoom(41), False, True),  Rem forced -> goto LOC_MISTWEST
+      Op(46, Always(), ToRoom(42), False, False),  Rem SOUTH -> goto LOC_ALIKE1
+      Op(29, Always(), ToRoom(42), False, False),  Rem UPWAR -> goto LOC_ALIKE1
+      Op(23, Always(), ToRoom(42), False, False),  Rem PASSA -> goto LOC_ALIKE1
+      Op(56, Always(), ToRoom(42), False, False),  Rem CLIMB -> goto LOC_ALIKE1
+      Op(43, Always(), ToRoom(27), False, False),  Rem EAST -> goto LOC_WESTBANK
+      Op(45, Always(), ToRoom(59), False, False),  Rem NORTH -> goto LOC_PARALLEL2
+      Op(44, Always(), ToRoom(60), False, False),  Rem WEST -> goto LOC_LONGEAST
+      Op(17, Always(), ToRoom(60), False, True),  Rem CRAWL -> goto LOC_LONGEAST
+      Op(29, Always(), ToRoom(41), False, False),  Rem UPWAR -> goto LOC_MISTWEST
+      Op(45, Always(), ToRoom(42), False, False),  Rem NORTH -> goto LOC_ALIKE1
+      Op(43, Always(), ToRoom(43), False, False),  Rem EAST -> goto LOC_ALIKE2
+      Op(46, Always(), ToRoom(45), False, False),  Rem SOUTH -> goto LOC_ALIKE4
+      Op(44, Always(), ToRoom(80), False, True),  Rem WEST -> goto LOC_ALIKE11
+      Op(44, Always(), ToRoom(42), False, False),  Rem WEST -> goto LOC_ALIKE1
+      Op(46, Always(), ToRoom(44), False, False),  Rem SOUTH -> goto LOC_ALIKE3
+      Op(43, Always(), ToRoom(45), False, True),  Rem EAST -> goto LOC_ALIKE4
+      Op(43, Always(), ToRoom(43), False, False),  Rem EAST -> goto LOC_ALIKE2
+      Op(30, Always(), ToRoom(48), False, False),  Rem DOWN -> goto LOC_MAZEEND3
+      Op(46, Always(), ToRoom(50), False, False),  Rem SOUTH -> goto LOC_ALIKE6
+      Op(45, Always(), ToRoom(82), False, True),  Rem NORTH -> goto LOC_MAZEEND9
+      Op(44, Always(), ToRoom(42), False, False),  Rem WEST -> goto LOC_ALIKE1
+      Op(45, Always(), ToRoom(43), False, False),  Rem NORTH -> goto LOC_ALIKE2
+      Op(43, Always(), ToRoom(46), False, False),  Rem EAST -> goto LOC_MAZEEND1
+      Op(46, Always(), ToRoom(47), False, False),  Rem SOUTH -> goto LOC_MAZEEND2
+      Op(29, Always(), ToRoom(87), False, False),  Rem UPWAR -> goto LOC_ALIKE14
+      Op(30, Always(), ToRoom(87), False, True),  Rem DOWN -> goto LOC_ALIKE14
+      Op(44, Always(), ToRoom(45), False, False),  Rem WEST -> goto LOC_ALIKE4
+      Op(11, Always(), ToRoom(45), False, True),  Rem OUT -> goto LOC_ALIKE4
+      Op(43, Always(), ToRoom(45), False, False),  Rem EAST -> goto LOC_ALIKE4
+      Op(11, Always(), ToRoom(45), False, True),  Rem OUT -> goto LOC_ALIKE4
+      Op(29, Always(), ToRoom(44), False, False),  Rem UPWAR -> goto LOC_ALIKE3
+      Op(11, Always(), ToRoom(44), False, True),  Rem OUT -> goto LOC_ALIKE3
+      Op(43, Always(), ToRoom(50), False, False),  Rem EAST -> goto LOC_ALIKE6
+      Op(44, Always(), ToRoom(51), False, True),  Rem WEST -> goto LOC_ALIKE7
+      Op(43, Always(), ToRoom(44), False, False),  Rem EAST -> goto LOC_ALIKE3
+      Op(44, Always(), ToRoom(49), False, False),  Rem WEST -> goto LOC_ALIKE5
+      Op(30, Always(), ToRoom(51), False, False),  Rem DOWN -> goto LOC_ALIKE7
+      Op(46, Always(), ToRoom(52), False, True),  Rem SOUTH -> goto LOC_ALIKE8
+      Op(44, Always(), ToRoom(49), False, False),  Rem WEST -> goto LOC_ALIKE5
+      Op(29, Always(), ToRoom(50), False, False),  Rem UPWAR -> goto LOC_ALIKE6
+      Op(43, Always(), ToRoom(52), False, False),  Rem EAST -> goto LOC_ALIKE8
+      Op(46, Always(), ToRoom(53), False, True),  Rem SOUTH -> goto LOC_ALIKE9
+      Op(44, Always(), ToRoom(50), False, False),  Rem WEST -> goto LOC_ALIKE6
+      Op(43, Always(), ToRoom(51), False, False),  Rem EAST -> goto LOC_ALIKE7
+      Op(46, Always(), ToRoom(52), False, False),  Rem SOUTH -> goto LOC_ALIKE8
+      Op(29, Always(), ToRoom(53), False, False),  Rem UPWAR -> goto LOC_ALIKE9
+      Op(45, Always(), ToRoom(55), False, False),  Rem NORTH -> goto LOC_ALIKE10
+      Op(30, Always(), ToRoom(86), False, True),  Rem DOWN -> goto LOC_MAZEEND11
+      Op(44, Always(), ToRoom(51), False, False),  Rem WEST -> goto LOC_ALIKE7
+      Op(45, Always(), ToRoom(52), False, False),  Rem NORTH -> goto LOC_ALIKE8
+      Op(46, Always(), ToRoom(54), False, True),  Rem SOUTH -> goto LOC_MAZEEND4
+      Op(44, Always(), ToRoom(53), False, False),  Rem WEST -> goto LOC_ALIKE9
+      Op(11, Always(), ToRoom(53), False, True),  Rem OUT -> goto LOC_ALIKE9
+      Op(44, Always(), ToRoom(52), False, False),  Rem WEST -> goto LOC_ALIKE8
+      Op(45, Always(), ToRoom(55), False, False),  Rem NORTH -> goto LOC_ALIKE10
+      Op(30, Always(), ToRoom(56), False, False),  Rem DOWN -> goto LOC_MAZEEND5
+      Op(43, Always(), ToRoom(57), False, True),  Rem EAST -> goto LOC_PITBRINK
+      Op(29, Always(), ToRoom(55), False, False),  Rem UPWAR -> goto LOC_ALIKE10
+      Op(11, Always(), ToRoom(55), False, True),  Rem OUT -> goto LOC_ALIKE10
+      Op(30, Always(), ToRoom(13), False, False),  Rem DOWN -> goto LOC_BIRDCHAMBER
+      Op(56, Always(), ToRoom(13), False, False),  Rem CLIMB -> goto LOC_BIRDCHAMBER
+      Op(44, Always(), ToRoom(55), False, False),  Rem WEST -> goto LOC_ALIKE10
+      Op(46, Always(), ToRoom(58), False, False),  Rem SOUTH -> goto LOC_MAZEEND6
+      Op(45, Always(), ToRoom(83), False, False),  Rem NORTH -> goto LOC_ALIKE12
+      Op(43, Always(), ToRoom(84), False, True),  Rem EAST -> goto LOC_ALIKE13
+      Op(43, Always(), ToRoom(57), False, False),  Rem EAST -> goto LOC_PITBRINK
+      Op(11, Always(), ToRoom(57), False, True),  Rem OUT -> goto LOC_PITBRINK
+      Op(1, Always(), ToRoom(27), False, True),  Rem forced -> goto LOC_WESTBANK
+      Op(43, Always(), ToRoom(41), False, False),  Rem EAST -> goto LOC_MISTWEST
+      Op(29, Always(), ToRoom(41), False, False),  Rem UPWAR -> goto LOC_MISTWEST
+      Op(17, Always(), ToRoom(41), False, False),  Rem CRAWL -> goto LOC_MISTWEST
+      Op(44, Always(), ToRoom(61), False, False),  Rem WEST -> goto LOC_LONGWEST
+      Op(45, Always(), ToRoom(62), False, False),  Rem NORTH -> goto LOC_CROSSOVER
+      Op(30, Always(), ToRoom(62), False, False),  Rem DOWN -> goto LOC_CROSSOVER
+      Op(52, Always(), ToRoom(62), False, True),  Rem HOLE -> goto LOC_CROSSOVER
+      Op(43, Always(), ToRoom(60), False, False),  Rem EAST -> goto LOC_LONGEAST
+      Op(45, Always(), ToRoom(62), False, False),  Rem NORTH -> goto LOC_CROSSOVER
+      Op(46, Chance(100), ToRoom(107), True, True),  Rem SOUTH -> goto LOC_DIFFERENT1
+      Op(44, Always(), ToRoom(60), False, False),  Rem WEST -> goto LOC_LONGEAST
+      Op(45, Always(), ToRoom(63), False, False),  Rem NORTH -> goto LOC_DEADEND7
+      Op(43, Always(), ToRoom(30), False, False),  Rem EAST -> goto LOC_WESTSIDE
+      Op(46, Always(), ToRoom(61), False, True),  Rem SOUTH -> goto LOC_LONGWEST
+      Op(46, Always(), ToRoom(62), False, False),  Rem SOUTH -> goto LOC_CROSSOVER
+      Op(11, Always(), ToRoom(62), False, True),  Rem OUT -> goto LOC_CROSSOVER
+      Op(29, Always(), ToRoom(39), False, False),  Rem UPWAR -> goto LOC_DUSTY
+      Op(56, Always(), ToRoom(39), False, False),  Rem CLIMB -> goto LOC_DUSTY
+      Op(59, Always(), ToRoom(39), False, False),  Rem ROOM -> goto LOC_DUSTY
+      Op(44, Always(), ToRoom(65), False, False),  Rem WEST -> goto LOC_BEDQUILT
+      Op(69, Always(), ToRoom(65), False, False),  Rem BEDQU -> goto LOC_BEDQUILT
+      Op(45, Always(), ToRoom(103), False, False),  Rem NORTH -> goto LOC_SHELLROOM
+      Op(73, Always(), ToRoom(103), False, False),  Rem SHELL -> goto LOC_SHELLROOM
+      Op(43, Always(), ToRoom(106), False, True),  Rem EAST -> goto LOC_ANTEROOM
+      Op(43, Always(), ToRoom(64), False, False),  Rem EAST -> goto LOC_COMPLEX
+      Op(44, Always(), ToRoom(66), False, False),  Rem WEST -> goto LOC_SWISSCHEESE
+      Op(46, Chance(65), ToMessage(44), False, False),  Rem SOUTH -> speak FUTILE_CRAWL
+      Op(61, Always(), ToRoom(68), False, False),  Rem SLAB -> goto LOC_SLAB
+      Op(29, Chance(60), ToMessage(44), False, False),  Rem UPWAR -> speak FUTILE_CRAWL
+      Op(29, Chance(70), ToRoom(70), False, False),  Rem UPWAR -> goto LOC_SECRET2
+      Op(29, Always(), ToRoom(39), False, False),  Rem UPWAR -> goto LOC_DUSTY
+      Op(45, Chance(50), ToMessage(44), False, False),  Rem NORTH -> speak FUTILE_CRAWL
+      Op(45, Chance(75), ToRoom(72), False, False),  Rem NORTH -> goto LOC_LOWROOM
+      Op(45, Always(), ToRoom(71), False, False),  Rem NORTH -> goto LOC_THREEJUNCTION
+      Op(30, Chance(65), ToMessage(44), False, False),  Rem DOWN -> speak FUTILE_CRAWL
+      Op(30, Always(), ToRoom(106), False, True),  Rem DOWN -> goto LOC_ANTEROOM
+      Op(47, Always(), ToRoom(65), False, False),  Rem NE -> goto LOC_BEDQUILT
+      Op(44, Always(), ToRoom(67), False, False),  Rem WEST -> goto LOC_EASTEND
+      Op(46, Chance(80), ToMessage(44), False, False),  Rem SOUTH -> speak FUTILE_CRAWL
+      Op(25, Always(), ToRoom(77), False, False),  Rem CANYO -> goto LOC_TALL
+      Op(43, Always(), ToRoom(96), False, False),  Rem EAST -> goto LOC_SOFTROOM
+      Op(50, Chance(50), ToMessage(44), False, False),  Rem NW -> speak FUTILE_CRAWL
+      Op(71, Always(), ToRoom(97), False, True),  Rem ORIEN -> goto LOC_ORIENTAL
+      Op(43, Always(), ToRoom(66), False, False),  Rem EAST -> goto LOC_SWISSCHEESE
+      Op(44, Always(), ToRoom(23), False, False),  Rem WEST -> goto LOC_WESTEND
+      Op(42, Always(), ToRoom(23), False, False),  Rem ACROS -> goto LOC_WESTEND
+      Op(30, Always(), ToRoom(24), False, False),  Rem DOWN -> goto LOC_EASTPIT
+      Op(31, Always(), ToRoom(24), False, True),  Rem PIT -> goto LOC_EASTPIT
+      Op(46, Always(), ToRoom(23), False, False),  Rem SOUTH -> goto LOC_WESTEND
+      Op(29, Always(), ToRoom(69), False, False),  Rem UPWAR -> goto LOC_SECRET1
+      Op(56, Always(), ToRoom(69), False, False),  Rem CLIMB -> goto LOC_SECRET1
+      Op(45, Always(), ToRoom(65), False, True),  Rem NORTH -> goto LOC_BEDQUILT
+      Op(30, Always(), ToRoom(68), False, False),  Rem DOWN -> goto LOC_SLAB
+      Op(61, Always(), ToRoom(68), False, False),  Rem SLAB -> goto LOC_SLAB
+      Op(46, NotInState(31, 0), ToRoom(120), False, False),  Rem SOUTH -> goto LOC_SECRET5
+      Op(46, Always(), ToRoom(119), False, False),  Rem SOUTH -> goto LOC_SECRET4
+      Op(45, Always(), ToRoom(109), False, False),  Rem NORTH -> goto LOC_MIRRORCANYON
+      Op(74, Always(), ToRoom(113), False, True),  Rem RESER -> goto LOC_RESERVOIR
+      Op(45, Always(), ToRoom(71), False, False),  Rem NORTH -> goto LOC_THREEJUNCTION
+      Op(30, Always(), ToRoom(65), False, False),  Rem DOWN -> goto LOC_BEDQUILT
+      Op(23, Always(), ToRoom(65), False, False),  Rem PASSA -> goto LOC_BEDQUILT
+      Op(46, Always(), ToRoom(111), False, True),  Rem SOUTH -> goto LOC_TOPSTALACTITE
+      Op(48, Always(), ToRoom(65), False, False),  Rem SE -> goto LOC_BEDQUILT
+      Op(46, Always(), ToRoom(70), False, False),  Rem SOUTH -> goto LOC_SECRET2
+      Op(45, Always(), ToRoom(110), False, True),  Rem NORTH -> goto LOC_WINDOW2
+      Op(69, Always(), ToRoom(65), False, False),  Rem BEDQU -> goto LOC_BEDQUILT
+      Op(49, Always(), ToRoom(118), False, False),  Rem SW -> goto LOC_WINDING
+      Op(45, Always(), ToRoom(73), False, False),  Rem NORTH -> goto LOC_DEADCRAWL
+      Op(48, Always(), ToRoom(97), False, False),  Rem SE -> goto LOC_ORIENTAL
+      Op(71, Always(), ToRoom(97), False, True),  Rem ORIEN -> goto LOC_ORIENTAL
+      Op(46, Always(), ToRoom(72), False, False),  Rem SOUTH -> goto LOC_LOWROOM
+      Op(17, Always(), ToRoom(72), False, False),  Rem CRAWL -> goto LOC_LOWROOM
+      Op(11, Always(), ToRoom(72), False, True),  Rem OUT -> goto LOC_LOWROOM
+      Op(43, Always(), ToRoom(19), False, False),  Rem EAST -> goto LOC_KINGHALL
+      Op(44, NotInState(31, 0), ToRoom(120), False, False),  Rem WEST -> goto LOC_SECRET5
+      Op(44, Always(), ToRoom(121), False, False),  Rem WEST -> goto LOC_SECRET6
+      Op(30, Always(), ToRoom(75), False, True),  Rem DOWN -> goto LOC_WIDEPLACE
+      Op(46, Always(), ToRoom(76), False, False),  Rem SOUTH -> goto LOC_TIGHTPLACE
+      Op(45, Always(), ToRoom(77), False, True),  Rem NORTH -> goto LOC_TALL
+      Op(45, Always(), ToRoom(75), False, True),  Rem NORTH -> goto LOC_WIDEPLACE
+      Op(43, Always(), ToRoom(75), False, False),  Rem EAST -> goto LOC_WIDEPLACE
+      Op(44, Always(), ToRoom(78), False, False),  Rem WEST -> goto LOC_BOULDERS1
+      Op(45, Always(), ToRoom(66), False, False),  Rem NORTH -> goto LOC_SWISSCHEESE
+      Op(17, Always(), ToRoom(66), False, True),  Rem CRAWL -> goto LOC_SWISSCHEESE
+      Op(46, Always(), ToRoom(77), False, True),  Rem SOUTH -> goto LOC_TALL
+      Op(1, Always(), ToRoom(3), False, True),  Rem forced -> goto LOC_BUILDING
+      Op(45, Always(), ToRoom(42), False, False),  Rem NORTH -> goto LOC_ALIKE1
+      Op(44, Always(), ToRoom(80), False, False),  Rem WEST -> goto LOC_ALIKE11
+      Op(46, Always(), ToRoom(80), False, False),  Rem SOUTH -> goto LOC_ALIKE11
+      Op(43, Always(), ToRoom(81), False, True),  Rem EAST -> goto LOC_MAZEEND8
+      Op(44, Always(), ToRoom(80), False, False),  Rem WEST -> goto LOC_ALIKE11
+      Op(11, Always(), ToRoom(80), False, True),  Rem OUT -> goto LOC_ALIKE11
+      Op(46, Always(), ToRoom(44), False, False),  Rem SOUTH -> goto LOC_ALIKE3
+      Op(11, Always(), ToRoom(44), False, True),  Rem OUT -> goto LOC_ALIKE3
+      Op(46, Always(), ToRoom(57), False, False),  Rem SOUTH -> goto LOC_PITBRINK
+      Op(43, Always(), ToRoom(84), False, False),  Rem EAST -> goto LOC_ALIKE13
+      Op(44, Always(), ToRoom(85), False, True),  Rem WEST -> goto LOC_MAZEEND10
+      Op(45, Always(), ToRoom(57), False, False),  Rem NORTH -> goto LOC_PITBRINK
+      Op(44, Always(), ToRoom(83), False, False),  Rem WEST -> goto LOC_ALIKE12
+      Op(50, Always(), ToRoom(114), False, True),  Rem NW -> goto LOC_MAZEEND12
+      Op(43, Always(), ToRoom(83), False, False),  Rem EAST -> goto LOC_ALIKE12
+      Op(11, Always(), ToRoom(83), False, True),  Rem OUT -> goto LOC_ALIKE12
+      Op(29, Always(), ToRoom(52), False, False),  Rem UPWAR -> goto LOC_ALIKE8
+      Op(11, Always(), ToRoom(52), False, True),  Rem OUT -> goto LOC_ALIKE8
+      Op(29, Always(), ToRoom(45), False, False),  Rem UPWAR -> goto LOC_ALIKE4
+      Op(30, Always(), ToRoom(45), False, True),  Rem DOWN -> goto LOC_ALIKE4
+      Op(30, Always(), ToRoom(25), False, False),  Rem DOWN -> goto LOC_WESTPIT
+      Op(56, Always(), ToRoom(25), False, False),  Rem CLIMB -> goto LOC_WESTPIT
+      Op(43, Always(), ToRoom(25), False, False),  Rem EAST -> goto LOC_WESTPIT
+      Op(39, Always(), ToRoom(20), False, False),  Rem JUMP -> goto LOC_NECKBROKE
+      Op(44, Always(), ToRoom(92), False, False),  Rem WEST -> goto LOC_GIANTROOM
+      Op(27, Always(), ToRoom(92), False, True),  Rem GIANT -> goto LOC_GIANTROOM
+      Op(1, Always(), ToRoom(25), False, True),  Rem forced -> goto LOC_WESTPIT
+      Op(1, Always(), ToRoom(23), False, True),  Rem forced -> goto LOC_WESTEND
+      Op(45, Always(), ToRoom(95), False, False),  Rem NORTH -> goto LOC_WATERFALL
+      Op(72, Always(), ToRoom(95), False, False),  Rem CAVER -> goto LOC_WATERFALL
+      Op(23, Always(), ToRoom(95), False, False),  Rem PASSA -> goto LOC_WATERFALL
+      Op(30, Always(), ToRoom(72), False, False),  Rem DOWN -> goto LOC_LOWROOM
+      Op(56, Always(), ToRoom(72), False, True),  Rem CLIMB -> goto LOC_LOWROOM
+      Op(46, Always(), ToRoom(88), False, False),  Rem SOUTH -> goto LOC_NARROW
+      Op(43, Always(), ToRoom(93), False, False),  Rem EAST -> goto LOC_CAVEIN
+      Op(45, Always(), ToRoom(94), False, True),  Rem NORTH -> goto LOC_IMMENSE
+      Op(46, Always(), ToRoom(92), False, False),  Rem SOUTH -> goto LOC_GIANTROOM
+      Op(27, Always(), ToRoom(92), False, False),  Rem GIANT -> goto LOC_GIANTROOM
+      Op(11, Always(), ToRoom(92), False, True),  Rem OUT -> goto LOC_GIANTROOM
+      Op(46, Always(), ToRoom(92), False, False),  Rem SOUTH -> goto LOC_GIANTROOM
+      Op(27, Always(), ToRoom(92), False, False),  Rem GIANT -> goto LOC_GIANTROOM
+      Op(23, Always(), ToRoom(92), False, False),  Rem PASSA -> goto LOC_GIANTROOM
+      Op(45, NotInState(9, 0), ToRoom(95), False, False),  Rem NORTH -> goto LOC_WATERFALL
+      Op(3, NotInState(9, 0), ToRoom(95), False, False),  Rem ENTER -> goto LOC_WATERFALL
+      Op(72, NotInState(9, 0), ToRoom(95), False, False),  Rem CAVER -> goto LOC_WATERFALL
+      Op(45, Always(), ToMessage(76), False, True),  Rem NORTH -> speak RUSTY_DOOR
+      Op(46, Always(), ToRoom(94), False, False),  Rem SOUTH -> goto LOC_IMMENSE
+      Op(11, Always(), ToRoom(94), False, False),  Rem OUT -> goto LOC_IMMENSE
+      Op(27, Always(), ToRoom(92), False, False),  Rem GIANT -> goto LOC_GIANTROOM
+      Op(44, Always(), ToRoom(91), False, True),  Rem WEST -> goto LOC_INCLINE
+      Op(44, Always(), ToRoom(66), False, False),  Rem WEST -> goto LOC_SWISSCHEESE
+      Op(11, Always(), ToRoom(66), False, True),  Rem OUT -> goto LOC_SWISSCHEESE
+      Op(48, Always(), ToRoom(66), False, False),  Rem SE -> goto LOC_SWISSCHEESE
+      Op(44, Always(), ToRoom(72), False, False),  Rem WEST -> goto LOC_LOWROOM
+      Op(17, Always(), ToRoom(72), False, False),  Rem CRAWL -> goto LOC_LOWROOM
+      Op(29, Always(), ToRoom(98), False, False),  Rem UPWAR -> goto LOC_MISTY
+      Op(45, Always(), ToRoom(98), False, False),  Rem NORTH -> goto LOC_MISTY
+      Op(72, Always(), ToRoom(98), False, True),  Rem CAVER -> goto LOC_MISTY
+      Op(46, Always(), ToRoom(97), False, False),  Rem SOUTH -> goto LOC_ORIENTAL
+      Op(71, Always(), ToRoom(97), False, False),  Rem ORIEN -> goto LOC_ORIENTAL
+      Op(44, Always(), ToRoom(99), False, True),  Rem WEST -> goto LOC_ALCOVE
+      Op(50, Always(), ToRoom(98), False, False),  Rem NW -> goto LOC_MISTY
+      Op(72, Always(), ToRoom(98), False, False),  Rem CAVER -> goto LOC_MISTY
+      Op(43, Always(), ToSpecial(1), False, False),  Rem EAST -> special 1
+      Op(23, Always(), ToSpecial(1), False, False),  Rem PASSA -> special 1
+      Op(43, Always(), ToRoom(100), False, True),  Rem EAST -> goto LOC_PLOVER
+      Op(44, Always(), ToSpecial(1), False, False),  Rem WEST -> special 1
+      Op(23, Always(), ToSpecial(1), False, False),  Rem PASSA -> special 1
+      Op(11, Always(), ToSpecial(1), False, False),  Rem OUT -> special 1
+      Op(44, Always(), ToRoom(99), False, False),  Rem WEST -> goto LOC_ALCOVE
+      Op(70, Carrying(59), ToSpecial(2), False, False),  Rem PLOVE -> special 2
+      Op(70, Always(), ToRoom(184), False, False),  Rem PLOVE -> goto LOC_FOOF6
+      Op(47, Always(), ToRoom(101), False, False),  Rem NE -> goto LOC_DARKROOM
+      Op(22, Always(), ToRoom(101), False, True),  Rem DARK -> goto LOC_DARKROOM
+      Op(46, Always(), ToRoom(100), False, False),  Rem SOUTH -> goto LOC_PLOVER
+      Op(70, Always(), ToRoom(100), False, False),  Rem PLOVE -> goto LOC_PLOVER
+      Op(11, Always(), ToRoom(100), False, True),  Rem OUT -> goto LOC_PLOVER
+      Op(30, Always(), ToRoom(103), False, False),  Rem DOWN -> goto LOC_SHELLROOM
+      Op(73, Always(), ToRoom(103), False, False),  Rem SHELL -> goto LOC_SHELLROOM
+      Op(11, Always(), ToRoom(103), False, True),  Rem OUT -> goto LOC_SHELLROOM
+      Op(29, Always(), ToRoom(102), False, False),  Rem UPWAR -> goto LOC_ARCHED
+      Op(38, Always(), ToRoom(102), False, False),  Rem HALL -> goto LOC_ARCHED
+      Op(30, Always(), ToRoom(104), False, False),  Rem DOWN -> goto LOC_SLOPING1
+      Op(46, Carrying(14), ToMessage(81), False, False),  Rem SOUTH -> speak CLAM_BLOCKER
+      Op(46, Carrying(15), ToMessage(82), False, False),  Rem SOUTH -> speak OYSTER_BLOCKER
+      Op(46, Always(), ToRoom(64), False, True),  Rem SOUTH -> goto LOC_COMPLEX
+      Op(29, Always(), ToRoom(103), False, False),  Rem UPWAR -> goto LOC_SHELLROOM
+      Op(73, Always(), ToRoom(103), False, False),  Rem SHELL -> goto LOC_SHELLROOM
+      Op(30, Always(), ToRoom(105), False, True),  Rem DOWN -> goto LOC_CULDESAC
+      Op(29, Always(), ToRoom(104), False, False),  Rem UPWAR -> goto LOC_SLOPING1
+      Op(11, Always(), ToRoom(104), False, False),  Rem OUT -> goto LOC_SLOPING1
+      Op(73, Always(), ToRoom(103), False, True),  Rem SHELL -> goto LOC_SHELLROOM
+      Op(29, Always(), ToRoom(64), False, False),  Rem UPWAR -> goto LOC_COMPLEX
+      Op(44, Always(), ToRoom(65), False, False),  Rem WEST -> goto LOC_BEDQUILT
+      Op(43, Always(), ToRoom(108), False, True),  Rem EAST -> goto LOC_WITTSEND
+      Op(46, Always(), ToRoom(131), False, False),  Rem SOUTH -> goto LOC_DIFFERENT3
+      Op(49, Always(), ToRoom(132), False, False),  Rem SW -> goto LOC_DIFFERENT4
+      Op(47, Always(), ToRoom(133), False, False),  Rem NE -> goto LOC_DIFFERENT5
+      Op(48, Always(), ToRoom(134), False, False),  Rem SE -> goto LOC_DIFFERENT6
+      Op(29, Always(), ToRoom(135), False, False),  Rem UPWAR -> goto LOC_DIFFERENT7
+      Op(50, Always(), ToRoom(136), False, False),  Rem NW -> goto LOC_DIFFERENT8
+      Op(43, Always(), ToRoom(137), False, False),  Rem EAST -> goto LOC_DIFFERENT9
+      Op(44, Always(), ToRoom(138), False, False),  Rem WEST -> goto LOC_DIFFERENT10
+      Op(45, Always(), ToRoom(139), False, False),  Rem NORTH -> goto LOC_DIFFERENT11
+      Op(30, Always(), ToRoom(61), False, True),  Rem DOWN -> goto LOC_LONGWEST
+      Op(43, Chance(95), ToMessage(44), False, False),  Rem EAST -> speak FUTILE_CRAWL
+      Op(45, Chance(95), ToMessage(44), False, False),  Rem NORTH -> speak FUTILE_CRAWL
+      Op(46, Chance(95), ToMessage(44), False, False),  Rem SOUTH -> speak FUTILE_CRAWL
+      Op(47, Chance(95), ToMessage(44), False, False),  Rem NE -> speak FUTILE_CRAWL
+      Op(48, Chance(95), ToMessage(44), False, False),  Rem SE -> speak FUTILE_CRAWL
+      Op(49, Chance(95), ToMessage(44), False, False),  Rem SW -> speak FUTILE_CRAWL
+      Op(50, Chance(95), ToMessage(44), False, False),  Rem NW -> speak FUTILE_CRAWL
+      Op(29, Chance(95), ToMessage(44), False, False),  Rem UPWAR -> speak FUTILE_CRAWL
+      Op(30, Chance(95), ToMessage(44), False, False),  Rem DOWN -> speak FUTILE_CRAWL
+      Op(43, Always(), ToRoom(106), False, False),  Rem EAST -> goto LOC_ANTEROOM
+      Op(44, Always(), ToMessage(89), False, True),  Rem WEST -> speak WAY_BLOCKED
+      Op(46, Always(), ToRoom(69), False, False),  Rem SOUTH -> goto LOC_SECRET1
+      Op(45, Always(), ToRoom(113), False, False),  Rem NORTH -> goto LOC_RESERVOIR
+      Op(74, Always(), ToRoom(113), False, True),  Rem RESER -> goto LOC_RESERVOIR
+      Op(44, Always(), ToRoom(71), False, False),  Rem WEST -> goto LOC_THREEJUNCTION
+      Op(39, Always(), ToRoom(20), False, True),  Rem JUMP -> goto LOC_NECKBROKE
+      Op(45, Always(), ToRoom(70), False, False),  Rem NORTH -> goto LOC_SECRET2
+      Op(30, Chance(40), ToRoom(50), False, False),  Rem DOWN -> goto LOC_ALIKE6
+      Op(39, Chance(40), ToRoom(50), False, False),  Rem JUMP -> goto LOC_ALIKE6
+      Op(56, Chance(40), ToRoom(50), False, False),  Rem CLIMB -> goto LOC_ALIKE6
+      Op(30, Chance(50), ToRoom(53), False, False),  Rem DOWN -> goto LOC_ALIKE9
+      Op(30, Always(), ToRoom(45), False, True),  Rem DOWN -> goto LOC_ALIKE4
+      Op(49, Always(), ToRoom(131), False, False),  Rem SW -> goto LOC_DIFFERENT3
+      Op(45, Always(), ToRoom(132), False, False),  Rem NORTH -> goto LOC_DIFFERENT4
+      Op(43, Always(), ToRoom(133), False, False),  Rem EAST -> goto LOC_DIFFERENT5
+      Op(50, Always(), ToRoom(134), False, False),  Rem NW -> goto LOC_DIFFERENT6
+      Op(48, Always(), ToRoom(135), False, False),  Rem SE -> goto LOC_DIFFERENT7
+      Op(47, Always(), ToRoom(136), False, False),  Rem NE -> goto LOC_DIFFERENT8
+      Op(44, Always(), ToRoom(137), False, False),  Rem WEST -> goto LOC_DIFFERENT9
+      Op(30, Always(), ToRoom(138), False, False),  Rem DOWN -> goto LOC_DIFFERENT10
+      Op(29, Always(), ToRoom(139), False, False),  Rem UPWAR -> goto LOC_DIFFERENT11
+      Op(46, Always(), ToRoom(140), False, True),  Rem SOUTH -> goto LOC_DEADEND13
+      Op(46, Always(), ToRoom(109), False, False),  Rem SOUTH -> goto LOC_MIRRORCANYON
+      Op(11, Always(), ToRoom(109), False, False),  Rem OUT -> goto LOC_MIRRORCANYON
+      Op(45, NotInState(45, 1), ToMessage(40), False, False),  Rem NORTH -> speak BAD_DIRECTION
+      Op(42, NotInState(45, 1), ToMessage(40), False, False),  Rem ACROS -> speak BAD_DIRECTION
+      Op(68, NotInState(45, 1), ToMessage(40), False, False),  Rem CROSS -> speak BAD_DIRECTION
+      Op(45, Always(), ToRoom(168), False, True),  Rem NORTH -> goto LOC_RESBOTTOM
+      Op(48, Always(), ToRoom(84), False, True),  Rem SE -> goto LOC_ALIKE13
+      Op(49, Always(), ToRoom(116), False, True),  Rem SW -> goto LOC_SW
+      Op(47, Always(), ToRoom(115), False, False),  Rem NE -> goto LOC_NE
+      Op(30, Always(), ToMessage(61), False, True),  Rem DOWN -> speak GRATE_NOWAY
+      Op(49, Always(), ToRoom(118), False, False),  Rem SW -> goto LOC_WINDING
+      Op(41, CarriedOrHere(33), ToMessage(121), False, False),  Rem OVER -> speak TROLL_BLOCKS
+      Op(42, CarriedOrHere(33), ToMessage(121), False, False),  Rem ACROS -> speak TROLL_BLOCKS
+      Op(68, CarriedOrHere(33), ToMessage(121), False, False),  Rem CROSS -> speak TROLL_BLOCKS
+      Op(47, CarriedOrHere(33), ToMessage(121), False, False),  Rem NE -> speak TROLL_BLOCKS
+      Op(41, NotInState(32, 0), ToMessage(122), False, False),  Rem OVER -> speak BRIDGE_GONE
+      Op(41, Always(), ToSpecial(3), False, False),  Rem OVER -> special 3
+      Op(39, NotInState(32, 0), ToRoom(21), False, False),  Rem JUMP -> goto LOC_NOMAKE
+      Op(39, Always(), ToMessage(64), False, True),  Rem JUMP -> speak CROSS_BRIDGE
+      Op(30, Always(), ToRoom(72), False, False),  Rem DOWN -> goto LOC_LOWROOM
+      Op(29, Always(), ToRoom(117), False, True),  Rem UPWAR -> goto LOC_SWCHASM
+      Op(45, Always(), ToRoom(69), False, False),  Rem NORTH -> goto LOC_SECRET1
+      Op(11, Always(), ToRoom(69), False, False),  Rem OUT -> goto LOC_SECRET1
+      Op(43, Always(), ToMessage(115), False, False),  Rem EAST -> speak NASTY_DRAGON
+      Op(7, Always(), ToMessage(115), False, True),  Rem FORWA -> speak NASTY_DRAGON
+      Op(45, Always(), ToRoom(69), False, False),  Rem NORTH -> goto LOC_SECRET1
+      Op(43, Always(), ToRoom(74), False, True),  Rem EAST -> goto LOC_SECRET3
+      Op(43, Always(), ToRoom(74), False, False),  Rem EAST -> goto LOC_SECRET3
+      Op(11, Always(), ToRoom(74), False, False),  Rem OUT -> goto LOC_SECRET3
+      Op(45, Always(), ToMessage(115), False, False),  Rem NORTH -> speak NASTY_DRAGON
+      Op(7, Always(), ToMessage(115), False, True),  Rem FORWA -> speak NASTY_DRAGON
+      Op(47, Always(), ToRoom(123), False, False),  Rem NE -> goto LOC_CORRIDOR
+      Op(41, CarriedOrHere(33), ToMessage(121), False, False),  Rem OVER -> speak TROLL_BLOCKS
+      Op(42, CarriedOrHere(33), ToMessage(121), False, False),  Rem ACROS -> speak TROLL_BLOCKS
+      Op(68, CarriedOrHere(33), ToMessage(121), False, False),  Rem CROSS -> speak TROLL_BLOCKS
+      Op(49, CarriedOrHere(33), ToMessage(121), False, False),  Rem SW -> speak TROLL_BLOCKS
+      Op(41, Always(), ToSpecial(3), False, False),  Rem OVER -> special 3
+      Op(39, Always(), ToMessage(64), False, False),  Rem JUMP -> speak CROSS_BRIDGE
+      Op(15, Always(), ToRoom(124), False, False),  Rem FORK -> goto LOC_FORK
+      Op(28, Always(), ToRoom(126), False, False),  Rem VIEW -> goto LOC_BREATHTAKING
+      Op(40, Always(), ToRoom(129), False, True),  Rem BARRE -> goto LOC_BARRENFRONT
+      Op(44, Always(), ToRoom(122), False, False),  Rem WEST -> goto LOC_NECHASM
+      Op(43, Always(), ToRoom(124), False, False),  Rem EAST -> goto LOC_FORK
+      Op(15, Always(), ToRoom(124), False, False),  Rem FORK -> goto LOC_FORK
+      Op(28, Always(), ToRoom(126), False, False),  Rem VIEW -> goto LOC_BREATHTAKING
+      Op(40, Always(), ToRoom(129), False, True),  Rem BARRE -> goto LOC_BARRENFRONT
+      Op(44, Always(), ToRoom(123), False, False),  Rem WEST -> goto LOC_CORRIDOR
+      Op(47, Always(), ToRoom(125), False, False),  Rem NE -> goto LOC_WARMWALLS
+      Op(36, Always(), ToRoom(125), False, False),  Rem LEFT -> goto LOC_WARMWALLS
+      Op(48, Always(), ToRoom(128), False, False),  Rem SE -> goto LOC_LIMESTONE
+      Op(37, Always(), ToRoom(128), False, False),  Rem RIGHT -> goto LOC_LIMESTONE
+      Op(30, Always(), ToRoom(128), False, False),  Rem DOWN -> goto LOC_LIMESTONE
+      Op(28, Always(), ToRoom(126), False, False),  Rem VIEW -> goto LOC_BREATHTAKING
+      Op(40, Always(), ToRoom(129), False, True),  Rem BARRE -> goto LOC_BARRENFRONT
+      Op(46, Always(), ToRoom(124), False, False),  Rem SOUTH -> goto LOC_FORK
+      Op(15, Always(), ToRoom(124), False, False),  Rem FORK -> goto LOC_FORK
+      Op(45, Always(), ToRoom(126), False, False),  Rem NORTH -> goto LOC_BREATHTAKING
+      Op(28, Always(), ToRoom(126), False, False),  Rem VIEW -> goto LOC_BREATHTAKING
+      Op(43, Always(), ToRoom(127), False, False),  Rem EAST -> goto LOC_BOULDERS2
+      Op(17, Always(), ToRoom(127), False, True),  Rem CRAWL -> goto LOC_BOULDERS2
+      Op(46, Always(), ToRoom(125), False, False),  Rem SOUTH -> goto LOC_WARMWALLS
+      Op(23, Always(), ToRoom(125), False, False),  Rem PASSA -> goto LOC_WARMWALLS
+      Op(11, Always(), ToRoom(125), False, False),  Rem OUT -> goto LOC_WARMWALLS
+      Op(15, Always(), ToRoom(124), False, False),  Rem FORK -> goto LOC_FORK
+      Op(30, Always(), ToMessage(75), False, False),  Rem DOWN -> speak RIDICULOUS_ATTEMPT
+      Op(39, Always(), ToRoom(178), False, True),  Rem JUMP -> goto LOC_GRUESOME
+      Op(44, Always(), ToRoom(125), False, False),  Rem WEST -> goto LOC_WARMWALLS
+      Op(11, Always(), ToRoom(125), False, False),  Rem OUT -> goto LOC_WARMWALLS
+      Op(17, Always(), ToRoom(125), False, False),  Rem CRAWL -> goto LOC_WARMWALLS
+      Op(15, Always(), ToRoom(124), False, False),  Rem FORK -> goto LOC_FORK
+      Op(28, Always(), ToRoom(126), False, True),  Rem VIEW -> goto LOC_BREATHTAKING
+      Op(45, Always(), ToRoom(124), False, False),  Rem NORTH -> goto LOC_FORK
+      Op(29, Always(), ToRoom(124), False, False),  Rem UPWAR -> goto LOC_FORK
+      Op(15, Always(), ToRoom(124), False, False),  Rem FORK -> goto LOC_FORK
+      Op(46, Always(), ToRoom(129), False, False),  Rem SOUTH -> goto LOC_BARRENFRONT
+      Op(30, Always(), ToRoom(129), False, False),  Rem DOWN -> goto LOC_BARRENFRONT
+      Op(40, Always(), ToRoom(129), False, False),  Rem BARRE -> goto LOC_BARRENFRONT
+      Op(28, Always(), ToRoom(126), False, True),  Rem VIEW -> goto LOC_BREATHTAKING
+      Op(44, Always(), ToRoom(128), False, False),  Rem WEST -> goto LOC_LIMESTONE
+      Op(29, Always(), ToRoom(128), False, False),  Rem UPWAR -> goto LOC_LIMESTONE
+      Op(15, Always(), ToRoom(124), False, False),  Rem FORK -> goto LOC_FORK
+      Op(43, Always(), ToRoom(130), False, False),  Rem EAST -> goto LOC_BARRENROOM
+      Op(19, Always(), ToRoom(130), False, False),  Rem INWAR -> goto LOC_BARRENROOM
+      Op(40, Always(), ToRoom(130), False, False),  Rem BARRE -> goto LOC_BARRENROOM
+      Op(3, Always(), ToRoom(130), False, False),  Rem ENTER -> goto LOC_BARRENROOM
+      Op(28, Always(), ToRoom(126), False, True),  Rem VIEW -> goto LOC_BREATHTAKING
+      Op(44, Always(), ToRoom(129), False, False),  Rem WEST -> goto LOC_BARRENFRONT
+      Op(11, Always(), ToRoom(129), False, False),  Rem OUT -> goto LOC_BARRENFRONT
+      Op(15, Always(), ToRoom(124), False, False),  Rem FORK -> goto LOC_FORK
+      Op(28, Always(), ToRoom(126), False, True),  Rem VIEW -> goto LOC_BREATHTAKING
+      Op(44, Always(), ToRoom(107), False, False),  Rem WEST -> goto LOC_DIFFERENT1
+      Op(48, Always(), ToRoom(132), False, False),  Rem SE -> goto LOC_DIFFERENT4
+      Op(50, Always(), ToRoom(133), False, False),  Rem NW -> goto LOC_DIFFERENT5
+      Op(49, Always(), ToRoom(134), False, False),  Rem SW -> goto LOC_DIFFERENT6
+      Op(47, Always(), ToRoom(135), False, False),  Rem NE -> goto LOC_DIFFERENT7
+      Op(29, Always(), ToRoom(136), False, False),  Rem UPWAR -> goto LOC_DIFFERENT8
+      Op(30, Always(), ToRoom(137), False, False),  Rem DOWN -> goto LOC_DIFFERENT9
+      Op(45, Always(), ToRoom(138), False, False),  Rem NORTH -> goto LOC_DIFFERENT10
+      Op(46, Always(), ToRoom(139), False, False),  Rem SOUTH -> goto LOC_DIFFERENT11
+      Op(43, Always(), ToRoom(112), False, True),  Rem EAST -> goto LOC_DIFFERENT2
+      Op(50, Always(), ToRoom(107), False, False),  Rem NW -> goto LOC_DIFFERENT1
+      Op(29, Always(), ToRoom(131), False, False),  Rem UPWAR -> goto LOC_DIFFERENT3
+      Op(45, Always(), ToRoom(133), False, False),  Rem NORTH -> goto LOC_DIFFERENT5
+      Op(46, Always(), ToRoom(134), False, False),  Rem SOUTH -> goto LOC_DIFFERENT6
+      Op(44, Always(), ToRoom(135), False, False),  Rem WEST -> goto LOC_DIFFERENT7
+      Op(49, Always(), ToRoom(136), False, False),  Rem SW -> goto LOC_DIFFERENT8
+      Op(47, Always(), ToRoom(137), False, False),  Rem NE -> goto LOC_DIFFERENT9
+      Op(43, Always(), ToRoom(138), False, False),  Rem EAST -> goto LOC_DIFFERENT10
+      Op(30, Always(), ToRoom(139), False, False),  Rem DOWN -> goto LOC_DIFFERENT11
+      Op(48, Always(), ToRoom(112), False, True),  Rem SE -> goto LOC_DIFFERENT2
+      Op(29, Always(), ToRoom(107), False, False),  Rem UPWAR -> goto LOC_DIFFERENT1
+      Op(30, Always(), ToRoom(131), False, False),  Rem DOWN -> goto LOC_DIFFERENT3
+      Op(44, Always(), ToRoom(132), False, False),  Rem WEST -> goto LOC_DIFFERENT4
+      Op(47, Always(), ToRoom(134), False, False),  Rem NE -> goto LOC_DIFFERENT6
+      Op(49, Always(), ToRoom(135), False, False),  Rem SW -> goto LOC_DIFFERENT7
+      Op(43, Always(), ToRoom(136), False, False),  Rem EAST -> goto LOC_DIFFERENT8
+      Op(45, Always(), ToRoom(137), False, False),  Rem NORTH -> goto LOC_DIFFERENT9
+      Op(50, Always(), ToRoom(138), False, False),  Rem NW -> goto LOC_DIFFERENT10
+      Op(48, Always(), ToRoom(139), False, False),  Rem SE -> goto LOC_DIFFERENT11
+      Op(46, Always(), ToRoom(112), False, True),  Rem SOUTH -> goto LOC_DIFFERENT2
+      Op(47, Always(), ToRoom(107), False, False),  Rem NE -> goto LOC_DIFFERENT1
+      Op(45, Always(), ToRoom(131), False, False),  Rem NORTH -> goto LOC_DIFFERENT3
+      Op(50, Always(), ToRoom(132), False, False),  Rem NW -> goto LOC_DIFFERENT4
+      Op(48, Always(), ToRoom(133), False, False),  Rem SE -> goto LOC_DIFFERENT5
+      Op(43, Always(), ToRoom(135), False, False),  Rem EAST -> goto LOC_DIFFERENT7
+      Op(30, Always(), ToRoom(136), False, False),  Rem DOWN -> goto LOC_DIFFERENT8
+      Op(46, Always(), ToRoom(137), False, False),  Rem SOUTH -> goto LOC_DIFFERENT9
+      Op(29, Always(), ToRoom(138), False, False),  Rem UPWAR -> goto LOC_DIFFERENT10
+      Op(44, Always(), ToRoom(139), False, False),  Rem WEST -> goto LOC_DIFFERENT11
+      Op(49, Always(), ToRoom(112), False, True),  Rem SW -> goto LOC_DIFFERENT2
+      Op(45, Always(), ToRoom(107), False, False),  Rem NORTH -> goto LOC_DIFFERENT1
+      Op(48, Always(), ToRoom(131), False, False),  Rem SE -> goto LOC_DIFFERENT3
+      Op(30, Always(), ToRoom(132), False, False),  Rem DOWN -> goto LOC_DIFFERENT4
+      Op(46, Always(), ToRoom(133), False, False),  Rem SOUTH -> goto LOC_DIFFERENT5
+      Op(43, Always(), ToRoom(134), False, False),  Rem EAST -> goto LOC_DIFFERENT6
+      Op(44, Always(), ToRoom(136), False, False),  Rem WEST -> goto LOC_DIFFERENT8
+      Op(49, Always(), ToRoom(137), False, False),  Rem SW -> goto LOC_DIFFERENT9
+      Op(47, Always(), ToRoom(138), False, False),  Rem NE -> goto LOC_DIFFERENT10
+      Op(50, Always(), ToRoom(139), False, False),  Rem NW -> goto LOC_DIFFERENT11
+      Op(29, Always(), ToRoom(112), False, True),  Rem UPWAR -> goto LOC_DIFFERENT2
+      Op(43, Always(), ToRoom(107), False, False),  Rem EAST -> goto LOC_DIFFERENT1
+      Op(44, Always(), ToRoom(131), False, False),  Rem WEST -> goto LOC_DIFFERENT3
+      Op(29, Always(), ToRoom(132), False, False),  Rem UPWAR -> goto LOC_DIFFERENT4
+      Op(49, Always(), ToRoom(133), False, False),  Rem SW -> goto LOC_DIFFERENT5
+      Op(30, Always(), ToRoom(134), False, False),  Rem DOWN -> goto LOC_DIFFERENT6
+      Op(46, Always(), ToRoom(135), False, False),  Rem SOUTH -> goto LOC_DIFFERENT7
+      Op(50, Always(), ToRoom(137), False, False),  Rem NW -> goto LOC_DIFFERENT9
+      Op(48, Always(), ToRoom(138), False, False),  Rem SE -> goto LOC_DIFFERENT10
+      Op(47, Always(), ToRoom(139), False, False),  Rem NE -> goto LOC_DIFFERENT11
+      Op(45, Always(), ToRoom(112), False, True),  Rem NORTH -> goto LOC_DIFFERENT2
+      Op(48, Always(), ToRoom(107), False, False),  Rem SE -> goto LOC_DIFFERENT1
+      Op(47, Always(), ToRoom(131), False, False),  Rem NE -> goto LOC_DIFFERENT3
+      Op(46, Always(), ToRoom(132), False, False),  Rem SOUTH -> goto LOC_DIFFERENT4
+      Op(30, Always(), ToRoom(133), False, False),  Rem DOWN -> goto LOC_DIFFERENT5
+      Op(29, Always(), ToRoom(134), False, False),  Rem UPWAR -> goto LOC_DIFFERENT6
+      Op(50, Always(), ToRoom(135), False, False),  Rem NW -> goto LOC_DIFFERENT7
+      Op(45, Always(), ToRoom(136), False, False),  Rem NORTH -> goto LOC_DIFFERENT8
+      Op(49, Always(), ToRoom(138), False, False),  Rem SW -> goto LOC_DIFFERENT10
+      Op(43, Always(), ToRoom(139), False, False),  Rem EAST -> goto LOC_DIFFERENT11
+      Op(44, Always(), ToRoom(112), False, True),  Rem WEST -> goto LOC_DIFFERENT2
+      Op(30, Always(), ToRoom(107), False, False),  Rem DOWN -> goto LOC_DIFFERENT1
+      Op(43, Always(), ToRoom(131), False, False),  Rem EAST -> goto LOC_DIFFERENT3
+      Op(47, Always(), ToRoom(132), False, False),  Rem NE -> goto LOC_DIFFERENT4
+      Op(29, Always(), ToRoom(133), False, False),  Rem UPWAR -> goto LOC_DIFFERENT5
+      Op(44, Always(), ToRoom(134), False, False),  Rem WEST -> goto LOC_DIFFERENT6
+      Op(45, Always(), ToRoom(135), False, False),  Rem NORTH -> goto LOC_DIFFERENT7
+      Op(46, Always(), ToRoom(136), False, False),  Rem SOUTH -> goto LOC_DIFFERENT8
+      Op(48, Always(), ToRoom(137), False, False),  Rem SE -> goto LOC_DIFFERENT9
+      Op(49, Always(), ToRoom(139), False, False),  Rem SW -> goto LOC_DIFFERENT11
+      Op(50, Always(), ToRoom(112), False, True),  Rem NW -> goto LOC_DIFFERENT2
+      Op(49, Always(), ToRoom(107), False, False),  Rem SW -> goto LOC_DIFFERENT1
+      Op(50, Always(), ToRoom(131), False, False),  Rem NW -> goto LOC_DIFFERENT3
+      Op(43, Always(), ToRoom(132), False, False),  Rem EAST -> goto LOC_DIFFERENT4
+      Op(44, Always(), ToRoom(133), False, False),  Rem WEST -> goto LOC_DIFFERENT5
+      Op(45, Always(), ToRoom(134), False, False),  Rem NORTH -> goto LOC_DIFFERENT6
+      Op(30, Always(), ToRoom(135), False, False),  Rem DOWN -> goto LOC_DIFFERENT7
+      Op(48, Always(), ToRoom(136), False, False),  Rem SE -> goto LOC_DIFFERENT8
+      Op(29, Always(), ToRoom(137), False, False),  Rem UPWAR -> goto LOC_DIFFERENT9
+      Op(46, Always(), ToRoom(138), False, False),  Rem SOUTH -> goto LOC_DIFFERENT10
+      Op(47, Always(), ToRoom(112), False, True),  Rem NE -> goto LOC_DIFFERENT2
+      Op(45, Always(), ToRoom(112), False, False),  Rem NORTH -> goto LOC_DIFFERENT2
+      Op(11, Always(), ToRoom(112), False, False),  Rem OUT -> goto LOC_DIFFERENT2
+      Op(46, NotInState(38, 0), ToRoom(141), False, False),  Rem SOUTH -> goto LOC_ROUGHHEWN
+      Op(46, Always(), ToRoom(142), False, True),  Rem SOUTH -> goto LOC_BADDIRECTION
+      Op(45, Always(), ToRoom(140), False, False),  Rem NORTH -> goto LOC_DEADEND13
+      Op(46, Always(), ToRoom(143), False, True),  Rem SOUTH -> goto LOC_LARGE
+      Op(1, Always(), ToRoom(140), False, True),  Rem forced -> goto LOC_DEADEND13
+      Op(44, Always(), ToRoom(141), False, False),  Rem WEST -> goto LOC_ROUGHHEWN
+      Op(45, CarriedOrHere(41), ToMessage(48), False, False),  Rem NORTH -> speak OGRE_SNARL
+      Op(45, Always(), ToRoom(144), False, True),  Rem NORTH -> goto LOC_STOREROOM
+      Op(46, Always(), ToRoom(143), False, False),  Rem SOUTH -> goto LOC_LARGE
+      Op(11, Always(), ToRoom(143), False, True),  Rem OUT -> goto LOC_LARGE
+      Op(43, Always(), ToRoom(1), False, False),  Rem EAST -> goto LOC_START
+      Op(44, Always(), ToRoom(157), False, False),  Rem WEST -> goto LOC_FOREST13
+      Op(45, Always(), ToRoom(146), False, False),  Rem NORTH -> goto LOC_FOREST2
+      Op(46, Always(), ToRoom(147), False, True),  Rem SOUTH -> goto LOC_FOREST3
+      Op(43, Always(), ToRoom(145), False, False),  Rem EAST -> goto LOC_FOREST1
+      Op(44, Always(), ToRoom(163), False, False),  Rem WEST -> goto LOC_FOREST19
+      Op(45, Always(), ToRoom(147), False, False),  Rem NORTH -> goto LOC_FOREST3
+      Op(46, Always(), ToRoom(162), False, True),  Rem SOUTH -> goto LOC_FOREST18
+      Op(43, Always(), ToRoom(148), False, False),  Rem EAST -> goto LOC_FOREST4
+      Op(44, Always(), ToRoom(148), False, False),  Rem WEST -> goto LOC_FOREST4
+      Op(45, Always(), ToRoom(146), False, False),  Rem NORTH -> goto LOC_FOREST2
+      Op(46, Always(), ToRoom(145), False, True),  Rem SOUTH -> goto LOC_FOREST1
+      Op(43, Always(), ToRoom(147), False, False),  Rem EAST -> goto LOC_FOREST3
+      Op(45, Always(), ToRoom(147), False, False),  Rem NORTH -> goto LOC_FOREST3
+      Op(44, Always(), ToRoom(149), False, False),  Rem WEST -> goto LOC_FOREST5
+      Op(46, Always(), ToRoom(149), False, True),  Rem SOUTH -> goto LOC_FOREST5
+      Op(43, Always(), ToRoom(148), False, False),  Rem EAST -> goto LOC_FOREST4
+      Op(45, Always(), ToRoom(148), False, False),  Rem NORTH -> goto LOC_FOREST4
+      Op(44, Always(), ToRoom(151), False, False),  Rem WEST -> goto LOC_FOREST7
+      Op(46, Always(), ToRoom(150), False, True),  Rem SOUTH -> goto LOC_FOREST6
+      Op(43, Always(), ToRoom(149), False, False),  Rem EAST -> goto LOC_FOREST5
+      Op(44, Always(), ToRoom(151), False, False),  Rem WEST -> goto LOC_FOREST7
+      Op(45, Always(), ToRoom(4), False, False),  Rem NORTH -> goto LOC_VALLEY
+      Op(46, Always(), ToRoom(7), False, True),  Rem SOUTH -> goto LOC_SLIT
+      Op(43, Always(), ToRoom(149), False, False),  Rem EAST -> goto LOC_FOREST5
+      Op(44, Always(), ToRoom(150), False, False),  Rem WEST -> goto LOC_FOREST6
+      Op(45, Always(), ToRoom(8), False, False),  Rem NORTH -> goto LOC_GRATE
+      Op(46, Always(), ToRoom(152), False, True),  Rem SOUTH -> goto LOC_FOREST8
+      Op(43, Always(), ToRoom(153), False, False),  Rem EAST -> goto LOC_FOREST9
+      Op(44, Always(), ToRoom(155), False, False),  Rem WEST -> goto LOC_FOREST11
+      Op(45, Always(), ToRoom(166), False, False),  Rem NORTH -> goto LOC_FOREST22
+      Op(46, Always(), ToRoom(151), False, True),  Rem SOUTH -> goto LOC_FOREST7
+      Op(43, Always(), ToRoom(155), False, False),  Rem EAST -> goto LOC_FOREST11
+      Op(44, Always(), ToRoom(152), False, False),  Rem WEST -> goto LOC_FOREST8
+      Op(45, Always(), ToRoom(154), False, False),  Rem NORTH -> goto LOC_FOREST10
+      Op(46, Always(), ToRoom(8), False, True),  Rem SOUTH -> goto LOC_GRATE
+      Op(43, Always(), ToRoom(7), False, False),  Rem EAST -> goto LOC_SLIT
+      Op(44, Always(), ToRoom(155), False, False),  Rem WEST -> goto LOC_FOREST11
+      Op(45, Always(), ToRoom(153), False, False),  Rem NORTH -> goto LOC_FOREST9
+      Op(46, Always(), ToRoom(8), False, True),  Rem SOUTH -> goto LOC_GRATE
+      Op(43, Always(), ToRoom(154), False, False),  Rem EAST -> goto LOC_FOREST10
+      Op(44, Always(), ToRoom(152), False, False),  Rem WEST -> goto LOC_FOREST8
+      Op(45, Always(), ToRoom(166), False, False),  Rem NORTH -> goto LOC_FOREST22
+      Op(46, Always(), ToRoom(153), False, True),  Rem SOUTH -> goto LOC_FOREST9
+      Op(43, Always(), ToRoom(157), False, False),  Rem EAST -> goto LOC_FOREST13
+      Op(44, Always(), ToRoom(158), False, False),  Rem WEST -> goto LOC_FOREST14
+      Op(45, Always(), ToRoom(166), False, False),  Rem NORTH -> goto LOC_FOREST22
+      Op(46, Always(), ToRoom(4), False, True),  Rem SOUTH -> goto LOC_VALLEY
+      Op(43, Always(), ToRoom(145), False, False),  Rem EAST -> goto LOC_FOREST1
+      Op(44, Always(), ToRoom(156), False, False),  Rem WEST -> goto LOC_FOREST12
+      Op(45, Always(), ToRoom(164), False, False),  Rem NORTH -> goto LOC_FOREST20
+      Op(46, Always(), ToRoom(2), False, True),  Rem SOUTH -> goto LOC_HILL
+      Op(43, Always(), ToRoom(5), False, False),  Rem EAST -> goto LOC_ROADEND
+      Op(44, Always(), ToRoom(160), False, False),  Rem WEST -> goto LOC_FOREST16
+      Op(45, Always(), ToRoom(159), False, False),  Rem NORTH -> goto LOC_FOREST15
+      Op(46, Always(), ToRoom(156), False, True),  Rem SOUTH -> goto LOC_FOREST12
+      Op(43, Always(), ToRoom(160), False, False),  Rem EAST -> goto LOC_FOREST16
+      Op(44, Always(), ToRoom(166), False, False),  Rem WEST -> goto LOC_FOREST22
+      Op(45, Always(), ToRoom(5), False, False),  Rem NORTH -> goto LOC_ROADEND
+      Op(46, Always(), ToRoom(158), False, True),  Rem SOUTH -> goto LOC_FOREST14
+      Op(43, Always(), ToRoom(161), False, False),  Rem EAST -> goto LOC_FOREST17
+      Op(45, Always(), ToRoom(161), False, False),  Rem NORTH -> goto LOC_FOREST17
+      Op(44, Always(), ToRoom(158), False, False),  Rem WEST -> goto LOC_FOREST14
+      Op(46, Always(), ToRoom(159), False, True),  Rem SOUTH -> goto LOC_FOREST15
+      Op(43, Always(), ToRoom(162), False, False),  Rem EAST -> goto LOC_FOREST18
+      Op(44, Always(), ToRoom(160), False, False),  Rem WEST -> goto LOC_FOREST16
+      Op(46, Always(), ToRoom(160), False, False),  Rem SOUTH -> goto LOC_FOREST16
+      Op(45, Always(), ToRoom(6), False, True),  Rem NORTH -> goto LOC_CLIFF
+      Op(43, Always(), ToRoom(163), False, False),  Rem EAST -> goto LOC_FOREST19
+      Op(44, Always(), ToRoom(161), False, False),  Rem WEST -> goto LOC_FOREST17
+      Op(45, Always(), ToRoom(146), False, False),  Rem NORTH -> goto LOC_FOREST2
+      Op(46, Always(), ToRoom(165), False, True),  Rem SOUTH -> goto LOC_FOREST21
+      Op(43, Always(), ToRoom(146), False, False),  Rem EAST -> goto LOC_FOREST2
+      Op(44, Always(), ToRoom(162), False, False),  Rem WEST -> goto LOC_FOREST18
+      Op(45, Always(), ToRoom(6), False, False),  Rem NORTH -> goto LOC_CLIFF
+      Op(46, Always(), ToRoom(164), False, True),  Rem SOUTH -> goto LOC_FOREST20
+      Op(43, Always(), ToRoom(2), False, False),  Rem EAST -> goto LOC_HILL
+      Op(44, Always(), ToRoom(165), False, False),  Rem WEST -> goto LOC_FOREST21
+      Op(45, Always(), ToRoom(163), False, False),  Rem NORTH -> goto LOC_FOREST19
+      Op(46, Always(), ToRoom(157), False, True),  Rem SOUTH -> goto LOC_FOREST13
+      Op(43, Always(), ToRoom(164), False, False),  Rem EAST -> goto LOC_FOREST20
+      Op(44, Always(), ToRoom(5), False, False),  Rem WEST -> goto LOC_ROADEND
+      Op(45, Always(), ToRoom(162), False, False),  Rem NORTH -> goto LOC_FOREST18
+      Op(46, Always(), ToRoom(165), False, True),  Rem SOUTH -> goto LOC_FOREST21
+      Op(43, Always(), ToRoom(152), False, False),  Rem EAST -> goto LOC_FOREST8
+      Op(44, Always(), ToRoom(155), False, False),  Rem WEST -> goto LOC_FOREST11
+      Op(45, Always(), ToRoom(159), False, False),  Rem NORTH -> goto LOC_FOREST15
+      Op(46, Always(), ToRoom(156), False, True),  Rem SOUTH -> goto LOC_FOREST12
+      Op(39, Always(), ToRoom(21), False, True),  Rem JUMP -> goto LOC_NOMAKE
+      Op(45, Always(), ToRoom(169), False, False),  Rem NORTH -> goto LOC_RESNORTH
+      Op(46, Always(), ToRoom(113), False, True),  Rem SOUTH -> goto LOC_RESERVOIR
+      Op(46, NotInState(45, 1), ToMessage(40), False, False),  Rem SOUTH -> speak BAD_DIRECTION
+      Op(42, NotInState(45, 1), ToMessage(40), False, False),  Rem ACROS -> speak BAD_DIRECTION
+      Op(68, NotInState(45, 1), ToMessage(40), False, False),  Rem CROSS -> speak BAD_DIRECTION
+      Op(46, Always(), ToRoom(168), False, False),  Rem SOUTH -> goto LOC_RESBOTTOM
+      Op(50, Always(), ToRoom(170), False, False),  Rem NW -> goto LOC_TREACHEROUS
+      Op(29, Always(), ToRoom(170), False, False),  Rem UPWAR -> goto LOC_TREACHEROUS
+      Op(11, Always(), ToRoom(170), False, True),  Rem OUT -> goto LOC_TREACHEROUS
+      Op(29, Always(), ToRoom(171), False, False),  Rem UPWAR -> goto LOC_STEEP
+      Op(50, Always(), ToRoom(171), False, False),  Rem NW -> goto LOC_STEEP
+      Op(30, Always(), ToRoom(169), False, False),  Rem DOWN -> goto LOC_RESNORTH
+      Op(48, Always(), ToRoom(169), False, True),  Rem SE -> goto LOC_RESNORTH
+      Op(30, Always(), ToRoom(170), False, False),  Rem DOWN -> goto LOC_TREACHEROUS
+      Op(48, Always(), ToRoom(170), False, False),  Rem SE -> goto LOC_TREACHEROUS
+      Op(29, Always(), ToRoom(172), False, False),  Rem UPWAR -> goto LOC_CLIFFBASE
+      Op(50, Always(), ToRoom(172), False, True),  Rem NW -> goto LOC_CLIFFBASE
+      Op(30, Always(), ToRoom(171), False, False),  Rem DOWN -> goto LOC_STEEP
+      Op(48, Always(), ToRoom(171), False, False),  Rem SE -> goto LOC_STEEP
+      Op(29, Always(), ToRoom(173), False, False),  Rem UPWAR -> goto LOC_CLIFFACE
+      Op(56, Always(), ToRoom(173), False, True),  Rem CLIMB -> goto LOC_CLIFFACE
+      Op(30, Always(), ToRoom(172), False, False),  Rem DOWN -> goto LOC_CLIFFBASE
+      Op(29, Carrying(46), ToRoom(175), False, False),  Rem UPWAR -> goto LOC_CLIFFTOP
+      Op(29, Always(), ToRoom(174), False, True),  Rem UPWAR -> goto LOC_FOOTSLIP
+      Op(1, Always(), ToRoom(0), False, True),  Rem forced -> goto LOC_NOWHERE
+      Op(1, Always(), ToRoom(176), False, True),  Rem forced -> goto LOC_CLIFFLEDGE
+      Op(56, Always(), ToRoom(173), False, False),  Rem CLIMB -> goto LOC_CLIFFACE
+      Op(30, Always(), ToRoom(173), False, False),  Rem DOWN -> goto LOC_CLIFFACE
+      Op(47, Always(), ToRoom(177), False, False),  Rem NE -> goto LOC_REACHDEAD
+      Op(17, Always(), ToRoom(177), False, True),  Rem CRAWL -> goto LOC_REACHDEAD
+      Op(49, Always(), ToRoom(176), False, False),  Rem SW -> goto LOC_CLIFFLEDGE
+      Op(11, Always(), ToRoom(176), False, False),  Rem OUT -> goto LOC_CLIFFLEDGE
+      Op(17, Always(), ToRoom(176), False, True),  Rem CRAWL -> goto LOC_CLIFFLEDGE
+      Op(1, Always(), ToRoom(0), False, True),  Rem forced -> goto LOC_NOWHERE
+      Op(1, Always(), ToRoom(11), False, True),  Rem forced -> goto LOC_DEBRIS
+      Op(1, Always(), ToRoom(3), False, True),  Rem forced -> goto LOC_BUILDING
+      Op(1, Always(), ToRoom(33), False, True),  Rem forced -> goto LOC_Y2
+      Op(1, Always(), ToRoom(3), False, True),  Rem forced -> goto LOC_BUILDING
+      Op(1, Always(), ToRoom(100), False, True),  Rem forced -> goto LOC_PLOVER
+      Op(1, Always(), ToRoom(33), False, True)   Rem forced -> goto LOC_Y2
     }
 
 Rem The first travel row for each location, 0 for none.

@@ -1,0 +1,244 @@
+Rem ===================================================================
+Rem cave-fight.shoddy -- attacking, and being attacked.
+Rem 
+Rem actions.c:800-1000. Bare hands, the axe, the dragon, and the
+Rem several ways this ends badly.
+Rem ===================================================================
+
+Rem ---- attacking ---------------------------------------------------------------
+Rem actions.c:17-180. With no object named the game picks a target, and
+Rem the enemies outrank the merely hittable. Only the dragon rewards you
+Rem for trying.
+
+Rem actions.c:25-72. Assume a target only when it is unambiguous: two
+Rem enemies at once, or no enemy but two lesser targets, get "Attack
+Rem what?" instead. The bird and the machine cannot be attacked by
+Rem throwing the axe. Minus one here means ambiguous.
+Def PickTarget(g As Game, want As Number, thrown As Boolean) As Number
+    If want <> NoObject() Then
+        want
+    Else
+        Let foes = AttackFoes(g)
+        If Length(foes) >= 2 Then
+            0 - 1
+        Else
+            If Length(foes) = 1 Then
+                First(foes)
+            Else
+                PickLesserTarget(g, thrown)
+
+Def PickLesserTarget(g As Game, thrown As Boolean) As Number
+    Let cands = AttackOthers(g, thrown)
+    If Length(cands) >= 2 Then
+        0 - 1
+    Else
+        If Length(cands) = 1 Then
+            First(cands)
+        Else
+            NoObject()
+
+Def AddIf(xs As List, cond As Boolean, i As Number) As List
+    If cond Then
+        Append(xs, i)
+    Else
+        xs
+
+Def AttackFoes(g As Game) As List
+    AddIf(AddIf(AddIf(AddIf(AddIf(AddIf({ },
+          CurmudgeonsHere(g) > 0, ObjNamed("CURMUDGEON")),
+          Here(g, ObjNamed("SNAKE")), ObjNamed("SNAKE")),
+          (At(g, ObjNamed("DRAGON"))
+           And PropOf(g, ObjNamed("DRAGON")) = 0), ObjNamed("DRAGON")),
+          At(g, ObjNamed("TROLL")), ObjNamed("TROLL")),
+          At(g, ObjNamed("OGRE")), ObjNamed("OGRE")),
+          (Here(g, ObjNamed("BEAR"))
+           And PropOf(g, ObjNamed("BEAR")) = 0), ObjNamed("BEAR"))
+
+Def AttackOthers(g As Game, thrown As Boolean) As List
+    AddIf(AddIf(AddIf({ },
+          Here(g, ObjNamed("BIRD")) And Not thrown, ObjNamed("BIRD")),
+          Here(g, ObjNamed("VEND")) And Not thrown, ObjNamed("VEND")),
+          Here(g, ObjNamed("CLAM")) Or Here(g, ObjNamed("OYSTER")), ObjNamed("CLAM"))
+
+Rem actions.c:107-137. Insisting you can kill a dragon bare-handed is the
+Rem one place in the cave where sheer cheek is rewarded.
+Def DoAttack(g As Game, want As Number, thrown As Boolean, msg As String) As Done
+    Let obj = PickTarget(g, want, thrown)
+    Let dragon = ObjNamed("DRAGON")
+    If obj = 0 - 1 Then
+        Done(g, GoUnknown())
+    Else
+        If obj = dragon And PropOf(g, dragon) = 0 Then
+            SpeakId(MsgBareHandsQuery())
+            If SilentYes() Then
+                Done(SlayDragon(g, dragon), GoMove())
+            Else
+                Done(VoicedId(g, MsgNastyDragon()), GoMove())
+        Else
+            AttackOther(g, obj, msg)
+
+Rem misc.c:275-320: the question has already been asked, so this reads
+Rem the answer -- and keeps asking for one until it begins with y or n.
+Def SilentYes() As Boolean
+    Let reply = Lower(Trim(LineText(AskRaw())))
+    If Len(reply) = 0 Then
+        SpeakId(MsgPleaseAnswer())
+        SilentYes()
+    Else
+        Let w = First(Tokens(reply))
+        If Left(w, 1) = "y" Then
+            True
+        Else
+            If Left(w, 1) = "n" Then
+                False
+            Else
+                SpeakId(MsgPleaseAnswer())
+                SilentYes()
+
+Def SlayDragon(g As Game, dragon As Number) As Game
+    Let rug = ObjNamed("RUG")
+    Let blood = ObjNamed("BLOOD")
+    Let here = LocNamed("LOC_SECRET5")
+    Let ps = Places(ObjAt(dragon))
+    Let g1 = StateChange(g, dragon, 1)
+    Let g2 = SetStuck(With(g1, Props = SetNth(Props(g1), rug + 1, 0)), rug, False)
+    Let g3 = Relocated(Relocated(g2, dragon, here), rug, here)
+    Let g4 = Relocated(g3, blood, here)
+    Rem actions.c:130-135: everything else lying in either half of the
+    Rem dragon's canyon -- the thrown axe, mostly -- comes along too.
+    Let g5 = SweptTo(g4, ps, here, 1, Length(Objects()) - 1)
+    With(g5, Location = here)
+
+Def SweptTo(g As Game, ps As List, dest As Number, i As Number, n As Number) As Game
+    If i > n Then
+        g
+    Else
+        If (Nth(ObjectLocation(g), i + 1) = First(ps)
+            Or (Length(ps) > 1 And Nth(ObjectLocation(g), i + 1) = Nth(ps, 2))) Then
+            SweptTo(Relocated(g, i, dest), ps, dest, i + 1, n)
+        Else
+            SweptTo(g, ps, dest, i + 1, n)
+
+Rem misc.c:622-640. move() is carry-then-drop, and drop prefixes, so an
+Rem object moved into a room is listed before whatever was already there.
+Def Relocated(g As Game, i As Number, dest As Number) As Game
+    Let cleared = ClearFrom(g, i, 1, Length(Locations()))
+    With(cleared, ObjectsAt = SetNth(ObjectsAt(cleared), dest + 1,
+                                 Prepend(i, Nth(ObjectsAt(cleared), dest + 1))),
+                  ObjectLocation = SetNth(ObjectLocation(cleared), i + 1, dest))
+
+Def ClearFrom(g As Game, i As Number, k As Number, n As Number) As Game
+    If k > n Then
+        g
+    Else
+        Let room = Nth(ObjectsAt(g), k)
+        If Contains(room, i) Then
+            ClearFrom(With(g, ObjectsAt = SetNth(ObjectsAt(g), k,
+                                             Filter(room, Fn(x) => x <> i))), i, k + 1, n)
+        Else
+            ClearFrom(g, i, k + 1, n)
+
+Rem actions.c:139-156. The ogre shrugs off anything you can do to him,
+Rem but the sight of a fight makes any curmudgeons in the room bolt, and
+Rem their panic is what actually gets rid of him.
+Def AttackOgre(gIn As Game, ogre As Number) As Done
+    Let g = VoicedId(gIn, MsgOgreDodge())
+    If CurmudgeonsHere(g) = 0 Then
+        Done(g, GoClearObj())
+    Else
+        Let g1 = Destroy(VoicedId(g, MsgKnifeThrown()), ogre)
+        Let t = Scared(g1, 1, NCurmudgeons() - 1, 0)
+        Done(VoicedId(SState(t), PanicMessage(Fled(t))), GoClearObj())
+
+Type Fleeing
+    SState As Game
+    Fled   As Number
+
+Def Scared(g As Game, i As Number, n As Number, fled As Number) As Fleeing
+    If i > n Then
+        Fleeing(g, fled)
+    Else
+        Let d = Nth(Curmudgeons(g), i)
+        If DLoc(d) <> Location(g) Then
+            Scared(g, i + 1, n, fled)
+        Else
+            Let d2 = With(d, DLoc = LocNamed("LOC_LONGWEST"), DSeen = False)
+            Scared(With(g, Curmudgeons = SetNth(Curmudgeons(g), i, d2)), i + 1, n, fled + 1)
+
+Def PanicMessage(fled As Number) As Number
+    If fled > 1 Then
+        MsgOgrePanic1()
+    Else
+        MsgOgrePanic2()
+
+Def AttackOther(g As Game, obj As Number, msg As String) As Done
+    If obj = ObjNamed("OGRE") Then
+        AttackOgre(g, obj)
+    Else
+        If obj = ObjNamed("VEND") Then
+            Rem actions.c:76-82. Hitting the machine swings it aside, or back.
+            Done(StateChange(g, obj, VendToggle(g, obj)), GoClearObj())
+        Else
+            If obj = ObjNamed("BIRD") Then
+                If Closed(g) Then
+                    Done(VoicedId(g, MsgUnhappyBird()), GoClearObj())
+                Else
+                    Done(Destroy(VoicedId(g, MsgBirdDead()), obj), GoClearObj())
+            Else
+                If obj = ObjNamed("CURMUDGEON") And Closed(g) Then
+                    CurmudgeonWake(g)
+                Else
+                    If obj = NoObject() Then
+                        Done(VoicedId(g, MsgNoTarget()), GoClearObj())
+                    Else
+                        AttackDefault(g, obj, msg)
+
+Rem actions.c:181-182. Only the handful of things worth attacking have an
+Rem answer of their own; everything else gets the verb's own retort, which
+Rem for attacking a locked grate is "Don't be ridiculous!".
+Def AttackDefault(g As Game, obj As Number, msg As String) As Done
+    Let id = AttackReply(g, obj)
+    If id < 0 Then
+        Done(Voiced(g, msg), GoClearObj())
+    Else
+        Done(VoicedId(g, id), GoClearObj())
+
+Def VendToggle(g As Game, vend As Number) As Number
+    If PropOf(g, vend) = 0 Then
+        1
+    Else
+        0
+
+Def AttackReply(g As Game, obj As Number) As Number
+    If obj = ObjNamed("SNAKE") Then
+        MsgSnakeWarning()
+    Else
+        If obj = ObjNamed("CLAM") Or obj = ObjNamed("OYSTER") Then
+            MsgShellImpervious()
+        Else
+            If obj = ObjNamed("DRAGON") Then
+                MsgAlreadyDead()
+            Else
+                If obj = ObjNamed("TROLL") Then
+                    MsgRockyTroll()
+                Else
+                    Rem the curmudgeons are the one thing you might plausibly
+                    Rem take on unarmed, and the game asks whether you mean it
+                    If obj = ObjNamed("CURMUDGEON") Then
+                        MsgBareHandsQuery()
+                    Else
+                        If obj = ObjNamed("BEAR") Then
+                            BearAttackReply(g)
+                        Else
+                            0 - 1
+
+Rem actions.c:88-105. The bear is a bad idea in every state, differently.
+Def BearAttackReply(g As Game) As Number
+    If PropOf(g, ObjNamed("BEAR")) = 0 Then
+        MsgBearHands()
+    Else
+        If PropOf(g, ObjNamed("BEAR")) = 3 Then
+            MsgAlreadyDead()
+        Else
+            MsgBearConfused()
+

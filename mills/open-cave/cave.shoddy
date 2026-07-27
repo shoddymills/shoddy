@@ -1,12 +1,19 @@
 Rem ===================================================================
-Rem cave.shoddy -- Colossal Cave Adventure, the I/O shell.
+Rem cave.shoddy -- Colossal Cave Adventure. The turn loop, and the
+Rem assembly of everything else.
 Rem
 Rem   build.cmd           play
 Rem   ./build.sh          play
+Rem   build.cmd smoke     replay 16 recorded transcripts
+Rem   build.cmd check     replay all 107
 Rem
-Rem Everything that knows the cave lives in cave-core.shoddy and the
-Rem generated cave-*.shoddy tables. This file reads lines, prints lines,
-Rem and threads the state through the turn loop.
+Rem The port is a forward-port of Eric Raymond's open-adventure, itself a
+Rem forward-port of Crowther & Woods Adventure 2.5. The C is the
+Rem reference for every rule here; section comments carry the C file and
+Rem line the rule came from, which is what makes the two diffable by
+Rem hand. Where the C and this port disagree, the C wins -- unless a
+Rem recorded transcript says otherwise, in which case the transcript
+Rem wins. See tests/README.
 Rem
 Rem The transcript format matters more than it looks. When stdin is not a
 Rem terminal the C echoes each command back (misc.c:264), so a recorded
@@ -14,4358 +21,35 @@ Rem session reads as prompt-and-reply; and most messages are printed with
 Rem a leading blank line (misc.c:49-51) -- but not all, which is why
 Rem Speak and SpeakFlat are separate words. Reproducing both exactly is
 Rem what lets the C distribution's own .chk files grade this port.
+Rem
+Rem Modules below are namespaced: a bare name resolves local, then own
+Rem namespace, then exact, then unique bare candidate, and a clash across
+Rem namespaces is a compile error telling you to write Name In Q. The
+Rem data tables are deliberately left flat -- Tag is declared by Room,
+Rem Obj, Vocab and Hint alike, and namespacing them would turn one word
+Rem into four and force In at every call site.
 Rem ===================================================================
 
 Include "cave-core.shoddy"
-
-Rem ---- rendering messages ------------------------------------------------
-Rem misc.c:37-147. %d and %s substitute positionally; %S is Adventure's
-Rem own invention -- it pluralizes against the *previous* %d, so one
-Rem message can say "1 turn" and "4 turns" without a second template.
-
-Rem Arguments arrive already rendered as strings: Shoddy has no way to
-Rem ask a value its type, so the caller decides how each one prints and
-Rem %S just asks whether the last number came out as "1".
-Def ArgStr(a As Number, args As List) As String
-    If a > Length(args) Then
-        ""
-    Else
-        Nth(args, a)
-
-Def Plural(a As Number, args As List) As String
-    If a < 1 Or a > Length(args) Then
-        "s"
-    Else
-        If Nth(args, a) = "1" Then
-            ""
-        Else
-            "s"
-
-Rem Walks the template once, carrying the index of the next argument and
-Rem the index of the last %d seen (which is what %S looks back at).
-Def RenderAt(msg As String, i As Number, n As Number, args As List,
-             a As Number, lastNum As Number, acc As String) As String
-    If i > n Then
-        acc
-    Else
-        If Mid(msg, i, 1) <> "%" Then
-            RenderAt(msg, i + 1, n, args, a, lastNum, acc & Mid(msg, i, 1))
-        Else
-            Let c = Mid(msg, i + 1, 1)
-            If c = "d" Then
-                RenderAt(msg, i + 2, n, args, a + 1, a, acc & ArgStr(a, args))
-            Else
-                If c = "s" Then
-                    RenderAt(msg, i + 2, n, args, a + 1, lastNum, acc & ArgStr(a, args))
-                Else
-                    If c = "S" Then
-                        RenderAt(msg, i + 2, n, args, a, lastNum, acc & Plural(lastNum, args))
-                    Else
-                        RenderAt(msg, i + 1, n, args, a, lastNum, acc & "%")
-
-Def Render(msg As String, args As List) As String
-    RenderAt(msg, 1, Len(msg), args, 1, 0, "")
-
-Rem ---- output ------------------------------------------------------------
-Rem An empty message prints nothing at all, not even the blank line --
-Rem several tables are sparse and rely on that.
-
-Def Speak(msg As String)
-    If Len(msg) > 0 Then
-        Print("\n" & msg)
-
-Rem pspeak(..., blank = false): the inventory list runs flush under its
-Rem heading with no blank between the lines.
-Def SpeakFlat(msg As String)
-    If Len(msg) > 0 Then
-        Print(msg)
-
-Def SpeakId(n As Number)
-    If n >= 0 Then
-        Speak(Nth(Messages(), n + 1))
-
-Def SpeakArgs(n As Number, args As List)
-    If n >= 0 Then
-        Speak(Render(Nth(Messages(), n + 1), args))
-
-Rem ---- input -------------------------------------------------------------
-
-Rem At end of input there is no command to echo, so the prompt is left
-Rem hanging exactly as the C leaves it before the final score.
-Rem End of input is not the same as an empty line, and the difference
-Rem decides whether to reprompt or to go and score the game. InputLine
-Rem reports it separately; this lifts its flat carrier into a proper answer.
-Type Line = Eof | Typed(String)
-
-Rem Two entry points, because the C has two. A yes/no prompt calls
-Rem get_input directly, so a blank line reaches it and earns "Please answer
-Rem the question."; a command prompt goes through get_command_input, which
-Rem throws blank lines away and reads again (misc.c:566-572).
-Rem main.c:1493-1494 -- -o drops the prompt string, leaving only the
-Rem blank line get_input prints before every read.
-Def OldStyleMode() As Boolean
-    Contains(Args(), "-o")
-
-Def Prompt() As String
-    If OldStyleMode() Then
-        "\n"
-    Else
-        "\n> "
-
-Def Ask() As Line
-    Skipping(AskRaw())
-
-Def Skipping(l As Line) As Line
-    Select Case l
-        Case Typed(s)
-            If Len(s) = 0 Then
-                Skipping(AskRaw())
-            Else
-                l
-        Case Else
-            l
-
-Def AskRaw() As Line
-    AskLine(InputLine(Prompt()))
-
-Rem misc.c:251-254. A line beginning with "#" is swallowed whole: no echo,
-Rem no reply, and -- because the blank line is printed once before the read
-Rem loop rather than inside it -- no second prompt either. The recorded test
-Rem scripts are full of these, which is how they carry their own commentary.
-Rem misc.c:566-572 then throws away a blank line and reads another, so a
-Rem stray newline mid-script costs a prompt and nothing else.
-Def AskLine(r As Array) As Line
-    If Nth(r, 1) Then
-        Eof()
-    Else
-        Let s = Nth(r, 2)
-        If Len(s) > 0 And Left(s, 1) = "#" Then
-            AskLine(InputLine(""))
-        Else
-            Print(s)
-            Typed(s)
-
-Def LineText(l As Line) As String
-    Select Case l
-        Case Typed(s)
-            s
-        Case Else
-            ""
-
-Rem misc.c:275-360. "yes" and "y" both match on their own length, so
-Rem "yesterday" is a yes; that quirk is older than most of its players.
-Def YesNo(question As String, yes As String, no As String) As Boolean
-    Speak(question)
-    Answered(AskRaw(), question, yes, no)
-
-Rem misc.c:281-287 gives up only at end of input. A blank line is not that:
-Rem yes_or_no reads through get_input rather than get_command_input, so
-Rem nothing swallows it, and it earns the same scolding as any other answer
-Rem that is neither yes nor no.
-Def Answered(l As Line, question As String, yes As String, no As String) As Boolean
-    Select Case l
-        Case Eof
-            False
-        Case Typed(raw)
-            Replied(Lower(Trim(raw)), question, yes, no)
-
-Def Replied(reply As String, question As String, yes As String, no As String) As Boolean
-    If Len(reply) = 0 Then
-        SpeakId(MsgPleaseAnswer())
-        YesNo(question, yes, no)
-    Else
-        Let w = First(Tokens(reply))
-        If StartsWith("yes", w) Or StartsWith("y", w) Then
-            Speak(yes)
-            True
-        Else
-            If StartsWith("no", w) Or StartsWith("n", w) Then
-                Speak(no)
-                False
-            Else
-                SpeakId(MsgPleaseAnswer())
-                YesNo(question, yes, no)
-
-Rem ---- state ---------------------------------------------------------------
-Rem The C keeps one global struct; this threads the same fields. Two need
-Rem explaining. AtLoc is an array of per-room object lists, because the
-Rem order objects are listed in is observable and the C maintains it as an
-Rem intrusive linked list that drop() prefixes to. Held is the same list
-Rem for the player's hands.
-
-Def Carried() As Number
-    0 - 1
-
-Rem Suspended is not Quit: saveresume.c:108 calls exit() the moment the
-Rem file is written, so a suspended game is never scored and never rated.
-Rem Quitting, dying and running out of input all still go past the scorer.
-Type Fate = Playing | Quit | Died(Msg) | Suspended | Won
-
-Type Game
-    Loc     As Number
-    OldLoc  As Number
-    AtLoc   As Array
-    Held    As List
-    Where   As Array
-    Props   As Array
-    PendObj  As Number
-    PendVerb As Number
-    PendRaw  As String
-    Abbrev  As Array
-    Turns   As Number
-    Deaths  As Number
-    Tally   As Number
-    Dflag   As Number
-    Curmudgeons As List
-    Knfloc  As Number
-    OldLc2  As Number
-    WzDark  As Boolean
-    Foobar  As String
-    SeenBigWords As Boolean
-    Iwest   As Number
-    Igo     As Number
-    Trnluz  As Number
-    Lmwarn  As Boolean
-    Blooded As Boolean
-    Dkill   As Number
-    Clock1  As Number
-    Clock2  As Number
-    Closng  As Boolean
-    Closed  As Boolean
-    Panic   As Boolean
-    Bonus   As Number
-    Clshnt  As Boolean
-    Saved   As Number
-    Detail  As Number
-    AbbNumOf As Number
-    HintState As List
-    OldObj  As Number
-    Fixture As Array
-    LcgX    As Number
-    Magic   As String
-    Novice  As Boolean
-    Limit   As Number
-    Outcome As Fate
-
-
-Def NoObject() As Number
-    0
-
-Rem The C uses verb 0 (ACT_NULL) to mean "no verb remembered yet".
-Def NoVerb() As Number
-    0
-
-Def VerbWord(g As Game) As String
-    PendRaw(g)
-
-Rem init.c:61-73 seeds the room lists by walking the object table
-Rem backwards into a prefixing list, which leaves declaration order. We
-Rem append forwards, which is the same thing said plainly.
-Rem init.c:56-73 runs two backwards loops into a prefixing list: the
-Rem two-placed objects go down first so they end up described last. Two
-Rem forward appending passes, singles then doubles, land in the same
-Rem order without the double negative.
-Def SeedPass(at As Array, i As Number, n As Number, doubles As Boolean) As Array
-    If i > n Then
-        at
-    Else
-        Let ps = Places(Nth(Objects(), i))
-        If (Length(ps) > 1) = doubles And Not IsEmpty(ps) Then
-            SeedPass(PlaceAll(at, ps, 1, Length(ps), i - 1), i + 1, n, doubles)
-        Else
-            SeedPass(at, i + 1, n, doubles)
-
-Def SeedRooms(at As Array, wh As Array, i As Number, n As Number) As Array
-    SeedPass(SeedPass(at, 1, n, False), 1, n, True)
-
-Rem A few objects exist in two rooms at once -- the grate seen from above
-Rem and below, the troll at both ends of its bridge. The C addresses the
-Rem second placement as obj + NOBJECTS; listing the object in both rooms
-Rem says the same thing without the arithmetic.
-Def PlaceAll(at As Array, ps As List, i As Number, n As Number, obj As Number) As Array
-    If i > n Then
-        at
-    Else
-        Let loc = Nth(ps, i)
-        PlaceAll(SetNth(at, loc + 1, Append(Nth(at, loc + 1), obj)), ps, i + 1, n, obj)
-
-Def SeedWhere(wh As Array, i As Number, n As Number) As Array
-    If i > n Then
-        wh
-    Else
-        Let o = Nth(Objects(), i)
-        If IsEmpty(Places(o)) Then
-            SeedWhere(wh, i + 1, n)
-        Else
-            SeedWhere(SetNth(wh, i, First(Places(o))), i + 1, n)
-
-Def EmptyLists(a As Array, i As Number, n As Number) As Array
-    If i > n Then
-        a
-    Else
-        EmptyLists(SetNth(a, i, { }), i + 1, n)
-
-Rem init.c:82-92. A treasure that can be carried starts out "not found",
-Rem which is the negative prop the C leans on so heavily; everything else
-Rem starts at zero. Describing a treasure is what flips it and decrements
-Rem the tally, and the tally reaching zero is what closes the cave.
-Def IsTreasure(o As Obj) As Boolean
-    Treasure(o) And Len(Inventory(o)) > 0
-
-Def SeedProps(p As Array, i As Number, n As Number) As Array
-    If i > n Then
-        p
-    Else
-        If IsTreasure(Nth(Objects(), i)) Then
-            SeedProps(SetNth(p, i, 0 - 1), i + 1, n)
-        Else
-            SeedProps(p, i + 1, n)
-
-Def TreasureCount(i As Number, n As Number, acc As Number) As Number
-    If i > n Then
-        acc
-    Else
-        If Treasure(ObjAt(i)) Then
-            TreasureCount(i + 1, n, acc + 1)
-        Else
-            TreasureCount(i + 1, n, acc)
-
-Def NewGame(seed As Number) As Game
-    Let nl = Length(Locations())
-    Let no = Length(Objects())
-    Let at = EmptyLists(Dim(nl, 0), 1, nl)
-    Let wh = Dim(no, 0)
-    Rem init.c:25-26 sets loc and newloc but never oldloc, so it starts at
-    Rem LOC_NOWHERE -- which is why "back" on turn one has nowhere to go.
-    Game(1, 0,
-         SeedRooms(at, wh, 1, no),
-         { },
-         SeedWhere(wh, 1, no),
-         SeedProps(Dim(no, 0), 1, no),
-         NoObject(),
-         NoVerb(), "",
-         Dim(nl, 0), 0, 0,
-         TreasureCount(1, no - 1, 0), 0,
-         NewCurmudgeons(1, NCurmudgeons(), { }), 0, 1, False, "", False, 0, 0, 0, False, False, 0,
-         30, 50, False, False, False, 0, False, 0,
-         0, 5,
-         NewHints(1, Length(Hints()), { }), NoObject(),
-         SeedFixture(Dim(no, 0), 1, no),
-         SeedState(seed), ZzWord(seed), False, 330, Playing())
-
-Def IsPlaying(g As Game) As Boolean
-    Select Case Outcome(g)
-        Case Playing
-            True
-        Case Else
-            False
-
-Def IsSuspended(g As Game) As Boolean
-    Select Case Outcome(g)
-        Case Suspended
-            True
-        Case Else
-            False
-
-Def RoomAt(g As Game) As Room
-    Nth(Locations(), Loc(g) + 1)
-
-Def ObjAt(i As Number) As Obj
-    Nth(Objects(), i + 1)
-
-Def HereList(g As Game) As List
-    Nth(AtLoc(g), Loc(g) + 1)
-
-Def Toting(g As Game, o As Number) As Boolean
-    Contains(Held(g), o)
-
-Rem ---- the generator -------------------------------------------------------
-
-Def RollOf(g As Game, n As Number) As Number
-    RandRange(LcgX(g), n)
-
-Def Stepped(g As Game) As Game
-    Trace("draw", Loc(g), LcgX(g), RandRange(LcgX(g), 100))
-    With(g, LcgX = LcgNext(LcgX(g)))
-
-Rem ---- objects by name -------------------------------------------------------
-Rem A handful of objects are special-cased by the rules, exactly as they
-Rem are in the C, where they arrive as generated #defines.
-
-Rem The name-to-index lookups run constantly -- the hint check alone does
-Rem dozens a turn -- so the name lists are built once at load rather than
-Rem rebuilt on every call. A top-level Let is evaluated before Main.
-Let ObjNames = Map(Objects(), Fn(o) => Tag(o))
-Let LocNames = Map(Locations(), Fn(l) => Tag(l))
-Let MotionNames = Map(Motions(), Fn(m) => Tag(m))
-Let ActionNames = Map(Actions(), Fn(a) => Tag(a))
-
-Def ObjNamed(want As String) As Number
-    IndexIn(ObjNames, 1, Length(ObjNames), want) - 1
-
-Def Lamp() As Number
-    ObjNamed("LAMP")
-
-Def Grate() As Number
-    ObjNamed("GRATE")
-
-Def Keys() As Number
-    ObjNamed("KEYS")
-
-Def LampDark() As Number
-    0
-
-Def LampBright() As Number
-    1
-
-Def GrateClosed() As Number
-    0
-
-Def GrateOpen() As Number
-    1
-
-Def PropOf(g As Game, i As Number) As Number
-    Nth(Props(g), i + 1)
-
-Rem advent.h:107-122. An object is "here" if you are carrying it or it is
-Rem lying in this room.
-Def Here(g As Game, i As Number) As Boolean
-    Toting(g, i) Or Contains(HereList(g), i)
-
-Rem advent.h:110-113. AT is lying in this room; HERE also counts what you
-Rem are carrying. The grate is AT you from either side of it.
-Def At(g As Game, i As Number) As Boolean
-    Contains(HereList(g), i)
-
-Rem advent.h:123-125. Dark unless the room lights itself or you have a
-Rem burning lamp with you.
-Def IsDarkHere(g As Game) As Boolean
-    (Not Contains(Conds(RoomAt(g)), "LIT")
-     And (PropOf(g, Lamp()) = LampDark() Or Not Here(g, Lamp())))
-
-Rem misc.c:800-806. Setting an object's state announces the change; only
-Rem some objects have anything to say about it.
-Def StateChange(g As Game, i As Number, st As Number) As Game
-    Let o = ObjAt(i)
-    If st >= 0 And st < Length(Changes(o)) Then
-        Speak(Nth(Changes(o), st + 1))
-        With(g, Props = SetNth(Props(g), i + 1, st))
-    Else
-        With(g, Props = SetNth(Props(g), i + 1, st))
-
-Rem ---- describing a room ----------------------------------------------------
-Rem main.c:534-556. The long description shows on the first visit and
-Rem every fifth after; the short one fills the gaps, unless the room has
-Rem no short form.
-
-Rem init.c:46-53 derives COND_FORCED by looking for a travel row whose
-Rem motion is the magic HERE. A forced room moves you straight on again,
-Rem and it is shown even in the dark -- which is how ">>Foof!<<" gets
-Rem seen at all.
-Def HereMotion() As Number
-    1
-
-Def IsForced(g As Game) As Boolean
-    Let k = Nth(Tkey(), Loc(g) + 1)
-    If k = 0 Then
-        False
-    Else
-        Motion(RowAt(k)) = HereMotion()
-
-Def RoomText(g As Game) As String
-    If IsDarkHere(g) And Not IsForced(g) Then
-        Nth(Messages(), MsgPitchDark() + 1)
-    Else
-        Let r = RoomAt(g)
-        Let seen = Nth(Abbrev(g), Loc(g) + 1)
-        If (seen Mod AbbNumOf(g)) = 0 Or Len(Short(r)) = 0 Then
-            Long(r)
-        Else
-            Short(r)
-
-Rem main.c:1048-1115. Each object shows the description for its current
-Rem state; an object with no descriptions is invisible scenery.
-Rem main.c:1106-1111. The steps are one object standing in two rooms, and
-Rem which way they lead depends on which end you are at -- the C special-
-Rem cases them right here rather than giving them two entries.
-Def StateShown(g As Game, i As Number) As Number
-    If i <> ObjNamed("STEPS") Then
-        PropOf(g, i)
-    Else
-        Let ps = Places(ObjAt(i))
-        If Length(ps) > 1 And Loc(g) = Nth(ps, 2) Then
-            1
-        Else
-            0
-
-Def DescOf(g As Game, i As Number) As String
-    Let o = ObjAt(i)
-    Let p = StateShown(g, i)
-    If IsEmpty(Descs(o)) Then
-        ""
-    Else
-        If p >= 0 And p < Length(Descs(o)) Then
-            Nth(Descs(o), p + 1)
-        Else
-            First(Descs(o))
-
-Rem main.c:1064. Once the nugget is in your hands the steps stop being
-Rem worth mentioning, because you cannot climb them carrying it.
-Def Skipped(g As Game, i As Number) As Boolean
-    ((i = ObjNamed("STEPS") And Toting(g, ObjNamed("NUGGET")))
-     Or (PropOf(g, i) < 0 And Closed(g)))
-
-Rem main.c:1071-1080. Describing a treasure for the first time is what
-Rem marks it found and takes it off the tally -- the tally is what tells
-Rem the cave when to start closing.
-Rem main.c:1075-1082. Two treasures do not simply become "found": the rug
-Rem is first seen with the dragon lying on it, and the chain with the bear
-Rem chained to it, so they jump straight to that state.
-Def FoundState(i As Number) As Number
-    If i = ObjNamed("RUG") Or i = ObjNamed("CHAIN") Then
-        1
-    Else
-        0
-
-Def MarkFound(g As Game, i As Number) As Game
-    If PropOf(g, i) < 0 Then
-        With(g, Props = SetNth(Props(g), i + 1, FoundState(i)),
-                Tally = Tally(g) - 1,
-                SeenBigWords = SeenBigWords(g) Or i = ObjNamed("EGGS"))
-    Else
-        g
-
-Def ListObjects(g As Game, xs As List, i As Number, n As Number) As Game
-    If i > n Then
-        g
-    Else
-        If Skipped(g, Nth(xs, i)) Then
-            ListObjects(g, xs, i + 1, n)
-        Else
-            Let g1 = MarkFound(g, Nth(xs, i))
-            Speak(Grounded(g1, DescOf(g1, Nth(xs, i))))
-            ListObjects(g1, xs, i + 1, n)
-
-Rem misc.c:66-79. Things described as "on the floor" have their floor
-Rem quietly reworded to ground when you are out of doors -- only before
-Rem a space, a full stop, or the end of the text, exactly as the C.
-Def Grounded(g As Game, msg As String) As String
-    If Outside(g) And Loc(g) <> LocNamed("LOC_BUILDING") Then
-        GroundedAt(msg, 1, Len(msg), "")
-    Else
-        msg
-
-Def GroundedAt(msg As String, i As Number, n As Number, acc As String) As String
-    If i > n Then
-        acc
-    Else
-        If (Mid(msg, i, 5) = "floor"
-            And (i + 5 > n Or Mid(msg, i + 5, 1) = " "
-                 Or Mid(msg, i + 5, 1) = ".")) Then
-            GroundedAt(msg, i + 5, n, acc & "ground")
-        Else
-            GroundedAt(msg, i + 1, n, acc & Mid(msg, i, 1))
-
-Rem In the dark you see nothing lying about, which is the whole point of
-Rem the lamp. main.c:554-555 adds the one line of atmosphere that costs a
-Rem random draw -- and only at Y2, because C's && stops early there. Any
-Rem port that draws unconditionally desynchronises every seeded game.
-Rem main.c:1256-1263 keeps these apart: describe_location always runs, but
-Rem a forced room leaves before listobjects. So the bear and the Y2 voice --
-Rem and the random draw the voice costs -- belong to the description, not to
-Rem the listing.
-Def DescribeOnly(g As Game) As Game
-    Let g0 = BearNote(g)
-    Speak(RoomText(g0))
-    Whisper(g0)
-
-Def Describe(g As Game) As Game
-    Let g1 = DescribeOnly(g)
-    If IsDarkHere(g1) Then
-        g1
-    Else
-        Let here = HereList(g1)
-        ListObjects(g1, here, 1, Length(here))
-
-Rem main.c:547-549 -- the bear announces himself ahead of the room, so the
-Rem reminder that you are dragging him around lands before the description.
-Def BearNote(g As Game) As Game
-    If Toting(g, ObjNamed("BEAR")) Then
-        SpeakId(MsgTameBear())
-        g
-    Else
-        g
-
-Def Whisper(g As Game) As Game
-    If Loc(g) <> LocNamed("LOC_Y2") Then
-        g
-    Else
-        Let hit = Pct(LcgX(g), 25)
-        Let g1 = Stepped(g)
-        If hit And Not Closng(g1) Then
-            SpeakId(MsgSaysPlugh())
-            g1
-        Else
-            g1
-
-Def Visited(g As Game) As Game
-    With(g, Abbrev = SetNth(Abbrev(g), Loc(g) + 1, Nth(Abbrev(g), Loc(g) + 1) + 1))
-
-Rem ---- the travel table -----------------------------------------------------
-Rem main.c:575-870, in its simplest form: walk this room's block looking
-Rem for a row whose motion matches and whose condition holds. The block
-Rem runs from Tkey(loc) until a row with Stop set.
-
-Def RowAt(i As Number) As Op
-    Nth(Travels(), i + 1)
-
-Def CondHolds(g As Game, o As Op) As Boolean
-    Select Case CondType(o)
-        Case 0
-            GotoOrPct(g, o)
-        Case 1
-            GotoOrPct(g, o)
-        Case 2
-            Toting(g, CondArg1(o))
-        Case 3
-            Toting(g, CondArg1(o)) Or Contains(HereList(g), CondArg1(o))
-        Case Else
-            Rem "not in state N" -- true when the object is elsewhere in
-            Rem its state machine
-            Nth(Props(g), CondArg1(o) + 1) <> CondArg2(o)
-
-Rem main.c:719-723 folds cond_goto and cond_pct into a single branch:
-Rem
-Rem     if (condarg1 == 0 || PCT(condarg1)) break;
-Rem
-Rem so a rule with a non-zero argument is rolled for even when the roll
-Rem cannot fail. A `nocurmudgeons` rule is exactly that case -- it encodes as
-Rem cond_goto with argument 100, always passes, and still costs a draw.
-Rem Skip it and every seeded game runs one draw behind from the first such
-Rem passage onwards; the way into the all-different maze is one.
-Def GotoOrPct(g As Game, o As Op) As Boolean
-    If CondArg1(o) = 0 Then
-        True
-    Else
-        RollOf(g, 100) < CondArg1(o)
-
-Def CondSpends(o As Op) As Boolean
-    ((CondType(o) = 0 Or CondType(o) = 1) And CondArg1(o) <> 0)
-
-Type Found
-    Row   As Number
-    State As Game
-
-Def AfterTest(g As Game, o As Op) As Game
-    If CondSpends(o) Then
-        Stepped(g)
-    Else
-        g
-
-Rem main.c:661-703. First find the row this motion word belongs to. The
-Rem magic HERE matches anything, which is how a forced room grabs every
-Rem attempt to leave it.
-Def MotionScan(i As Number, want As Number) As Number
-    Let o = RowAt(i)
-    If Motion(o) = HereMotion() Or Motion(o) = want Then
-        i
-    Else
-        If Stop(o) Then
-            0 - 1
-        Else
-            MotionScan(i + 1, want)
-
-Rem main.c:558-566. Two rows count as the same for skipping purposes when
-Rem their condition and their destination agree.
-Def TravelEq(a As Number, b As Number) As Boolean
-    Let x = RowAt(a)
-    Let y = RowAt(b)
-    (CondType(x) = CondType(y) And CondArg1(x) = CondArg1(y)
-     And CondArg2(x) = CondArg2(y) And DestType(x) = DestType(y)
-     And DestVal(x) = DestVal(y))
-
-Rem main.c:740-748. A failed condition does not step to the next row; it
-Rem steps past every row that would lead to the same place, so a chain of
-Rem "60% here, then 70% there" tries each outcome once.
-Def SkipEqual(a As Number, b As Number) As Number
-    If TravelEq(a, b) Then
-        SkipEqual(a, b + 1)
-    Else
-        b
-
-Rem main.c:710-738. Note this loop never re-checks the motion word: once
-Rem a row for the motion is found, the condition chain runs from there.
-Def CondScan(g As Game, i As Number) As Found
-    Let o = RowAt(i)
-    Let holds = CondHolds(g, o)
-    Let g1 = AfterTest(g, o)
-    If holds Then
-        Found(i, g1)
-    Else
-        If Stop(o) Then
-            Rem the C calls this a bug in the database; refuse to move
-            Found(0 - 1, g1)
-        Else
-            CondScan(g1, SkipEqual(i, i + 1))
-
-Def FindTravel(g As Game, want As Number) As Found
-    Let k = Nth(Tkey(), Loc(g) + 1)
-    If k = 0 Then
-        Found(0 - 1, g)
-    Else
-        Let start = MotionScan(k, want)
-        If start < 0 Then
-            Found(0 - 1, g)
-        Else
-            CondScan(g, start)
-
-Rem main.c:668-701. When nothing in the table answers the motion word,
-Rem the complaint is chosen to fit what was asked: a compass point gets
-Rem "no way to go", a magic word gets "nothing happens", and so on.
-Def MotionIs(want As Number, tags As List, i As Number, n As Number) As Boolean
-    If i > n Then
-        False
-    Else
-        If want = MotionNamed(Nth(tags, i)) Then
-            True
-        Else
-            MotionIs(want, tags, i + 1, n)
-
-Def MotionNamed(want As String) As Number
-    IndexIn(MotionNames, 1, Length(MotionNames), want) - 1
-
-Def NoWayMessage(want As Number) As Number
-    If MotionIs(want, { "EAST", "WEST", "SOUTH", "NORTH", "NE", "NW", "SW", "SE",
-                        "UP", "DOWN" }, 1, 10) Then
-        MsgBadDirection()
-    Else
-        If MotionIs(want, { "FORWARD", "LEFT", "RIGHT" }, 1, 3) Then
-            MsgUnsureFacing()
-        Else
-            If MotionIs(want, { "OUTSIDE", "INSIDE" }, 1, 2) Then
-                MsgNoInoutHere()
-            Else
-                If MotionIs(want, { "XYZZY", "PLUGH" }, 1, 2) Then
-                    MsgNothingHappens()
-                Else
-                    If MotionIs(want, { "CRAWL" }, 1, 1) Then
-                        MsgWhichWay()
-                    Else
-                        MsgCantApply()
-
-Rem main.c:581-656. Four motion words never reach the travel table. LOOK
-Rem repeats the long description and says so, but only three times; it
-Rem also clears wzdark, so staring into the gloom cannot drop you down a
-Rem pit you were already standing beside.
-Def Move(g As Game, want As Number) As Game
-    If want = MotionNamed("LOOK") Then
-        DoLook(g)
-    Else
-        If want = MotionNamed("CAVE") Then
-            SpeakId(CaveReply(g))
-            g
-        Else
-            If want = MotionNamed("BACK") Then
-                GoingBack(g)
-            Else
-                Rem main.c:655-656: ordinary travel notes where you came
-                Rem from before the scan, even when the way is refused.
-                Travelled(With(g, OldLc2 = OldLoc(g), OldLoc = Loc(g)), want)
-
-Rem main.c:583-601. "back" retraces to wherever you came from -- or, if
-Rem that was a forced room you were only passing through, to the place
-Rem before it. In a maze marked NOBACK you have lost your bearings and it
-Rem refuses; and if where you came from is where you already are, you have
-Rem simply forgotten the way.
-Def GoingBack(g As Game) As Game
-    Let dest = BackTarget(g)
-    Let g1 = With(g, OldLc2 = OldLoc(g), OldLoc = Loc(g))
-    If Contains(Conds(RoomAt(g1)), "NOBACK") Then
-        SpeakId(MsgTwistTurn())
-        g1
-    Else
-        If dest = Loc(g1) Then
-            SpeakId(MsgForgotPath())
-            g1
-        Else
-            BackTo(g1, dest)
-
-Def BackTarget(g As Game) As Number
-    If ForcedAt(OldLoc(g)) Then
-        OldLc2(g)
-    Else
-        OldLoc(g)
-
-Rem main.c:603-633 walks this room's block for a way to the room you came
-Rem from, preferring a direct one but settling for a forced room that leads
-Rem there. Whatever it finds, it re-enters ordinary travel with that rule's
-Rem own motion word, so every condition on the way is honoured.
-Def BackTo(g As Game, dest As Number) As Game
-    Let row = BackRow(g, Nth(Tkey(), Loc(g) + 1), dest, 0)
-    If row = 0 Then
-        SpeakId(MsgNotConnected())
-        g
-    Else
-        Travelled(g, Motion(RowAt(row)))
-
-Def BackRow(g As Game, k As Number, dest As Number, spare As Number) As Number
-    Let o = RowAt(k)
-    If DestType(o) = 0 And DestVal(o) = dest Then
-        k
-    Else
-        Let keep = BackSpare(o, dest, spare, k)
-        If Stop(o) Then
-            keep
-        Else
-            BackRow(g, k + 1, dest, keep)
-
-Rem A goto into a forced room counts if that room's own first rule carries
-Rem straight on to where you are heading.
-Def BackSpare(o As Op, dest As Number, spare As Number, k As Number) As Number
-    If (DestType(o) = 0 And ForcedAt(DestVal(o))
-        And DestVal(RowAt(Nth(Tkey(), DestVal(o) + 1))) = dest) Then
-        k
-    Else
-        spare
-
-Def DoLook(g As Game) As Game
-    If Detail(g) < 3 Then
-        SpeakId(MsgNoMoreDetail())
-        LookedAround(g)
-    Else
-        LookedAround(g)
-
-Def LookedAround(g As Game) As Game
-    With(g, Detail = Detail(g) + 1, WzDark = False,
-            Abbrev = SetNth(Abbrev(g), Loc(g) + 1, 0))
-
-Def CaveReply(g As Game) As Number
-    If Outside(g) And Loc(g) <> LocNamed("LOC_GRATE") Then
-        MsgFollowStream()
-    Else
-        MsgNeedDetail()
-
-Rem advent.h:130. Outside is above ground or in the forest.
-Def Outside(g As Game) As Boolean
-    Contains(Conds(RoomAt(g)), "ABOVE") Or Contains(Conds(RoomAt(g)), "FOREST")
-
-Def Travelled(g As Game, want As Number) As Game
-    Let f = FindTravel(g, want)
-    Let g1 = State(f)
-    If Row(f) < 0 Then
-        SpeakId(NoWayMessage(want))
-        g1
-    Else
-        Let o = RowAt(Row(f))
-        Select Case DestType(o)
-            Case 0
-                Blocked(g1, DestVal(o))
-            Case 2
-                SpeakId(DestVal(o))
-                g1
-            Case Else
-                DoSpecial(g1, DestVal(o))
-
-Rem main.c:765-870. Three motions are hardcoded rather than tabled. Only
-Rem the first is here; the plover transport and the troll bridge need the
-Rem bear and the troll's state machine and come with them.
-Def DoSpecial(g As Game, which As Number) As Game
-    If which = 1 Then
-        PloverPassage(g)
-    Else
-        If which = 2 Then
-            Rem main.c:785-806: the plover transport will not carry the
-            Rem emerald. Drop it and travel again as if it had never been
-            Rem along -- the carry condition now fails, so the plain row
-            Rem underneath takes over.
-            Travelled(Put(g, ObjNamed("EMERALD")), MotionNamed("PLOVER"))
-        Else
-            If which = 3 Then
-                TrollBridge(g)
-            Else
-                SpeakId(MsgBadDirection())
-                g
-
-Rem main.c:807-861. The troll takes a toll each way. Having been paid
-Rem once he steps back out to block you; paid again he lets you by. And
-Rem if you try to carry the bear across, the bridge goes into the chasm
-Rem and takes you with it.
-Def TrollBridge(g As Game) As Game
-    Let troll = ObjNamed("TROLL")
-    If PropOf(g, troll) = 1 Then
-        Speak(DescOf(g, troll))
-        Blocking(g, troll)
-    Else
-        Crossing(g, troll)
-
-Def Blocking(g As Game, troll As Number) As Game
-    Let troll2 = ObjNamed("TROLL2")
-    Let ps = Places(ObjAt(troll))
-    Let g1 = With(g, Props = SetNth(Props(g), troll + 1, 0))
-    Let g2 = Destroy(g1, troll2)
-    Let g3 = Relocated(g2, troll, First(ps))
-    Juggled(PlaceSecond(g3, troll, ps), ObjNamed("CHASM"))
-
-Rem misc.c:610-620. Juggling an object is picking it up and putting it down
-Rem again. It changes nothing except the order of the room's list, because
-Rem dropping prefixes -- and that order is the order you are told things in.
-Rem The C juggles the bridge as the troll steps back out, so you read about
-Rem the chasm first and the troll second.
-Def Juggled(g As Game, i As Number) As Game
-    Let ps = Places(ObjAt(i))
-    Let g1 = Relocated(g, i, Nth(Where(g), i + 1))
-    PlaceSecond(g1, i, ps)
-
-Def PlaceSecond(g As Game, i As Number, ps As List) As Game
-    If Length(ps) < 2 Then
-        g
-    Else
-        With(g, AtLoc = SetNth(AtLoc(g), Nth(ps, 2) + 1,
-                               Prepend(i, Nth(AtLoc(g), Nth(ps, 2) + 1))))
-
-Rem The far side is whichever end of the bridge you are not standing on.
-Def Crossing(g As Game, troll As Number) As Game
-    Let ps = Places(ObjAt(troll))
-    Let far = First(ps) + Nth(ps, 2) - Loc(g)
-    Let g1 = PaidAgain(g, troll)
-    If Not Toting(g1, ObjNamed("BEAR")) Then
-        With(g1, OldLoc = Loc(g1), Loc = far)
-    Else
-        WreckTheBridge(g1, troll, far)
-
-Def PaidAgain(g As Game, troll As Number) As Game
-    If PropOf(g, troll) = 0 Then
-        With(g, Props = SetNth(Props(g), troll + 1, 1))
-    Else
-        g
-
-Def WreckTheBridge(g As Game, troll As Number, far As Number) As Game
-    Let bear = ObjNamed("BEAR")
-    Let g1 = StateChange(g, ObjNamed("CHASM"), 1)
-    Let g2 = With(g1, Props = SetNth(Props(g1), troll + 1, 2), Loc = far)
-    Let g3 = Put(g2, bear)
-    Let g4 = SetStuck(With(g3, Props = SetNth(Props(g3), bear + 1, 3), OldLc2 = far), bear, True)
-    Croak(g4)
-
-Rem Special travel 1: the crack to the alcove admits you and the emerald
-Rem and nothing else, which is the whole puzzle.
-Def PloverPassage(g As Game) As Game
-    Let plover = LocNamed("LOC_PLOVER")
-    Let alcove = LocNamed("LOC_ALCOVE")
-    Let dest = OtherEnd(Loc(g), plover, alcove)
-    Let held = Length(Held(g))
-    If held > 1 Or (held = 1 And Not Toting(g, ObjNamed("EMERALD"))) Then
-        SpeakId(MsgMustDrop())
-        g
-    Else
-        With(g, OldLoc = Loc(g), Loc = dest)
-
-Def OtherEnd(here As Number, plover As Number, alcove As Number) As Number
-    If here = plover Then
-        alcove
-    Else
-        plover
-
-Def LocNamed(want As String) As Number
-    IndexIn(LocNames, 1, Length(LocNames), want) - 1
-
-Rem ---- the curmudgeons ------------------------------------------------------------
-Rem main.c:312-474. The most delicate function in the game, because it is
-Rem the largest consumer of the random stream and every seeded transcript
-Rem in the test corpus depends on drawing exactly as often as the C does,
-Rem in exactly the same order.
-Rem
-Rem Two subtleties are load-bearing and must not be tidied away. The
-Rem activation test reads
-Rem     PCT(95) && (!CNDBIT(loc, COND_NOBACK) || PCT(85))
-Rem so the second roll happens only when the first passed and the room
-Rem forbids going back -- evaluate both eagerly and the stream shifts by
-Rem one draw and every seeded game diverges. And the curmudgeons are moved by
-Rem walking the travel table with a scratch variable the C happens to
-Rem share with the player's own destination; the sharing is invisible
-Rem here because the player's move is already finished by this point.
-
-Def NCurmudgeons() As Number
-    6
-
-Def PirateIndex() As Number
-    6
-
-Type Curmudgeon
-    DLoc As Number
-    DOld As Number
-    DSeen As Boolean
-
-Def NewCurmudgeons(i As Number, n As Number, acc As List) As List
-    If i > n Then
-        acc
-    Else
-        NewCurmudgeons(i + 1, n, Append(acc, Curmudgeon(Nth(CurmudgeonLocs(), i), 0, False)))
-
-Def InDeep(loc As Number) As Boolean
-    Contains(Conds(Nth(Locations(), loc + 1)), "DEEP")
-
-Def ForcedAt(loc As Number) As Boolean
-    Let k = Nth(Tkey(), loc + 1)
-    If k = 0 Then
-        False
-    Else
-        Motion(RowAt(k)) = HereMotion()
-
-Rem The candidate rooms one curmudgeon might wander into, gathered by walking
-Rem that room's travel block under the filters at main.c:388-413.
-Def CurmudgeonDests(g As Game, k As Number, self As Number, old As Number,
-               isPirate As Boolean, acc As List) As List
-    Let o = RowAt(k)
-    Let dest = DestVal(o)
-    Let ok = CurmudgeonDestOk(g, o, dest, self, old, isPirate, acc)
-    If ok Then
-        If Stop(o) Then
-            Append(acc, dest)
-        Else
-            CurmudgeonDests(g, k + 1, self, old, isPirate, Append(acc, dest))
-    Else
-        If Stop(o) Then
-            acc
-        Else
-            CurmudgeonDests(g, k + 1, self, old, isPirate, acc)
-
-Def CurmudgeonDestOk(g As Game, o As Op, dest As Number, self As Number, old As Number,
-                isPirate As Boolean, acc As List) As Boolean
-    If DestType(o) <> 0 Then
-        False
-    Else
-        If Not InDeep(dest) Then
-            False
-        Else
-            If dest = old Or dest = self Then
-                False
-            Else
-                If Not IsEmpty(acc) And dest = Last(acc) Then
-                    False
-                Else
-                    If ForcedAt(dest) Then
-                        False
-                    Else
-                        If NoCurmudgeons(o) Then
-                            False
-                        Else
-                            If isPirate And Contains(Conds(Nth(Locations(), dest + 1)), "NOARRR") Then
-                                False
-                            Else
-                                True
-
-Rem ---- the pirate ---------------------------------------------------------------
-Rem main.c:231-310. The sixth curmudgeon is no curmudgeon. He leaves you alone once
-Rem you have found his chest; until then, catching you with a treasure
-Rem costs you every treasure you are carrying, and they all turn up in
-Rem his maze. The chest is moved before the robbery so that it is listed
-Rem last where he leaves it.
-
-Def ChestLoc() As Number
-    LocNamed("LOC_MAZEEND12")
-
-Def ChestLoc2() As Number
-    LocNamed("LOC_DEADEND13")
-
-Rem The pyramid is left alone in its own room and in the emerald's -- it
-Rem would be too easy to lose it there.
-Def PirateSpares(g As Game, i As Number) As Boolean
-    If i <> ObjNamed("PYRAMID") Then
-        False
-    Else
-        (Loc(g) = First(Places(ObjAt(ObjNamed("PYRAMID"))))
-         Or Loc(g) = First(Places(ObjAt(ObjNamed("EMERALD")))))
-
-Def Snarfable(g As Game, i As Number, n As Number, seen As Number, robbing As Boolean) As Number
-    If i > n Then
-        seen
-    Else
-        If Not Treasure(ObjAt(i)) Or PirateSpares(g, i) Then
-            Snarfable(g, i + 1, n, seen, robbing)
-        Else
-            If Toting(g, i) Or Here(g, i) Then
-                Snarfable(g, i + 1, n, seen + 1, robbing)
-            Else
-                Snarfable(g, i + 1, n, seen, robbing)
-
-Def CarryingTreasure(g As Game, i As Number, n As Number) As Boolean
-    If i > n Then
-        False
-    Else
-        If Treasure(ObjAt(i)) And Not PirateSpares(g, i) And Toting(g, i) Then
-            True
-        Else
-            CarryingTreasure(g, i + 1, n)
-
-Def SpottedByPirate(g As Game) As Game
-    Let chest = ObjNamed("CHEST")
-    If Loc(g) = ChestLoc() Or PropOf(g, chest) >= 0 Then
-        g
-    Else
-        Let n = Length(Objects()) - 1
-        Let seen = Snarfable(g, 1, n, 0, False)
-        Let robbing = CarryingTreasure(g, 1, n)
-        PirateActs(g, chest, seen, robbing)
-
-Def PirateActs(g As Game, chest As Number, seen As Number, robbing As Boolean) As Game
-    Rem The chest is planted before you can find the last treasure, so
-    Rem there is always somewhere left to go.
-    Let forced = (Tally(g) = 1 And seen = 0 And Nth(Where(g), chest + 1) = 0
-                  And Here(g, Lamp()) And PropOf(g, Lamp()) = LampBright())
-    If forced Then
-        SpeakId(MsgPirateSpotted())
-        Robbed(MoveChest(g, chest), robbing)
-    Else
-        If robbing Then
-            Robbed(MoveChest(g, chest), True)
-        Else
-            Rustle(g)
-
-Def MoveChest(g As Game, chest As Number) As Game
-    Let g1 = Relocated(g, chest, ChestLoc())
-    Let g2 = Relocated(g1, ObjNamed("MESSAG"), ChestLoc2())
-    Let p = Nth(Curmudgeons(g2), PirateIndex())
-    With(g2, Curmudgeons = SetNth(Curmudgeons(g2), PirateIndex(),
-                              Curmudgeon(ChestLoc(), ChestLoc(), False)))
-
-Rem Even when he takes nothing you may hear him go by.
-Def Rustle(g As Game) As Game
-    Let p = Nth(Curmudgeons(g), PirateIndex())
-    If DOld(p) = DLoc(p) Then
-        g
-    Else
-        Let heard = Pct(LcgX(g), 20)
-        Let g1 = Stepped(g)
-        If heard Then
-            SpeakId(MsgPirateRustles())
-            g1
-        Else
-            g1
-
-Def Robbed(g As Game, robbing As Boolean) As Game
-    If Not robbing Then
-        g
-    Else
-        SpeakId(MsgPiratePounces())
-        Steal(g, 1, Length(Objects()) - 1)
-
-Def Steal(g As Game, i As Number, n As Number) As Game
-    If i > n Then
-        g
-    Else
-        If Not Treasure(ObjAt(i)) Or PirateSpares(g, i) Then
-            Steal(g, i + 1, n)
-        Else
-            Steal(Snatched(g, i), i + 1, n)
-
-Def Snatched(g As Game, i As Number) As Game
-    Let g1 = TakenLoose(g, i)
-    If Toting(g1, i) Then
-        Dumped(g1, i)
-    Else
-        g1
-
-Def TakenLoose(g As Game, i As Number) As Game
-    If At(g, i) And Not IsStuck(g, i) Then
-        Lifted(g, i)
-    Else
-        g
-
-Def Dumped(g As Game, i As Number) As Game
-    With(g, Held = Filter(Held(g), Fn(x) => x <> i),
-            AtLoc = SetNth(AtLoc(g), ChestLoc() + 1,
-                           Prepend(i, Nth(AtLoc(g), ChestLoc() + 1))),
-            Where = SetNth(Where(g), i + 1, ChestLoc()))
-
-Rem The result of a curmudgeon turn: the new state, and whether the player is
-Rem still alive to see it.
-Type Moved2
-    Result   As Game
-    Survived As Boolean
-
-Rem main.c:334-368. The first encounter kills nought to two of the five
-Rem curmudgeons, shifts any that started on top of you, and throws an axe.
-Def KillSome(g As Game, i As Number) As Game
-    If i > 2 Then
-        g
-    Else
-        Let j = 1 + RollOf(g, NCurmudgeons() - 1)
-        Let g1 = Stepped(g)
-        Let hit = Pct(LcgX(g1), 50)
-        Let g2 = Stepped(g1)
-        If hit Then
-            KillSome(SetCurmudgeonLoc(g2, j, 0), i + 1)
-        Else
-            KillSome(g2, i + 1)
-
-Def SetCurmudgeonLoc(g As Game, j As Number, loc As Number) As Game
-    Let d = Nth(Curmudgeons(g), j)
-    With(g, Curmudgeons = SetNth(Curmudgeons(g), j, With(d, DLoc = loc)))
-
-Rem Any survivor standing where the player is gets moved aside, and every
-Rem curmudgeon's oldloc is squared up with where it now is.
-Def Relocate(g As Game, i As Number, n As Number) As Game
-    If i > n Then
-        g
-    Else
-        Let d = Nth(Curmudgeons(g), i)
-        Let moved = ShiftedOff(d, Loc(g))
-        Relocate(With(g, Curmudgeons = SetNth(Curmudgeons(g), i, With(moved, DOld = DLoc(moved)))),
-                 i + 1, n)
-
-Def ShiftedOff(d As Curmudgeon, here As Number) As Curmudgeon
-    If DLoc(d) = here Then
-        With(d, DLoc = LocNamed("LOC_NUGGET"))
-    Else
-        d
-
-Def FirstEncounter(g As Game) As Game
-    Let g1 = KillSome(With(g, Dflag = 2), 1)
-    Let g2 = Relocate(g1, 1, NCurmudgeons() - 1)
-    SpeakId(MsgCurmudgeonRan())
-    Put(g2, ObjNamed("AXE"))
-
-Rem main.c:344-347. The short-circuit here is the whole reason this is
-Rem written out rather than folded into one expression.
-Def Activates(g As Game) As Moved2
-    If Not InDeep(Loc(g)) Then
-        Moved2(g, True)
-    Else
-        Let pass95 = Pct(LcgX(g), 95)
-        Let g1 = Stepped(g)
-        Trace("act95", Loc(g), RandRange(LcgX(g), 100), Dflag(g))
-        If Not pass95 Then
-            Moved2(FirstEncounter(g1), True)
-        Else
-            If Not Contains(Conds(RoomAt(g1)), "NOBACK") Then
-                Moved2(g1, True)
-            Else
-                Let pass85 = Pct(LcgX(g1), 85)
-                Let g2 = Stepped(g1)
-                Trace("act85", Loc(g1), RandRange(LcgX(g1), 100), 0)
-                If pass85 Then
-                    Moved2(g2, True)
-                Else
-                    Moved2(FirstEncounter(g2), True)
-
-Rem misc.c:769 dumps every draw under -d. The same switch here prints the
-Rem curmudgeon decisions, which is the only way to line this stream up against a
-Rem recorded C transcript without a C compiler to hand.
-Def Debugging() As Boolean
-    Contains(Args(), "-d")
-
-Def Trace(tag As String, loc As Number, a As Number, b As Number)
-    If Debugging() Then
-        Print("# " & tag & " loc=" & Str(loc) & " " & Str(a) & " " & Str(b))
-
-Rem How the encounter tallies as each curmudgeon is moved.
-Type Tally3
-    TState  As Game
-    Dtotal  As Number
-    Attack  As Number
-    Stick   As Number
-
-Rem main.c:380-445. Move one curmudgeon, then work out whether it is now in
-Rem the room with the player and, if it did not move, whether its knife
-Rem finds him.
-Def MoveOne(g As Game, i As Number, total As Number, swings As Number, hits As Number) As Tally3
-    Let d = Nth(Curmudgeons(g), i)
-    If DLoc(d) = 0 Then
-        Tally3(g, total, swings, hits)
-    Else
-        Let k = Nth(Tkey(), DLoc(d) + 1)
-        Let cands = CurmudgeonCandidates(g, k, DLoc(d), DOld(d), i = PirateIndex())
-        Let choices = ChoiceList(cands, DOld(d))
-        Let pick = 1 + RollOf(g, Length(choices))
-        Let g1 = Stepped(g)
-        Let dest = Nth(choices, pick)
-        Let d2 = Curmudgeon(dest, DLoc(d), False)
-        Let seen = ((DSeen(d) And InDeep(Loc(g1)))
-                    Or (DLoc(d2) = Loc(g1) Or DOld(d2) = Loc(g1)))
-        Let d3 = With(d2, DSeen = seen)
-        If Not seen Then
-            Tally3(With(g1, Curmudgeons = SetNth(Curmudgeons(g1), i, d3)), total, swings, hits)
-        Else
-            Let d4 = With(d3, DLoc = Loc(g1))
-            Let g2 = With(g1, Curmudgeons = SetNth(Curmudgeons(g1), i, d4))
-            If i = PirateIndex() Then
-                Tally3(SpottedByPirate(g2), total, swings, hits)
-            Else
-                Threaten(g2, d4, total + 1, swings, hits)
-
-Def Threaten(g As Game, d As Curmudgeon, total As Number, swings As Number, hits As Number) As Tally3
-    If DOld(d) <> DLoc(d) Then
-        Tally3(g, total, swings, hits)
-    Else
-        Rem main.c:439-440: once the knife has vanished for good (minus
-        Rem one), no later attack brings the phantom knife back.
-        Let g1 = KnifeMarked(g)
-        Rem main.c:437. The knife gets deadlier the longer the curmudgeons
-        Rem have been at it, which is what dflag counts.
-        Let wounded = RollOf(g1, 1000) < 95 * (Dflag(g1) - 2)
-        Let g2 = Stepped(g1)
-        If wounded Then
-            Tally3(g2, total, swings + 1, hits + 1)
-        Else
-            Tally3(g2, total, swings + 1, hits)
-
-Rem main.c:386-411 gathers candidates; 416-419 then appends the curmudgeon's
-Rem previous room and drops it again unless nothing else was on offer, so
-Rem a curmudgeon only doubles back when it has to.
-Def CurmudgeonCandidates(g As Game, k As Number, self As Number, old As Number,
-                    isPirate As Boolean) As List
-    If k = 0 Then
-        { }
-    Else
-        CurmudgeonDests(g, k, self, old, isPirate, { })
-
-Def ChoiceList(cands As List, old As Number) As List
-    If IsEmpty(cands) Then
-        { old }
-    Else
-        cands
-
-Def MoveAll(g As Game, i As Number, n As Number, total As Number,
-            swings As Number, hits As Number) As Tally3
-    If i > n Then
-        Tally3(g, total, swings, hits)
-    Else
-        Let t = MoveOne(g, i, total, swings, hits)
-        MoveAll(TState(t), i + 1, n, Dtotal(t), Attack(t), Stick(t))
-
-Rem main.c:447-473. Report the encounter and say whether he lived.
-Def Report(t As Tally3) As Moved2
-    Let g = TState(t)
-    If Dtotal(t) = 0 Then
-        Moved2(g, True)
-    Else
-        SpeakArgs(PackMessage(Dtotal(t)), { Str(Dtotal(t)) })
-        If Attack(t) = 0 Then
-            Moved2(g, True)
-        Else
-            Let g1 = Hardened(g)
-            Knives(t)
-            If Stick(t) = 0 Then
-                Moved2(g1, True)
-            Else
-                Moved2(With(g1, OldLc2 = Loc(g1)), False)
-
-Def PackMessage(n As Number) As Number
-    If n = 1 Then
-        MsgCurmudgeonSingle()
-    Else
-        MsgCurmudgeonPack()
-
-Def Hardened(g As Game) As Game
-    If Dflag(g) = 2 Then
-        With(g, Dflag = 3)
-    Else
-        g
-
-Def Knives(t As Tally3)
-    If Attack(t) > 1 Then
-        SpeakArgs(MsgThrownKnives(), { Str(Attack(t)) })
-        SpeakArgs(HitMessage(Stick(t)), { Str(Stick(t)) })
-    Else
-        SpeakId(MsgKnifeThrown())
-        SpeakId(TouchMessage(Stick(t)))
-
-Def HitMessage(hits As Number) As Number
-    If hits > 1 Then
-        MsgMultipleHits()
-    Else
-        If hits = 1 Then
-            MsgOneHit()
-        Else
-            MsgNoneHit()
-
-Def TouchMessage(hits As Number) As Number
-    If hits > 0 Then
-        MsgGetsYou()
-    Else
-        MsgMissesYou()
-
-Rem main.c:312-330. Curmudgeons do not follow into a pit, a forced room, or
-Rem anywhere the pirate is forbidden.
-Def CurmudgeonMove(g As Game) As Moved2
-    Trace("dmove", Loc(g), Dflag(g), LcgX(g))
-    If Loc(g) = 0 Or ForcedAt(Loc(g)) Or Contains(Conds(RoomAt(g)), "NOARRR") Then
-        Moved2(g, True)
-    Else
-        If Dflag(g) = 0 Then
-            If InDeep(Loc(g)) Then
-                Moved2(With(g, Dflag = 1), True)
-            Else
-                Moved2(g, True)
-        Else
-            If Dflag(g) = 1 Then
-                Activates(g)
-            Else
-                Report(MoveAll(g, 1, NCurmudgeons(), 0, 0, 0))
-
-Rem ---- the clock ---------------------------------------------------------------
-Rem main.c:940-1046. Once per accepted command, after the turn counter
-Rem has moved and before the verb runs: dawdling costs points, and the
-Rem lamp burns down.
-
-Def WarnTime() As Number
-    30
-
-Def BatteryLife() As Number
-    2500
-
-Rem main.c:943-948. Each threshold fires once, on the turn after it is
-Rem passed, and the points come off the final score rather than showing
-Rem up as a penalty at the time.
-Def Thresholds(g As Game, i As Number, n As Number) As Game
-    If i > n Then
-        g
-    Else
-        Let t = Nth(TurnThresholds(), i)
-        If Turns(g) = Threshold(t) + 1 Then
-            Speak(Message(t))
-            Thresholds(With(g, Trnluz = Trnluz(g) + PointLoss(t)), i + 1, n)
-        Else
-            Thresholds(g, i + 1, n)
-
-Rem main.c:872-919. The lamp is the real clock of the first half of the
-Rem game; the warnings start thirty turns from the end.
-Def LampCheck(g As Game) As Game
-    Let burning = PropOf(g, Lamp()) = LampBright()
-    Let g1 = Burned(g, burning)
-    Let g2 = Warned(g1)
-    If Limit(g2) = 0 Then
-        Let g3 = With(g2, Limit = 0 - 1, Props = SetNth(Props(g2), Lamp() + 1, LampDark()))
-        If Here(g3, Lamp()) Then
-            SpeakId(MsgLampOut())
-            g3
-        Else
-            g3
-    Else
-        g2
-
-Def Burned(g As Game, burning As Boolean) As Game
-    If burning Then
-        With(g, Limit = Limit(g) - 1)
-    Else
-        g
-
-Def Warned(g As Game) As Game
-    If Limit(g) > WarnTime() Then
-        g
-    Else
-        Let battery = ObjNamed("BATTERY")
-        If Here(g, battery) And PropOf(g, battery) = 0 And Here(g, Lamp()) Then
-            SpeakId(MsgReplaceBatteries())
-            With(g, Props = SetNth(Props(g), battery + 1, 1),
-                    Limit = Limit(g) + BatteryLife(), Lmwarn = False)
-        Else
-            If Not Lmwarn(g) And Here(g, Lamp()) Then
-                SpeakId(DimMessage(g, battery))
-                With(g, Lmwarn = True)
-            Else
-                g
-
-Def DimMessage(g As Game, battery As Number) As Number
-    If PropOf(g, battery) = 1 Then
-        MsgMissingBatteries()
-    Else
-        If Nth(Where(g), battery + 1) = 0 Then
-            MsgLampDim()
-        Else
-            MsgGetBatteries()
-
-Rem ---- closing the cave ---------------------------------------------------------
-Rem main.c:950-1044. Once every treasure has been found the cave starts
-Rem shutting: thirty turns of warning, then the grate locks, the bridge
-Rem goes, the curmudgeons and the troll and the bear are cleared away, and
-Rem there is no more resurrection. Fifteen turns after that you are
-Rem carried off to the repository, which is where the game is actually
-Rem won.
-
-Def PanicTime() As Number
-    15
-
-Def Closing(g As Game) As Game
-    Rem the clock only runs when you are deep in and every treasure is
-    Rem accounted for -- and not at Y2, where the plugh voice lives
-    If (Tally(g) = 0 And InDeep(Loc(g)) And Loc(g) <> LocNamed("LOC_Y2")) Then
-        Ticking(With(g, Clock1 = Clock1(g) - 1))
-    Else
-        Ticking(g)
-
-Def Ticking(g As Game) As Game
-    If Clock1(g) = 0 Then
-        ShutTheCave(g)
-    Else
-        If Clock1(g) < 0 Then
-            Panicking(With(g, Clock2 = Clock2(g) - 1))
-        Else
-            g
-
-Def Panicking(g As Game) As Game
-    If Clock2(g) = 0 Then
-        Repository(g)
-    Else
-        g
-
-Rem The cave locks itself up and clears out everything that could get in
-Rem the way of the endgame.
-Def ShutTheCave(g As Game) As Game
-    Let g1 = With(g, Props = SetNth(Props(g), Grate() + 1, GrateClosed()))
-    Let g2 = With(g1, Props = SetNth(Props(g1), ObjNamed("FISSURE") + 1, 0))
-    Let g3 = With(g2, Curmudgeons = NewCurmudgeons(1, NCurmudgeons(), { }))
-    Let g4 = Banished(g3, 1, NCurmudgeons())
-    Let g5 = ClearTroll(g4)
-    Let g6 = ClearBear(g5)
-    Let g7 = Freed(Freed(g6, ObjNamed("CHAIN"), 0), ObjNamed("AXE"), 0)
-    SpeakId(MsgCaveClosing())
-    With(g7, Clock1 = 0 - 1, Closng = True)
-
-Def Banished(g As Game, i As Number, n As Number) As Game
-    If i > n Then
-        g
-    Else
-        Banished(With(g, Curmudgeons = SetNth(Curmudgeons(g), i, Curmudgeon(0, 0, False))), i + 1, n)
-
-Def ClearTroll(g As Game) As Game
-    Let troll = ObjNamed("TROLL")
-    Let ps = Places(ObjAt(troll))
-    Let g1 = Destroy(g, troll)
-    PlaceSecond(Relocated(g1, ObjNamed("TROLL2"), First(ps)), ObjNamed("TROLL2"), ps)
-
-Def ClearBear(g As Game) As Game
-    Let bear = ObjNamed("BEAR")
-    If PropOf(g, bear) = 3 Then
-        g
-    Else
-        Destroy(g, bear)
-
-Def Freed(g As Game, i As Number, state As Number) As Game
-    SetStuck(With(g, Props = SetNth(Props(g), i + 1, state)), i, False)
-
-Rem main.c:993-1041. The repository: two rooms of oddments, a mirror
-Rem between them, and everything you were carrying taken away.
-Def Repository(g As Game) As Game
-    Let ne = LocNamed("LOC_NE")
-    Let sw = LocNamed("LOC_SW")
-    Let g1 = Stocked(g, ne, { "BOTTLE", "PLANT", "OYSTER", "LAMP", "ROD", "CURMUDGEON" },
-                     { 1, 0, 0, 0, 0, 0 }, 1, 6)
-    Let g2 = Stocked(g1, sw, { "SNAKE", "BIRD", "CAGE", "ROD2", "PILLOW" },
-                     { 1, 1, 0, 0, 0 }, 1, 5)
-    Let g3 = Relocated(Relocated(g2, Grate(), sw), ObjNamed("SIGN"), sw)
-    Let g4 = With(g3, Props = SetNth(Props(g3), ObjNamed("SIGN") + 1, 1))
-    Rem main.c:1030-1031. The mirror is placed at the north-east end but
-    Rem fixed at the south-west one, so it stretches across both rooms and
-    Rem is present -- and breakable -- from either.
-    Let g5 = PlaceSecond(Stocked(g4, ne, { "MIRROR" }, { 0 }, 1, 1),
-                         ObjNamed("MIRROR"), { ne, sw })
-    Let g6 = Stripped(g5, 1, Length(Objects()) - 1)
-    SpeakId(MsgCaveClosed())
-    With(g6, Loc = ne, OldLoc = ne, Closed = True)
-
-Def Stocked(g As Game, where As Number, tags As List, states As List,
-            i As Number, n As Number) As Game
-    If i > n Then
-        g
-    Else
-        Let obj = ObjNamed(Nth(tags, i))
-        Let g1 = Relocated(g, obj, where)
-        Rem main.c:962 put() stashes the state negative, so the piles go
-        Rem undescribed until each thing is picked up and put down.
-        Stocked(With(g1, Props = SetNth(Props(g1), obj + 1,
-                                        0 - 1 - Nth(states, i))),
-                where, tags, states, i + 1, n)
-
-Def Stripped(g As Game, i As Number, n As Number) As Game
-    If i > n Then
-        g
-    Else
-        If Toting(g, i) Then
-            Stripped(Destroy(g, i), i + 1, n)
-        Else
-            Stripped(g, i + 1, n)
-
-Rem main.c:1326 and 940-1046. closecheck returns true -- skipping the
-Rem lamp -- only on the turn the cave starts closing or slams shut, not
-Rem for the whole countdown; the lamp keeps burning down while you panic.
-Def ClockTick(g As Game) As Game
-    Let g1 = Thresholds(g, 1, Length(TurnThresholds()))
-    Let g2 = Closing(g1)
-    If (Closng(g2) And Not Closng(g1)) Or (Closed(g2) And Not Closed(g1)) Then
-        g2
-    Else
-        LampCheck(g2)
-
-Rem ---- hints -----------------------------------------------------------------
-Rem main.c:109-229. Loiter long enough somewhere the game thinks you are
-Rem stuck and it offers to help, for a price. Each hint counts the turns
-Rem you have spent in its own region; leave the region and the count goes
-Rem back to nothing.
-Rem
-Rem The C tests this with a bitmask where bits 11 upward mark which hints
-Rem a room carries. We kept the hint list on the room instead, so the
-Rem outer guard "conditions[loc] >= game.conds" is simply "this room
-Rem offers some hint at all".
-
-Type HintRec
-    Used As Boolean
-    Lc   As Number
-
-Def NewHints(i As Number, n As Number, acc As List) As List
-    If i > n Then
-        acc
-    Else
-        NewHints(i + 1, n, Append(acc, HintRec(False, 0)))
-
-Def HintAt(g As Game, i As Number) As HintRec
-    Nth(HintState(g), i)
-
-Def SetHint(g As Game, i As Number, h As HintRec) As Game
-    With(g, HintState = SetNth(HintState(g), i, h))
-
-Def CheckHints(g As Game) As Game
-    If IsEmpty(RoomHints(RoomAt(g))) Then
-        g
-    Else
-        HintLoop(g, 1, Length(Hints()))
-
-Def HintLoop(g As Game, i As Number, n As Number) As Game
-    If i > n Then
-        g
-    Else
-        Let h = HintAt(g, i)
-        If Used(h) Then
-            HintLoop(g, i + 1, n)
-        Else
-            Let ticked = Ticked(g, h, i)
-            Let g1 = SetHint(g, i, ticked)
-            If Lc(ticked) < Turns(Nth(Hints(), i)) Then
-                HintLoop(g1, i + 1, n)
-            Else
-                HintLoop(Ripe(g1, i), i + 1, n)
-
-Rem A hint's counter only runs while you are somewhere it applies.
-Def Ticked(g As Game, h As HintRec, i As Number) As HintRec
-    If Contains(RoomHints(RoomAt(g)), i - 1) Then
-        With(h, Lc = Lc(h) + 1)
-    Else
-        With(h, Lc = 0)
-
-Rem Each hint has its own idea of whether you are really stuck.
-Def Ripe(g As Game, i As Number) As Game
-    If Stuck(g, i) Then
-        Offer(g, i)
-    Else
-        SetHint(g, i, With(HintAt(g, i), Lc = 0))
-
-Def Stuck(g As Game, i As Number) As Boolean
-    Let tag = Tag(Nth(Hints(), i))
-    If tag = "CAVE" Then
-        Rem main.c:126-131 offers this one precisely when the grate is
-        Rem shut and you have nothing to open it with -- which is when
-        Rem loitering outside it means you are genuinely stuck.
-        (PropOf(g, Grate()) = GrateClosed() And Not Here(g, Keys()))
-    Else
-        If tag = "BIRD" Then
-            (Nth(Where(g), ObjNamed("BIRD") + 1) = Loc(g)
-             And Toting(g, ObjNamed("ROD")) And OldObj(g) = ObjNamed("BIRD"))
-        Else
-            If tag = "SNAKE" Then
-                Here(g, ObjNamed("SNAKE")) And Not Here(g, ObjNamed("BIRD"))
-            Else
-                StuckMore(g, tag)
-
-Def StuckMore(g As Game, tag As String) As Boolean
-    If tag = "MAZE" Then
-        Lost(g) And HoldCount(g) > 1
-    Else
-        If tag = "DARK" Then
-            PropOf(g, ObjNamed("EMERALD")) >= 0 And PropOf(g, ObjNamed("PYRAMID")) < 0
-        Else
-            If tag = "WITT" Then
-                True
-            Else
-                Rem main.c:390 labels this one /* urn */, but the seventh
-                Rem hint in the tables is tagged CLIFF -- the comment and the
-                Rem data disagree, and the data is what the game indexes by.
-                If tag = "CLIFF" Then
-                    Dflag(g) = 0
-                Else
-                    StuckLast(g, tag)
-
-Def StuckLast(g As Game, tag As String) As Boolean
-    If tag = "WOODS" Then
-        Lost(g)
-    Else
-        If tag = "OGRE" Then
-            Here(g, ObjNamed("OGRE")) And CurmudgeonsHere(g) = 0 And CurmudgeonsHere(g) >= 0
-        Else
-            If tag = "JADE" Then
-                Tally(g) = 1 And PropOf(g, ObjNamed("JADE")) < 0
-            Else
-                False
-
-Rem Three rooms running with nothing lying about in any of them.
-Def Lost(g As Game) As Boolean
-    (IsEmpty(Nth(AtLoc(g), Loc(g) + 1)) And IsEmpty(Nth(AtLoc(g), OldLoc(g) + 1))
-     And IsEmpty(Nth(AtLoc(g), OldLc2(g) + 1)))
-
-Rem main.c:206-224. Two questions: do you want help, and is it worth the
-Rem points. Taking a hint buys back some lamp life to soften the blow.
-Def Offer(g As Game, i As Number) As Game
-    Let hint = Nth(Hints(), i)
-    Let g1 = SetHint(g, i, With(HintAt(g, i), Lc = 0))
-    Let ok = Nth(Messages(), MsgOkMan() + 1)
-    If Not YesNo(Question(hint), "", ok) Then
-        g1
-    Else
-        SpeakArgs(MsgHintCost(), { Str(Penalty(hint)), Str(Penalty(hint)) })
-        Let took = YesNo(Nth(Messages(), MsgWantHint() + 1), Text(hint), ok)
-        If took Then
-            SetHint(Rewarded(g1, Penalty(hint)), i, HintRec(True, 0))
-        Else
-            g1
-
-Def Rewarded(g As Game, penalty As Number) As Game
-    If Limit(g) > WarnTime() Then
-        With(g, Limit = Limit(g) + WarnTime() * penalty)
-    Else
-        g
-
-Rem ---- scoring ---------------------------------------------------------------
-Rem score.c:13-129. Only the parts a short game can reach are live; the
-Rem endgame bonuses stay at zero until the closing sequence exists.
-
-Def ChestIndex() As Number
-    ObjNamed("CHEST")
-
-Def TreasureValue(i As Number) As Number
-    If i = ChestIndex() Then
-        14
-    Else
-        If i > ChestIndex() Then
-            16
-        Else
-            12
-
-Def CountsForScore(o As Obj) As Boolean
-    Treasure(o) And Len(Inventory(o)) > 0
-
-Def MaxTreasure(i As Number, n As Number, acc As Number) As Number
-    If i > n Then
-        acc
-    Else
-        If CountsForScore(ObjAt(i)) Then
-            MaxTreasure(i + 1, n, acc + TreasureValue(i))
-        Else
-            MaxTreasure(i + 1, n, acc)
-
-Def NDeaths() As Number
-    3
-
-Def MaxScore() As Number
-    MaxTreasure(1, Length(Objects()) - 1, 0) + NDeaths() * 10 + 4 + 25 + 25 + 45 + 1 + 2
-
-Rem score.c:38-60. Two points for having laid eyes on a treasure, and the
-Rem rest of its value only once it is safely back in the well house.
-Def TreasureScore(g As Game, i As Number, n As Number, acc As Number) As Number
-    If i > n Then
-        acc
-    Else
-        Let o = ObjAt(i)
-        If Not IsTreasure(o) Then
-            TreasureScore(g, i + 1, n, acc)
-        Else
-            TreasureScore(g, i + 1, n, acc + TreasurePoints(g, i))
-
-Def TreasurePoints(g As Game, i As Number) As Number
-    If PropOf(g, i) < 0 Then
-        Rem never seen, so not even the consolation two
-        0
-    Else
-        If (Nth(Where(g), i + 1) = LocNamed("LOC_BUILDING")
-            And PropOf(g, i) = 0) Then
-            TreasureValue(i)
-        Else
-            2
-
-Rem A quit or an EOF is mode quitgame, which forfeits the four points for
-Rem seeing it through.
-Rem score.c:96-99. Four points for having played it out to a finish
-Rem rather than walking away, which is what quitting and running out of
-Rem input both are.
-Def SawItThrough(g As Game) As Number
-    Select Case Outcome(g)
-        Case Died(m)
-            4
-        Case Won
-            4
-        Case Else
-            0
-
-Rem score.c:110-115. Every hint you took comes off the total.
-Def HintPenalty(g As Game, i As Number, n As Number, acc As Number) As Number
-    If i > n Then
-        acc
-    Else
-        If Used(HintAt(g, i)) Then
-            HintPenalty(g, i + 1, n, acc + Penalty(Nth(Hints(), i)))
-        Else
-            HintPenalty(g, i + 1, n, acc)
-
-Def ScoreOf(g As Game) As Number
-    Let hinted = HintPenalty(g, 1, Length(Hints()), 0)
-    Let treasure = TreasureScore(g, 1, Length(Objects()) - 1, 0)
-    Let survived = (NDeaths() - Deaths(g)) * 10
-    Let deep = DeepBonus(g)
-    Let finished = SawItThrough(g)
-    Rem score.c:122 -- suspending costs five points a time, so you cannot
-    Rem win by saving before a fight and reloading until it goes your way.
-    If Novice(g) Then
-        (treasure + survived + deep + finished + ClosingScore(g) + WittPoint(g)
-         + 2 - 5 - Trnluz(g) - hinted - Saved(g) - CluePenalty(g))
-    Else
-        (treasure + survived + deep + finished + ClosingScore(g) + WittPoint(g)
-         + 2 - Trnluz(g) - hinted - Saved(g) - CluePenalty(g))
-
-Rem score.c:118-120. The endgame clue costs ten points if taken.
-Def CluePenalty(g As Game) As Number
-    If Clshnt(g) Then
-        10
-    Else
-        0
-
-Rem score.c:79-96. Reaching closing is worth 25; how the closed cave was
-Rem left decides the rest -- a mundane end 10, blowing yourself up 25,
-Rem blasting at the wrong end 30, the true victory 45.
-Def ClosingScore(g As Game) As Number
-    ClosngPoints(g) + ClosedPoints(g)
-
-Def ClosngPoints(g As Game) As Number
-    If Closng(g) Then
-        25
-    Else
-        0
-
-Def ClosedPoints(g As Game) As Number
-    If Not Closed(g) Then
-        0
-    Else
-        If Bonus(g) = 1 Then
-            25
-        Else
-            If Bonus(g) = 2 Then
-                30
-            Else
-                If Bonus(g) = 3 Then
-                    45
-                Else
-                    10
-
-Rem score.c:99-102. One point for having come to Witt's End as you should.
-Def WittPoint(g As Game) As Number
-    If Nth(Where(g), ObjNamed("MAGAZINE") + 1) = LocNamed("LOC_WITTSEND") Then
-        1
-    Else
-        0
-
-Def DeepBonus(g As Game) As Number
-    If Dflag(g) <> 0 Then
-        25
-    Else
-        0
-
-Rem score.c:146-157. The classes are walked from one, and the first whose
-Rem threshold still covers the score is the rating earned.
-Def RateFrom(g As Game, points As Number, i As Number, n As Number)
-    If i > n Then
-        SpeakId(MsgOffScale())
-    Else
-        Let k = Nth(Classes(), i + 1)
-        If Threshold(k) >= points Then
-            Speak(Message(k))
-            If i < n Then
-                Let nxt = Threshold(k) + 1 - points
-                SpeakArgs(MsgNextHigher(), { Str(nxt), Str(nxt) })
-            Else
-                SpeakId(MsgNoHigher())
-        Else
-            RateFrom(g, points, i + 1, n)
-
-Rem score.c:138-143. Two backhanded compliments, for players who would have
-Rem topped the scale but for dawdling or for suspending: both only fire when
-Rem the penalty is what kept them off it.
-Def Terminate(g As Game)
-    Let points = ScoreOf(g)
-    If (points + Trnluz(g) + 1 >= MaxScore() And Trnluz(g) <> 0) Then
-        SpeakId(MsgTookLong())
-    If (points + Saved(g) + 1 >= MaxScore() And Saved(g) <> 0) Then
-        SpeakId(MsgWithoutSuspends())
-    SpeakArgs(MsgTotalScore(), { Str(points), Str(MaxScore()), Str(Turns(g)), Str(Turns(g)) })
-    RateFrom(g, points, 1, Length(Classes()) - 1)
-
-Rem ---- verbs -------------------------------------------------------------------
-
-Def Sub1(msg As String, n As Number) As String
-    Render(msg, { Str(n) })
-
-Rem actions.c:1344-1351. Reseeding is free: it winds the turn counter back
-Rem so a transcript that pins the stream is not charged for it. This is
-Rem why 92 of the recorded test games open with a seed line.
-Def DoSeed(g As Game, arg As String, msg As String) As Game
-    If Not IsInteger(arg) Then
-        SpeakId(MsgNumericRequired())
-        g
-    Else
-        Let n = Val(arg)
-        Speak(Sub1(msg, n))
-        With(g, LcgX = SeedState(n), Magic = ZzWord(n), Turns = Turns(g) - 1)
-
-Rem actions.c:1353-1358. Waste burns lamp turns for testing purposes.
-Def DoWaste(g As Game, arg As String, msg As String) As Game
-    If Not IsInteger(arg) Then
-        SpeakId(MsgNumericRequired())
-        g
-    Else
-        Let g1 = With(g, Limit = Limit(g) - Val(arg))
-        Speak(Sub1(msg, Limit(g1)))
-        g1
-
-Rem actions.c:303-330. Picking up removes the object from the room list;
-Rem the list order is why this is a removal rather than a flag.
-Def InvLimit() As Number
-    7
-
-Rem actions.c:329-425. Picking a thing up is the busiest verb in the game:
-Rem the immovable things each have their own excuse, the liquids are really
-Rem the bottle, and the bird will not be caught bare-handed or by anyone
-Rem still waving the rod at it.
-Rem init.c:69 copies the object table's fixed flag into the game state,
-Rem and it is state, not a constant: killing the dragon frees the rug it
-Rem was lying on, and a broken vase or a dead bear becomes part of the
-Rem scenery. Reading the static flag instead refuses to pick up things
-Rem the game has since released.
-Def IsStuck(g As Game, i As Number) As Boolean
-    Nth(Fixture(g), i + 1) = 1
-
-Def SetStuck(g As Game, i As Number, stuck As Boolean) As Game
-    With(g, Fixture = SetNth(Fixture(g), i + 1, StuckFlag(stuck)))
-
-Def StuckFlag(stuck As Boolean) As Number
-    If stuck Then
-        1
-    Else
-        0
-
-Def SeedFixture(a As Array, i As Number, n As Number) As Array
-    If i > n Then
-        a
-    Else
-        If Fixed(Nth(Objects(), i)) Then
-            SeedFixture(SetNth(a, i, 1), i + 1, n)
-        Else
-            SeedFixture(a, i + 1, n)
-
-Def TakeObject(g As Game, i As Number, msg As String) As Game
-    If Toting(g, i) Then
-        Speak(msg)
-        g
-    Else
-        If i = ObjNamed("MESSAG") Then
-            Rem actions.c:323-327: the dust is not for taking.
-            SpeakId(MsgRemoveMessage())
-            Destroy(g, i)
-        Else
-            If IsStuck(g, i) Then
-                SpeakId(ImmovableReply(g, i))
-                g
-            Else
-                TakeLiquidOr(g, i)
-
-Def ImmovableReply(g As Game, i As Number) As Number
-    If i = ObjNamed("PLANT") And PropOf(g, i) = 0 Then
-        MsgDeepRoots()
-    Else
-        If i = ObjNamed("BEAR") And PropOf(g, i) = 1 Then
-            MsgBearChained()
-        Else
-            If i = ObjNamed("CHAIN") And PropOf(g, ObjNamed("BEAR")) <> 0 Then
-                MsgStillLocked()
-            Else
-                If i = ObjNamed("RUG") And PropOf(g, i) = 2 Then
-                    MsgRugHovers()
-                Else
-                    OddmentReply(i)
-
-Def OddmentReply(i As Number) As Number
-    If i = ObjNamed("URN") Then
-        MsgUrnNobudge()
-    Else
-        If i = ObjNamed("CAVITY") Then
-            MsgDoughnutHoles()
-        Else
-            If i = ObjNamed("BLOOD") Then
-                MsgFewDrops()
-            Else
-                If i = ObjNamed("SIGN") Then
-                    MsgHandPassthrough()
-                Else
-                    MsgYouJoking()
-
-Rem Asking for water or oil is really asking for the bottle they are in.
-Def TakeLiquidOr(g As Game, i As Number) As Game
-    If i <> ObjNamed("WATER") And i <> ObjNamed("OIL") Then
-        TakeIfRoom(g, i)
-    Else
-        Let bottle = ObjNamed("BOTTLE")
-        If Here(g, bottle) And Liquid(g) = i Then
-            TakeIfRoom(g, bottle)
-        Else
-            If Not Toting(g, bottle) Then
-                SpeakId(MsgNoContainer())
-                g
-            Else
-                If PropOf(g, bottle) = EmptyBottle() Then
-                    After(DoFill(g, bottle, ""))
-                Else
-                    SpeakId(MsgBottleFull())
-                    g
-
-Rem actions.c:417-418 sets the liquid's place directly rather than going
-Rem through carry(), so what is in the bottle never counts against the
-Rem seven things you are allowed to hold.
-Rem misc.c:672-673, 695-704: the bird is weightless -- an ugly hack the C
-Rem needs so "take bird" and "take cage" both work when the bird is caged.
-Def HoldCount(g As Game) As Number
-    Length(Filter(Held(g), Fn(x) => (x <> ObjNamed("WATER") And x <> ObjNamed("OIL")
-                                     And x <> ObjNamed("BIRD"))))
-
-Def TakeIfRoom(g As Game, i As Number) As Game
-    If HoldCount(g) >= InvLimit() Then
-        SpeakId(MsgCarryLimit())
-        g
-    Else
-        TakeBird(g, i)
-
-Rem The bird has to be caught in the cage, and it will not be caught at
-Rem all by someone brandishing the rod.
-Def TakeBird(g As Game, i As Number) As Game
-    Let bird = ObjNamed("BIRD")
-    Rem actions.c:390-391: a stashed bird -- caged in the repository --
-    Rem skips the catching rules just as a plainly caged one does.
-    If i <> bird Or PropOf(g, bird) = 1 Or PropOf(g, bird) < 0 - 1 Then
-        Grasp(g, i)
-    Else
-        If PropOf(g, bird) = 2 Then
-            SpeakId(MsgBirdCrap())
-            Destroy(g, bird)
-        Else
-            If Not Toting(g, ObjNamed("CAGE")) Then
-                SpeakId(MsgCannotCarry())
-                g
-            Else
-                If Toting(g, ObjNamed("ROD")) Then
-                    SpeakId(MsgBirdEvades())
-                    g
-                Else
-                    Grasp(With(g, Props = SetNth(Props(g), bird + 1, 1)), i)
-
-Rem The bird and its cage travel together once the bird is inside.
-Def Grasp(g As Game, i As Number) As Game
-    Let bird = ObjNamed("BIRD")
-    Let cage = ObjNamed("CAGE")
-    Let g1 = Lifted(g, i)
-    Let g2 = WithCagemate(g1, i, bird, cage)
-    Let g3 = LiftedLiquid(g2, i)
-    Let g4 = GemUnstashed(g3, i)
-    SpeakId(MsgOkMan())
-    g4
-
-Rem actions.c:420-423. Picking up a gem that is not plainly FOUND --
-Rem fresh from its hiding place, or prised back out of the cavity --
-Rem leaves the cavity open for the next one.
-Def GemUnstashed(g As Game, i As Number) As Game
-    If Gemstone(i) And PropOf(g, i) <> 0 Then
-        With(g, Props = SetNth(SetNth(Props(g), i + 1, 0),
-                               ObjNamed("CAVITY") + 1, 1))
-    Else
-        g
-
-Def WithCagemate(g As Game, i As Number, bird As Number, cage As Number) As Game
-    If ((i = bird Or i = cage)
-        And (PropOf(g, bird) = 1 Or PropOf(g, bird) = 0 - 2)) Then
-        Lifted(g, bird + cage - i)
-    Else
-        g
-
-Def LiftedLiquid(g As Game, i As Number) As Game
-    If i = ObjNamed("BOTTLE") And Liquid(g) <> NoObject() And Not Toting(g, Liquid(g)) Then
-        With(g, Held = Append(Held(g), Liquid(g)))
-    Else
-        g
-
-Rem misc.c:652-656. carry() returns at once if the thing is already in
-Rem your hands, so taking the caged bird does not pick the cage up twice.
-Def Lifted(g As Game, i As Number) As Game
-    If Toting(g, i) Then
-        g
-    Else
-        With(g, AtLoc = SetNth(AtLoc(g), Loc(g) + 1,
-                               Filter(HereList(g), Fn(x) => x <> i)),
-                Held = Append(Held(g), i),
-                Where = SetNth(Where(g), i + 1, Carried()))
-
-Rem actions.c:896-918. Intransitive carry works only when the room holds
-Rem exactly one thing; otherwise the game asks which.
-Rem main.c:1403-1415 upcases the first letter of what you actually typed,
-Rem so mistyping "GET" back at you keeps your own word.
-Def Capitalize(s As String) As String
-    If Len(s) = 0 Then
-        s
-    Else
-        Upper(Left(s, 1)) & Mid(s, 2, Len(s))
-
-Def DoCarry(g As Game, i As Number, msg As String) As Done
-    If i = NoObject() Then
-        Let here = HereList(g)
-        Rem actions.c:399-403: a curmudgeon in the room makes a bare "take"
-        Rem ambiguous even when only one thing is lying about.
-        If Length(here) = 1 And CurmudgeonsHere(g) <= 0 Then
-            Done(TakeObject(g, First(here), msg), GoClearObj())
-        Else
-            Rem more than one thing here, so the game has to ask which
-            Done(g, GoUnknown())
-    Else
-        Done(TakeObject(g, i, msg), GoClearObj())
-
-Rem actions.c:481-492. Dropping prefixes the object to the room's list,
-Rem which is why what you put down is listed before what was already
-Rem lying there.
-Rem actions.c:485-487, 529-533. Two substitutions before anything else: the
-Rem black rod stands in for the striped one when only that is in hand, and
-Rem putting down the water means putting down the bottle it lives in --
-Rem which empties it, because the liquid goes nowhere.
-Def RodSwap(g As Game, i As Number) As Number
-    Let rod = ObjNamed("ROD")
-    If (i = rod And Not Toting(g, rod) And Toting(g, ObjNamed("ROD2"))) Then
-        ObjNamed("ROD2")
-    Else
-        i
-
-Def LiquidSwap(g As Game, i As Number) As Number
-    If i = Liquid(g) Then
-        ObjNamed("BOTTLE")
-    Else
-        i
-
-Def Emptied(g As Game, i As Number) As Game
-    If (i = ObjNamed("BOTTLE") And Liquid(g) <> NoObject()) Then
-        Destroy(g, Liquid(g))
-    Else
-        g
-
-Def DoDrop(g As Game, raw As Number, msg As String) As Done
-    If raw = NoObject() Then
-        Done(g, GoUnknown())
-    Else
-        DoDrop2(g, RodSwap(g, raw), msg)
-
-Rem The carrying test is made against what you named; only once it passes
-Rem does the water become the bottle it is sitting in.
-Def DoDrop2(g As Game, named As Number, msg As String) As Done
-    If Not Toting(g, named) Then
-        Speak(msg)
-        Done(g, GoClearObj())
-    Else
-        DoDrop3(g, LiquidSwap(g, named))
-
-Def DoDrop3(g0 As Game, i As Number) As Done
-    Let g = Emptied(g0, i)
-    If (Gemstone(i) And At(g, ObjNamed("CAVITY"))
-        And PropOf(g, ObjNamed("CAVITY")) <> 0) Then
-        DropGem(g, i)
-    Else
-        If i = ObjNamed("COINS") And Here(g, ObjNamed("VEND")) Then
-            DropCoins(g, i)
-        Else
-            If i = ObjNamed("BEAR") And At(g, ObjNamed("TROLL")) Then
-                BearRoutsTroll(g, i)
-            Else
-                If i = ObjNamed("BIRD") Then
-                    DropBird(g, i)
-                Else
-                    If i = ObjNamed("VASE") Then
-                        DropVase(g, i)
-                    Else
-                        DropPlain(g, i)
-
-Def Gemstone(i As Number) As Boolean
-    (i = ObjNamed("EMERALD") Or i = ObjNamed("RUBY")
-     Or i = ObjNamed("AMBER") Or i = ObjNamed("SAPPH"))
-
-Rem actions.c:493-518. A gem fits the cavity, and the rug reacts: it
-Rem rises over the emerald, settles when the ruby displaces it, and only
-Rem wiggles if you are holding on to it.
-Def DropGem(g As Game, gem As Number) As Done
-    SpeakId(MsgGemFits())
-    Let cavity = ObjNamed("CAVITY")
-    Let g1 = With(g, Props = SetNth(SetNth(Props(g), gem + 1, 1), cavity + 1, 0))
-    Done(Put(RugReacts(g1, gem), gem), GoClearObj())
-
-Def RugReacts(g As Game, gem As Number) As Game
-    Let rug = ObjNamed("RUG")
-    If (Here(g, rug)
-        And ((gem = ObjNamed("EMERALD") And PropOf(g, rug) <> 2)
-             Or (gem = ObjNamed("RUBY") And PropOf(g, rug) = 2))) Then
-        RugMoves(g, gem, rug)
-    Else
-        g
-
-Def RugMoves(g As Game, gem As Number, rug As Number) As Game
-    SpeakId(RugWord(g, gem, rug))
-    If Not Toting(g, rug) Or gem = ObjNamed("RUBY") Then
-        RugToggled(g, rug)
-    Else
-        g
-
-Def RugWord(g As Game, gem As Number, rug As Number) As Number
-    If gem = ObjNamed("RUBY") Then
-        MsgRugSettles()
-    Else
-        If Toting(g, rug) Then
-            MsgRugWiggles()
-        Else
-            MsgRugRises()
-
-Rem The hovering rug shows in the sapphire's room through its second
-Rem placement, the way the troll shows at both ends of the bridge.
-Def RugToggled(g As Game, rug As Number) As Game
-    If PropOf(g, rug) = 2 Then
-        Let g1 = With(g, Props = SetNth(Props(g), rug + 1, 0))
-        SetStuck(SecondMoved(g1, rug, 0), rug, False)
-    Else
-        Let g1 = With(g, Props = SetNth(Props(g), rug + 1, 2))
-        SetStuck(SecondMoved(g1, rug,
-                             First(Places(ObjAt(ObjNamed("SAPPH"))))),
-                 rug, True)
-
-Rem misc.c:622-640 for the fixed half of a two-placement object: relocate
-Rem only the second placement, leaving the primary room's listing alone.
-Rem A destination of zero parks it nowhere.
-Def SecondMoved(g As Game, i As Number, dest As Number) As Game
-    Let g1 = ClearSecondFrom(g, i, 1, Length(Locations()))
-    If dest = 0 Then
-        g1
-    Else
-        With(g1, AtLoc = SetNth(AtLoc(g1), dest + 1,
-                                Prepend(i, Nth(AtLoc(g1), dest + 1))))
-
-Def ClearSecondFrom(g As Game, i As Number, k As Number, n As Number) As Game
-    If k > n Then
-        g
-    Else
-        Let room = Nth(AtLoc(g), k)
-        If Contains(room, i) And k <> Nth(Where(g), i + 1) + 1 Then
-            ClearSecondFrom(With(g, AtLoc = SetNth(AtLoc(g), k,
-                                                   Filter(room, Fn(x) => x <> i))),
-                            i, k + 1, n)
-        Else
-            ClearSecondFrom(g, i, k + 1, n)
-
-Rem actions.c:524-529. Coins in the vending machine buy fresh batteries.
-Def DropCoins(g As Game, coins As Number) As Done
-    Let battery = ObjNamed("BATTERY")
-    Let g1 = Destroy(g, coins)
-    Let g2 = Put(g1, battery)
-    Speak(First(Descs(ObjAt(battery))))
-    Done(g2, GoClearObj())
-
-Rem actions.c:538-546. The tame bear chases the troll off for good.
-Def BearRoutsTroll(g As Game, bear As Number) As Done
-    Let troll = ObjNamed("TROLL")
-    Let troll2 = ObjNamed("TROLL2")
-    Let ps = Places(ObjAt(troll))
-    Let g1 = StateChange(g, troll, 2)
-    Let g2 = Destroy(g1, troll)
-    Let g3 = PlaceSecond(Relocated(g2, troll2, First(ps)), troll2, ps)
-    Let g4 = Juggled(g3, ObjNamed("CHASM"))
-    Done(Put(g4, bear), GoClearObj())
-
-Rem actions.c:560-562. Dropping the cage lets a caged bird out with it.
-Def DropPlain(g As Game, i As Number) As Done
-    SpeakId(MsgOkMan())
-    Done(Put(CagedBirdOut(g, i), i), GoClearObj())
-
-Def CagedBirdOut(g As Game, i As Number) As Game
-    If i = ObjNamed("CAGE") And PropOf(g, ObjNamed("BIRD")) = 1 Then
-        Put(g, ObjNamed("BIRD"))
-    Else
-        g
-
-Rem actions.c:548-558. The vase survives being put down only on the
-Rem pillow; anywhere else it shatters and becomes part of the floor.
-Def DropVase(g As Game, vase As Number) As Done
-    Let pillow = ObjNamed("PILLOW")
-    If Loc(g) = First(Places(ObjAt(pillow))) Then
-        SpeakId(MsgOkMan())
-        Done(Put(g, vase), GoClearObj())
-    Else
-        Let whole = At(g, pillow)
-        Let g1 = StateChange(g, vase, VaseState(whole))
-        Done(Put(Broken(g1, vase, whole), vase), GoClearObj())
-
-Def VaseState(whole As Boolean) As Number
-    If whole Then
-        0
-    Else
-        1
-
-Def Broken(g As Game, vase As Number, whole As Boolean) As Game
-    If whole Then
-        g
-    Else
-        SetStuck(g, vase, True)
-
-Rem Take an object out of your hands and lay it in this room. The C
-Rem prefixes it to the room's list, so what you just dropped is named
-Rem first next time the room is described.
-Def Put(g As Game, i As Number) As Game
-    With(g, Held = Filter(Held(g), Fn(x) => x <> i),
-            AtLoc = SetNth(AtLoc(g), Loc(g) + 1, Prepend(i, HereList(g))),
-            Where = SetNth(Where(g), i + 1, Loc(g)))
-
-Rem Remove an object from play altogether. Sweeps every room list, not
-Rem just the player's, because a two-ended object (troll, bridge) sits in
-Rem two lists and may be destroyed from a third room entirely.
-Def Destroy(g As Game, i As Number) As Game
-    Let cleared = ClearFrom(g, i, 1, Length(Locations()))
-    With(cleared, Held = Filter(Held(cleared), Fn(x) => x <> i),
-                  Where = SetNth(Where(cleared), i + 1, 0))
-
-Rem actions.c:564-586. Letting the bird go where the snake is drives the
-Rem snake off -- the central puzzle of the first half of the cave. The
-Rem snake's state is what the travel table then consults to let you past.
-Def DropBird(g As Game, bird As Number) As Done
-    If (At(g, ObjNamed("DRAGON"))
-        And PropOf(g, ObjNamed("DRAGON")) = 0) Then
-        SpeakId(MsgBirdBurnt())
-        Done(Destroy(g, bird), GoClearObj())
-    Else
-        DropBird2(g, bird)
-
-Def DropBird2(g As Game, bird As Number) As Done
-    Let snake = ObjNamed("SNAKE")
-    If Here(g, snake) Then
-        SpeakId(MsgBirdAttacks())
-        If Closed(g) Then
-            CurmudgeonWake(g)
-        Else
-            Let g1 = Destroy(g, snake)
-            Let g2 = With(g1, Props = SetNth(Props(g1), snake + 1, 1))
-            Done(Put(FreedBird(g2, bird), bird), GoClearObj())
-    Else
-        SpeakId(MsgOkMan())
-        Done(Put(FreedBird(g, bird), bird), GoClearObj())
-
-Rem A bird let go in the forest behaves differently from one let go
-Rem underground, and the state records which.
-Def FreedBird(g As Game, bird As Number) As Game
-    If Contains(Conds(RoomAt(g)), "FOREST") Then
-        With(g, Props = SetNth(Props(g), bird + 1, 2))
-    Else
-        With(g, Props = SetNth(Props(g), bird + 1, 0))
-
-Rem actions.c:1360-1400. Waving does nothing unless it is the rod, and
-Rem then only at the fissure or at the bird -- but those two cases are
-Rem the crystal bridge and the jade necklace, so it earns its keep.
-Def DoWave(g As Game, i As Number, msg As String) As Done
-    Let rod = ObjNamed("ROD")
-    Let bird = ObjNamed("BIRD")
-    Let fissure = ObjNamed("FISSURE")
-    If i <> rod Or Not Toting(g, rod) Or (Not Here(g, bird) And Not At(g, fissure)) Then
-        If Not Toting(g, i) Then
-            SpeakId(MsgArentCarrying())
-            Done(g, GoClearObj())
-        Else
-            Speak(msg)
-            Done(g, GoClearObj())
-    Else
-        WaveTheRod(g, bird, fissure)
-
-Rem The bird, loose on the steps with the necklace still unseen, fetches
-Rem it out of the crack for you.
-Def WaveTheRod(g As Game, bird As Number, fissure As Number) As Done
-    Let jade = ObjNamed("JADE")
-    Let steps = ObjNamed("STEPS")
-    If (PropOf(g, bird) = 0 And Loc(g) = First(Places(ObjAt(steps)))
-        And PropOf(g, jade) < 0) Then
-        Let g1 = Put(g, jade)
-        Let g2 = With(g1, Props = SetNth(Props(g1), jade + 1, 0), Tally = Tally(g1) - 1)
-        SpeakId(MsgNecklaceFly())
-        Done(g2, GoClearObj())
-    Else
-        If Closed(g) Then
-            Rem actions.c:1377-1382: waving anything about in the closed
-            Rem repository disturbs the curmudgeons.
-            SpeakId(BirdFlyMessage(g, bird))
-            CurmudgeonWake(g)
-        Else
-            WaveAtFissure(g, bird, fissure)
-
-Def WaveAtFissure(g As Game, bird As Number, fissure As Number) As Done
-    If Closng(g) Or Not At(g, fissure) Then
-        SpeakId(BirdFlyMessage(g, bird))
-        Done(g, GoClearObj())
-    Else
-        Let g1 = Fluttered(g, bird)
-        Done(StateChange(g1, fissure, Spanned(g1, fissure)), GoClearObj())
-
-Def Fluttered(g As Game, bird As Number) As Game
-    If Here(g, bird) Then
-        SpeakId(BirdFlyMessage(g, bird))
-        g
-    Else
-        g
-
-Rem The bridge is a toggle: wave once to raise it, again to drop it.
-Def Spanned(g As Game, fissure As Number) As Number
-    If PropOf(g, fissure) = 1 Then
-        0
-    Else
-        1
-
-Def BirdFlyMessage(g As Game, bird As Number) As Number
-    If PropOf(g, bird) = 1 Then
-        MsgCageFly()
-    Else
-        MsgFreeFly()
-
-Rem actions.c:899-905 walks the object table in declaration order, not the
-Rem order things were picked up, so the inventory always reads the same
-Rem way round however you gathered it.
-Def ShowHeld(g As Game, i As Number, n As Number)
-    If i > n Then
-        Speak("")
-    Else
-        If Toting(g, i) And i <> ObjNamed("BEAR") Then
-            SpeakFlat(Inventory(ObjAt(i)))
-        ShowHeld(g, i + 1, n)
-
-Rem actions.c:896-917. The bear is never on the list; being followed by
-Rem him gets its own line after it, even when the list itself is empty.
-Def DoInventory(g As Game) As Game
-    Let bear = ObjNamed("BEAR")
-    Let burden = Filter(Held(g), Fn(x) => x <> bear)
-    If IsEmpty(burden) Then
-        BearTrails(g)
-        SpeakId(MsgNoCarry())
-        g
-    Else
-        SpeakId(MsgNowHolding())
-        ShowHeld(g, 1, Length(Objects()) - 1)
-        BearTrails(g)
-        g
-
-Def BearTrails(g As Game) As Game
-    If Toting(g, ObjNamed("BEAR")) Then
-        SpeakId(MsgTameBear())
-        g
-    Else
-        g
-
-Rem advent.h:157-169. The phase codes are the old FORTRAN line numbers
-Rem the verbs used to jump back to, and main.c:1386-1437 is the only
-Rem place that reads them. Two are live here: GO_CLEAROBJ drops back to
-Rem the prompt with the room unchanged, while GO_TOP leaves the command
-Rem half-processed so the outer loop falls through and paints the room
-Rem again -- which is why reseeding reprints where you are standing.
-Rem GoUnknown is the "Get what?" case: the verb is remembered but the
-Rem object is dropped, so naming a thing next turn runs the verb on it.
-Rem GoMove is main.c:1390-1393: a null move, which re-describes the room
-Rem AND gives the curmudgeons their turn. GoTop re-describes without them.
-Type Phase = GoClearObj | GoTop | GoUnknown | GoMove | GoWord2
-
-Type Done
-    After As Game
-    How   As Phase
-
-Def Redescribes(p As Phase) As Boolean
-    Select Case p
-        Case GoTop
-            True
-        Case Else
-            False
-
-Rem actions.c:919-955. Light. Lamp or urn; lighting the lamp in a dark
-Rem room returns GO_TOP so the room you can suddenly see gets painted,
-Rem and a lamp past its limit will not light at all.
-Def DoLight(g As Game, i As Number, msg As String) As Done
-    Let obj = ChooseLightable(g, i)
-    If obj = NoObject() Then
-        Done(g, GoUnknown())
-    Else
-        If obj = ObjNamed("URN") Then
-            Done(StateChange(g, obj, LitUrnState(g, obj)), GoClearObj())
-        Else
-            If obj <> Lamp() Then
-                Speak(msg)
-                Done(g, GoClearObj())
-            Else
-                LightLamp(g)
-
-Rem Lighting an empty urn re-announces its empty state instead.
-Def LitUrnState(g As Game, urn As Number) As Number
-    If PropOf(g, urn) = 0 Then
-        0
-    Else
-        2
-
-Def LightLamp(g As Game) As Done
-    If Limit(g) < 0 Then
-        SpeakId(MsgLampOut())
-        Done(g, GoClearObj())
-    Else
-        Let g1 = StateChange(g, Lamp(), LampBright())
-        If IsDarkHere(g) Then
-            Done(g1, GoTop())
-        Else
-            Done(g1, GoClearObj())
-
-Rem actions.c:922-935. With no object named there must be exactly one
-Rem plausible candidate, or the game asks which you meant.
-Def ChooseLightable(g As Game, i As Number) As Number
-    If i <> NoObject() Then
-        i
-    Else
-        Let lampOk = (Here(g, Lamp()) And PropOf(g, Lamp()) = LampDark()
-                      And Limit(g) >= 0)
-        Let urnOk = (Here(g, ObjNamed("URN"))
-                     And PropOf(g, ObjNamed("URN")) = 1)
-        If lampOk And urnOk Then
-            NoObject()
-        Else
-            If urnOk Then
-                ObjNamed("URN")
-            Else
-                If lampOk Then
-                    Lamp()
-                Else
-                    NoObject()
-
-Rem actions.c:655-687. Putting the lamp out in a dark place says so; the
-Rem urn goes dark but keeps its oil; the dragon and the volcano are
-Rem beyond your power.
-Def DoExtinguish(g As Game, i As Number, msg As String) As Done
-    Let obj = ChooseExtinguishable(g, i)
-    If obj = NoObject() Then
-        Done(g, GoUnknown())
-    Else
-        If obj = ObjNamed("URN") Then
-            Done(UrnDoused(g, obj), GoClearObj())
-        Else
-            If obj = Lamp() Then
-                LampDoused(g)
-            Else
-                If obj = ObjNamed("DRAGON") Or obj = ObjNamed("VOLCANO") Then
-                    SpeakId(MsgBeyondPower())
-                    Done(g, GoClearObj())
-                Else
-                    Speak(msg)
-                    Done(g, GoClearObj())
-
-Rem Dousing an empty urn re-announces the dark state without moving it.
-Def UrnDoused(g As Game, urn As Number) As Game
-    If PropOf(g, urn) <> 0 Then
-        StateChange(g, urn, 1)
-    Else
-        Speak(Nth(Changes(ObjAt(urn)), 2))
-        g
-
-Def LampDoused(g As Game) As Done
-    Let g1 = StateChange(g, Lamp(), LampDark())
-    If IsDarkHere(g1) Then
-        SpeakId(MsgPitchDark())
-        Done(g1, GoClearObj())
-    Else
-        Done(g1, GoClearObj())
-
-Def ChooseExtinguishable(g As Game, i As Number) As Number
-    If i <> NoObject() Then
-        i
-    Else
-        If Here(g, ObjNamed("URN")) And PropOf(g, ObjNamed("URN")) = 2 Then
-            ObjNamed("URN")
-        Else
-            If Here(g, Lamp()) And PropOf(g, Lamp()) = LampBright() Then
-                Lamp()
-            Else
-                NoObject()
-
-Rem actions.c:998-1020. With no object named, the game looks round for
-Rem something lockable. The C tests each candidate in turn and lets the
-Rem last match win, so the order below is its order, not a preference.
-Def LockableHere(g As Game, cands As List, i As Number, n As Number, best As Number) As Number
-    If i > n Then
-        best
-    Else
-        Let obj = ObjNamed(Nth(cands, i))
-        If LockInReach(g, obj, Nth(cands, i)) Then
-            LockableHere(g, cands, i + 1, n, obj)
-        Else
-            LockableHere(g, cands, i + 1, n, best)
-
-Rem actions.c:1000-1015. The door and the grate must be at hand; the
-Rem clam, the oyster and the chain may also be carried.
-Def LockInReach(g As Game, obj As Number, tag As String) As Boolean
-    If tag = "DOOR" Or tag = "GRATE" Then
-        At(g, obj)
-    Else
-        Here(g, obj)
-
-Def ChooseLockable(g As Game, i As Number) As Number
-    If i <> NoObject() Then
-        i
-    Else
-        LockableHere(g, { "CLAM", "OYSTER", "DOOR", "GRATE", "CHAIN" }, 1, 5, NoObject())
-
-Rem actions.c:1050-1085. Everything else you might try to lock has its
-Rem own answer: the clam and oyster want a trident, the door depends on
-Rem whether it has been oiled, and the cage simply has no lock.
-Def LockOther(g As Game, i As Number, shut As Boolean, msg As String) As Done
-    If i = ObjNamed("CAGE") Then
-        SpeakId(MsgNoLock())
-        Done(g, GoClearObj())
-    Else
-        If i = Keys() Then
-            SpeakId(MsgCannotUnlock())
-            Done(g, GoClearObj())
-        Else
-            If i = ObjNamed("DOOR") Then
-                SpeakId(DoorReply(g))
-                Done(g, GoClearObj())
-            Else
-                Shellfish(g, i, shut, msg)
-
-Def DoorReply(g As Game) As Number
-    If PropOf(g, ObjNamed("DOOR")) = 1 Then
-        MsgOkMan()
-    Else
-        MsgRustyDoor()
-
-Rem The clam and the oyster answer the same way, but only the clam holds
-Rem the pearl.
-Def Shellfish(g As Game, i As Number, shut As Boolean, msg As String) As Done
-    Let clam = ObjNamed("CLAM")
-    Let oyster = ObjNamed("OYSTER")
-    If i <> clam And i <> oyster Then
-        Speak(msg)
-        Done(g, GoClearObj())
-    Else
-        If shut Then
-            SpeakId(MsgHuhMan())
-            Done(g, GoClearObj())
-        Else
-            If Toting(g, i) Then
-                SpeakId(DropIt(i, clam))
-                Done(g, GoClearObj())
-            Else
-                If Not Toting(g, ObjNamed("TRIDENT")) Then
-                    SpeakId(NeedOpener(i, clam))
-                    Done(g, GoClearObj())
-                Else
-                    Prised(g, i, clam, oyster)
-
-Def DropIt(i As Number, clam As Number) As Number
-    If i = clam Then
-        MsgDropClam()
-    Else
-        MsgDropOyster()
-
-Def NeedOpener(i As Number, clam As Number) As Number
-    If i = clam Then
-        MsgClamOpener()
-    Else
-        MsgOysterOpener()
-
-Def Prised(g As Game, i As Number, clam As Number, oyster As Number) As Done
-    If i <> clam Then
-        SpeakId(MsgOysterOpens())
-        Done(g, GoClearObj())
-    Else
-        Let g1 = Destroy(g, clam)
-        Let g2 = Put(g1, oyster)
-        Let g3 = Relocated(g2, ObjNamed("PEARL"), LocNamed("LOC_CULDESAC"))
-        SpeakId(MsgPearlFalls())
-        Done(g3, GoClearObj())
-
-Rem actions.c:998-1048. The grate and the chain have locks worth the
-Rem name, and both want the keys -- in reach, not necessarily in hand.
-Def DoLock(g As Game, want As Number, shut As Boolean, msg As String) As Done
-    Let i = ChooseLockable(g, want)
-    If i = NoObject() Then
-        SpeakId(MsgNothingLocked())
-        Done(g, GoClearObj())
-    Else
-        If i <> Grate() And i <> ObjNamed("CHAIN") Then
-            LockOther(g, i, shut, msg)
-        Else
-            If Not Here(g, Keys()) Then
-                SpeakId(MsgNoKeys())
-                Done(g, GoClearObj())
-            Else
-                If i = ObjNamed("CHAIN") Then
-                    DoChain(g, shut)
-                Else
-                    LockGrate(g, shut)
-
-Rem actions.c:1035-1045. During closing the grate stays shut, and asking
-Rem it to open is how most players find out they are trapped.
-Def LockGrate(g As Game, shut As Boolean) As Done
-    If Closng(g) Then
-        SpeakId(MsgExitClosed())
-        Done(Panicked(g), GoClearObj())
-    Else
-        If shut Then
-            Done(StateChange(g, Grate(), GrateClosed()), GoClearObj())
-        Else
-            Done(StateChange(g, Grate(), GrateOpen()), GoClearObj())
-
-Rem actions.c:428-478. The bear's chain. Unlocking frees the bear along
-Rem with the chain, unless the bear is dead and stays where it fell.
-Def DoChain(g As Game, shut As Boolean) As Done
-    If shut Then
-        LockChain(g)
-    Else
-        UnlockChain(g)
-
-Def UnlockChain(g As Game) As Done
-    Let bear = ObjNamed("BEAR")
-    Let ch = ObjNamed("CHAIN")
-    If PropOf(g, bear) = 0 Then
-        SpeakId(MsgBearBlocks())
-        Done(g, GoClearObj())
-    Else
-        If PropOf(g, ch) = 0 Then
-            SpeakId(MsgAlreadyUnlocked())
-            Done(g, GoClearObj())
-        Else
-            Let g1 = Freed(g, ch, 0)
-            Let g2 = LoosedBear(g1, bear)
-            SpeakId(MsgChainUnlocked())
-            Done(g2, GoClearObj())
-
-Def LoosedBear(g As Game, bear As Number) As Game
-    If PropOf(g, bear) = 3 Then
-        SetStuck(g, bear, True)
-    Else
-        Freed(g, bear, 2)
-
-Rem Locking wants the chain back at its anchor in the bear's room.
-Def LockChain(g As Game) As Done
-    Let ch = ObjNamed("CHAIN")
-    If PropOf(g, ch) <> 0 Then
-        SpeakId(MsgAlreadyLocked())
-        Done(g, GoClearObj())
-    Else
-        If Loc(g) <> First(Places(ObjAt(ch))) Then
-            SpeakId(MsgNoLocksite())
-            Done(g, GoClearObj())
-        Else
-            SpeakId(MsgChainLocked())
-            Done(ChainedUp(g, ch), GoClearObj())
-
-Def ChainedUp(g As Game, ch As Number) As Game
-    Let g1 = With(g, Props = SetNth(Props(g), ch + 1, 2))
-    Let g2 = DroppedIfHeld(g1, ch)
-    SetStuck(g2, ch, True)
-
-Def DroppedIfHeld(g As Game, i As Number) As Game
-    If Toting(g, i) Then
-        Put(g, i)
-    Else
-        g
-
-Rem ---- liquids -------------------------------------------------------------------
-Rem advent.h:115-121. Water and oil are objects, but they never lie about
-Rem in a room: what the bottle holds is read off the bottle's own state,
-Rem and what a room offers is read off its condition flags.
-
-Def WaterBottle() As Number
-    0
-
-Def EmptyBottle() As Number
-    1
-
-Def OilBottle() As Number
-    2
-
-Def Liquid(g As Game) As Number
-    Let p = PropOf(g, ObjNamed("BOTTLE"))
-    If p = WaterBottle() Then
-        ObjNamed("WATER")
-    Else
-        If p = OilBottle() Then
-            ObjNamed("OIL")
-        Else
-            NoObject()
-
-Def LiqLoc(g As Game) As Number
-    If Not Contains(Conds(RoomAt(g)), "FLUID") Then
-        NoObject()
-    Else
-        If Contains(Conds(RoomAt(g)), "OILY") Then
-            ObjNamed("OIL")
-        Else
-            ObjNamed("WATER")
-
-Rem actions.c:755-827. Fill. The bottle wants a liquid to hand, the urn
-Rem drinks the bottle dry, and the vase does not survive the attempt.
-Def DoFill(g As Game, want As Number, msg As String) As Done
-    If want = ObjNamed("VASE") Then
-        FillVase(g)
-    Else
-        If want = ObjNamed("URN") Then
-            FillUrn(g)
-        Else
-            FillBottle(g, want, msg)
-
-Def FillVase(g As Game) As Done
-    Let vase = ObjNamed("VASE")
-    If LiqLoc(g) = NoObject() Then
-        SpeakId(MsgFillInvalid())
-        Done(g, GoClearObj())
-    Else
-        If Not Toting(g, vase) Then
-            SpeakId(MsgArentCarrying())
-            Done(g, GoClearObj())
-        Else
-            SpeakId(MsgShatterVase())
-            Let g1 = SetStuck(With(g, Props = SetNth(Props(g), vase + 1, 2)),
-                              vase, True)
-            Done(Put(g1, vase), GoClearObj())
-
-Def FillUrn(g As Game) As Done
-    Let urn = ObjNamed("URN")
-    Let bottle = ObjNamed("BOTTLE")
-    If PropOf(g, urn) <> 0 Then
-        SpeakId(MsgFullUrn())
-        Done(g, GoClearObj())
-    Else
-        If Not Here(g, bottle) Then
-            SpeakId(MsgFillInvalid())
-            Done(g, GoClearObj())
-        Else
-            PourIntoUrn(g, urn, bottle, Liquid(g))
-
-Def PourIntoUrn(g As Game, urn As Number, bottle As Number, k As Number) As Done
-    If k = NoObject() Then
-        SpeakId(MsgFillInvalid())
-        Done(g, GoClearObj())
-    Else
-        SpeakId(UrnWord(k))
-        Done(EmptiedIntoUrn(g, urn, bottle, k), GoClearObj())
-
-Rem Water poured in just drains away; only oil stays and readies the urn.
-Def UrnWord(k As Number) As Number
-    If k = ObjNamed("WATER") Then
-        MsgWaterUrn()
-    Else
-        MsgOilUrn()
-
-Def EmptiedIntoUrn(g As Game, urn As Number, bottle As Number, k As Number) As Game
-    Let g1 = With(g, Props = SetNth(Props(g), bottle + 1, EmptyBottle()))
-    Let g2 = UrnOiled(g1, urn, k)
-    With(g2, Held = Filter(Held(g2), Fn(x) => x <> k),
-             Where = SetNth(Where(g2), k + 1, 0))
-
-Def UrnOiled(g As Game, urn As Number, k As Number) As Game
-    If k = ObjNamed("OIL") Then
-        With(g, Props = SetNth(Props(g), urn + 1, 1))
-    Else
-        g
-
-Rem actions.c:800-827. Filling the bottle puts the liquid in your hands
-Rem along with it, which is how TOTING(WATER) ever becomes true. A lit or
-Rem full urn nearby claims the liquid first and refuses to give it up.
-Def FillBottle(g As Game, want As Number, msg As String) As Done
-    Let bottle = ObjNamed("BOTTLE")
-    If want <> NoObject() And want <> bottle Then
-        Speak(msg)
-        Done(g, GoClearObj())
-    Else
-        If want = NoObject() And Not Here(g, bottle) Then
-            Done(g, GoUnknown())
-        Else
-            If (Here(g, ObjNamed("URN"))
-                And PropOf(g, ObjNamed("URN")) <> 0) Then
-                SpeakId(MsgUrnNopour())
-                Done(g, GoClearObj())
-            Else
-                If Liquid(g) <> NoObject() Then
-                    SpeakId(MsgBottleFull())
-                    Done(g, GoClearObj())
-                Else
-                    If LiqLoc(g) = NoObject() Then
-                        SpeakId(MsgNoLiquid())
-                        Done(g, GoClearObj())
-                    Else
-                        Done(Filled(g, bottle), GoClearObj())
-
-Def Filled(g As Game, bottle As Number) As Game
-    Let oily = LiqLoc(g) = ObjNamed("OIL")
-    Let g1 = StateChange(g, bottle, BottleState(oily))
-    If Toting(g1, bottle) And Not Toting(g1, Liquid(g1)) Then
-        With(g1, Held = Append(Held(g1), Liquid(g1)))
-    Else
-        g1
-
-Def BottleState(oily As Boolean) As Number
-    If oily Then
-        OilBottle()
-    Else
-        WaterBottle()
-
-Rem actions.c:1092-1133. Watering the plant is the beanstalk puzzle; the
-Rem plant cycles through three states and the room is repainted, which is
-Rem why this returns GO_MOVE rather than dropping back to the prompt.
-Def DoPour(g As Game, want As Number, msg As String) As Done
-    Let bottle = ObjNamed("BOTTLE")
-    Let obj = PouredThing(g, want, bottle)
-    If obj = NoObject() Then
-        Done(g, GoUnknown())
-    Else
-        If Not Toting(g, obj) Then
-            Speak(msg)
-            Done(g, GoClearObj())
-        Else
-            If obj <> ObjNamed("OIL") And obj <> ObjNamed("WATER") Then
-                SpeakId(MsgCantPour())
-                Done(g, GoClearObj())
-            Else
-                If (Here(g, ObjNamed("URN"))
-                    And PropOf(g, ObjNamed("URN")) = 0) Then
-                    FillUrn(g)
-                Else
-                    Poured(g, obj, bottle)
-
-Def PouredThing(g As Game, want As Number, bottle As Number) As Number
-    If want = bottle Or want = NoObject() Then
-        Liquid(g)
-    Else
-        want
-
-Def Poured(g As Game, obj As Number, bottle As Number) As Done
-    Let g1 = With(g, Props = SetNth(Props(g), bottle + 1, EmptyBottle()),
-                     Held = Filter(Held(g), Fn(x) => x <> obj),
-                     Where = SetNth(Where(g), obj + 1, 0))
-    Let plant = ObjNamed("PLANT")
-    Let door = ObjNamed("DOOR")
-    If Not At(g1, plant) And Not At(g1, door) Then
-        SpeakId(MsgGroundWet())
-        Done(g1, GoClearObj())
-    Else
-        If At(g1, door) Then
-            Done(StateChange(g1, door, DoorState(obj)), GoClearObj())
-        Else
-            If obj = ObjNamed("WATER") Then
-                Done(Watered(g1, plant), GoMove())
-            Else
-                SpeakId(MsgShakingLeaves())
-                Done(g1, GoClearObj())
-
-Def DoorState(obj As Number) As Number
-    If obj = ObjNamed("OIL") Then
-        1
-    Else
-        0
-
-Rem The plant and its taller self share a state, so both move together.
-Def Watered(g As Game, plant As Number) As Game
-    Let next = (PropOf(g, plant) + 1) Mod 3
-    Let g1 = StateChange(g, plant, next)
-    With(g1, Props = SetNth(Props(g1), ObjNamed("PLANT2") + 1, next))
-
-Rem actions.c:594-622. Drinking from the bottle empties it; drinking from
-Rem a stream is free and does nothing at all.
-Def DoDrink(g As Game, want As Number, msg As String) As Done
-    Let water = ObjNamed("WATER")
-    Let bottle = ObjNamed("BOTTLE")
-    If want = ObjNamed("BLOOD") Then
-        Rem actions.c:604-609. Drinking dragon's blood is what lets you
-        Rem understand the bird, later on.
-        Let g1 = Destroy(g, ObjNamed("BLOOD"))
-        Done(With(StateChange(g1, ObjNamed("DRAGON"), 2), Blooded = True), GoClearObj())
-    Else
-      If (want = NoObject() And LiqLoc(g) <> water
-        And (Liquid(g) <> water Or Not Here(g, bottle))) Then
-        Done(g, GoUnknown())
-      Else
-        If want <> NoObject() And want <> water Then
-            SpeakId(MsgRidiculousAttempt())
-            Done(g, GoClearObj())
-        Else
-            If Liquid(g) = water And Here(g, bottle) Then
-                Let g1 = With(g, Held = Filter(Held(g), Fn(x) => x <> water),
-                                 Where = SetNth(Where(g), water + 1, 0))
-                Done(StateChange(g1, bottle, EmptyBottle()), GoClearObj())
-            Else
-                Speak(msg)
-                Done(g, GoClearObj())
-
-Rem ---- attacking ---------------------------------------------------------------
-Rem actions.c:17-180. With no object named the game picks a target, and
-Rem the enemies outrank the merely hittable. Only the dragon rewards you
-Rem for trying.
-
-Rem actions.c:25-72. Assume a target only when it is unambiguous: two
-Rem enemies at once, or no enemy but two lesser targets, get "Attack
-Rem what?" instead. The bird and the machine cannot be attacked by
-Rem throwing the axe. Minus one here means ambiguous.
-Def PickTarget(g As Game, want As Number, thrown As Boolean) As Number
-    If want <> NoObject() Then
-        want
-    Else
-        Let foes = AttackFoes(g)
-        If Length(foes) >= 2 Then
-            0 - 1
-        Else
-            If Length(foes) = 1 Then
-                First(foes)
-            Else
-                PickLesserTarget(g, thrown)
-
-Def PickLesserTarget(g As Game, thrown As Boolean) As Number
-    Let cands = AttackOthers(g, thrown)
-    If Length(cands) >= 2 Then
-        0 - 1
-    Else
-        If Length(cands) = 1 Then
-            First(cands)
-        Else
-            NoObject()
-
-Def AddIf(xs As List, cond As Boolean, i As Number) As List
-    If cond Then
-        Append(xs, i)
-    Else
-        xs
-
-Def AttackFoes(g As Game) As List
-    AddIf(AddIf(AddIf(AddIf(AddIf(AddIf({ },
-          CurmudgeonsHere(g) > 0, ObjNamed("CURMUDGEON")),
-          Here(g, ObjNamed("SNAKE")), ObjNamed("SNAKE")),
-          (At(g, ObjNamed("DRAGON"))
-           And PropOf(g, ObjNamed("DRAGON")) = 0), ObjNamed("DRAGON")),
-          At(g, ObjNamed("TROLL")), ObjNamed("TROLL")),
-          At(g, ObjNamed("OGRE")), ObjNamed("OGRE")),
-          (Here(g, ObjNamed("BEAR"))
-           And PropOf(g, ObjNamed("BEAR")) = 0), ObjNamed("BEAR"))
-
-Def AttackOthers(g As Game, thrown As Boolean) As List
-    AddIf(AddIf(AddIf({ },
-          Here(g, ObjNamed("BIRD")) And Not thrown, ObjNamed("BIRD")),
-          Here(g, ObjNamed("VEND")) And Not thrown, ObjNamed("VEND")),
-          Here(g, ObjNamed("CLAM")) Or Here(g, ObjNamed("OYSTER")), ObjNamed("CLAM"))
-
-Rem actions.c:107-137. Insisting you can kill a dragon bare-handed is the
-Rem one place in the cave where sheer cheek is rewarded.
-Def DoAttack(g As Game, want As Number, thrown As Boolean, msg As String) As Done
-    Let obj = PickTarget(g, want, thrown)
-    Let dragon = ObjNamed("DRAGON")
-    If obj = 0 - 1 Then
-        Done(g, GoUnknown())
-    Else
-        If obj = dragon And PropOf(g, dragon) = 0 Then
-            SpeakId(MsgBareHandsQuery())
-            If SilentYes() Then
-                Done(SlayDragon(g, dragon), GoMove())
-            Else
-                SpeakId(MsgNastyDragon())
-                Done(g, GoMove())
-        Else
-            AttackOther(g, obj, msg)
-
-Rem misc.c:275-320: the question has already been asked, so this reads
-Rem the answer -- and keeps asking for one until it begins with y or n.
-Def SilentYes() As Boolean
-    Let reply = Lower(Trim(LineText(AskRaw())))
-    If Len(reply) = 0 Then
-        SpeakId(MsgPleaseAnswer())
-        SilentYes()
-    Else
-        Let w = First(Tokens(reply))
-        If Left(w, 1) = "y" Then
-            True
-        Else
-            If Left(w, 1) = "n" Then
-                False
-            Else
-                SpeakId(MsgPleaseAnswer())
-                SilentYes()
-
-Def SlayDragon(g As Game, dragon As Number) As Game
-    Let rug = ObjNamed("RUG")
-    Let blood = ObjNamed("BLOOD")
-    Let here = LocNamed("LOC_SECRET5")
-    Let ps = Places(ObjAt(dragon))
-    Let g1 = StateChange(g, dragon, 1)
-    Let g2 = SetStuck(With(g1, Props = SetNth(Props(g1), rug + 1, 0)), rug, False)
-    Let g3 = Relocated(Relocated(g2, dragon, here), rug, here)
-    Let g4 = Relocated(g3, blood, here)
-    Rem actions.c:130-135: everything else lying in either half of the
-    Rem dragon's canyon -- the thrown axe, mostly -- comes along too.
-    Let g5 = SweptTo(g4, ps, here, 1, Length(Objects()) - 1)
-    With(g5, Loc = here)
-
-Def SweptTo(g As Game, ps As List, dest As Number, i As Number, n As Number) As Game
-    If i > n Then
-        g
-    Else
-        If (Nth(Where(g), i + 1) = First(ps)
-            Or (Length(ps) > 1 And Nth(Where(g), i + 1) = Nth(ps, 2))) Then
-            SweptTo(Relocated(g, i, dest), ps, dest, i + 1, n)
-        Else
-            SweptTo(g, ps, dest, i + 1, n)
-
-Rem misc.c:622-640. move() is carry-then-drop, and drop prefixes, so an
-Rem object moved into a room is listed before whatever was already there.
-Def Relocated(g As Game, i As Number, dest As Number) As Game
-    Let cleared = ClearFrom(g, i, 1, Length(Locations()))
-    With(cleared, AtLoc = SetNth(AtLoc(cleared), dest + 1,
-                                 Prepend(i, Nth(AtLoc(cleared), dest + 1))),
-                  Where = SetNth(Where(cleared), i + 1, dest))
-
-Def ClearFrom(g As Game, i As Number, k As Number, n As Number) As Game
-    If k > n Then
-        g
-    Else
-        Let room = Nth(AtLoc(g), k)
-        If Contains(room, i) Then
-            ClearFrom(With(g, AtLoc = SetNth(AtLoc(g), k,
-                                             Filter(room, Fn(x) => x <> i))), i, k + 1, n)
-        Else
-            ClearFrom(g, i, k + 1, n)
-
-Rem actions.c:139-156. The ogre shrugs off anything you can do to him,
-Rem but the sight of a fight makes any curmudgeons in the room bolt, and
-Rem their panic is what actually gets rid of him.
-Def AttackOgre(g As Game, ogre As Number) As Done
-    SpeakId(MsgOgreDodge())
-    If CurmudgeonsHere(g) = 0 Then
-        Done(g, GoClearObj())
-    Else
-        SpeakId(MsgKnifeThrown())
-        Let g1 = Destroy(g, ogre)
-        Let t = Scared(g1, 1, NCurmudgeons() - 1, 0)
-        SpeakId(PanicMessage(Fled(t)))
-        Done(SState(t), GoClearObj())
-
-Type Fleeing
-    SState As Game
-    Fled   As Number
-
-Def Scared(g As Game, i As Number, n As Number, fled As Number) As Fleeing
-    If i > n Then
-        Fleeing(g, fled)
-    Else
-        Let d = Nth(Curmudgeons(g), i)
-        If DLoc(d) <> Loc(g) Then
-            Scared(g, i + 1, n, fled)
-        Else
-            Let d2 = With(d, DLoc = LocNamed("LOC_LONGWEST"), DSeen = False)
-            Scared(With(g, Curmudgeons = SetNth(Curmudgeons(g), i, d2)), i + 1, n, fled + 1)
-
-Def PanicMessage(fled As Number) As Number
-    If fled > 1 Then
-        MsgOgrePanic1()
-    Else
-        MsgOgrePanic2()
-
-Def AttackOther(g As Game, obj As Number, msg As String) As Done
-    If obj = ObjNamed("OGRE") Then
-        AttackOgre(g, obj)
-    Else
-        If obj = ObjNamed("VEND") Then
-            Rem actions.c:76-82. Hitting the machine swings it aside, or back.
-            Done(StateChange(g, obj, VendToggle(g, obj)), GoClearObj())
-        Else
-            If obj = ObjNamed("BIRD") Then
-                If Closed(g) Then
-                    SpeakId(MsgUnhappyBird())
-                    Done(g, GoClearObj())
-                Else
-                    SpeakId(MsgBirdDead())
-                    Done(Destroy(g, obj), GoClearObj())
-            Else
-                If obj = ObjNamed("CURMUDGEON") And Closed(g) Then
-                    CurmudgeonWake(g)
-                Else
-                    If obj = NoObject() Then
-                        SpeakId(MsgNoTarget())
-                        Done(g, GoClearObj())
-                    Else
-                        AttackDefault(g, obj, msg)
-
-Rem actions.c:181-182. Only the handful of things worth attacking have an
-Rem answer of their own; everything else gets the verb's own retort, which
-Rem for attacking a locked grate is "Don't be ridiculous!".
-Def AttackDefault(g As Game, obj As Number, msg As String) As Done
-    Let id = AttackReply(g, obj)
-    If id < 0 Then
-        Speak(msg)
-        Done(g, GoClearObj())
-    Else
-        SpeakId(id)
-        Done(g, GoClearObj())
-
-Def VendToggle(g As Game, vend As Number) As Number
-    If PropOf(g, vend) = 0 Then
-        1
-    Else
-        0
-
-Def AttackReply(g As Game, obj As Number) As Number
-    If obj = ObjNamed("SNAKE") Then
-        MsgSnakeWarning()
-    Else
-        If obj = ObjNamed("CLAM") Or obj = ObjNamed("OYSTER") Then
-            MsgShellImpervious()
-        Else
-            If obj = ObjNamed("DRAGON") Then
-                MsgAlreadyDead()
-            Else
-                If obj = ObjNamed("TROLL") Then
-                    MsgRockyTroll()
-                Else
-                    Rem the curmudgeons are the one thing you might plausibly
-                    Rem take on unarmed, and the game asks whether you mean it
-                    If obj = ObjNamed("CURMUDGEON") Then
-                        MsgBareHandsQuery()
-                    Else
-                        If obj = ObjNamed("BEAR") Then
-                            BearAttackReply(g)
-                        Else
-                            0 - 1
-
-Rem actions.c:88-105. The bear is a bad idea in every state, differently.
-Def BearAttackReply(g As Game) As Number
-    If PropOf(g, ObjNamed("BEAR")) = 0 Then
-        MsgBearHands()
-    Else
-        If PropOf(g, ObjNamed("BEAR")) = 3 Then
-            MsgAlreadyDead()
-        Else
-            MsgBearConfused()
-
-Rem ---- the smaller verbs ---------------------------------------------------------
-Rem Each of these is a handful of lines in the C and a handful here. They
-Rem matter because between them they account for most of what a player
-Rem actually types.
-
-Rem actions.c:624-652. Eating the food works; eating the livestock does
-Rem not, and the game has a separate opinion about each attempt.
-Def DoEat(g As Game, want As Number, msg As String) As Done
-    Let food = ObjNamed("FOOD")
-    If want = NoObject() Then
-        If Not Here(g, food) Then
-            Done(g, GoUnknown())
-        Else
-            SpeakId(MsgThanksDelicious())
-            Done(Destroy(g, food), GoClearObj())
-    Else
-        If want = food Then
-            SpeakId(MsgThanksDelicious())
-            Done(Destroy(g, food), GoClearObj())
-        Else
-            If IsLivestock(want) Then
-                SpeakId(MsgLostAppetite())
-                Done(g, GoClearObj())
-            Else
-                Speak(msg)
-                Done(g, GoClearObj())
-
-Def IsLivestock(i As Number) As Boolean
-    Contains({ ObjNamed("BIRD"), ObjNamed("SNAKE"), ObjNamed("CLAM"),
-               ObjNamed("OYSTER"), ObjNamed("CURMUDGEON"), ObjNamed("DRAGON"),
-               ObjNamed("TROLL"), ObjNamed("BEAR"), ObjNamed("OGRE") }, i)
-
-Rem actions.c:1224-1239. Rubbing the lit urn is the one time it is worth
-Rem doing; everything else earns a shrug.
-Def DoRub(g As Game, want As Number, msg As String) As Done
-    Let urn = ObjNamed("URN")
-    If want = urn And PropOf(g, urn) = 2 Then
-        Let amber = ObjNamed("AMBER")
-        Let g1 = Destroy(g, urn)
-        Let g2 = Put(g1, amber)
-        Let g3 = With(g2, Props = SetNth(Props(g2), amber + 1, 1), Tally = Tally(g2) - 1)
-        SpeakId(MsgUrnGenies())
-        Done(Put(g3, ObjNamed("CAVITY")), GoClearObj())
-    Else
-        If want <> Lamp() Then
-            SpeakId(MsgPeculiarNothing())
-            Done(g, GoClearObj())
-        Else
-            Speak(msg)
-            Done(g, GoClearObj())
-
-Def DoScore(g As Game) As Done
-    SpeakArgs(MsgGarneredPoints(), { Str(ScoreOf(g)), Str(MaxScore()),
-                                     Str(Turns(g)), Str(Turns(g)) })
-    Done(g, GoClearObj())
-
-Rem main.c:1421-1425. Disturbing the curmudgeons in the repository is the
-Rem last mistake anyone gets to make: they wake, and the game ends on
-Rem endgame scoring.
-Def CurmudgeonWake(g As Game) As Done
-    SpeakId(MsgCurmudgeonsAwaken())
-    Done(With(g, Outcome = Won()), GoClearObj())
-
-Rem actions.c:266-292. Break: the mirror is out of reach until the
-Rem repository, where breaking it wakes the curmudgeons; the vase is the
-Rem only other thing fragile enough to answer.
-Def DoBreak(g As Game, want As Number, msg As String) As Done
-    If want = ObjNamed("MIRROR") Then
-        If Closed(g) Then
-            CurmudgeonWake(StateChange(g, ObjNamed("MIRROR"), 1))
-        Else
-            SpeakId(MsgTooFar())
-            Done(g, GoClearObj())
-    Else
-        If want = ObjNamed("VASE") And PropOf(g, ObjNamed("VASE")) = 0 Then
-            BreakVase(g)
-        Else
-            Speak(msg)
-            Done(g, GoClearObj())
-
-Def BreakVase(g As Game) As Done
-    Let vase = ObjNamed("VASE")
-    Let g1 = DroppedIfHeld(g, vase)
-    Let g2 = StateChange(g1, vase, 2)
-    Done(SetStuck(g2, vase, True), GoClearObj())
-
-Rem actions.c:1333-1341. Wake: only worth anything as a way to lose.
-Def DoWake(g As Game, want As Number, msg As String) As Done
-    If want = ObjNamed("CURMUDGEON") And Closed(g) Then
-        SpeakId(MsgProdCurmudgeon())
-        CurmudgeonWake(g)
-    Else
-        Speak(msg)
-        Done(g, GoClearObj())
-
-Rem actions.c:246-264. Blasting needs the dynamite rod, found and in the
-Rem closed cave; where the rod is when it goes off decides how you fare.
-Def DoBlast(g As Game) As Done
-    Let rod2 = ObjNamed("ROD2")
-    If PropOf(g, rod2) < 0 Or Not Closed(g) Then
-        SpeakId(MsgRequiresDynamite())
-        Done(g, GoClearObj())
-    Else
-        If Here(g, rod2) Then
-            SpeakId(MsgSplatterMessage())
-            Done(With(g, Bonus = 1, Outcome = Won()), GoClearObj())
-        Else
-            If Loc(g) = LocNamed("LOC_NE") Then
-                SpeakId(MsgDefeatMessage())
-                Done(With(g, Bonus = 2, Outcome = Won()), GoClearObj())
-            Else
-                SpeakId(MsgVictoryMessage())
-                Done(With(g, Bonus = 3, Outcome = Won()), GoClearObj())
-
-Rem actions.c:854-894. Fly. Snide remarks unless the hovering rug is
-Rem here; boarding it whisks you across the chasm and back.
-Def DoFly(g As Game, want As Number, msg As String) As Done
-    Let rug = ObjNamed("RUG")
-    If want = NoObject() And Not Here(g, rug) Then
-        SpeakId(MsgFlapArms())
-        Done(g, GoClearObj())
-    Else
-        If want = NoObject() And PropOf(g, rug) <> 2 Then
-            SpeakId(MsgRugNothing2())
-            Done(g, GoClearObj())
-        Else
-            If want <> NoObject() And want <> rug Then
-                Speak(msg)
-                Done(g, GoClearObj())
-            Else
-                If PropOf(g, rug) <> 2 Then
-                    SpeakId(MsgRugNothing1())
-                    Done(g, GoClearObj())
-                Else
-                    RideRug(g)
-
-Def RideRug(g As Game) As Done
-    Let cliff = LocNamed("LOC_CLIFF")
-    Let ledge = LocNamed("LOC_LEDGE")
-    If Loc(g) <> cliff And Loc(g) <> ledge Then
-        SpeakId(MsgNothingHappens())
-        Done(g, GoMove())
-    Else
-        SpeakId(RugRideWord(g, ledge))
-        Done(With(g, OldLc2 = OldLoc(g), OldLoc = Loc(g),
-                     Loc = cliff + ledge - Loc(g)), GoMove())
-
-Def RugRideWord(g As Game, ledge As Number) As Number
-    If Loc(g) = ledge Then
-        MsgRugReturns()
-    Else
-        MsgRugGoes()
-
-Rem actions.c:831-852. Finding something you are already holding, or that
-Rem is right in front of you, gets a wry answer.
-Def DoFind(g As Game, want As Number, msg As String) As Done
-    If Toting(g, want) Then
-        SpeakId(MsgAlreadyCarrying())
-        Done(g, GoClearObj())
-    Else
-        If Closed(g) Then
-            SpeakId(MsgNeededNearby())
-            Done(g, GoClearObj())
-        Else
-            If FindsIt(g, want) Then
-                SpeakId(MsgYouHaveit())
-                Done(g, GoClearObj())
-            Else
-                Speak(msg)
-                Done(g, GoClearObj())
-
-Def FindsIt(g As Game, want As Number) As Boolean
-    If At(g, want) Then
-        True
-    Else
-        If Liquid(g) = want And At(g, ObjNamed("BOTTLE")) Then
-            True
-        Else
-            If want = LiqLoc(g) And want <> NoObject() Then
-                True
-            Else
-                want = ObjNamed("CURMUDGEON") And CurmudgeonsHere(g) > 0
-
-Rem actions.c:294-300. Brief mode: stop volunteering the long room text.
-Def DoBrief(g As Game) As Done
-    SpeakId(MsgBriefConfirm())
-    Done(With(g, AbbNumOf = 10000, Detail = 3), GoClearObj())
-
-Rem actions.c:691-740. Feeding is mostly a way of finding out what will
-Rem not eat, but the snake will take the bird, and the curmudgeons take
-Rem offence at being offered anything at all.
-Def DoFeed(g As Game, want As Number, msg As String) As Done
-    Let bird = ObjNamed("BIRD")
-    Let snake = ObjNamed("SNAKE")
-    If want = bird Then
-        SpeakId(MsgBirdPining())
-        Done(g, GoClearObj())
-    Else
-        If want = snake And Here(g, bird) Then
-            SpeakId(MsgBirdDevoured())
-            Done(Destroy(g, bird), GoClearObj())
-        Else
-            If want = ObjNamed("TROLL") Then
-                SpeakId(MsgTrollVices())
-                Done(g, GoClearObj())
-            Else
-                FedOthers(g, want, msg)
-
-Rem actions.c:697-750. Each creature refuses in its own way, and only the
-Rem bear is actually interested -- feeding it the food is what tames it
-Rem and frees the axe.
-Def FedOthers(g As Game, want As Number, msg As String) As Done
-    Let food = ObjNamed("FOOD")
-    If want = ObjNamed("CURMUDGEON") Then
-        If Here(g, food) Then
-            SpeakId(MsgReallyMad())
-            Done(With(g, Dflag = Dflag(g) + 2), GoClearObj())
-        Else
-            Speak(msg)
-            Done(g, GoClearObj())
-    Else
-        If want = ObjNamed("DRAGON") Then
-            SpeakId(DragonReply(g))
-            Done(g, GoClearObj())
-        Else
-            If want = ObjNamed("BEAR") Then
-                FedBear(g, want, msg, food)
-            Else
-                If want = ObjNamed("OGRE") Then
-                    If Here(g, food) Then
-                        SpeakId(MsgOgreFull())
-                        Done(g, GoClearObj())
-                    Else
-                        Speak(msg)
-                        Done(g, GoClearObj())
-                Else
-                    If want = ObjNamed("SNAKE") Then
-                        SpeakId(MsgNothingEdible())
-                        Done(g, GoClearObj())
-                    Else
-                        SpeakId(MsgAmGame())
-                        Done(g, GoClearObj())
-
-Def DragonReply(g As Game) As Number
-    If PropOf(g, ObjNamed("DRAGON")) <> 0 Then
-        MsgRidiculousAttempt()
-    Else
-        MsgNothingEdible()
-
-
-Def FedBear(g As Game, bear As Number, msg As String, food As Number) As Done
-    If PropOf(g, bear) = 3 Then
-        SpeakId(MsgRidiculousAttempt())
-        Done(g, GoClearObj())
-    Else
-        If PropOf(g, bear) <> 0 Then
-            Speak(msg)
-            Done(g, GoClearObj())
-        Else
-            If Not Here(g, food) Then
-                SpeakId(MsgNothingEdible())
-                Done(g, GoClearObj())
-            Else
-                Let g1 = Destroy(g, food)
-                Let axe = ObjNamed("AXE")
-                Let g2 = SetStuck(With(g1, Props = SetNth(Props(g1), axe + 1, 0)), axe, False)
-                Done(StateChange(g2, bear, 1), GoClearObj())
-
-Rem actions.c:1146-1200. Reading needs light and something written on.
-Rem A bare "read" never reaches actions.c's read() at all: the intransitive
-Rem branch hands back GO_UNKNOWN first, so the game asks "Read what?" rather
-Rem than complaining it cannot see a thing called read. The darkness only
-Rem matters once you have named something to read.
-Rem actions.c:1170-1200. Bare "read" looks round for something to read: one
-Rem readable thing to hand and it reads that, nothing or several and it asks
-Rem which. So the rod with the rusty star answers for itself.
-Def Readable(g As Game, i As Number) As Boolean
-    (Here(g, i) And Not IsEmpty(Texts(ObjAt(i))) And PropOf(g, i) >= 0)
-
-Def ReadTarget(g As Game, i As Number, n As Number, found As Number) As Number
-    If i > n Then
-        found
-    Else
-        ReadTarget2(g, i, n, found)
-
-Def ReadTarget2(g As Game, i As Number, n As Number, found As Number) As Number
-    If Readable(g, i) Then
-        If found = NoObject() Then
-            ReadTarget(g, i + 1, n, i)
-        Else
-            Rem two things to read is as good as none: it asks which
-            NoObject()
-    Else
-        ReadTarget(g, i + 1, n, found)
-
-Def DoRead(g As Game, want As Number, msg As String, raw As String) As Done
-    If want = NoObject() Then
-        ReadAround(g, msg, raw)
-    Else
-        DoRead2(g, want, msg, raw)
-
-Def ReadAround(g As Game, msg As String, raw As String) As Done
-    Rem nothing is legible in a pitch-dark room, so there is nothing for the
-    Rem search to settle on and the game asks which thing you meant
-    Let t = ReadTargetLit(g)
-    If t = NoObject() Then
-        Done(g, GoUnknown())
-    Else
-        DoRead2(g, t, msg, raw)
-
-Def DoRead2(g As Game, want As Number, msg As String, raw As String) As Done
-    If IsDarkHere(g) Then
-        Speak(Render(Nth(Messages(), MsgNoSee() + 1), { raw }))
-        Done(g, GoClearObj())
-    Else
-        If want = ObjNamed("OYSTER") Then
-            ReadOyster(g, msg)
-        Else
-            Let o = ObjAt(want)
-            If IsEmpty(Texts(o)) Or PropOf(g, want) < 0 Then
-                Speak(msg)
-                Done(g, GoClearObj())
-            Else
-                SpeakFlat("")
-                Speak(TextOf(g, o, want))
-                Done(g, GoClearObj())
-
-Rem actions.c:1183-1193. The oyster's engraving is the endgame clue, and
-Rem reading it costs ten points -- once agreed to, it stays bought.
-Def ReadOyster(g As Game, msg As String) As Done
-    If Not Toting(g, ObjNamed("OYSTER")) Or Not Closed(g) Then
-        SpeakId(MsgDontUnderstand())
-        Done(g, GoClearObj())
-    Else
-        If Not Clshnt(g) Then
-            Let took = YesNo(Nth(Messages(), MsgClueQuery() + 1),
-                             Nth(Messages(), MsgWayoutClue() + 1),
-                             Nth(Messages(), MsgOkMan() + 1))
-            Done(With(g, Clshnt = took), GoClearObj())
-        Else
-            Speak(Nth(Sounds(ObjAt(ObjNamed("OYSTER"))), 2))
-            Done(g, GoClearObj())
-
-Def TextOf(g As Game, o As Obj, want As Number) As String
-    Let p = PropOf(g, want)
-    If p >= 0 And p < Length(Texts(o)) Then
-        Nth(Texts(o), p + 1)
-    Else
-        First(Texts(o))
-
-Rem actions.c:959-995. Listening reports the room's own noise and then
-Rem anything here that has something to say. The bird is special: once
-Rem you have drunk the dragon's blood you understand it, which is a whole
-Rem second set of sounds three states along -- and its last remark is the
-Rem one after which it is gone.
-Def DoListen(g As Game) As Done
-    Let g1 = RoomNoise(g)
-    Let roomSpoke = Noise(RoomAt(g)) >= 0
-    Let t = ListenAll(g1, 1, Length(Objects()) - 1, roomSpoke)
-    If Not Heard(t) Then
-        SpeakId(MsgAllSilent())
-        Done(LState(t), GoClearObj())
-    Else
-        Done(LState(t), GoClearObj())
-
-Type Listened
-    LState As Game
-    Heard  As Boolean
-
-Def RoomNoise(g As Game) As Game
-    If Noise(RoomAt(g)) < 0 Then
-        g
-    Else
-        SpeakId(Noise(RoomAt(g)))
-        g
-
-Def ListenAll(g As Game, i As Number, n As Number, heard As Boolean) As Listened
-    If i > n Then
-        Listened(g, heard)
-    Else
-        Let o = ObjAt(i)
-        If Not Here(g, i) Or IsEmpty(Sounds(o)) Or PropOf(g, i) < 0 Then
-            ListenAll(g, i + 1, n, heard)
-        Else
-            Let mi = SoundState(g, i)
-            Speak(SoundOf(g, o, mi))
-            ListenAll(Silenced(g, i, mi), i + 1, n, True)
-
-Def SoundState(g As Game, i As Number) As Number
-    If i = ObjNamed("BIRD") And Blooded(g) Then
-        PropOf(g, i) + 3
-    Else
-        PropOf(g, i)
-
-Def SoundOf(g As Game, o As Obj, mi As Number) As String
-    If mi >= 0 And mi < Length(Sounds(o)) Then
-        Replace(Nth(Sounds(o), mi + 1), "%s", Magic(g))
-    Else
-        First(Sounds(o))
-
-Rem The bird's last word is its farewell.
-Def Silenced(g As Game, i As Number, mi As Number) As Game
-    If i = ObjNamed("BIRD") And mi = Length(Sounds(ObjAt(i))) - 1 Then
-        Destroy(g, i)
-    Else
-        g
-
-Rem actions.c:1268-1332. Throwing is dropping, unless it is the axe, and
-Rem then it is attacking -- the only way to actually kill a curmudgeon. A
-Rem treasure thrown at the troll buys passage.
-Def DoThrow(g As Game, obj As Number, msg As String) As Done
-    If Not Toting(g, obj) Then
-        Speak(msg)
-        Done(g, GoClearObj())
-    Else
-        Let troll = ObjNamed("TROLL")
-        If Treasure(ObjAt(obj)) And At(g, troll) Then
-            SpeakId(MsgTrollSatisfied())
-            Done(PaidTheToll(g, obj, troll), GoClearObj())
-        Else
-            If obj = ObjNamed("FOOD") And Here(g, ObjNamed("BEAR")) Then
-                DoFeed(g, ObjNamed("BEAR"), msg)
-            Else
-                If obj <> ObjNamed("AXE") Then
-                    DoDrop(g, obj, msg)
-                Else
-                    ThrowAxe(g, msg)
-
-Def PaidTheToll(g As Game, obj As Number, troll As Number) As Game
-    Let troll2 = ObjNamed("TROLL2")
-    Let ps = Places(ObjAt(troll))
-    Let g1 = Destroy(g, obj)
-    Let g2 = Destroy(g1, troll)
-    Let g3 = Relocated(g2, troll2, First(ps))
-    Juggled(PlaceSecond(g3, troll2, ps), ObjNamed("CHASM"))
-
-Rem A curmudgeon in the room is a target; otherwise the axe lands wherever it
-Rem was going to land and the usual attack applies.
-Def ThrowAxe(g As Game, msg As String) As Done
-    If CurmudgeonsHere(g) <= 0 Then
-        ThrowAxeAtBeast(g, msg)
-    Else
-        Let missed = RollOf(g, NCurmudgeons() + 1) < Dflag(g)
-        Let g1 = Stepped(g)
-        Rem actions.c:1262-1266. throw_support drops the axe and hands back
-        Rem GO_MOVE, a null motion whose only job is to describe the room
-        Rem again -- so after the smoke clears you see where you are and the
-        Rem axe lying where it fell.
-        If missed Then
-            SpeakId(MsgCurmudgeonDodges())
-            Done(Landed(g1), GoMove())
-        Else
-            SpeakId(KillMessage(g1))
-            Done(Landed(Slain(With(g1, Dkill = Dkill(g1) + 1))), GoMove())
-
-Def KillMessage(g As Game) As Number
-    If Dkill(g) = 0 Then
-        MsgCurmudgeonSmoke()
-    Else
-        MsgKilledCurmudgeon()
-
-Rem actions.c:1296-1317. With no curmudgeon about, the axe finds the dragon,
-Rem the troll, the ogre or the bear before anything else does.
-Def ThrowAxeAtBeast(g As Game, msg As String) As Done
-    If At(g, ObjNamed("DRAGON")) And PropOf(g, ObjNamed("DRAGON")) = 0 Then
-        SpeakId(MsgDragonScales())
-        Done(Landed(g), GoMove())
-    Else
-        If At(g, ObjNamed("TROLL")) Then
-            SpeakId(MsgTrollReturns())
-            Done(Landed(g), GoMove())
-        Else
-            If At(g, ObjNamed("OGRE")) Then
-                SpeakId(MsgOgreDodge())
-                Done(Landed(g), GoMove())
-            Else
-                If (Here(g, ObjNamed("BEAR"))
-                    And PropOf(g, ObjNamed("BEAR")) = 0) Then
-                    AxeAtBear(g)
-                Else
-                    DoAttack(g, NoObject(), True, msg)
-
-Rem actions.c:1307-1315. This'll teach him to throw the axe at the bear:
-Rem it lands out of reach until the bear is dealt with.
-Def AxeAtBear(g As Game) As Done
-    Let axe = ObjNamed("AXE")
-    Let g1 = SetStuck(Put(g, axe), axe, True)
-    Let g2 = Juggled(g1, ObjNamed("BEAR"))
-    Done(StateChange(g2, axe, 1), GoClearObj())
-
-Def Slain(g As Game) As Game
-    SlayFirst(g, 1, NCurmudgeons() - 1)
-
-Def SlayFirst(g As Game, i As Number, n As Number) As Game
-    If i > n Then
-        g
-    Else
-        Let d = Nth(Curmudgeons(g), i)
-        If DLoc(d) = Loc(g) Then
-            With(g, Curmudgeons = SetNth(Curmudgeons(g), i, With(d, DLoc = 0, DSeen = False)))
-        Else
-            SlayFirst(g, i + 1, n)
-
-Rem actions.c:1262-1266. However the throw turns out, the axe ends up on
-Rem the floor here.
-Def Landed(g As Game) As Game
-    Let axe = ObjNamed("AXE")
-    If Toting(g, axe) Then
-        Put(g, axe)
-    Else
-        g
-
-Rem ---- suspend and resume --------------------------------------------------------
-Rem saveresume.c:67-149. The C writes its game struct to disk raw, which
-Rem is not portable even between two C compilers -- padding, endianness
-Rem and enum width all leak into the file. This port writes its own
-Rem format through Shoddy's binary words instead: a version, then every
-Rem scalar and array in a fixed order. The transcripts do not look at the
-Rem bytes, only at the prompts and the game that comes back, so they
-Rem grade this just as well.
-Rem
-Rem The prompt loop is the fiddly part: the C re-asks until a file opens,
-Rem and prints the failure with the name you typed.
-
-Rem saveresume.c:19 -- SAVE_VERSION 32, printed as major.minor by halving
-Rem it at the decimal point. The format on disk is ours, not the C's, but
-Rem the number is shared so a mismatched file reports the same version the
-Rem recorded transcripts expect.
-Def SaveVersion() As Number
-    32
-
-Rem saveresume.c:87 asks through myreadline, which goes to editline. With
-Rem stdin redirected editline suppresses the prompt and the echo, so a
-Rem recorded session shows the failure message but not what was typed --
-Rem and shows a bare "File name:" only on the read that hits end of
-Rem input. This reproduces those bytes; it is matched against the
-Rem recorded transcripts rather than derived from the C.
-Def AskFile() As String
-    Let name = Trim(Input(""))
-    If Len(name) = 0 Then
-        Rem Input writes its prompt with no trailing newline, which is
-        Rem what the hanging "File name: " at end of input needs; the
-        Rem read itself returns empty again straight away.
-        Let again = Input("\nFile name: ")
-        ""
-    Else
-        name
-
-Rem The C prints "Can't open file X, try again." with no leading blank,
-Rem then loops back to the prompt.
-Rem saveresume.c:85-103 loops on fopen until it gets a file or runs out of
-Rem input, so naming somewhere unwritable costs you a complaint and another
-Rem prompt rather than the game. TryWriteFile both asks the question and
-Rem creates the file, exactly as the C's fopen(name, "wb") does.
-Def AskUntilWritable(g As Game) As String
-    Let name = AskFile()
-    If Len(name) = 0 Then
-        ""
-    Else
-        If TryWriteFile(name, "") Then
-            name
-        Else
-            Print("Can't open file " & name & ", try again.")
-            AskUntilWritable(g)
-
-Def DoSuspend(g As Game) As Done
-    SpeakId(MsgSuspendWarning())
-    Let ok = Nth(Messages(), MsgOkMan() + 1)
-    If Not YesNo(Nth(Messages(), MsgThisAcceptable() + 1), ok, ok) Then
-        Done(g, GoClearObj())
-    Else
-        Let g1 = With(g, Saved = Saved(g) + 5)
-        Let name = AskUntilWritable(g1)
-        If Len(name) = 0 Then
-            Done(g1, GoTop())
-        Else
-            WriteSave(g1, name)
-            SpeakId(MsgResumeHelp())
-            Done(With(g1, Outcome = Suspended()), GoClearObj())
-
-Rem saveresume.c:111-148. Resuming mid-game asks whether you really mean
-Rem to abandon the one you are in.
-Def DoResume(g As Game) As Done
-    Let ok = Nth(Messages(), MsgOkMan() + 1)
-    If (Loc(g) <> LocNamed("LOC_START") Or Nth(Abbrev(g), LocNamed("LOC_START") + 1) <> 1) Then
-        SpeakId(MsgResumeAbandon())
-        If Not YesNo(Nth(Messages(), MsgThisAcceptable() + 1), ok, ok) Then
-            Done(g, GoClearObj())
-        Else
-            ResumeFrom(g)
-    Else
-        ResumeFrom(g)
-
-Def ResumeFrom(g As Game) As Done
-    Let name = AskFile()
-    If Len(name) = 0 Then
-        Done(g, GoTop())
-    Else
-        If Not FileExists(name) Then
-            Print("Can't open file " & name & ", try again.")
-            ResumeFrom(g)
-        Else
-            Rem saveresume.c:149 -- restore hands back GO_TOP, so the
-            Rem restored room is described where it stands rather than
-            Rem being moved into.
-            Done(ReadSave(g, name), GoTop())
-
-Rem ---- the save file ---------------------------------------------------------------
-Rem One version word, the scalars, then the arrays and lists. Nothing
-Rem clever: this is read back in exactly the order it is written.
-
-Def WriteSave(g As Game, name As String)
-    WriteSaveAs(g, name, SaveVersion())
-
-Rem saveresume.c:34 stamps ADVENT_MAGIC ahead of everything else, which is
-Rem what lets restore tell "not one of ours" from "ours, wrong era" -- two
-Rem refusals the transcripts word differently.
-Def SaveMagic() As Number
-    193765
-
-Def WriteSaveAs(g As Game, name As String, version As Number)
-    Let f = BOpen(name)
-    PutNum(f, SaveMagic())
-    PutNum(f, version)
-    PutNum(f, Loc(g))
-    PutNum(f, OldLoc(g))
-    PutNum(f, OldLc2(g))
-    PutNum(f, Turns(g))
-    PutNum(f, Deaths(g))
-    PutNum(f, Tally(g))
-    PutNum(f, Dflag(g))
-    PutNum(f, Dkill(g))
-    PutNum(f, Knfloc(g))
-    PutNum(f, Trnluz(g))
-    PutNum(f, Saved(g))
-    PutNum(f, Clock1(g))
-    PutNum(f, Clock2(g))
-    PutNum(f, Detail(g))
-    PutNum(f, AbbNumOf(g))
-    PutNum(f, LcgX(g))
-    PutNum(f, Limit(g))
-    PutBool(f, Lmwarn(g))
-    PutBool(f, Blooded(g))
-    PutBool(f, Closng(g))
-    PutBool(f, Closed(g))
-    PutBool(f, Panic(g))
-    PutBool(f, Novice(g))
-    PutBool(f, WzDark(g))
-    PutStr(f, Magic(g), 8)
-    PutArray(f, Props(g), 1, Length(Props(g)))
-    PutArray(f, Where(g), 1, Length(Where(g)))
-    PutArray(f, Fixture(g), 1, Length(Fixture(g)))
-    PutArray(f, Abbrev(g), 1, Length(Abbrev(g)))
-    PutList(f, Held(g), 1, Length(Held(g)))
-    PutRooms(f, AtLoc(g), 1, Length(AtLoc(g)))
-    PutCurmudgeons(f, Curmudgeons(g), 1, NCurmudgeons())
-    PutHints(f, HintState(g), 1, Length(Hints()))
-    BClose(f)
-
-Rem These walk to the end and stop. The base case writes nothing at all --
-Rem an earlier version padded it with a zero, which the Get side never read
-Rem back, so every array after the first came home shifted by one slot and a
-Rem resumed game quietly wore the wrong state.
-Def PutArray(f As Number, a As Array, i As Number, n As Number)
-    If i <= n Then
-        PutNum(f, Nth(a, i))
-        PutArray(f, a, i + 1, n)
-
-Def PutList(f As Number, xs As List, i As Number, n As Number)
-    PutNum(f, n)
-    PutItems(f, xs, i, n)
-
-Def PutItems(f As Number, xs As List, i As Number, n As Number)
-    If i <= n Then
-        PutNum(f, Nth(xs, i))
-        PutItems(f, xs, i + 1, n)
-
-Def PutRooms(f As Number, a As Array, i As Number, n As Number)
-    If i <= n Then
-        PutList(f, Nth(a, i), 1, Length(Nth(a, i)))
-        PutRooms(f, a, i + 1, n)
-
-Def PutCurmudgeons(f As Number, ds As List, i As Number, n As Number)
-    If i <= n Then
-        Let d = Nth(ds, i)
-        PutNum(f, DLoc(d))
-        PutNum(f, DOld(d))
-        PutBool(f, DSeen(d))
-        PutCurmudgeons(f, ds, i + 1, n)
-
-Def PutHints(f As Number, hs As List, i As Number, n As Number)
-    If i <= n Then
-        Let h = Nth(hs, i)
-        PutBool(f, Used(h))
-        PutNum(f, Lc(h))
-        PutHints(f, hs, i + 1, n)
-
-Rem Read back in exactly the order WriteSave laid it down. A file whose
-Rem first word is not our version is not ours.
-Rem saveresume.c:157-171. Three ways a save file can be refused, and they
-Rem read differently on purpose: bad magic means it is not one of ours at
-Rem all, a version mismatch means it is ours but from another era, and
-Rem failing is_valid means somebody has been editing it -- which the game
-Rem treats as meddling with magic and throws you out for.
-Def ReadSave(g As Game, name As String) As Game
-    Let f = BOpen(name)
-    Let magic = GetNum(f)
-    Let v = GetNum(f)
-    If magic <> SaveMagic() Then
-        BClose(f)
-        SpeakId(MsgBadSave())
-        g
-    Else
-      If v <> SaveVersion() Then
-        BClose(f)
-        SpeakArgs(MsgVersionSkew(), { Str(Div10(v)), Str(Rem10(v)),
-                                      Str(Div10(SaveVersion())), Str(Rem10(SaveVersion())) })
-        g
-      Else
-        Let g1 = ReadScalars(g, f)
-        Let g2 = ReadTables(g1, f)
-        BClose(f)
-        Validated(g2)
-
-Rem saveresume.c:229. Deaths beyond the three the game offers is the giveaway
-Rem the C checks for: nobody reaches it by playing.
-Def Validated(g As Game) As Game
-    If Deaths(g) >= NDeaths() Then
-        SpeakId(MsgSaveTampering())
-        With(g, Outcome = Suspended())
-    Else
-        g
-
-Rem C integer division truncates toward zero, so a negative version prints
-Rem as -133.-7 rather than -134.3. Floor would round the wrong way.
-Def Div10(n As Number) As Number
-    If n < 0 Then
-        0 - Floor((0 - n) / 10)
-    Else
-        Floor(n / 10)
-
-Def Rem10(n As Number) As Number
-    n - (Div10(n) * 10)
-
-Def ReadScalars(g As Game, f As Number) As Game
-    Let loc = GetNum(f)
-    Let oldloc = GetNum(f)
-    Let oldlc2 = GetNum(f)
-    Let turns = GetNum(f)
-    Let deaths = GetNum(f)
-    Let tally = GetNum(f)
-    Let dflag = GetNum(f)
-    Let dkill = GetNum(f)
-    Let knfloc = GetNum(f)
-    Let trnluz = GetNum(f)
-    Let saved = GetNum(f)
-    Let c1 = GetNum(f)
-    Let c2 = GetNum(f)
-    Let detail = GetNum(f)
-    Let abbnum = GetNum(f)
-    Let lcg = GetNum(f)
-    Let limit = GetNum(f)
-    Let lmw = GetBool(f)
-    Let blood = GetBool(f)
-    Let closng = GetBool(f)
-    Let closed = GetBool(f)
-    Let pan = GetBool(f)
-    Let novice = GetBool(f)
-    Let wz = GetBool(f)
-    Let magic = GetStr(f, 8)
-    With(g, Loc = loc, OldLoc = oldloc, OldLc2 = oldlc2, Turns = turns,
-            Deaths = deaths, Tally = tally, Dflag = dflag, Dkill = dkill,
-            Knfloc = knfloc, Trnluz = trnluz, Saved = saved,
-            Clock1 = c1, Clock2 = c2, Detail = detail, AbbNumOf = abbnum,
-            LcgX = lcg, Limit = limit, Lmwarn = lmw, Blooded = blood,
-            Closng = closng, Closed = closed, Panic = pan, Novice = novice,
-            WzDark = wz, Magic = magic)
-
-Def ReadTables(g As Game, f As Number) As Game
-    Let props = GetArray(f, Dim(Length(Objects()), 0), 1, Length(Objects()))
-    Let where = GetArray(f, Dim(Length(Objects()), 0), 1, Length(Objects()))
-    Let fix = GetArray(f, Dim(Length(Objects()), 0), 1, Length(Objects()))
-    Let abb = GetArray(f, Dim(Length(Locations()), 0), 1, Length(Locations()))
-    Let held = GetList(f)
-    Let at = GetRooms(f, Dim(Length(Locations()), 0), 1, Length(Locations()))
-    Let dw = GetCurmudgeons(f, 1, NCurmudgeons(), { })
-    Let hs = GetHints(f, 1, Length(Hints()), { })
-    With(g, Props = props, Where = where, Fixture = fix, Abbrev = abb,
-            Held = held, AtLoc = at, Curmudgeons = dw, HintState = hs)
-
-Def GetArray(f As Number, a As Array, i As Number, n As Number) As Array
-    If i > n Then
-        a
-    Else
-        GetArray(f, SetNth(a, i, GetNum(f)), i + 1, n)
-
-Def GetList(f As Number) As List
-    Let n = GetNum(f)
-    GetItems(f, 1, n, { })
-
-Def GetItems(f As Number, i As Number, n As Number, acc As List) As List
-    If i > n Then
-        acc
-    Else
-        GetItems(f, i + 1, n, Append(acc, GetNum(f)))
-
-Def GetRooms(f As Number, a As Array, i As Number, n As Number) As Array
-    If i > n Then
-        a
-    Else
-        GetRooms(f, SetNth(a, i, GetList(f)), i + 1, n)
-
-Def GetCurmudgeons(f As Number, i As Number, n As Number, acc As List) As List
-    If i > n Then
-        acc
-    Else
-        Let dl = GetNum(f)
-        Let dold = GetNum(f)
-        Let ds = GetBool(f)
-        GetCurmudgeons(f, i + 1, n, Append(acc, Curmudgeon(dl, dold, ds)))
-
-Def GetHints(f As Number, i As Number, n As Number, acc As List) As List
-    If i > n Then
-        acc
-    Else
-        Let u = GetBool(f)
-        Let l = GetNum(f)
-        GetHints(f, i + 1, n, Append(acc, HintRec(u, l)))
-
-Rem ---- the big words -------------------------------------------------------------
-Rem actions.c:188-243. FEE FIE FOE FOO, said in that order and no other,
-Rem fetches the eggs back to the giant's room. Only FEE may begin it, any
-Rem wrong word abandons the sequence, and the state is kept in foobar --
-Rem which main.c flips negative between commands so that the words must
-Rem be consecutive.
-
-Def BigWord(tag As String) As Boolean
-    Contains({ "FEE", "FIE", "FOE", "FOO", "FUM" }, tag)
-
-Def NextInSequence(sofar As String, tag As String) As Boolean
-    If sofar = "" Then
-        tag = "FEE"
-    Else
-        If sofar = "FEE" Then
-            tag = "FIE"
-        Else
-            If sofar = "FIE" Then
-                tag = "FOE"
-            Else
-                sofar = "FOE" And tag = "FOO"
-
-Def DoBigWord(g As Game, tag As String) As Done
-    If Foobar(g) = "" And tag <> "FEE" Then
-        SpeakId(MsgNothingHappens())
-        Done(g, GoClearObj())
-    Else
-        If Not NextInSequence(Foobar(g), tag) Then
-            SpeakId(StartOverReply(g))
-            Done(With(g, Foobar = ""), GoClearObj())
-        Else
-            If tag <> "FOO" Then
-                SpeakId(MsgOkMan())
-                Done(With(g, Foobar = tag), GoClearObj())
-            Else
-                Summon(With(g, Foobar = ""))
-
-Def StartOverReply(g As Game) As Number
-    If SeenBigWords(g) Then
-        MsgStartOver()
-    Else
-        MsgWellPointless()
-
-Rem The last word zips the eggs home -- unless they are already there.
-Def Summon(g As Game) As Done
-    Let eggs = ObjNamed("EGGS")
-    Let home = First(Places(ObjAt(eggs)))
-    If Nth(Where(g), eggs + 1) = home Or (Toting(g, eggs) And Loc(g) = home) Then
-        SpeakId(MsgNothingHappens())
-        Done(g, GoClearObj())
-    Else
-        Let g1 = TrollReturns(g, eggs)
-        Speak(EggWords(g1, eggs))
-        Done(Relocated(g1, eggs, home), GoClearObj())
-
-Rem Stealing the eggs back before crossing brings the troll back too.
-Def TrollReturns(g As Game, eggs As Number) As Game
-    Let troll = ObjNamed("TROLL")
-    If (Nth(Where(g), eggs + 1) = 0 And Nth(Where(g), troll + 1) = 0
-        And PropOf(g, troll) = 0) Then
-        With(g, Props = SetNth(Props(g), troll + 1, 1))
-    Else
-        g
-
-Def EggWords(g As Game, eggs As Number) As String
-    Let o = ObjAt(eggs)
-    If Here(g, eggs) Then
-        NthDesc(o, 1)
-    Else
-        If Loc(g) = First(Places(o)) Then
-            NthDesc(o, 0)
-        Else
-            NthDesc(o, 2)
-
-Def NthDesc(o As Obj, k As Number) As String
-    If k >= 0 And k < Length(Descs(o)) Then
-        Nth(Descs(o), k + 1)
-    Else
-        First(Descs(o))
-
-Rem actions.c:1241-1259. SAY echoes the second word back at you, except
-Rem that the magic words are obeyed rather than repeated.
-Def DoSay(g As Game, k2 As Kind, raw2 As String) As Done
-    If Len(raw2) = 0 Then
-        Done(g, GoUnknown())
-    Else
-        Let tag = ActionTagOf(k2)
-        If BigWord(tag) Then
-            DoBigWord(g, tag)
-        Else
-            If IsMotionWord(k2) Then
-                Rem xyzzy, plugh and plover are obeyed, not echoed
-                Done(g, GoWord2())
-            Else
-                Speak(Render(Nth(Messages(), MsgOkeyDokey() + 1), { raw2 }))
-                Done(g, GoClearObj())
-
-Def ActionTagOf(k As Kind) As String
-    Select Case k
-        Case KAction(id)
-            Tag(Nth(Actions(), id + 1))
-        Case Else
-            ""
-
-Def IsMotionWord(k As Kind) As Boolean
-    Select Case k
-        Case KMotion(id)
-            Contains({ MotionNamed("XYZZY"), MotionNamed("PLUGH"),
-                       MotionNamed("PLOVER") }, id)
-        Case Else
-            False
-
-Rem actions.c:1136-1144. Quitting asks first, and answering yes ends the
-Rem game there and then -- which is why this is the one verb that never
-Rem returns to the loop.
-Def DoQuit(g As Game) As Done
-    Let ok = Nth(Messages(), MsgOkMan() + 1)
-    If YesNo(Nth(Messages(), MsgReallyQuit() + 1), ok, ok) Then
-        Rem the turn loop scores it on the way out; there is no exit word
-        Rem in Shoddy to leave from here the way the C does
-        Done(With(g, Outcome = Quit()), GoClearObj())
-    Else
-        Done(g, GoClearObj())
-
-Rem The verb table. Sixteen of the fifty-eight verbs are marked noaction
-Rem and do nothing but speak their own message, which falls out here for
-Rem free; the rest arrive as the port grows.
-Def k2Of(g As Game, arg As String) As Kind
-    ClassifyOld(arg, Magic(g), OldStyleMode())
-
-Def DoAction(g As Game, id As Number, arg As String, obj As Number, raw As String) As Done
-    Let v = Nth(Actions(), id + 1)
-    Let tag = Tag(v)
-    Rem bigwords() is reached only from the intransitive switch. Name a
-    Rem thing after one of the giant's words and the C shifts to the thing
-    Rem first, then falls through the transitive switch to the verb's own
-    Rem message: "foo food" answers "I don't know how.", not "Nothing
-    Rem happens." -- the sequence is never even consulted.
-    If BigWord(tag) And obj = NoObject() Then
-        DoBigWord(g, tag)
-    Else
-     DoVerb(g, v, tag, id, arg, obj, raw)
-
-Rem actions.c:1476-1584. Ten verbs have no intransitive form at all: named
-Rem on their own they return GO_UNKNOWN, so the game asks "Wave what?" and
-Rem waits, rather than running the verb against nothing. Their handlers are
-Rem only ever reached from the transitive switch, with an object in hand.
-Def NeedsObject(tag As String) As Boolean
-    Contains({ "BREAK", "DROP", "FEED", "FIND", "RUB",
-               "SAY", "TAME", "THROW", "WAKE", "WAVE" }, tag)
-
-Def DoVerb(g As Game, v As Vocab, tag As String, id As Number, arg As String, obj As Number, raw As String) As Done
-    If (obj <> NoObject() And SpeaksTransitively(tag)) Then
-        Rem actions.c's transitive switch gives these thirteen no handler at
-        Rem all -- it just speaks their message. Their real work belongs to
-        Rem the intransitive side, so naming a thing after one of them is
-        Rem simply not something the game knows how to do: "brief food"
-        Rem answers "On what?" rather than turning on brief descriptions.
-        Speak(Message(v))
-        Done(g, GoClearObj())
-    Else
-        DoVerb1(g, v, tag, id, arg, obj, raw)
-
-Def DoVerb1(g As Game, v As Vocab, tag As String, id As Number, arg As String, obj As Number, raw As String) As Done
-    If (Len(arg) = 0 And (tag = "SEED" Or tag = "WASTE")) Then
-        Rem actions.c's intransitive switch answers these two with a
-        Rem complaint rather than a question, because what they want is a
-        Rem number and no object could ever satisfy them.
-        SpeakId(MsgNumericRequired())
-        Done(g, GoTop())
-    Else
-        If (obj = NoObject() And Len(arg) = 0 And NeedsObject(tag)) Then
-            Done(g, GoUnknown())
-        Else
-            DoVerb2(g, v, tag, id, arg, obj, raw)
-
-Def DoVerb2(g As Game, v As Vocab, tag As String, id As Number, arg As String, obj As Number, raw As String) As Done
-    Select Case tag
-        Case "SEED"
-            Done(DoSeed(g, arg, Message(v)), GoTop())
-        Case "WASTE"
-            Rem actions.c:1353-1358. Burn lamp turns, report what is left.
-            Done(DoWaste(g, arg, Message(v)), GoTop())
-        Case "CARRY"
-            DoCarry(g, obj, Message(v))
-        Case "DROP"
-            DoDrop(g, obj, Message(v))
-        Case "WAVE"
-            DoWave(g, obj, Message(v))
-        Case "INVENTORY"
-            Rem actions.c:897: with an object this is just find.
-            If obj = NoObject() Then
-                Done(DoInventory(g), GoClearObj())
-            Else
-                DoFind(g, obj, Message(v))
-        Case "QUIT"
-            DoQuit(g)
-        Case "SAY"
-            DoSay(g, k2Of(g, arg), arg)
-        Case "SAVE"
-            DoSuspend(g)
-        Case "RESUME"
-            DoResume(g)
-        Case "ATTACK"
-            DoAttack(g, obj, False, Message(v))
-        Case "POUR"
-            DoPour(g, obj, Message(v))
-        Case "FILL"
-            DoFill(g, obj, Message(v))
-        Case "DRINK"
-            DoDrink(g, obj, Message(v))
-        Case "EAT"
-            DoEat(g, obj, Message(v))
-        Case "RUB"
-            DoRub(g, obj, Message(v))
-        Case "FIND"
-            DoFind(g, obj, Message(v))
-        Case "FEED"
-            DoFeed(g, obj, Message(v))
-        Case "READ"
-            DoRead(g, obj, Message(v), raw)
-        Case "BRIEF"
-            DoBrief(g)
-        Case "LISTEN"
-            DoListen(g)
-        Case "THROW"
-            DoThrow(g, obj, Message(v))
-        Case "NOTHING"
-            SpeakId(MsgOkMan())
-            Done(g, GoClearObj())
-        Case "BLAST"
-            DoBlast(g)
-        Case "BREAK"
-            DoBreak(g, obj, Message(v))
-        Case "SCORE"
-            Rem actions.c:1531-1533. Score on demand reports and plays on.
-            If obj = NoObject() Then
-                DoScore(g)
-            Else
-                Speak(Message(v))
-                Done(g, GoClearObj())
-        Case "WAKE"
-            DoWake(g, obj, Message(v))
-        Case "GO"
-            Rem actions.c:1501-1504. A bare "walk" earns "Where?" rather
-            Rem than a question about objects.
-            Speak(Message(v))
-            Done(g, GoClearObj())
-        Case "FLY"
-            DoFly(g, obj, Message(v))
-        Case "LIGHT"
-            DoLight(g, obj, Message(v))
-        Case "EXTINGUISH"
-            DoExtinguish(g, obj, Message(v))
-        Case "UNLOCK"
-            DoLock(g, obj, False, Message(v))
-        Case "LOCK"
-            DoLock(g, obj, True, Message(v))
-        Case Else
-            Rem Which default applies depends on whether you named a thing.
-            Rem actions.c's intransitive switch answers a bare verb with
-            Rem GO_UNKNOWN -- "Wave what?" -- while the transitive switch
-            Rem falls back on the verb's own message, "I'm game.  Would you
-            Rem care to explain how?". A noaction verb short-circuits both,
-            Rem because actions.c:1411 speaks and returns before either.
-            If NoAction(v) Then
-                Speak(Message(v))
-                Done(g, GoClearObj())
-            Else
-                If obj = NoObject() Then
-                    Done(g, GoUnknown())
-                Else
-                    If Len(Message(v)) > 0 Then
-                        Speak(Message(v))
-                        Done(g, GoClearObj())
-                    Else
-                        Speak(Render(Nth(Messages(), MsgDontKnow() + 1), { raw }))
-                        Done(g, GoClearObj())
+Include "cave-names.shoddy"
+
+Include "cave-say.shoddy"          As Say
+Include "cave-ask.shoddy"          As Ask
+Include "cave-state.shoddy"        As State
+Include "cave-look.shoddy"         As Look
+Include "cave-travel-rules.shoddy" As Travel
+Include "cave-curmudgeon.shoddy"   As Curmudgeon
+Include "cave-pirate.shoddy"       As Pirate
+Include "cave-clock.shoddy"        As Clock
+Include "cave-closing.shoddy"      As Closing
+Include "cave-hint.shoddy"         As Hint
+Include "cave-score.shoddy"        As Score
+Include "cave-verb.shoddy"         As Verb
+Include "cave-liquid.shoddy"       As Liquid
+Include "cave-fight.shoddy"        As Fight
+Include "cave-act.shoddy"          As Act
+Include "cave-save.shoddy"         As Save
+Include "cave-magic.shoddy"        As Magic
 
 Rem ---- the turn loop -----------------------------------------------------------
 Rem main.c:1249-1444 in miniature. The one piece of its shape that must
@@ -4377,10 +61,6 @@ Rem Moved says whether the turn ended in main.c's EXECUTED state, which
 Rem is what sends the loop back round to describe the room again. Only a
 Rem motion does that -- a verb returns GO_CLEAROBJ and stays put, which
 Rem is why "get lamp" does not reprint the room.
-Type Step
-    Next  As Game
-    Moved As Boolean
-
 Rem main.c:1215-1226. A curmudgeon that has seen you and is standing where you
 Rem meant to go bars the way. It is checked against the curmudgeon's *previous*
 Rem room, because the curmudgeons have not moved yet this turn.
@@ -4395,17 +75,15 @@ Def CurmudgeonBars(g As Game, dest As Number, i As Number, n As Number) As Boole
             CurmudgeonBars(g, dest, i + 1, n)
 
 Def Blocked(g As Game, dest As Number) As Game
-    If Closng(g) And dest <> 0 And OutsideAt(dest) Then
-        SpeakId(MsgExitClosed())
-        With(Panicked(g), OldLoc = Loc(g))
+    If ClosingTime(g) And dest <> 0 And OutsideAt(dest) Then
+        With(Panicked(VoicedId(g, MsgExitClosed())), PreviousLocation = Location(g))
     Else
-        If (dest <> Loc(g) And Not ForcedAt(Loc(g))
+        If (dest <> Location(g) And Not ForcedAt(Location(g))
             And Not Contains(Conds(RoomAt(g)), "NOARRR")
             And CurmudgeonBars(g, dest, 1, NCurmudgeons() - 1)) Then
-            SpeakId(MsgCurmudgeonBlock())
-            g
+            VoicedId(g, MsgCurmudgeonBlock())
         Else
-            With(g, OldLoc = Loc(g), Loc = dest)
+            With(g, PreviousLocation = Location(g), Location = dest)
 
 Def OutsideAt(dest As Number) As Boolean
     (Contains(Conds(Nth(Locations(), dest + 1)), "ABOVE")
@@ -4417,7 +95,7 @@ Def Panicked(g As Game) As Game
     If Panic(g) Then
         g
     Else
-        With(g, Clock2 = PanicTime(), Panic = True)
+        With(g, ClockToBlinding = PanicTime(), Panic = True)
 
 Rem misc.c:715-732. Not a count: the index of the first curmudgeon here, or
 Rem zero when none is (or the curmudgeons are not yet awake), or minus one
@@ -4428,7 +106,7 @@ Def AtCurmudgeon(g As Game, i As Number, n As Number, anyAlive As Boolean) As Nu
         AllDeadOr(anyAlive)
     Else
         Let d = Nth(Curmudgeons(g), i)
-        If DLoc(d) = Loc(g) Then
+        If DLoc(d) = Location(g) Then
             i
         Else
             AtCurmudgeon(g, i + 1, n, anyAlive Or DLoc(d) <> 0)
@@ -4440,7 +118,7 @@ Def AllDeadOr(anyAlive As Boolean) As Number
         0 - 1
 
 Def CurmudgeonsHere(g As Game) As Number
-    If Dflag(g) < 2 Then
+    If CurmudgeonActivation(g) < 2 Then
         0
     Else
         AtCurmudgeon(g, 1, NCurmudgeons() - 1, False)
@@ -4459,7 +137,7 @@ Def AfterMove(g As Game) As Game
     If Not Survived(m) Then
         Croak(g1)
     Else
-        If Loc(g1) = 0 Then
+        If Location(g1) = 0 Then
             Rem main.c:1231-1233: the death pseudo-rooms all force you to
             Rem location nowhere, and arriving there is what kills you.
             Croak(g1)
@@ -4467,12 +145,11 @@ Def AfterMove(g As Game) As Game
             PitCheck(g1)
 
 Def PitCheck(g As Game) As Game
-    If Not ForcedAt(Loc(g)) And IsDarkHere(g) And WzDark(g) Then
-        Let fell = Pct(LcgX(g), 35)
+    If Not ForcedAt(Location(g)) And IsDarkHere(g) And LeftRoomWasDark(g) Then
+        Let fell = Pct(LcgState(g), 35)
         Let g2 = Stepped(g)
         If fell Then
-            SpeakId(MsgPitFall())
-            Croak(With(g2, OldLc2 = Loc(g2)))
+            Croak(With(VoicedId(g2, MsgPitFall()), LocationBeforeLast = Location(g2)))
         Else
             g2
     Else
@@ -4487,15 +164,17 @@ Def Croak(g As Game) As Game
     Let n = Deaths(g)
     Let obit = Nth(Obituaries(), n + 1)
     Let g1 = With(g, Deaths = n + 1)
-    If Closng(g1) Then
+    If ClosingTime(g1) Then
         Rem main.c:503-507: dying during closing time is final -- it is so
         Rem close to closing time anyway that the game just calls it a day.
-        SpeakId(MsgDeathClosing())
-        With(g1, Outcome = Died(""))
+        With(VoicedId(g1, MsgDeathClosing()), Outcome = Died(""))
     Else
         Croak2(g1, obit)
 
-Def Croak2(g As Game, obit As Obit) As Game
+Rem A question read between two writes: whatever the rules have said so
+Rem far has to be out before the offer of resurrection goes up.
+Def Croak2(gIn As Game, obit As Obit) As Game
+    Let g = Flushed(gIn)
     If (YesNo(Query(obit), Yes(obit), Nth(Messages(), MsgOkMan() + 1))
         And Deaths(g) < NDeaths()) Then
         Reincarnate(g)
@@ -4508,7 +187,7 @@ Def Reincarnate(g As Game) As Game
     Let lamp = Lamp()
     Let g1 = Doused(g, lamp)
     Let g2 = Scatter(g1, Length(Objects()) - 1, 1)
-    With(g2, OldLoc = LocNamed("LOC_BUILDING"), Loc = LocNamed("LOC_BUILDING"))
+    With(g2, PreviousLocation = LocNamed("LOC_BUILDING"), Location = LocNamed("LOC_BUILDING"))
 
 Def Doused(g As Game, lamp As Number) As Game
     If Toting(g, lamp) Then
@@ -4528,19 +207,19 @@ Def Scatter(g As Game, i As Number, low As Number) As Game
 Def Dropped(g As Game, i As Number) As Game
     Let dest = FallenTo(g, i)
     With(g, Held = Filter(Held(g), Fn(x) => x <> i),
-            AtLoc = SetNth(AtLoc(g), dest + 1, Prepend(i, Nth(AtLoc(g), dest + 1))),
-            Where = SetNth(Where(g), i + 1, dest))
+            ObjectsAt = SetNth(ObjectsAt(g), dest + 1, Prepend(i, Nth(ObjectsAt(g), dest + 1))),
+            ObjectLocation = SetNth(ObjectLocation(g), i + 1, dest))
 
 Def FallenTo(g As Game, i As Number) As Number
     If i = Lamp() Then
         LocNamed("LOC_START")
     Else
-        OldLc2(g)
+        LocationBeforeLast(g)
 
 Def Cleared(g As Game) As Game
     Rem misc.c:605: clearing the command is also what records the object
     Rem it referred to, which the bird hint later consults.
-    With(g, OldObj = PendObj(g), PendObj = NoObject(), PendVerb = NoVerb())
+    With(g, PreviousObject = PendingObject(g), PendingObject = NoObject(), PendingVerb = NoVerb())
 
 Rem main.c:1386-1437 turned inside out: run the verb, then let its phase
 Rem code say what survives into the next command.
@@ -4549,10 +228,10 @@ Rem its subject only if the verb asks, by returning GO_WORD2. Carry asks,
 Rem which is how "get knife" reaches the presence check; tame does not,
 Rem which is why "calm food" never looks at the food and simply answers
 Rem that it is game if you would care to explain how.
-Def Verbed(g As Game, id As Number, k2 As Kind, raw2 As String, raw1 As String) As Step
-    Let d = DoAction(g, id, raw2, PendObj(g), raw1)
+Def Verbed(g As Game, id As Number, k2 As Kind, raw2 As String, raw1 As String) As Done
+    Let d = DoAction(g, id, raw2, PendingObject(g), raw1)
     If (WantsWord2(d) And Len(raw2) > 0) Then
-        Shifted(With(After(d), PendVerb = id, PendRaw = raw1), k2, raw2)
+        Shifted(With(After(d), PendingVerb = id, PendingRaw = raw1), k2, raw2)
     Else
         Resolved(d, id, raw1)
 
@@ -4563,27 +242,27 @@ Def WantsWord2(d As Done) As Boolean
         Case Else
             False
 
-Def RunVerb(g As Game, verb As Number, obj As Number, arg As String, raw As String) As Step
+Def RunVerb(g As Game, verb As Number, obj As Number, arg As String, raw As String) As Done
     Rem misc.c:601-607: clearing the command records its object, so the
-    Rem object must ride along for Cleared to move into OldObj -- the
+    Rem object must ride along for Cleared to move into PreviousObject -- the
     Rem bird hint reads it there.
-    Resolved(DoAction(With(g, PendObj = obj), verb, arg, obj, raw), verb, raw)
+    Resolved(DoAction(With(g, PendingObject = obj), verb, arg, obj, raw), verb, raw)
 
-Def Resolved(d As Done, verb As Number, raw As String) As Step
+Def Resolved(d As Done, verb As Number, raw As String) As Done
     Select Case How(d)
         Case GoUnknown
-            Speak(Render(Nth(Messages(), MsgDoWhat() + 1), { Capitalize(raw) }))
             Rem the verb is remembered, the object is not
-            Step(With(After(d), PendObj = NoObject(), PendVerb = verb, PendRaw = raw), False)
+            Done(With(Voiced(After(d), Render(Nth(Messages(), MsgDoWhat() + 1), { Capitalize(raw) })),
+                      PendingObject = NoObject(), PendingVerb = verb, PendingRaw = raw), GoKeep())
         Case GoTop
-            Step(Cleared(After(d)), True)
+            Done(Cleared(After(d)), GoTop())
         Case GoMove
-            Step(Cleared(AfterMove(After(d))), True)
+            Done(Cleared(AfterMove(After(d))), GoTop())
         Case GoWord2
             Rem the second word becomes a command in its own right
-            Step(Cleared(After(d)), False)
+            Done(Cleared(After(d)), GoKeep())
         Case Else
-            Step(Cleared(After(d)), False)
+            Done(Cleared(After(d)), GoKeep())
 
 Rem main.c:1135-1197. Five small rewrites the parser applies before the
 Rem command is dispatched. Two matter a great deal: an object followed by
@@ -4597,8 +276,8 @@ Type Said
     RawTwo  As String
 
 Def Preprocess(g As Game, ts As List) As Said
-    Let k1 = ClassifyOld(RawAt(ts, 1, OldStyleMode()), Magic(g), OldStyleMode())
-    Let k2 = ClassifyOld(RawAt(ts, 2, OldStyleMode()), Magic(g), OldStyleMode())
+    Let k1 = ClassifyOld(RawAt(ts, 1, OldStyleMode()), MagicWord(g), OldStyleMode())
+    Let k2 = ClassifyOld(RawAt(ts, 2, OldStyleMode()), MagicWord(g), OldStyleMode())
     If Not IsObjectWord(k1) Then
         Said(k1, k2, RawAt(ts, 1, OldStyleMode()), RawAt(ts, 2, OldStyleMode()))
     Else
@@ -4641,7 +320,7 @@ Def InAny(g As Game, tags As List, i As Number, n As Number) As Boolean
     If i > n Then
         False
     Else
-        If Loc(g) = LocNamed(Nth(tags, i)) Then
+        If Location(g) = LocNamed(Nth(tags, i)) Then
             True
         Else
             InAny(g, tags, i + 1, n)
@@ -4683,9 +362,6 @@ Def IsActionWord(k As Kind) As Boolean
         Case Else
             False
 
-Def ActionNamed(want As String) As Number
-    IndexIn(ActionNames, 1, Length(ActionNames), want) - 1
-
 Rem main.c:1341-1354. After ten spellings-out the game suggests the
     Rem shorter form. Both counters are per-game, not per-room.
 Rem main.c:1340-1352 runs on every word the processing loop sees, and the
@@ -4698,44 +374,41 @@ Def Nudged(g As Game, ts As List) As Game
 
 Def NudgedGo(g As Game, w1 As String, w2 As String) As Game
     If w1 = "go" And Len(w2) > 0 Then
-        NudgeGo(With(g, Igo = Igo(g) + 1))
+        NudgeGo(With(g, GoCount = GoCount(g) + 1))
     Else
         g
 
 Def NudgedWest(g As Game, w1 As String, w2 As String) As Game
     If w1 = "west" Or (w2 = "west" And w1 <> "say") Then
-        NudgeWest(With(g, Iwest = Iwest(g) + 1))
+        NudgeWest(With(g, WestCount = WestCount(g) + 1))
     Else
         g
 
 Def NudgeWest(g As Game) As Game
-    If Iwest(g) = 10 Then
-        SpeakId(MsgWIsWest())
-        g
+    If WestCount(g) = 10 Then
+        VoicedId(g, MsgWIsWest())
     Else
         g
 
 Def NudgeGo(g As Game) As Game
-    If Igo(g) = 10 Then
-        SpeakId(MsgGoUnneeded())
-        g
+    If GoCount(g) = 10 Then
+        VoicedId(g, MsgGoUnneeded())
     Else
         g
 
-Def Command(gIn As Game, line As String) As Step
+Def Command(gIn As Game, line As String) As Done
     Let ts = Tokens(line)
     Let g = Nudged(gIn, ts)
     If EnteringWater(g, ts) Then
         Rem main.c:1136-1143 answers "enter water" on the spot and throws
         Rem the command away without processing either word further.
-        SpeakId(WaterEntryReply(g))
-        Step(g, False)
+        Done(VoicedId(g, WaterEntryReply(g)), GoKeep())
     Else
         Command2(g, Preprocess(g, ts))
 
 Def EnteringWater(g As Game, ts As List) As Boolean
-    Let k1 = ClassifyOld(RawAt(ts, 1, OldStyleMode()), Magic(g), OldStyleMode())
-    Let k2 = ClassifyOld(RawAt(ts, 2, OldStyleMode()), Magic(g), OldStyleMode())
+    Let k1 = ClassifyOld(RawAt(ts, 1, OldStyleMode()), MagicWord(g), OldStyleMode())
+    Let k2 = ClassifyOld(RawAt(ts, 2, OldStyleMode()), MagicWord(g), OldStyleMode())
     (IsMotionKind(k1, "ENTER")
      And (IsMotionKind(k2, "STREAM") Or ObjectOf2(k2) = ObjNamed("WATER")))
 
@@ -4752,13 +425,13 @@ Def WaterEntryReply(g As Game) As Number
     Else
         MsgWhereQuery()
 
-Def Command2(g As Game, said As Said) As Step
+Def Command2(g As Game, said As Said) As Done
     Let k1 = Word1(said)
     Let k2 = Word2(said)
     Let raw1 = RawWord(said)
     Select Case k1
         Case KMotion(id)
-            Step(Cleared(AfterMove(Move(g, id))), True)
+            Done(Cleared(AfterMove(Move(g, id))), GoTop())
         Case KMagic
             Rem the reservoir word is a command in its own right
             Resolved(Reservoir(g), NoVerb(), raw1)
@@ -4779,31 +452,28 @@ Def Command2(g As Game, said As Said) As Step
             Rem done with it, before the GO_WORD2 rule below ever runs. So
             Rem "no rub" answers for `no` and never looks at `rub`.
             If IsNumberWord(k2) Or NoAction(Nth(Actions(), id + 1)) Then
-                RunVerb(g, id, PendObj(g), RawTwo(said), raw1)
+                RunVerb(g, id, PendingObject(g), RawTwo(said), raw1)
             Else
                 If Len(RawTwo(said)) = 0 Then
-                    RunVerb(g, id, PendObj(g), "", raw1)
+                    RunVerb(g, id, PendingObject(g), "", raw1)
                 Else
-                    Shifted(With(g, PendVerb = id, PendRaw = raw1), k2, RawTwo(said))
+                    Shifted(With(g, PendingVerb = id, PendingRaw = raw1), k2, RawTwo(said))
         Case Else
             Rem main.c:1187-1191: a wordless command is treated as an empty
             Rem motion, and playermove's default answer for it is CANT_APPLY.
             If Len(raw1) = 0 Then
-                SpeakId(MsgCantApply())
-                Step(Cleared(AfterMove(g)), True)
+                Done(Cleared(AfterMove(VoicedId(g, MsgCantApply()))), GoTop())
             Else
-                Speak(Render(Nth(Messages(), MsgDontKnow() + 1), { raw1 }))
-                Step(Cleared(g), False)
+                Done(Cleared(Voiced(g, Render(Nth(Messages(), MsgDontKnow() + 1), { raw1 }))), GoKeep())
 
 Rem actions.c:1263-1264. Most verbs let the second word be re-parsed on its
 Rem own -- that detour is what makes "get knife" reach the presence check.
 Rem Say is the exception: it reads word[1] and echoes it whatever it is, so
 Rem "say axe" answers Okay, "axe" rather than going looking for an axe. The
 Rem magic words still reach the shift, because say hands those back itself.
-Def Shifted(g As Game, k As Kind, raw As String) As Step
-    If (PendVerb(g) = ActionNamed("SAY") And Not SayObeys(k)) Then
-        Speak(Render(Nth(Messages(), MsgOkeyDokey() + 1), { raw }))
-        Step(Cleared(g), False)
+Def Shifted(g As Game, k As Kind, raw As String) As Done
+    If (PendingVerb(g) = ActionNamed("SAY") And Not SayObeys(k)) Then
+        Done(Cleared(Voiced(g, Render(Nth(Messages(), MsgOkeyDokey() + 1), { raw }))), GoKeep())
     Else
         Shifted2(g, k, raw)
 
@@ -4813,16 +483,14 @@ Rem the far shore it works and strands you in the dark, which is fatal: the
 Rem waters close over the way you came.
 Def Reservoir(g As Game) As Done
     Let reser = ObjNamed("RESER")
-    If (Not At(g, reser) And Loc(g) <> LocNamed("LOC_RESBOTTOM")) Then
-        SpeakId(MsgNothingHappens())
-        Done(g, GoClearObj())
+    If (Not At(g, reser) And Location(g) <> LocNamed("LOC_RESBOTTOM")) Then
+        Done(VoicedId(g, MsgNothingHappens()), GoClearObj())
     Else
         Let g1 = StateChange(g, reser, Parted(PropOf(g, reser)))
         If At(g1, reser) Then
             Done(g1, GoClearObj())
         Else
-            SpeakId(MsgNotBright())
-            Done(Croak(With(g1, OldLc2 = Loc(g1))), GoClearObj())
+            Done(Croak(With(VoicedId(g1, MsgNotBright()), LocationBeforeLast = Location(g1))), GoClearObj())
 
 Def Parted(prop As Number) As Number
     If prop = 1 Then
@@ -4841,23 +509,22 @@ Def SayObeys(k As Kind) As Boolean
              Or Tag(Nth(Motions(), id + 1)) = "PLUGH"
              Or Tag(Nth(Motions(), id + 1)) = "PLOVER")
         Case KAction(id)
-            BigWord(Tag(Nth(Actions(), id + 1)))
+            BigWord(Nth(Actions(), id + 1))
         Case Else
             False
 
-Def Shifted2(g As Game, k As Kind, raw As String) As Step
+Def Shifted2(g As Game, k As Kind, raw As String) As Done
     Select Case k
         Case KObject(id)
             ObjectWord(g, id, raw)
         Case KMagic
             Resolved(Reservoir(g), NoVerb(), raw)
         Case KMotion(id)
-            Step(Cleared(AfterMove(Move(g, id))), True)
+            Done(Cleared(AfterMove(Move(g, id))), GoTop())
         Case KAction(id)
-            RunVerb(g, id, PendObj(g), "", raw)
+            RunVerb(g, id, PendingObject(g), "", raw)
         Case Else
-            Speak(Render(Nth(Messages(), MsgDontKnow() + 1), { raw }))
-            Step(Cleared(g), False)
+            Done(Cleared(Voiced(g, Render(Nth(Messages(), MsgDontKnow() + 1), { raw }))), GoKeep())
 
 Rem actions.c:1416-1460. Before anything is done with an object, it has
 Rem to be here -- or answer to one of the aliases the C accepts in order:
@@ -4865,7 +532,7 @@ Rem a prowling curmudgeon, the liquid in the bottle or the room (never once
 Rem the cave is closed), the oil in the urn, the taller plant, the rod
 Rem that is really the other rod. The knife is the odd one out: naming
 Rem it where the curmudgeons threw it is how you learn it has gone.
-Def ObjectWord(g As Game, id As Number, raw As String) As Step
+Def ObjectWord(g As Game, id As Number, raw As String) As Done
     If Here(g, id) Or At(g, id) Then
         KObjectSaid(g, id, raw)
     Else
@@ -4887,10 +554,9 @@ Def ObjectWord(g As Game, id As Number, raw As String) As Step
                     Else
                         ObjectWord2(g, id, raw)
 
-Def ObjectWord2(g As Game, id As Number, raw As String) As Step
-    If id = ObjNamed("KNIFE") And Knfloc(g) = Loc(g) Then
-        SpeakId(MsgKnivesVanish())
-        Step(Cleared(With(g, Knfloc = 0 - 1)), False)
+Def ObjectWord2(g As Game, id As Number, raw As String) As Done
+    If id = ObjNamed("KNIFE") And KnifeLocation(g) = Location(g) Then
+        Done(Cleared(With(VoicedId(g, MsgKnivesVanish()), KnifeLocation = 0 - 1)), GoKeep())
     Else
         If id = ObjNamed("ROD") And Here(g, ObjNamed("ROD2")) Then
             KObjectSaid(g, ObjNamed("ROD2"), raw)
@@ -4898,16 +564,15 @@ Def ObjectWord2(g As Game, id As Number, raw As String) As Step
             If FindsAnything(g, id) Then
                 KObjectSaid(g, id, raw)
             Else
-                Speak(Render(Nth(Messages(), MsgNoSee() + 1), { raw }))
-                Step(Cleared(g), False)
+                Done(Cleared(Voiced(g, Render(Nth(Messages(), MsgNoSee() + 1), { raw }))), GoKeep())
 
 Rem FIND and INVENTORY are allowed to ask after things that are not here;
 Rem that is what they are for.
 Def FindsAnything(g As Game, id As Number) As Boolean
-    If PendVerb(g) = NoVerb() Then
+    If PendingVerb(g) = NoVerb() Then
         False
     Else
-        Let tag = Tag(Nth(Actions(), PendVerb(g) + 1))
+        Let tag = Tag(Nth(Actions(), PendingVerb(g) + 1))
         tag = "FIND" Or tag = "INVENTORY"
 
 Def IsNumberWord(k As Kind) As Boolean
@@ -4920,15 +585,14 @@ Def IsNumberWord(k As Kind) As Boolean
 Rem actions.c:1456-1458. A bare object name runs the verb left over from
 Rem last turn, if there was one; otherwise the game remembers the object
 Rem and asks what you meant by it.
-Def KObjectSaid(g As Game, id As Number, raw1 As String) As Step
-    If PendVerb(g) = NoVerb() Then
-        Speak(Render(Nth(Messages(), MsgWhatDo() + 1), { raw1 }))
-        Step(With(g, PendObj = id), False)
+Def KObjectSaid(g As Game, id As Number, raw1 As String) As Done
+    If PendingVerb(g) = NoVerb() Then
+        Done(With(Voiced(g, Render(Nth(Messages(), MsgWhatDo() + 1), { raw1 })), PendingObject = id), GoKeep())
     Else
         Rem After the shift the C's word[0] is the object, so a verb that
         Rem quotes word[0].raw back at you names the thing you asked about
         Rem -- "I see no keys here", not "I see no read here".
-        RunVerb(g, PendVerb(g), id, "", raw1)
+        RunVerb(g, PendingVerb(g), id, "", raw1)
 
 Rem An object named in the same breath wins; otherwise the one left over
 Rem from the previous command stands in.
@@ -4966,38 +630,57 @@ Def AskCommand() As Line
 
 Def Turn(g As Game, show As Boolean)
     If Not IsPlaying(g) Then
-        Rem a suspended game is already on disk and its process gone
-        If Not IsSuspended(g) Then
-            Terminate(g)
+        Rem Whatever ended the game is still on the output channel, and
+        Rem this is the last chance to say it: nothing after here reads or
+        Rem prompts again. The flush comes before the test, not inside it,
+        Rem because a suspended game leaves without being scored and would
+        Rem otherwise take its last words with it -- which is how the cave
+        Rem swallowed its own accusation of tampering.
+        Let gf = Flushed(g)
+        If Not IsSuspended(gf) Then
+            Utter(Terminate(gf))
     Else
         If IsForced(g) Then
             Rem main.c:1258-1261: describe it, then leave at once without
             Rem listing anything or asking for a command. The loop's next
             Rem do_move is what lands the curmudgeons in the room it put you in.
-            Turn(AfterMove(Move(DescribeOnly(g), HereMotion())), True)
+            Turn(AfterMove(Move(Flushed(DescribeOnly(g)), HereMotion())), True)
         Else
             PlayTurn(g, show)
 
 Def PlayTurn(g As Game, show As Boolean)
-    Let shown = KnifeGone(Unstashed(Shown(g, show)))
+    Rem The room description is on the output channel; the hint offer below
+    Rem still asks its question by printing, so what has been described has
+    Rem to be out first. Another transitional flush -- see the note below.
+    Let shown = Flushed(KnifeGone(Unstashed(Shown(g, show))))
     Rem main.c:1292 records whether it was dark when the prompt went out;
     Rem the pit only opens under you if it was dark then and still is.
-    Let g1 = CheckHints(With(shown, WzDark = IsDarkHere(shown)))
+    Let g1 = CheckHints(With(shown, LeftRoomWasDark = IsDarkHere(shown)))
+    Rem Everything the rules have said has to reach the player before the
+    Rem prompt does. This is the turn's flush; the only others are at the
+    Rem questions the game asks mid-turn, which read between two writes.
+    Let g1f = Flushed(g1)
     Select Case AskCommand()
         Case Eof
             Rem misc.c:561 returns false at end of input; main.c:1310 hands
             Rem that up the loop, which leaves it and scores the game
-            Terminate(g1)
+            Utter(Terminate(g1f))
         Case Typed(line)
             Rem main.c:1321-1326: the turn counts, the clock ticks, then the
             Rem verb runs -- except on the turn the cave slams shut, when
             Rem closecheck returns true and the typed command is swallowed.
-            Let g2 = ClockTick(With(g1, Turns = Turns(g1) + 1))
+            Rem The clock speaks before the verb does, so its output has to
+            Rem be out before the command runs. While modules are still
+            Rem being moved onto the output channel, a flush is needed
+            Rem wherever converted code is followed by code that still
+            Rem prints where it stands; when the last module is across,
+            Rem only the flush above this Select remains.
+            Let g2 = Flushed(ClockTick(With(g1f, Turns = Turns(g1f) + 1)))
             If Closed(g2) And Not Closed(g1) Then
                 Turn(g2, True)
             Else
-                Let s = Command(g2, line)
-                Turn(Next(s), Moved(s))
+                Let d = Command(g2, line)
+                Turn(After(d), Redescribes(How(d)))
 
 Rem main.c:1270-1288. While the cave is closed, anything you are toting
 Rem that is still stashed flips out of its pile at the next prompt, so
@@ -5006,14 +689,14 @@ Rem The oyster hints at its engraving on the prompt you first hold it.
 Rem main.c:1298-1301. A knife left where a curmudgeon threw it vanishes for
 Rem good the moment you take a prompt anywhere else.
 Def KnifeGone(g As Game) As Game
-    If Knfloc(g) > 0 And Knfloc(g) <> Loc(g) Then
-        With(g, Knfloc = 0)
+    If KnifeLocation(g) > 0 And KnifeLocation(g) <> Location(g) Then
+        With(g, KnifeLocation = 0)
     Else
         g
 
 Def KnifeMarked(g As Game) As Game
-    If Knfloc(g) >= 0 Then
-        With(g, Knfloc = Loc(g))
+    If KnifeLocation(g) >= 0 Then
+        With(g, KnifeLocation = Location(g))
     Else
         g
 
@@ -5026,9 +709,8 @@ Def Unstashed(g As Game) As Game
 
 Def OysterClue(g As Game) As Game
     Let oyster = ObjNamed("OYSTER")
-    If Toting(g, oyster) And PropOf(g, oyster) < 0 Then
-        Speak(Nth(Descs(ObjAt(oyster)), 2))
-        g
+    If Toting(g, oyster) And IsHidden(g, oyster) Then
+        Voiced(g, Nth(Descs(ObjAt(oyster)), 2))
     Else
         g
 
@@ -5036,13 +718,9 @@ Def UnstashHeld(g As Game, hs As List, i As Number, n As Number) As Game
     If i > n Then
         g
     Else
-        Let obj = Nth(hs, i)
-        If PropOf(g, obj) < 0 Then
-            UnstashHeld(With(g, Props = SetNth(Props(g), obj + 1,
-                                               0 - 1 - PropOf(g, obj))),
-                        hs, i + 1, n)
-        Else
-            UnstashHeld(g, hs, i + 1, n)
+        Rem Revealed leaves a thing that was not stashed exactly as it was,
+        Rem so the two branches this used to need collapse into one.
+        UnstashHeld(Revealed(g, Nth(hs, i)), hs, i + 1, n)
 
 Rem main.c:1056-1057 counts the visit inside listobjects, under the same
 Rem guard that skips the listing in the dark. So stumbling through a room
@@ -5084,7 +762,7 @@ Def DoCheat()
     Let a = Args()
     Let g = NewGame(1)
     Let ver = OptValue(a, "-v", 1)
-    Let g1 = With(g, Saved = 1)
+    Let g1 = With(g, SavePenalty = 1)
     Let g2 = CheatField(g1, a, "-d")
     Let g3 = CheatField(g2, a, "-t")
     Let g4 = CheatField(g3, a, "-l")
@@ -5109,9 +787,9 @@ Def CheatField(g As Game, a As List, flag As String) As Game
                 With(g, Turns = Val(v))
             Else
                 If flag = "-l" Then
-                    With(g, Limit = Val(v))
+                    With(g, LampLife = Val(v))
                 Else
-                    With(g, Saved = Val(v))
+                    With(g, SavePenalty = Val(v))
 
 Def Main()
     If Contains(Args(), "-cheat") Then
@@ -5132,17 +810,13 @@ Def Play()
                            Nth(Messages(), MsgCaveNearby() + 1),
                            "")
         If novice Then
-            Turn(With(g, Novice = True, Limit = 1000), True)
+            Turn(With(g, Novice = True, LampLife = 1000), True)
         Else
             Turn(g, True)
 
 Rem actions.c:1586-1700. Thirteen verbs whose transitive case is nothing but
 Rem speak(actions[verb].message) -- their handlers live only on the
 Rem intransitive side.
-Def SpeaksTransitively(tag As String) As Boolean
-    Contains({ "TAME", "GO", "QUIT", "SCORE", "FEE", "FIE", "FOE", "FOO",
-               "FUM", "BRIEF", "SAVE", "RESUME", "LISTEN" }, tag)
-
 Def ReadTargetLit(g As Game) As Number
     If IsDarkHere(g) Then
         NoObject()

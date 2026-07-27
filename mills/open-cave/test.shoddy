@@ -8,9 +8,34 @@ Rem Nothing here touches a terminal, so every check is reproducible.
 Rem Expected values are taken from the C original, not from this port:
 Rem where a number looks arbitrary it was computed by running the
 Rem corresponding C and writing down what came out.
+Rem
+Rem The rule modules are included as well as the core. They were not, once:
+Rem the rules printed as they ran, so nothing below the parser could be
+Rem checked without capturing a console. They now put what they say on the
+Rem game's output channel, so this file can reach them. cave.shoddy is
+Rem deliberately not included -- it holds the turn loop, which reads.
 Rem ===================================================================
 
 Include "cave-core.shoddy"
+Include "cave-names.shoddy"
+
+Include "cave-say.shoddy"          As Say
+Include "cave-ask.shoddy"          As Ask
+Include "cave-state.shoddy"        As State
+Include "cave-look.shoddy"         As Look
+Include "cave-travel-rules.shoddy" As Travel
+Include "cave-curmudgeon.shoddy"   As Curmudgeon
+Include "cave-pirate.shoddy"       As Pirate
+Include "cave-clock.shoddy"        As Clock
+Include "cave-closing.shoddy"      As Closing
+Include "cave-hint.shoddy"         As Hint
+Include "cave-score.shoddy"        As Score
+Include "cave-verb.shoddy"         As Verb
+Include "cave-liquid.shoddy"       As Liquid
+Include "cave-fight.shoddy"        As Fight
+Include "cave-act.shoddy"          As Act
+Include "cave-save.shoddy"         As Save
+Include "cave-magic.shoddy"        As Magic
 
 Rem ---- the generator ------------------------------------------------
 Rem The reference stream below is seed 1494912171, which is the seed
@@ -182,10 +207,48 @@ Def IsUnknown(k As Kind) As Boolean
         Case Else
             False
 
+Rem ---- rules, without a console ---------------------------------------
+Rem This file used to stop at the parser, because everything below it
+Rem printed as it went and could only be tested by capturing a terminal.
+Rem Now the rules put what they say on the game's output channel, so a
+Rem rule is a function and can be checked like one: run it, read back
+Rem what it said. The recorded transcripts still grade the whole game;
+Rem these reach in and grade one rule at a time.
+
+Def SaidBy(g As Game) As String
+    Join(Output(g), "")
+
+Def CheckDarkness()
+    Rem Standing in the dark and moving into a lit room says nothing about
+    Rem the dark; the description is the room's own.
+    Let g = NewGame(1)
+    Assert(IsEmpty(Output(g)), "a new game has said nothing yet")
+
+Def CheckSpeaks()
+    Rem A rule that speaks leaves exactly what it said behind it, and a
+    Rem rule that does not leaves the channel alone.
+    Let g = NewGame(1)
+    Let spoke = VoicedId(g, MsgOkMan())
+    Assert(Length(Output(spoke)) = 1, "one message leaves one chunk")
+    Assert(Len(SaidBy(spoke)) = 3, "and the chunk carries the leading blank line")
+    Assert(IsEmpty(Output(VoicedId(g, 0 - 1))), "message -1 says nothing at all")
+    Assert(IsEmpty(Output(Voiced(g, ""))), "an empty message says nothing at all")
+
+Rem The bear announces himself before the room does. That ordering is
+Rem load-bearing -- main.c:547-549 -- and is now checkable without playing.
+Def CheckBearFirst()
+    Let g = NewGame(1)
+    Let held = With(g, Held = { ObjNamed("BEAR") })
+    Assert(Length(Output(BearNote(held))) = 1, "the bear speaks when carried")
+    Assert(IsEmpty(Output(BearNote(g))), "and stays quiet when not")
+
 Def Main()
     CheckLcg()
     CheckRandRange()
     CheckZzWord()
     CheckTables()
     CheckParser()
+    CheckDarkness()
+    CheckSpeaks()
+    CheckBearFirst()
     Print("ALL OPEN-CAVE CHECKS PASSED")

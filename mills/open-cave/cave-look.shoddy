@@ -1,0 +1,161 @@
+Rem ===================================================================
+Rem cave-look.shoddy -- describing where you are standing.
+Rem 
+Rem main.c:118-220. Long description or short, what is lying here, and
+Rem the darkness rule that decides whether you see any of it.
+Rem ===================================================================
+
+Rem ---- describing a room ----------------------------------------------------
+Rem main.c:534-556. The long description shows on the first visit and
+Rem every fifth after; the short one fills the gaps, unless the room has
+Rem no short form.
+
+Rem init.c:46-53 derives COND_FORCED by looking for a travel row whose
+Rem motion is the magic HERE. A forced room moves you straight on again,
+Rem and it is shown even in the dark -- which is how ">>Foof!<<" gets
+Rem seen at all.
+Def HereMotion() As Number
+    1
+
+Def IsForced(g As Game) As Boolean
+    Let k = Nth(Tkey(), Location(g) + 1)
+    If k = 0 Then
+        False
+    Else
+        Motion(RowAt(k)) = HereMotion()
+
+Def RoomText(g As Game) As String
+    If IsDarkHere(g) And Not IsForced(g) Then
+        Nth(Messages(), MsgPitchDark() + 1)
+    Else
+        Let r = RoomAt(g)
+        Let seen = Nth(LocationSeen(g), Location(g) + 1)
+        If (seen Mod AbbrevInterval(g)) = 0 Or Len(Short(r)) = 0 Then
+            Long(r)
+        Else
+            Short(r)
+
+Rem main.c:1048-1115. Each object shows the description for its current
+Rem state; an object with no descriptions is invisible scenery.
+Rem main.c:1106-1111. The steps are one object standing in two rooms, and
+Rem which way they lead depends on which end you are at -- the C special-
+Rem cases them right here rather than giving them two entries.
+Def StateShown(g As Game, i As Number) As Number
+    If i <> ObjNamed("STEPS") Then
+        PropOf(g, i)
+    Else
+        Let ps = Places(ObjAt(i))
+        If Length(ps) > 1 And Location(g) = Nth(ps, 2) Then
+            1
+        Else
+            0
+
+Def DescOf(g As Game, i As Number) As String
+    Let o = ObjAt(i)
+    Let p = StateShown(g, i)
+    If IsEmpty(Descs(o)) Then
+        ""
+    Else
+        If p >= 0 And p < Length(Descs(o)) Then
+            Nth(Descs(o), p + 1)
+        Else
+            First(Descs(o))
+
+Rem main.c:1064. Once the nugget is in your hands the steps stop being
+Rem worth mentioning, because you cannot climb them carrying it.
+Def Skipped(g As Game, i As Number) As Boolean
+    ((i = ObjNamed("STEPS") And Toting(g, ObjNamed("NUGGET")))
+     Or (IsHidden(g, i) And Closed(g)))
+
+Rem main.c:1071-1080. Describing a treasure for the first time is what
+Rem marks it found and takes it off the tally -- the tally is what tells
+Rem the cave when to start closing.
+Rem main.c:1075-1082. Two treasures do not simply become "found": the rug
+Rem is first seen with the dragon lying on it, and the chain with the bear
+Rem chained to it, so they jump straight to that state.
+Def FoundState(i As Number) As Number
+    If i = ObjNamed("RUG") Or i = ObjNamed("CHAIN") Then
+        1
+    Else
+        0
+
+Def MarkFound(g As Game, i As Number) As Game
+    If IsHidden(g, i) Then
+        With(g, Props = SetNth(Props(g), i + 1, FoundState(i)),
+                Tally = Tally(g) - 1,
+                SeenBigWords = SeenBigWords(g) Or i = ObjNamed("EGGS"))
+    Else
+        g
+
+Def ListObjects(g As Game, xs As List, i As Number, n As Number) As Game
+    If i > n Then
+        g
+    Else
+        If Skipped(g, Nth(xs, i)) Then
+            ListObjects(g, xs, i + 1, n)
+        Else
+            Let g1 = MarkFound(g, Nth(xs, i))
+            ListObjects(Voiced(g1, Grounded(g1, DescOf(g1, Nth(xs, i)))), xs, i + 1, n)
+
+Rem misc.c:66-79. Things described as "on the floor" have their floor
+Rem quietly reworded to ground when you are out of doors -- only before
+Rem a space, a full stop, or the end of the text, exactly as the C.
+Def Grounded(g As Game, msg As String) As String
+    If Outside(g) And Location(g) <> LocNamed("LOC_BUILDING") Then
+        GroundedAt(msg, 1, Len(msg), "")
+    Else
+        msg
+
+Def GroundedAt(msg As String, i As Number, n As Number, acc As String) As String
+    If i > n Then
+        acc
+    Else
+        If (Mid(msg, i, 5) = "floor"
+            And (i + 5 > n Or Mid(msg, i + 5, 1) = " "
+                 Or Mid(msg, i + 5, 1) = ".")) Then
+            GroundedAt(msg, i + 5, n, acc & "ground")
+        Else
+            GroundedAt(msg, i + 1, n, acc & Mid(msg, i, 1))
+
+Rem In the dark you see nothing lying about, which is the whole point of
+Rem the lamp. main.c:554-555 adds the one line of atmosphere that costs a
+Rem random draw -- and only at Y2, because C's && stops early there. Any
+Rem port that draws unconditionally desynchronises every seeded game.
+Rem main.c:1256-1263 keeps these apart: describe_location always runs, but
+Rem a forced room leaves before listobjects. So the bear and the Y2 voice --
+Rem and the random draw the voice costs -- belong to the description, not to
+Rem the listing.
+Def DescribeOnly(g As Game) As Game
+    Let g0 = BearNote(g)
+    Whisper(Voiced(g0, RoomText(g0)))
+
+Def Describe(g As Game) As Game
+    Let g1 = DescribeOnly(g)
+    If IsDarkHere(g1) Then
+        g1
+    Else
+        Let here = HereList(g1)
+        ListObjects(g1, here, 1, Length(here))
+
+Rem main.c:547-549 -- the bear announces himself ahead of the room, so the
+Rem reminder that you are dragging him around lands before the description.
+Def BearNote(g As Game) As Game
+    If Toting(g, ObjNamed("BEAR")) Then
+        VoicedId(g, MsgTameBear())
+    Else
+        g
+
+Def Whisper(g As Game) As Game
+    If Location(g) <> LocNamed("LOC_Y2") Then
+        g
+    Else
+        Let hit = Pct(LcgState(g), 25)
+        Let g1 = Stepped(g)
+        If hit And Not ClosingTime(g1) Then
+            VoicedId(g1, MsgSaysPlugh())
+        Else
+            g1
+
+Def Visited(g As Game) As Game
+    With(g, LocationSeen = SetNth(LocationSeen(g), Location(g) + 1, Nth(LocationSeen(g), Location(g) + 1) + 1))
+

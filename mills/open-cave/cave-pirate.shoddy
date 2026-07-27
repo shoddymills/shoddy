@@ -1,0 +1,345 @@
+Rem ===================================================================
+Rem cave-pirate.shoddy -- the one who takes your treasure.
+Rem 
+Rem main.c:1062-1140. He shares the curmudgeons table as the sixth
+Rem entry, and moves on their beat, which is why he lives beside them.
+Rem ===================================================================
+
+Rem ---- the pirate ---------------------------------------------------------------
+Rem main.c:231-310. The sixth curmudgeon is no curmudgeon. He leaves you alone once
+Rem you have found his chest; until then, catching you with a treasure
+Rem costs you every treasure you are carrying, and they all turn up in
+Rem his maze. The chest is moved before the robbery so that it is listed
+Rem last where he leaves it.
+
+Def ChestLoc() As Number
+    LocNamed("LOC_MAZEEND12")
+
+Def ChestLoc2() As Number
+    LocNamed("LOC_DEADEND13")
+
+Rem The pyramid is left alone in its own room and in the emerald's -- it
+Rem would be too easy to lose it there.
+Def PirateSpares(g As Game, i As Number) As Boolean
+    If i <> ObjNamed("PYRAMID") Then
+        False
+    Else
+        (Location(g) = First(Places(ObjAt(ObjNamed("PYRAMID"))))
+         Or Location(g) = First(Places(ObjAt(ObjNamed("EMERALD")))))
+
+Def Snarfable(g As Game, i As Number, n As Number, seen As Number, robbing As Boolean) As Number
+    If i > n Then
+        seen
+    Else
+        If Not Treasure(ObjAt(i)) Or PirateSpares(g, i) Then
+            Snarfable(g, i + 1, n, seen, robbing)
+        Else
+            If Toting(g, i) Or Here(g, i) Then
+                Snarfable(g, i + 1, n, seen + 1, robbing)
+            Else
+                Snarfable(g, i + 1, n, seen, robbing)
+
+Def CarryingTreasure(g As Game, n As Number) As Boolean
+    Range(1, n)
+        Any(Fn(i) => Treasure(ObjAt(i)) And Not PirateSpares(g, i) And Toting(g, i))
+
+Def SpottedByPirate(g As Game) As Game
+    Let chest = ObjNamed("CHEST")
+    If Location(g) = ChestLoc() Or Not IsHidden(g, chest) Then
+        g
+    Else
+        Let n = Length(Objects()) - 1
+        Let seen = Snarfable(g, 1, n, 0, False)
+        Let robbing = CarryingTreasure(g, n)
+        PirateActs(g, chest, seen, robbing)
+
+Def PirateActs(g As Game, chest As Number, seen As Number, robbing As Boolean) As Game
+    Rem The chest is planted before you can find the last treasure, so
+    Rem there is always somewhere left to go.
+    Let forced = (Tally(g) = 1 And seen = 0 And Nth(ObjectLocation(g), chest + 1) = 0
+                  And Here(g, Lamp()) And PropOf(g, Lamp()) = LampBright())
+    If forced Then
+        Robbed(MoveChest(VoicedId(g, MsgPirateSpotted()), chest), robbing)
+    Else
+        If robbing Then
+            Robbed(MoveChest(g, chest), True)
+        Else
+            Rustle(g)
+
+Def MoveChest(g As Game, chest As Number) As Game
+    Let g1 = Relocated(g, chest, ChestLoc())
+    Let g2 = Relocated(g1, ObjNamed("MESSAG"), ChestLoc2())
+    Let p = Nth(Curmudgeons(g2), PirateIndex())
+    With(g2, Curmudgeons = SetNth(Curmudgeons(g2), PirateIndex(),
+                              Curmudgeon(ChestLoc(), ChestLoc(), False)))
+
+Rem Even when he takes nothing you may hear him go by.
+Def Rustle(g As Game) As Game
+    Let p = Nth(Curmudgeons(g), PirateIndex())
+    If DOld(p) = DLoc(p) Then
+        g
+    Else
+        Let heard = Pct(LcgState(g), 20)
+        Let g1 = Stepped(g)
+        If heard Then
+            VoicedId(g1, MsgPirateRustles())
+        Else
+            g1
+
+Def Robbed(g As Game, robbing As Boolean) As Game
+    If Not robbing Then
+        g
+    Else
+        Steal(VoicedId(g, MsgPiratePounces()), 1, Length(Objects()) - 1)
+
+Def Steal(g As Game, i As Number, n As Number) As Game
+    If i > n Then
+        g
+    Else
+        If Not Treasure(ObjAt(i)) Or PirateSpares(g, i) Then
+            Steal(g, i + 1, n)
+        Else
+            Steal(Snatched(g, i), i + 1, n)
+
+Def Snatched(g As Game, i As Number) As Game
+    Let g1 = TakenLoose(g, i)
+    If Toting(g1, i) Then
+        Dumped(g1, i)
+    Else
+        g1
+
+Def TakenLoose(g As Game, i As Number) As Game
+    If At(g, i) And Not IsStuck(g, i) Then
+        Lifted(g, i)
+    Else
+        g
+
+Def Dumped(g As Game, i As Number) As Game
+    With(g, Held = Filter(Held(g), Fn(x) => x <> i),
+            ObjectsAt = SetNth(ObjectsAt(g), ChestLoc() + 1,
+                           Prepend(i, Nth(ObjectsAt(g), ChestLoc() + 1))),
+            ObjectLocation = SetNth(ObjectLocation(g), i + 1, ChestLoc()))
+
+Rem The result of a curmudgeon turn: the new state, and whether the player is
+Rem still alive to see it.
+Type Moved2
+    Result   As Game
+    Survived As Boolean
+
+Rem main.c:334-368. The first encounter kills nought to two of the five
+Rem curmudgeons, shifts any that started on top of you, and throws an axe.
+Def KillSome(g As Game, i As Number) As Game
+    If i > 2 Then
+        g
+    Else
+        Let j = 1 + RollOf(g, NCurmudgeons() - 1)
+        Let g1 = Stepped(g)
+        Let hit = Pct(LcgState(g1), 50)
+        Let g2 = Stepped(g1)
+        If hit Then
+            KillSome(SetCurmudgeonLoc(g2, j, 0), i + 1)
+        Else
+            KillSome(g2, i + 1)
+
+Def SetCurmudgeonLoc(g As Game, j As Number, loc As Number) As Game
+    Let d = Nth(Curmudgeons(g), j)
+    With(g, Curmudgeons = SetNth(Curmudgeons(g), j, With(d, DLoc = loc)))
+
+Rem Any survivor standing where the player is gets moved aside, and every
+Rem curmudgeon's oldloc is squared up with where it now is.
+Def Relocate(g As Game, i As Number, n As Number) As Game
+    If i > n Then
+        g
+    Else
+        Let d = Nth(Curmudgeons(g), i)
+        Let moved = ShiftedOff(d, Location(g))
+        Relocate(With(g, Curmudgeons = SetNth(Curmudgeons(g), i, With(moved, DOld = DLoc(moved)))),
+                 i + 1, n)
+
+Def ShiftedOff(d As Curmudgeon, here As Number) As Curmudgeon
+    If DLoc(d) = here Then
+        With(d, DLoc = LocNamed("LOC_NUGGET"))
+    Else
+        d
+
+Def FirstEncounter(g As Game) As Game
+    Let g1 = KillSome(With(g, CurmudgeonActivation = 2), 1)
+    Let g2 = Relocate(g1, 1, NCurmudgeons() - 1)
+    Put(VoicedId(g2, MsgCurmudgeonRan()), ObjNamed("AXE"))
+
+Rem main.c:344-347. The short-circuit here is the whole reason this is
+Rem written out rather than folded into one expression.
+Def Activates(g As Game) As Moved2
+    If Not InDeep(Location(g)) Then
+        Moved2(g, True)
+    Else
+        Let pass95 = Pct(LcgState(g), 95)
+        Let g1 = Stepped(g)
+        Trace("act95", Location(g), RandRange(LcgState(g), 100), CurmudgeonActivation(g))
+        If Not pass95 Then
+            Moved2(FirstEncounter(g1), True)
+        Else
+            If Not Contains(Conds(RoomAt(g1)), "NOBACK") Then
+                Moved2(g1, True)
+            Else
+                Let pass85 = Pct(LcgState(g1), 85)
+                Let g2 = Stepped(g1)
+                Trace("act85", Location(g1), RandRange(LcgState(g1), 100), 0)
+                If pass85 Then
+                    Moved2(g2, True)
+                Else
+                    Moved2(FirstEncounter(g2), True)
+
+Rem misc.c:769 dumps every draw under -d. The same switch here prints the
+Rem curmudgeon decisions, which is the only way to line this stream up against a
+Rem recorded C transcript without a C compiler to hand.
+Def Debugging() As Boolean
+    Contains(Args(), "-d")
+
+Def Trace(tag As String, loc As Number, a As Number, b As Number)
+    If Debugging() Then
+        Print("# " & tag & " loc=" & Str(loc) & " " & Str(a) & " " & Str(b))
+
+Rem How the encounter tallies as each curmudgeon is moved.
+Type Tally3
+    TState  As Game
+    Dtotal  As Number
+    Attack  As Number
+    Stick   As Number
+
+Rem main.c:380-445. Move one curmudgeon, then work out whether it is now in
+Rem the room with the player and, if it did not move, whether its knife
+Rem finds him.
+Def MoveOne(g As Game, i As Number, total As Number, swings As Number, hits As Number) As Tally3
+    Let d = Nth(Curmudgeons(g), i)
+    If DLoc(d) = 0 Then
+        Tally3(g, total, swings, hits)
+    Else
+        Let k = Nth(Tkey(), DLoc(d) + 1)
+        Let cands = CurmudgeonCandidates(g, k, DLoc(d), DOld(d), i = PirateIndex())
+        Let choices = ChoiceList(cands, DOld(d))
+        Let pick = 1 + RollOf(g, Length(choices))
+        Let g1 = Stepped(g)
+        Let dest = Nth(choices, pick)
+        Let d2 = Curmudgeon(dest, DLoc(d), False)
+        Let seen = ((DSeen(d) And InDeep(Location(g1)))
+                    Or (DLoc(d2) = Location(g1) Or DOld(d2) = Location(g1)))
+        Let d3 = With(d2, DSeen = seen)
+        If Not seen Then
+            Tally3(With(g1, Curmudgeons = SetNth(Curmudgeons(g1), i, d3)), total, swings, hits)
+        Else
+            Let d4 = With(d3, DLoc = Location(g1))
+            Let g2 = With(g1, Curmudgeons = SetNth(Curmudgeons(g1), i, d4))
+            If i = PirateIndex() Then
+                Tally3(SpottedByPirate(g2), total, swings, hits)
+            Else
+                Threaten(g2, d4, total + 1, swings, hits)
+
+Def Threaten(g As Game, d As Curmudgeon, total As Number, swings As Number, hits As Number) As Tally3
+    If DOld(d) <> DLoc(d) Then
+        Tally3(g, total, swings, hits)
+    Else
+        Rem main.c:439-440: once the knife has vanished for good (minus
+        Rem one), no later attack brings the phantom knife back.
+        Let g1 = KnifeMarked(g)
+        Rem main.c:437. The knife gets deadlier the longer the curmudgeons
+        Rem have been at it, which is what dflag counts.
+        Let wounded = RollOf(g1, 1000) < 95 * (CurmudgeonActivation(g1) - 2)
+        Let g2 = Stepped(g1)
+        If wounded Then
+            Tally3(g2, total, swings + 1, hits + 1)
+        Else
+            Tally3(g2, total, swings + 1, hits)
+
+Rem main.c:386-411 gathers candidates; 416-419 then appends the curmudgeon's
+Rem previous room and drops it again unless nothing else was on offer, so
+Rem a curmudgeon only doubles back when it has to.
+Def CurmudgeonCandidates(g As Game, k As Number, self As Number, old As Number,
+                    isPirate As Boolean) As List
+    If k = 0 Then
+        { }
+    Else
+        CurmudgeonDests(g, k, self, old, isPirate, { })
+
+Def ChoiceList(cands As List, old As Number) As List
+    If IsEmpty(cands) Then
+        { old }
+    Else
+        cands
+
+Def MoveAll(g As Game, i As Number, n As Number, total As Number,
+            swings As Number, hits As Number) As Tally3
+    If i > n Then
+        Tally3(g, total, swings, hits)
+    Else
+        Let t = MoveOne(g, i, total, swings, hits)
+        MoveAll(TState(t), i + 1, n, Dtotal(t), Attack(t), Stick(t))
+
+Rem main.c:447-473. Report the encounter and say whether he lived.
+Def Report(t As Tally3) As Moved2
+    Let g = TState(t)
+    If Dtotal(t) = 0 Then
+        Moved2(g, True)
+    Else
+        Let gp = VoicedArgs(g, PackMessage(Dtotal(t)), { Str(Dtotal(t)) })
+        If Attack(t) = 0 Then
+            Moved2(gp, True)
+        Else
+            Let g1 = Knives(Hardened(gp), t)
+            If Stick(t) = 0 Then
+                Moved2(g1, True)
+            Else
+                Moved2(With(g1, LocationBeforeLast = Location(g1)), False)
+
+Def PackMessage(n As Number) As Number
+    If n = 1 Then
+        MsgCurmudgeonSingle()
+    Else
+        MsgCurmudgeonPack()
+
+Def Hardened(g As Game) As Game
+    If CurmudgeonActivation(g) = 2 Then
+        With(g, CurmudgeonActivation = 3)
+    Else
+        g
+
+Def Knives(g As Game, t As Tally3) As Game
+    If Attack(t) > 1 Then
+        VoicedArgs(VoicedArgs(g, MsgThrownKnives(), { Str(Attack(t)) }),
+                   HitMessage(Stick(t)), { Str(Stick(t)) })
+    Else
+        VoicedId(VoicedId(g, MsgKnifeThrown()), TouchMessage(Stick(t)))
+
+Def HitMessage(hits As Number) As Number
+    If hits > 1 Then
+        MsgMultipleHits()
+    Else
+        If hits = 1 Then
+            MsgOneHit()
+        Else
+            MsgNoneHit()
+
+Def TouchMessage(hits As Number) As Number
+    If hits > 0 Then
+        MsgGetsYou()
+    Else
+        MsgMissesYou()
+
+Rem main.c:312-330. Curmudgeons do not follow into a pit, a forced room, or
+Rem anywhere the pirate is forbidden.
+Def CurmudgeonMove(g As Game) As Moved2
+    Trace("dmove", Location(g), CurmudgeonActivation(g), LcgState(g))
+    If Location(g) = 0 Or ForcedAt(Location(g)) Or Contains(Conds(RoomAt(g)), "NOARRR") Then
+        Moved2(g, True)
+    Else
+        If CurmudgeonActivation(g) = 0 Then
+            If InDeep(Location(g)) Then
+                Moved2(With(g, CurmudgeonActivation = 1), True)
+            Else
+                Moved2(g, True)
+        Else
+            If CurmudgeonActivation(g) = 1 Then
+                Activates(g)
+            Else
+                Report(MoveAll(g, 1, NCurmudgeons(), 0, 0, 0))
+

@@ -1,0 +1,269 @@
+Rem ===================================================================
+Rem cave-magic.shoddy -- the words that are not verbs.
+Rem 
+Rem actions.c:1300-1450. XYZZY, PLUGH, PLOVER, FEE FIE FOE FOO, and the
+Rem giant words, which the C reaches only from the intransitive switch.
+Rem ===================================================================
+
+Rem ---- the big words -------------------------------------------------------------
+Rem actions.c:188-243. FEE FIE FOE FOO, said in that order and no other,
+Rem fetches the eggs back to the giant's room. Only FEE may begin it, any
+Rem wrong word abandons the sequence, and the state is kept in foobar --
+Rem which main.c flips negative between commands so that the words must
+Rem be consecutive.
+
+Def NextInSequence(sofar As String, tag As String) As Boolean
+    If sofar = "" Then
+        tag = "FEE"
+    Else
+        If sofar = "FEE" Then
+            tag = "FIE"
+        Else
+            If sofar = "FIE" Then
+                tag = "FOE"
+            Else
+                sofar = "FOE" And tag = "FOO"
+
+Def DoBigWord(g As Game, tag As String) As Done
+    If FooBarProgress(g) = "" And tag <> "FEE" Then
+        Done(VoicedId(g, MsgNothingHappens()), GoClearObj())
+    Else
+        If Not NextInSequence(FooBarProgress(g), tag) Then
+            Done(With(VoicedId(g, StartOverReply(g)), FooBarProgress = ""), GoClearObj())
+        Else
+            If tag <> "FOO" Then
+                Done(With(VoicedId(g, MsgOkMan()), FooBarProgress = tag), GoClearObj())
+            Else
+                Summon(With(g, FooBarProgress = ""))
+
+Def StartOverReply(g As Game) As Number
+    If SeenBigWords(g) Then
+        MsgStartOver()
+    Else
+        MsgWellPointless()
+
+Rem The last word zips the eggs home -- unless they are already there.
+Def Summon(g As Game) As Done
+    Let eggs = ObjNamed("EGGS")
+    Let home = First(Places(ObjAt(eggs)))
+    If Nth(ObjectLocation(g), eggs + 1) = home Or (Toting(g, eggs) And Location(g) = home) Then
+        Done(VoicedId(g, MsgNothingHappens()), GoClearObj())
+    Else
+        Let g1 = TrollReturns(g, eggs)
+        Done(Relocated(Voiced(g1, EggWords(g1, eggs)), eggs, home), GoClearObj())
+
+Rem Stealing the eggs back before crossing brings the troll back too.
+Def TrollReturns(g As Game, eggs As Number) As Game
+    Let troll = ObjNamed("TROLL")
+    If (Nth(ObjectLocation(g), eggs + 1) = 0 And Nth(ObjectLocation(g), troll + 1) = 0
+        And PropOf(g, troll) = 0) Then
+        With(g, Props = SetNth(Props(g), troll + 1, 1))
+    Else
+        g
+
+Def EggWords(g As Game, eggs As Number) As String
+    Let o = ObjAt(eggs)
+    If Here(g, eggs) Then
+        NthDesc(o, 1)
+    Else
+        If Location(g) = First(Places(o)) Then
+            NthDesc(o, 0)
+        Else
+            NthDesc(o, 2)
+
+Def NthDesc(o As Obj, k As Number) As String
+    If k >= 0 And k < Length(Descs(o)) Then
+        Nth(Descs(o), k + 1)
+    Else
+        First(Descs(o))
+
+Rem actions.c:1241-1259. SAY echoes the second word back at you, except
+Rem that the magic words are obeyed rather than repeated.
+Def DoSay(g As Game, k2 As Kind, raw2 As String) As Done
+    If Len(raw2) = 0 Then
+        Done(g, GoUnknown())
+    Else
+        Let said = ActionRowOf(k2)
+        If BigWord(said) Then
+            DoBigWord(g, Tag(said))
+        Else
+            If IsMotionWord(k2) Then
+                Rem xyzzy, plugh and plover are obeyed, not echoed
+                Done(g, GoWord2())
+            Else
+                Done(Voiced(g, Render(Nth(Messages(), MsgOkeyDokey() + 1), { raw2 })), GoClearObj())
+
+Def ActionRowOf(k As Kind) As Vocab
+    Select Case k
+        Case KAction(id)
+            Nth(Actions(), id + 1)
+        Case Else
+            Rem row zero is ACT_NULL: empty tag, no grammar
+            Nth(Actions(), 1)
+
+Def ActionTagOf(k As Kind) As String
+    Tag(ActionRowOf(k))
+
+Def IsMotionWord(k As Kind) As Boolean
+    Select Case k
+        Case KMotion(id)
+            Contains({ MotionNamed("XYZZY"), MotionNamed("PLUGH"),
+                       MotionNamed("PLOVER") }, id)
+        Case Else
+            False
+
+Rem actions.c:1136-1144. Quitting asks first, and answering yes ends the
+Rem game there and then -- which is why this is the one verb that never
+Rem returns to the loop.
+Def DoQuit(g As Game) As Done
+    Let ok = Nth(Messages(), MsgOkMan() + 1)
+    If YesNo(Nth(Messages(), MsgReallyQuit() + 1), ok, ok) Then
+        Rem the turn loop scores it on the way out; there is no exit word
+        Rem in Shoddy to leave from here the way the C does
+        Done(With(g, Outcome = Quit()), GoClearObj())
+    Else
+        Done(g, GoClearObj())
+
+Rem The verb table. Sixteen of the fifty-eight verbs are marked noaction
+Rem and do nothing but speak their own message, which falls out here for
+Rem free; the rest arrive as the port grows.
+Def KindOf(g As Game, arg As String) As Kind
+    ClassifyOld(arg, MagicWord(g), OldStyleMode())
+
+Def DoAction(g As Game, id As Number, arg As String, obj As Number, raw As String) As Done
+    Let v = Nth(Actions(), id + 1)
+    Let tag = Tag(v)
+    Rem bigwords() is reached only from the intransitive switch. Name a
+    Rem thing after one of the giant's words and the C shifts to the thing
+    Rem first, then falls through the transitive switch to the verb's own
+    Rem message: "foo food" answers "I don't know how.", not "Nothing
+    Rem happens." -- the sequence is never even consulted.
+    If BigWord(v) And obj = NoObject() Then
+        DoBigWord(g, tag)
+    Else
+     DoVerb(g, v, tag, id, arg, obj, raw)
+
+Rem actions.c:1476-1584. Ten verbs have no intransitive form at all: named
+Rem on their own they return GO_UNKNOWN, so the game asks "Wave what?" and
+Rem waits, rather than running the verb against nothing. Their handlers are
+Rem only ever reached from the transitive switch, with an object in hand.
+Def DoVerb(g As Game, v As Vocab, tag As String, id As Number, arg As String, obj As Number, raw As String) As Done
+    If (obj <> NoObject() And SpeaksTransitively(v)) Then
+        Rem actions.c's transitive switch gives these thirteen no handler at
+        Rem all -- it just speaks their message. Their real work belongs to
+        Rem the intransitive side, so naming a thing after one of them is
+        Rem simply not something the game knows how to do: "brief food"
+        Rem answers "On what?" rather than turning on brief descriptions.
+        Done(Voiced(g, Message(v)), GoClearObj())
+    Else
+        DoVerb1(g, v, tag, id, arg, obj, raw)
+
+Def DoVerb1(g As Game, v As Vocab, tag As String, id As Number, arg As String, obj As Number, raw As String) As Done
+    If (Len(arg) = 0 And (tag = "SEED" Or tag = "WASTE")) Then
+        Rem actions.c's intransitive switch answers these two with a
+        Rem complaint rather than a question, because what they want is a
+        Rem number and no object could ever satisfy them.
+        Done(VoicedId(g, MsgNumericRequired()), GoTop())
+    Else
+        If (obj = NoObject() And Len(arg) = 0 And NeedsObject(v)) Then
+            Done(g, GoUnknown())
+        Else
+            DoVerb2(g, v, tag, id, arg, obj, raw)
+
+Def DoVerb2(g As Game, v As Vocab, tag As String, id As Number, arg As String, obj As Number, raw As String) As Done
+    Select Case tag
+        Case "SEED"
+            Done(DoSeed(g, arg, Message(v)), GoTop())
+        Case "WASTE"
+            Rem actions.c:1353-1358. Burn lamp turns, report what is left.
+            Done(DoWaste(g, arg, Message(v)), GoTop())
+        Case "CARRY"
+            DoCarry(g, obj, Message(v))
+        Case "DROP"
+            DoDrop(g, obj, Message(v))
+        Case "WAVE"
+            DoWave(g, obj, Message(v))
+        Case "INVENTORY"
+            Rem actions.c:897: with an object this is just find.
+            If obj = NoObject() Then
+                Done(DoInventory(g), GoClearObj())
+            Else
+                DoFind(g, obj, Message(v))
+        Case "QUIT"
+            DoQuit(g)
+        Case "SAY"
+            DoSay(g, KindOf(g, arg), arg)
+        Case "SAVE"
+            DoSuspend(g)
+        Case "RESUME"
+            DoResume(g)
+        Case "ATTACK"
+            DoAttack(g, obj, False, Message(v))
+        Case "POUR"
+            DoPour(g, obj, Message(v))
+        Case "FILL"
+            DoFill(g, obj, Message(v))
+        Case "DRINK"
+            DoDrink(g, obj, Message(v))
+        Case "EAT"
+            DoEat(g, obj, Message(v))
+        Case "RUB"
+            DoRub(g, obj, Message(v))
+        Case "FIND"
+            DoFind(g, obj, Message(v))
+        Case "FEED"
+            DoFeed(g, obj, Message(v))
+        Case "READ"
+            DoRead(g, obj, Message(v), raw)
+        Case "BRIEF"
+            DoBrief(g)
+        Case "LISTEN"
+            DoListen(g)
+        Case "THROW"
+            DoThrow(g, obj, Message(v))
+        Case "NOTHING"
+            Done(VoicedId(g, MsgOkMan()), GoClearObj())
+        Case "BLAST"
+            DoBlast(g)
+        Case "BREAK"
+            DoBreak(g, obj, Message(v))
+        Case "SCORE"
+            Rem actions.c:1531-1533. Score on demand reports and plays on.
+            If obj = NoObject() Then
+                DoScore(g)
+            Else
+                Done(Voiced(g, Message(v)), GoClearObj())
+        Case "WAKE"
+            DoWake(g, obj, Message(v))
+        Case "GO"
+            Rem actions.c:1501-1504. A bare "walk" earns "Where?" rather
+            Rem than a question about objects.
+            Done(Voiced(g, Message(v)), GoClearObj())
+        Case "FLY"
+            DoFly(g, obj, Message(v))
+        Case "LIGHT"
+            DoLight(g, obj, Message(v))
+        Case "EXTINGUISH"
+            DoExtinguish(g, obj, Message(v))
+        Case "UNLOCK"
+            DoLock(g, obj, False, Message(v))
+        Case "LOCK"
+            DoLock(g, obj, True, Message(v))
+        Case Else
+            Rem Which default applies depends on whether you named a thing.
+            Rem actions.c's intransitive switch answers a bare verb with
+            Rem GO_UNKNOWN -- "Wave what?" -- while the transitive switch
+            Rem falls back on the verb's own message, "I'm game.  Would you
+            Rem care to explain how?". A noaction verb short-circuits both,
+            Rem because actions.c:1411 speaks and returns before either.
+            If NoAction(v) Then
+                Done(Voiced(g, Message(v)), GoClearObj())
+            Else
+                If obj = NoObject() Then
+                    Done(g, GoUnknown())
+                Else
+                    If Len(Message(v)) > 0 Then
+                        Done(Voiced(g, Message(v)), GoClearObj())
+                    Else
+                        Done(Voiced(g, Render(Nth(Messages(), MsgDontKnow() + 1), { raw })), GoClearObj())
+

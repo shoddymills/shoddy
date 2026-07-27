@@ -5,17 +5,19 @@
 #   ./build.sh          play the game
 #   ./build.sh run      same as above
 #   ./build.sh test     run the headless model checks
-#   ./build.sh gen      regenerate cave-data.shoddy from adventure.yaml
+#   ./build.sh smoke    replay 16 recorded transcripts   (~3 minutes)
+#   ./build.sh check    replay all 107                   (~18 minutes)
 #
-# open-cave is a console program: prompts in, text out, no window. The
-# pure model in cave-core.shoddy is what test.shoddy covers; this wrapper
-# just launches the game. Words are significant to five letters, as they
-# have been since 1977 -- XYZZY, PLUGH, and PLOVER all still work.
+# open-cave is a console program: prompts in, text out, no window. Words
+# are significant to five letters, as they have been since 1977 -- XYZZY,
+# PLUGH, and PLOVER all still work.
 #
-# The cave itself lives in cave-data.shoddy, generated from
-# adventure.yaml by gen.shoddy and committed, so playing needs nothing
-# but the mill. The generator is Shoddy too: it reads the 154K YAML,
-# resolves its anchors, and writes the tables out as Shoddy source.
+# The cave lives in the cave-*.shoddy tables, which are hand-edited
+# source: the YAML and the generator that first produced them are in
+# obsolete/ and are not run. test.shoddy covers the pure model in
+# cave-core.shoddy; everything below the parser is covered by the
+# recorded transcripts in tests/, which are the port's real
+# specification. See tests/README.
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -38,12 +40,16 @@ case "${1:-run}" in
         ensure_mill
         "$MILL" run test.shoddy
         ;;
-    gen)
+    smoke)
         ensure_mill
-        "$MILL" run gen.shoddy
+        tests/run.sh --smoke
+        ;;
+    check)
+        ensure_mill
+        tests/run.sh
         ;;
     *)
-        echo "usage: ./build.sh [run|test|gen]" >&2
+        echo "usage: ./build.sh [run|test|smoke|check]" >&2
         exit 2
         ;;
 esac

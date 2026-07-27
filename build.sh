@@ -2,8 +2,9 @@
 # Shoddy build wrapper (Unix: Linux / macOS / WSL).
 # Windows users: use build.ps1 (same commands).
 #
+#   ./build.sh all [bump]            everything: clean, test, then .vsix
 #   ./build.sh build                 build the mill into bin/
-#   ./build.sh test                  run the golden suite + libtest assertions
+#   ./build.sh test                  golden suite + libtest + net loopback check
 #   ./build.sh run FILE.shoddy       compile in memory and run a program
 #   ./build.sh weave FILE.shoddy     compile a program to an assembly
 #   ./build.sh machines              compile every machine to a machine DLL
@@ -12,11 +13,23 @@
 #   ./build.sh clean                 remove build output
 #   ./build.sh help                  show this help
 #
+# all: the whole toolchain from nothing — clean, then test (which rebuilds
+# the mill), then vsix (which builds the machines, stages, and packages).
+# This is the path for a package you mean to install or ship; `vsix` on its
+# own reuses whatever bin/mill is already there and runs no tests, which is
+# fine for a quick turn and not for a release. Takes the same optional bump
+# as vsix: ./build.sh all patch
+#
 # vsix [bump]: optional patch|minor|major or an exact X.Y.Z to bump the
 # extension version before packaging (e.g. ./build.sh vsix patch).
 # vsix stages first, so the package carries its own mill and machines.
 set -euo pipefail
 cd "$(dirname "$0")"
+
+# Absolute path to this script, for `all` to re-invoke. Resolved after the
+# cd above: a relative $0 ("sub/build.sh") would no longer point at anything
+# once the working directory has moved.
+SELF="$PWD/$(basename "$0")"
 
 MILL=bin/mill
 # Where `stage` drops the extension's own copy of the toolchain. Both are
@@ -88,6 +101,15 @@ stage() {
 }
 
 case "${1:-help}" in
+    all)
+        # Re-invoked rather than inlined so each step stays exactly the
+        # command it documents — no second copy of clean/test/vsix to drift
+        # out of step with the real ones. set -e stops the chain on the
+        # first failure, so a red test never reaches the packager.
+        "$SELF" clean
+        "$SELF" test
+        "$SELF" vsix ${2:+"$2"}
+        ;;
     build)
         build
         ;;
@@ -95,6 +117,12 @@ case "${1:-help}" in
         dotnet test src/Shoddy.Tests
         ensure_mill
         "$MILL" run tst/libtest.shoddy
+        # The net demo is the only end-to-end exercise of the socket words:
+        # it stands up a server, connects a client to it and trades lines,
+        # both ends in one process on loopback. --allow-net is required
+        # because the network is a gated capability — without the flag the
+        # first socket word aborts, so this run also proves the gate opens.
+        "$MILL" run --allow-net tst/net-demo.shoddy
         ;;
     run)
         [ $# -ge 2 ] || { echo "usage: ./build.sh run FILE.shoddy" >&2; exit 2; }
@@ -132,7 +160,7 @@ case "${1:-help}" in
         echo "cleaned."
         ;;
     help|-h|--help)
-        sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'
+        sed -n '2,25p' "$SELF" | sed 's/^# \{0,1\}//'
         ;;
     *)
         echo "unknown command: $1" >&2

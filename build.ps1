@@ -1,8 +1,9 @@
 #!/usr/bin/env pwsh
 # Shoddy build wrapper (Windows). Unix users: use build.sh (same commands).
 #
+#   ./build.ps1 all [bump]            everything: clean, test, then .vsix
 #   ./build.ps1 build                 build the mill into bin/
-#   ./build.ps1 test                  run the golden suite + libtest assertions
+#   ./build.ps1 test                  golden suite + libtest + net loopback check
 #   ./build.ps1 run FILE.shoddy       compile in memory and run a program
 #   ./build.ps1 weave FILE.shoddy     compile a program to an assembly
 #   ./build.ps1 machines              compile every machine to a machine DLL
@@ -10,6 +11,13 @@
 #   ./build.ps1 vsix [bump]           package the VS Code extension (.vsix)
 #   ./build.ps1 clean                 remove build output
 #   ./build.ps1 help                  show this help
+#
+# all: the whole toolchain from nothing — clean, then test (which rebuilds
+# the mill), then vsix (which builds the machines, stages, and packages).
+# This is the path for a package you mean to install or ship; `vsix` on its
+# own reuses whatever bin/mill is already there and runs no tests, which is
+# fine for a quick turn and not for a release. Takes the same optional bump
+# as vsix: ./build.ps1 all patch
 #
 # vsix [bump]: optional patch|minor|major or an exact X.Y.Z to bump the
 # extension version before packaging (e.g. ./build.ps1 vsix patch).
@@ -104,13 +112,62 @@ function Invoke-Stage {
     Write-Host ('staged mill + machines into vscode-shoddy/ ({0:N1} MB)' -f ($size / 1MB))
 }
 
-switch ($Command) {
-    'build' { Invoke-Build }
-    'test' {
-        dotnet test src/Shoddy.Tests
-        Assert-Mill
-        & $Mill run tst/libtest.shoddy
+function Invoke-Test {
+    dotnet test src/Shoddy.Tests
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    Assert-Mill
+    & $Mill run tst/libtest.shoddy
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    # The net demo is the only end-to-end exercise of the socket words: it
+    # stands up a server, connects a client to it and trades lines, both
+    # ends in one process on loopback. --allow-net is required because the
+    # network is a gated capability — without the flag the first socket
+    # word aborts, so this run also proves the gate opens.
+    & $Mill run --allow-net tst/net-demo.shoddy
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+}
+
+function Invoke-Vsix {
+    param([string]$Bump)
+    if (-not (Get-Command vsce -ErrorAction SilentlyContinue)) {
+        Write-Host 'installing @vscode/vsce (npm -g)...'
+        npm install -g @vscode/vsce
     }
+    Invoke-Stage
+    Push-Location vscode-shoddy
+    try {
+        if ($Bump) { vsce package $Bump --no-git-tag-version }
+        else { vsce package }
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    }
+    finally { Pop-Location }
+}
+
+function Invoke-Clean {
+    if (Test-Path bin) { Remove-Item -Recurse -Force bin }
+    if (Test-Path artifacts) { Remove-Item -Recurse -Force artifacts }
+    if (Test-Path machines/bin) { Remove-Item -Recurse -Force machines/bin }
+    foreach ($d in $StageMill, $StageLib) {
+        if (Test-Path $d) { Remove-Item -Recurse -Force $d }
+    }
+    Get-ChildItem src -Recurse -Directory -Include bin, obj |
+        ForEach-Object { Remove-Item -Recurse -Force $_.FullName }
+    Write-Host 'cleaned.'
+}
+
+switch ($Command) {
+    'all' {
+        # The build.sh twin re-invokes itself per step; here the steps are
+        # called as functions instead, because a .ps1 invoked with & does
+        # not reliably surface its exit code to the caller — the explicit
+        # $LASTEXITCODE guards inside each function are what stop the chain,
+        # so a red test never reaches the packager.
+        Invoke-Clean
+        Invoke-Test
+        Invoke-Vsix $File
+    }
+    'build' { Invoke-Build }
+    'test' { Invoke-Test }
     'run' {
         if (-not $File) { Write-Error 'usage: ./build.ps1 run FILE.shoddy'; exit 2 }
         Assert-Mill
@@ -123,32 +180,10 @@ switch ($Command) {
     }
     'machines' { Invoke-Machines }
     'stage' { Invoke-Stage }
-    'vsix' {
-        if (-not (Get-Command vsce -ErrorAction SilentlyContinue)) {
-            Write-Host 'installing @vscode/vsce (npm -g)...'
-            npm install -g @vscode/vsce
-        }
-        Invoke-Stage
-        Push-Location vscode-shoddy
-        try {
-            if ($File) { vsce package $File --no-git-tag-version }
-            else { vsce package }
-        }
-        finally { Pop-Location }
-    }
-    'clean' {
-        if (Test-Path bin) { Remove-Item -Recurse -Force bin }
-        if (Test-Path artifacts) { Remove-Item -Recurse -Force artifacts }
-        if (Test-Path machines/bin) { Remove-Item -Recurse -Force machines/bin }
-        foreach ($d in $StageMill, $StageLib) {
-            if (Test-Path $d) { Remove-Item -Recurse -Force $d }
-        }
-        Get-ChildItem src -Recurse -Directory -Include bin, obj |
-            ForEach-Object { Remove-Item -Recurse -Force $_.FullName }
-        Write-Host 'cleaned.'
-    }
+    'vsix' { Invoke-Vsix $File }
+    'clean' { Invoke-Clean }
     { $_ -in 'help', '-h', '--help' } {
-        Get-Content $PSCommandPath | Select-Object -Skip 1 -First 15 |
+        Get-Content $PSCommandPath | Select-Object -Skip 1 -First 23 |
             ForEach-Object { $_ -replace '^#\s?', '' }
     }
     default {

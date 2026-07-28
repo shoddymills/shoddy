@@ -68,7 +68,7 @@ by hand against the upstream C, which remains the reference for every rule.
 **The C sources themselves are not redistributed here.**
 
 The port is **modified** from upstream: the game itself is called Mungo
-Caverns, and the cave's little knife-throwing folk are called curmudgeons
+Caverns, and the cave's knife-throwing folk are called curmudgeons
 rather than by their upstream name, which renames one vocabulary word, the
 symbols built from it, and the messages and room descriptions that mention
 them. Both renames are mechanical, and the mill's transcript harness maps them

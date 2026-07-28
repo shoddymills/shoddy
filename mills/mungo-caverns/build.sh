@@ -16,13 +16,13 @@
 # source: the YAML and the generator that first produced them are in
 # obsolete/ and are not run.
 #
-# Testing comes in three layers.  test.shoddy covers the generator, the
-# tables and the parser; tests/test-tables.shoddy asserts what must be
-# true of the cave itself, and tests/test-turn.shoddy drives whole turns
-# as a function -- all three need nothing but the mill.  On top of those,
-# tests/run.sh replays the C original's recorded transcripts, which are
-# the port's specification but need that source tree present.  See
-# tests/README.
+# Testing comes in layers.  test.shoddy covers the generator, the tables
+# and the parser; tests/test-tables.shoddy asserts what must be true of
+# the cave itself; tests/test-turn.shoddy drives whole turns as a
+# function; tests/test-walk.shoddy plays a game to the gold and back; and
+# tests/test-fuzz.shoddy throws random commands at it.  Above them,
+# tests/run.sh replays the recorded transcripts, which are the port's
+# specification.  See tests/README.
 set -euo pipefail
 cd "$(dirname "$0")"
 

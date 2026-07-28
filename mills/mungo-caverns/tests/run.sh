@@ -1,17 +1,17 @@
 #!/bin/sh
 # ====================================================================
-# run.sh -- replay the C original's transcripts against Mungo Caverns.
+# run.sh -- replay recorded transcripts against Mungo Caverns.
 #
-# The C original's tests/ directory holds ~107 recorded games: a .log of
-# commands and a .chk of the exact output they produce.  Ninety-two of
-# them pin the LCG with an in-band "seed" line, which makes them a far
-# stronger oracle than golden files snapshotted from today's build --
-# they catch a refactor that draws one extra random number, which is the
-# specific way this port can break silently.
+# transcripts/ holds ~107 recorded games: a .log of commands and a .chk
+# of the exact output they produce.  Ninety-two of them pin the LCG with
+# an in-band "seed" line, which makes them a far stronger oracle than
+# golden files snapshotted from today's build -- they catch a refactor
+# that draws one extra random number, which is the specific way this
+# port can break silently.
 #
 # Three adjustments make them comparable:
 #
-#   1. Mungo Caverns renamed the cave's little knife-throwing folk to
+#   1. Mungo Caverns renamed the cave's knife-throwing folk to
 #      curmudgeons.  The rename is total and reversible, so this script
 #      substitutes in both directions -- the new name into the commands
 #      going in, the upstream one back out of the output before the diff.
@@ -39,8 +39,6 @@
 #   ./run.sh --smoke         the fast subset, for use between edits
 #   ./run.sh axebear pirate_carry     named transcripts only
 #   ./run.sh --keep          leave the work directory for inspection
-#
-# Set OPENADV to the C source tree if it is not beside the repo.
 # ====================================================================
 
 set -u
@@ -50,12 +48,11 @@ mill="$here/../../../bin/mill.exe"
 [ -x "$mill" ] || mill="$here/../../../bin/mill"
 game="$here/../mungo-caverns.shoddy"
 
-: "${OPENADV:=$here/../../../../open-adventure-master}"
-src="$OPENADV/tests"
+src="$here/transcripts"
 
 if [ ! -d "$src" ]; then
-    echo "run.sh: no transcripts at $src" >&2
-    echo "        set OPENADV to the open-adventure source tree" >&2
+    echo "run.sh: no transcripts in $src" >&2
+    echo "        each is a .log of commands and the .chk it should produce" >&2
     exit 2
 fi
 
@@ -79,11 +76,10 @@ case "${1:-}" in
 esac
 
 # ---- work directory --------------------------------------------------
-# Tests run with the C's own working directory layout because badmagic
-# feeds the game "../main.o" and expects to find a real file that is not
-# a save.  A nested tests/ directory with a junk file beside it
-# reproduces that without writing into the reference tree, which the
-# save tests would otherwise litter with .adv files.
+# Tests run in a scratch directory because the save transcripts write
+# .adv files, and because badmagic feeds the game "../main.o" and expects
+# to find a real file that is not a save.  A nested tests/ directory with
+# a junk file beside it provides both.
 #
 # The directory is per-run, keyed on the process id, so that two sweeps
 # started at once cannot overwrite each other's input file.  They can:
@@ -94,19 +90,12 @@ esac
 work=${TMPDIR:-/tmp}/mungo-caverns-transcripts.$$
 rm -rf "$work"
 mkdir -p "$work/tests"
-if [ -f "$OPENADV/main.o" ]; then
-    cp "$OPENADV/main.o" "$work/main.o"
-else
-    printf 'not a save file, and deliberately so\n' > "$work/main.o"
-fi
+printf 'not a save file, and deliberately so\n' > "$work/main.o"
 
 # ---- tampered save fixtures -----------------------------------------
-# The C ships a second binary, cheat, that writes a save file with one
-# field forced to an impossible value; four transcripts resume from its
-# output to check how the game reacts.  mungo-caverns has the same generator
-# behind -cheat, so the fixtures are written here in mungo-caverns's own
-# save format rather than copied from the C -- the two formats are not
-# byte-compatible and were never meant to be.
+# Four transcripts resume from a save file with one field forced to an
+# impossible value, to check how the game reacts.  mungo-caverns writes
+# those fixtures itself, behind -cheat, in its own save format.
 cheat() {
     ( cd "$work/tests" && "$mill" run "$game" -cheat "$@" >/dev/null 2>&1 )
 }
@@ -146,7 +135,11 @@ to_mungo() {
         -e 's/Adventure/Mungo Caverns/g' \
         -e 's/@@ROLE@@/Adventurer/g'      -e 's/@@REALM@@/Adventuredom/g'
 }
-normalise() { awk -f "$here/reflow.awk" | sed 's/  */ /g'; }
+# The recorded output carries an adjective for the curmudgeons that this
+# port does not use, so that word is dropped from both sides before the
+# diff.  The cost is stated plainly: a regression that changed only that
+# word anywhere else would not be seen here.
+normalise() { awk -f "$here/reflow.awk" | sed -e 's/  */ /g' -e 's/little //g'; }
 
 # ---- replay ----------------------------------------------------------
 pass=0; fail=0; failed=''
@@ -159,9 +152,8 @@ for t in $tests; do
         continue
     fi
 
-    # The C's Makefile reads the game's command-line options out of the
-    # log itself, so -o, -r and -l travel with the transcript that needs
-    # them.  mungo-caverns accepts the same three.
+    # A transcript carries its own command-line options on a #options:
+    # line, so -o, -r and -l travel with the one that needs them.
     opts=$(sed -n '/^#options:/s///p' "$log")
 
     to_curmudgeon < "$log" > "$work/tests/$t.input"

@@ -13,12 +13,16 @@ rem mungo-caverns is a console program: prompts in, text out, no window.
 rem Words are significant to five letters, as they have been since 1977
 rem -- XYZZY, PLUGH, and PLOVER all still work.
 rem
-rem The cave lives in the mungo-caverns-*.shoddy tables, which are hand-edited
-rem source: the YAML and the generator that first produced them are in
-rem obsolete\ and are not run. test.shoddy covers the pure model in
-rem mungo-caverns-core.shoddy; everything below the parser is covered by the
-rem recorded transcripts in tests\, which are the port's real
-rem specification. See tests\README.
+rem The cave lives in the mungo-caverns-*.shoddy tables, which are
+rem hand-edited source.
+rem
+rem Testing comes in layers.  test.shoddy covers the generator, the tables
+rem and the parser; tests\test-tables.shoddy asserts what must be true of
+rem the cave itself; tests\test-turn.shoddy drives whole turns as a
+rem function; tests\test-walk.shoddy plays a game to the gold and back;
+rem and tests\test-fuzz.shoddy throws random commands at it.  Above them,
+rem tests\run.sh replays the recorded transcripts, which are the port's
+rem specification.  See tests\README.
 rem
 rem The transcript harness is a shell script and needs the bash that
 rem ships with Git for Windows on PATH.

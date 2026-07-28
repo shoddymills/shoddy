@@ -12,9 +12,8 @@
 # are significant to five letters, as they have been since 1977 -- XYZZY,
 # PLUGH, and PLOVER all still work.
 #
-# The cave lives in the mungo-caverns-*.shoddy tables, which are hand-edited
-# source: the YAML and the generator that first produced them are in
-# obsolete/ and are not run.
+# The cave lives in the mungo-caverns-*.shoddy tables, which are
+# hand-edited source.
 #
 # Testing comes in layers.  test.shoddy covers the generator, the tables
 # and the parser; tests/test-tables.shoddy asserts what must be true of

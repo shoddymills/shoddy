@@ -61,11 +61,12 @@ rather than MIT. The full terms and copyright lines — Crowther & Woods
 (the Shoddy port, 2026) — are in `mills/mungo-caverns/LICENSE` in the source
 repository.
 
-`mills/mungo-caverns/obsolete/adventure.yaml` is the dungeon database from Open
-Adventure, redistributed under the same license. The port's data tables were
-originally generated from it (by `obsolete/gen.shoddy`) and are now maintained
-by hand against the upstream C, which remains the reference for every rule.
-**The C sources themselves are not redistributed here.**
+The port's data tables — the rooms, objects, messages, vocabulary and travel
+rules — derive from Open Adventure's dungeon database. They were generated from
+it once and are now hand-edited Shoddy, maintained against the upstream C,
+which remains the reference for every rule. The text they carry is Crowther and
+Woods' and Eric Raymond's, which is why the whole mill is BSD-2-Clause.
+**Neither that database nor the C sources are redistributed here.**
 
 The port is **modified** from upstream: the game itself is called Mungo
 Caverns, and the cave's knife-throwing folk are called curmudgeons

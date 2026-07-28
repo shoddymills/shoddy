@@ -4,13 +4,25 @@ Rem Licensed under the MIT License. See the LICENSE file in the project root.
 Rem ==================================================================
 Rem neural.shoddy — Shoddy standard library: feed-forward neural nets
 Rem
-Rem One hidden layer, Tanh activation, identity output, trained by
-Rem mini-batch SGD on squared-error loss — the classic regression
-Rem network. A Net is a record of two weight matrices and two bias
-Rem vectors; a GRADIENT HAS THE SAME SHAPE AS THE NETWORK, so the same
-Rem record represents both and accumulate / average / apply-update all
-Rem fall out of NetAdd and NetScale — no zeroing loops, no mutable
-Rem scratch arrays.
+Rem One hidden layer, Tanh activation, trained by mini-batch SGD. A Net
+Rem is a record of two weight matrices and two bias vectors; a GRADIENT
+Rem HAS THE SAME SHAPE AS THE NETWORK, so the same record represents
+Rem both and accumulate / average / apply-update all fall out of NetAdd
+Rem and NetScale — no zeroing loops, no mutable scratch arrays. The
+Rem same identity carries MOMENTUM: a velocity is a Net too.
+Rem
+Rem Two output heads, one gradient. Regress reads the linear output
+Rem as-is and fits squared error; Classify reads it through Softmax and
+Rem fits cross-entropy. Those two look like different networks in most
+Rem textbooks, but the error signal at the output pre-activation is the
+Rem same expression for both — (what the head predicts) minus (the
+Rem target) — so NetGradAt has exactly one line that knows which head
+Rem it is serving, and everything downstream is shared.
+Rem
+Rem Two ways in, matching that split:
+Rem   * NetTrain — regression, scalar targets, plain SGD. Unchanged.
+Rem   * NetFit   — either head, vector targets, momentum, driven by a
+Rem     Plan record so the hyperparameters travel as one value.
 Rem
 Rem Scale: like stats.shoddy this is classroom-sized — hundreds of rows
 Rem and a few thousand epochs through immutable arrays, not bulk
@@ -32,6 +44,13 @@ Rem   * NetSaveBin/NetLoadBin — binary over recio, a self-describing
 Rem     header (magic, ni, nh, no) then raw 8-byte IEEE doubles, so a
 Rem     round trip is BIT-EXACT and loading needs no architecture
 Rem     arguments.
+Rem   * ModelSave/ModelLoad — the same binary discipline over a Model:
+Rem     the weights PLUS the head and the input Scaler. A Net alone is
+Rem     not a predictor, because whoever trained it also decided how to
+Rem     centre and scale the inputs, and a caller who reconstructs that
+Rem     decision by hand at prediction time is one edit away from a
+Rem     silently wrong answer. ModelPredict takes raw inputs and applies
+Rem     the scaling the file remembers, so the two cannot drift apart.
 Rem ==================================================================
 
 Include "matrix.shoddy"
@@ -70,6 +89,26 @@ Def NetRandArray(n As Number) As Array Of Number
 Def NetNew(ni As Number, nh As Number, no As Number) As Net
     Net(Matrix(nh, ni, NetRandArray(nh * ni)), NetRandArray(nh), Matrix(no, nh, NetRandArray(no * nh)), NetRandArray(no))
 
+Rem Xavier/Glorot initialization: draw from ±sqrt(6 / (fanIn + fanOut)),
+Rem so the spread narrows as a layer widens. NetNew's fixed ±0.01 is
+Rem fine for the handful of inputs a regression demo has, but on a layer
+Rem with a hundred-odd inputs it starts every hidden unit within a
+Rem whisker of zero — deep in the linear part of Tanh, with every output
+Rem near-identical, and a long slow crawl before the units differentiate
+Rem at all. Biases start at zero: they need no symmetry breaking, since
+Rem the weights have already provided it.
+Def NetXavier(rows As Number, cols As Number) As Array Of Number
+    Let b = Sqr(6 / (rows + cols))
+    ToArray(Map(Range(1, rows * cols), Fn(k) => RandomRange(Negate(b), b)))
+
+Def NetNewScaled(ni As Number, nh As Number, no As Number) As Net
+    Net(Matrix(nh, ni, NetXavier(nh, ni)), Dim(nh, 0), Matrix(no, nh, NetXavier(no, nh)), Dim(no, 0))
+
+Rem A net of the same shape, all zeros — the starting velocity for
+Rem momentum. Scaling by zero is the shortest way to say "this shape".
+Def NetZero(n As Net) As Net
+    NetScale(n, 0)
+
 Rem ---- forward -------------------------------------------------------
 
 Def NetEvalAt(n As Net, x As Array Of Number) As NetEval
@@ -79,18 +118,75 @@ Def NetEvalAt(n As Net, x As Array Of Number) As NetEval
 Def NetOut(n As Net, x As Array Of Number) As Number
     First(Output(NetEvalAt(n, x)))
 
+Rem ---- output heads --------------------------------------------------
+
+Rem The output layer is linear either way; the HEAD says how to read it.
+Rem Regress takes it as-is; Classify pushes it through Softmax to get
+Rem probabilities that sum to 1.
+Type Head = Regress | Classify
+
+Rem Subtracting the largest logit first cannot change the answer —
+Rem softmax is shift-invariant — and it keeps Exp away from overflow.
+Def Softmax(zs As Array Of Number) As Array Of Number
+    Let m = Fold(zs, Nth(zs, 1), Max)
+    Let es = Map(zs, Fn(z) => Exp(z - m))
+    VScale(es, 1 / Fold(es, 0, +))
+
+Def HeadOut(head As Head, z As Array Of Number) As Array Of Number
+    Select Case head
+        Case Classify
+            Softmax(z)
+        Case Else
+            z
+
+Rem The whole output vector, read through the head. NetOut above is the
+Rem scalar shortcut for the one-output regression case.
+Def NetPredict(n As Net, head As Head, x As Array Of Number) As Array Of Number
+    HeadOut(head, Output(NetEvalAt(n, x)))
+
+Def Argmax(zs As Array Of Number) As Number
+    Fold(Range(2, Length(zs)), 1, Fn(best, k) => Ifte(Nth(zs, k) > Nth(zs, best), k, best))
+
+Rem Softmax is monotonic, so the winning class is simply the largest
+Rem logit — the exponentials never have to be computed to find it.
+Def NetClassOf(n As Net, x As Array Of Number) As Number
+    Argmax(Output(NetEvalAt(n, x)))
+
+Rem A class index as a target vector: 1 in position k, 0 elsewhere.
+Rem Kron is the equality indicator, so a one-hot is Kron along the row.
+Def NetOneHot(k As Number, n As Number) As Array Of Number
+    ToArray(Map(Range(1, n), Fn(i) => Kron(i, k)))
+
 Rem ---- backward ------------------------------------------------------
 
-Rem One example's gradient of squared error (no 1/2 factor), identity
-Rem output. oSig = o - y; hSig = W2^T oSig  ⊙  (1 - h^2), with the tanh
-Rem derivative written (1-h)(1+h); the weight gradients are outer
-Rem products of a signal with the layer's input.
-Def NetGrad(n As Net, x As Array Of Number, y As Number) As Net
+Rem One example's gradient. oSig = (what the head predicts) - target;
+Rem hSig = W2^T oSig  ⊙  (1 - h^2), with the tanh derivative written
+Rem (1-h)(1+h); the weight gradients are outer products of a signal with
+Rem the layer's input.
+Rem
+Rem THE ONE LINE THAT KNOWS THE HEAD is oSig. For identity output under
+Rem squared error and for softmax output under cross-entropy the error
+Rem signal at the output pre-activation is the same difference, which is
+Rem why one backward pass serves regression and classification alike.
+Rem Both conventions omit the factor of 2 (squared error is really HALF
+Rem squared error here), absorbed by the learning rate — see the
+Rem finite-difference tests in tst/neuraltest.shoddy, which difference
+Rem that same half loss.
+Def NetGradAt(n As Net, head As Head, x As Array Of Number, ys As Array Of Number) As Net
     Let e = NetEvalAt(n, x)
     Let h = Hidden(e)
-    Let oSig = Map(Output(e), Fn(v) => v - y)
+    Let oSig = VSub(HeadOut(head, Output(e)), ys)
     Let hSig = VMul(MatVec(Transp(W2(n)), oSig), Map(h, Fn(v) => (1 - v) * (1 + v)))
     Net(Outer(hSig, x), hSig, Outer(oSig, h), oSig)
+
+Rem The scalar-target regression form, kept because NetTrain and every
+Rem existing caller speak it. It is a wrapper, not a second copy: the
+Rem backward pass above is the only one in the machine, so the two
+Rem cannot drift. VSub is dimension-checked, which makes a scalar target
+Rem against a multi-output net an error here rather than a silent
+Rem broadcast of one number onto every output.
+Def NetGrad(n As Net, x As Array Of Number, y As Number) As Net
+    NetGradAt(n, Regress(), x, ToArray({ y }))
 
 Rem One mini-batch step: average the per-example gradients, descend.
 Def NetStep(n As Net, xs As List Of Array Of Number, ys As List Of Number, lr As Number) As Net
@@ -123,6 +219,65 @@ Def NetTrain(n As Net, xs As List Of Array Of Number, ys As List Of Number, lr A
     Let ya = ToArray(ys)
     Fold(Range(1, epochs), n, Fn(net, epoch) => NetReport(NetEpoch(net, xa, ya, lr, batSize), epoch, report))
 
+Rem ---- training, the general form ------------------------------------
+
+Rem Everything NetFit needs to know that is not the data, carried as one
+Rem value so a training run can be named, printed, and passed around
+Rem rather than smeared across seven arguments. Moment is the momentum
+Rem coefficient: 0 reduces this to the plain descent NetTrain does.
+Type Plan
+    Task   As Head
+    Rate   As Number
+    Moment As Number
+    Batch  As Number
+    Epochs As Number
+
+Def ClassPlan(lr As Number, mu As Number, batch As Number, epochs As Number) As Plan
+    Plan(Classify(), lr, mu, batch, epochs)
+
+Def RegressPlan(lr As Number, mu As Number, batch As Number, epochs As Number) As Plan
+    Plan(Regress(), lr, mu, batch, epochs)
+
+Rem The state carried through training is (net, velocity) — Fst and Snd
+Rem of a Pair. Momentum keeps a running step rather than recomputing one
+Rem from scratch each batch: v = mu*v - lr*grad, then the net moves by v.
+Rem Consecutive batches that agree about the direction accumulate speed;
+Rem ones that disagree cancel. A velocity is a Net, so the same NetAdd
+Rem and NetScale that average the gradients also do this.
+Def NetStepAt(p As Pair, pl As Plan, xs As List Of Array Of Number, ys As List Of Array Of Number) As Pair
+    Let n = Fst(p)
+    Let grads = ZipWith(xs, ys, Fn(x, y) => NetGradAt(n, Task(pl), x, y))
+    Let avg = NetScale(Fold(Rest(grads), First(grads), NetAdd), 1 / Length(grads))
+    Let v = NetAdd(NetScale(Snd(p), Moment(pl)), NetScale(avg, Negate(Rate(pl))))
+    Pair(NetAdd(n, v), v)
+
+Def NetBatchAt(p As Pair, pl As Plan, xa As Array Of Array Of Number, ya As Array Of Array Of Number, perm As Array Of Number, b As Number) As Pair
+    Let idx = Map(Range((b - 1) * Batch(pl) + 1, b * Batch(pl)), Fn(k) => Nth(perm, k))
+    NetStepAt(p, pl, Map(idx, Fn(i) => Nth(xa, i)), Map(idx, Fn(i) => Nth(ya, i)))
+
+Rem One epoch: shuffle the row indices (IMPURE: Rnd), then tile the whole
+Rem permutation with Floor(n / batSize) consecutive chunks — the same
+Rem remainder-dropping NetEpoch does, and harmless for the same reason,
+Rem since the next epoch reshuffles and the dropped rows are not the
+Rem same ones twice.
+Def NetEpochAt(p As Pair, pl As Plan, xa As Array Of Array Of Number, ya As Array Of Array Of Number) As Pair
+    Let perm = ToArray(Shuffle(Range(1, Length(ya))))
+    Fold(Range(1, Floor(Length(ya) / Batch(pl))), p, Fn(q, b) => NetBatchAt(q, pl, xa, ya, perm, b))
+
+Def NetFitReport(p As Pair, epoch As Number, report As [ Number Net -- ]) As Pair
+    Call(report, epoch, Fst(p))
+    p
+
+Rem Fold over epochs, threading net and velocity. report is called with
+Rem (epoch, net) after EVERY epoch — the caller decides when to print and
+Rem pay for metrics, so both the effect and the cost stay at the mill's
+Rem edge. The velocity starts at zero and is discarded at the end: it is
+Rem scaffolding for the descent, not part of the model.
+Def NetFit(n As Net, pl As Plan, xs As List Of Array Of Number, ys As List Of Array Of Number, report As [ Number Net -- ]) As Net
+    Let xa = ToArray(xs)
+    Let ya = ToArray(ys)
+    Fst(Fold(Range(1, Epochs(pl)), Pair(n, NetZero(n)), Fn(p, epoch) => NetFitReport(NetEpochAt(p, pl, xa, ya), epoch, report)))
+
 Rem ---- metrics -------------------------------------------------------
 
 Def NetSqErr(n As Net, x As Array Of Number, y As Number) As Number
@@ -142,6 +297,33 @@ Def NetClose(n As Net, x As Array Of Number, y As Number, pctClose As Number) As
 
 Def NetAccuracy(n As Net, xs As List Of Array Of Number, ys As List Of Number, pctClose As Number) As Number
     Fold(ZipWith(xs, ys, Fn(x, y) => NetClose(n, x, y, pctClose)), 0, +) / Length(ys)
+
+Rem ---- metrics for classification ------------------------------------
+
+Rem Percent-close accuracy above is meaningless once the outputs are
+Rem class scores, and so is MSE: these are the two a classifier is
+Rem actually judged by. Targets are one-hot vectors, as NetFit takes.
+
+Rem Cross-entropy: the negative log of the probability the net gave to
+Rem the true class. Zero when it was certain and right, and it climbs
+Rem without bound as the probability it assigned to the truth goes to
+Rem zero — which is why it has to be floored before Log sees it, since
+Rem a confident enough mistake underflows to exactly 0 and Log(0) has no
+Rem answer to give.
+Def NetFloor() As Number
+    0.000000000000001
+
+Def NetLogLossAt(n As Net, x As Array Of Number, ys As Array Of Number) As Number
+    Let p = Softmax(Output(NetEvalAt(n, x)))
+    Negate(Fold(ZipWith(ys, p, Fn(t, q) => t * Log(Max(q, NetFloor()))), 0, +))
+
+Def NetLogLoss(n As Net, xs As List Of Array Of Number, ys As List Of Array Of Number) As Number
+    Fold(ZipWith(xs, ys, Fn(x, y) => NetLogLossAt(n, x, y)), 0, +) / Length(ys)
+
+Rem Winner-takes-all accuracy: the fraction of rows whose largest output
+Rem sits in the same position as the one-hot target's 1.
+Def NetClassAccuracy(n As Net, xs As List Of Array Of Number, ys As List Of Array Of Number) As Number
+    Fold(ZipWith(xs, ys, Fn(x, y) => Kron(NetClassOf(n, x), Argmax(y))), 0, +) / Length(ys)
 
 Rem ---- save / load (effectful, like all file words) ------------------
 
@@ -224,3 +406,131 @@ Def NetLoadBin(path As String) As Net
     Let ws = ToArray(Map(Range(1, count), Fn(k) => NetGetAt(f, k + 4)))
     BClose(f)
     NetFromList(ws, ni, nh, no)
+
+Rem ---- input scaling -------------------------------------------------
+
+Rem Tanh saturates, so an input column measured in thousands swamps one
+Rem measured in tenths and the network spends its first few hundred
+Rem epochs undoing the units. A Scaler centres each column on its mean
+Rem and divides by its standard deviation, putting every input on the
+Rem same footing.
+Rem
+Rem Center and Spread rather than Mean and StdDev: those two words are
+Rem already declared by stats.shoddy, and a program that includes both
+Rem machines would be refused for declaring a name twice.
+Type Scaler
+    Center As Array Of Number
+    Spread As Array Of Number
+
+Def ScalerCol(xs As List Of Array Of Number, j As Number) As List Of Number
+    Map(xs, Fn(x) => Nth(x, j))
+
+Def ScalerMean(vs As List Of Number) As Number
+    Fold(vs, 0, +) / Length(vs)
+
+Rem Population spread (divide by n), because this is a description of
+Rem the training columns rather than an estimate about a wider
+Rem population. A column that never varies gets a spread of 1, not 0:
+Rem it carries no information either way, and 1 maps it to a harmless
+Rem constant 0 instead of dividing by zero.
+Def ScalerSd(vs As List Of Number) As Number
+    Let m = ScalerMean(vs)
+    Let s = Sqr(Fold(Map(vs, Fn(v) => (v - m) * (v - m)), 0, +) / Length(vs))
+    If s = 0 Then
+        1
+    Else
+        s
+
+Def ScalerFit(xs As List Of Array Of Number) As Scaler
+    Let ni = Length(First(xs))
+    Scaler(ToArray(Map(Range(1, ni), Fn(j) => ScalerMean(ScalerCol(xs, j)))),
+           ToArray(Map(Range(1, ni), Fn(j) => ScalerSd(ScalerCol(xs, j)))))
+
+Def ScalerApply(s As Scaler, x As Array Of Number) As Array Of Number
+    ToArray(Map(Range(1, Length(x)), Fn(j) => (Nth(x, j) - Nth(Center(s), j)) / Nth(Spread(s), j)))
+
+Rem The identity scaler, for inputs that are already comparable.
+Def ScalerNone(ni As Number) As Scaler
+    Scaler(Dim(ni, 0), Dim(ni, 1))
+
+Rem ---- the model: weights, head, and scaling as one artifact ---------
+
+Rem A Net on its own is not enough to predict with. Whoever trained it
+Rem also chose a head and a scaling of the inputs, and a caller who
+Rem rebuilds those by hand is maintaining a second copy of a decision —
+Rem the classic way to end up serving a model different inputs than the
+Rem ones it was fitted on, with nothing to warn you. A Model carries all
+Rem three, ModelPredict takes RAW inputs, and the drift has nowhere to
+Rem happen.
+Type Model
+    Weights As Net
+    Task    As Head
+    Prep    As Scaler
+
+Def ModelPredict(m As Model, x As Array Of Number) As Array Of Number
+    NetPredict(Weights(m), Task(m), ScalerApply(Prep(m), x))
+
+Def ModelClassOf(m As Model, x As Array Of Number) As Number
+    Argmax(ModelPredict(m, x))
+
+Rem ---- model save / load (over recio; bit-exact) ---------------------
+
+Rem A model file is a stream of 8-byte doubles: a 5-double header — the
+Rem magic, then ni, nh, no, then the head as 0 or 1 — followed by the
+Rem weights in NetWeightList's canonical order, then the scaler's ni
+Rem centres and ni spreads. Self-describing like NetSaveBin, so
+Rem ModelLoad takes no architecture arguments.
+Rem
+Rem A DIFFERENT magic from NetSaveBin's 1986, and a separate pair of
+Rem words, so the two formats can never be mistaken for one another:
+Rem files already written by NetSaveBin stay readable by exactly the
+Rem word that wrote them.
+Def ModelBinMagic() As Number
+    1987
+
+Def HeadCode(h As Head) As Number
+    Select Case h
+        Case Classify
+            1
+        Case Else
+            0
+
+Def HeadOfCode(c As Number) As Head
+    If c = 1 Then
+        Classify()
+    Else
+        Regress()
+
+Def ModelSave(path As String, m As Model)
+    If FileExists(path) Then
+        DeleteFile(path)
+    Let f = BOpen(path)
+    Let n = Weights(m)
+    Let ni = Cols(W1(n))
+    NetPutAt(f, 1, ModelBinMagic())
+    NetPutAt(f, 2, ni)
+    NetPutAt(f, 3, Rows(W1(n)))
+    NetPutAt(f, 4, Rows(W2(n)))
+    NetPutAt(f, 5, HeadCode(Task(m)))
+    Let ws = ToArray(NetWeightList(n))
+    Each(Range(1, Length(ws)), Fn(k) => NetPutAt(f, k + 5, Nth(ws, k)))
+    Each(Range(1, ni), Fn(k) => NetPutAt(f, k + 5 + Length(ws), Nth(Center(Prep(m)), k)))
+    Each(Range(1, ni), Fn(k) => NetPutAt(f, k + 5 + Length(ws) + ni, Nth(Spread(Prep(m)), k)))
+    BClose(f)
+
+Def ModelLoad(path As String) As Model
+    Let f = BOpen(path)
+    If BSize(f) < 40 Or NetGetAt(f, 1) <> ModelBinMagic() Then
+        Error("MODELLOAD: NOT A NEURAL MODEL FILE: " & path)
+    Let ni = NetGetAt(f, 2)
+    Let nh = NetGetAt(f, 3)
+    Let no = NetGetAt(f, 4)
+    Let task = HeadOfCode(NetGetAt(f, 5))
+    Let count = ni * nh + nh + nh * no + no
+    If BSize(f) <> 8 * (5 + count + 2 * ni) Then
+        Error("MODELLOAD: WRONG SIZE FOR " & Str(ni) & "-" & Str(nh) & "-" & Str(no) & " MODEL: " & path)
+    Let ws = ToArray(Map(Range(1, count), Fn(k) => NetGetAt(f, k + 5)))
+    Let ctr = ToArray(Map(Range(1, ni), Fn(k) => NetGetAt(f, k + 5 + count)))
+    Let spr = ToArray(Map(Range(1, ni), Fn(k) => NetGetAt(f, k + 5 + count + ni)))
+    BClose(f)
+    Model(NetFromList(ws, ni, nh, no), task, Scaler(ctr, spr))

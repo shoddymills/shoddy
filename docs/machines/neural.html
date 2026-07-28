@@ -22,16 +22,23 @@
 
 <h2 id="summary">Summary</h2>
 <p><code>neural</code> gives Shoddy the classic small neural network: one
-hidden layer of <code>Tanh</code> neurons, an identity output layer, trained
-by mini-batch stochastic gradient descent on squared error — the textbook
-regression network, the kind you can hold entirely in your head. A
+hidden layer of <code>Tanh</code> neurons, trained by mini-batch stochastic
+gradient descent — the kind you can hold entirely in your head. A
 <code>Net</code> is a plain record of four fields: two weight matrices and two
 bias vectors. The design's one big win is that <strong>a gradient has the same
 shape as the network</strong>, so the very same record represents both, and
 accumulating, averaging, and applying an update all fall out of two words —
 <code>NetAdd</code> and <code>NetScale</code>. No zeroing loops, no mutable
 scratch arrays: training is a pure <code>Fold</code> over epochs, each epoch a
-<code>Fold</code> over shuffled mini-batches.</p>
+<code>Fold</code> over shuffled mini-batches. The same identity carries
+momentum, because a velocity is a <code>Net</code> too.</p>
+<p>It does two jobs, chosen by a <strong>head</strong>. <code>Regress</code>
+reads the output layer as-is and fits squared error — predict a number, score
+it on how close. <code>Classify</code> reads it through <code>Softmax</code>
+and fits cross-entropy — predict a category, score it on how often it's right,
+and get a probability for every candidate. Those look like different networks
+in most textbooks; here they share one backward pass, for a reason worth
+knowing (see <a href="#hood">Under the Hood</a>).</p>
 
 <h2 id="why">Why It's Useful</h2>
 <p>Sometimes the relationship you want to learn from data isn't a line, and
@@ -40,20 +47,32 @@ will make it one. A one-hidden-layer network is the smallest honest tool for
 that job: given enough hidden neurons it can approximate any reasonable
 function, and with a few hundred rows and a few thousand epochs it does so on
 classroom hardware in classroom time. Reach for <code>neural</code> when you
-have a table of numeric inputs, a numeric target, and a suspicion the mapping
-between them bends. It builds on <a href="matrix.html">matrix</a> (the forward
+have a table of numeric inputs and either a numeric target whose mapping
+bends, or a label drawn from a short fixed list. It builds on
+<a href="matrix.html">matrix</a> (the forward
 pass is a <code>MatVec</code>, the weight gradients are <code>Outer</code>
 products), <a href="random.html">random</a> (each epoch shuffles),
 <a href="file.html">file</a> (weights save and load as plain text), and
 <a href="recio.html">recio</a> (the binary model format underneath
 <code>NetSaveBin</code>/<code>NetLoadBin</code>).</p>
 
+<div class="note"><strong>Small data wants a smaller tool.</strong> A neural
+network earns its keep when you have many thousands of examples and no clear
+idea which features matter. With a few hundred rows and features you can
+already name, counting and distance methods — naive Bayes over
+<a href="stats.html">stats</a>' <code>Freq</code>, nearest neighbour, plain
+<code>LinFit</code> — are usually faster to train, easier to audit, and at
+least as accurate. This machine is here for when the mapping genuinely bends,
+and as the honest small implementation of an algorithm worth understanding
+from the inside.</div>
+
 <div class="note"><strong>Scale, and the two impure edges.</strong> Like
 stats, this machine is classroom-sized — hundreds of rows and a few thousand
-epochs through immutable arrays, not bulk training. And exactly two words
-touch <code>Rnd</code>: <code>NetNew</code> draws its initial weights, and
-<code>NetTrain</code> shuffles each epoch. A program that wants reproducible
-runs calls the <code>Seed</code> builtin once, at the top of
+epochs through immutable arrays, not bulk training. And exactly two kinds of
+word touch <code>Rnd</code>: the constructors (<code>NetNew</code>,
+<code>NetNewScaled</code>) draw the initial weights, and the training loops
+(<code>NetTrain</code>, <code>NetFit</code>) shuffle each epoch. A program that
+wants reproducible runs calls the <code>Seed</code> builtin once, at the top of
 <code>Main</code> — the same edge random.shoddy documents.</div>
 
 <h2 id="history">A Brief History of Backpropagation</h2>
@@ -91,6 +110,33 @@ Def Main()
     Print(NetOut(n, ToArray({ 0.7 })))       ' close to 2.4
     NetSave("wts.txt", n)
     Let m = NetLoad("wts.txt", 1, 4, 1)      ' same predictions to ~1e-10</code></pre>
+
+<p><strong>Classification</strong> is the same machine wearing the other head.
+Targets become one-hot vectors instead of numbers, the hyperparameters travel
+as a <code>Plan</code>, and the answer comes back as a probability for each
+class:</p>
+<pre><code>Include "neural.shoddy"
+
+Def Main()
+    Seed(0)
+    Let raw = { ToArray({ 5.1, 3.5 }), ToArray({ 6.7, 3.0 }), ToArray({ 5.0, 3.4 }) }
+    Let ys  = { NetOneHot(1, 2), NetOneHot(2, 2), NetOneHot(1, 2) }   ' 2 classes
+
+    Rem centre and scale the inputs, and keep the scaler — you will need
+    Rem exactly this transformation again at prediction time
+    Let sc = ScalerFit(raw)
+    Let xs = Map(raw, Fn(x) => ScalerApply(sc, x))
+
+    Rem ClassPlan(rate, momentum, batch, epochs)
+    Let n = NetFit(NetNewScaled(2, 6, 2), ClassPlan(0.1, 0.9, 3, 300), xs, ys, [ Drop Drop ])
+    Print(NetClassAccuracy(n, xs, ys))       ' 1
+    Print(NetPredict(n, Classify(), First(xs)))   ' probabilities, summing to 1
+
+    Rem save weights + head + scaler as one artifact, then predict from RAW input
+    ModelSave("model.bin", Model(n, Classify(), sc))
+    Let m = ModelLoad("model.bin")
+    Print(ModelClassOf(m, ToArray({ 5.1, 3.5 })))    ' 1 — no scaling by hand</code></pre>
+
 <p>A few things worth remembering:</p>
 <ul>
 <li><strong>Seed first if you want the same run twice.</strong>
@@ -105,10 +151,24 @@ every <code>freq</code>-th epoch and costs nothing in between.</li>
 indices and takes <code>Floor(n / batSize)</code> consecutive chunks; the
 remainder rows (fewer than a full batch) are dropped that epoch — a different
 remainder each time, since the shuffle is fresh.</li>
-<li><strong>Scale your data.</strong> Tanh neurons saturate; inputs and
-targets somewhere near [-1, 1] (divide ages by 100, incomes by 100&thinsp;000)
-keep the gradients alive. This is standard practice for every network of this
-family, not a quirk of this machine.</li>
+<li><strong>Scale your data — and keep the scaler.</strong> Tanh neurons
+saturate; inputs somewhere near [-1, 1] keep the gradients alive. You can do
+it by hand (divide ages by 100, incomes by 100&thinsp;000) or let
+<code>ScalerFit</code> centre each column on its mean and divide by its
+spread. Either way the <em>prediction</em> side must apply the identical
+transformation, which is why <code>Model</code> stores the scaler beside the
+weights and <code>ModelPredict</code> takes raw inputs: rebuilding the
+transformation by hand in a second program is the classic way to end up
+serving a model inputs it was never fitted on, with nothing to warn you.</li>
+<li><strong>Momentum is usually worth switching on.</strong>
+<code>NetFit</code>'s <code>Plan</code> carries a momentum coefficient; 0.9 is
+the conventional starting point and typically reaches a given loss in a
+fraction of the epochs plain descent needs. Setting it to 0 reduces
+<code>NetFit</code> to exactly the descent <code>NetTrain</code> performs —
+bit for bit, which the machine's tests assert.</li>
+<li><strong>Fit the scaler on the training rows only.</strong> Letting the
+held-out rows influence the centring leaks them into training and quietly
+flatters the test score.</li>
 <li><strong>Two serialization formats, one canonical order.</strong>
 <code>NetSave</code> writes text, one number per line in the traditional order —
 input-hidden weights input-major, hidden biases, hidden-output weights
@@ -120,6 +180,16 @@ the same sequence as raw 8-byte doubles behind a self-describing header, so
 trip is <em>bit-exact</em>.</li>
 </ul>
 
+<p><strong>Two mills use this machine end to end</strong>, and reading them
+side by side is the fastest way to see the difference between the heads:
+<a href="../mills/demographics.html">demographics</a> predicts a number
+(income) with the <code>Regress</code> head and is scored on how close it
+gets, while <a href="../mills/iris.html">iris</a> predicts a category
+(species) with <code>Classify</code>, is scored on how often it is right, and
+reports how sure it was. Both split the same way — a trainer that writes a
+model file, a predictor that reads one — and iris trains in about four
+seconds, which makes it the one to run when changing this machine.</p>
+
 <h2 id="hood">Under the Hood: Gradients With the Net's Shape</h2>
 <p>You don't need any of this to use the machine — it's here for the curious.</p>
 <p>A <code>Net</code> holds <code>W1</code> (hidden&times;input),
@@ -130,13 +200,29 @@ The forward pass is two lines of matrix algebra:
 <code>h</code> and <code>o</code> in a <code>NetEval</code> record, because
 the backward pass needs the hidden activations it just computed.</p>
 <p><strong>The backward pass is four lines.</strong> For one example with
-target <code>y</code>: the output signal is <code>o - y</code> (identity
-output, half-squared-error loss); the hidden signal carries that back through
+target <code>y</code>: the output signal is <code>o - y</code>; the hidden
+signal carries that back through
 <code>W2</code> transposed and multiplies by the tanh derivative, written
 <code>(1 - h)(1 + h)</code> from the activations themselves; and each weight
 matrix's gradient is the <code>Outer</code> product of its layer's signal with
 its layer's input. The result is assembled straight into a <code>Net</code> —
 gradient and network, same shape.</p>
+
+<p><strong>Both heads share that pass, and the reason is a small piece of
+calculus worth carrying around.</strong> Differentiate squared error through
+an identity output and the error signal arriving at the output
+pre-activation is <code>output - target</code>. Differentiate cross-entropy
+through a softmax output and it is <code>probabilities - target</code>. The
+exponentials and the logarithm cancel exactly, and what is left is the same
+subtraction. So <code>NetGradAt</code> has precisely one line that knows which
+head it is working for — <code>oSig</code>, where the head decides how to read
+the output layer — and every other line of the backward pass, every weight
+gradient, the mini-batch averaging, the momentum, and the serialization are
+shared verbatim. Regression's <code>NetGrad</code> is a one-line wrapper over
+it rather than a second copy, so the two cannot drift apart. This is asserted,
+not assumed: the machine's tests difference both losses numerically against
+the analytic gradient, every parameter, and swapping one head for the other
+makes them fail.</p>
 <p><strong>That shape-sharing is the whole design.</strong> A mini-batch step
 is <code>Fold</code>-ing <code>NetAdd</code> over the per-example gradients,
 one <code>NetScale</code> by <code>1/batchsize</code> to average, and one more
@@ -149,26 +235,52 @@ a runtime builtin (it needs native precision and saturates safely at
 runtime supplies the primitives, Shoddy derives the rest.</p>
 
 <h2 id="words">Word Reference</h2>
-<p class="tag">16 words, plus the Net and NetEval types</p>
+<p class="tag">37 words, plus the Net, NetEval, Head, Plan, Scaler and Model types</p>
 
 <h3>The types</h3>
 <table>
 <tr><th>Word</th><th>Description</th></tr>
-<tr><td>Net</td><td>A network (or a gradient — same shape): <code>W1</code>,
+<tr><td>Net</td><td>A network (or a gradient, or a momentum velocity — same
+shape): <code>W1</code>,
 the hidden&times;input weight matrix; <code>B1</code>, the hidden biases;
 <code>W2</code>, the output&times;hidden weight matrix; <code>B2</code>, the
-output biases (length 1 for regression).</td></tr>
+output biases (length 1 for regression, one per class for
+classification).</td></tr>
 <tr><td>NetEval</td><td>One forward pass's results: <code>Hidden</code>, the
 post-tanh hidden activations (backpropagation needs them), and
 <code>Output</code>, the output vector.</td></tr>
+<tr><td>Head</td><td>How to read the output layer: <code>Regress()</code>
+takes it as-is and fits squared error; <code>Classify()</code> pushes it
+through <code>Softmax</code> and fits cross-entropy.</td></tr>
+<tr><td>Plan</td><td>Everything <code>NetFit</code> needs that isn't the data,
+as one value: <code>Task</code> (a <code>Head</code>), <code>Rate</code>,
+<code>Moment</code> (the momentum coefficient), <code>Batch</code>,
+<code>Epochs</code>.</td></tr>
+<tr><td>Scaler</td><td>A per-column input transformation: <code>Center</code>
+and <code>Spread</code>, one of each per input. Named so rather than Mean and
+StdDev, which <a href="stats.html">stats</a> already declares.</td></tr>
+<tr><td>Model</td><td>A predictor, complete: <code>Weights</code> (a
+<code>Net</code>), <code>Task</code> (its <code>Head</code>), and
+<code>Prep</code> (its <code>Scaler</code>). A <code>Net</code> alone is not
+enough to predict with — whoever trained it also chose a head and a
+scaling.</td></tr>
 </table>
 
-<h3>Building and combining <span class="tag">NetNew is impure: Rnd</span></h3>
+<h3>Building and combining <span class="tag">the constructors are impure: Rnd</span></h3>
 <table>
 <tr><th>Word</th><th>Description</th></tr>
 <tr><td>NetNew(ni, nh, no)</td><td>A fresh <code>ni</code>-<code>nh</code>-<code>no</code>
 network with weights and biases uniform in [-0.01, 0.01] via <code>Rnd</code>.
 Call <code>Seed</code> first for a reproducible net.</td></tr>
+<tr><td>NetNewScaled(ni, nh, no)</td><td>The same, but Xavier/Glorot
+initialized — each layer's weights uniform in
+&plusmn;<code>Sqr(6 / (fanIn + fanOut))</code>, so the spread narrows as a
+layer widens, and biases at zero. Prefer this whenever a layer has more than a
+handful of inputs: <code>NetNew</code>'s fixed &plusmn;0.01 starts every hidden
+unit within a whisker of zero, deep in the linear part of Tanh, and the units
+take a long time to differentiate.</td></tr>
+<tr><td>NetZero(n)</td><td>A net of the same shape with every weight zero — the
+starting velocity for momentum.</td></tr>
 <tr><td>NetAdd(a, b)</td><td>Fieldwise sum of two same-shaped nets
 (<code>MatAdd</code>/<code>VAdd</code> per field). Accumulates gradients;
 applies updates.</td></tr>
@@ -188,35 +300,87 @@ serialization order.</td></tr>
 a <code>NetEval</code> with the hidden activations and the output
 vector.</td></tr>
 <tr><td>NetOut(n, x)</td><td>Just the regression value — the first element of
-the output. The everyday prediction word.</td></tr>
+the output. The everyday prediction word for a <code>Regress</code>
+net.</td></tr>
+<tr><td>NetPredict(n, head, x)</td><td>The whole output vector read through the
+head: the raw output under <code>Regress</code>, probabilities summing to 1
+under <code>Classify</code>.</td></tr>
+<tr><td>NetClassOf(n, x)</td><td>The predicted class as a 1-based index.
+Softmax is monotonic, so this is the largest output and the exponentials are
+never computed.</td></tr>
+<tr><td>Softmax(zs)</td><td>Turns scores into probabilities summing to 1. The
+largest is subtracted first — which cannot change the result, softmax being
+shift-invariant, and keeps <code>Exp</code> away from overflow.</td></tr>
+<tr><td>HeadOut(head, z)</td><td>Applies a head to an output vector: identity
+for <code>Regress</code>, <code>Softmax</code> for <code>Classify</code>.</td></tr>
+<tr><td>Argmax(zs)</td><td>The 1-based position of the largest element; the
+first of a tie.</td></tr>
+<tr><td>NetOneHot(k, n)</td><td>A class index as a target vector of length
+<code>n</code>: 1 at position <code>k</code>, 0 elsewhere.</td></tr>
 </table>
 
-<h3>Training <span class="tag">NetTrain shuffles: impure</span></h3>
+<h3>Training <span class="tag">NetTrain and NetFit shuffle: impure</span></h3>
 <table>
 <tr><th>Word</th><th>Description</th></tr>
-<tr><td>NetGrad(n, x, y)</td><td>One example's gradient of half squared error,
-as a <code>Net</code> with the same shape as <code>n</code>.</td></tr>
+<tr><td>NetGradAt(n, head, x, ys)</td><td>One example's gradient against a
+vector target, as a <code>Net</code> with the same shape as <code>n</code>.
+The machine's only backward pass; the head chooses how the output layer is
+read and nothing else in it changes.</td></tr>
+<tr><td>NetGrad(n, x, y)</td><td>The scalar-target regression form — a wrapper
+over <code>NetGradAt</code>, not a second copy.</td></tr>
 <tr><td>NetStep(n, xs, ys, lr)</td><td>One mini-batch step: the batch's
 gradients averaged, scaled by <code>-lr</code>, and added to
 <code>n</code>.</td></tr>
-<tr><td>NetTrain(n, xs, ys, lr, batSize, epochs, report)</td><td>The full
-training loop: each epoch shuffles the rows, tiles them into
+<tr><td>NetTrain(n, xs, ys, lr, batSize, epochs, report)</td><td>The
+regression training loop: each epoch shuffles the rows, tiles them into
 <code>Floor(n / batSize)</code> mini-batches (remainder dropped), folds
 <code>NetStep</code> over them, then calls <code>report</code> with
 <code>(epoch, net)</code> — after <em>every</em> epoch, so the caller decides
 when to print and pay for metrics. Pass <code>[ Drop Drop ]</code> for
 silence.</td></tr>
+<tr><td>ClassPlan(lr, mu, batch, epochs)</td><td>A <code>Plan</code> with the
+<code>Classify</code> head.</td></tr>
+<tr><td>RegressPlan(lr, mu, batch, epochs)</td><td>A <code>Plan</code> with the
+<code>Regress</code> head.</td></tr>
+<tr><td>NetFit(n, plan, xs, ys, report)</td><td>The general training loop:
+either head, vector targets, momentum. Threads net and velocity together
+through every batch (<code>v = mu&middot;v - lr&middot;grad</code>, then the
+net moves by <code>v</code>), reports after every epoch exactly as
+<code>NetTrain</code> does, and discards the velocity at the end — it is
+scaffolding for the descent, not part of the model. With
+<code>Moment = 0</code> it is <code>NetTrain</code>, bit for bit.</td></tr>
 </table>
 
 <h3>Measuring</h3>
 <table>
 <tr><th>Word</th><th>Description</th></tr>
 <tr><td>NetMse(n, xs, ys)</td><td>Mean squared error of the net's predictions
-over a data set.</td></tr>
+over a data set. Regression.</td></tr>
 <tr><td>NetAccuracy(n, xs, ys, pctClose)</td><td>The fraction of rows
 predicted within <code>pctClose</code> of the actual value —
 <code>|pred - actual| &lt; pctClose &times; |actual|</code>. Percent-close
 accuracy, the natural score for regression.</td></tr>
+<tr><td>NetLogLoss(n, xs, ys)</td><td>Mean cross-entropy over a data set: the
+negative log of the probability the net gave the true class. Zero when it was
+certain and right, climbing without bound as the probability it assigned to
+the truth goes to zero. The convergence signal for classification, where MSE
+means nothing.</td></tr>
+<tr><td>NetClassAccuracy(n, xs, ys)</td><td>Winner-takes-all accuracy: the
+fraction of rows whose largest output sits where the one-hot target's 1
+is.</td></tr>
+</table>
+
+<h3>Scaling the inputs</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>ScalerFit(xs)</td><td>A <code>Scaler</code> from a set of input rows:
+each column's mean, and its population standard deviation. A column that never
+varies gets a spread of 1, not 0 — it carries no information either way, and 1
+maps it to a harmless constant instead of dividing by zero. Fit this on the
+<em>training</em> rows only.</td></tr>
+<tr><td>ScalerApply(s, x)</td><td>One input row centred and scaled.</td></tr>
+<tr><td>ScalerNone(ni)</td><td>The identity scaler, for inputs already on
+comparable scales.</td></tr>
 </table>
 
 <h3>Saving and loading <span class="tag">effectful; call from Main</span></h3>
@@ -239,7 +403,32 @@ so the round trip is bit-exact.</td></tr>
 header carries the architecture, so no dimension arguments; the magic number
 and the exact byte size are checked before any weight is trusted, and a wrong
 or truncated file stops the program with a clear error.</td></tr>
+<tr><td>ModelSave(path, m)</td><td>Writes a whole <code>Model</code> — weights,
+head, and scaler — with the same binary discipline: a five-double header (its
+own magic, then <code>ni</code>, <code>nh</code>, <code>no</code>, then the
+head), the weights in the canonical order, then the scaler's centres and
+spreads. A different magic from <code>NetSaveBin</code>'s, so the two formats
+can never be mistaken for one another and files already written by
+<code>NetSaveBin</code> stay readable by the word that wrote them.</td></tr>
+<tr><td>ModelLoad(path)</td><td>Reads one back. Self-describing, so no
+architecture arguments; magic and exact byte size checked before anything is
+trusted.</td></tr>
+<tr><td>ModelPredict(m, x)</td><td>Predict from a <strong>raw</strong> input
+row: the model applies the scaling it remembers, then its own head. This is
+the word that makes a saved model a complete predictor — the caller never
+reconstructs the training-time transformation, so it cannot get it
+wrong.</td></tr>
+<tr><td>ModelClassOf(m, x)</td><td>The predicted class index from a raw input
+row.</td></tr>
 </table>
+
+<div class="note"><strong>Which format to write.</strong> Reach for
+<code>ModelSave</code> unless you have a reason not to: a
+<code>NetSaveBin</code> file is weights alone, which means the program that
+loads it must know the head and reproduce the input scaling from somewhere
+else — usually by hand, in another file, where nothing will notice if the two
+ever stop agreeing. <code>NetSave</code>'s text format remains the one to use
+when the weights must interchange with the C# reference program.</div>
 
 
 <nav class="pager" aria-label="Machines, in catalog order">

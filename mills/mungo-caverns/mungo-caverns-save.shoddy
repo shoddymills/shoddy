@@ -1,37 +1,37 @@
 Rem ===================================================================
-Rem cave-save.shoddy -- suspending and resuming.
+Rem mungo-caverns-save.shoddy -- suspending and resuming.
 Rem 
-Rem saveresume.c. WriteSaveAs enumerates every field with an explicit
+Rem WriteSaveAs enumerates every field with an explicit
 Rem PutNum or PutBool: it is a positional write sequence, not reflection
 Rem over the record. Renaming fields is therefore byte-safe. Reordering
 Rem or adding a Put call is not.
 Rem ===================================================================
 
 Rem ---- suspend and resume --------------------------------------------------------
-Rem saveresume.c:67-149. The C writes its game struct to disk raw, which
-Rem is not portable even between two C compilers -- padding, endianness
-Rem and enum width all leak into the file. This port writes its own
+Rem A raw memory image of the game would not be portable -- padding,
+Rem endianness
+Rem and field width all leak into such a file. This port writes its own
 Rem format through Shoddy's binary words instead: a version, then every
 Rem scalar and array in a fixed order. The transcripts do not look at the
 Rem bytes, only at the prompts and the game that comes back, so they
 Rem grade this just as well.
 Rem
-Rem The prompt loop is the fiddly part: the C re-asks until a file opens,
+Rem The prompt loop is the fiddly part: it re-asks until a file opens,
 Rem and prints the failure with the name you typed.
 
-Rem saveresume.c:19 -- SAVE_VERSION 32, printed as major.minor by halving
-Rem it at the decimal point. The format on disk is ours, not the C's, but
-Rem the number is shared so a mismatched file reports the same version the
-Rem recorded transcripts expect.
+Rem SAVE_VERSION 32, printed as major.minor by halving
+Rem it at the decimal point. The format on disk is this port's own, but
+Rem the version number is kept so a mismatched file reports the same
+Rem version the recorded transcripts expect.
 Def SaveVersion() As Number
     32
 
-Rem saveresume.c:87 asks through myreadline, which goes to editline. With
-Rem stdin redirected editline suppresses the prompt and the echo, so a
+Rem With stdin redirected the file-name prompt and its echo are
+Rem suppressed, so a
 Rem recorded session shows the failure message but not what was typed --
 Rem and shows a bare "File name:" only on the read that hits end of
 Rem input. This reproduces those bytes; it is matched against the
-Rem recorded transcripts rather than derived from the C.
+Rem recorded transcripts, which are the authority for them.
 Def AskFile() As String
     Let name = Trim(Input(""))
     If Len(name) = 0 Then
@@ -43,12 +43,12 @@ Def AskFile() As String
     Else
         name
 
-Rem The C prints "Can't open file X, try again." with no leading blank,
+Rem "Can't open file X, try again." prints with no leading blank,
 Rem then loops back to the prompt.
-Rem saveresume.c:85-103 loops on fopen until it gets a file or runs out of
-Rem input, so naming somewhere unwritable costs you a complaint and another
+Rem The ask loops until a file opens or input runs out, so naming
+Rem somewhere unwritable costs you a complaint and another
 Rem prompt rather than the game. TryWriteFile both asks the question and
-Rem creates the file, exactly as the C's fopen(name, "wb") does.
+Rem creates the file in one step.
 Def AskUntilWritable(g As Game) As String
     Let name = AskFile()
     If Len(name) = 0 Then
@@ -78,7 +78,7 @@ Def DoSuspend(gIn As Game) As Done
             SpeakId(MsgResumeHelp())
             Done(With(g1, Outcome = Suspended()), GoClearObj())
 
-Rem saveresume.c:111-148. Resuming mid-game asks whether you really mean
+Rem Resuming mid-game asks whether you really mean
 Rem to abandon the one you are in.
 Def DoResume(gIn As Game) As Done
     Let g = Flushed(gIn)
@@ -101,7 +101,7 @@ Def ResumeFrom(g As Game) As Done
             Print("Can't open file " & name & ", try again.")
             ResumeFrom(g)
         Else
-            Rem saveresume.c:149 -- restore hands back GO_TOP, so the
+            Rem restore hands back GO_TOP, so the
             Rem restored room is described where it stands rather than
             Rem being moved into.
             Done(ReadSave(g, name), GoTop())
@@ -113,7 +113,7 @@ Rem clever: this is read back in exactly the order it is written.
 Def WriteSave(g As Game, name As String)
     WriteSaveAs(g, name, SaveVersion())
 
-Rem saveresume.c:34 stamps ADVENT_MAGIC ahead of everything else, which is
+Rem The magic number is stamped ahead of everything else, which is
 Rem what lets restore tell "not one of ours" from "ours, wrong era" -- two
 Rem refusals the transcripts word differently.
 Def SaveMagic() As Number
@@ -198,7 +198,7 @@ Def PutHints(f As Number, hs As List, i As Number, n As Number)
 
 Rem Read back in exactly the order WriteSave laid it down. A file whose
 Rem first word is not our version is not ours.
-Rem saveresume.c:157-171. Three ways a save file can be refused, and they
+Rem Three ways a save file can be refused, and they
 Rem read differently on purpose: bad magic means it is not one of ours at
 Rem all, a version mismatch means it is ours but from another era, and
 Rem failing is_valid means somebody has been editing it -- which the game
@@ -222,8 +222,8 @@ Def ReadSave(g As Game, name As String) As Game
         BClose(f)
         Validated(g2)
 
-Rem saveresume.c:229. Deaths beyond the three the game offers is the giveaway
-Rem the C checks for: nobody reaches it by playing.
+Rem Deaths beyond the three the game offers is the giveaway
+Rem checked for: nobody reaches it by playing.
 Def Validated(g As Game) As Game
     If Deaths(g) >= NDeaths() Then
         With(VoicedId(g, MsgSaveTampering()), Outcome = Suspended())

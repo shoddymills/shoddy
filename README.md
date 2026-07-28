@@ -96,7 +96,7 @@ is in [the heritage of the name](https://shoddymills.github.io/shoddy/heritage.h
 | `src/`| The .NET solution: `Shoddy.Runtime` · `Shoddy.Devil` (front-end) · `Shoddy.Mill` · `Shoddy.Compiler` · `Shoddy.Tests` |
 | `bin/`| Build output — the published `mill` toolchain lands here after `dotnet publish` (not committed; build it, then run `bin/mill`) |
 | `machines/`| Standard library (the machines): `seq` `str` `math` `matrix` `stats` `random` `neural` `money` `file` `recio` `dict` `isam` `net` `simplex` `mps` `clock` `vt100` `keys` `scribbler` `turtle` `plotter` `buzzer` |
-| `mills/`| Complete example programs (the mills), each with its own build wrapper: `oregon` (overland-trail game, after MECC's 1971 original) · `pac-vt100` · `invaders` · `open-cave` (Colossal Cave Adventure) · `demographics` (neural income model, regression) · `iris` (neural species classifier, ~4s to train) · `simplex-from-mps` (LP solver) |
+| `mills/`| Complete example programs (the mills), each with its own build wrapper: `oregon` (overland-trail game, after MECC's 1971 original) · `pac-vt100` · `invaders` · `mungo-caverns` (cave-adventure port) · `demographics` (neural income model, regression) · `iris` (neural species classifier, ~4s to train) · `simplex-from-mps` (LP solver) |
 | `docs/`| `index.html` (start here) · `guide.html` · `setup.html` (one-time machine setup) · `vscode.html` (editor) · `build.html` (the toolchain) · `stack.html` (the stack, traced) · `spec.html` · `quickref.html` · `machines/` and `mills/` (one page each) |
 | `tst/`| `libtest.shoddy` (assertion suite) · `examples.shoddy` · `gradebook.shoddy` · `simplex.shoddy` · demos (`scribbler-` `turtle-` `plotter-` `buzzer-` `net-demo.shoddy`) · `golden/` (the constitution) |
 | `vscode-shoddy/`| VS Code extension: highlighting, snippets, debugging, mill commands |
@@ -174,10 +174,11 @@ for anything, including commercially, with attribution.
 
 Third-party dependencies and the historical/homage example programs (OREGON,
 the Pac-Man and Space Invaders homages, and a neural-net reference) remain
-under their own licenses and their owners' trademarks. The Colossal Cave
-Adventure port ([mills/open-cave/](mills/open-cave/)) derives from Crowther &
-Woods via Eric Raymond's Open Adventure and is **BSD-2-Clause**; see its
-[LICENSE](mills/open-cave/LICENSE) and
+under their own licenses and their owners' trademarks. The Mungo Caverns
+mill ([mills/mungo-caverns/](mills/mungo-caverns/)) derives from Crowther &
+Woods' Colossal Cave Adventure via Eric Raymond's Open Adventure and is
+**BSD-2-Clause**; see its
+[LICENSE](mills/mungo-caverns/LICENSE) and
 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
 
 Contributions are welcome under the MIT License; see

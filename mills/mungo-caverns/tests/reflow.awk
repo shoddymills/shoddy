@@ -1,6 +1,6 @@
 # Join each blank-line-delimited block into a single line.
 #
-# Adventure's message text is stored pre-wrapped, and open-cave renamed
+# The game's message text is stored pre-wrapped, and Mungo Caverns renamed
 # the dwarves to curmudgeons -- five characters longer.  Every paragraph
 # mentioning one therefore breaks at different columns than the C's
 # recorded output does, even when the words are identical.  Collapsing

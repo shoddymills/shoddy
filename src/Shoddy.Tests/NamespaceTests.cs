@@ -13,7 +13,7 @@ namespace Shoddy.Tests;
 /// Shoddy has one namespace: Include splices, so every Def, Type, variant,
 /// and field accessor in every included file lands in a single flat table.
 /// A namespace pastes a prefix onto the names a file declares, which is
-/// exactly what the open-cave port had been doing by hand (its generator
+/// exactly what the mungo-caverns port had been doing by hand (its generator
 /// emitted `"Def Msg" & Pascal(name)` as a string) — these pin the compiler
 /// doing it instead.
 ///

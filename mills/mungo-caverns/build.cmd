@@ -1,6 +1,6 @@
 @echo off
 setlocal
-rem Run Colossal Cave Adventure (Windows).
+rem Run Mungo Caverns (Windows).
 rem Unix users: use build.sh (same commands).
 rem
 rem   build.cmd          play the game
@@ -9,14 +9,14 @@ rem   build.cmd test     run the headless model checks
 rem   build.cmd smoke    replay 16 recorded transcripts   (~3 minutes)
 rem   build.cmd check    replay all 107                   (~18 minutes)
 rem
-rem open-cave is a console program: prompts in, text out, no window.
+rem mungo-caverns is a console program: prompts in, text out, no window.
 rem Words are significant to five letters, as they have been since 1977
 rem -- XYZZY, PLUGH, and PLOVER all still work.
 rem
-rem The cave lives in the cave-*.shoddy tables, which are hand-edited
+rem The cave lives in the mungo-caverns-*.shoddy tables, which are hand-edited
 rem source: the YAML and the generator that first produced them are in
 rem obsolete\ and are not run. test.shoddy covers the pure model in
-rem cave-core.shoddy; everything below the parser is covered by the
+rem mungo-caverns-core.shoddy; everything below the parser is covered by the
 rem recorded transcripts in tests\, which are the port's real
 rem specification. See tests\README.
 rem
@@ -52,7 +52,7 @@ exit /b 0
 
 :run
 call :ensure_mill || exit /b 1
-"%MILL%" run cave.shoddy
+"%MILL%" run mungo-caverns.shoddy
 exit /b %errorlevel%
 
 :test

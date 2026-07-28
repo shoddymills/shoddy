@@ -1,23 +1,23 @@
 Rem ===================================================================
-Rem cave-state.shoddy -- the game record, and the questions asked of it.
+Rem mungo-caverns-state.shoddy -- the game record, and the questions asked of it.
 Rem 
-Rem advent.h struct game_t. One record threaded through every turn,
+Rem The game record: one record threaded through every turn,
 Rem plus the small predicates -- Here, At, Toting, IsDarkHere -- that
 Rem the rules ask about it constantly.
 Rem ===================================================================
 
 Rem ---- state ---------------------------------------------------------------
-Rem The C keeps one global struct; this threads the same fields. Two need
+Rem One record threads the whole game through every call. Two fields need
 Rem explaining. ObjectsAt is an array of per-room object lists, because the
-Rem order objects are listed in is observable and the C maintains it as an
-Rem intrusive linked list that drop() prefixes to. Held is the same list
+Rem order objects are listed in is observable: dropping prefixes to the
+Rem room's list. Held is the same list
 Rem for the player's hands.
 
 Def Carried() As Number
     0 - 1
 
-Rem Suspended is not Quit: saveresume.c:108 calls exit() the moment the
-Rem file is written, so a suspended game is never scored and never rated.
+Rem Suspended is not Quit: a suspended game ends the moment the file is
+Rem written, so it is never scored and never rated.
 Rem Quitting, dying and running out of input all still go past the scorer.
 Type Fate = Playing | Quit | Died(Msg) | Suspended | Won
 
@@ -66,7 +66,7 @@ Type Game
     Novice               As Boolean
     LampLife             As Number
     Outcome              As Fate
-    Rem What the rules have said so far this turn. See cave-say.shoddy:
+    Rem What the rules have said so far this turn. See mungo-caverns-say.shoddy:
     Rem rules append here instead of printing, and the turn loop drains it.
     Rem WriteSaveAs enumerates fields explicitly, so this one is simply not
     Rem written and the save format is unchanged.
@@ -76,20 +76,16 @@ Type Game
 Def NoObject() As Number
     0
 
-Rem The C uses verb 0 (ACT_NULL) to mean "no verb remembered yet".
+Rem Verb 0 (ACT_NULL) means "no verb remembered yet".
 Def NoVerb() As Number
     0
 
 Def VerbWord(g As Game) As String
     PendingRaw(g)
 
-Rem init.c:61-73 seeds the room lists by walking the object table
-Rem backwards into a prefixing list, which leaves declaration order. We
-Rem append forwards, which is the same thing said plainly.
-Rem init.c:56-73 runs two backwards loops into a prefixing list: the
-Rem two-placed objects go down first so they end up described last. Two
-Rem forward appending passes, singles then doubles, land in the same
-Rem order without the double negative.
+Rem The room lists must land in declaration order, with the two-placed
+Rem objects described last. Two forward appending passes -- singles then
+Rem doubles -- produce exactly that.
 Def PlacedTwice(i As Number, doubles As Boolean) As Boolean
     Let ps = Places(Nth(Objects(), i))
     (Length(ps) > 1) = doubles And Not IsEmpty(ps)
@@ -103,9 +99,8 @@ Def SeedRooms(at As Array, n As Number) As Array
     SeedPass(SeedPass(at, n, False), n, True)
 
 Rem A few objects exist in two rooms at once -- the grate seen from above
-Rem and below, the troll at both ends of its bridge. The C addresses the
-Rem second placement as obj + NOBJECTS; listing the object in both rooms
-Rem says the same thing without the arithmetic.
+Rem and below, the troll at both ends of its bridge. Listing the object
+Rem in both rooms models the second placement without index arithmetic.
 Def PlaceAll(at As Array, ps As List, obj As Number) As Array
     Fold(ps, at, Fn(acc, loc) => SetNth(acc, loc + 1, Append(Nth(acc, loc + 1), obj)))
 
@@ -118,8 +113,8 @@ Def EmptyLists(a As Array, n As Number) As Array
     Range(1, n)
         Fold(a, Fn(acc, i) => SetNth(acc, i, { }))
 
-Rem init.c:82-92. A treasure that can be carried starts out "not found",
-Rem which is the negative prop the C leans on so heavily; everything else
+Rem A treasure that can be carried starts out "not found",
+Rem which is the negative prop the rules lean on so heavily; everything else
 Rem starts at zero. Describing a treasure is what flips it and decrements
 Rem the tally, and the tally reaching zero is what closes the cave.
 Def IsTreasure(o As Obj) As Boolean
@@ -139,8 +134,8 @@ Def NewGame(seed As Number) As Game
     Let no = Length(Objects())
     Let at = EmptyLists(Dim(nl, 0), nl)
     Let wh = Dim(no, 0)
-    Rem init.c:25-26 sets loc and newloc but never oldloc, so it starts at
-    Rem LOC_NOWHERE -- which is why "back" on turn one has nowhere to go.
+    Rem PreviousLocation deliberately starts at LOC_NOWHERE -- which is
+    Rem why "back" on turn one has nowhere to go.
     Rem Named rather than positional, and not as a matter of taste: this
     Rem record has forty-four fields, and given positionally, inserting one
     Rem in the middle silently shifts every argument after it into the wrong
@@ -235,11 +230,10 @@ Def Stepped(g As Game) As Game
     With(g, LcgState = LcgNext(LcgState(g)))
 
 Rem ---- objects by name -------------------------------------------------------
-Rem A handful of objects are special-cased by the rules, exactly as they
-Rem are in the C, where they arrive as generated #defines.
+Rem A handful of objects are special-cased by the rules, by name.
 
 Rem The names themselves, and the three constants the rules ask for by
-Rem name, live in cave-names.shoddy. What is left here is the meaning of
+Rem name, live in mungo-caverns-names.shoddy. What is left here is the meaning of
 Rem the prop values those two objects carry.
 
 Def LampDark() As Number
@@ -257,14 +251,14 @@ Def GrateOpen() As Number
 Def PropOf(g As Game, i As Number) As Number
     Nth(Props(g), i + 1)
 
-Rem advent.h. An object's prop is which state it is in -- except that a
+Rem An object's prop is which state it is in -- except that a
 Rem negative one means the state is there but hidden: the thing has not
 Rem been laid eyes on yet, or the closing sequence stashed it into a
 Rem repository pile so it stays undescribed until picked up and put down.
 Rem
 Rem The hiding is done with 0 - 1 - n, which is its own inverse, so the
 Rem same expression stashes and unstashes. That is load-bearing and is not
-Rem to be "simplified" into a negation: main.c:962 relies on it. Reading
+Rem to be "simplified" into a negation: the round trip relies on it. Reading
 Rem the encoding through this type is what keeps the arithmetic in one
 Rem place rather than at every site that asks whether a thing is hidden.
 Rem
@@ -307,23 +301,23 @@ Def Revealed(g As Game, i As Number) As Game
         Case Else
             g
 
-Rem advent.h:107-122. An object is "here" if you are carrying it or it is
+Rem An object is "here" if you are carrying it or it is
 Rem lying in this room.
 Def Here(g As Game, i As Number) As Boolean
     Toting(g, i) Or Contains(HereList(g), i)
 
-Rem advent.h:110-113. AT is lying in this room; HERE also counts what you
+Rem AT is lying in this room; HERE also counts what you
 Rem are carrying. The grate is AT you from either side of it.
 Def At(g As Game, i As Number) As Boolean
     Contains(HereList(g), i)
 
-Rem advent.h:123-125. Dark unless the room lights itself or you have a
+Rem Dark unless the room lights itself or you have a
 Rem burning lamp with you.
 Def IsDarkHere(g As Game) As Boolean
     (Not Contains(Conds(RoomAt(g)), "LIT")
      And (PropOf(g, Lamp()) = LampDark() Or Not Here(g, Lamp())))
 
-Rem misc.c:800-806. Setting an object's state announces the change; only
+Rem Setting an object's state announces the change; only
 Rem some objects have anything to say about it.
 Def StateChange(g As Game, i As Number, st As Number) As Game
     Let o = ObjAt(i)

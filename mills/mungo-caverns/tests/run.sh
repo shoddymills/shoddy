@@ -1,6 +1,6 @@
 #!/bin/sh
 # ====================================================================
-# run.sh -- replay the open-adventure transcripts against open-cave.
+# run.sh -- replay the C original's transcripts against Mungo Caverns.
 #
 # The C original's tests/ directory holds ~107 recorded games: a .log of
 # commands and a .chk of the exact output they produce.  Ninety-two of
@@ -9,16 +9,27 @@
 # they catch a refactor that draws one extra random number, which is the
 # specific way this port can break silently.
 #
-# Two adjustments make them comparable:
+# Three adjustments make them comparable:
 #
-#   1. open-cave renamed the dwarves to curmudgeons.  The rename is
+#   1. Mungo Caverns renamed the dwarves to curmudgeons.  The rename is
 #      total and reversible, so this script substitutes in both
 #      directions -- curmudgeon into the commands going in, dwarf back
 #      out of the output.  Order matters: the longer forms first, or
 #      "curmudgeons" becomes "dwarfs".
 #
-#   2. "curmudgeon" is five characters longer than "dwarf", so stored
-#      message text wraps at different columns.  Both sides are reflowed
+#   2. The game itself was renamed to Mungo Caverns, and the old names
+#      appear in recorded output ("Welcome to ...!!", the cave the game
+#      says is nearby, the suspend and resume messages, the version
+#      line).  Two old names collapse into one new one, so this rename
+#      is mapped forward on the expected side (to_mungo below) rather
+#      than backward out of the output.  "Adventurer" and "Adventuredom"
+#      are role words, not the name, and are shielded from the mapping.
+#      Typed commands never contain the name, so the input side is
+#      untouched.
+#
+#   3. "curmudgeon" is five characters longer than "dwarf", and the new
+#      name is longer than either old one, so stored message text wraps
+#      at different columns.  Both sides are reflowed
 #      paragraph-by-paragraph before diffing.  See reflow.awk.
 #
 # Usage:
@@ -35,7 +46,7 @@ set -u
 here=$(cd "$(dirname "$0")" && pwd)
 mill="$here/../../../bin/mill.exe"
 [ -x "$mill" ] || mill="$here/../../../bin/mill"
-game="$here/../cave.shoddy"
+game="$here/../mungo-caverns.shoddy"
 
 : "${OPENADV:=$here/../../../../open-adventure-master}"
 src="$OPENADV/tests"
@@ -78,7 +89,7 @@ esac
 # second one while forgetting the first, and the failures that produces
 # look like real divergence -- a game replying to somebody else's
 # commands, seed line and all -- rather than like interference.
-work=${TMPDIR:-/tmp}/open-cave-transcripts.$$
+work=${TMPDIR:-/tmp}/mungo-caverns-transcripts.$$
 rm -rf "$work"
 mkdir -p "$work/tests"
 if [ -f "$OPENADV/main.o" ]; then
@@ -90,8 +101,8 @@ fi
 # ---- tampered save fixtures -----------------------------------------
 # The C ships a second binary, cheat, that writes a save file with one
 # field forced to an impossible value; four transcripts resume from its
-# output to check how the game reacts.  open-cave has the same generator
-# behind -cheat, so the fixtures are written here in open-cave's own
+# output to check how the game reacts.  mungo-caverns has the same generator
+# behind -cheat, so the fixtures are written here in mungo-caverns's own
 # save format rather than copied from the C -- the two formats are not
 # byte-compatible and were never meant to be.
 cheat() {
@@ -118,6 +129,18 @@ to_dwarf() {
         -e 's/curmudgeons/dwarves/g'      -e 's/CURMUDGEON/DWARF/g' \
         -e 's/Curmudgeon/Dwarf/g'         -e 's/curmudgeon/dwarf/g'
 }
+
+# The game-name rename, applied forward to the expected text.  Shield the
+# role words first or "Adventurer" becomes "Mungo Cavernsr"; the version
+# line loses its trailing URL because the port no longer prints one.
+to_mungo() {
+    sed -e 's/Adventurer/@@ROLE@@/g'      -e 's/Adventuredom/@@REALM@@/g' \
+        -e 's|Open Adventure \(.*\) - http://www\.catb\.org/esr/open-adventure/|Mungo Caverns \1|' \
+        -e 's/Open Adventure/Mungo Caverns/g' \
+        -e 's/Colossal Cave/Mungo Caverns/g' \
+        -e 's/Adventure/Mungo Caverns/g' \
+        -e 's/@@ROLE@@/Adventurer/g'      -e 's/@@REALM@@/Adventuredom/g'
+}
 normalise() { awk -f "$here/reflow.awk" | sed 's/  */ /g'; }
 
 # ---- replay ----------------------------------------------------------
@@ -133,13 +156,13 @@ for t in $tests; do
 
     # The C's Makefile reads the game's command-line options out of the
     # log itself, so -o, -r and -l travel with the transcript that needs
-    # them.  open-cave accepts the same three.
+    # them.  mungo-caverns accepts the same three.
     opts=$(sed -n '/^#options:/s///p' "$log")
 
     to_curmudgeon < "$log" > "$work/tests/$t.input"
     ( cd "$work/tests" && "$mill" run "$game" $opts < "$t.input" 2>&1 ) \
         | to_dwarf | normalise > "$work/$t.got"
-    normalise < "$chk" > "$work/$t.exp"
+    to_mungo < "$chk" | normalise > "$work/$t.exp"
 
     if diff -q "$work/$t.exp" "$work/$t.got" >/dev/null 2>&1; then
         pass=$((pass + 1))

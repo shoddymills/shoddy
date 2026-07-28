@@ -5,7 +5,7 @@ Rem SPDX-FileCopyrightText: (C) 2026 Stephen Vincent Foster
 Rem See LICENSE in this directory for full terms and credits.
 
 Rem ===================================================================
-Rem cave.shoddy -- Colossal Cave Adventure. The turn loop, and the
+Rem mungo-caverns.shoddy -- Mungo Caverns. The turn loop, and the
 Rem assembly of everything else.
 Rem
 Rem   build.cmd           play
@@ -13,20 +13,17 @@ Rem   ./build.sh          play
 Rem   build.cmd smoke     replay 16 recorded transcripts
 Rem   build.cmd check     replay all 107
 Rem
-Rem The port is a forward-port of Eric Raymond's open-adventure, itself a
-Rem forward-port of Crowther & Woods Adventure 2.5. The C is the
-Rem reference for every rule here; section comments carry the C file and
-Rem line the rule came from, which is what makes the two diffable by
-Rem hand. Where the C and this port disagree, the C wins -- unless a
-Rem recorded transcript says otherwise, in which case the transcript
-Rem wins. See tests/README.
+Rem The port follows a C original (see LICENSE in this directory for
+Rem the full lineage and credits). Its recorded transcripts are the
+Rem specification: where this port and a transcript disagree, the
+Rem transcript wins. See tests/README.
 Rem
 Rem The transcript format matters more than it looks. When stdin is not a
-Rem terminal the C echoes each command back (misc.c:264), so a recorded
+Rem terminal each command is echoed back, so a recorded
 Rem session reads as prompt-and-reply; and most messages are printed with
-Rem a leading blank line (misc.c:49-51) -- but not all, which is why
+Rem a leading blank line -- but not all, which is why
 Rem Speak and SpeakFlat are separate words. Reproducing both exactly is
-Rem what lets the C distribution's own .chk files grade this port.
+Rem what lets the recorded .chk transcripts grade this port.
 Rem
 Rem Modules below are namespaced: a bare name resolves local, then own
 Rem namespace, then exact, then unique bare candidate, and a clash across
@@ -36,38 +33,38 @@ Rem Obj, Vocab and Hint alike, and namespacing them would turn one word
 Rem into four and force In at every call site.
 Rem ===================================================================
 
-Include "cave-core.shoddy"
-Include "cave-names.shoddy"        As Name
+Include "mungo-caverns-core.shoddy"
+Include "mungo-caverns-names.shoddy"        As Name
 
-Include "cave-say.shoddy"          As Say
-Include "cave-ask.shoddy"          As Ask
-Include "cave-state.shoddy"        As State
-Include "cave-look.shoddy"         As Look
-Include "cave-travel-rules.shoddy" As Travel
-Include "cave-curmudgeon.shoddy"   As Curmudgeon
-Include "cave-pirate.shoddy"       As Pirate
-Include "cave-clock.shoddy"        As Clock
-Include "cave-closing.shoddy"      As Closing
-Include "cave-hint.shoddy"         As Hint
-Include "cave-score.shoddy"        As Score
-Include "cave-verb.shoddy"         As Verb
-Include "cave-liquid.shoddy"       As Liquid
-Include "cave-fight.shoddy"        As Fight
-Include "cave-act.shoddy"          As Act
-Include "cave-save.shoddy"         As Save
-Include "cave-magic.shoddy"        As Magic
+Include "mungo-caverns-say.shoddy"          As Say
+Include "mungo-caverns-ask.shoddy"          As Ask
+Include "mungo-caverns-state.shoddy"        As State
+Include "mungo-caverns-look.shoddy"         As Look
+Include "mungo-caverns-travel-rules.shoddy" As Travel
+Include "mungo-caverns-curmudgeon.shoddy"   As Curmudgeon
+Include "mungo-caverns-pirate.shoddy"       As Pirate
+Include "mungo-caverns-clock.shoddy"        As Clock
+Include "mungo-caverns-closing.shoddy"      As Closing
+Include "mungo-caverns-hint.shoddy"         As Hint
+Include "mungo-caverns-score.shoddy"        As Score
+Include "mungo-caverns-verb.shoddy"         As Verb
+Include "mungo-caverns-liquid.shoddy"       As Liquid
+Include "mungo-caverns-fight.shoddy"        As Fight
+Include "mungo-caverns-act.shoddy"          As Act
+Include "mungo-caverns-save.shoddy"         As Save
+Include "mungo-caverns-magic.shoddy"        As Magic
 
 Rem ---- the turn loop -----------------------------------------------------------
-Rem main.c:1249-1444 in miniature. The one piece of its shape that must
-Rem survive is the deliberate fall-through at actions.c:1567: a verb typed
+Rem The turn loop. One piece of its shape is load-bearing: by a
+Rem deliberate fall-through, a verb typed
 Rem with no object still runs transitively if a bare object name was typed
 Rem the turn before. That is what makes "food" then "get" work.
 
-Rem Moved says whether the turn ended in main.c's EXECUTED state, which
+Rem Moved says whether the turn completed a move, which
 Rem is what sends the loop back round to describe the room again. Only a
-Rem motion does that -- a verb returns GO_CLEAROBJ and stays put, which
+Rem motion does that -- a verb returns GoClearObj and stays put, which
 Rem is why "get lamp" does not reprint the room.
-Rem main.c:1215-1226. A curmudgeon that has seen you and is standing where you
+Rem A curmudgeon that has seen you and is standing where you
 Rem meant to go bars the way. It is checked against the curmudgeon's *previous*
 Rem room, because the curmudgeons have not moved yet this turn.
 Def CurmudgeonBars(g As Game, dest As Number, i As Number, n As Number) As Boolean
@@ -95,7 +92,7 @@ Def OutsideAt(dest As Number) As Boolean
     (Contains(Conds(Nth(Locations(), dest + 1)), "ABOVE")
      Or Contains(Conds(Nth(Locations(), dest + 1)), "FOREST"))
 
-Rem main.c:1204-1208. The panic clock starts the first time the closing
+Rem The panic clock starts the first time the closing
 Rem cave refuses to let you out, and only that first time.
 Def Panicked(g As Game) As Game
     If Panic(g) Then
@@ -103,7 +100,7 @@ Def Panicked(g As Game) As Game
     Else
         With(g, ClockToBlinding = PanicTime(), Panic = True)
 
-Rem misc.c:715-732. Not a count: the index of the first curmudgeon here, or
+Rem Not a count: the index of the first curmudgeon here, or
 Rem zero when none is (or the curmudgeons are not yet awake), or minus one
 Rem when every curmudgeon is dead. The three answers are treated differently --
 Rem an ogre will not be panicked away by curmudgeons that no longer exist.
@@ -129,7 +126,7 @@ Def CurmudgeonsHere(g As Game) As Number
     Else
         AtCurmudgeon(g, 1, NCurmudgeons() - 1, False)
 
-Rem main.c:1199-1247. Everything that happens once the player has been
+Rem Everything that happens once the player has been
 Rem put down in the new room: the curmudgeons get their turn, and then the
 Rem easiest death in the game gets its chance.
 Rem
@@ -144,7 +141,7 @@ Def AfterMove(g As Game) As Game
         Croak(g1)
     Else
         If Location(g1) = 0 Then
-            Rem main.c:1231-1233: the death pseudo-rooms all force you to
+            Rem the death pseudo-rooms all force you to
             Rem location nowhere, and arriving there is what kills you.
             Croak(g1)
         Else
@@ -161,7 +158,7 @@ Def PitCheck(g As Game) As Game
     Else
         g
 
-Rem main.c:495-533. Dying offers a resurrection, and there are only three
+Rem Dying offers a resurrection, and there are only three
 Rem on offer. Everything you were carrying is dropped where you died --
 Rem backwards through the object table, so the bird lands before the cage
 Rem -- except the lamp, which is turned off and left outside where you can
@@ -171,7 +168,7 @@ Def Croak(g As Game) As Game
     Let obit = Nth(Obituaries(), n + 1)
     Let g1 = With(g, Deaths = n + 1)
     If ClosingTime(g1) Then
-        Rem main.c:503-507: dying during closing time is final -- it is so
+        Rem dying during closing time is final -- it is so
         Rem close to closing time anyway that the game just calls it a day.
         With(VoicedId(g1, MsgDeathClosing()), Outcome = Died(""))
     Else
@@ -185,7 +182,7 @@ Def Croak2(gIn As Game, obit As Obit) As Game
         And Deaths(g) < NDeaths()) Then
         Reincarnate(g)
     Else
-        Rem score.c:96-99: dying counts as seeing it through, and is worth
+        Rem dying counts as seeing it through, and is worth
         Rem four points that walking away is not
         With(g, Outcome = Died(""))
 
@@ -223,13 +220,13 @@ Def FallenTo(g As Game, i As Number) As Number
         LocationBeforeLast(g)
 
 Def Cleared(g As Game) As Game
-    Rem misc.c:605: clearing the command is also what records the object
+    Rem clearing the command is also what records the object
     Rem it referred to, which the bird hint later consults.
     With(g, PreviousObject = PendingObject(g), PendingObject = NoObject(), PendingVerb = NoVerb())
 
-Rem main.c:1386-1437 turned inside out: run the verb, then let its phase
+Rem The dispatch turned inside out: run the verb, then let its phase
 Rem code say what survives into the next command.
-Rem main.c:1356-1371. The verb runs on its own first; a second word becomes
+Rem The verb runs on its own first; a second word becomes
 Rem its subject only if the verb asks, by returning GO_WORD2. Carry asks,
 Rem which is how "get knife" reaches the presence check; tame does not,
 Rem which is why "calm food" never looks at the food and simply answers
@@ -249,7 +246,7 @@ Def WantsWord2(d As Done) As Boolean
             False
 
 Def RunVerb(g As Game, verb As Number, obj As Number, arg As String, raw As String) As Done
-    Rem misc.c:601-607: clearing the command records its object, so the
+    Rem clearing the command records its object, so the
     Rem object must ride along for Cleared to move into PreviousObject -- the
     Rem bird hint reads it there.
     Resolved(DoAction(With(g, PendingObject = obj), verb, arg, obj, raw), verb, raw)
@@ -270,7 +267,7 @@ Def Resolved(d As Done, verb As Number, raw As String) As Done
         Case Else
             Done(Cleared(After(d)), GoKeep())
 
-Rem main.c:1135-1197. Five small rewrites the parser applies before the
+Rem Five small rewrites the parser applies before the
 Rem command is dispatched. Two matter a great deal: an object followed by
 Rem a verb is swapped into verb-object order, so "lamp get" works; and
 Rem "water plant" becomes "pour water", which is how the beanstalk gets
@@ -293,7 +290,7 @@ Def Preprocess(g As Game, ts As List) As Said
         Else
             Caging(g, k1, k2, ts)
 
-Rem main.c:1179-1184. "cage bird" is not a phrase the grammar knows, so
+Rem "cage bird" is not a phrase the grammar knows, so
 Rem it is rewritten into a plain "carry bird".
 Def Caging(g As Game, k1 As Kind, k2 As Kind, ts As List) As Said
     Let a = ObjectOf2(k1)
@@ -304,7 +301,7 @@ Def Caging(g As Game, k1 As Kind, k2 As Kind, ts As List) As Said
     Else
         Grating(g, k1, k2, ts)
 
-Rem main.c:1152-1166. Saying "grate" is asking to go to it, and which
+Rem Saying "grate" is asking to go to it, and which
 Rem grate you mean depends on which side of it you are standing.
 Def Grating(g As Game, k1 As Kind, k2 As Kind, ts As List) As Said
     If ObjectOf2(k1) <> ObjNamed("GRATE") Then
@@ -368,10 +365,10 @@ Def IsActionWord(k As Kind) As Boolean
         Case Else
             False
 
-Rem main.c:1341-1354. After ten spellings-out the game suggests the
+Rem After ten spellings-out the game suggests the
     Rem shorter form. Both counters are per-game, not per-room.
-Rem main.c:1340-1352 runs on every word the processing loop sees, and the
-Rem GO_WORD2 shift feeds the second word back through it -- so "go west"
+Rem The nudge runs on every word the processing loop sees, and the
+Rem GoWord2 shift feeds the second word back through it -- so "go west"
 Rem bumps both counters, go first and west second.
 Def Nudged(g As Game, ts As List) As Game
     Let w1 = Lower(RawAt(ts, 1, OldStyleMode()))
@@ -406,8 +403,8 @@ Def Command(gIn As Game, line As String) As Done
     Let ts = Tokens(line)
     Let g = Nudged(gIn, ts)
     If EnteringWater(g, ts) Then
-        Rem main.c:1136-1143 answers "enter water" on the spot and throws
-        Rem the command away without processing either word further.
+        Rem "enter water" is answered on the spot and the command thrown
+        Rem away without processing either word further.
         Done(VoicedId(g, WaterEntryReply(g)), GoKeep())
     Else
         Command2(g, Preprocess(g, ts))
@@ -444,18 +441,18 @@ Def Command2(g As Game, said As Said) As Done
         Case KObject(id)
             ObjectWord(g, id, raw1)
         Case KAction(id)
-            Rem main.c:1394-1401. A verb with a second word does not run
+            Rem A verb with a second word does not run
             Rem straight away: it remembers itself and hands the second
             Rem word back to the parser as a command in its own right.
             Rem That detour is what makes "get knife" reach the
             Rem object-presence check below.
-            Rem actions.c:1463-1465 is a blanket rule, not a per-verb one:
-            Rem at the top of the intransitive branch, any verb with a second
-            Rem word and any verb but say returns GO_WORD2 at once. So
-            Rem deferring here is exactly what the C does, and say is the
-            Rem single exception -- which is why its guard lives in Shifted.
-            Rem actions.c:1411-1414 speaks a noaction verb's message and is
-            Rem done with it, before the GO_WORD2 rule below ever runs. So
+            Rem The deferral is a blanket rule, not a per-verb one:
+            Rem any verb with a second
+            Rem word -- any verb but say -- returns GoWord2 at once.
+            Rem Say is the
+            Rem single exception, which is why its guard lives in Shifted.
+            Rem And a noaction verb speaks its message and is
+            Rem done with it, before the GoWord2 rule below ever runs. So
             Rem "no rub" answers for `no` and never looks at `rub`.
             If IsNumberWord(k2) Or NoAction(Nth(Actions(), id + 1)) Then
                 RunVerb(g, id, PendingObject(g), RawTwo(said), raw1)
@@ -465,14 +462,14 @@ Def Command2(g As Game, said As Said) As Done
                 Else
                     Shifted(With(g, PendingVerb = id, PendingRaw = raw1), k2, RawTwo(said))
         Case Else
-            Rem main.c:1187-1191: a wordless command is treated as an empty
+            Rem a wordless command is treated as an empty
             Rem motion, and playermove's default answer for it is CANT_APPLY.
             If Len(raw1) = 0 Then
                 Done(Cleared(AfterMove(VoicedId(g, MsgCantApply()))), GoTop())
             Else
                 Done(Cleared(Voiced(g, Render(Nth(Messages(), MsgDontKnow() + 1), { raw1 }))), GoKeep())
 
-Rem actions.c:1263-1264. Most verbs let the second word be re-parsed on its
+Rem Most verbs let the second word be re-parsed on its
 Rem own -- that detour is what makes "get knife" reach the presence check.
 Rem Say is the exception: it reads word[1] and echoes it whatever it is, so
 Rem "say axe" answers Okay, "axe" rather than going looking for an axe. The
@@ -483,7 +480,7 @@ Def Shifted(g As Game, k As Kind, raw As String) As Done
     Else
         Shifted2(g, k, raw)
 
-Rem actions.c:1380-1400. The magic word parts the reservoir -- but only
+Rem The magic word parts the reservoir -- but only
 Rem where the reservoir is; anywhere else nothing happens at all. Said from
 Rem the far shore it works and strands you in the dark, which is fatal: the
 Rem waters close over the way you came.
@@ -532,8 +529,8 @@ Def Shifted2(g As Game, k As Kind, raw As String) As Done
         Case Else
             Done(Cleared(Voiced(g, Render(Nth(Messages(), MsgDontKnow() + 1), { raw }))), GoKeep())
 
-Rem actions.c:1416-1460. Before anything is done with an object, it has
-Rem to be here -- or answer to one of the aliases the C accepts in order:
+Rem Before anything is done with an object, it has
+Rem to be here -- or answer to one of the aliases accepted in order:
 Rem a prowling curmudgeon, the liquid in the bottle or the room (never once
 Rem the cave is closed), the oil in the urn, the taller plant, the rod
 Rem that is really the other rod. The knife is the odd one out: naming
@@ -584,15 +581,15 @@ Def IsNumberWord(k As Kind) As Boolean
         Case Else
             False
 
-Rem actions.c:1456-1458. A bare object name runs the verb left over from
+Rem A bare object name runs the verb left over from
 Rem last turn, if there was one; otherwise the game remembers the object
 Rem and asks what you meant by it.
 Def KObjectSaid(g As Game, id As Number, raw1 As String) As Done
     If PendingVerb(g) = NoVerb() Then
         Done(With(Voiced(g, Render(Nth(Messages(), MsgWhatDo() + 1), { raw1 })), PendingObject = id), GoKeep())
     Else
-        Rem After the shift the C's word[0] is the object, so a verb that
-        Rem quotes word[0].raw back at you names the thing you asked about
+        Rem After the shift the remembered raw word is the object's, so a
+        Rem verb that quotes it back at you names the thing you asked about
         Rem -- "I see no keys here", not "I see no read here".
         RunVerb(g, PendingVerb(g), id, "", raw1)
 
@@ -606,14 +603,12 @@ Def SecondObject(k As Kind, pend As Number) As Number
             pend
 
 Rem show is true on arrival in a room, which is also when the visit
-Rem counter ticks -- the C does both inside listobjects.
-Rem main.c:1579-1588 runs do_move at the head of every pass, but do_command
-Rem only returns -- and so only lets that happen -- when a command reaches
-Rem EXECUTED, which main.c:1359/1388/1392 reserve for MOTION, GO_MOVE and
-Rem GO_TERMINATE. GO_CLEAROBJ and GO_TOP loop back inside do_command and
+Rem counter ticks -- both belong with the object listing.
+Rem The curmudgeons move only when a command completes a move: motions
+Rem and GoMove reach AfterMove, while GoClearObj and GoTop loop back and
 Rem read another command without one. So standing still costs the curmudgeons
 Rem nothing, and AfterMove belongs on the movement paths, not here.
-Rem misc.c:556-575. Three or more words are refused and a wholly empty
+Rem Three or more words are refused and a wholly empty
 Rem line is skipped, both without costing a turn or re-running the hints.
 Def AskCommand() As Line
     Let l = Ask()
@@ -643,7 +638,7 @@ Def Turn(g As Game, show As Boolean)
             Utter(Terminate(gf))
     Else
         If IsForced(g) Then
-            Rem main.c:1258-1261: describe it, then leave at once without
+            Rem describe it, then leave at once without
             Rem listing anything or asking for a command. The loop's next
             Rem do_move is what lands the curmudgeons in the room it put you in.
             Turn(AfterMove(Move(Flushed(DescribeOnly(g)), HereMotion())), True)
@@ -655,8 +650,8 @@ Def PlayTurn(g As Game, show As Boolean)
     Rem still asks its question by printing, so what has been described has
     Rem to be out first. Another transitional flush -- see the note below.
     Let shown = Flushed(KnifeGone(Unstashed(Shown(g, show))))
-    Rem main.c:1292 records whether it was dark when the prompt went out;
-    Rem the pit only opens under you if it was dark then and still is.
+    Rem LeftRoomWasDark records whether it was dark when the prompt went
+    Rem out; the pit only opens under you if it was dark then and still is.
     Let g1 = CheckHints(With(shown, LeftRoomWasDark = IsDarkHere(shown)))
     Rem Everything the rules have said has to reach the player before the
     Rem prompt does. This is the turn's flush; the only others are at the
@@ -664,19 +659,14 @@ Def PlayTurn(g As Game, show As Boolean)
     Let g1f = Flushed(g1)
     Select Case AskCommand()
         Case Eof
-            Rem misc.c:561 returns false at end of input; main.c:1310 hands
-            Rem that up the loop, which leaves it and scores the game
+            Rem end of input leaves the loop and scores the game
             Utter(Terminate(g1f))
         Case Typed(line)
-            Rem main.c:1321-1326: the turn counts, the clock ticks, then the
+            Rem the turn counts, the clock ticks, then the
             Rem verb runs -- except on the turn the cave slams shut, when
             Rem closecheck returns true and the typed command is swallowed.
             Rem The clock speaks before the verb does, so its output has to
-            Rem be out before the command runs. While modules are still
-            Rem being moved onto the output channel, a flush is needed
-            Rem wherever converted code is followed by code that still
-            Rem prints where it stands; when the last module is across,
-            Rem only the flush above this Select remains.
+            Rem be out before the command runs; this flush keeps that order.
             Let g2 = Flushed(ClockTick(With(g1f, Turns = Turns(g1f) + 1)))
             If Closed(g2) And Not Closed(g1) Then
                 Turn(g2, True)
@@ -684,11 +674,11 @@ Def PlayTurn(g As Game, show As Boolean)
                 Let d = Command(g2, line)
                 Turn(After(d), Redescribes(How(d)))
 
-Rem main.c:1270-1288. While the cave is closed, anything you are toting
+Rem While the cave is closed, anything you are toting
 Rem that is still stashed flips out of its pile at the next prompt, so
 Rem the repository piles get described only once picked up and put down.
 Rem The oyster hints at its engraving on the prompt you first hold it.
-Rem main.c:1298-1301. A knife left where a curmudgeon threw it vanishes for
+Rem A knife left where a curmudgeon threw it vanishes for
 Rem good the moment you take a prompt anywhere else.
 Def KnifeGone(g As Game) As Game
     If KnifeLocation(g) > 0 And KnifeLocation(g) <> Location(g) Then
@@ -721,10 +711,10 @@ Def UnstashHeld(g As Game, hs As List, i As Number, n As Number) As Game
         g
     Else
         Rem Revealed leaves a thing that was not stashed exactly as it was,
-        Rem so the two branches this used to need collapse into one.
+        Rem so one call serves stashed and unstashed alike.
         UnstashHeld(Revealed(g, Nth(hs, i)), hs, i + 1, n)
 
-Rem main.c:1056-1057 counts the visit inside listobjects, under the same
+Rem The visit is counted with the object listing, under the same
 Rem guard that skips the listing in the dark. So stumbling through a room
 Rem you cannot see does not count as having seen it, and lighting the lamp
 Rem still earns you the long description.
@@ -738,7 +728,7 @@ Def Shown(g As Game, show As Boolean) As Game
     Else
         g
 
-Rem main.c:1477-1512. The only switch that changes how the game starts is
+Rem The only switch that changes how the game starts is
 Rem -r: resuming from a file skips the welcome question entirely, because
 Rem the saved game already knows whether you asked for instructions.
 Def OptValue(a As List, flag As String, i As Number) As String
@@ -750,15 +740,15 @@ Def OptValue(a As List, flag As String, i As Number) As String
         Else
             OptValue(a, flag, i + 1)
 
-Rem cheat.c. The C ships a second binary that writes a save file with one
-Rem field forced to an impossible value, so the suite can check how resume
-Rem behaves on files no honest game could produce. Ours is the same idea
-Rem folded in behind a flag, because the save writer lives here:
+Rem The test suite resumes from save files with one field forced to an
+Rem impossible value, to check how resume behaves on files no honest
+Rem game could produce. The -cheat flag writes those fixtures, because
+Rem the save writer lives here:
 Rem
 Rem   cave -cheat -d -900 -o cheat_numdie.adv
 Rem
 Rem -d deaths, -t turns, -l limit, -s saves, -v save-file version. A cheat
-Rem file counts as saved once by default (cheat.c:28), which is why the
+Rem file counts as saved once by default, which is why the
 Rem games resumed from one are scolded for suspending.
 Def DoCheat()
     Let a = Args()
@@ -799,7 +789,7 @@ Def Main()
         Play()
 
 Def Play()
-    Rem init.c:31 -- the one thing -o announces before the game starts
+    Rem the one thing -o announces before the game starts
     If OldStyleMode() Then
         Print("Initialising...")
     Let g = NewGame(1)
@@ -815,7 +805,7 @@ Def Play()
         Else
             Turn(g, True)
 
-Rem actions.c:1586-1700. Thirteen verbs whose transitive case is nothing but
+Rem Thirteen verbs whose transitive case is nothing but
 Rem speak(actions[verb].message) -- their handlers live only on the
 Rem intransitive side.
 Def ReadTargetLit(g As Game) As Number

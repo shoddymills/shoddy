@@ -1,0 +1,88 @@
+Rem ===================================================================
+Rem tests/harness.shoddy -- the whole game, plus enough of the turn loop
+Rem to drive it without a terminal.
+Rem
+Rem Every suite in this directory includes this file and nothing else.
+Rem What it adds to the game is twelve lines: a Step that takes one turn
+Rem the way the loop does, and three small words for asking what a turn
+Rem said. That it is only twelve lines is the point being made -- the
+Rem loop has nothing in it worth reproducing here, because everything
+Rem that decides anything is already a function.
+Rem ===================================================================
+
+Include "../mungo-caverns-core.shoddy"
+Include "../mungo-caverns-names.shoddy"        As Name
+
+Include "../mungo-caverns-say.shoddy"          As Say
+Include "../mungo-caverns-ask.shoddy"          As Ask
+Include "../mungo-caverns-state.shoddy"        As State
+Include "../mungo-caverns-look.shoddy"         As Look
+Include "../mungo-caverns-travel-rules.shoddy" As Travel
+Include "../mungo-caverns-curmudgeon.shoddy"   As Curmudgeon
+Include "../mungo-caverns-pirate.shoddy"       As Pirate
+Include "../mungo-caverns-clock.shoddy"        As Clock
+Include "../mungo-caverns-closing.shoddy"      As Closing
+Include "../mungo-caverns-hint.shoddy"         As Hint
+Include "../mungo-caverns-score.shoddy"        As Score
+Include "../mungo-caverns-verb.shoddy"         As Verb
+Include "../mungo-caverns-liquid.shoddy"       As Liquid
+Include "../mungo-caverns-fight.shoddy"        As Fight
+Include "../mungo-caverns-act.shoddy"          As Act
+Include "../mungo-caverns-save.shoddy"         As Save
+Include "../mungo-caverns-magic.shoddy"        As Magic
+Include "../mungo-caverns-turn.shoddy"         As Turn
+
+Rem ---- driving the game ------------------------------------------------
+Rem One turn, exactly as the loop takes it apart from the prompting: the
+Rem turn counts, the clock ticks, the command runs, and a command that
+Rem moved you describes where you have arrived. The loop does that last
+Rem part at the top of the following turn rather than here, which makes
+Rem no difference to either the game or the order of what is said -- the
+Rem only thing left out is the flush, and flushing decides nothing.
+
+Def Step(g As Game, line As String) As Game
+    Let d = Command(ClockTick(With(g, Turns = Turns(g) + 1)), line)
+    Let settled = Settled(After(d))
+    If Redescribes(How(d)) Then
+        Shown(settled, True)
+    Else
+        settled
+
+Rem A forced room moves you straight on again without asking for a
+Rem command -- it describes itself and forwards you, which is how
+Rem ">>Foof!<<" is seen at all. The loop does this before it prompts, so
+Rem a scenario that stopped short of it would be standing somewhere no
+Rem player can ever stand.
+Def Settled(g As Game) As Game
+    If IsPlaying(g) And IsForced(g) Then
+        Settled(AfterMove(Move(DescribeOnly(g), HereMotion())))
+    Else
+        g
+
+Def Steps(g As Game, lines As List Of String) As Game
+    Fold(lines, g, Fn(acc, l) => Step(acc, l))
+
+Rem A game with nothing on its output channel, so the next thing said is
+Rem the only thing there.
+Def Hushed(g As Game) As Game
+    With(g, Output = Silent())
+
+Def Spoken(g As Game) As String
+    Join(Output(g), "")
+
+Rem What this one command says, and nothing else. (Spoken rather than
+Rem Said: Said is the parser's own record of a rewritten command.)
+Def Reply(g As Game, line As String) As String
+    Spoken(Step(Hushed(g), line))
+
+Def Mentions(text As String, want As String) As Boolean
+    Instr(text, want) > 0
+
+Rem The reference seed the recorded games use.
+Def Fresh() As Game
+    NewGame(1494912171)
+
+Rem In the well house with the lamp, which is where most scenarios start.
+Def Outfitted() As Game
+    Steps(Fresh(), { "in", "take lamp", "take keys" })
+

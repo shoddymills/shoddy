@@ -1,0 +1,122 @@
+Rem ===================================================================
+Rem tests/test-walk.shoddy -- one game, played from the road to the gold
+Rem and back, with the score checked at every landmark.
+Rem
+Rem   ./build.sh test     (runs this and the rest of tests/)
+Rem
+Rem The scenarios in test-turn.shoddy each hold one rule still. This one
+Rem does the opposite: it plays, and every rule the route touches has to
+Rem be right or the score at the end is not 69. Thirteen commands reach
+Rem through the parser, the travel table, two forced rooms, the darkness
+Rem rule, the lamp, the curmudgeon activation ladder, the treasure tally
+Rem and the scorer -- and one wrong number anywhere lands somewhere else.
+Rem
+Rem It is deliberately a stage rather than a full win. The route is
+Rem checked landmark by landmark, so extending it is a matter of adding
+Rem the next stretch and the score it should reach; a walkthrough that
+Rem only asserted 430 at the end would tell you it broke but not where.
+Rem
+Rem The route was not remembered, it was derived: a walk of the travel
+Rem table from the well house to the room the nugget starts in, and back
+Rem by the only way that works when your hands are full. See NoWayBack
+Rem below, which is the part worth knowing.
+Rem ===================================================================
+
+Include "harness.shoddy"
+
+Rem ---- the route ------------------------------------------------------
+
+Rem Down: the magic word puts you in the debris room without troubling
+Rem the grate, then the pit and the steps take you into the mists.
+Def RouteDown() As List Of String
+    { "in", "take lamp", "light lamp", "xyzzy", "pit", "down", "left" }
+
+Rem Up: not the way you came. See NoWayBack.
+Def RouteHome() As List Of String
+    { "hall", "y2", "down", "plugh" }
+
+Def CheckTheWalk()
+    Rem --- the well house: outfitted, still worth only turning up
+    Let start = Steps(Fresh(), { "in", "take lamp", "light lamp" })
+    Assert(Location(start) = LocNamed("LOC_BUILDING"), "STAGE 1: IN THE WELL HOUSE")
+    Assert(Toting(start, Lamp()), "WITH THE LAMP")
+    Assert(PropOf(start, Lamp()) = LampBright(), "LIT")
+    Assert(ScoreOf(start) = 32, "AND WORTH 32, WHICH IS WHAT TURNING UP IS WORTH")
+
+    Rem --- into the cave by the magic word, through a forced room
+    Let debris = Step(start, "xyzzy")
+    Assert(Location(debris) = LocNamed("LOC_DEBRIS"), "STAGE 2: XYZZY REACHES THE DEBRIS ROOM")
+    Assert(Not IsDarkHere(debris), "WHICH THE LAMP MAKES VISIBLE")
+    Assert(ScoreOf(debris) = 32, "AND IS STILL NOT WORTH ANYTHING EXTRA")
+
+    Rem --- the hall of mists, which is what "deep in the cave" means
+    Let hall = Steps(debris, { "pit", "down" })
+    Assert(Location(hall) = LocNamed("LOC_MISTHALL"), "STAGE 3: THE STEPS REACH THE HALL OF MISTS")
+    Assert(CurmudgeonActivation(hall) > 0, "WHERE THE CURMUDGEONS WAKE UP")
+    Assert(ScoreOf(hall) = 57, "AND THE 25 FOR GETTING WELL IN IS EARNED")
+
+    Rem --- the gold: two points for laying eyes on it
+    Let seen = Step(hall, "left")
+    Assert(Location(seen) = LocNamed("LOC_NUGGET"), "STAGE 4: LEFT REACHES THE NUGGET ROOM")
+    Assert(Not IsHidden(seen, Nugget()), "SEEING THE NUGGET UNCOVERS IT")
+    Assert(ScoreOf(seen) = 59, "WHICH IS WORTH TWO")
+
+    Let held = Step(seen, "take gold")
+    Assert(Toting(held, Nugget()), "AND IT CAN BE PICKED UP")
+    Assert(ScoreOf(held) = 59, "THOUGH CARRYING IT IS WORTH NO MORE THAN SEEING IT")
+
+    Rem --- home, and the whole value of the treasure
+    Let home = Steps(held, RouteHome())
+    Assert(Location(home) = LocNamed("LOC_BUILDING"), "STAGE 5: Y2 AND PLUGH LEAD HOME")
+    Assert(Toting(home, Nugget()), "STILL CARRYING THE GOLD")
+
+    Let stowed = Step(home, "drop gold")
+    Assert(Nth(ObjectLocation(stowed), Nugget() + 1) = LocNamed("LOC_BUILDING"),
+           "STAGE 6: THE GOLD IS IN THE WELL HOUSE")
+    Assert(ScoreOf(stowed) = 69, "AND THE GAME IS WORTH 69")
+    Assert(ScoreOf(stowed) - ScoreOf(held) = TreasureValue(Nugget()) - 2,
+           "THE JUMP IS THE TREASURE'S FULL VALUE, LESS THE TWO ALREADY GIVEN")
+
+    Rem --- and the whole of it costs thirteen turns, ten of them burning
+    Rem lamp: it was lit on the third, and the clock charges for the turns
+    Rem after that
+    Assert(Turns(stowed) = 13, "THIRTEEN TURNS FROM THE ROAD TO THE GOLD AND BACK")
+    Assert(LampLife(stowed) = 330 - 10, "TEN OF THEM WITH THE LAMP LIT")
+    Assert(IsPlaying(stowed), "AND THE GAME IS STILL GOING")
+
+Def Nugget() As Number
+    ObjNamed("NUGGET")
+
+Rem ---- why the route home is not the route down ------------------------
+Rem The way down was the pit and the steps into the mists, and you may
+Rem climb back up them -- but not with the gold in your hands. That is
+Rem the oldest puzzle in the cave, and it is not in any code: it is a
+Rem condition on a travel row. Carrying the nugget matches an earlier row
+Rem that sends you at the dome instead, and the dome is unclimbable.
+Rem
+Rem Which is the whole reason the route home goes the other way, east to
+Rem Y2 and out through the second magic word. The pair of assertions
+Rem below is what keeps the walk honest: if the dome ever did let you
+Rem through carrying the gold, the walk above would still pass, and this
+Rem is the check that would not.
+
+Def NoWayBack()
+    Let held = Step(Steps(Fresh(), RouteDown()), "take gold")
+    Let hall = Step(held, "hall")
+    Assert(Location(hall) = LocNamed("LOC_MISTHALL"), "BACK IN THE HALL OF MISTS")
+
+    Rem with the gold: diverted at the dome, and left where you stood
+    Let tried = Step(Hushed(hall), "up")
+    Assert(Location(tried) = LocNamed("LOC_MISTHALL"), "THE GOLD WILL NOT COME UP THE STEPS")
+    Assert(Mentions(Spoken(tried), "dome is unclimbable"), "AND THE DOME SAYS WHY")
+
+    Rem put it down and the same command works: it is the load that is
+    Rem barred, not the passage
+    Let empty = Step(Step(hall, "drop gold"), "up")
+    Assert(Location(empty) = LocNamed("LOC_PITTOP"),
+           "WITHOUT IT THE SAME STEPS TAKE YOU STRAIGHT OUT")
+
+Def Main()
+    CheckTheWalk()
+    NoWayBack()
+    Print("ALL MUNGO CAVERNS WALKTHROUGH CHECKS PASSED")

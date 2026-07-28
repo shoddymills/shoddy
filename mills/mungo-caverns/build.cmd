@@ -5,7 +5,7 @@ rem Unix users: use build.sh (same commands).
 rem
 rem   build.cmd          play the game
 rem   build.cmd run      same as above
-rem   build.cmd test     run the headless model checks
+rem   build.cmd test     run every headless suite (test.shoddy, tests\test-*)
 rem   build.cmd smoke    replay 16 recorded transcripts   (~3 minutes)
 rem   build.cmd check    replay all 107                   (~18 minutes)
 rem
@@ -57,7 +57,11 @@ exit /b %errorlevel%
 
 :test
 call :ensure_mill || exit /b 1
-"%MILL%" run test.shoddy
+"%MILL%" run test.shoddy < nul || exit /b 1
+for %%s in (tests\test-*.shoddy) do (
+    echo --- %%s
+    "%MILL%" run "%%s" < nul || exit /b 1
+)
 exit /b %errorlevel%
 
 :smoke

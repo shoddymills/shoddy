@@ -4,7 +4,7 @@
 #
 #   ./build.sh          play the game
 #   ./build.sh run      same as above
-#   ./build.sh test     run the headless model checks
+#   ./build.sh test     run every headless suite (test.shoddy, tests/test-*)
 #   ./build.sh smoke    replay 16 recorded transcripts   (~3 minutes)
 #   ./build.sh check    replay all 107                   (~18 minutes)
 #
@@ -14,10 +14,15 @@
 #
 # The cave lives in the mungo-caverns-*.shoddy tables, which are hand-edited
 # source: the YAML and the generator that first produced them are in
-# obsolete/ and are not run. test.shoddy covers the pure model in
-# mungo-caverns-core.shoddy; everything below the parser is covered by the
-# recorded transcripts in tests/, which are the port's real
-# specification. See tests/README.
+# obsolete/ and are not run.
+#
+# Testing comes in three layers.  test.shoddy covers the generator, the
+# tables and the parser; tests/test-tables.shoddy asserts what must be
+# true of the cave itself, and tests/test-turn.shoddy drives whole turns
+# as a function -- all three need nothing but the mill.  On top of those,
+# tests/run.sh replays the C original's recorded transcripts, which are
+# the port's specification but need that source tree present.  See
+# tests/README.
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -38,7 +43,10 @@ case "${1:-run}" in
         ;;
     test)
         ensure_mill
-        "$MILL" run test.shoddy
+        for suite in test.shoddy tests/test-*.shoddy; do
+            echo "--- $suite"
+            "$MILL" run "$suite" < /dev/null || exit 1
+        done
         ;;
     smoke)
         ensure_mill

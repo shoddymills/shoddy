@@ -1,0 +1,619 @@
+Rem ===================================================================
+Rem mungo-caverns-turn.shoddy -- what one command does.
+Rem
+Rem Everything between a line of input and the game it leaves behind:
+Rem the five rewrites the parser applies before dispatch, the verb and
+Rem object dispatch itself, moving, what happens after a move -- the
+Rem curmudgeons' turn, the pit, dying and being put back together -- and
+Rem the small housekeeping the prompt does on arrival.
+Rem
+Rem Command(g, line) -> Done is a function: a Game and a line in, a Game
+Rem and a Phase out, with everything the rules said carried on the Game's
+Rem own output channel. Nothing here prompts and nothing here prints, so
+Rem test.shoddy can drive a whole turn headless. The one exception is
+Rem Croak2, which offers you a resurrection and must read the answer
+Rem between two writes; it is one of the ten question sites the port
+Rem admits to.
+Rem
+Rem The turn loop that calls all this -- the prompt, the flush, and the
+Rem decision to go round again -- is in mungo-caverns.shoddy.
+Rem ===================================================================
+
+
+Rem Moved says whether the turn completed a move, which
+Rem is what sends the loop back round to describe the room again. Only a
+Rem motion does that -- a verb returns GoClearObj and stays put, which
+Rem is why "get lamp" does not reprint the room.
+Rem A curmudgeon that has seen you and is standing where you
+Rem meant to go bars the way. It is checked against the curmudgeon's *previous*
+Rem room, because the curmudgeons have not moved yet this turn.
+Def CurmudgeonBars(g As Game, dest As Number, i As Number, n As Number) As Boolean
+    If i > n Then
+        False
+    Else
+        Let d = Nth(Curmudgeons(g), i)
+        If DOld(d) = dest And DSeen(d) Then
+            True
+        Else
+            CurmudgeonBars(g, dest, i + 1, n)
+
+Def Blocked(g As Game, dest As Number) As Game
+    If ClosingTime(g) And dest <> 0 And OutsideAt(dest) Then
+        With(Panicked(VoicedId(g, MsgExitClosed())), PreviousLocation = Location(g))
+    Else
+        If (dest <> Location(g) And Not ForcedAt(Location(g))
+            And Not Contains(Conds(RoomAt(g)), "NOARRR")
+            And CurmudgeonBars(g, dest, 1, NCurmudgeons() - 1)) Then
+            VoicedId(g, MsgCurmudgeonBlock())
+        Else
+            With(g, PreviousLocation = Location(g), Location = dest)
+
+Def OutsideAt(dest As Number) As Boolean
+    (Contains(Conds(Nth(Locations(), dest + 1)), "ABOVE")
+     Or Contains(Conds(Nth(Locations(), dest + 1)), "FOREST"))
+
+Rem The panic clock starts the first time the closing
+Rem cave refuses to let you out, and only that first time.
+Def Panicked(g As Game) As Game
+    If Panic(g) Then
+        g
+    Else
+        With(g, ClockToBlinding = PanicTime(), Panic = True)
+
+Rem Not a count: the index of the first curmudgeon here, or
+Rem zero when none is (or the curmudgeons are not yet awake), or minus one
+Rem when every curmudgeon is dead. The three answers are treated differently --
+Rem an ogre will not be panicked away by curmudgeons that no longer exist.
+Def AtCurmudgeon(g As Game, i As Number, n As Number, anyAlive As Boolean) As Number
+    If i > n Then
+        AllDeadOr(anyAlive)
+    Else
+        Let d = Nth(Curmudgeons(g), i)
+        If DLoc(d) = Location(g) Then
+            i
+        Else
+            AtCurmudgeon(g, i + 1, n, anyAlive Or DLoc(d) <> 0)
+
+Def AllDeadOr(anyAlive As Boolean) As Number
+    If anyAlive Then
+        0
+    Else
+        0 - 1
+
+Def CurmudgeonsHere(g As Game) As Number
+    If CurmudgeonActivation(g) < 2 Then
+        0
+    Else
+        AtCurmudgeon(g, 1, NCurmudgeons() - 1, False)
+
+Rem Everything that happens once the player has been
+Rem put down in the new room: the curmudgeons get their turn, and then the
+Rem easiest death in the game gets its chance.
+Rem
+Rem The pit roll is guarded by three tests before it, so the draw only
+Rem happens when all three hold. Drawing unconditionally would shift the
+Rem stream and break every seeded transcript -- the same trap as the
+Rem curmudgeon activation test.
+Def AfterMove(g As Game) As Game
+    Let m = CurmudgeonMove(g)
+    Let g1 = Result(m)
+    If Not Survived(m) Then
+        Croak(g1)
+    Else
+        If Location(g1) = 0 Then
+            Rem the death pseudo-rooms all force you to
+            Rem location nowhere, and arriving there is what kills you.
+            Croak(g1)
+        Else
+            PitCheck(g1)
+
+Def PitCheck(g As Game) As Game
+    If Not ForcedAt(Location(g)) And IsDarkHere(g) And LeftRoomWasDark(g) Then
+        Let fell = Pct(LcgState(g), 35)
+        Let g2 = Stepped(g)
+        If fell Then
+            Croak(With(VoicedId(g2, MsgPitFall()), LocationBeforeLast = Location(g2)))
+        Else
+            g2
+    Else
+        g
+
+Rem Dying offers a resurrection, and there are only three
+Rem on offer. Everything you were carrying is dropped where you died --
+Rem backwards through the object table, so the bird lands before the cage
+Rem -- except the lamp, which is turned off and left outside where you can
+Rem reach it without one.
+Def Croak(g As Game) As Game
+    Let n = Deaths(g)
+    Let obit = Nth(Obituaries(), n + 1)
+    Let g1 = With(g, Deaths = n + 1)
+    If ClosingTime(g1) Then
+        Rem dying during closing time is final -- it is so
+        Rem close to closing time anyway that the game just calls it a day.
+        With(VoicedId(g1, MsgDeathClosing()), Outcome = Died(""))
+    Else
+        Croak2(g1, obit)
+
+Rem A question read between two writes: whatever the rules have said so
+Rem far has to be out before the offer of resurrection goes up.
+Def Croak2(gIn As Game, obit As Obit) As Game
+    Let g = Flushed(gIn)
+    If (YesNo(Query(obit), Yes(obit), Nth(Messages(), MsgOkMan() + 1))
+        And Deaths(g) < NDeaths()) Then
+        Reincarnate(g)
+    Else
+        Rem dying counts as seeing it through, and is worth
+        Rem four points that walking away is not
+        With(g, Outcome = Died(""))
+
+Def Reincarnate(g As Game) As Game
+    Let lamp = Lamp()
+    Let g1 = Doused(g, lamp)
+    Let g2 = Scatter(g1, Length(Objects()) - 1, 1)
+    With(g2, PreviousLocation = LocNamed("LOC_BUILDING"), Location = LocNamed("LOC_BUILDING"))
+
+Def Doused(g As Game, lamp As Number) As Game
+    If Toting(g, lamp) Then
+        With(g, Props = SetNth(Props(g), lamp + 1, LampDark()))
+    Else
+        g
+
+Def Scatter(g As Game, i As Number, low As Number) As Game
+    If i < low Then
+        g
+    Else
+        If Toting(g, i) Then
+            Scatter(Dropped(g, i), i - 1, low)
+        Else
+            Scatter(g, i - 1, low)
+
+Def Dropped(g As Game, i As Number) As Game
+    Let dest = FallenTo(g, i)
+    With(g, Held = Filter(Held(g), Fn(x) => x <> i),
+            ObjectsAt = SetNth(ObjectsAt(g), dest + 1, Prepend(i, Nth(ObjectsAt(g), dest + 1))),
+            ObjectLocation = SetNth(ObjectLocation(g), i + 1, dest))
+
+Def FallenTo(g As Game, i As Number) As Number
+    If i = Lamp() Then
+        LocNamed("LOC_START")
+    Else
+        LocationBeforeLast(g)
+
+Def Cleared(g As Game) As Game
+    Rem clearing the command is also what records the object
+    Rem it referred to, which the bird hint later consults.
+    With(g, PreviousObject = PendingObject(g), PendingObject = NoObject(), PendingVerb = NoVerb())
+
+Rem The dispatch turned inside out: run the verb, then let its phase
+Rem code say what survives into the next command.
+Rem The verb runs on its own first; a second word becomes
+Rem its subject only if the verb asks, by returning GO_WORD2. Carry asks,
+Rem which is how "get knife" reaches the presence check; tame does not,
+Rem which is why "calm food" never looks at the food and simply answers
+Rem that it is game if you would care to explain how.
+Def Verbed(g As Game, id As Number, k2 As Kind, raw2 As String, raw1 As String) As Done
+    Let d = DoAction(g, id, raw2, PendingObject(g), raw1)
+    If (WantsWord2(d) And Len(raw2) > 0) Then
+        Shifted(With(After(d), PendingVerb = id, PendingRaw = raw1), k2, raw2)
+    Else
+        Resolved(d, id, raw1)
+
+Def WantsWord2(d As Done) As Boolean
+    Select Case How(d)
+        Case GoWord2
+            True
+        Case Else
+            False
+
+Def RunVerb(g As Game, verb As Number, obj As Number, arg As String, raw As String) As Done
+    Rem clearing the command records its object, so the
+    Rem object must ride along for Cleared to move into PreviousObject -- the
+    Rem bird hint reads it there.
+    Resolved(DoAction(With(g, PendingObject = obj), verb, arg, obj, raw), verb, raw)
+
+Def Resolved(d As Done, verb As Number, raw As String) As Done
+    Select Case How(d)
+        Case GoUnknown
+            Rem the verb is remembered, the object is not
+            Done(With(Voiced(After(d), Render(Nth(Messages(), MsgDoWhat() + 1), { Capitalize(raw) })),
+                      PendingObject = NoObject(), PendingVerb = verb, PendingRaw = raw), GoKeep())
+        Case GoTop
+            Done(Cleared(After(d)), GoTop())
+        Case GoMove
+            Done(Cleared(AfterMove(After(d))), GoTop())
+        Case GoWord2
+            Rem the second word becomes a command in its own right
+            Done(Cleared(After(d)), GoKeep())
+        Case Else
+            Done(Cleared(After(d)), GoKeep())
+
+Rem Five small rewrites the parser applies before the
+Rem command is dispatched. Two matter a great deal: an object followed by
+Rem a verb is swapped into verb-object order, so "lamp get" works; and
+Rem "water plant" becomes "pour water", which is how the beanstalk gets
+Rem grown, since neither word on its own is a verb.
+Type Said
+    Word1   As Kind
+    Word2   As Kind
+    RawWord As String
+    RawTwo  As String
+
+Def Preprocess(g As Game, ts As List) As Said
+    Let k1 = ClassifyOld(RawAt(ts, 1, OldStyleMode()), MagicWord(g), OldStyleMode())
+    Let k2 = ClassifyOld(RawAt(ts, 2, OldStyleMode()), MagicWord(g), OldStyleMode())
+    If Not IsObjectWord(k1) Then
+        Said(k1, k2, RawAt(ts, 1, OldStyleMode()), RawAt(ts, 2, OldStyleMode()))
+    Else
+        If IsActionWord(k2) Then
+            Rem object-then-verb: say it the other way round
+            Said(k2, k1, RawAt(ts, 2, OldStyleMode()), RawAt(ts, 1, OldStyleMode()))
+        Else
+            Caging(g, k1, k2, ts)
+
+Rem "cage bird" is not a phrase the grammar knows, so
+Rem it is rewritten into a plain "carry bird".
+Def Caging(g As Game, k1 As Kind, k2 As Kind, ts As List) As Said
+    Let a = ObjectOf2(k1)
+    Let b = ObjectOf2(k2)
+    If (a = ObjNamed("CAGE") And b = ObjNamed("BIRD")
+        And Here(g, a) And Here(g, b)) Then
+        Said(KAction(ActionNamed("CARRY")), k2, "carry", RawAt(ts, 2, OldStyleMode()))
+    Else
+        Grating(g, k1, k2, ts)
+
+Rem Saying "grate" is asking to go to it, and which
+Rem grate you mean depends on which side of it you are standing.
+Def Grating(g As Game, k1 As Kind, k2 As Kind, ts As List) As Said
+    If ObjectOf2(k1) <> ObjNamed("GRATE") Then
+        Watering(g, k1, k2, ts)
+    Else
+        Said(KMotion(GrateWay(g)), k2, RawAt(ts, 1, OldStyleMode()), RawAt(ts, 2, OldStyleMode()))
+
+Def GrateWay(g As Game) As Number
+    If InAny(g, { "LOC_START", "LOC_VALLEY", "LOC_SLIT" }, 1, 3) Then
+        MotionNamed("DEPRESSION")
+    Else
+        If InAny(g, { "LOC_COBBLE", "LOC_DEBRIS", "LOC_AWKWARD",
+                      "LOC_BIRDCHAMBER", "LOC_PITTOP" }, 1, 5) Then
+            MotionNamed("ENTRANCE")
+        Else
+            MotionNamed("GRATE")
+
+Def InAny(g As Game, tags As List, i As Number, n As Number) As Boolean
+    If i > n Then
+        False
+    Else
+        If Location(g) = LocNamed(Nth(tags, i)) Then
+            True
+        Else
+            InAny(g, tags, i + 1, n)
+
+Rem "water plant", "oil door" and their kin become a POUR of the liquid,
+Rem but only when the thing named is actually here.
+Def Watering(g As Game, k1 As Kind, k2 As Kind, ts As List) As Said
+    Let a = ObjectOf2(k1)
+    Let b = ObjectOf2(k2)
+    If (Not IsLiquid(a) Or Not IsPourable(b) Or Not At(g, b)) Then
+        Said(k1, k2, RawAt(ts, 1, OldStyleMode()), RawAt(ts, 2, OldStyleMode()))
+    Else
+        Said(KAction(ActionNamed("POUR")), KObject(a), "pour", RawAt(ts, 1, OldStyleMode()))
+
+Def IsLiquid(i As Number) As Boolean
+    i <> NoObject() And (i = ObjNamed("WATER") Or i = ObjNamed("OIL"))
+
+Def IsPourable(i As Number) As Boolean
+    i <> NoObject() And (i = ObjNamed("PLANT") Or i = ObjNamed("DOOR"))
+
+Def ObjectOf2(k As Kind) As Number
+    Select Case k
+        Case KObject(id)
+            id
+        Case Else
+            NoObject()
+
+Def IsObjectWord(k As Kind) As Boolean
+    Select Case k
+        Case KObject(id)
+            True
+        Case Else
+            False
+
+Def IsActionWord(k As Kind) As Boolean
+    Select Case k
+        Case KAction(id)
+            True
+        Case Else
+            False
+
+Rem After ten spellings-out the game suggests the
+    Rem shorter form. Both counters are per-game, not per-room.
+Rem The nudge runs on every word the processing loop sees, and the
+Rem GoWord2 shift feeds the second word back through it -- so "go west"
+Rem bumps both counters, go first and west second.
+Def Nudged(g As Game, ts As List) As Game
+    Let w1 = Lower(RawAt(ts, 1, OldStyleMode()))
+    Let w2 = Lower(RawAt(ts, 2, OldStyleMode()))
+    NudgedWest(NudgedGo(g, w1, w2), w1, w2)
+
+Def NudgedGo(g As Game, w1 As String, w2 As String) As Game
+    If w1 = "go" And Len(w2) > 0 Then
+        NudgeGo(With(g, GoCount = GoCount(g) + 1))
+    Else
+        g
+
+Def NudgedWest(g As Game, w1 As String, w2 As String) As Game
+    If w1 = "west" Or (w2 = "west" And w1 <> "say") Then
+        NudgeWest(With(g, WestCount = WestCount(g) + 1))
+    Else
+        g
+
+Def NudgeWest(g As Game) As Game
+    If WestCount(g) = 10 Then
+        VoicedId(g, MsgWIsWest())
+    Else
+        g
+
+Def NudgeGo(g As Game) As Game
+    If GoCount(g) = 10 Then
+        VoicedId(g, MsgGoUnneeded())
+    Else
+        g
+
+Def Command(gIn As Game, line As String) As Done
+    Let ts = Tokens(line)
+    Let g = Nudged(gIn, ts)
+    If EnteringWater(g, ts) Then
+        Rem "enter water" is answered on the spot and the command thrown
+        Rem away without processing either word further.
+        Done(VoicedId(g, WaterEntryReply(g)), GoKeep())
+    Else
+        Command2(g, Preprocess(g, ts))
+
+Def EnteringWater(g As Game, ts As List) As Boolean
+    Let k1 = ClassifyOld(RawAt(ts, 1, OldStyleMode()), MagicWord(g), OldStyleMode())
+    Let k2 = ClassifyOld(RawAt(ts, 2, OldStyleMode()), MagicWord(g), OldStyleMode())
+    (IsMotionKind(k1, "ENTER")
+     And (IsMotionKind(k2, "STREAM") Or ObjectOf2(k2) = ObjNamed("WATER")))
+
+Def IsMotionKind(k As Kind, t As String) As Boolean
+    Select Case k
+        Case KMotion(id)
+            Tag(Nth(Motions(), id + 1)) = t
+        Case Else
+            False
+
+Def WaterEntryReply(g As Game) As Number
+    If LiqLoc(g) = ObjNamed("WATER") Then
+        MsgFeetWet()
+    Else
+        MsgWhereQuery()
+
+Def Command2(g As Game, said As Said) As Done
+    Let k1 = Word1(said)
+    Let k2 = Word2(said)
+    Let raw1 = RawWord(said)
+    Select Case k1
+        Case KMotion(id)
+            Done(Cleared(AfterMove(Move(g, id))), GoTop())
+        Case KMagic
+            Rem the reservoir word is a command in its own right
+            Resolved(Reservoir(g), NoVerb(), raw1)
+        Case KObject(id)
+            ObjectWord(g, id, raw1)
+        Case KAction(id)
+            Rem A verb with a second word does not run
+            Rem straight away: it remembers itself and hands the second
+            Rem word back to the parser as a command in its own right.
+            Rem That detour is what makes "get knife" reach the
+            Rem object-presence check below.
+            Rem The deferral is a blanket rule, not a per-verb one:
+            Rem any verb with a second
+            Rem word -- any verb but say -- returns GoWord2 at once.
+            Rem Say is the
+            Rem single exception, which is why its guard lives in Shifted.
+            Rem And a noaction verb speaks its message and is
+            Rem done with it, before the GoWord2 rule below ever runs. So
+            Rem "no rub" answers for `no` and never looks at `rub`.
+            If IsNumberWord(k2) Or NoAction(Nth(Actions(), id + 1)) Then
+                RunVerb(g, id, PendingObject(g), RawTwo(said), raw1)
+            Else
+                If Len(RawTwo(said)) = 0 Then
+                    RunVerb(g, id, PendingObject(g), "", raw1)
+                Else
+                    Shifted(With(g, PendingVerb = id, PendingRaw = raw1), k2, RawTwo(said))
+        Case Else
+            Rem a wordless command is treated as an empty
+            Rem motion, and playermove's default answer for it is CANT_APPLY.
+            If Len(raw1) = 0 Then
+                Done(Cleared(AfterMove(VoicedId(g, MsgCantApply()))), GoTop())
+            Else
+                Done(Cleared(Voiced(g, Render(Nth(Messages(), MsgDontKnow() + 1), { raw1 }))), GoKeep())
+
+Rem Most verbs let the second word be re-parsed on its
+Rem own -- that detour is what makes "get knife" reach the presence check.
+Rem Say is the exception: it reads word[1] and echoes it whatever it is, so
+Rem "say axe" answers Okay, "axe" rather than going looking for an axe. The
+Rem magic words still reach the shift, because say hands those back itself.
+Def Shifted(g As Game, k As Kind, raw As String) As Done
+    If (PendingVerb(g) = ActionNamed("SAY") And Not SayObeys(k)) Then
+        Done(Cleared(Voiced(g, Render(Nth(Messages(), MsgOkeyDokey() + 1), { raw }))), GoKeep())
+    Else
+        Shifted2(g, k, raw)
+
+Rem The magic word parts the reservoir -- but only
+Rem where the reservoir is; anywhere else nothing happens at all. Said from
+Rem the far shore it works and strands you in the dark, which is fatal: the
+Rem waters close over the way you came.
+Def Reservoir(g As Game) As Done
+    Let reser = ObjNamed("RESER")
+    If (Not At(g, reser) And Location(g) <> LocNamed("LOC_RESBOTTOM")) Then
+        Done(VoicedId(g, MsgNothingHappens()), GoClearObj())
+    Else
+        Let g1 = StateChange(g, reser, Parted(PropOf(g, reser)))
+        If At(g1, reser) Then
+            Done(g1, GoClearObj())
+        Else
+            Done(Croak(With(VoicedId(g1, MsgNotBright()), LocationBeforeLast = Location(g1))), GoClearObj())
+
+Def Parted(prop As Number) As Number
+    If prop = 1 Then
+        0
+    Else
+        1
+
+Rem The words say hands on rather than echoes: the three transport words,
+Rem the giant's fee-fie-foe-foo, and the reservoir's own magic word.
+Def SayObeys(k As Kind) As Boolean
+    Select Case k
+        Case KMagic
+            True
+        Case KMotion(id)
+            (Tag(Nth(Motions(), id + 1)) = "XYZZY"
+             Or Tag(Nth(Motions(), id + 1)) = "PLUGH"
+             Or Tag(Nth(Motions(), id + 1)) = "PLOVER")
+        Case KAction(id)
+            BigWord(Nth(Actions(), id + 1))
+        Case Else
+            False
+
+Def Shifted2(g As Game, k As Kind, raw As String) As Done
+    Select Case k
+        Case KObject(id)
+            ObjectWord(g, id, raw)
+        Case KMagic
+            Resolved(Reservoir(g), NoVerb(), raw)
+        Case KMotion(id)
+            Done(Cleared(AfterMove(Move(g, id))), GoTop())
+        Case KAction(id)
+            RunVerb(g, id, PendingObject(g), "", raw)
+        Case Else
+            Done(Cleared(Voiced(g, Render(Nth(Messages(), MsgDontKnow() + 1), { raw }))), GoKeep())
+
+Rem Before anything is done with an object, it has
+Rem to be here -- or answer to one of the aliases accepted in order:
+Rem a prowling curmudgeon, the liquid in the bottle or the room (never once
+Rem the cave is closed), the oil in the urn, the taller plant, the rod
+Rem that is really the other rod. The knife is the odd one out: naming
+Rem it where the curmudgeons threw it is how you learn it has gone.
+Def ObjectWord(g As Game, id As Number, raw As String) As Done
+    Select Case True
+        Case Here(g, id) Or At(g, id)
+            KObjectSaid(g, id, raw)
+        Case id = ObjNamed("CURMUDGEON") And CurmudgeonsHere(g) > 0
+            KObjectSaid(g, id, raw)
+        Case (Not Closed(g)
+              And ((Liquid(g) = id And Here(g, ObjNamed("BOTTLE")))
+                   Or (id = LiqLoc(g) And id <> NoObject())))
+            KObjectSaid(g, id, raw)
+        Case (id = ObjNamed("OIL") And Here(g, ObjNamed("URN"))
+              And PropOf(g, ObjNamed("URN")) <> 0)
+            KObjectSaid(g, ObjNamed("URN"), raw)
+        Case (id = ObjNamed("PLANT") And At(g, ObjNamed("PLANT2"))
+              And PropOf(g, ObjNamed("PLANT2")) <> 0)
+            KObjectSaid(g, ObjNamed("PLANT2"), raw)
+        Case Else
+            ObjectWord2(g, id, raw)
+
+Def ObjectWord2(g As Game, id As Number, raw As String) As Done
+    Select Case True
+        Case id = ObjNamed("KNIFE") And KnifeLocation(g) = Location(g)
+            Done(Cleared(With(VoicedId(g, MsgKnivesVanish()), KnifeLocation = 0 - 1)), GoKeep())
+        Case id = ObjNamed("ROD") And Here(g, ObjNamed("ROD2"))
+            KObjectSaid(g, ObjNamed("ROD2"), raw)
+        Case FindsAnything(g, id)
+            KObjectSaid(g, id, raw)
+        Case Else
+            Done(Cleared(Voiced(g, Render(Nth(Messages(), MsgNoSee() + 1), { raw }))), GoKeep())
+
+Rem FIND and INVENTORY are allowed to ask after things that are not here;
+Rem that is what they are for.
+Def FindsAnything(g As Game, id As Number) As Boolean
+    If PendingVerb(g) = NoVerb() Then
+        False
+    Else
+        Let tag = Tag(Nth(Actions(), PendingVerb(g) + 1))
+        tag = "FIND" Or tag = "INVENTORY"
+
+Def IsNumberWord(k As Kind) As Boolean
+    Select Case k
+        Case KNumeric(v)
+            True
+        Case Else
+            False
+
+Rem A bare object name runs the verb left over from
+Rem last turn, if there was one; otherwise the game remembers the object
+Rem and asks what you meant by it.
+Def KObjectSaid(g As Game, id As Number, raw1 As String) As Done
+    If PendingVerb(g) = NoVerb() Then
+        Done(With(Voiced(g, Render(Nth(Messages(), MsgWhatDo() + 1), { raw1 })), PendingObject = id), GoKeep())
+    Else
+        Rem After the shift the remembered raw word is the object's, so a
+        Rem verb that quotes it back at you names the thing you asked about
+        Rem -- "I see no keys here", not "I see no read here".
+        RunVerb(g, PendingVerb(g), id, "", raw1)
+
+Rem An object named in the same breath wins; otherwise the one left over
+Rem from the previous command stands in.
+Def SecondObject(k As Kind, pend As Number) As Number
+    Select Case k
+        Case KObject(id)
+            id
+        Case Else
+            pend
+
+Rem While the cave is closed, anything you are toting
+Rem that is still stashed flips out of its pile at the next prompt, so
+Rem the repository piles get described only once picked up and put down.
+Rem The oyster hints at its engraving on the prompt you first hold it.
+Rem A knife left where a curmudgeon threw it vanishes for
+Rem good the moment you take a prompt anywhere else.
+Def KnifeGone(g As Game) As Game
+    If KnifeLocation(g) > 0 And KnifeLocation(g) <> Location(g) Then
+        With(g, KnifeLocation = 0)
+    Else
+        g
+
+Def KnifeMarked(g As Game) As Game
+    If KnifeLocation(g) >= 0 Then
+        With(g, KnifeLocation = Location(g))
+    Else
+        g
+
+Def Unstashed(g As Game) As Game
+    If Not Closed(g) Then
+        g
+    Else
+        Let g1 = OysterClue(g)
+        UnstashHeld(g1, Held(g1), 1, Length(Held(g1)))
+
+Def OysterClue(g As Game) As Game
+    Let oyster = ObjNamed("OYSTER")
+    If Toting(g, oyster) And IsHidden(g, oyster) Then
+        Voiced(g, Nth(Descs(ObjAt(oyster)), 2))
+    Else
+        g
+
+Def UnstashHeld(g As Game, hs As List, i As Number, n As Number) As Game
+    If i > n Then
+        g
+    Else
+        Rem Revealed leaves a thing that was not stashed exactly as it was,
+        Rem so one call serves stashed and unstashed alike.
+        UnstashHeld(Revealed(g, Nth(hs, i)), hs, i + 1, n)
+
+Rem The visit is counted with the object listing, under the same
+Rem guard that skips the listing in the dark. So stumbling through a room
+Rem you cannot see does not count as having seen it, and lighting the lamp
+Rem still earns you the long description.
+Rem show is true on arrival in a room, which is also when the visit
+Rem counter ticks -- both belong with the object listing.
+Def Shown(g As Game, show As Boolean) As Game
+    If show Then
+        Let g1 = Describe(g)
+        If IsDarkHere(g1) Then
+            g1
+        Else
+            Visited(g1)
+    Else
+        g

@@ -68,7 +68,7 @@ byte-for-byte agreement.</p>
 <code>build.cmd</code> on Windows, <code>./build.sh</code> on Linux/macOS/WSL,
 same subcommands:</p>
 <pre><code>./build.sh          # play (also: ./build.sh run)
-./build.sh test     # headless checks on the pure model
+./build.sh test     # every headless suite                (~20 seconds)
 ./build.sh smoke    # replay 16 recorded transcripts   (~3 minutes)
 ./build.sh check    # replay all 107                   (~18 minutes)</code></pre>
 <p>It is a plain console program — prompts in, text out, no window — so it
@@ -90,7 +90,7 @@ redistributed here. <code>./build.sh test</code> needs nothing but the
 mill.</p>
 
 <h2 id="built">How It's Built</h2>
-<p>Twenty-six source files, about 10,900 lines, 755 <code>Def</code>s. Rather
+<p>Twenty-seven source files, about 11,000 lines, 755 <code>Def</code>s. Rather
 more than half of that is the cave itself rather than code: 185 rooms, 70
 objects, 878 travel rows, 213 messages, 134 vocabulary entries with their
 synonyms, ten hints, eleven rank classes and three obituaries. All of it is
@@ -104,11 +104,11 @@ with that is a database the compiler checks: a room with a missing field or a
 travel row naming a condition that does not exist is a compile error in the
 same pass that compiles the rules, rather than something a code generator
 either notices or does not.</p>
-<p>The rules divide into eighteen namespaced modules — travel, curmudgeons,
+<p>The rules divide into nineteen namespaced modules — travel, curmudgeons,
 the pirate, the clock, the closing sequence, hints, scoring, fighting,
-liquids, the verbs, save and resume — over a core holding the generator,
-the tokenizer and the word classifier. One file, one idea; the file names
-say which.</p>
+liquids, the verbs, save and resume, and the turn itself — over a core
+holding the generator, the tokenizer and the word classifier. One file,
+one idea; the file names say which.</p>
 
 <h2 id="dsl">Writing a Game DSL in Shoddy</h2>
 <p>A cave crawl has always been two programs. There is a
@@ -255,6 +255,115 @@ reads. Save and resume touch files. Those aside, everything from the parser
 down runs headless, and the turn loop that remains is thin enough that there
 is nowhere in it for a bug to hide.</p>
 
+<h2 id="tested">How It Is Tested</h2>
+<p>The purity above is a claim, and a claim about testability is only
+worth what its tests are. There are <strong>1,270 lines of them and 194
+assertions against 11,000 lines of game</strong>, in five suites that need
+nothing but the mill and run in twenty seconds, plus a sixth that needs the
+original.</p>
+<p>They exist because a turn is a function. <code>Command</code>, the whole
+dispatch — the parser's five rewrites, the verbs, moving, the curmudgeons'
+reply, the pit, dying — lives in <code>mungo-caverns-turn.shoddy</code> and
+returns a <code>Game</code>. Only the prompt, the flush and the decision to
+go round again are left in the shell. So the entire test harness is this:</p>
+<pre><code>Def Step(g As Game, line As String) As Game
+    Let d = Command(ClockTick(With(g, Turns = Turns(g) + 1)), line)
+    Let settled = Settled(After(d))
+    If Redescribes(How(d)) Then
+        Shown(settled, True)
+    Else
+        settled</code></pre>
+<p>Twelve lines, and the cave can be held still anywhere in it.</p>
+
+<h3>Scenarios</h3>
+<p><code>tests/test-turn.shoddy</code> stands in the dark with the lamp off,
+unlocks the grate with and without the keys, checks that <code>lamp get</code>
+and <code>get lamp</code> mean the same thing, and suspends a game and reads
+it back. The check that matters most is the one no amount of playing could
+perform reliably — <strong>whether a rule touched the random number
+generator</strong>, which is the single way this port can break silently:</p>
+<pre><code>Rem The pit roll is guarded by three tests. In the light the roll must
+Rem not happen at all -- drawing anyway would cost one number a turn and
+Rem put every seeded game out of step within a few moves.
+Assert(LcgState(PitCheck(litRoom)) = LcgState(litRoom),
+       "THE PIT DOES NOT ROLL IN A ROOM YOU CAN SEE")
+Assert(LcgState(PitCheck(inDark)) = LcgNext(LcgState(inDark)),
+       "AND ROLLS EXACTLY ONCE IN THE DARK")</code></pre>
+<p>Scoring gets the same treatment. A played session can only ever show you
+the total; held still, each of the seven terms can be isolated by setting one
+field and asking what changed — thirty for the lives you have not spent,
+twenty-five for waking the curmudgeons, two for laying eyes on a treasure and
+its full value for carrying it home.</p>
+
+<h3>Invariants</h3>
+<p><code>tests/test-tables.shoddy</code> asserts what has to be true of the
+cave itself — every travel row leads to a room that exists, every block of
+rules ends in a row with <code>Stop</code> set, every hint costs points and is
+offered somewhere, every room flag is one the rules actually test for. These
+replaced a guarantee the port gave up when it retired its code generator: a
+generator cannot silently drop a field, but a person editing 878 rows by hand
+certainly can.</p>
+<p>Two of them earned their keep by what they found. Asserting that every room
+describes itself failed — on <code>LOC_BUILDING1</code>, which turns out to be
+right: it is a <em>forced</em> room, the instant of climbing the beanstalk,
+and you are moved on before you can look around. The assertion became the more
+interesting one, that every room <em>you can stand in</em> describes itself
+and every forced room forwards you somewhere real. And walking the travel
+table from the end of the road shows that <strong>thirteen of the 185 rooms
+are not connected to it at all</strong>, which is not a bug either — it is the
+exact census of the three places where movement escapes the table:</p>
+<pre><code>Rem The bridge's far side is not written in the travel table at all: the
+Rem troll stands at both ends of it, and the crossing rule computes where
+Rem you come out from his two placements.
+Def BridgeEdges() As List
+    Let ps = Places(ObjAt(ObjNamed("TROLL")))
+    { { First(ps), Nth(ps, 2) }, { Nth(ps, 2), First(ps) } }</code></pre>
+<p>Add the bridge and nine rooms open up; add the magic rug and the ledge
+does; what remains unreachable is the repository, which you cannot walk into
+because the closing sequence puts you there. A fourth exception would fail the
+test, which is the point of counting them.</p>
+
+<h3>A walk to the gold</h3>
+<p>Where the scenarios each hold one rule still, <code>tests/test-walk.shoddy</code>
+does the opposite: it plays. Thirteen commands take it from the road to the
+nugget and home again, and the score is checked at every landmark — 32 in the
+well house, 57 on reaching the Hall of Mists where the curmudgeons wake, 59
+for laying eyes on the gold, 69 with it stowed. One wrong number anywhere on
+that route and the walk lands somewhere else.</p>
+<p>The route was derived from the travel table rather than remembered, and
+deriving it turned up the cave's oldest joke. The way down is the pit and the
+steps; the way back up them is barred while you are carrying the gold, and the
+bar is not in any code — it is a condition on a travel row, which diverts you
+to a dome that is unclimbable. So the walk goes home the other way, through
+Y2 and the second magic word, and asserts both halves:</p>
+<pre><code>Assert(Location(tried) = LocNamed("LOC_MISTHALL"), "THE GOLD WILL NOT COME UP THE STEPS")
+Assert(Mentions(Spoken(tried), "dome is unclimbable"), "AND THE DOME SAYS WHY")
+Assert(Location(empty) = LocNamed("LOC_PITTOP"),
+       "WITHOUT IT THE SAME STEPS TAKE YOU STRAIGHT OUT")</code></pre>
+<p>It is deliberately a stage rather than a full win: extending it means
+adding the next stretch and the score it should reach, where a walkthrough
+that only asserted 430 at the end would say it broke but not where.</p>
+
+<h3>And 450 commands nobody would type</h3>
+<p><code>tests/test-fuzz.shoddy</code> draws words at random from the game's
+own vocabulary, one or two at a time, and throws them at whatever state the
+last one left behind. It asserts nothing about the answers — only that after
+every command you are still somewhere, still carrying things that exist, the
+tables are still the size they were, and the score is still a score. That
+catches the class of bug the other suites cannot see: the index that goes out
+of range, which aborts rather than answering wrongly.</p>
+<p>It is deterministic — the commands come from the game's own generator run
+from a separate seed threaded alongside the game, so a failure names a run and
+a step that replays exactly. Three runs from three starting states; on the run
+we ship, one of them is killed by a curmudgeon's knife after 43 commands,
+which the suite reports rather than hides.</p>
+
+<p>One honest limit, stated plainly: all five suites are a
+<strong>baseline, not an oracle</strong>. They can tell you the cave is
+internally coherent and that the port still does what it did yesterday.
+They cannot tell you it matches Crowther and Woods. Only the transcripts
+do that — which is the next section.</p>
+
 <h2 id="ground">The Transcripts Are the Specification</h2>
 <p>This is a port, so its specification is not a description of what the game
 should do — it is a recording of what the original does. Open Adventure ships
@@ -281,12 +390,12 @@ message text therefore wraps at different columns. Where this port and a
 transcript disagree, the transcript wins — including where it records a bug.
 The original's bugs are load-bearing and are not to be fixed.</p>
 
-<h2 id="split">Why Twenty-Six Files</h2>
+<h2 id="split">Why Twenty-Seven Files</h2>
 <p>The C original keeps the whole game in one global
 <code>struct game_t</code>; the 1970s Fortran was a single listing. The seam
 here is drawn twice over. Across one axis the split is <strong>data from
 rules</strong>: six table files that declare what the cave is, and a core plus
-eighteen modules that decide what happens in it. Across the other it is
+nineteen modules that decide what happens in it. Across the other it is
 <strong>rules from effects</strong>: the rules return values, and the effects
 are penned into three small files — <code>say</code>, where output finally
 becomes a <code>Print</code>; <code>ask</code>, where a line is read; and

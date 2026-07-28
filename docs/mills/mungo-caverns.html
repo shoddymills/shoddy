@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
+<meta name="description" content="A cave crawl, purely functional — mills/mungo-caverns">
+<link rel="stylesheet" href="../style.css">
+<link rel="icon" href="../favicon.svg" type="image/svg+xml">
+<title>mungo-caverns — A Cave Crawl, Purely Functional | Shoddy Mills</title>
+</head>
+<body>
+<div class="topbar"><div class="inner">
+  <a class="phase" href="index.html">Shoddy · The Mills</a>
+  <span class="spacer"></span>
+  <nav class="docnav" aria-label="Documentation"><a href="../heritage.html">Story</a><a href="../guide.html">Guide</a><a href="../quickref.html">Reference</a><a href="../machines/index.html">Machines</a><span class="here">Mills</span><a href="../stack.html">Stack</a><a href="../spec.html">Spec</a><a href="../setup.html">Setup</a><a href="../vscode.html">VS Code</a><a href="../build.html">Toolchain</a></nav>
+</div></div>
+<div class="wrap">
+
+<header class="mast"><p class="eyebrow"><a href="index.html#games">The Mills &middot; Games</a></p><h1>mungo-caverns</h1><p class="kicker">A cave crawl, purely functional — mills/mungo-caverns</p></header>
+<nav class="pagertop" aria-label="Mills, in catalog order"><a href="index.html">&larr; All mills</a><a href="index.html">All mills</a><a href="oregon.html">oregon &rarr;</a></nav>
+
+<h2 id="summary">Summary</h2>
+<p><code>mungo-caverns</code> is the text adventure every other text adventure
+came from, rebuilt in a language with no assignment. You stand at the end of a
+road before a small brick building; below it is a cave of 185 rooms holding
+twenty treasures, a lamp with 330 turns of battery in it, a pirate who steals
+what you are carrying, and five little curmudgeons who throw axes at you.
+Commands are
+one or two words, significant to their first five letters — which is why
+the game asks for <code>ne</code> rather than <code>northeast</code> — and the
+magic words still work. Four hundred and thirty points are on offer; the
+game will tell you what rank you earned and how far short of the next one
+you fell.</p>
+
+<div class="gallery hero">
+  <a class="shot" href="#dsl"><img src="../media/mungo-dark.svg" alt="A turn in the dark: PLUGH, then pitch dark, then the lamp lit, then a curmudgeon barring the way" loading="lazy"><span class="lab"><b>A turn in the dark</b><span>the lamp, the pit warning, and one of the five curmudgeons</span></span></a>
+  <a class="shot" href="#dsl"><img src="../media/mungo-travel.svg" alt="Shoddy source showing the TravelCond union, one travel-table row, and the Select Case that reads it" loading="lazy"><span class="lab"><b>The travel table</b><span>a cave database the compiler checks</span></span></a>
+  <a class="shot" href="#pure"><img src="../media/mungo-pure.svg" alt="Diagram: the rule modules return what they say on the Game record; the turn loop decides when it is printed" loading="lazy"><span class="lab"><b>What the rules return</b><span>output is a value until the turn loop utters it</span></span></a>
+</div>
+
+<h2 id="history">The Original</h2>
+<p class="tm"><em>This mill is a Shoddy forward-port of Eric S. Raymond's
+<strong>Open Adventure</strong>, itself a forward-port of Crowther and Woods'
+Adventure 2.5 (1995). Because it derives from that work it carries the
+BSD 2-Clause License rather than the repository's MIT — see
+<code>mills/mungo-caverns/LICENSE</code> and
+<code>THIRD-PARTY-NOTICES.md</code>.</em></p>
+<p>Will Crowther wrote the first version in the mid-1970s — a caver and a
+Fortran programmer, mapping Mammoth Cave for his daughters — and Don Woods
+added most of what makes it a game in 1977. Everything the genre has done since
+is downstream of it: the two-word parser, the room description that shortens
+once you have read it, the light source that runs down, the maze of twisty
+little passages. It reached this port through Open Adventure, which is
+maintained as C and, crucially, ships about 107 recorded transcripts of real
+games. Those transcripts are this port's specification, and they are why the
+mill is as faithful as it is.</p>
+<p>Two things were renamed on the way in. The game is <strong>Mungo
+Caverns</strong>, after the mungo of the Yorkshire shoddy mills
+(<a href="../heritage.html">the story is here</a>), and the little
+knife-throwing folk who prowl the deep passages are
+<strong>curmudgeons</strong>. Both renames are total and mechanical, which is
+what lets the harness map a recorded 1977 game onto this one and still demand
+byte-for-byte agreement.</p>
+
+<h2 id="run">Running It</h2>
+<pre><code>bin/mill run mills/mungo-caverns/mungo-caverns.shoddy</code></pre>
+<p>or, from <code>mills/mungo-caverns/</code>, use the wrapper —
+<code>build.cmd</code> on Windows, <code>./build.sh</code> on Linux/macOS/WSL,
+same subcommands:</p>
+<pre><code>./build.sh          # play (also: ./build.sh run)
+./build.sh test     # headless checks on the pure model
+./build.sh smoke    # replay 16 recorded transcripts   (~3 minutes)
+./build.sh check    # replay all 107                   (~18 minutes)</code></pre>
+<p>It is a plain console program — prompts in, text out, no window — so it
+runs anywhere the mill does. Three switches travel with it:
+<code>-o</code> plays the 4.30-style interface, in which the one-letter
+abbreviations added after 1977 (<code>l</code>, <code>x</code>,
+<code>g</code>, <code>z</code>, <code>i</code>) are not words and every token
+is upper-cased and cut to ten characters, exactly as packing five sixbit
+characters into a 32-bit word once did; <code>-r FILE</code> resumes a saved
+game at startup; and <code>-cheat</code> writes save files with a field forced
+to an impossible value, which is how the test suite checks what resume does
+with a file no honest game could have produced. A fourth, <code>-d</code>,
+dumps every draw from the random number generator along with the curmudgeons'
+decisions — the only practical way to line the stream up against a recorded
+transcript when the two diverge.</p>
+<p>The two replay targets need the C source tree beside the repository (or
+<code>OPENADV</code> pointed at it) — the transcripts live there and are not
+redistributed here. <code>./build.sh test</code> needs nothing but the
+mill.</p>
+
+<h2 id="built">How It's Built</h2>
+<p>Twenty-six source files, about 10,900 lines, 755 <code>Def</code>s. Rather
+more than half of that is the cave itself rather than code: 185 rooms, 70
+objects, 878 travel rows, 213 messages, 134 vocabulary entries with their
+synonyms, ten hints, eleven rank classes and three obituaries. All of it is
+Shoddy source, hand-edited.</p>
+<p>That last point is the mill's first design decision and the one everything
+else follows from. The port started the way the C original works — a YAML
+database and a generator that emits code from it — and that arrangement was
+retired. The YAML and the generator sit in <code>obsolete/</code> and are
+never run; the generated Shoddy <em>is</em> the source now. What was bought
+with that is a database the compiler checks: a room with a missing field or a
+travel row naming a condition that does not exist is a compile error in the
+same pass that compiles the rules, rather than something a code generator
+either notices or does not.</p>
+<p>The rules divide into eighteen namespaced modules — travel, curmudgeons,
+the pirate, the clock, the closing sequence, hints, scoring, fighting,
+liquids, the verbs, save and resume — over a core holding the generator,
+the tokenizer and the word classifier. One file, one idea; the file names
+say which.</p>
+
+<h2 id="dsl">Writing a Game DSL in Shoddy</h2>
+<p>A cave crawl has always been two programs. There is a
+<strong>database</strong> — what rooms exist, what is in them, which words go
+where — and an <strong>interpreter</strong> that walks it, and the reason the
+genre survived its own decade is that the second one is small. The
+interesting question for a language is what the first one is written
+<em>in</em>. In the C it is YAML compiled to arrays of small integers whose
+meanings live in comments. Here it is Shoddy, and a handful of ordinary
+features of the language do all the work.</p>
+
+<p><strong>Record literals make the tables values.</strong> A room is a
+record; the cave is a <code>List Of Room</code>; the whole database is a
+handful of <code>Def</code>s returning literals. Nothing parses at
+startup.</p>
+<pre><code>Room("LOC_START",
+        "You are standing at the end of a road before a small brick\n"
+      &amp; "building.  Around you is a forest.",
+    "You're in front of building.",
+    { "FLUID", "ABOVE", "LIT" },
+    172, False, { }),</code></pre>
+<p>Note the condition flags: a list of names, not a packed bitmask. The C
+packs them because a 1977 machine had reasons to. There is no reason to
+here, and the rules read better for it —
+<code>Contains(Conds(RoomAt(g)), "LIT")</code> says what it means.</p>
+
+<p><strong>Discriminated unions replace the magic integers.</strong> The rule
+the port works to is: <em>if a comment has to explain what the number means,
+the comment should have been a type.</em> A travel row's condition was a code
+plus two arguments; here it is a <code>TravelCond</code>, and where it leads
+is a <code>TravelDest</code>.</p>
+<pre><code>Type TravelCond = Always | Chance(Percent As Number)
+                | Carrying(Obj As Number)
+                | CarriedOrHere(Obj As Number)
+                | NotInState(Obj As Number, State As Number)
+
+Type TravelDest = ToRoom(Room As Number)
+                | ToMessage(Msg As Number)
+                | ToSpecial(Which As Number)</code></pre>
+<p><strong>And <code>Select Case</code> destructures them, so the interpreter
+is a page long and cannot forget a case.</strong> This is the entire
+condition evaluator:</p>
+<pre><code>Def CondHolds(g As Game, o As Op) As Boolean
+    Select Case Condition(o)
+        Case Always
+            True
+        Case Chance(pct)
+            RollOf(g, 100) &lt; pct
+        Case Carrying(obj)
+            Toting(g, obj)
+        Case CarriedOrHere(obj)
+            Toting(g, obj) Or Contains(HereList(g), obj)
+        Case NotInState(obj, st)
+            Nth(Props(g), obj + 1) &lt;&gt; st</code></pre>
+<p>The type earns its keep immediately next door. Some conditions cost a draw
+from the random number generator and some do not, and getting that wrong is
+the one way this port can break silently — a rule that draws one extra number
+diverges every seeded transcript from that moment on. With the union in hand
+that hazard collapses into one small function, <code>CondSpends</code>, saying
+plainly that <code>Chance</code> rolls and nothing else does. A
+"no&#8209;curmudgeons" rule is encoded upstream as <code>Chance(100)</code>: it
+always passes and still spends a number, and naming it apart from
+<code>Always</code> is what keeps it from looking like a redundant test
+somebody could tidy away.</p>
+
+<p><strong>Sum types are used for the small vocabularies too</strong>, not
+just the big table. A parsed word is a <code>Kind</code> (motion, object,
+action, the magic word, a number, or unknown); what a verb wants done with the
+rest of the command is a <code>Phase</code>; how the game ended is a
+<code>Fate</code>; whether a line was typed or input ran out is a
+<code>Line</code>. Each replaces a convention that was previously a comment
+next to an integer.</p>
+
+<p><strong><code>Select Case True</code> is the guard chain</strong> the
+rules reach for constantly, and it reads like the prose in the original
+source — a list of cases, first match wins:</p>
+<pre><code>Select Case True
+    Case IsHidden(g, rod2) Or Not Closed(g)
+        Done(VoicedId(g, MsgRequiresDynamite()), GoClearObj())
+    Case Here(g, rod2)
+        Done(With(VoicedId(g, MsgSplatterMessage()), Bonus = 1, Outcome = Won()), GoClearObj())
+    Case Location(g) = LocNamed("LOC_NE")
+        Done(With(VoicedId(g, MsgDefeatMessage()), Bonus = 2, Outcome = Won()), GoClearObj())
+    Case Else
+        Done(With(VoicedId(g, MsgVictoryMessage()), Bonus = 3, Outcome = Won()), GoClearObj())</code></pre>
+
+<p><strong>Named-field construction and <code>With</code> carry the state.</strong>
+The game is one record of forty-five fields threaded through every rule, and
+it is built by name rather than by position — not as a matter of taste.
+Given positionally, inserting a field in the middle silently shifts every
+argument after it into the wrong field, and nothing fails to compile. Updates
+are the same shape: <code>With(g, Turns = Turns(g) + 1)</code> returns a new
+game rather than altering one, and the old one is still in hand — which is how
+the turn loop tells that the cave slammed shut on <em>this</em> turn rather
+than an earlier one, by asking whether the game before the clock ticked was
+still open.</p>
+
+<p><strong>Namespaces are put on the code and deliberately kept off the
+data.</strong> Each rule module is included under a name —
+<code>Include "mungo-caverns-verb.shoddy" As Verb</code> — so a bare word
+resolves locally first, then in its own module, and a genuine clash across two
+modules is a compile error that tells you to write <code>Name In Verb</code>.
+The six data tables share one flat namespace on purpose: <code>Tag</code> is
+declared by <code>Room</code>, <code>Obj</code>, <code>Vocab</code> and
+<code>Hint</code> alike, and one word serving all four is the point — namespace
+them and <code>Tag</code> becomes four different words with <code>In</code> at
+every call site.</p>
+
+<p>Two more small things are worth stealing. Pipelines let a scoring rule read
+like its own specification —</p>
+<pre><code>Def MaxTreasure() As Number
+    Range(1, Length(Objects()) - 1)
+        Filter(ScoresAsTreasure)
+        Map(TreasureValue)
+        Fold(0, +)</code></pre>
+<p>— and a <code>Let</code> at the left margin runs once at load, which is
+where the name-to-index lookups live: the tables are addressed by small
+integer, as they have been since 1977, but the rules say
+<code>ObjNamed("BOTTLE")</code> and the lamp, the grate and the keys are
+resolved to constants at startup because the darkness check consults the lamp
+on every single turn.</p>
+
+<h2 id="pure">Purity, and What the Rules Return</h2>
+<p>The mill's largest structural decision is that <strong>the rules do not
+print</strong>. A rule that speaks returns a game that has more to say:
+output accumulates as a <code>List Of String</code> on the <code>Game</code>
+record, and the turn loop drains it.</p>
+<pre><code>Def Voiced(g As Game, msg As String) As Game
+    With(g, Output = Both(Output(g), Voice(msg)))
+
+Def Flushed(g As Game) As Game
+    Utter(Output(g))
+    With(g, Output = Silent())</code></pre>
+<p>It sounds like bookkeeping and it changes what can be tested. A rule that
+emits its own text can only be checked by capturing a console; a rule that
+returns it is a function, and <code>test.shoddy</code> can reach in and grade
+one rule at a time — that the bear announces himself before the room does,
+that an empty message produces no output at all rather than a stray blank
+line, that a fresh game has said nothing yet.</p>
+<p>The purity is honest about its exceptions. Ten sites ask a question
+mid-turn — offering a hint, confirming a quit, offering a resurrection — and
+each is a read between two writes, so each flushes what has been said and then
+reads. Save and resume touch files. Those aside, everything from the parser
+down runs headless, and the turn loop that remains is thin enough that there
+is nowhere in it for a bug to hide.</p>
+
+<h2 id="ground">The Transcripts Are the Specification</h2>
+<p>This is a port, so its specification is not a description of what the game
+should do — it is a recording of what the original does. Open Adventure ships
+about 107 of those: a <code>.log</code> of commands and the <code>.chk</code>
+of the exact output they produce. <code>tests/run.sh</code> replays them
+against this mill and diffs.</p>
+<p>Ninety-two of them open with an in-band <code>seed</code> command that pins
+the random number generator, and that is what makes them worth more than
+golden files snapshotted from today's build: a golden file would happily bless
+a divergence, while a seeded transcript catches the single extra draw. The
+generator is the 1970s linear congruential one,
+<code>x' = (1093x + 221587) mod 2<sup>20</sup></code>, and it reproduces bit
+for bit here for a reason worth writing down — the largest value the
+recurrence ever forms is about 1.15&times;10<sup>9</sup>, far below
+2<sup>53</sup>, where Shoddy's Numbers are still exact integers. The
+arithmetic is not an approximation of the C's; it is the same arithmetic.</p>
+<p>Three adjustments make the two comparable, and the harness documents all
+three: the curmudgeons' upstream name is substituted in both directions, since
+the recorded commands going in name them the old way and the output coming
+back names them the new one; the game's own name is mapped forward onto the
+expected text; and both sides are reflowed paragraph by paragraph, because
+<code>curmudgeon</code> is a longer word than the one it replaced and stored
+message text therefore wraps at different columns. Where this port and a
+transcript disagree, the transcript wins — including where it records a bug.
+The original's bugs are load-bearing and are not to be fixed.</p>
+
+<h2 id="split">Why Twenty-Six Files</h2>
+<p>The C original keeps the whole game in one global
+<code>struct game_t</code>; the 1970s Fortran was a single listing. The seam
+here is drawn twice over. Across one axis the split is <strong>data from
+rules</strong>: six table files that declare what the cave is, and a core plus
+eighteen modules that decide what happens in it. Across the other it is
+<strong>rules from effects</strong>: the rules return values, and the effects
+are penned into three small files — <code>say</code>, where output finally
+becomes a <code>Print</code>; <code>ask</code>, where a line is read; and
+<code>save</code>, which writes the file — with
+<code>mungo-caverns.shoddy</code>, the turn loop, deciding when each of them
+runs.</p>
+<p>The payoff is that <code>test.shoddy</code> includes every rule module and
+still needs no terminal, which is the property the port was refactored to
+get. It also makes the port diffable by hand against the C: section comments
+carry the file and line the rule came from, and keeping those accurate as code
+moves is half the value of the exercise.</p>
+
+<h2 id="machines">The Machines It Uses</h2>
+<table>
+<tr><th>Machine</th><th>Why</th></tr>
+<tr><td><a href="../machines/str.html">str</a></td><td>In the core, for the
+tokenizer: <code>Split</code> and <code>Trim</code> cut a command into its one
+or two words. <code>StartsWith</code> reads the transcripts' own
+<code>#</code> comment lines, and <code>Join</code> is how a test asks a rule
+what it just said.</td></tr>
+<tr><td><a href="../machines/seq.html">seq</a></td><td>Throughout:
+<code>Contains</code> alone answers most of what the rules ask — is this word
+among the synonyms, is this flag on the room, is this object in your hands —
+with <code>Append</code>, <code>Any</code>, <code>All</code>,
+<code>CountIf</code>, <code>Last</code> and <code>Flatten</code> behind
+it.</td></tr>
+</table>
+<p>That is the whole list, and as with <a href="oregon.html">oregon</a> the
+short list is the interesting fact: a game of this size needs almost nothing
+but the language itself. Even the message renderer —
+<code>%d</code>, <code>%s</code>, and the game's own <code>%S</code>, a plural
+that looks back at the previous <code>%d</code> so one message can say "1
+turn" and "4 turns" — is twenty lines of builtins. The save format likewise
+goes through Shoddy's own binary words rather than a machine: a version
+number and then every scalar and array in a fixed order, written with
+explicit <code>PutNum</code> and <code>PutBool</code> calls rather than by
+reflecting over the record, which is exactly why renaming a field is
+byte-safe and reordering a call is not.</p>
+
+<nav class="pager" aria-label="Mills, in catalog order">
+  <a href="index.html"><span class="dir">&larr; All mills</span><span class="ttl">the catalog</span></a>
+  <a class="next" href="oregon.html"><span class="dir">Next mill &rarr;</span><span class="ttl">oregon</span></a>
+</nav>
+<footer>Named for the shoddy mills of the West Riding: Useless Things Made
+Useful Through Skill (<a href="../heritage.html">the full story</a>).<br>
+&copy; 2026 Stephen Vincent Foster</footer>
+</div>
+</body>
+</html>

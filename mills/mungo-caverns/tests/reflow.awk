@@ -1,9 +1,10 @@
 # Join each blank-line-delimited block into a single line.
 #
 # The game's message text is stored pre-wrapped, and Mungo Caverns renamed
-# the dwarves to curmudgeons -- five characters longer.  Every paragraph
-# mentioning one therefore breaks at different columns than the C's
-# recorded output does, even when the words are identical.  Collapsing
+# the cave's little knife-throwing folk to curmudgeons -- five characters
+# longer.  Every paragraph mentioning one therefore breaks at different
+# columns than the C's recorded output does, even when the words are
+# identical.  Collapsing
 # each paragraph to a single line compares content and paragraph
 # structure while ignoring where the wrap fell.
 #

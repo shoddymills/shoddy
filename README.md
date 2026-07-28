@@ -35,10 +35,33 @@ is recursion and `Map`/`Filter`/`Fold`. And the whole surface desugars to
 stack code you can also write directly: `Def Square ( Number -- Number )`
 / `Dup *`.
 
+## Our showpiece example
+
+*Mungo Caverns: a purely functional reimagining of our favourite text
+adventure game.*
+
+<table>
+  <tr>
+    <td width="33%" align="center" valign="top">
+      <a href="https://shoddymills.github.io/shoddy/mills/mungo-caverns.html"><img src="docs/media/mungo-caverns.svg" alt="Mungo Caverns in a terminal: the well house and a brass lamp" width="100%"></a><br>
+      <b>Mungo Caverns</b><br><sub>the cave crawl, purely functional</sub>
+    </td>
+    <td width="33%" align="center" valign="top">
+      <a href="https://shoddymills.github.io/shoddy/mills/mungo-caverns.html"><img src="docs/media/mungo-travel.svg" alt="Shoddy source showing the TravelCond union, one travel-table row, and the Select Case that reads it" width="100%"></a><br>
+      <b>The travel table</b><br><sub>the cave's database is Shoddy source</sub>
+    </td>
+    <td width="33%" align="center" valign="top">
+      <a href="https://shoddymills.github.io/shoddy/mills/mungo-caverns.html"><img src="docs/media/mungo-pure.svg" alt="Diagram: the rule modules return what they say on the Game record; the turn loop decides when it is printed" width="100%"></a><br>
+      <b>What the rules return</b><br><sub>output is a value, not a Print</sub>
+    </td>
+  </tr>
+</table>
+
 ## See it run
 
 Complete programs woven from the machines — each split into a headless,
-unit-tested pure core and a thin I/O shell. Click through to the docs.
+unit-tested pure core and a thin I/O shell. Click through for the full
+write-up on each one.
 
 <table>
   <tr>
@@ -96,7 +119,7 @@ is in [the heritage of the name](https://shoddymills.github.io/shoddy/heritage.h
 | `src/`| The .NET solution: `Shoddy.Runtime` · `Shoddy.Devil` (front-end) · `Shoddy.Mill` · `Shoddy.Compiler` · `Shoddy.Tests` |
 | `bin/`| Build output — the published `mill` toolchain lands here after `dotnet publish` (not committed; build it, then run `bin/mill`) |
 | `machines/`| Standard library (the machines): `seq` `str` `math` `matrix` `stats` `random` `neural` `money` `file` `recio` `dict` `isam` `net` `simplex` `mps` `clock` `vt100` `keys` `scribbler` `turtle` `plotter` `buzzer` |
-| `mills/`| Complete example programs (the mills), each with its own build wrapper: `oregon` (overland-trail game, after MECC's 1971 original) · `pac-vt100` · `invaders` · `open-cave` (Colossal Cave Adventure) · `demographics` (neural income model, regression) · `iris` (neural species classifier, ~4s to train) · `simplex-from-mps` (LP solver) |
+| `mills/`| Complete example programs (the mills), each with its own build wrapper: `mungo-caverns` (Colossal Cave Adventure) · `oregon` (overland-trail game, after MECC's 1971 original) · `pac-vt100` · `invaders` · `demographics` (neural income model, regression) · `iris` (neural species classifier, ~4s to train) · `simplex-from-mps` (LP solver) |
 | `docs/`| `index.html` (start here) · `guide.html` · `setup.html` (one-time machine setup) · `vscode.html` (editor) · `build.html` (the toolchain) · `stack.html` (the stack, traced) · `spec.html` · `quickref.html` · `machines/` and `mills/` (one page each) |
 | `tst/`| `libtest.shoddy` (assertion suite) · `examples.shoddy` · `gradebook.shoddy` · `simplex.shoddy` · demos (`scribbler-` `turtle-` `plotter-` `buzzer-` `net-demo.shoddy`) · `golden/` (the constitution) |
 | `vscode-shoddy/`| VS Code extension: highlighting, snippets, debugging, mill commands |
@@ -175,9 +198,9 @@ for anything, including commercially, with attribution.
 Third-party dependencies and the historical/homage example programs (OREGON,
 the Pac-Man and Space Invaders homages, and a neural-net reference) remain
 under their own licenses and their owners' trademarks. The Colossal Cave
-Adventure port ([mills/open-cave/](mills/open-cave/)) derives from Crowther &
-Woods via Eric Raymond's Open Adventure and is **BSD-2-Clause**; see its
-[LICENSE](mills/open-cave/LICENSE) and
+Adventure port ([mills/mungo-caverns/](mills/mungo-caverns/)) derives from
+Crowther & Woods via Eric Raymond's Open Adventure and is **BSD-2-Clause**; see
+its [LICENSE](mills/mungo-caverns/LICENSE) and
 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
 
 Contributions are welcome under the MIT License; see

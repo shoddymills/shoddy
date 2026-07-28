@@ -11,11 +11,13 @@
 #
 # Three adjustments make them comparable:
 #
-#   1. Mungo Caverns renamed the dwarves to curmudgeons.  The rename is
-#      total and reversible, so this script substitutes in both
-#      directions -- curmudgeon into the commands going in, dwarf back
-#      out of the output.  Order matters: the longer forms first, or
-#      "curmudgeons" becomes "dwarfs".
+#   1. Mungo Caverns renamed the cave's little knife-throwing folk to
+#      curmudgeons.  The rename is total and reversible, so this script
+#      substitutes in both directions -- the new name into the commands
+#      going in, the upstream one back out of the output before the diff.
+#      The two sed filters below hold the only copies of the old spelling
+#      in this port; order matters within them, longer forms first, or
+#      the plural comes back wrong.
 #
 #   2. The game itself was renamed to Mungo Caverns, and the old names
 #      appear in recorded output ("Welcome to ...!!", the cave the game
@@ -27,9 +29,9 @@
 #      Typed commands never contain the name, so the input side is
 #      untouched.
 #
-#   3. "curmudgeon" is five characters longer than "dwarf", and the new
-#      name is longer than either old one, so stored message text wraps
-#      at different columns.  Both sides are reflowed
+#   3. "curmudgeon" is five characters longer than the word it replaced,
+#      and the new game name is longer than either old one, so stored
+#      message text wraps at different columns.  Both sides are reflowed
 #      paragraph-by-paragraph before diffing.  See reflow.awk.
 #
 # Usage:
@@ -117,13 +119,16 @@ cheat -t -1000  -o thousand_turns.adv
 cheat -l -1000  -o thousand_limit.adv
 
 # ---- the rename, both directions ------------------------------------
+# These two filters are the only place the upstream spelling survives.
+# They are data, not prose: the recorded logs and .chk files use it, so
+# the strings have to match it exactly.
 to_curmudgeon() {
     sed -e 's/Dwarvish/Curmudgeonish/g'   -e 's/dwarvish/curmudgeonish/g' \
         -e 's/DWARVES/CURMUDGEONS/g'      -e 's/Dwarves/Curmudgeons/g' \
         -e 's/dwarves/curmudgeons/g'      -e 's/DWARF/CURMUDGEON/g' \
         -e 's/Dwarf/Curmudgeon/g'         -e 's/dwarf/curmudgeon/g'
 }
-to_dwarf() {
+to_upstream() {
     sed -e 's/Curmudgeonish/Dwarvish/g'   -e 's/curmudgeonish/dwarvish/g' \
         -e 's/CURMUDGEONS/DWARVES/g'      -e 's/Curmudgeons/Dwarves/g' \
         -e 's/curmudgeons/dwarves/g'      -e 's/CURMUDGEON/DWARF/g' \
@@ -161,7 +166,7 @@ for t in $tests; do
 
     to_curmudgeon < "$log" > "$work/tests/$t.input"
     ( cd "$work/tests" && "$mill" run "$game" $opts < "$t.input" 2>&1 ) \
-        | to_dwarf | normalise > "$work/$t.got"
+        | to_upstream | normalise > "$work/$t.got"
     to_mungo < "$chk" | normalise > "$work/$t.exp"
 
     if diff -q "$work/$t.exp" "$work/$t.got" >/dev/null 2>&1; then

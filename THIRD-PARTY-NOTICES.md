@@ -45,9 +45,9 @@ educational and historical purposes. *The Oregon Trail* is a trademark of
 Houghton Mifflin Harcourt. This project is not affiliated with, endorsed by, or
 sponsored by the trademark owner.
 
-### Colossal Cave Adventure (`mills/open-cave/`)
+### Colossal Cave Adventure (`mills/mungo-caverns/`)
 
-The open-cave mill is a Shoddy forward-port of **Open Adventure** by Eric S.
+The mungo-caverns mill is a Shoddy forward-port of **Open Adventure** by Eric S.
 Raymond (https://gitlab.com/esr/open-adventure), itself a forward-port of
 *Adventure* 2.5 (1995) by Will Crowther and Don Woods — the last version of
 Colossal Cave Adventure in the main line of development by the game's original
@@ -58,19 +58,22 @@ features of the game as it stands were added by Don Woods.
 Because it derives from that work, the entire mill is licensed **BSD-2-Clause**
 rather than MIT. The full terms and copyright lines — Crowther & Woods
 (1977, 2005), Eric S. Raymond (Open Adventure), and Stephen Vincent Foster
-(the Shoddy port, 2026) — are in `mills/open-cave/LICENSE` in the source
+(the Shoddy port, 2026) — are in `mills/mungo-caverns/LICENSE` in the source
 repository.
 
-`mills/open-cave/obsolete/adventure.yaml` is the dungeon database from Open
+`mills/mungo-caverns/obsolete/adventure.yaml` is the dungeon database from Open
 Adventure, redistributed under the same license. The port's data tables were
 originally generated from it (by `obsolete/gen.shoddy`) and are now maintained
 by hand against the upstream C, which remains the reference for every rule.
 **The C sources themselves are not redistributed here.**
 
-The port is **modified** from upstream: the cave's little knife-throwing folk
-are called curmudgeons rather than by their upstream name, which renames one
-vocabulary word, the symbols built from it, and the messages and room
-descriptions that mention them. The game plays identically otherwise.
+The port is **modified** from upstream: the game itself is called Mungo
+Caverns, and the cave's little knife-throwing folk are called curmudgeons
+rather than by their upstream name, which renames one vocabulary word, the
+symbols built from it, and the messages and room descriptions that mention
+them. Both renames are mechanical, and the mill's transcript harness maps them
+back so that upstream's recorded games still grade the port. It plays
+identically otherwise.
 
 ### Pac-Man homage (`mills/pac-vt100/`)
 

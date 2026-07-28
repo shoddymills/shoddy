@@ -20,13 +20,12 @@ Def OilBottle() As Number
     2
 
 Def Liquid(g As Game) As Number
-    Let p = PropOf(g, ObjNamed("BOTTLE"))
-    If p = WaterBottle() Then
-        ObjNamed("WATER")
-    Else
-        If p = OilBottle() Then
+    Select Case PropOf(g, ObjNamed("BOTTLE"))
+        Case WaterBottle()
+            ObjNamed("WATER")
+        Case OilBottle()
             ObjNamed("OIL")
-        Else
+        Case Else
             NoObject()
 
 Def LiqLoc(g As Game) As Number
@@ -41,12 +40,12 @@ Def LiqLoc(g As Game) As Number
 Rem actions.c:755-827. Fill. The bottle wants a liquid to hand, the urn
 Rem drinks the bottle dry, and the vase does not survive the attempt.
 Def DoFill(g As Game, want As Number, msg As String) As Done
-    If want = ObjNamed("VASE") Then
-        FillVase(g)
-    Else
-        If want = ObjNamed("URN") Then
+    Select Case want
+        Case ObjNamed("VASE")
+            FillVase(g)
+        Case ObjNamed("URN")
             FillUrn(g)
-        Else
+        Case Else
             FillBottle(g, want, msg)
 
 Def FillVase(g As Game) As Done
@@ -102,23 +101,19 @@ Rem along with it, which is how TOTING(WATER) ever becomes true. A lit or
 Rem full urn nearby claims the liquid first and refuses to give it up.
 Def FillBottle(g As Game, want As Number, msg As String) As Done
     Let bottle = ObjNamed("BOTTLE")
-    If want <> NoObject() And want <> bottle Then
-        Done(Voiced(g, msg), GoClearObj())
-    Else
-        If want = NoObject() And Not Here(g, bottle) Then
+    Select Case True
+        Case want <> NoObject() And want <> bottle
+            Done(Voiced(g, msg), GoClearObj())
+        Case want = NoObject() And Not Here(g, bottle)
             Done(g, GoUnknown())
-        Else
-            If (Here(g, ObjNamed("URN"))
-                And PropOf(g, ObjNamed("URN")) <> 0) Then
-                Done(VoicedId(g, MsgUrnNopour()), GoClearObj())
-            Else
-                If Liquid(g) <> NoObject() Then
-                    Done(VoicedId(g, MsgBottleFull()), GoClearObj())
-                Else
-                    If LiqLoc(g) = NoObject() Then
-                        Done(VoicedId(g, MsgNoLiquid()), GoClearObj())
-                    Else
-                        Done(Filled(g, bottle), GoClearObj())
+        Case Here(g, ObjNamed("URN")) And PropOf(g, ObjNamed("URN")) <> 0
+            Done(VoicedId(g, MsgUrnNopour()), GoClearObj())
+        Case Liquid(g) <> NoObject()
+            Done(VoicedId(g, MsgBottleFull()), GoClearObj())
+        Case LiqLoc(g) = NoObject()
+            Done(VoicedId(g, MsgNoLiquid()), GoClearObj())
+        Case Else
+            Done(Filled(g, bottle), GoClearObj())
 
 Def Filled(g As Game, bottle As Number) As Game
     Let oily = LiqLoc(g) = ObjNamed("OIL")
@@ -140,20 +135,17 @@ Rem why this returns GO_MOVE rather than dropping back to the prompt.
 Def DoPour(g As Game, want As Number, msg As String) As Done
     Let bottle = ObjNamed("BOTTLE")
     Let obj = PouredThing(g, want, bottle)
-    If obj = NoObject() Then
-        Done(g, GoUnknown())
-    Else
-        If Not Toting(g, obj) Then
+    Select Case True
+        Case obj = NoObject()
+            Done(g, GoUnknown())
+        Case Not Toting(g, obj)
             Done(Voiced(g, msg), GoClearObj())
-        Else
-            If obj <> ObjNamed("OIL") And obj <> ObjNamed("WATER") Then
-                Done(VoicedId(g, MsgCantPour()), GoClearObj())
-            Else
-                If (Here(g, ObjNamed("URN"))
-                    And PropOf(g, ObjNamed("URN")) = 0) Then
-                    FillUrn(g)
-                Else
-                    Poured(g, obj, bottle)
+        Case obj <> ObjNamed("OIL") And obj <> ObjNamed("WATER")
+            Done(VoicedId(g, MsgCantPour()), GoClearObj())
+        Case Here(g, ObjNamed("URN")) And PropOf(g, ObjNamed("URN")) = 0
+            FillUrn(g)
+        Case Else
+            Poured(g, obj, bottle)
 
 Def PouredThing(g As Game, want As Number, bottle As Number) As Number
     If want = bottle Or want = NoObject() Then
@@ -167,16 +159,15 @@ Def Poured(g As Game, obj As Number, bottle As Number) As Done
                      ObjectLocation = SetNth(ObjectLocation(g), obj + 1, 0))
     Let plant = ObjNamed("PLANT")
     Let door = ObjNamed("DOOR")
-    If Not At(g1, plant) And Not At(g1, door) Then
-        Done(VoicedId(g1, MsgGroundWet()), GoClearObj())
-    Else
-        If At(g1, door) Then
+    Select Case True
+        Case Not At(g1, plant) And Not At(g1, door)
+            Done(VoicedId(g1, MsgGroundWet()), GoClearObj())
+        Case At(g1, door)
             Done(StateChange(g1, door, DoorState(obj)), GoClearObj())
-        Else
-            If obj = ObjNamed("WATER") Then
-                Done(Watered(g1, plant), GoMove())
-            Else
-                Done(VoicedId(g1, MsgShakingLeaves()), GoClearObj())
+        Case obj = ObjNamed("WATER")
+            Done(Watered(g1, plant), GoMove())
+        Case Else
+            Done(VoicedId(g1, MsgShakingLeaves()), GoClearObj())
 
 Def DoorState(obj As Number) As Number
     If obj = ObjNamed("OIL") Then
@@ -195,23 +186,21 @@ Rem a stream is free and does nothing at all.
 Def DoDrink(g As Game, want As Number, msg As String) As Done
     Let water = ObjNamed("WATER")
     Let bottle = ObjNamed("BOTTLE")
-    If want = ObjNamed("BLOOD") Then
-        Rem actions.c:604-609. Drinking dragon's blood is what lets you
-        Rem understand the bird, later on.
-        Let g1 = Destroy(g, ObjNamed("BLOOD"))
-        Done(With(StateChange(g1, ObjNamed("DRAGON"), 2), Blooded = True), GoClearObj())
-    Else
-      If (want = NoObject() And LiqLoc(g) <> water
-        And (Liquid(g) <> water Or Not Here(g, bottle))) Then
-        Done(g, GoUnknown())
-      Else
-        If want <> NoObject() And want <> water Then
+    Select Case True
+        Case want = ObjNamed("BLOOD")
+            Rem actions.c:604-609. Drinking dragon's blood is what lets you
+            Rem understand the bird, later on.
+            Let g1 = Destroy(g, ObjNamed("BLOOD"))
+            Done(With(StateChange(g1, ObjNamed("DRAGON"), 2), Blooded = True), GoClearObj())
+        Case (want = NoObject() And LiqLoc(g) <> water
+              And (Liquid(g) <> water Or Not Here(g, bottle)))
+            Done(g, GoUnknown())
+        Case want <> NoObject() And want <> water
             Done(VoicedId(g, MsgRidiculousAttempt()), GoClearObj())
-        Else
-            If Liquid(g) = water And Here(g, bottle) Then
-                Let g1 = With(g, Held = Filter(Held(g), Fn(x) => x <> water),
-                                 ObjectLocation = SetNth(ObjectLocation(g), water + 1, 0))
-                Done(StateChange(g1, bottle, EmptyBottle()), GoClearObj())
-            Else
-                Done(Voiced(g, msg), GoClearObj())
+        Case Liquid(g) = water And Here(g, bottle)
+            Let g1 = With(g, Held = Filter(Held(g), Fn(x) => x <> water),
+                             ObjectLocation = SetNth(ObjectLocation(g), water + 1, 0))
+            Done(StateChange(g1, bottle, EmptyBottle()), GoClearObj())
+        Case Else
+            Done(Voiced(g, msg), GoClearObj())
 

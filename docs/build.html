@@ -40,6 +40,8 @@ mill machine lib.shoddy  # compile a library to a machine DLL
 mill gen x.shoddy        # print the generated C#
 mill lex x.shoddy        # dump token lines (debug)
 mill dap                 # DAP server — the perch (the editor launches this)
+
+mill run --allow-net x.shoddy   # arm the gated TCP builtins (the net machine)
 </code></pre>
 <p><code>mill run</code> and <code>mill weave</code> are the same compiler
 with a different destination: <code>run</code> weaves to memory and
@@ -49,6 +51,12 @@ passes the remaining arguments through to the program.</p>
 <p>One platform note: programs that open a scribbler window must run under
 <code>mill run</code> — a woven <code>dotnet FILE.dll</code> has no window
 backend. Console programs weave and run anywhere .NET runs.</p>
+<p>Networking is a gated capability: the nine <code>TCP*</code> builtins (and
+the <a href="machines/net.html">net machine</a> built on them) abort unless the
+mill is run with <code>--allow-net</code>. The flag may appear anywhere on the
+command line; it sets <code>SHODDY_ALLOW_NET=1</code> in the environment, so a
+woven standalone program (<code>dotnet x.dll</code>) honours the same switch —
+set that variable yourself when running one.</p>
 
 <h2 id="wrappers">2. The build wrappers</h2>
 <p>Thin convenience wrappers at the repo root bundle the common commands —
@@ -92,14 +100,16 @@ file arrives at most once.</p>
 </li>
 <li><p>Both <code>mill run</code> and <code>mill weave</code> link against a
 precompiled <strong>machine</strong> (<code>Shoddy.Machines.&lt;Name&gt;.dll</code> beside the
-<code>.shoddy</code>) when one exists, and splice the source otherwise. Build
-machines in dependency order (<code>seq</code> and <code>str</code> before the machines
-that include them):</p>
-<pre><code class="language-sh">for m in seq str matrix money file recio dict random neural isam simplex mps; do
-    bin/mill machine machines/$m.shoddy
-done
+<code>.shoddy</code>) when one exists, and splice the source otherwise.
+<code>./build.sh machines</code> compiles all twenty-two, working out the
+order itself: it reads each machine's <code>Include</code> lines and builds a
+machine only once everything it includes is already a DLL
+(<code>seq</code> before <code>dict</code>, <code>matrix</code> before
+<code>simplex</code>, and so on). To build one by hand —</p>
+<pre><code class="language-sh">bin/mill machine machines/seq.shoddy
 </code></pre>
-<p>(or just <code>./build.sh machines</code>, which knows the order).</p>
+<p>— its includes must already be built, or their source is spliced in and
+re-exported, colliding with the real machine downstream.</p>
 </li>
 <li><p>Curious what your program compiles to? <code>mill gen file.shoddy</code>
 prints the generated C#. Self-tail-recursive defs show
@@ -108,9 +118,15 @@ prints the generated C#. Self-tail-recursive defs show
 </ul>
 
 <h2 id="testing">5. Errors and testing</h2>
-<p>Runtime and parse errors print <code>ERROR (line N): message</code> to the
-terminal and exit 1 — the line number is within the file that defines
-the failing code. <code>Assert(cond, &quot;MSG&quot;)</code> is built in.</p>
+<p>Errors print to stderr and exit 1, in one of three shapes. A compile-time
+error that can point across an <code>Include</code> boundary — a duplicate
+definition, a shadowed builtin, a bad <code>Def</code> header — names the
+file: <code>ERROR (file.shoddy:N): message</code>. A runtime error names only
+the line: <code>ERROR (line N): message</code> — the line number is within the
+file that defines the failing code. An error with no source line at all, such
+as a duplicate export across machine DLLs, prints bare
+<code>ERROR: message</code>. <code>Assert(cond, &quot;MSG&quot;)</code> is built
+in.</p>
 <p>The conformance rule of the whole project: <code>tst/golden/</code> is the
 constitution. After touching anything under <code>src/</code>, run
 <code>dotnet test src/Shoddy.Tests</code> (or <code>./build.sh test</code>) —
@@ -124,7 +140,10 @@ because a word resolves through local binding, top-level <code>Let</code>,
 program <code>Def</code>, machine <code>Def</code>, type constructor, builtin,
 and only then accessor. So a parameter named <code>Name</code> does not read
 like a shadowing declaration, it reads like a parameter, and the accessor it
-hides simply stops being reachable in that scope. Nothing else catches this:
+hides simply stops being reachable in that scope. (This chain decides what a
+word <em>means</em> once declarations are in place; how a name finds its
+declaration across namespaces is the separate resolution described in
+<a href="spec.html#namespaces">spec §13.1</a>.) Nothing else catches this:
 annotations are runtime-only, so there is no check at weave time, and the
 shadowing name almost always has the type the accessor would have returned, so
 there is no error at run time either. The program just computes the wrong

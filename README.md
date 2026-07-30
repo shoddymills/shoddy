@@ -133,7 +133,7 @@ machine library, so it is the entire install — grab the `.vsix` from
 [Releases](https://github.com/shoddymills/shoddy/releases) and:
 
 ```
-code --install-extension vscode-shoddy-1.1.0.vsix
+code --install-extension vscode-shoddy-<version>.vsix
 ```
 
 The only prerequisite is the [.NET 10 runtime](https://dotnet.microsoft.com/download/dotnet/10.0)
@@ -211,11 +211,15 @@ This project intends to join the [.NET Foundation](https://dotnetfoundation.org/
 
 ## Status
 
-A research-preview-grade toy with working depth: a 100%-compiled .NET
-language — every program weaves to C# and compiles with Roslyn, either
-in memory (`mill run`) or to an assembly on disk (`mill weave`) — with
-tail-call optimization, separately-compiled library machines, a
-self-hosted standard library, and a golden conformance suite graded
-byte-for-byte. Type annotations are parsed and enforced at runtime;
-static checking with stack-effect inference is the headline item of
-future work, alongside a REPL and catchable errors.
+Version 1.0, and the toolchain is real: a 100%-compiled .NET language —
+every program weaves to C# and compiles with Roslyn, either in memory
+(`mill run`) or to an assembly on disk (`mill weave`) — with tail-call
+optimization, separately-compiled library machines, a self-hosted
+standard library, and a golden conformance suite graded byte-for-byte.
+The programs in `mills/` are not syntax demonstrations; they are
+complete, working software.
+
+Shoddy is young, and there is work still ahead. Type annotations are
+parsed and enforced at runtime; static checking with stack-effect
+inference is the headline item of future work, alongside a REPL and
+catchable errors.

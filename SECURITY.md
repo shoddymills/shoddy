@@ -1,6 +1,6 @@
 # Security Policy
 
-Shoddy is a research-preview educational language and toolchain. It compiles
+Shoddy is an educational language and toolchain. It compiles
 `.shoddy` programs to C# and runs them with Roslyn. Treat compiled programs
 with the same caution as any code you would run locally.
 

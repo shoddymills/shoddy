@@ -1,0 +1,124 @@
+#!/usr/bin/env pwsh
+# MAINTAINER TOOL - pushes to origin/main and creates tags. Assumes write access.
+#
+# scripts/shoddy-release.ps1 X.Y.Z [-Yes]   (run from the repo root)
+#
+# The whole release, from a clean repo, in one shot:
+#   main fast-forwarded to origin/main -> release/VX.Y.Z cut -> ./build.ps1 all X.Y.Z
+#   (clean + test + package; a red test stops everything) -> commit package.json ->
+#   push branch -> tag vX.Y.Z -> push tag -> merge --no-ff into main -> push.
+#
+# Pushing the tag is what ships: the Release workflow rebuilds on a clean runner
+# and publishes the GitHub Release with the .vsix attached. The local build here
+# is the gate, not the artifact - nothing is pushed until it is green. The .vsix
+# is build output and is never committed.
+#
+# Refuses to start unless every precondition holds: exact X.Y.Z version, repo root,
+# clean tree, no merge in progress, branch/tag not already taken (local or origin).
+# -Yes skips the confirmation prompt.
+[CmdletBinding()]
+param(
+    [Parameter(Position = 0)][string]$Version,
+    [switch]$Yes
+)
+$ErrorActionPreference = 'Stop'
+
+function Fail([string]$Msg) { Write-Host "RELEASE STOPPED: $Msg" -ForegroundColor Red; exit 1 }
+function G {
+    Write-Host ("> git " + ($args -join ' ')) -ForegroundColor Cyan
+    git @args
+    if ($LASTEXITCODE -ne 0) { Fail "git $($args -join ' ') failed (exit $LASTEXITCODE)." }
+}
+
+# --- argument ---
+if (-not $Version) { Fail "usage: scripts/shoddy-release.ps1 X.Y.Z [-Yes]   (e.g. scripts/shoddy-release.ps1 1.0.0)" }
+if ($Version -notmatch '^\d+\.\d+\.\d+$') { Fail "version must be exactly X.Y.Z, digits only (got '$Version')." }
+$Branch = "release/V$Version"
+$Tag    = "v$Version"
+$Vsix   = "vscode-shoddy/vscode-shoddy-$Version.vsix"
+
+# --- preconditions: right place, clean state ---
+git rev-parse --is-inside-work-tree > $null
+if ($LASTEXITCODE -ne 0) { Fail "not inside a git repository." }
+$top = (git rev-parse --show-toplevel) -replace '/', '\'
+if ((Get-Location).Path -ne $top) { Fail "run from the repo root: $top" }
+if (-not (Test-Path build.ps1) -or -not (Test-Path vscode-shoddy/package.json)) {
+    Fail "this doesn't look like the shoddy repo root."
+}
+git diff --quiet
+if ($LASTEXITCODE -ne 0) { Fail "unstaged changes present - commit or stash first (see git status)." }
+git diff --cached --quiet
+if ($LASTEXITCODE -ne 0) { Fail "staged-but-uncommitted changes present - commit or unstage first." }
+git rev-parse -q --verify MERGE_HEAD > $null
+if ($LASTEXITCODE -eq 0) { Fail "a merge is in progress - finish or abort it first." }
+
+# --- preconditions: name not taken anywhere ---
+G fetch origin --tags --prune
+git show-ref --verify --quiet "refs/heads/$Branch"
+if ($LASTEXITCODE -eq 0) { Fail "branch $Branch already exists locally." }
+git show-ref --verify --quiet "refs/remotes/origin/$Branch"
+if ($LASTEXITCODE -eq 0) { Fail "branch $Branch already exists on origin." }
+git show-ref --verify --quiet "refs/tags/$Tag"
+if ($LASTEXITCODE -eq 0) { Fail "tag $Tag already exists locally." }
+git ls-remote --exit-code --tags origin $Tag > $null
+if ($LASTEXITCODE -eq 0) { Fail "tag $Tag already exists on origin." }
+
+# --- confirm ---
+Write-Host ""
+Write-Host "Release plan for ${Version}:" -ForegroundColor Yellow
+Write-Host "  main          -> fast-forwarded to origin/main"
+Write-Host "  $Branch -> created; ./build.ps1 all $Version (clean + test + package)"
+Write-Host "  commit + push -> package.json ('$Tag release')"
+Write-Host "  tag + push    -> $Tag   (this is what triggers the Release workflow)"
+Write-Host "  main          -> merge --no-ff $Branch, pushed"
+Write-Host ""
+$Notes = "release-notes/$Tag.md"
+if (Test-Path $Notes) {
+    Write-Host "  release notes -> $Notes ($((Get-Content $Notes).Count) lines)"
+} else {
+    Write-Host "  release notes -> MISSING: $Notes" -ForegroundColor Yellow
+    Write-Host "                   The release body will fall back to the merge log."
+    Write-Host "                   Notes must be committed BEFORE the tag: answer n,"
+    Write-Host "                   write them, commit, then re-run. See release-notes/README.md."
+}
+if (-not $Yes) {
+    $a = Read-Host "Proceed? (y/N)"
+    if ($a -notmatch '^(y|yes)$') { Write-Host "aborted, nothing done."; exit 0 }
+}
+
+# --- full checkout: release always builds from up-to-date main ---
+G checkout main
+G pull --ff-only origin main
+G checkout -b $Branch
+
+# --- clear stale packages so the version check below can't pass on an old file ---
+Get-ChildItem vscode-shoddy -Filter *.vsix -ErrorAction SilentlyContinue | Remove-Item -Force
+
+# --- build + test + package; nothing has been pushed yet ---
+& .\build.ps1 all $Version
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "BUILD/TEST FAILED - nothing was pushed." -ForegroundColor Red
+    Write-Host "inspect, then undo with: git checkout main; git branch -D $Branch"
+    exit 1
+}
+if (-not (Test-Path $Vsix)) { Fail "expected package $Vsix was not produced." }
+$pkg = (Get-Content vscode-shoddy/package.json -Raw | ConvertFrom-Json).version
+if ($pkg -ne $Version) { Fail "package.json version is '$pkg', expected '$Version'." }
+
+# --- publish: the version bump is the only artifact that belongs in the commit ---
+G add vscode-shoddy/package.json
+G commit -m "$Tag release"
+G push -u origin $Branch
+G tag $Tag
+G push origin $Tag
+G checkout main
+G merge --no-ff $Branch -m "Merge branch '$Branch'"
+G push origin main
+
+Write-Host ""
+Write-Host "DONE - $Tag is tagged and merged." -ForegroundColor Green
+Write-Host "The Release workflow is now building $Tag and will publish the GitHub Release"
+Write-Host "with vscode-shoddy-$Version.vsix attached. Watch it in the Actions tab; if it fails,"
+Write-Host "the tag is already public, so fix forward with a new patch version."
+Write-Host "Release branch kept as hotfix base: $Branch"
+Write-Host "  (delete anytime: git branch -d $Branch; git push origin --delete $Branch)"

@@ -1,0 +1,114 @@
+name: Release
+
+# Pushing a vX.Y.Z tag is what ships a release. scripts/shoddy-release.sh (and its
+# .ps1/.cmd twins) build and test locally as a gate, then push the tag; this job
+# rebuilds from scratch on a clean runner and publishes the GitHub Release with the
+# packaged extension attached. The .vsix is never committed — this is the only place
+# a shipped package comes from.
+#
+# The staged mill is framework-dependent and carries every RID's natives (see
+# build.sh `stage`), so a package built here on Linux is the same artifact as one
+# built on Windows.
+
+on:
+  push:
+    tags: ['v*.*.*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing vX.Y.Z tag to (re)build and publish'
+        required: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+          # Full history and all tags: composing the notes needs to find the
+          # previous tag and log the merges between it and this one.
+          fetch-depth: 0
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install vsce
+        run: npm install -g @vscode/vsce
+
+      - name: Tag must match the extension version
+        id: ver
+        run: |
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          VER="${TAG#v}"
+          PKG=$(node -p "require('./vscode-shoddy/package.json').version")
+          if [ "$VER" != "$PKG" ]; then
+            echo "tag $TAG implies version $VER, but vscode-shoddy/package.json says $PKG" >&2
+            exit 1
+          fi
+          echo "tag=$TAG"     >> "$GITHUB_OUTPUT"
+          echo "version=$VER" >> "$GITHUB_OUTPUT"
+
+      # No bump argument: vsce packages at package.json's version, which the step
+      # above has already proven equals the tag.
+      - name: Build, test, package
+        run: ./build.sh all
+
+      - name: Confirm the package was produced
+        run: test -f "vscode-shoddy/vscode-shoddy-${{ steps.ver.outputs.version }}.vsix"
+
+      # Hand-written notes win. They must be committed *before* the tag is pushed,
+      # because this job checks out the tag and sees only what it contains.
+      # Without them the body falls back to the --no-ff merge subjects, which is
+      # never empty but reads like a branch list — fine for a patch, thin for a
+      # release anyone will actually read.
+      - name: Compose release notes
+        run: |
+          TAG='${{ steps.ver.outputs.tag }}'
+          if [ -f "release-notes/$TAG.md" ]; then
+            echo "Using checked-in notes: release-notes/$TAG.md"
+            cp "release-notes/$TAG.md" NOTES.md
+          else
+            echo "::warning::No release-notes/$TAG.md in the tagged commit; generating from merge history."
+            PREV=$(git describe --tags --abbrev=0 "$TAG^" 2>/dev/null || true)
+            # --first-parent walks the merge bubbles on main, one line per shipped
+            # feature. Two kinds of line are pure mechanism, not change: the
+            # version-bump commit this tag sits on, and the previous release's
+            # merge-back, which always falls inside the range.
+            if [ -n "$PREV" ]; then RANGE="$PREV..$TAG"; else RANGE="$TAG"; fi
+            git log --first-parent --pretty='- %s' "$RANGE" \
+              | grep -vE "^- Merge branch 'release/" \
+              | grep -vE '^- v[0-9]+\.[0-9]+\.[0-9]+ release$' > CHANGES.txt || true
+            {
+              echo '## Changes'
+              echo
+              if [ -s CHANGES.txt ]; then cat CHANGES.txt; else echo '- Maintenance release.'; fi
+              if [ -n "$PREV" ]; then
+                echo
+                echo "**Full changelog**: ${{ github.server_url }}/${{ github.repository }}/compare/$PREV...$TAG"
+              fi
+            } > NOTES.md
+          fi
+          echo '--- release body ---'
+          cat NOTES.md
+
+      - name: Publish the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ steps.ver.outputs.tag }}" \
+            "vscode-shoddy/vscode-shoddy-${{ steps.ver.outputs.version }}.vsix" \
+            --title "${{ steps.ver.outputs.tag }}" \
+            --notes-file NOTES.md

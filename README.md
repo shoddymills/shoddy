@@ -1,5 +1,7 @@
 # Shoddy
- 
+
+[![CI](https://github.com/shoddymills/shoddy/actions/workflows/ci.yml/badge.svg)](https://github.com/shoddymills/shoddy/actions/workflows/ci.yml)
+
 *Useless Things Made Useful Through Skill*
 
 A purely functional BASIC. Friendly typed syntax on the surface —

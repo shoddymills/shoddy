@@ -1,0 +1,83 @@
+Rem ===================================================================
+Rem mungo-caverns-curmudgeon.shoddy -- the axe-throwing nuisances.
+Rem 
+Rem The curmudgeons carried a different name upstream, which is why
+Rem the transcript harness substitutes in both directions. This is the
+Rem largest consumer of the random stream -- see tests/README.
+Rem ===================================================================
+
+Rem ---- the curmudgeons ------------------------------------------------------------
+Rem The most delicate function in the game, because it is
+Rem the largest consumer of the random stream and every seeded transcript
+Rem in the test corpus depends on drawing exactly as often as the
+Rem recorded games did, in exactly the same order.
+Rem
+Rem Two subtleties are load-bearing and must not be tidied away. The
+Rem activation test rolls a second time only when the first roll passed
+Rem and the room forbids going back -- evaluate both eagerly and the
+Rem stream shifts by one draw and every seeded game diverges. And the
+Rem curmudgeons walk the travel table only after the player's own move
+Rem is already finished; that ordering is load-bearing too.
+
+Def NCurmudgeons() As Number
+    6
+
+Def PirateIndex() As Number
+    6
+
+Type Curmudgeon
+    DLoc As Number
+    DOld As Number
+    DSeen As Boolean
+
+Def NewCurmudgeons() As List
+    Range(1, NCurmudgeons())
+        Map(Fn(i) => Curmudgeon(Nth(CurmudgeonLocs(), i), 0, False))
+
+Def InDeep(loc As Number) As Boolean
+    Contains(Conds(Nth(Locations(), loc + 1)), "DEEP")
+
+Def ForcedAt(loc As Number) As Boolean
+    Let k = Nth(Tkey(), loc + 1)
+    If k = 0 Then
+        False
+    Else
+        Motion(RowAt(k)) = HereMotion()
+
+Rem The candidate rooms one curmudgeon might wander into, gathered by walking
+Rem that room's travel block under the filters in CurmudgeonDestOk below.
+Def CurmudgeonDests(g As Game, k As Number, self As Number, old As Number,
+               isPirate As Boolean, acc As List) As List
+    Let o = RowAt(k)
+    Let dest = GoesTo(o)
+    Let ok = CurmudgeonDestOk(g, o, dest, self, old, isPirate, acc)
+    Select Case True
+        Case ok And Stop(o)
+            Append(acc, dest)
+        Case ok
+            CurmudgeonDests(g, k + 1, self, old, isPirate, Append(acc, dest))
+        Case Stop(o)
+            acc
+        Case Else
+            CurmudgeonDests(g, k + 1, self, old, isPirate, acc)
+
+Def CurmudgeonDestOk(g As Game, o As Op, dest As Number, self As Number, old As Number,
+                isPirate As Boolean, acc As List) As Boolean
+    Select Case True
+        Case dest = NoRoom()
+            False
+        Case Not InDeep(dest)
+            False
+        Case dest = old Or dest = self
+            False
+        Case Not IsEmpty(acc) And dest = Last(acc)
+            False
+        Case ForcedAt(dest)
+            False
+        Case NoCurmudgeons(o)
+            False
+        Case isPirate And Contains(Conds(Nth(Locations(), dest + 1)), "NOARRR")
+            False
+        Case Else
+            True
+

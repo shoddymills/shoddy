@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
+<meta name="description" content="Pac in the terminal — mills/pac-vt100">
+<link rel="stylesheet" href="../style.css">
+<link rel="icon" href="../favicon.svg" type="image/svg+xml">
+<title>pac-vt100 — Pac in the Terminal | Shoddy Mills</title>
+</head>
+<body>
+<div class="topbar"><div class="inner">
+  <a class="phase" href="index.html">Shoddy · The Mills</a>
+  <span class="spacer"></span>
+  <nav class="docnav" aria-label="Documentation"><a href="../heritage.html">Story</a><a href="../guide.html">Guide</a><a href="../quickref.html">Reference</a><a href="../machines/index.html">Machines</a><span class="here">Mills</span><a href="../stack.html">Stack</a><a href="../spec.html">Spec</a><a href="../setup.html">Setup</a><a href="../vscode.html">VS Code</a><a href="../build.html">Toolchain</a></nav>
+</div></div>
+<div class="wrap">
+
+<header class="mast"><p class="eyebrow"><a href="index.html#games">The Mills &middot; Games</a></p><h1>pac-vt100</h1><p class="kicker">Pac in the terminal — mills/pac-vt100</p></header>
+<nav class="pagertop" aria-label="Mills, in catalog order"><a href="oregon.html">&larr; oregon</a><a href="index.html">All mills</a><a href="invaders.html">invaders &rarr;</a></nav>
+
+<h2 id="summary">Summary</h2>
+<p><code>pac-vt100</code> is Pac in a terminal: a 39&times;25 maze of
+walls, dots, and cherries, four ghosts, and nothing on screen that isn't a
+character. Eat every dot to win; a cherry makes the ghosts edible for a few
+seconds. There is no window and no scribbler — the screen is any VT100/ANSI
+terminal, painted with escape strings from the
+<a href="../machines/vt100.html">vt100</a> machine, and keys arrive through
+the <code>InKey</code> builtin, non-blocking and unechoed. WASD, the arrow
+keys, or the numeric keypad move; <code>Q</code> or Escape quits; the menu's
+<code>C</code> toggles colour — with it off, only cursor addressing is ever
+emitted, never a colour code, exactly as in the C original.</p>
+
+<h2 id="history">The Original</h2>
+<p class="tm"><em>PAC-MAN is a trademark of Bandai Namco Entertainment Inc. This mill is an
+independent educational homage, not affiliated with or endorsed by the trademark
+owner. See <code>THIRD-PARTY-NOTICES.md</code>.</em></p>
+<p>Pac-Man itself needs no introduction — Namco, 1980, the most recognizable
+maze in software. This mill is a rewrite of a compact C terminal rendition
+(the original C source is not redistributed here; see
+<code>THIRD-PARTY-NOTICES.md</code>): same
+<code>board[25][39]</code> maze, same ghost direction scheme, same
+colour-toggle menu. What changed in the crossing is the interesting part —
+the C original mutates one global board in place and free-runs its read
+loop, while the Shoddy version threads an immutable state record through a
+fixed-rate tick, so its timing constants are re-tuned rather than copied
+(the C original's <code>EDIBLE_TIMEOUT 300</code> loop iterations become 80
+engine ticks, and so on — the header of <code>pac-core.shoddy</code> shows
+the arithmetic).</p>
+
+<h2 id="run">Running It</h2>
+<pre><code>bin/mill run mills/pac-vt100/pac.shoddy</code></pre>
+<p>or, from <code>mills/pac-vt100/</code>, use the wrapper —
+<code>build.cmd</code> on Windows, <code>./build.sh</code> on
+Linux/macOS/WSL:</p>
+<pre><code>./build.sh          # run the game (also: ./build.sh run)
+./build.sh test     # run the headless simulation smoke check</code></pre>
+<p>It wants a real ANSI-capable terminal at least <strong>80&times;26</strong>
+(Windows Terminal, or any Unix terminal, is fine). The game runs one tick
+per frame at 100&nbsp;ms, paced by the
+<a href="../machines/clock.html">clock</a> machine.</p>
+
+<h2 id="built">How It's Built</h2>
+<p><strong>The pure model</strong> is <code>pac-core.shoddy</code>:
+the maze, the state record, the per-tick simulation — ghost AI, timers,
+collisions, eating, winning and losing — and the input actions. Coordinates
+are 0-based cells, directions are the C original's scheme (0 none, 1 up,
+2 right, 3 down, 4 left), and the board is an <code>Array</code> of 25 row
+<code>String</code>s holding <code>#</code> walls, <code>.</code> dots,
+<code>+</code> cherries, and eaten spaces — <code>PutCell</code> returns a
+new board, nothing mutates. It contains no cursor addressing at all, so it
+runs headless and is unit-tested that way, twice over: by
+<code>test.shoddy</code> in the folder and by
+<code>src/Shoddy.Tests/PacTests.cs</code> in the golden suite.</p>
+<p><strong>The terminal half</strong> is <code>pac.shoddy</code>: painting,
+the menu, and the loop. Its one sly trick: <code>Print</code> appends a
+newline, so each frame is assembled into a single string that ends by
+parking the cursor at row 1 — the newline then lands harmlessly on row 2
+and can never scroll the maze away. Every recursive branch of
+<code>GameLoop</code>, <code>MenuWait</code>, and <code>WaitKey</code> calls
+itself directly — genuine self tail calls, which the compiler turns into
+loops.</p>
+
+<h2 id="split">Why More Than One File</h2>
+<p>The C original is one file that mutates one global board inside one
+free-running read loop — simulation, drawing, and input interleaved
+line by line, which is exactly what makes such programs hard to test.
+The port cuts along the effect line instead:
+<code>pac-core.shoddy</code> is everything the game <em>is</em> — maze,
+state record, ghost AI, timers, collisions, input actions — and emits not
+one cursor movement; <code>pac.shoddy</code> is everything the game
+<em>shows</em>, and decides nothing.</p>
+<p>That's why the core can be tested twice over — by
+<code>test.shoddy</code> in the folder and
+<code>src/Shoddy.Tests/PacTests.cs</code> in the golden suite — driving
+the simulation tick by tick with no terminal anywhere. It's also what made
+the timing retune honest: when the free-running loop's constants had to
+become fixed-rate tick counts, every change landed in the core where a test
+could hold it still, not in the paint code where it would only show up as
+feel.</p>
+
+<h2 id="machines">The Machines It Uses</h2>
+<table>
+<tr><th>Machine</th><th>Why</th></tr>
+<tr><td><a href="../machines/seq.html">seq</a></td><td>In the core:
+<code>Any</code>, <code>All</code>, <code>Contains</code>, and
+<code>Flatten</code> — the questions the simulation asks of the maze and
+the ghosts (any dot left? is a ghost on this cell?).</td></tr>
+<tr><td><a href="../machines/str.html">str</a></td><td>In the core: the
+board is 25 row <code>String</code>s, and <code>Split</code> and
+<code>Replace</code> do the row surgery — <code>PutCell</code> rebuilds a
+row around one changed cell instead of mutating it.</td></tr>
+<tr><td><a href="../machines/math.html">math</a></td><td>In the core:
+<code>RandInt</code> and <code>Pick</code> are the ghosts' dice.</td></tr>
+<tr><td><a href="../machines/vt100.html">vt100</a></td><td>Both directions
+of the terminal protocol — and the direction the <em>core</em> needs is the
+surprise: it uses <code>EvalKey</code> to classify raw <code>InKey</code>
+input, because arrow and keypad presses arrive as escape sequences and
+decoding them is part of the pure input model. The shell uses the emit
+side — cursor addressing and clearing. (The machine stops at attributes,
+so the ANSI colour codes live in the shell itself.)</td></tr>
+<tr><td><a href="../machines/clock.html">clock</a></td><td>In the shell:
+<code>SleepUntil</code> paces the loop to one tick per 100&nbsp;ms frame
+without drift.</td></tr>
+</table>
+
+<nav class="pager" aria-label="Mills, in catalog order">
+  <a href="oregon.html"><span class="dir">&larr; Previous mill</span><span class="ttl">oregon</span></a>
+  <a class="next" href="invaders.html"><span class="dir">Next mill &rarr;</span><span class="ttl">invaders</span></a>
+</nav>
+<footer>Named for the shoddy mills of the West Riding: Useless Things Made
+Useful Through Skill (<a href="../heritage.html">the full story</a>).<br>
+&copy; 2026 Stephen Vincent Foster</footer>
+</div>
+</body>
+</html>

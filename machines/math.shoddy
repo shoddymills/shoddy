@@ -1,0 +1,109 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem math.shoddy — Shoddy standard library: the derived math layer.
+Rem
+Rem The runtime supplies the primitives that need native precision or
+Rem native state: + - * / MOD WRAP, ABS SGN NEGATE, MIN MAX, FLOOR CEIL
+Rem ROUND FIX, ^ SQR EXP LOG LOG10, SIN COS TAN ATN ATN2 ASIN ACOS TANH,
+Rem PI, RND SEED. Everything below is expressed on top of them, the way
+Rem clock.shoddy is derived from the Ticks builtin — no runtime support
+Rem of its own. Standalone: it includes nothing, so a program can pull in
+Rem math alone.
+Rem
+Rem Naming: no Def here may shadow a builtin (a Def silently outranks
+Rem one), which is why the base-10 log stays the LOG10 builtin and this
+Rem file adds only Log2/LogBase.
+Rem ==================================================================
+
+Rem ---- constants -----------------------------------------------------
+
+Def E() As Number
+    Exp(1)
+
+Def Tau() As Number
+    2 * Pi()
+
+Rem ---- angle conversion ----------------------------------------------
+Rem Trig builtins take radians; these bridge to degrees (turtles, UIs).
+
+Def Rad(deg As Number) As Number
+    deg * Pi() / 180
+
+Def Deg(rad As Number) As Number
+    rad * 180 / Pi()
+
+Rem Direction of a vector as an angle, radians in (-Pi, Pi]. Atn2's
+Rem argument order is (y, x); Angle takes (dx, dy) to read naturally.
+Def Angle(dx As Number, dy As Number) As Number
+    Atn2(dy, dx)
+
+Rem ---- parts and rounding --------------------------------------------
+
+Rem Fractional part, sign of x (Fix truncates toward zero, so -3.25 -> -0.25).
+Def Frac(x As Number) As Number
+    x - Fix(x)
+
+Rem Round to n decimal places.
+Def RoundTo(x As Number, n As Number) As Number
+    Let s = 10 ^ n
+    Round(x * s) / s
+
+Rem ---- range shaping -------------------------------------------------
+
+Def Clamp(x As Number, lo As Number, hi As Number) As Number
+    Max(lo, Min(hi, x))
+
+Def Lerp(a As Number, b As Number, t As Number) As Number
+    a + (b - a) * t
+
+Rem Where x sits in [a, b] as a fraction — the inverse of Lerp.
+Def InvLerp(a As Number, b As Number, x As Number) As Number
+    (x - a) / (b - a)
+
+Rem Map x from the input range onto the output range, linearly.
+Def Remap(x As Number, inLo As Number, inHi As Number, outLo As Number, outHi As Number) As Number
+    Lerp(outLo, outHi, InvLerp(inLo, inHi, x))
+
+Rem Smooth Hermite interpolation, clamped to [0, 1] at the edges.
+Def Smoothstep(edge0 As Number, edge1 As Number, x As Number) As Number
+    Let t = Clamp(InvLerp(edge0, edge1, x), 0, 1)
+    t * t * (3 - 2 * t)
+
+Rem ---- geometry ------------------------------------------------------
+
+Def Hypot(x As Number, y As Number) As Number
+    Sqr(x * x + y * y)
+
+Def Dist(x0 As Number, y0 As Number, x1 As Number, y1 As Number) As Number
+    Hypot(x1 - x0, y1 - y0)
+
+Rem ---- logarithms ----------------------------------------------------
+Rem Natural (LOG) and base-10 (LOG10) are builtins; other bases derive.
+
+Def Log2(x As Number) As Number
+    Log(x) / Log(2)
+
+Def LogBase(base As Number, x As Number) As Number
+    Log(x) / Log(base)
+
+Rem ---- random --------------------------------------------------------
+Rem All on top of RND (float in [0, 1)); SEED makes any of them
+Rem reproducible.
+
+Rem Float in [lo, hi).
+Def RandRange(lo As Number, hi As Number) As Number
+    lo + Rnd() * (hi - lo)
+
+Rem Integer in [lo, hi], both ends inclusive.
+Def RandInt(lo As Number, hi As Number) As Number
+    Floor(Rnd() * (hi - lo + 1)) + lo
+
+Rem A uniformly-chosen element of a non-empty list or array.
+Def Pick(xs As List Of t) As t
+    Nth(xs, Floor(Rnd() * Length(xs)) + 1)
+
+Rem True with probability p (p <= 0 never, p >= 1 always).
+Def Chance(p As Number) As Boolean
+    Rnd() < p

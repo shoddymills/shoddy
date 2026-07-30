@@ -1,0 +1,206 @@
+Rem ===================================================================
+Rem mungo-caverns-liquid.shoddy -- water, oil, and the things you pour them on.
+Rem 
+Rem The bottle is a small state machine and the
+Rem plant, the door and the vase all read it.
+Rem ===================================================================
+
+Rem ---- liquids -------------------------------------------------------------------
+Rem Water and oil are objects, but they never lie about
+Rem in a room: what the bottle holds is read off the bottle's own state,
+Rem and what a room offers is read off its condition flags.
+
+Def WaterBottle() As Number
+    0
+
+Def EmptyBottle() As Number
+    1
+
+Def OilBottle() As Number
+    2
+
+Def Liquid(g As Game) As Number
+    Select Case PropOf(g, ObjNamed("BOTTLE"))
+        Case WaterBottle()
+            ObjNamed("WATER")
+        Case OilBottle()
+            ObjNamed("OIL")
+        Case Else
+            NoObject()
+
+Def LiqLoc(g As Game) As Number
+    If Not Contains(Conds(RoomAt(g)), "FLUID") Then
+        NoObject()
+    Else
+        If Contains(Conds(RoomAt(g)), "OILY") Then
+            ObjNamed("OIL")
+        Else
+            ObjNamed("WATER")
+
+Rem Fill. The bottle wants a liquid to hand, the urn
+Rem drinks the bottle dry, and the vase does not survive the attempt.
+Def DoFill(g As Game, want As Number, msg As String) As Done
+    Select Case want
+        Case ObjNamed("VASE")
+            FillVase(g)
+        Case ObjNamed("URN")
+            FillUrn(g)
+        Case Else
+            FillBottle(g, want, msg)
+
+Def FillVase(g As Game) As Done
+    Let vase = ObjNamed("VASE")
+    If LiqLoc(g) = NoObject() Then
+        Done(VoicedId(g, MsgFillInvalid()), GoClearObj())
+    Else
+        If Not Toting(g, vase) Then
+            Done(VoicedId(g, MsgArentCarrying()), GoClearObj())
+        Else
+            Let g1 = SetStuck(With(VoicedId(g, MsgShatterVase()), Props = SetNth(Props(g), vase + 1, 2)),
+                              vase, True)
+            Done(Put(g1, vase), GoClearObj())
+
+Def FillUrn(g As Game) As Done
+    Let urn = ObjNamed("URN")
+    Let bottle = ObjNamed("BOTTLE")
+    If PropOf(g, urn) <> 0 Then
+        Done(VoicedId(g, MsgFullUrn()), GoClearObj())
+    Else
+        If Not Here(g, bottle) Then
+            Done(VoicedId(g, MsgFillInvalid()), GoClearObj())
+        Else
+            PourIntoUrn(g, urn, bottle, Liquid(g))
+
+Def PourIntoUrn(g As Game, urn As Number, bottle As Number, k As Number) As Done
+    If k = NoObject() Then
+        Done(VoicedId(g, MsgFillInvalid()), GoClearObj())
+    Else
+        Done(EmptiedIntoUrn(VoicedId(g, UrnWord(k)), urn, bottle, k), GoClearObj())
+
+Rem Water poured in just drains away; only oil stays and readies the urn.
+Def UrnWord(k As Number) As Number
+    If k = ObjNamed("WATER") Then
+        MsgWaterUrn()
+    Else
+        MsgOilUrn()
+
+Def EmptiedIntoUrn(g As Game, urn As Number, bottle As Number, k As Number) As Game
+    Let g1 = With(g, Props = SetNth(Props(g), bottle + 1, EmptyBottle()))
+    Let g2 = UrnOiled(g1, urn, k)
+    With(g2, Held = Filter(Held(g2), Fn(x) => x <> k),
+             ObjectLocation = SetNth(ObjectLocation(g2), k + 1, 0))
+
+Def UrnOiled(g As Game, urn As Number, k As Number) As Game
+    If k = ObjNamed("OIL") Then
+        With(g, Props = SetNth(Props(g), urn + 1, 1))
+    Else
+        g
+
+Rem Filling the bottle puts the liquid in your hands
+Rem along with it, which is how TOTING(WATER) ever becomes true. A lit or
+Rem full urn nearby claims the liquid first and refuses to give it up.
+Def FillBottle(g As Game, want As Number, msg As String) As Done
+    Let bottle = ObjNamed("BOTTLE")
+    Select Case True
+        Case want <> NoObject() And want <> bottle
+            Done(Voiced(g, msg), GoClearObj())
+        Case want = NoObject() And Not Here(g, bottle)
+            Done(g, GoUnknown())
+        Case Here(g, ObjNamed("URN")) And PropOf(g, ObjNamed("URN")) <> 0
+            Done(VoicedId(g, MsgUrnNopour()), GoClearObj())
+        Case Liquid(g) <> NoObject()
+            Done(VoicedId(g, MsgBottleFull()), GoClearObj())
+        Case LiqLoc(g) = NoObject()
+            Done(VoicedId(g, MsgNoLiquid()), GoClearObj())
+        Case Else
+            Done(Filled(g, bottle), GoClearObj())
+
+Def Filled(g As Game, bottle As Number) As Game
+    Let oily = LiqLoc(g) = ObjNamed("OIL")
+    Let g1 = StateChange(g, bottle, BottleState(oily))
+    If Toting(g1, bottle) And Not Toting(g1, Liquid(g1)) Then
+        With(g1, Held = Append(Held(g1), Liquid(g1)))
+    Else
+        g1
+
+Def BottleState(oily As Boolean) As Number
+    If oily Then
+        OilBottle()
+    Else
+        WaterBottle()
+
+Rem Watering the plant is the beanstalk puzzle; the
+Rem plant cycles through three states and the room is repainted, which is
+Rem why this returns GO_MOVE rather than dropping back to the prompt.
+Def DoPour(g As Game, want As Number, msg As String) As Done
+    Let bottle = ObjNamed("BOTTLE")
+    Let obj = PouredThing(g, want, bottle)
+    Select Case True
+        Case obj = NoObject()
+            Done(g, GoUnknown())
+        Case Not Toting(g, obj)
+            Done(Voiced(g, msg), GoClearObj())
+        Case obj <> ObjNamed("OIL") And obj <> ObjNamed("WATER")
+            Done(VoicedId(g, MsgCantPour()), GoClearObj())
+        Case Here(g, ObjNamed("URN")) And PropOf(g, ObjNamed("URN")) = 0
+            FillUrn(g)
+        Case Else
+            Poured(g, obj, bottle)
+
+Def PouredThing(g As Game, want As Number, bottle As Number) As Number
+    If want = bottle Or want = NoObject() Then
+        Liquid(g)
+    Else
+        want
+
+Def Poured(g As Game, obj As Number, bottle As Number) As Done
+    Let g1 = With(g, Props = SetNth(Props(g), bottle + 1, EmptyBottle()),
+                     Held = Filter(Held(g), Fn(x) => x <> obj),
+                     ObjectLocation = SetNth(ObjectLocation(g), obj + 1, 0))
+    Let plant = ObjNamed("PLANT")
+    Let door = ObjNamed("DOOR")
+    Select Case True
+        Case Not At(g1, plant) And Not At(g1, door)
+            Done(VoicedId(g1, MsgGroundWet()), GoClearObj())
+        Case At(g1, door)
+            Done(StateChange(g1, door, DoorState(obj)), GoClearObj())
+        Case obj = ObjNamed("WATER")
+            Done(Watered(g1, plant), GoMove())
+        Case Else
+            Done(VoicedId(g1, MsgShakingLeaves()), GoClearObj())
+
+Def DoorState(obj As Number) As Number
+    If obj = ObjNamed("OIL") Then
+        1
+    Else
+        0
+
+Rem The plant and its taller self share a state, so both move together.
+Def Watered(g As Game, plant As Number) As Game
+    Let next = (PropOf(g, plant) + 1) Mod 3
+    Let g1 = StateChange(g, plant, next)
+    With(g1, Props = SetNth(Props(g1), ObjNamed("PLANT2") + 1, next))
+
+Rem Drinking from the bottle empties it; drinking from
+Rem a stream is free and does nothing at all.
+Def DoDrink(g As Game, want As Number, msg As String) As Done
+    Let water = ObjNamed("WATER")
+    Let bottle = ObjNamed("BOTTLE")
+    Select Case True
+        Case want = ObjNamed("BLOOD")
+            Rem Drinking dragon's blood is what lets you
+            Rem understand the bird, later on.
+            Let g1 = Destroy(g, ObjNamed("BLOOD"))
+            Done(With(StateChange(g1, ObjNamed("DRAGON"), 2), Blooded = True), GoClearObj())
+        Case (want = NoObject() And LiqLoc(g) <> water
+              And (Liquid(g) <> water Or Not Here(g, bottle)))
+            Done(g, GoUnknown())
+        Case want <> NoObject() And want <> water
+            Done(VoicedId(g, MsgRidiculousAttempt()), GoClearObj())
+        Case Liquid(g) = water And Here(g, bottle)
+            Let g1 = With(g, Held = Filter(Held(g), Fn(x) => x <> water),
+                             ObjectLocation = SetNth(ObjectLocation(g), water + 1, 0))
+            Done(StateChange(g1, bottle, EmptyBottle()), GoClearObj())
+        Case Else
+            Done(Voiced(g, msg), GoClearObj())
+

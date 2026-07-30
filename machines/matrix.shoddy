@@ -1,0 +1,114 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem matrix.shoddy — Shoddy standard library: matrices
+Rem a Matrix is a record: dimensions + flat row-major Array of cells,
+Rem so MatGet is o(1) and dimension checks are possible (via Error).
+Rem Pure throughout: MatSet and friends return new matrices.
+Rem ==================================================================
+
+Include "seq.shoddy"
+
+Type Matrix
+    Rows  As Number
+    Cols  As Number
+    Cells As Array Of Number
+
+Rem ---- construction ---------------------------------------------------
+
+Def Mat(r As Number, c As Number, vals As List Of Number) As Matrix
+    If Length(vals) <> r * c Then
+        Error("MAT: WRONG NUMBER OF CELLS")
+    Else
+        Matrix(r, c, ToArray(vals))
+
+Def MatFill(r As Number, c As Number, v As Number) As Matrix
+    Matrix(r, c, Dim(r * c, v))
+
+Def Kron(a As Number, b As Number) As Number
+    If a = b Then
+        1
+    Else
+        0
+
+Def Ident(n As Number) As Matrix
+    Matrix(n, n, ToArray(Map(Range(1, n * n), Fn(k) => Kron((k - 1) Mod (n + 1), 0))))
+
+Def MatFromRows(rs As List Of Array Of Number) As Matrix
+    Matrix(Length(rs), Length(First(rs)), ToArray(Flatten(Map(rs, ToList))))
+
+Rem ---- indexing (1-based, o(1)) ---------------------------------------
+
+Def MatGet(m As Matrix, r As Number, c As Number) As Number
+    Nth(Cells(m), (r - 1) * Cols(m) + c)
+
+Def MatSet(m As Matrix, r As Number, c As Number, v As Number) As Matrix
+    With(m, Cells = SetNth(Cells(m), (r - 1) * Cols(m) + c, v))
+
+Def MatRow(m As Matrix, r As Number) As Array Of Number
+    ToArray(Map(Range(1, Cols(m)), Fn(c) => MatGet(m, r, c)))
+
+Def MatCol(m As Matrix, c As Number) As Array Of Number
+    ToArray(Map(Range(1, Rows(m)), Fn(r) => MatGet(m, r, c)))
+
+Rem ---- vector helpers (flat arrays) -----------------------------------
+
+Def Dot(xs As Array Of Number, ys As Array Of Number) As Number
+    Fold(Range(1, Length(xs)), 0, Fn(s, k) => s + Nth(xs, k) * Nth(ys, k))
+
+Def VAdd(xs As Array Of Number, ys As Array Of Number) As Array Of Number
+    ToArray(ZipWith(xs, ys, +))
+
+Def VSub(xs As Array Of Number, ys As Array Of Number) As Array Of Number
+    ToArray(ZipWith(xs, ys, -))
+
+Def VMul(xs As Array Of Number, ys As Array Of Number) As Array Of Number
+    ToArray(ZipWith(xs, ys, *))
+
+Def VScale(xs As Array Of Number, s As Number) As Array Of Number
+    Map(xs, *(s))
+
+Rem Outer product: Length(u) x Length(v), cell (i,j) = u_i * v_j.
+Def Outer(u As Array Of Number, v As Array Of Number) As Matrix
+    Matrix(Length(u), Length(v), ToArray(Map(Range(1, Length(u) * Length(v)), Fn(k) => Nth(u, Floor((k - 1) / Length(v)) + 1) * Nth(v, ((k - 1) Mod Length(v)) + 1))))
+
+Rem ---- arithmetic ------------------------------------------------------
+
+Def MatCell(a As Matrix, b As Matrix, r As Number, c As Number) As Number
+    Fold(Range(1, Cols(a)), 0, Fn(s, i) => s + MatGet(a, r, i) * MatGet(b, i, c))
+
+Def MatMul(a As Matrix, b As Matrix) As Matrix
+    If Cols(a) <> Rows(b) Then
+        Error("MATMUL: DIMENSION MISMATCH")
+    Else
+        Matrix(Rows(a), Cols(b), ToArray(Map(Range(1, Rows(a) * Cols(b)), Fn(k) => MatCell(a, b, Floor((k - 1) / Cols(b)) + 1, ((k - 1) Mod Cols(b)) + 1))))
+
+Def MatAdd(a As Matrix, b As Matrix) As Matrix
+    If Rows(a) <> Rows(b) Or Cols(a) <> Cols(b) Then
+        Error("MATADD: DIMENSION MISMATCH")
+    Else
+        With(a, Cells = ToArray(ZipWith(Cells(a), Cells(b), +)))
+
+Def MatSub(a As Matrix, b As Matrix) As Matrix
+    If Rows(a) <> Rows(b) Or Cols(a) <> Cols(b) Then
+        Error("MATSUB: DIMENSION MISMATCH")
+    Else
+        With(a, Cells = ToArray(ZipWith(Cells(a), Cells(b), -)))
+
+Def MatScale(m As Matrix, s As Number) As Matrix
+    With(m, Cells = VScale(Cells(m), s))
+
+Def Transp(m As Matrix) As Matrix
+    Matrix(Cols(m), Rows(m), ToArray(Map(Range(1, Rows(m) * Cols(m)), Fn(k) => MatGet(m, ((k - 1) Mod Rows(m)) + 1, Floor((k - 1) / Rows(m)) + 1))))
+
+Def MatVec(m As Matrix, v As Array Of Number) As Array Of Number
+    If Cols(m) <> Length(v) Then
+        Error("MATVEC: DIMENSION MISMATCH")
+    Else
+        ToArray(Map(Range(1, Rows(m)), Fn(r) => Dot(MatRow(m, r), v)))
+
+Rem ---- display (effectful; call from Main) -----------------------------
+
+Def MatShow(m As Matrix)
+    Each(Range(1, Rows(m)), Fn(r) => Print(MatRow(m, r)))

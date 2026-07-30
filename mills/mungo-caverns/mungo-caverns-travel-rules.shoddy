@@ -1,0 +1,343 @@
+Rem ===================================================================
+Rem mungo-caverns-travel-rules.shoddy -- moving from room to room.
+Rem 
+Rem Driven by the table in mungo-caverns-travel.shoddy. The scan walks
+Rem rows from Tkey(loc) until one with Stop set. Note that a
+Rem nocurmudgeons rule encodes as cond_goto with argument 100: it always
+Rem passes and still costs a draw from the generator. Removing that draw
+Rem diverges every seeded transcript.
+Rem ===================================================================
+
+Rem ---- the travel table -----------------------------------------------------
+Rem Travel in its simplest form: walk this room's block looking
+Rem for a row whose motion matches and whose condition holds. The block
+Rem runs from Tkey(loc) until a row with Stop set.
+
+Def RowAt(i As Number) As Op
+    Nth(Travels(), i + 1)
+
+Def CondHolds(g As Game, o As Op) As Boolean
+    Select Case Condition(o)
+        Case Always
+            True
+        Case Chance(pct)
+            RollOf(g, 100) < pct
+        Case Carrying(obj)
+            Toting(g, obj)
+        Case CarriedOrHere(obj)
+            Toting(g, obj) Or Contains(HereList(g), obj)
+        Case NotInState(obj, st)
+            Rem true when the object is elsewhere in its state machine
+            Nth(Props(g), obj + 1) <> st
+
+Rem Which conditions cost a draw. See the note on TravelCond: this is
+Rem exactly the rows that roll, and Chance is the only variant that does.
+Def CondSpends(o As Op) As Boolean
+    Select Case Condition(o)
+        Case Chance(pct)
+            True
+        Case Else
+            False
+
+Rem Several rules care only whether a row leads to a room, and which.
+Def NoRoom() As Number
+    0 - 1
+
+Def GoesTo(o As Op) As Number
+    Select Case Destination(o)
+        Case ToRoom(r)
+            r
+        Case Else
+            NoRoom()
+
+Type Found
+    Row   As Number
+    State As Game
+
+Def AfterTest(g As Game, o As Op) As Game
+    If CondSpends(o) Then
+        Stepped(g)
+    Else
+        g
+
+Rem First find the row this motion word belongs to. The
+Rem magic HERE matches anything, which is how a forced room grabs every
+Rem attempt to leave it.
+Def MotionScan(i As Number, want As Number) As Number
+    Let o = RowAt(i)
+    If Motion(o) = HereMotion() Or Motion(o) = want Then
+        i
+    Else
+        If Stop(o) Then
+            0 - 1
+        Else
+            MotionScan(i + 1, want)
+
+Rem Two rows count as the same for skipping purposes when
+Rem their condition and their destination agree.
+Def TravelEq(a As Number, b As Number) As Boolean
+    Let x = RowAt(a)
+    Let y = RowAt(b)
+    Condition(x) = Condition(y) And Destination(x) = Destination(y)
+
+Rem A failed condition does not step to the next row; it
+Rem steps past every row that would lead to the same place, so a chain of
+Rem "60% here, then 70% there" tries each outcome once.
+Def SkipEqual(a As Number, b As Number) As Number
+    If TravelEq(a, b) Then
+        SkipEqual(a, b + 1)
+    Else
+        b
+
+Rem Note this loop never re-checks the motion word: once
+Rem a row for the motion is found, the condition chain runs from there.
+Def CondScan(g As Game, i As Number) As Found
+    Let o = RowAt(i)
+    Let holds = CondHolds(g, o)
+    Let g1 = AfterTest(g, o)
+    If holds Then
+        Found(i, g1)
+    Else
+        If Stop(o) Then
+            Rem a block ending before any condition passes is a
+            Rem database bug; refuse to move
+            Found(0 - 1, g1)
+        Else
+            CondScan(g1, SkipEqual(i, i + 1))
+
+Def FindTravel(g As Game, want As Number) As Found
+    Let k = Nth(Tkey(), Location(g) + 1)
+    If k = 0 Then
+        Found(0 - 1, g)
+    Else
+        Let start = MotionScan(k, want)
+        If start < 0 Then
+            Found(0 - 1, g)
+        Else
+            CondScan(g, start)
+
+Rem When nothing in the table answers the motion word,
+Rem the complaint is chosen to fit what was asked: a compass point gets
+Rem "no way to go", a magic word gets "nothing happens", and so on.
+Def MotionIs(want As Number, tags As List Of String) As Boolean
+    Any(tags, Fn(t) => want = MotionNamed(t))
+
+
+Def NoWayMessage(want As Number) As Number
+    Select Case True
+        Case MotionIs(want, { "EAST", "WEST", "SOUTH", "NORTH", "NE", "NW", "SW", "SE",
+                              "UP", "DOWN" })
+            MsgBadDirection()
+        Case MotionIs(want, { "FORWARD", "LEFT", "RIGHT" })
+            MsgUnsureFacing()
+        Case MotionIs(want, { "OUTSIDE", "INSIDE" })
+            MsgNoInoutHere()
+        Case MotionIs(want, { "XYZZY", "PLUGH" })
+            MsgNothingHappens()
+        Case MotionIs(want, { "CRAWL" })
+            MsgWhichWay()
+        Case Else
+            MsgCantApply()
+
+Rem Four motion words never reach the travel table. LOOK
+Rem repeats the long description and says so, but only three times; it
+Rem also clears wzdark, so staring into the gloom cannot drop you down a
+Rem pit you were already standing beside.
+Def Move(g As Game, want As Number) As Game
+    Select Case want
+        Case MotionNamed("LOOK")
+            DoLook(g)
+        Case MotionNamed("CAVE")
+            VoicedId(g, CaveReply(g))
+        Case MotionNamed("BACK")
+            GoingBack(g)
+        Case Else
+            Rem ordinary travel notes where you came
+            Rem from before the scan, even when the way is refused.
+            Travelled(With(g, LocationBeforeLast = PreviousLocation(g), PreviousLocation = Location(g)), want)
+
+Rem "back" retraces to wherever you came from -- or, if
+Rem that was a forced room you were only passing through, to the place
+Rem before it. In a maze marked NOBACK you have lost your bearings and it
+Rem refuses; and if where you came from is where you already are, you have
+Rem simply forgotten the way.
+Def GoingBack(g As Game) As Game
+    Let dest = BackTarget(g)
+    Let g1 = With(g, LocationBeforeLast = PreviousLocation(g), PreviousLocation = Location(g))
+    If Contains(Conds(RoomAt(g1)), "NOBACK") Then
+        VoicedId(g1, MsgTwistTurn())
+    Else
+        If dest = Location(g1) Then
+            VoicedId(g1, MsgForgotPath())
+        Else
+            BackTo(g1, dest)
+
+Def BackTarget(g As Game) As Number
+    If ForcedAt(PreviousLocation(g)) Then
+        LocationBeforeLast(g)
+    Else
+        PreviousLocation(g)
+
+Rem Walk this room's block for a way to the room you came
+Rem from, preferring a direct one but settling for a forced room that leads
+Rem there. Whatever it finds, it re-enters ordinary travel with that rule's
+Rem own motion word, so every condition on the way is honoured.
+Def BackTo(g As Game, dest As Number) As Game
+    Let row = BackRow(g, Nth(Tkey(), Location(g) + 1), dest, 0)
+    If row = 0 Then
+        VoicedId(g, MsgNotConnected())
+    Else
+        Travelled(g, Motion(RowAt(row)))
+
+Def BackRow(g As Game, k As Number, dest As Number, spare As Number) As Number
+    Let o = RowAt(k)
+    If GoesTo(o) = dest Then
+        k
+    Else
+        Let keep = BackSpare(o, dest, spare, k)
+        If Stop(o) Then
+            keep
+        Else
+            BackRow(g, k + 1, dest, keep)
+
+Rem A goto into a forced room counts if that room's own first rule carries
+Rem straight on to where you are heading.
+Def BackSpare(o As Op, dest As Number, spare As Number, k As Number) As Number
+    If (GoesTo(o) <> NoRoom() And ForcedAt(GoesTo(o))
+        And GoesTo(RowAt(Nth(Tkey(), GoesTo(o) + 1))) = dest) Then
+        k
+    Else
+        spare
+
+Def DoLook(g As Game) As Game
+    If Detail(g) < 3 Then
+        LookedAround(VoicedId(g, MsgNoMoreDetail()))
+    Else
+        LookedAround(g)
+
+Def LookedAround(g As Game) As Game
+    With(g, Detail = Detail(g) + 1, LeftRoomWasDark = False,
+            LocationSeen = SetNth(LocationSeen(g), Location(g) + 1, 0))
+
+Def CaveReply(g As Game) As Number
+    If Outside(g) And Location(g) <> LocNamed("LOC_GRATE") Then
+        MsgFollowStream()
+    Else
+        MsgNeedDetail()
+
+Rem Outside is above ground or in the forest.
+Def Outside(g As Game) As Boolean
+    Contains(Conds(RoomAt(g)), "ABOVE") Or Contains(Conds(RoomAt(g)), "FOREST")
+
+Def Travelled(g As Game, want As Number) As Game
+    Let f = FindTravel(g, want)
+    Let g1 = State(f)
+    If Row(f) < 0 Then
+        VoicedId(g1, NoWayMessage(want))
+    Else
+        Let o = RowAt(Row(f))
+        Select Case Destination(o)
+            Case ToRoom(r)
+                Blocked(g1, r)
+            Case ToMessage(m)
+                VoicedId(g1, m)
+            Case ToSpecial(which)
+                DoSpecial(g1, which)
+
+Rem Three motions are hardcoded rather than tabled. Only
+Rem the first is here; the plover transport and the troll bridge need the
+Rem bear and the troll's state machine and come with them.
+Def DoSpecial(g As Game, which As Number) As Game
+    Select Case which
+        Case 1
+            PloverPassage(g)
+        Case 2
+            Rem the plover transport will not carry the
+            Rem emerald. Drop it and travel again as if it had never been
+            Rem along -- the carry condition now fails, so the plain row
+            Rem underneath takes over.
+            Travelled(Put(g, ObjNamed("EMERALD")), MotionNamed("PLOVER"))
+        Case 3
+            TrollBridge(g)
+        Case Else
+            VoicedId(g, MsgBadDirection())
+
+Rem The troll takes a toll each way. Having been paid
+Rem once he steps back out to block you; paid again he lets you by. And
+Rem if you try to carry the bear across, the bridge goes into the chasm
+Rem and takes you with it.
+Def TrollBridge(g As Game) As Game
+    Let troll = ObjNamed("TROLL")
+    If PropOf(g, troll) = 1 Then
+        Blocking(Voiced(g, DescOf(g, troll)), troll)
+    Else
+        Crossing(g, troll)
+
+Def Blocking(g As Game, troll As Number) As Game
+    Let troll2 = ObjNamed("TROLL2")
+    Let ps = Places(ObjAt(troll))
+    Let g1 = With(g, Props = SetNth(Props(g), troll + 1, 0))
+    Let g2 = Destroy(g1, troll2)
+    Let g3 = Relocated(g2, troll, First(ps))
+    Juggled(PlaceSecond(g3, troll, ps), ObjNamed("CHASM"))
+
+Rem Juggling an object is picking it up and putting it down
+Rem again. It changes nothing except the order of the room's list, because
+Rem dropping prefixes -- and that order is the order you are told things in.
+Rem The bridge is juggled as the troll steps back out, so you read about
+Rem the chasm first and the troll second.
+Def Juggled(g As Game, i As Number) As Game
+    Let ps = Places(ObjAt(i))
+    Let g1 = Relocated(g, i, Nth(ObjectLocation(g), i + 1))
+    PlaceSecond(g1, i, ps)
+
+Def PlaceSecond(g As Game, i As Number, ps As List) As Game
+    If Length(ps) < 2 Then
+        g
+    Else
+        With(g, ObjectsAt = SetNth(ObjectsAt(g), Nth(ps, 2) + 1,
+                               Prepend(i, Nth(ObjectsAt(g), Nth(ps, 2) + 1))))
+
+Rem The far side is whichever end of the bridge you are not standing on.
+Def Crossing(g As Game, troll As Number) As Game
+    Let ps = Places(ObjAt(troll))
+    Let far = First(ps) + Nth(ps, 2) - Location(g)
+    Let g1 = PaidAgain(g, troll)
+    If Not Toting(g1, ObjNamed("BEAR")) Then
+        With(g1, PreviousLocation = Location(g1), Location = far)
+    Else
+        WreckTheBridge(g1, troll, far)
+
+Def PaidAgain(g As Game, troll As Number) As Game
+    If PropOf(g, troll) = 0 Then
+        With(g, Props = SetNth(Props(g), troll + 1, 1))
+    Else
+        g
+
+Def WreckTheBridge(g As Game, troll As Number, far As Number) As Game
+    Let bear = ObjNamed("BEAR")
+    Let g1 = StateChange(g, ObjNamed("CHASM"), 1)
+    Let g2 = With(g1, Props = SetNth(Props(g1), troll + 1, 2), Location = far)
+    Let g3 = Put(g2, bear)
+    Let g4 = SetStuck(With(g3, Props = SetNth(Props(g3), bear + 1, 3), LocationBeforeLast = far), bear, True)
+    Croak(g4)
+
+Rem Special travel 1: the crack to the alcove admits you and the emerald
+Rem and nothing else, which is the whole puzzle.
+Def PloverPassage(g As Game) As Game
+    Let plover = LocNamed("LOC_PLOVER")
+    Let alcove = LocNamed("LOC_ALCOVE")
+    Let dest = OtherEnd(Location(g), plover, alcove)
+    Let held = Length(Held(g))
+    If held > 1 Or (held = 1 And Not Toting(g, ObjNamed("EMERALD"))) Then
+        VoicedId(g, MsgMustDrop())
+    Else
+        With(g, PreviousLocation = Location(g), Location = dest)
+
+Def OtherEnd(here As Number, plover As Number, alcove As Number) As Number
+    If here = plover Then
+        alcove
+    Else
+        plover
+
+

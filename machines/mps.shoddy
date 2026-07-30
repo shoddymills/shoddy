@@ -1,0 +1,250 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem mps.shoddy — Shoddy standard library: MPS linear-programming files
+Rem
+Rem The public surface:
+Rem
+Rem   LoadMps(path As String) As Problem      read a file and parse it
+Rem   ParseMps(text As String) As Problem     parse MPS text
+Rem   LoadMpsZeroLower(path)  /  ParseMpsZeroLower(text)
+Rem       as above, but force a zero lower bound (x >= 0) on every
+Rem       variable: a BOUNDS section is skipped instead of rejected
+Rem   LoadMpsModel(path, zeroLower) / ParseMpsModel(text, zeroLower)
+Rem       As MpsModel: the Problem plus the variable names and the
+Rem       normalised constraint labels (an E row appears as its
+Rem       NAME+ / NAME- pair) - for reporting tools
+Rem
+Rem The result is a Problem for the simplex machine's Optimize: rows are
+Rem normalised to the machine's  A x >= Rhs  form (L rows are negated,
+Rem E rows become a >= pair), the first N row is the objective, and
+Rem unmentioned coefficients and right-hand sides default to zero.
+Rem
+Rem Free-format reading: fields are whitespace-separated; a section
+Rem header starts in column 1, data lines are indented; * comments and
+Rem blank lines are skipped; an RHS line with an even field count has a
+Rem blank set name (as in tst/dat/blend.mps). Supported sections: NAME,
+Rem OBJSENSE (MIN only), ROWS, COLUMNS, RHS, ENDATA. RANGES, BOUNDS and
+Rem integer MARKERs are rejected honestly - variables are non-negative,
+Rem exactly as Optimize assumes.
+Rem ==================================================================
+
+Include "str.shoddy"
+Include "simplex.shoddy"
+
+Rem ---- parse state: one record folded over the lines -----------------
+
+Type MpsSt
+    Sec     As String
+    ObjName As String
+    Senses  As List Of String
+    RowIds  As List Of String
+    Cols    As List Of String
+    Ents    As List
+    RhsEs   As List
+    ZeroLo  As Boolean
+
+Type MpsEnt
+    Col As String
+    Row As String
+    Amt As Number
+
+Type MpsModel
+    Prob     As Problem
+    VarNames As List Of String
+    ConNames As List Of String
+
+Rem ---- line scanning --------------------------------------------------
+
+Def Fields(line As String) As List Of String
+    Filter(Split(Replace(Replace(line, Chr(9), " "), Chr(13), " "), " "), Fn(t) => Len(t) > 0)
+
+Def Header(st As MpsSt, w As String) As MpsSt
+    Select Case Upper(w)
+        Case "NAME", "ENDATA"
+            With(st, Sec = "")
+        Case "ROWS", "COLUMNS", "RHS", "OBJSENSE"
+            With(st, Sec = Upper(w))
+        Case "BOUNDS"
+            If ZeroLo(st) Then
+                With(st, Sec = "SKIP")
+            Else
+                Error("MPS: BOUNDS SECTION NOT SUPPORTED (use LoadMpsZeroLower to force x >= 0)")
+        Case "RANGES"
+            Error("MPS: RANGES SECTION NOT SUPPORTED")
+        Case Else
+            Error("MPS: UNKNOWN SECTION " & w)
+
+Def RowLine(st As MpsSt, toks As List Of String) As MpsSt
+    Select Case Upper(First(toks))
+        Case "N"
+            If ObjName(st) = "" Then
+                With(st, ObjName = Nth(toks, 2))
+            Else
+                Error("MPS: MULTIPLE OBJECTIVE ROWS")
+        Case "G", "L", "E"
+            With(st, Senses = Concat(Senses(st), { Upper(First(toks)) }), RowIds = Concat(RowIds(st), { Nth(toks, 2) }))
+        Case Else
+            Error("MPS: BAD ROW SENSE " & First(toks))
+
+Def AddCol(st As MpsSt, cname As String) As MpsSt
+    If Contains(Cols(st), cname) Then
+        st
+    Else
+        With(st, Cols = Concat(Cols(st), { cname }))
+
+Def AddEnt(st As MpsSt, cname As String, rname As String, v As String) As MpsSt
+    With(st, Ents = Prepend(MpsEnt(cname, rname, Val(v)), Ents(st)))
+
+Def ColLine(st As MpsSt, toks As List Of String) As MpsSt
+    If Contains(toks, "'MARKER'") Then
+        Error("MPS: INTEGER MARKERS NOT SUPPORTED")
+    Else
+        If Length(toks) = 3 Then
+            AddEnt(AddCol(st, First(toks)), First(toks), Nth(toks, 2), Nth(toks, 3))
+        Else
+            If Length(toks) = 5 Then
+                AddEnt(AddEnt(AddCol(st, First(toks)), First(toks), Nth(toks, 2), Nth(toks, 3)), First(toks), Nth(toks, 4), Nth(toks, 5))
+            Else
+                Error("MPS: BAD COLUMNS LINE")
+
+Def RhsPairs(st As MpsSt, toks As List Of String) As MpsSt
+    If IsEmpty(toks) Then
+        st
+    Else
+        RhsPairs(With(st, RhsEs = Prepend(MpsEnt("", First(toks), Val(Nth(toks, 2))), RhsEs(st))), Rest(Rest(toks)))
+
+Def RhsLine(st As MpsSt, toks As List Of String) As MpsSt
+    If Length(toks) Mod 2 = 0 Then
+        RhsPairs(st, toks)
+    Else
+        RhsPairs(st, Rest(toks))
+
+Def Step(st As MpsSt, line As String) As MpsSt
+    Let toks = Fields(line)
+    If IsEmpty(toks) Then
+        st
+    Else
+        If StartsWith(First(toks), "*") Then
+            st
+        Else
+            If Not (StartsWith(line, " ") Or StartsWith(line, Chr(9))) Then
+                Header(st, First(toks))
+            Else
+                Select Case Sec(st)
+                    Case "ROWS"
+                        RowLine(st, toks)
+                    Case "COLUMNS"
+                        ColLine(st, toks)
+                    Case "RHS"
+                        RhsLine(st, toks)
+                    Case "OBJSENSE"
+                        If Upper(First(toks)) = "MIN" Or Upper(First(toks)) = "MINIMIZE" Then
+                            st
+                        Else
+                            Error("MPS: ONLY MINIMIZE IS SUPPORTED")
+                    Case Else
+                        st
+
+Rem ---- assembly: names and entries to dense Problem data --------------
+
+Def ColAmt(e As MpsEnt, cname As String) As Number
+    If Col(e) = cname Then
+        Amt(e)
+    Else
+        0
+
+Def SumCol(es As List, cname As String) As Number
+    Fold(es, 0, Fn(a, e) => a + ColAmt(e, cname))
+
+Def RowAmt(e As MpsEnt, rname As String) As Number
+    If Row(e) = rname Then
+        Amt(e)
+    Else
+        0
+
+Def RowSum(es As List, rname As String) As Number
+    Fold(es, 0, Fn(a, e) => a + RowAmt(e, rname))
+
+Def RowVec(ents As List, cnames As List Of String, rid As String) As Array Of Number
+    Let re = Filter(ents, Fn(e) => Row(e) = rid)
+    ToArray(Map(cnames, Fn(c) => SumCol(re, c)))
+
+Rem G rows pass through, L rows negate, E rows become a >= pair.
+
+Def SenseRows(sens As List Of String, dense As List, i As Number, acc As List) As List
+    If i > Length(dense) Then
+        acc
+    Else
+        Select Case Nth(sens, i)
+            Case "G"
+                SenseRows(sens, dense, i + 1, Concat(acc, { Nth(dense, i) }))
+            Case "L"
+                SenseRows(sens, dense, i + 1, Concat(acc, { VScale(Nth(dense, i), -1) }))
+            Case Else
+                SenseRows(sens, dense, i + 1, Concat(acc, { Nth(dense, i), VScale(Nth(dense, i), -1) }))
+
+Def SenseRhs(sens As List Of String, vals As List, i As Number, acc As List) As List
+    If i > Length(vals) Then
+        acc
+    Else
+        Select Case Nth(sens, i)
+            Case "G"
+                SenseRhs(sens, vals, i + 1, Concat(acc, { Nth(vals, i) }))
+            Case "L"
+                SenseRhs(sens, vals, i + 1, Concat(acc, { 0 - Nth(vals, i) }))
+            Case Else
+                SenseRhs(sens, vals, i + 1, Concat(acc, { Nth(vals, i), 0 - Nth(vals, i) }))
+
+Rem The normalised constraint labels: G and L rows keep their name, an
+Rem E row doubles into NAME+ and NAME-.
+
+Def ConLabels(sens As List Of String, rids As List Of String, i As Number, acc As List) As List
+    If i > Length(rids) Then
+        acc
+    Else
+        Select Case Nth(sens, i)
+            Case "E"
+                ConLabels(sens, rids, i + 1, Concat(acc, { Nth(rids, i) & "+", Nth(rids, i) & "-" }))
+            Case Else
+                ConLabels(sens, rids, i + 1, Concat(acc, { Nth(rids, i) }))
+
+Rem ---- the public surface ---------------------------------------------
+
+Def RunParse(text As String, zeroLower As Boolean) As MpsSt
+    Fold(Split(text, Chr(10)), MpsSt("", "", { }, { }, { }, { }, { }, zeroLower), Step)
+
+Def AssembleProblem(st As MpsSt) As Problem
+    If ObjName(st) = "" Then
+        Error("MPS: NO OBJECTIVE (N) ROW")
+    Else
+        Let cnames = Cols(st)
+        Let ents = Ents(st)
+        Let objEs = Filter(ents, Fn(e) => Row(e) = ObjName(st))
+        Let costs = ToArray(Map(cnames, Fn(c) => SumCol(objEs, c)))
+        Let dense = Map(RowIds(st), Fn(rid) => RowVec(ents, cnames, rid))
+        Let rvals = Map(RowIds(st), Fn(rid) => RowSum(RhsEs(st), rid))
+        Problem(costs, MatFromRows(SenseRows(Senses(st), dense, 1, { })), ToArray(SenseRhs(Senses(st), rvals, 1, { })))
+
+Def ParseMpsB(text As String, zeroLower As Boolean) As Problem
+    AssembleProblem(RunParse(text, zeroLower))
+
+Def ParseMpsModel(text As String, zeroLower As Boolean) As MpsModel
+    Let st = RunParse(text, zeroLower)
+    MpsModel(AssembleProblem(st), Cols(st), ConLabels(Senses(st), RowIds(st), 1, { }))
+
+Def LoadMpsModel(path As String, zeroLower As Boolean) As MpsModel
+    ParseMpsModel(ReadFile(path), zeroLower)
+
+Def ParseMps(text As String) As Problem
+    ParseMpsB(text, False)
+
+Def ParseMpsZeroLower(text As String) As Problem
+    ParseMpsB(text, True)
+
+Def LoadMps(path As String) As Problem
+    ParseMpsB(ReadFile(path), False)
+
+Def LoadMpsZeroLower(path As String) As Problem
+    ParseMpsB(ReadFile(path), True)

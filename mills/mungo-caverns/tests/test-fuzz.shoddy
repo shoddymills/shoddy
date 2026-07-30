@@ -1,0 +1,144 @@
+Rem ===================================================================
+Rem tests/test-fuzz.shoddy -- a thousand commands nobody would type.
+Rem
+Rem   ./build.sh test     (runs this and the rest of tests/)
+Rem
+Rem The scenarios and the walkthrough both go where a player goes. This
+Rem one goes everywhere else: words drawn at random from the game's own
+Rem vocabulary, one or two at a time, thrown at whatever state the last
+Rem one left behind. It asserts nothing about what the game answers --
+Rem only that after every single command the game is still a game.
+Rem
+Rem That is a weaker claim than the other suites make and it catches a
+Rem different kind of bug: the index that goes out of range, the accessor
+Rem read off the end of a table, the state no rule expected. Those abort
+Rem the mill rather than producing a wrong answer, so no assertion about
+Rem output would ever see them.
+Rem
+Rem It is deterministic. The commands are drawn with the game's own
+Rem generator, run from a separate seed that is threaded alongside the
+Rem game and never touches the game's own stream -- so a failure names a
+Rem run and a step that can be replayed exactly.
+Rem
+Rem Note on death: dying asks whether you want to be resurrected, and
+Rem that is a read. Under ./build.sh test the suites run with their input
+Rem closed, so the answer is no and the run simply ends there -- which is
+Rem why a run reports how many commands it survived rather than assuming
+Rem it survived all of them.
+Rem ===================================================================
+
+Include "harness.shoddy"
+
+Rem ---- what may be typed -----------------------------------------------
+Rem Every synonym of every motion, object and verb, minus five verbs that
+Rem would end the run rather than test it: quit and suspend and resume
+Rem read from the terminal, and seed and waste exist to manipulate the
+Rem generator and the lamp for testing, which would make the run's own
+Rem accounting meaningless.
+
+Def OffLimits() As List Of String
+    { "QUIT", "SAVE", "RESUME", "SEED", "WASTE" }
+
+Def WordsOf(rows As List) As List Of String
+    Flatten(Map(rows, Fn(r) => Words(r)))
+
+Let FuzzWords = Flatten({ WordsOf(Motions()),
+                          WordsOf(Objects()),
+                          WordsOf(Filter(Actions(), Fn(v) => Not Contains(OffLimits(), Tag(v)))) })
+
+Def PickWord(r As Number) As String
+    Nth(FuzzWords, RandRange(r, Length(FuzzWords)) + 1)
+
+Rem Half the commands are two words, which is where the parser's rewrites
+Rem and its object-then-verb swap live.
+Def Phrase(two As Boolean, w1 As String, w2 As String) As String
+    If two Then
+        w1 & " " & w2
+    Else
+        w1
+
+Rem ---- what must still be true afterwards ------------------------------
+Rem None of these is about the cave being sensible -- only about the game
+Rem being a game: you are somewhere, you are carrying things that exist,
+Rem the tables are the size they were, and the score is a score.
+
+Def Sane(g As Game) As Boolean
+    (Location(g) >= 0 And Location(g) < Length(Locations())
+     And PreviousLocation(g) >= 0 And PreviousLocation(g) < Length(Locations())
+     And LcgState(g) >= 0 And LcgState(g) < LcgM()
+     And Length(Props(g)) = Length(Objects())
+     And Length(ObjectLocation(g)) = Length(Objects())
+     And Length(ObjectsAt(g)) = Length(Locations())
+     And All(Held(g), Fn(o) => o > 0 And o < Length(Objects()))
+     And NoneTwice(Held(g))
+     And ScoreOf(g) <= MaxScore()
+     And Turns(g) >= 0)
+
+Rem You cannot be carrying the same thing twice, however you came by it.
+Def NoneTwice(held As List Of Number) As Boolean
+    All(held, Fn(o) => CountIf(held, Fn(x) => x = o) = 1)
+
+Rem ---- the run ---------------------------------------------------------
+
+Type Run
+    Now  As Game
+    Rng  As Number
+    Went As Number
+
+Def Fuzzed(r As Run, left As Number) As Run
+    If left = 0 Or Not IsPlaying(Now(r)) Then
+        r
+    Else
+        Let a = Rng(r)
+        Let b = LcgNext(a)
+        Let c = LcgNext(b)
+        Let line = Phrase(RandRange(b, 2) = 1, PickWord(a), PickWord(c))
+        Let g = Step(Hushed(Now(r)), line)
+        Assert(Sane(g), "FUZZ BROKE THE GAME ON: " & line)
+        Fuzzed(Run(g, LcgNext(c), Went(r) + 1), left - 1)
+
+Rem Three runs from three seeds, from three different starting states:
+Rem outside on the road, inside with the lamp lit, and deep in the cave
+Rem where the curmudgeons are awake and the pirate is about.
+Def CheckFuzz()
+    Let onTheRoad = Fuzzed(Run(Fresh(), SeedX(1), 0), 150)
+    Assert(Went(onTheRoad) > 0, "THE ROAD RUN TOOK COMMANDS")
+
+    Let outfitted = Fuzzed(Run(Steps(Fresh(), { "in", "take lamp", "take keys", "light lamp" }),
+                               SeedX(20250728), 0), 150)
+    Assert(Went(outfitted) > 0, "THE WELL HOUSE RUN TOOK COMMANDS")
+
+    Let deep = Fuzzed(Run(Steps(Fresh(), { "in", "take lamp", "light lamp", "xyzzy",
+                                           "pit", "down" }),
+                          SeedX(1494912171), 0), 150)
+    Assert(Went(deep) > 0, "THE DEEP RUN TOOK COMMANDS")
+
+    Rem A run that ends early ended in a way the game knows about -- it
+    Rem was killed, or it won -- rather than in a state nothing can read.
+    Assert(Ended(Now(onTheRoad)) And Ended(Now(outfitted)) And Ended(Now(deep)),
+           "EVERY RUN ENDED IN A STATE THE GAME UNDERSTANDS")
+
+    Rem A run cut short was killed, and the obituary it printed on its way
+    Rem out is the stray text above this line. Saying how far each one got
+    Rem turns that into information rather than noise.
+    Print("     survived " & Str(Went(onTheRoad)) & ", " & Str(Went(outfitted))
+          & " and " & Str(Went(deep)) & " of 150 commands")
+
+Rem Playing, or one of the ways a game stops. There is no fifth thing a
+Rem Fate can be, which is the point of it being a type.
+Def Ended(g As Game) As Boolean
+    Select Case Outcome(g)
+        Case Playing
+            True
+        Case Quit
+            True
+        Case Died(m)
+            True
+        Case Suspended
+            True
+        Case Won
+            True
+
+Def Main()
+    CheckFuzz()
+    Print("ALL MUNGO CAVERNS FUZZ CHECKS PASSED")

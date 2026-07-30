@@ -1,0 +1,212 @@
+Rem SPDX-License-Identifier: BSD-2-Clause
+Rem SPDX-FileCopyrightText: (C) 1977, 2005 by Will Crowther and Don Woods
+Rem SPDX-FileCopyrightText: (C) Eric S. Raymond <esr@thyrsus.com>
+Rem SPDX-FileCopyrightText: (C) 2026 Stephen Vincent Foster
+Rem See LICENSE in this directory for full terms and credits.
+
+Rem ===================================================================
+Rem mungo-caverns.shoddy -- Mungo Caverns. The turn loop, the command
+Rem line, and the assembly of everything else.
+Rem
+Rem This file is the shell and nothing more: it prompts, it flushes what
+Rem the rules have said, and it decides whether to go round again. What a
+Rem command actually does is mungo-caverns-turn.shoddy, which is a
+Rem function -- which is what lets test.shoddy drive whole turns with no
+Rem terminal anywhere.
+Rem
+Rem   build.cmd           play
+Rem   ./build.sh          play
+Rem   build.cmd smoke     replay 16 recorded transcripts
+Rem   build.cmd check     replay all 107
+Rem
+Rem The port follows a C original (see LICENSE in this directory for
+Rem the full lineage and credits). Its recorded transcripts are the
+Rem specification: where this port and a transcript disagree, the
+Rem transcript wins. See tests/README.
+Rem
+Rem The transcript format matters more than it looks. When stdin is not a
+Rem terminal each command is echoed back, so a recorded
+Rem session reads as prompt-and-reply; and most messages are printed with
+Rem a leading blank line -- but not all, which is why
+Rem Speak and SpeakFlat are separate words. Reproducing both exactly is
+Rem what lets the recorded .chk transcripts grade this port.
+Rem
+Rem Modules below are namespaced: a bare name resolves local, then own
+Rem namespace, then exact, then unique bare candidate, and a clash across
+Rem namespaces is a compile error telling you to write Name In Q. The
+Rem data tables are deliberately left flat -- Tag is declared by Room,
+Rem Obj, Vocab and Hint alike, and namespacing them would turn one word
+Rem into four and force In at every call site.
+Rem ===================================================================
+
+Include "mungo-caverns-core.shoddy"
+Include "mungo-caverns-names.shoddy"        As Name
+
+Include "mungo-caverns-say.shoddy"          As Say
+Include "mungo-caverns-ask.shoddy"          As Ask
+Include "mungo-caverns-state.shoddy"        As State
+Include "mungo-caverns-look.shoddy"         As Look
+Include "mungo-caverns-travel-rules.shoddy" As Travel
+Include "mungo-caverns-curmudgeon.shoddy"   As Curmudgeon
+Include "mungo-caverns-pirate.shoddy"       As Pirate
+Include "mungo-caverns-clock.shoddy"        As Clock
+Include "mungo-caverns-closing.shoddy"      As Closing
+Include "mungo-caverns-hint.shoddy"         As Hint
+Include "mungo-caverns-score.shoddy"        As Score
+Include "mungo-caverns-verb.shoddy"         As Verb
+Include "mungo-caverns-liquid.shoddy"       As Liquid
+Include "mungo-caverns-fight.shoddy"        As Fight
+Include "mungo-caverns-act.shoddy"          As Act
+Include "mungo-caverns-save.shoddy"         As Save
+Include "mungo-caverns-magic.shoddy"        As Magic
+Include "mungo-caverns-turn.shoddy"         As Turn
+
+Rem ---- the turn loop -----------------------------------------------------------
+Rem The curmudgeons move only when a command completes a move: motions
+Rem and GoMove reach AfterMove, while GoClearObj and GoTop loop back and
+Rem read another command without one. So standing still costs the curmudgeons
+Rem nothing, and AfterMove belongs on the movement paths, not here.
+Rem Three or more words are refused and a wholly empty
+Rem line is skipped, both without costing a turn or re-running the hints.
+Def AskCommand() As Line
+    Let l = Ask()
+    Select Case l
+        Case Typed(t)
+            If Length(Tokens(t)) > 2 Then
+                SpeakId(MsgTwoWords())
+                AskCommand()
+            Else
+                If Len(t) = 0 Then
+                    AskCommand()
+                Else
+                    l
+        Case Else
+            l
+
+Def Loop(g As Game, show As Boolean)
+    If Not IsPlaying(g) Then
+        Rem Whatever ended the game is still on the output channel, and
+        Rem this is the last chance to say it: nothing after here reads or
+        Rem prompts again. The flush comes before the test, not inside it,
+        Rem because a suspended game leaves without being scored and would
+        Rem otherwise take its last words with it -- which is how the cave
+        Rem swallowed its own accusation of tampering.
+        Let gf = Flushed(g)
+        If Not IsSuspended(gf) Then
+            Utter(Terminate(gf))
+    Else
+        If IsForced(g) Then
+            Rem describe it, then leave at once without
+            Rem listing anything or asking for a command. The loop's next
+            Rem do_move is what lands the curmudgeons in the room it put you in.
+            Loop(AfterMove(Move(Flushed(DescribeOnly(g)), HereMotion())), True)
+        Else
+            PlayTurn(g, show)
+
+Def PlayTurn(g As Game, show As Boolean)
+    Rem The room description is on the output channel; the hint offer below
+    Rem still asks its question by printing, so what has been described has
+    Rem to be out first. Another transitional flush -- see the note below.
+    Let shown = Flushed(KnifeGone(Unstashed(Shown(g, show))))
+    Rem LeftRoomWasDark records whether it was dark when the prompt went
+    Rem out; the pit only opens under you if it was dark then and still is.
+    Let g1 = CheckHints(With(shown, LeftRoomWasDark = IsDarkHere(shown)))
+    Rem Everything the rules have said has to reach the player before the
+    Rem prompt does. This is the turn's flush; the only others are at the
+    Rem questions the game asks mid-turn, which read between two writes.
+    Let g1f = Flushed(g1)
+    Select Case AskCommand()
+        Case Eof
+            Rem end of input leaves the loop and scores the game
+            Utter(Terminate(g1f))
+        Case Typed(line)
+            Rem the turn counts, the clock ticks, then the
+            Rem verb runs -- except on the turn the cave slams shut, when
+            Rem closecheck returns true and the typed command is swallowed.
+            Rem The clock speaks before the verb does, so its output has to
+            Rem be out before the command runs; this flush keeps that order.
+            Let g2 = Flushed(ClockTick(With(g1f, Turns = Turns(g1f) + 1)))
+            If Closed(g2) And Not Closed(g1) Then
+                Loop(g2, True)
+            Else
+                Let d = Command(g2, line)
+                Loop(After(d), Redescribes(How(d)))
+
+Rem ---- the command line ------------------------------------------------------
+Rem The only switch that changes how the game starts is
+Rem -r: resuming from a file skips the welcome question entirely, because
+Rem the saved game already knows whether you asked for instructions.
+Def OptValue(a As List, flag As String, i As Number) As String
+    If i >= Length(a) Then
+        ""
+    Else
+        If Nth(a, i) = flag Then
+            Nth(a, i + 1)
+        Else
+            OptValue(a, flag, i + 1)
+
+Rem The test suite resumes from save files with one field forced to an
+Rem impossible value, to check how resume behaves on files no honest
+Rem game could produce. The -cheat flag writes those fixtures, because
+Rem the save writer lives here:
+Rem
+Rem   cave -cheat -d -900 -o cheat_numdie.adv
+Rem
+Rem -d deaths, -t turns, -l limit, -s saves, -v save-file version. A cheat
+Rem file counts as saved once by default, which is why the
+Rem games resumed from one are scolded for suspending.
+Def DoCheat()
+    Let a = Args()
+    Let g = NewGame(1)
+    Let ver = OptValue(a, "-v", 1)
+    Let g1 = With(g, SavePenalty = 1)
+    Let g2 = CheatField(g1, a, "-d")
+    Let g3 = CheatField(g2, a, "-t")
+    Let g4 = CheatField(g3, a, "-l")
+    Let g5 = CheatField(g4, a, "-s")
+    WriteSaveAs(g5, OptValue(a, "-o", 1), CheatVersion(ver))
+
+Def CheatVersion(ver As String) As Number
+    If Len(ver) > 0 Then
+        Val(ver)
+    Else
+        SaveVersion()
+
+Def CheatField(g As Game, a As List, flag As String) As Game
+    Let v = OptValue(a, flag, 1)
+    If Len(v) = 0 Then
+        g
+    Else
+        Select Case flag
+            Case "-d"
+                With(g, Deaths = Val(v))
+            Case "-t"
+                With(g, Turns = Val(v))
+            Case "-l"
+                With(g, LampLife = Val(v))
+            Case Else
+                With(g, SavePenalty = Val(v))
+
+Def Main()
+    If Contains(Args(), "-cheat") Then
+        DoCheat()
+    Else
+        Play()
+
+Def Play()
+    Rem the one thing -o announces before the game starts
+    If OldStyleMode() Then
+        Print("Initialising...")
+    Let g = NewGame(1)
+    Let resume = OptValue(Args(), "-r", 1)
+    If Len(resume) > 0 Then
+        Loop(ReadSave(g, resume), True)
+    Else
+        Let novice = YesNo(Nth(Messages(), MsgWelcomeYou() + 1),
+                           Nth(Messages(), MsgCaveNearby() + 1),
+                           "")
+        If novice Then
+            Loop(With(g, Novice = True, LampLife = 1000), True)
+        Else
+            Loop(g, True)
+

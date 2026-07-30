@@ -1,0 +1,126 @@
+Rem ===================================================================
+Rem mungo-caverns-closing.shoddy -- shutting the cave, and the endgame.
+Rem 
+Rem Once the clocks run out the cave closes, the
+Rem rules change, and the last puzzle begins.
+Rem ===================================================================
+
+Rem ---- closing the cave ---------------------------------------------------------
+Rem Once every treasure has been found the cave starts
+Rem shutting: thirty turns of warning, then the grate locks, the bridge
+Rem goes, the curmudgeons and the troll and the bear are cleared away, and
+Rem there is no more resurrection. Fifteen turns after that you are
+Rem carried off to the repository, which is where the game is actually
+Rem won.
+
+Def PanicTime() As Number
+    15
+
+Def Closing(g As Game) As Game
+    Rem the clock only runs when you are deep in and every treasure is
+    Rem accounted for -- and not at Y2, where the plugh voice lives
+    If (Tally(g) = 0 And InDeep(Location(g)) And Location(g) <> LocNamed("LOC_Y2")) Then
+        Ticking(With(g, ClockToClosing = ClockToClosing(g) - 1))
+    Else
+        Ticking(g)
+
+Def Ticking(g As Game) As Game
+    Select Case ClockToClosing(g)
+        Case 0
+            ShutTheCave(g)
+        Case < 0
+            Panicking(With(g, ClockToBlinding = ClockToBlinding(g) - 1))
+        Case Else
+            g
+
+Def Panicking(g As Game) As Game
+    If ClockToBlinding(g) = 0 Then
+        Repository(g)
+    Else
+        g
+
+Rem The cave locks itself up and clears out everything that could get in
+Rem the way of the endgame.
+Def ShutTheCave(g As Game) As Game
+    Let g1 = With(g, Props = SetNth(Props(g), Grate() + 1, GrateClosed()))
+    Let g2 = With(g1, Props = SetNth(Props(g1), ObjNamed("FISSURE") + 1, 0))
+    Let g3 = With(g2, Curmudgeons = NewCurmudgeons())
+    Let g4 = Banished(g3, 1, NCurmudgeons())
+    Let g5 = ClearTroll(g4)
+    Let g6 = ClearBear(g5)
+    Let g7 = Freed(Freed(g6, ObjNamed("CHAIN"), 0), ObjNamed("AXE"), 0)
+    With(VoicedId(g7, MsgCaveClosing()), ClockToClosing = 0 - 1, ClosingTime = True)
+
+Def Banished(g As Game, i As Number, n As Number) As Game
+    If i > n Then
+        g
+    Else
+        Banished(With(g, Curmudgeons = SetNth(Curmudgeons(g), i, Curmudgeon(0, 0, False))), i + 1, n)
+
+Def ClearTroll(g As Game) As Game
+    Let troll = ObjNamed("TROLL")
+    Let ps = Places(ObjAt(troll))
+    Let g1 = Destroy(g, troll)
+    PlaceSecond(Relocated(g1, ObjNamed("TROLL2"), First(ps)), ObjNamed("TROLL2"), ps)
+
+Def ClearBear(g As Game) As Game
+    Let bear = ObjNamed("BEAR")
+    If PropOf(g, bear) = 3 Then
+        g
+    Else
+        Destroy(g, bear)
+
+Def Freed(g As Game, i As Number, state As Number) As Game
+    SetStuck(With(g, Props = SetNth(Props(g), i + 1, state)), i, False)
+
+Rem The repository: two rooms of oddments, a mirror
+Rem between them, and everything you were carrying taken away.
+Def Repository(g As Game) As Game
+    Let ne = LocNamed("LOC_NE")
+    Let sw = LocNamed("LOC_SW")
+    Let g1 = Stocked(g, ne, { "BOTTLE", "PLANT", "OYSTER", "LAMP", "ROD", "CURMUDGEON" },
+                     { 1, 0, 0, 0, 0, 0 }, 1, 6)
+    Let g2 = Stocked(g1, sw, { "SNAKE", "BIRD", "CAGE", "ROD2", "PILLOW" },
+                     { 1, 1, 0, 0, 0 }, 1, 5)
+    Let g3 = Relocated(Relocated(g2, Grate(), sw), ObjNamed("SIGN"), sw)
+    Let g4 = With(g3, Props = SetNth(Props(g3), ObjNamed("SIGN") + 1, 1))
+    Rem The mirror is placed at the north-east end but
+    Rem fixed at the south-west one, so it stretches across both rooms and
+    Rem is present -- and breakable -- from either.
+    Let g5 = PlaceSecond(Stocked(g4, ne, { "MIRROR" }, { 0 }, 1, 1),
+                         ObjNamed("MIRROR"), { ne, sw })
+    Let g6 = Stripped(g5, 1, Length(Objects()) - 1)
+    With(VoicedId(g6, MsgCaveClosed()), Location = ne, PreviousLocation = ne, Closed = True)
+
+Def Stocked(g As Game, where As Number, tags As List, states As List,
+            i As Number, n As Number) As Game
+    If i > n Then
+        g
+    Else
+        Let obj = ObjNamed(Nth(tags, i))
+        Let g1 = Relocated(g, obj, where)
+        Rem the state is stashed negative, so the piles go undescribed
+        Rem until each thing is picked up and put down.
+        Stocked(SetPropView(g1, obj, Stashed(Nth(states, i))),
+                where, tags, states, i + 1, n)
+
+Def Stripped(g As Game, i As Number, n As Number) As Game
+    If i > n Then
+        g
+    Else
+        If Toting(g, i) Then
+            Stripped(Destroy(g, i), i + 1, n)
+        Else
+            Stripped(g, i + 1, n)
+
+Rem closecheck returns true -- skipping the
+Rem lamp -- only on the turn the cave starts closing or slams shut, not
+Rem for the whole countdown; the lamp keeps burning down while you panic.
+Def ClockTick(g As Game) As Game
+    Let g1 = Thresholds(g, 1, Length(TurnThresholds()))
+    Let g2 = Closing(g1)
+    If (ClosingTime(g2) And Not ClosingTime(g1)) Or (Closed(g2) And Not Closed(g1)) Then
+        g2
+    Else
+        LampCheck(g2)
+

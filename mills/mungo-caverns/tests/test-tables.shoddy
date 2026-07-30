@@ -1,0 +1,406 @@
+Rem ===================================================================
+Rem tests/test-tables.shoddy -- what must be true of the cave itself.
+Rem
+Rem   ./build.sh test     (runs this and the rest of tests/)
+Rem
+Rem These checks need no oracle. Every one of them asserts something that
+Rem has to hold of any correct build -- a travel row cannot name a room
+Rem that does not exist, a block of travel rules has to end in a row with
+Rem Stop set or the scan runs off the table, a hint has to cost points --
+Rem so they are worth exactly as much on a machine with no reference
+Rem transcripts as on one with them.
+Rem
+Rem That is the point. The port's tables used to be produced by a
+Rem generator from YAML and are now hand-edited Shoddy, which trades one
+Rem risk for another: no generator can silently drop a field, but a
+Rem person can. This file is what replaced the generator's guarantees.
+Rem ===================================================================
+
+Include "harness.shoddy"
+
+Rem ---- the travel table ------------------------------------------------
+Rem 878 rows, each a motion word, a condition, and somewhere to end up.
+Rem The indices in them are the whole risk: they are plain numbers, and a
+Rem wrong one is a room you have never heard of, or an abort.
+
+Def NRooms() As Number
+    Length(Locations())
+
+Def NMessages() As Number
+    Length(Messages())
+
+Def NRows() As Number
+    Length(Travels())
+
+Rem A destination is one of three things, and each has its own range.
+Rem The three specials are hardcoded passages in the rules, numbered from
+Rem one, so a fourth would be a rule nobody wrote.
+Def DestOk(o As Op) As Boolean
+    Select Case Destination(o)
+        Case ToRoom(r)
+            r >= 0 And r < NRooms()
+        Case ToMessage(m)
+            m >= 0 And m < NMessages()
+        Case ToSpecial(s)
+            s >= 1 And s <= 3
+
+Def CheckTravelRows()
+    Rem every destination lands somewhere that exists
+    Assert(All(Range(0, NRows() - 1), Fn(i) => DestOk(RowAt(i))),
+           "EVERY TRAVEL ROW LEADS SOMEWHERE THAT EXISTS")
+
+    Rem every motion word on a row is a word the parser can produce
+    Assert(All(Range(0, NRows() - 1),
+           Fn(i) => Motion(RowAt(i)) >= 0 And Motion(RowAt(i)) < Length(Motions())),
+           "EVERY TRAVEL ROW NAMES A REAL MOTION WORD")
+
+    Rem a Chance percentage is a percentage
+    Assert(All(Range(0, NRows() - 1), Fn(i) => PctOk(RowAt(i))),
+           "EVERY CHANCE CONDITION IS A PERCENTAGE")
+
+    Rem a condition that names an object names one that exists
+    Assert(All(Range(0, NRows() - 1), Fn(i) => CondObjOk(RowAt(i))),
+           "EVERY TRAVEL CONDITION NAMES A REAL OBJECT")
+
+Def PctOk(o As Op) As Boolean
+    Select Case Condition(o)
+        Case Chance(p)
+            p >= 0 And p <= 100
+        Case Else
+            True
+
+Def CondObjOk(o As Op) As Boolean
+    Select Case Condition(o)
+        Case Carrying(obj)
+            ObjIndexOk(obj)
+        Case CarriedOrHere(obj)
+            ObjIndexOk(obj)
+        Case NotInState(obj, st)
+            ObjIndexOk(obj)
+        Case Else
+            True
+
+Def ObjIndexOk(i As Number) As Boolean
+    i >= 0 And i < Length(Objects())
+
+Rem ---- the travel blocks -----------------------------------------------
+Rem Tkey(loc) is where a room's rules start; the scan walks forward until
+Rem a row with Stop set. A block whose last row has no Stop would run the
+Rem scan into the next room's rules and then off the end of the table --
+Rem which is a hang or an abort, never a wrong answer, so nothing milder
+Rem than this check would find it.
+
+Def BlockEnds(i As Number) As Boolean
+    If i >= NRows() Then
+        False
+    Else
+        If Stop(RowAt(i)) Then
+            True
+        Else
+            BlockEnds(i + 1)
+
+Def CheckTravelBlocks()
+    Assert(All(Range(1, NRooms()),
+           Fn(i) => Nth(Tkey(), i) >= 0 And Nth(Tkey(), i) < NRows()),
+           "EVERY TRAVEL KEY IS A ROW INDEX")
+
+    Assert(All(Range(1, NRooms()),
+           Fn(i) => Nth(Tkey(), i) = 0 Or BlockEnds(Nth(Tkey(), i))),
+           "EVERY BLOCK OF TRAVEL RULES ENDS IN A STOP ROW")
+
+Rem ---- the rooms -------------------------------------------------------
+
+Rem The flags a room may carry. The rules ask about these by name, so a
+Rem typo in the data is a flag that is simply never true -- a room that
+Rem is quietly never dark, or never deep enough for the curmudgeons to
+Rem walk into. Nothing at runtime would complain.
+Def KnownConds() As List Of String
+    { "ABOVE", "ALLALIKE", "ALLDIFFERENT", "DEEP", "FLUID",
+      "FOREST", "LIT", "NOARRR", "NOBACK", "OILY" }
+
+Def RoomCondsOk(r As Room) As Boolean
+    All(Conds(r), Fn(c) => Contains(KnownConds(), c))
+
+Def CheckRooms()
+    Assert(All(Range(1, NRooms()), Fn(i) => RoomCondsOk(Nth(Locations(), i))),
+           "EVERY ROOM FLAG IS ONE THE RULES KNOW")
+
+    Rem -1 is silence; anything else indexes the message table
+    Assert(All(Range(1, NRooms()),
+           Fn(i) => Noise(Nth(Locations(), i)) = 0 - 1
+                            Or (Noise(Nth(Locations(), i)) >= 0
+                                And Noise(Nth(Locations(), i)) < NMessages())),
+           "EVERY ROOM SOUND IS SILENCE OR A REAL MESSAGE")
+
+    Assert(All(Range(1, NRooms()),
+           Fn(i) => All(RoomHints(Nth(Locations(), i)),
+                                Fn(h) => h >= 0 And h < Length(Hints()))),
+           "EVERY ROOM HINT IS A REAL HINT")
+
+    Rem A room with no long description prints nothing on arrival, which
+    Rem is a bug everywhere except in a forced room -- one whose travel
+    Rem block begins with the magic HERE motion, so you are moved straight
+    Rem on again and never stand in it. LOC_BUILDING1 is the only one that
+    Rem takes the exemption: it is the moment of climbing the beanstalk,
+    Rem and which room it forwards you to depends on how tall the plant is.
+    Assert(All(Range(2, NRooms()),
+           Fn(i) => ForcedAt(i - 1) Or Len(Long(Nth(Locations(), i))) > 0),
+           "EVERY ROOM YOU CAN STAND IN DESCRIBES ITSELF")
+
+    Rem and the exemption is not a licence: a forced room has to lead
+    Rem somewhere, or it is a room the game cannot get you out of
+    Assert(All(Range(2, NRooms()),
+           Fn(i) => Not ForcedAt(i - 1) Or LeadsToARoom(Nth(Tkey(), i))),
+           "EVERY FORCED ROOM FORWARDS YOU TO A REAL ROOM")
+
+Def LeadsToARoom(k As Number) As Boolean
+    If k = 0 Then
+        False
+    Else
+        If GoesTo(RowAt(k)) <> NoRoom() Then
+            True
+        Else
+            If Stop(RowAt(k)) Then
+                False
+            Else
+                LeadsToARoom(k + 1)
+
+Rem ---- the objects -----------------------------------------------------
+
+Def CheckObjects()
+    Assert(All(Range(1, Length(Objects())),
+           Fn(i) => All(Places(Nth(Objects(), i)),
+                                Fn(p) => p >= 0 And p < NRooms())),
+           "EVERY OBJECT STARTS IN A REAL ROOM")
+
+    Rem An object's prop indexes its description list, so a thing with
+    Rem states needs a description for each of them or a state change
+    Rem describes nothing.
+    Assert(All(Range(1, Length(Objects())), Fn(i) => StateArityOk(Nth(Objects(), i))),
+           "EVERY OBJECT WITH STATES CAN DESCRIBE EACH OF THEM")
+
+    Rem two rooms at most: the grate seen from above and below, the troll
+    Rem at both ends of its bridge
+    Assert(All(Range(1, Length(Objects())),
+           Fn(i) => Length(Places(Nth(Objects(), i))) <= 2),
+           "NO OBJECT STANDS IN MORE THAN TWO ROOMS")
+
+Def StateArityOk(o As Obj) As Boolean
+    (IsEmpty(States(o)) Or IsEmpty(Descs(o))
+     Or Length(Descs(o)) = Length(States(o)))
+
+Rem ---- the vocabulary --------------------------------------------------
+
+Def CheckVocabulary()
+    Rem words are stored already cut to the five letters the parser
+    Rem compares, so a six-letter synonym in the table matches nothing
+    Assert(All(Motions(), Fn(v) => All(Words(v), Fn(w) => Len(w) <= TokLen())),
+           "EVERY MOTION SYNONYM IS STORED CUT TO FIVE LETTERS")
+    Assert(All(Actions(), Fn(v) => All(Words(v), Fn(w) => Len(w) <= TokLen())),
+           "EVERY ACTION SYNONYM IS STORED CUT TO FIVE LETTERS")
+    Assert(All(Objects(), Fn(o) => All(Words(o), Fn(w) => Len(w) <= TokLen())),
+           "EVERY OBJECT SYNONYM IS STORED CUT TO FIVE LETTERS")
+
+    Rem and every one of them classifies as something, which is the round
+    Rem trip that matters: a word in a table the parser cannot reach is a
+    Rem command nobody can type
+    Assert(All(Motions(), Fn(v) => All(Words(v), Fn(w) => Known(w))),
+           "EVERY MOTION SYNONYM CLASSIFIES")
+    Assert(All(Objects(), Fn(o) => All(Words(o), Fn(w) => Known(w))),
+           "EVERY OBJECT SYNONYM CLASSIFIES")
+    Assert(All(Actions(), Fn(v) => All(Words(v), Fn(w) => Known(w))),
+           "EVERY ACTION SYNONYM CLASSIFIES")
+
+    Rem the tags are how the rules name a room, an object or a verb, so a
+    Rem duplicate is a lookup that silently answers with the wrong one
+    Assert(UniqueTags(Locations()), "EVERY ROOM TAG IS UNIQUE")
+    Assert(UniqueTags(Objects()), "EVERY OBJECT TAG IS UNIQUE")
+    Assert(UniqueTags(Motions()), "EVERY MOTION TAG IS UNIQUE")
+    Assert(UniqueTags(Actions()), "EVERY ACTION TAG IS UNIQUE")
+
+Rem The placeholder for the reservoir's magic word is deliberately not a
+Rem word: the seeded one replaces it at startup.
+Def Known(w As String) As Boolean
+    If w = "z'zzz" Then
+        True
+    Else
+        Not IsUnknown(Classify(w, "X'YZZ"))
+
+Def IsUnknown(k As Kind) As Boolean
+    Select Case k
+        Case KUnknown
+            True
+        Case Else
+            False
+
+Def UniqueTags(rows As List) As Boolean
+    Let tags = Map(rows, Fn(r) => Tag(r))
+    All(Range(1, Length(tags)),
+           Fn(i) => IndexIn(tags, 1, Length(tags), Nth(tags, i)) = i)
+
+Rem ---- scoring and the ladders -----------------------------------------
+
+Def CheckScoring()
+    Rem the maximum is the number the game quotes at you, and it is built
+    Rem from the treasure values rather than written down anywhere
+    Assert(MaxScore() = 430, "THE MAXIMUM SCORE IS 430")
+    Assert(MaxTreasure() = 298, "THE TREASURES ARE WORTH 298 OF IT")
+    Assert(TreasureCount() = 20, "THERE ARE 20 TREASURES")
+
+    Rem the rank ladder is read by walking it until the score fits, so an
+    Rem unordered rung is a rank nobody can ever be given
+    Assert(All(Range(2, Length(Classes())),
+           Fn(i) => Threshold(Nth(Classes(), i)) > Threshold(Nth(Classes(), i - 1))),
+           "THE RANK THRESHOLDS INCREASE")
+    Assert(All(Range(2, Length(TurnThresholds())),
+           Fn(i) => Threshold(Nth(TurnThresholds(), i))
+                            > Threshold(Nth(TurnThresholds(), i - 1))),
+           "THE TURN PENALTY THRESHOLDS INCREASE")
+
+    Rem every rank above the bottom says something
+    Assert(All(Range(2, Length(Classes())), Fn(i) => Len(Message(Nth(Classes(), i))) > 0),
+           "EVERY RANK HAS SOMETHING TO SAY")
+
+Def CheckHintTable()
+    Rem a hint that costs nothing, or is offered instantly, is a hint the
+    Rem game gives away
+    Assert(All(Hints(), Fn(h) => Penalty(h) > 0), "EVERY HINT COSTS POINTS")
+    Assert(All(Hints(), Fn(h) => Turns(h) > 0), "EVERY HINT MAKES YOU WAIT")
+    Assert(All(Hints(), Fn(h) => Len(Question(h)) > 0 And Len(Text(h)) > 0),
+           "EVERY HINT ASKS AND ANSWERS")
+
+    Rem each hint is offered somewhere: a hint no room carries is dead
+    Assert(All(Range(1, Length(Hints())), Fn(i) => HintIsOffered(i - 1)),
+           "EVERY HINT IS OFFERED IN SOME ROOM")
+
+Def HintIsOffered(h As Number) As Boolean
+    Any(Locations(), Fn(r) => Contains(RoomHints(r), h))
+
+Rem ---- the curmudgeons' rooms ------------------------------------------
+
+Def CheckCurmudgeonRooms()
+    Assert(All(CurmudgeonLocs(), Fn(l) => l > 0 And l < NRooms()),
+           "EVERY CURMUDGEON STARTS IN A REAL ROOM")
+    Rem they start deep, which is where they are allowed to walk
+    Assert(All(CurmudgeonLocs(), Fn(l) => InDeep(l)),
+           "EVERY CURMUDGEON STARTS DEEP IN THE CAVE")
+
+Rem ---- can you get there from here? ------------------------------------
+Rem Walking the travel table from the end of the road, ignoring every
+Rem condition, answers a question no single row can: which rooms does the
+Rem table not connect at all? The answer is not zero, and the rooms it
+Rem names are the three places where movement deliberately escapes the
+Rem table -- which is the point of the check. A fourth would be a
+Rem teleport somebody added without saying so.
+
+Def Marked(seen As Array, k As Number) As Array
+    Let o = RowAt(k)
+    Let s = MarkDest(seen, GoesTo(o))
+    If Stop(o) Then
+        s
+    Else
+        Marked(s, k + 1)
+
+Def MarkDest(seen As Array, d As Number) As Array
+    If d = NoRoom() Then
+        seen
+    Else
+        SetNth(seen, d + 1, True)
+
+Def ExpandRoom(seen As Array, loc As Number) As Array
+    If Not Nth(seen, loc + 1) Then
+        seen
+    Else
+        Let k = Nth(Tkey(), loc + 1)
+        If k = 0 Then
+            seen
+        Else
+            Marked(seen, k)
+
+Rem An edge the travel table does not have: { from, to }.
+Def ExpandEdge(seen As Array, e As List) As Array
+    If Nth(seen, Nth(e, 1) + 1) Then
+        SetNth(seen, Nth(e, 2) + 1, True)
+    Else
+        seen
+
+Def OnePass(seen As Array, extra As List) As Array
+    Let s1 = Fold(Range(0, NRooms() - 1), seen, Fn(acc, loc) => ExpandRoom(acc, loc))
+    Fold(extra, s1, Fn(acc, e) => ExpandEdge(acc, e))
+
+Def CountReached(seen As Array) As Number
+    CountIf(Range(1, NRooms()), Fn(i) => Nth(seen, i))
+
+Rem Passes until the count stops growing. A room count is a fixed point
+Rem the closure cannot overshoot, so this terminates.
+Def Closure(seen As Array, extra As List, before As Number) As Array
+    Let next = OnePass(seen, extra)
+    Let n = CountReached(next)
+    If n = before Then
+        next
+    Else
+        Closure(next, extra, n)
+
+Def Reached(extra As List) As Array
+    Closure(SetNth(Dim(NRooms(), False), 2, True), extra, 1)
+
+Def CutOff(seen As Array) As List Of String
+    Map(Filter(Range(1, NRooms()), Fn(i) => Not Nth(seen, i)),
+        Fn(i) => Tag(Nth(Locations(), i)))
+
+Def SameSet(got As List Of String, want As List Of String) As Boolean
+    (Length(got) = Length(want)
+     And All(got, Fn(t) => Contains(want, t)))
+
+Rem The bridge's far side is not written in the travel table at all: the
+Rem troll stands at both ends of it, and the crossing rule computes where
+Rem you come out from his two placements. The rug does the same trick
+Rem between the cliff and the ledge. Deriving both here the way the rules
+Rem derive them means this check follows the data, not a copy of it.
+Def BridgeEdges() As List
+    Let ps = Places(ObjAt(ObjNamed("TROLL")))
+    { { First(ps), Nth(ps, 2) }, { Nth(ps, 2), First(ps) } }
+
+Def RugEdges() As List
+    Let cliff = LocNamed("LOC_CLIFF")
+    Let ledge = LocNamed("LOC_LEDGE")
+    { { cliff, ledge }, { ledge, cliff } }
+
+Def BeyondTheTable() As List Of String
+    { "LOC_NE", "LOC_SW", "LOC_NECHASM", "LOC_CORRIDOR", "LOC_FORK",
+      "LOC_WARMWALLS", "LOC_BREATHTAKING", "LOC_BOULDERS2", "LOC_LIMESTONE",
+      "LOC_BARRENFRONT", "LOC_BARRENROOM", "LOC_LEDGE", "LOC_GRUESOME" }
+
+Def CheckReachability()
+    Rem what the rules alone connect
+    Let byRules = Reached({ })
+    Assert(CountReached(byRules) = 172, "172 ROOMS ARE REACHABLE BY TRAVEL RULE ALONE")
+    Assert(SameSet(CutOff(byRules), BeyondTheTable()),
+           "AND THE THIRTEEN THAT ARE NOT ARE THE ONES WE KNOW ABOUT")
+
+    Rem pay the troll and nine of the thirteen open up: everything past
+    Rem the chasm is on the far side of a crossing the table cannot express
+    Let withBridge = Reached(BridgeEdges())
+    Assert(SameSet(CutOff(withBridge), { "LOC_NE", "LOC_SW", "LOC_LEDGE" }),
+           "THE TROLL BRIDGE IS THE ONLY WAY PAST THE CHASM")
+
+    Rem the ledge is reachable only by rug
+    Let withRug = Reached(Flatten({ BridgeEdges(), RugEdges() }))
+    Assert(SameSet(CutOff(withRug), { "LOC_NE", "LOC_SW" }),
+           "THE RUG IS THE ONLY WAY TO THE LEDGE")
+
+    Rem and what is left is the repository, which you cannot walk into at
+    Rem all: the closing sequence puts you there when the cave shuts
+    Assert(Length(CutOff(withRug)) = 2, "ONLY THE REPOSITORY IS UNWALKABLE")
+
+Def Main()
+    CheckTravelRows()
+    CheckTravelBlocks()
+    CheckRooms()
+    CheckObjects()
+    CheckVocabulary()
+    CheckScoring()
+    CheckHintTable()
+    CheckCurmudgeonRooms()
+    CheckReachability()
+    Print("ALL MUNGO CAVERNS TABLE CHECKS PASSED")

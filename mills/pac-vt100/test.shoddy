@@ -1,0 +1,67 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem Headless checks for the Pac pure model — no terminal. Run with
+Rem `./build.sh test` (or `mill run test.shoddy`). Mirrors the C#
+Rem PacTests; a quick confidence check that the simulation is intact.
+Rem Cherries land randomly, so nothing here depends on where they are —
+Rem only on how many.
+
+Include "pac-core.shoddy"
+
+Def PlusCount(g As Game) As Number
+    Fold(ToList(Board(g)), 0, Fn(a, r) => a + CountCh(r, "+"))
+
+Def DotCount(g As Game) As Number
+    Fold(ToList(Board(g)), 0, Fn(a, r) => a + CountCh(r, "."))
+
+Def Main()
+    Let g = NewGame()
+    Assert(Px(g) = 19 And Py(g) = 19, "PLAYER STARTS AT THE S")
+    Assert(Score(g) = 0 And Lives(g) = StartLives() And Not Ended(g), "FRESH GAME")
+    Assert(Length(Ghosts(g)) = GhostCount(), "FIVE GHOSTS IN THE CAGE")
+    Assert(All(Ghosts(g), Fn(gh) => Gx(gh) = Hx(gh) And Gy(gh) = Hy(gh)), "GHOSTS START AT HOME")
+    Assert(Gx(First(Ghosts(g))) = 18 And Gy(First(Ghosts(g))) = 11, "CAGE IS WHERE THE MAZE SAYS")
+
+    Rem the board: 6 cherries were carved out of the dots, all still owed
+    Assert(PlusCount(g) = CherryCount(), "SIX CHERRIES ON THE BOARD")
+    Assert(DotCount(g) = Dots(g) - CherryCount(), "EVERY DOT AND CHERRY IS OWED")
+
+    Rem walls stop the step but still turn the sprite (same as the C)
+    Let up = TryMove(g, 1)
+    Assert(Px(up) = 19 And Py(up) = 19 And Pd(up) = 1, "WALL BLOCKS, SPRITE TURNS")
+
+    Rem stepping left lands on a dot or a cherry; either way it is eaten
+    Let left = TryMove(g, 4)
+    Assert(Px(left) = 18 And Dots(left) = Dots(g) - 1, "STEP LEFT EATS THE CELL")
+    Assert(Score(left) = 1 Or EdibleT(left) > 0, "IT WAS A DOT OR A CHERRY")
+
+    Rem a ghost on the player: dinner while edible, death otherwise
+    Let meal = EatOrDie(With(g, Ghosts = { Ghost(Px(g), Py(g), 0, 17, 11) }, EdibleT = 10))
+    Assert(Score(meal) = GhostScore(), "EDIBLE GHOST IS SCORED")
+    Assert(Gx(First(Ghosts(meal))) = 17 And Gy(First(Ghosts(meal))) = 11, "EATEN GHOST GOES HOME")
+    Let death = EatOrDie(With(g, Ghosts = { Ghost(Px(g), Py(g), 0, 17, 11) }))
+    Assert(Lives(death) = StartLives() - 1 And Px(death) = Sx(g), "A GHOST COSTS A LIFE")
+    Let last = EatOrDie(With(g, Ghosts = { Ghost(Px(g), Py(g), 0, 17, 11) }, Lives = 1))
+    Assert(Lives(last) = 0 And Ended(last) And Not Won(last), "THE LAST LIFE ENDS IT")
+
+    Rem eating the final dot wins and banks the life bonus
+    Let win = TryMove(With(g, Dots = 1), 4)
+    Assert(Won(win) And Ended(win), "LAST DOT WINS")
+    Assert(Score(win) >= StartLives() * LifeBonus(), "LIVES PAY THE BONUS")
+    Assert(Ended(Advance(win)), "ADVANCE IS A NO-OP ONCE ENDED")
+
+    Rem a free-standing ghost moves exactly one legal cell per round
+    Let round = MoveGhostsRound(With(g, Ghosts = { Ghost(1, 1, 0, 1, 1) }))
+    Let m = First(Ghosts(round))
+    Assert(Abs(Gx(m) - 1) + Abs(Gy(m) - 1) = 1, "GHOST STEPS ONE CELL")
+    Assert(Not IsWall(g, Gx(m), Gy(m)), "ONTO OPEN FLOOR")
+    Assert(ScatterT(round) = ScatterSteps() - GhostCount(), "SCATTER RUNS DOWN PER STEP")
+
+    Rem the classifier drives the controls
+    Assert(Px(Act(g, KeyLeft())) = 18, "ARROW KEYS STEER")
+    Assert(Px(Act(g, EvalKey("a"))) = 18, "WASD STEERS")
+    Assert(QuitKey(EvalKey("q")) And QuitKey(EvalKey(Chr(27))), "Q AND ESC QUIT")
+    Assert(Not QuitKey(EvalKey("a")), "OTHER KEYS DO NOT QUIT")
+
+    Print("ALL PAC CHECKS PASSED")

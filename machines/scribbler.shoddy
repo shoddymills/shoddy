@@ -1,0 +1,246 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem scribbler.shoddy — Shoddy standard library: the scribbler
+Rem
+Rem A scribbler is Shoddy's drawing surface: a pixel buffer shown in a
+Rem window opened by ScribblerOpen(width, height). This machine is the
+Rem derived layer over the Scribbler* builtins — the event decoder,
+Rem frame-timing helpers, and shape drawing built on ScribblerPixel.
+Rem
+Rem KNOWN LIMITATION: scribbler programs are `mill run` programs. A
+Rem program woven with `mill weave` and run as `dotnet FILE.dll` has no
+Rem window backend in the process, so ScribblerOpen raises there (as it
+Rem does under `mill dap`). Everything that only touches the buffer —
+Rem the drawing words below, ScribblerGetPixel, Width/Height — works
+Rem headless.
+Rem
+Rem Every constructor here is prefixed Scribbler: names fold to
+Rem uppercase and vt100.shoddy already exports KeyUp/KeyDown as Vt100Key
+Rem constructors, so a program including both machines must not collide.
+Rem The tick timestamp field is At, not Ticks — a builtin outranks a
+Rem record field accessor of the same name.
+Rem ==================================================================
+
+Include "seq.shoddy"
+Include "clock.shoddy"
+
+Rem ---- events --------------------------------------------------------
+
+Rem Key in ScribblerKeyDown/Up is a stable Shoddy key code (letters and
+Rem digits sit on their ASCII codes; Enter 13, Escape 27, Backspace 8,
+Rem Tab 9, Space 32; Insert 256, Delete 257, Home 258, End 259, PageUp
+Rem 260, PageDown 261, Left 262, Right 263, Up 264, Down 265; F1-F12
+Rem 281-292; modifiers 301-308; unmapped keys report 0). Ch in
+Rem ScribblerTyped is the CHARACTER the user produced — layout, shift
+Rem and IME already applied — and is never derived from Key: "the D key
+Rem went down" and "the user produced a d" are different questions.
+Rem Mods is a bitfield: 1 Shift, 2 Ctrl, 4 Alt, 8 Super. At is the
+Rem Ticks() value when the event was generated — on every kind, so a
+Rem handler can compute a true delta without drift.
+
+Type ScribblerEvent = ScribblerNone | ScribblerMouseDown(X, Y, Button, Mods, At) | ScribblerMouseMove(X, Y, Mods, At) | ScribblerMouseUp(X, Y, Button, Mods, At) | ScribblerKeyDown(Key, Mods, At) | ScribblerKeyUp(Key, Mods, At) | ScribblerTyped(Ch, Mods, At) | ScribblerTick(At) | ScribblerQuit
+
+Type Point
+    X As Number
+    Y As Number
+
+Rem Decode the 8-element array from ScribblerPoll / ScribblerWait —
+Rem [kind, x, y, button, key, keyChar, mods, at] — into the sum type.
+Def DecodeEvent(e As Array Of t) As ScribblerEvent
+    Select Case Nth(e, 1)
+        Case 1
+            ScribblerMouseDown(Nth(e, 2), Nth(e, 3), Nth(e, 4), Nth(e, 7), Nth(e, 8))
+        Case 2
+            ScribblerMouseMove(Nth(e, 2), Nth(e, 3), Nth(e, 7), Nth(e, 8))
+        Case 3
+            ScribblerMouseUp(Nth(e, 2), Nth(e, 3), Nth(e, 4), Nth(e, 7), Nth(e, 8))
+        Case 4
+            ScribblerKeyDown(Nth(e, 5), Nth(e, 7), Nth(e, 8))
+        Case 5
+            ScribblerKeyUp(Nth(e, 5), Nth(e, 7), Nth(e, 8))
+        Case 6
+            ScribblerTyped(Nth(e, 6), Nth(e, 7), Nth(e, 8))
+        Case 7
+            ScribblerTick(Nth(e, 8))
+        Case 8
+            ScribblerQuit()
+        Case Else
+            ScribblerNone()
+
+Rem Blocking: sits at zero CPU until an event arrives. Never ScribblerNone.
+Def NextEvent(sc As Scribbler) As ScribblerEvent
+    DecodeEvent(ScribblerWait(sc))
+
+Rem Non-blocking: ScribblerNone when the queue is empty.
+Def PeekEvent(sc As Scribbler) As ScribblerEvent
+    DecodeEvent(ScribblerPoll(sc))
+
+Rem ---- frame timing --------------------------------------------------
+
+Def SetFps(sc As Scribbler, fps As Number) As Scribbler
+    ScribblerSetInterval(sc, Round(1000 / fps))
+
+Rem The At field of e, minus prev — the frame delta, drift-free.
+Def SinceLast(e As ScribblerEvent, prev As Number) As Number
+    At(e) - prev
+
+Rem ---- drawing -------------------------------------------------------
+Rem All implemented in Shoddy on ScribblerPixel. Every word returns the
+Rem scribbler, so drawing chains read functionally even though the
+Rem buffer mutates in place.
+
+Def DrawHLine(sc As Scribbler, y As Number, x0 As Number, x1 As Number, r As Number, g As Number, b As Number) As Scribbler
+    Fold(Range(Min(x0, x1), Max(x0, x1)), sc, Fn(s, x) => ScribblerPixel(s, x, y, r, g, b))
+
+Def DrawVLine(sc As Scribbler, x As Number, y0 As Number, y1 As Number, r As Number, g As Number, b As Number) As Scribbler
+    Fold(Range(Min(y0, y1), Max(y0, y1)), sc, Fn(s, y) => ScribblerPixel(s, x, y, r, g, b))
+
+Rem Bresenham — DrawHLine/DrawVLine alone cannot do diagonals.
+Def DrawLine(sc As Scribbler, x0 As Number, y0 As Number, x1 As Number, y1 As Number, r As Number, g As Number, b As Number) As Scribbler
+    LineStep(sc, x0, y0, x1, y1, Abs(x1 - x0), -Abs(y1 - y0), StepDir(x0, x1), StepDir(y0, y1), Abs(x1 - x0) - Abs(y1 - y0), r, g, b)
+
+Def StepDir(a As Number, b As Number) As Number
+    If a < b Then
+        1
+    Else
+        -1
+
+Def LineStep(sc As Scribbler, x As Number, y As Number, x1 As Number, y1 As Number, dx As Number, dy As Number, sx As Number, sy As Number, err As Number, r As Number, g As Number, b As Number) As Scribbler
+    Let s = ScribblerPixel(sc, x, y, r, g, b)
+    If x = x1 And y = y1 Then
+        s
+    Else
+        Let e2 = 2 * err
+        Let nx = Ifte(e2 >= dy, x + sx, x)
+        Let ex = Ifte(e2 >= dy, err + dy, err)
+        Let ny = Ifte(e2 <= dx, y + sy, y)
+        Let ey = Ifte(e2 <= dx, ex + dx, ex)
+        LineStep(s, nx, ny, x1, y1, dx, dy, sx, sy, ey, r, g, b)
+
+Rem Outline rectangle; w and h are pixel sizes (a 1x1 rect is one pixel).
+Def DrawRect(sc As Scribbler, x As Number, y As Number, w As Number, h As Number, r As Number, g As Number, b As Number) As Scribbler
+    Let s1 = DrawHLine(sc, y, x, x + w - 1, r, g, b)
+    Let s2 = DrawHLine(s1, y + h - 1, x, x + w - 1, r, g, b)
+    Let s3 = DrawVLine(s2, x, y, y + h - 1, r, g, b)
+    DrawVLine(s3, x + w - 1, y, y + h - 1, r, g, b)
+
+Def FillRect(sc As Scribbler, x As Number, y As Number, w As Number, h As Number, r As Number, g As Number, b As Number) As Scribbler
+    Fold(Range(y, y + h - 1), sc, Fn(s, row) => DrawHLine(s, row, x, x + w - 1, r, g, b))
+
+Rem Midpoint circle: walk one octant, plot all eight reflections.
+Def DrawCircle(sc As Scribbler, cx As Number, cy As Number, radius As Number, r As Number, g As Number, b As Number) As Scribbler
+    CircleStep(sc, cx, cy, 0, radius, 3 - 2 * radius, r, g, b)
+
+Def CircleStep(sc As Scribbler, cx As Number, cy As Number, x As Number, y As Number, d As Number, r As Number, g As Number, b As Number) As Scribbler
+    If x > y Then
+        sc
+    Else
+        Let s = CirclePoints(sc, cx, cy, x, y, r, g, b)
+        If d < 0 Then
+            CircleStep(s, cx, cy, x + 1, y, d + 4 * x + 6, r, g, b)
+        Else
+            CircleStep(s, cx, cy, x + 1, y - 1, d + 4 * (x - y) + 10, r, g, b)
+
+Def CirclePoints(sc As Scribbler, cx As Number, cy As Number, x As Number, y As Number, r As Number, g As Number, b As Number) As Scribbler
+    Let s1 = ScribblerPixel(sc, cx + x, cy + y, r, g, b)
+    Let s2 = ScribblerPixel(s1, cx - x, cy + y, r, g, b)
+    Let s3 = ScribblerPixel(s2, cx + x, cy - y, r, g, b)
+    Let s4 = ScribblerPixel(s3, cx - x, cy - y, r, g, b)
+    Let s5 = ScribblerPixel(s4, cx + y, cy + x, r, g, b)
+    Let s6 = ScribblerPixel(s5, cx - y, cy + x, r, g, b)
+    Let s7 = ScribblerPixel(s6, cx + y, cy - x, r, g, b)
+    ScribblerPixel(s7, cx - y, cy - x, r, g, b)
+
+Def FillCircle(sc As Scribbler, cx As Number, cy As Number, radius As Number, r As Number, g As Number, b As Number) As Scribbler
+    Fold(Range(-radius, radius), sc, Fn(s, dy) => FillCircleRow(s, cx, cy, radius, dy, r, g, b))
+
+Def FillCircleRow(sc As Scribbler, cx As Number, cy As Number, radius As Number, dy As Number, r As Number, g As Number, b As Number) As Scribbler
+    Let half = Floor(Sqr(radius * radius - dy * dy))
+    DrawHLine(sc, cy + dy, cx - half, cx + half, r, g, b)
+
+Rem Open path, no closing edge.
+Def DrawPolyline(sc As Scribbler, points As List Of Point, r As Number, g As Number, b As Number) As Scribbler
+    If IsEmpty(points) Then
+        sc
+    Else
+        PolylineStep(sc, First(points), Rest(points), r, g, b)
+
+Def PolylineStep(sc As Scribbler, p As Point, rest As List Of Point, r As Number, g As Number, b As Number) As Scribbler
+    If IsEmpty(rest) Then
+        sc
+    Else
+        Let q = First(rest)
+        PolylineStep(DrawLine(sc, X(p), Y(p), X(q), Y(q), r, g, b), q, Rest(rest), r, g, b)
+
+Rem DrawPolyline plus the closing edge.
+Def DrawPolygon(sc As Scribbler, points As List Of Point, r As Number, g As Number, b As Number) As Scribbler
+    If IsEmpty(points) Then
+        sc
+    Else
+        Let s = DrawPolyline(sc, points, r, g, b)
+        Let p0 = First(points)
+        Let pn = Last(points)
+        DrawLine(s, X(pn), Y(pn), X(p0), Y(p0), r, g, b)
+
+Rem ---- flood fill ----------------------------------------------------
+Rem Scanline fill with an explicit worklist of span seeds — NOT four-way
+Rem recursion. Only *self* tail calls are optimised into a loop; a
+Rem mutually recursive or non-tail flood fill overflows the stack long
+Rem before it covers a 640x480 region. No visited-set is needed:
+Rem ScribblerGetPixel and ScribblerPixel read and write the same buffer
+Rem the fill is walking, so a filled pixel no longer matches the seed
+Rem colour. The bounds check matters: out-of-bounds reads yield 0,0,0,
+Rem which would "match" a black seed forever.
+
+Def FloodFill(sc As Scribbler, x As Number, y As Number, r As Number, g As Number, b As Number) As Scribbler
+    Let seed = ScribblerGetPixel(sc, x, y)
+    If Nth(seed, 1) = r And Nth(seed, 2) = g And Nth(seed, 3) = b Then
+        sc
+    Else
+        FillWork(sc, { Point(x, y) }, seed, r, g, b)
+
+Def InBounds(sc As Scribbler, x As Number, y As Number) As Boolean
+    x >= 0 And y >= 0 And x < ScribblerWidth(sc) And y < ScribblerHeight(sc)
+
+Def Fillable(sc As Scribbler, x As Number, y As Number, seed As Array Of Number) As Boolean
+    InBounds(sc, x, y) And SameColor(sc, x, y, seed)
+
+Def SameColor(sc As Scribbler, x As Number, y As Number, c As Array Of Number) As Boolean
+    Let p = ScribblerGetPixel(sc, x, y)
+    Nth(p, 1) = Nth(c, 1) And Nth(p, 2) = Nth(c, 2) And Nth(p, 3) = Nth(c, 3)
+
+Rem Leftmost still-fillable x at or left of x (caller passes x - 1).
+Def ScanLeft(sc As Scribbler, x As Number, y As Number, seed As Array Of Number) As Number
+    If Fillable(sc, x, y, seed) Then
+        ScanLeft(sc, x - 1, y, seed)
+    Else
+        x + 1
+
+Def ScanRight(sc As Scribbler, x As Number, y As Number, seed As Array Of Number) As Number
+    If Fillable(sc, x, y, seed) Then
+        ScanRight(sc, x + 1, y, seed)
+    Else
+        x - 1
+
+Rem One seed per run of fillable pixels in [xl..xr] on row y; the scan
+Rem from that seed extends past xl/xr on its own, covering overhangs.
+Def AddSeeds(sc As Scribbler, xl As Number, xr As Number, y As Number, seed As Array Of Number, work As List Of Point) As List Of Point
+    Fold(Range(xl, xr), work, Fn(acc, x) => Ifte(Fillable(sc, x, y, seed) And (x = xl Or Not Fillable(sc, x - 1, y, seed)), Prepend(Point(x, y), acc), acc))
+
+Def FillWork(sc As Scribbler, work As List Of Point, seed As Array Of Number, r As Number, g As Number, b As Number) As Scribbler
+    If IsEmpty(work) Then
+        sc
+    Else
+        Let p = First(work)
+        Let rest = Rest(work)
+        If Fillable(sc, X(p), Y(p), seed) Then
+            Let xl = ScanLeft(sc, X(p) - 1, Y(p), seed)
+            Let xr = ScanRight(sc, X(p) + 1, Y(p), seed)
+            Let s = DrawHLine(sc, Y(p), xl, xr, r, g, b)
+            Let above = AddSeeds(s, xl, xr, Y(p) - 1, seed, rest)
+            Let below = AddSeeds(s, xl, xr, Y(p) + 1, seed, above)
+            FillWork(s, below, seed, r, g, b)
+        Else
+            FillWork(sc, rest, seed, r, g, b)

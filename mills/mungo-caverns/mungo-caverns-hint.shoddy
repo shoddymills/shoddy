@@ -1,0 +1,136 @@
+Rem ===================================================================
+Rem mungo-caverns-hint.shoddy -- offering help, for a price.
+Rem 
+Rem Driven by the table in mungo-caverns-tables.shoddy. Each hint
+Rem has a room, a dwell time and a cost in points.
+Rem ===================================================================
+
+Rem ---- hints -----------------------------------------------------------------
+Rem Loiter long enough somewhere the game thinks you are
+Rem stuck and it offers to help, for a price. Each hint counts the turns
+Rem you have spent in its own region; leave the region and the count goes
+Rem back to nothing.
+Rem
+Rem The hint list is kept on the room itself, so the
+Rem outer guard is simply "this room offers some hint at all".
+
+Type HintRec
+    Used As Boolean
+    Lc   As Number
+
+Def NewHints() As List
+    Range(1, Length(Hints()))
+        Map(Fn(i) => HintRec(False, 0))
+
+Def HintAt(g As Game, i As Number) As HintRec
+    Nth(HintState(g), i)
+
+Def SetHint(g As Game, i As Number, h As HintRec) As Game
+    With(g, HintState = SetNth(HintState(g), i, h))
+
+Def CheckHints(g As Game) As Game
+    If IsEmpty(RoomHints(RoomAt(g))) Then
+        g
+    Else
+        HintLoop(g, 1, Length(Hints()))
+
+Def HintLoop(g As Game, i As Number, n As Number) As Game
+    If i > n Then
+        g
+    Else
+        Let h = HintAt(g, i)
+        If Used(h) Then
+            HintLoop(g, i + 1, n)
+        Else
+            Let ticked = Ticked(g, h, i)
+            Let g1 = SetHint(g, i, ticked)
+            If Lc(ticked) < Turns(Nth(Hints(), i)) Then
+                HintLoop(g1, i + 1, n)
+            Else
+                HintLoop(Ripe(g1, i), i + 1, n)
+
+Rem A hint's counter only runs while you are somewhere it applies.
+Def Ticked(g As Game, h As HintRec, i As Number) As HintRec
+    If Contains(RoomHints(RoomAt(g)), i - 1) Then
+        With(h, Lc = Lc(h) + 1)
+    Else
+        With(h, Lc = 0)
+
+Rem Each hint has its own idea of whether you are really stuck.
+Def Ripe(g As Game, i As Number) As Game
+    If Stuck(g, i) Then
+        Offer(g, i)
+    Else
+        SetHint(g, i, With(HintAt(g, i), Lc = 0))
+
+Def Stuck(g As Game, i As Number) As Boolean
+    Let tag = Tag(Nth(Hints(), i))
+    Select Case tag
+        Case "CAVE"
+            Rem This one is offered precisely when the grate is shut and
+            Rem you have nothing to open it with -- which is when
+            Rem loitering outside it means you are genuinely stuck.
+            (PropOf(g, Grate()) = GrateClosed() And Not Here(g, Keys()))
+        Case "BIRD"
+            (Nth(ObjectLocation(g), ObjNamed("BIRD") + 1) = Location(g)
+             And Toting(g, ObjNamed("ROD")) And PreviousObject(g) = ObjNamed("BIRD"))
+        Case "SNAKE"
+            Here(g, ObjNamed("SNAKE")) And Not Here(g, ObjNamed("BIRD"))
+        Case Else
+            StuckMore(g, tag)
+
+Def StuckMore(g As Game, tag As String) As Boolean
+    Select Case tag
+        Case "MAZE"
+            Lost(g) And HoldCount(g) > 1
+        Case "DARK"
+            PropOf(g, ObjNamed("EMERALD")) >= 0 And PropOf(g, ObjNamed("PYRAMID")) < 0
+        Case "WITT"
+            True
+        Case "CLIFF"
+            Rem The seventh hint answers for the urn but is tagged CLIFF
+            Rem in the tables; the tag is what the game indexes by, so
+            Rem CLIFF is the name to match on.
+            CurmudgeonActivation(g) = 0
+        Case Else
+            StuckLast(g, tag)
+
+Def StuckLast(g As Game, tag As String) As Boolean
+    Select Case tag
+        Case "WOODS"
+            Lost(g)
+        Case "OGRE"
+            Here(g, ObjNamed("OGRE")) And CurmudgeonsHere(g) = 0 And CurmudgeonsHere(g) >= 0
+        Case "JADE"
+            Tally(g) = 1 And PropOf(g, ObjNamed("JADE")) < 0
+        Case Else
+            False
+
+Rem Three rooms running with nothing lying about in any of them.
+Def Lost(g As Game) As Boolean
+    (IsEmpty(Nth(ObjectsAt(g), Location(g) + 1)) And IsEmpty(Nth(ObjectsAt(g), PreviousLocation(g) + 1))
+     And IsEmpty(Nth(ObjectsAt(g), LocationBeforeLast(g) + 1)))
+
+Rem Two questions: do you want help, and is it worth the
+Rem points. Taking a hint buys back some lamp life to soften the blow.
+Def Offer(gIn As Game, i As Number) As Game
+    Let g = Flushed(gIn)
+    Let hint = Nth(Hints(), i)
+    Let g1 = SetHint(g, i, With(HintAt(g, i), Lc = 0))
+    Let ok = Nth(Messages(), MsgOkMan() + 1)
+    If Not YesNo(Question(hint), "", ok) Then
+        g1
+    Else
+        SpeakArgs(MsgHintCost(), { Str(Penalty(hint)), Str(Penalty(hint)) })
+        Let took = YesNo(Nth(Messages(), MsgWantHint() + 1), Text(hint), ok)
+        If took Then
+            SetHint(Rewarded(g1, Penalty(hint)), i, HintRec(True, 0))
+        Else
+            g1
+
+Def Rewarded(g As Game, penalty As Number) As Game
+    If LampLife(g) > WarnTime() Then
+        With(g, LampLife = LampLife(g) + WarnTime() * penalty)
+    Else
+        g
+

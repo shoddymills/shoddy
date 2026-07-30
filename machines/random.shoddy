@@ -1,0 +1,62 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem random.shoddy — Shoddy standard library: random numbers
+Rem
+Rem Built directly on the Rnd builtin (uniform, [0,1), impure — effects
+Rem live at the edge, same as Print). Seedless by construction: Rnd
+Rem draws from the engine's own auto-seeded generator, so there is no
+Rem seed to create, store, or thread through your program — the cost
+Rem of that convenience is the one property this whole language is
+Rem built to guarantee everywhere else. Random() is NOT a pure
+Rem function: calling it twice with identical arguments can (and
+Rem should) give two different answers. A fully pure alternative is
+Rem possible (an explicitly-seeded generator that threads its state
+Rem through every call, the way Isam threads its handle) but that's
+Rem the opposite of seedless, so it isn't what's below.
+Rem ==================================================================
+
+Def Random() As Number
+    Rnd()
+
+Def RandomRange(lo As Number, hi As Number) As Number
+    If hi < lo Then
+        Error("RANDOMRANGE: HI < LO")
+    Else
+        lo + Random() * (hi - lo)
+
+Def RandomInt(lo As Number, hi As Number) As Number
+    If hi < lo Then
+        Error("RANDOMINT: HI < LO")
+    Else
+        lo + Floor(Random() * (hi - lo + 1))
+
+Rem ---- shuffling and sampling ---------------------------------------
+Rem Impure like everything above — each call is a fresh draw. These
+Rem live here rather than in stats.shoddy because stats is pure and
+Rem random.shoddy owns the Rnd edge.
+
+Rem The list without its k-th element (local helper; no includes here).
+Def DropAt(xs As List Of t, k As Number) As List Of t
+    If k = 1 Then
+        Rest(xs)
+    Else
+        Prepend(First(xs), DropAt(Rest(xs), k - 1))
+
+Rem A uniformly random permutation: pick an element, shuffle the rest.
+Def Shuffle(xs As List Of t) As List Of t
+    If IsEmpty(xs) Then
+        { }
+    Else
+        Let k = RandomInt(1, Length(xs))
+        Prepend(Nth(xs, k), Shuffle(DropAt(xs, k)))
+
+Rem n distinct draws without replacement (all of xs, shuffled, if n
+Rem meets or exceeds the length).
+Def Sample(xs As List Of t, n As Number) As List Of t
+    If n <= 0 Or IsEmpty(xs) Then
+        { }
+    Else
+        Let k = RandomInt(1, Length(xs))
+        Prepend(Nth(xs, k), Sample(DropAt(xs, k), n - 1))

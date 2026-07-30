@@ -1,0 +1,128 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem iris.shoddy — CLASSIFY a flower interactively. Deserializes the
+Rem trained 4-8-3 model that iris-train.shoddy wrote to
+Rem dat/iris-model.bin (binary, bit-exact, self-describing — see
+Rem ModelLoad in neural.shoddy), then prompts for four measurements in
+Rem centimetres and names the species, with the probability it assigns
+Rem to each of the three.
+Rem
+Rem Build and run: build.cmd run          (Windows)
+Rem                ./build.sh run          (Unix)
+Rem Just run:      dotnet bin\iris.dll
+Rem
+Rem Run from THIS directory — the model path dat/iris-model.bin is
+Rem relative. No model yet? Train one first (a few seconds):
+Rem build.cmd train (or ./build.sh train).
+Rem
+Rem Notice what this program does NOT contain: any mention of how the
+Rem inputs are scaled. It reads raw centimetres and hands them straight
+Rem to ModelPredict, which applies the centring and scaling recorded in
+Rem the model file by whoever trained it. Compare the demographics
+Rem mill, where the trainer's RowX and the predictor's PersonX each
+Rem build the input vector by hand, in different files — two copies of
+Rem one decision, and nothing to notice if they ever stop agreeing.
+Rem
+Rem The three probabilities are the point of a classifier, and the
+Rem thing a regression network cannot express. They are also worth
+Rem reading sceptically: on the held-out data this model is wrong three
+Rem times in thirty, and while two of those three are near-ties it
+Rem announces the third at 0.999. Confidence is what the model believes,
+Rem not evidence that it is right.
+Rem ==================================================================
+
+Include "neural.shoddy"
+Include "math.shoddy"
+
+Def Species() As Number
+    3
+
+Def SpeciesName(k As Number) As String
+    Select Case k
+        Case 1
+            "SETOSA"
+        Case 2
+            "VERSICOLOR"
+        Case Else
+            "VIRGINICA"
+
+Rem ---- prompting (each measurement re-asks until the answer parses) ---
+
+Rem Val aborts on anything that is not a number, so nothing may reach it
+Rem unguarded: digits and at most one decimal point, and not a bare dot.
+Def DigitsOrDot(s As String) As Boolean
+    All(Range(1, Len(s)), Fn(k) => Instr("0123456789.", Mid(s, k, 1)) > 0)
+
+Def DotCount(s As String) As Number
+    Fold(Range(1, Len(s)), 0, Fn(a, k) => a + Ifte(Mid(s, k, 1) = ".", 1, 0))
+
+Def IsMeasure(s As String) As Boolean
+    Len(s) > 0 And s <> "." And DigitsOrDot(s) And DotCount(s) <= 1
+
+Def AskMeasure(prompt As String) As Number
+    Let s = Trim(Input(prompt))
+    If IsMeasure(s) Then
+        Val(s)
+    Else
+        AskMeasure(prompt)
+
+Def Ask(prompt As String) As String
+    Upper(Trim(Input(prompt)))
+
+Rem ---- display --------------------------------------------------------
+
+Def PadRight(s As String, n As Number) As String
+    If Len(s) >= n Then
+        s
+    Else
+        PadRight(s & " ", n)
+
+Def Bar(p As Number) As String
+    StrRep("#", Round(p * 40))
+
+Def ShowProb(ps As Array Of Number, k As Number)
+    Print("  " & PadRight(SpeciesName(k), 12)
+          & PadRight(Str(RoundTo(Nth(ps, k), 3)), 8)
+          & Bar(Nth(ps, k)))
+
+Rem ---- the loop (state threads through the self tail call) -------------
+
+Def ClassifyLoop(m As Model)
+    Print("")
+    Rem raw centimetres: the model file remembers how to scale them
+    Let x = ToArray({ AskMeasure("SEPAL LENGTH (CM): "),
+                      AskMeasure("SEPAL WIDTH  (CM): "),
+                      AskMeasure("PETAL LENGTH (CM): "),
+                      AskMeasure("PETAL WIDTH  (CM): ") })
+    Let ps = ModelPredict(m, x)
+    Let best = Argmax(ps)
+    Print("")
+    Print("PREDICTED SPECIES = " & SpeciesName(best)
+          & "  (" & Str(RoundTo(Nth(ps, best) * 100, 1)) & "% CONFIDENT)")
+    Print("")
+    Each(Range(1, Species()), Fn(k) => ShowProb(ps, k))
+    Print("")
+    If Ask("ANOTHER (Y/N)? ") = "Y" Then
+        ClassifyLoop(m)
+
+Def Main()
+    Print("")
+    Print("NEURAL NETWORK CLASSIFICATION - SHODDY - PREDICTOR")
+    Print("NAME THE IRIS SPECIES FROM SEPAL AND PETAL MEASUREMENTS")
+
+    Print("")
+    If Not FileExists("dat/iris-model.bin") Then
+        Error("NO MODEL AT dat/iris-model.bin - TRAIN ONE FIRST: build.cmd train (OR ./build.sh train)")
+    Print("LOADING MODEL FROM dat/iris-model.bin")
+    Let m = ModelLoad("dat/iris-model.bin")
+    Let n = Weights(m)
+    Print("LOADED A " & Str(Cols(W1(n))) & "-" & Str(Rows(W1(n))) & "-" & Str(Rows(W2(n)))
+          & " NETWORK WITH A SOFTMAX HEAD AND ITS INPUT SCALER")
+    Print("TYPICAL RANGES - SEPAL 4.3-7.9 BY 2.0-4.4, PETAL 1.0-6.9 BY 0.1-2.5")
+
+    ClassifyLoop(m)
+
+    Print("")
+    Print("END DEMO")

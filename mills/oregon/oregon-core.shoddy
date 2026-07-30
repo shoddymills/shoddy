@@ -1,0 +1,444 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem oregon-core.shoddy — The Oregon Trail, the pure model.
+Rem
+Rem A port of OREGON (Bill Heinemann, 1971, for MECC) from the
+Rem oregon.bas listing in this folder. Everything the game IS that does
+Rem not touch the console: the Trail state record, the outfitting and
+Rem eating arithmetic, the date table, the fourteen-day travel formula,
+Rem the rider encounters, the sixteen-entry misfortune table, the
+Rem mountain crossings, and the arrival-date computation. It includes
+Rem nothing, so it runs headless and is checked that way (test.shoddy).
+Rem oregon.shoddy adds the prompts, the timed shooting, and the turn
+Rem loop on top.
+Rem
+Rem Randomness: any roll that DECIDES a branch (did riders appear, which
+Rem misfortune, did the shot miss) arrives as a parameter, so every
+Rem branch is reachable deterministically from the tests. Rolls that
+Rem only jitter a magnitude (how many miles a breakdown costs) call Rnd
+Rem directly, the way invaders-core's RandomAlien does.
+Rem
+Rem The BASIC's variables map onto Trail fields: M Miles, M2 PrevMiles,
+Rem F Food, B Bullets, C Clothing, M1 Misc, T Cash, A Oxen, D3 TurnNo,
+Rem E Eating, D9 Skill, K8 Injured, S4 Ill, M9 ShowPass, F1 ClearedPass,
+Rem F2 ClearedBlue, X1 FortDue. Death (its GOTO 5170) is the Dead fate.
+Rem ==================================================================
+
+Rem ---- tunables ------------------------------------------------------
+
+Def TotalMiles() As Number
+    2040
+
+Rem $900 saved less $200 already paid for the wagon.
+Def StartBudget() As Number
+    700
+
+Def DoctorFee() As Number
+    20
+
+Rem Below this much food you are warned, then you starve.
+Def LowFood() As Number
+    13
+
+Rem Forts charge more: a dollar buys two-thirds of what it did at home.
+Def FortRate() As Number
+    2 / 3
+
+Rem Hunting or fighting takes more bullets than this.
+Def FewBullets() As Number
+    39
+
+Rem Shot quality of a botched word — the worst possible shot.
+Def MissShot() As Number
+    9
+
+Rem ---- state ---------------------------------------------------------
+
+Type Outcome = Rolling | Dead(Msg)
+
+Type Trail
+    Miles       As Number       Rem M  - total mileage so far
+    PrevMiles   As Number       Rem M2 - mileage at the last turn's start
+    Food        As Number       Rem F  - dollars' worth of food
+    Bullets     As Number       Rem B  - count, not dollars
+    Clothing    As Number       Rem C
+    Misc        As Number       Rem M1 - medicine and repairs
+    Cash        As Number       Rem T
+    Oxen        As Number       Rem A  - dollars spent on the team
+    TurnNo      As Number       Rem D3 - fortnights on the trail
+    Eating      As Number       Rem E  - 1 poorly / 2 moderately / 3 well
+    Skill       As Number       Rem D9 - 1 ace .. 5 shaky (0 for braggarts)
+    Injured     As Boolean      Rem K8
+    Ill         As Boolean      Rem S4
+    ShowPass    As Boolean      Rem M9 - report 950 miles while backtracking
+    ClearedPass As Boolean      Rem F1 - South Pass behind you
+    ClearedBlue As Boolean      Rem F2 - Blue Mountains behind you
+    FortDue     As Boolean      Rem X1 - a fort is reachable this turn
+    Fate        As Outcome
+
+Def NewTrail(oxen As Number, food As Number, ammo As Number, clothes As Number, misc As Number, skill As Number) As Trail
+    Let cash = StartBudget() - oxen - food - ammo - clothes - misc
+    Trail(0, 0, food, 50 * ammo, clothes, misc, cash, oxen, 0, 1, skill, False, False, False, False, False, False, Rolling())
+
+Def IsRolling(t As Trail) As Boolean
+    Select Case Fate(t)
+        Case Rolling
+            True
+        Case Else
+            False
+
+Def Kill(t As Trail, msg As String) As Trail
+    With(t, Fate = Dead(msg))
+
+Def DiedOf(t As Trail) As String
+    If Injured(t) Then
+        "YOU DIED OF INJURIES"
+    Else
+        "YOU DIED OF PNEUMONIA"
+
+Rem ---- the calendar --------------------------------------------------
+Rem Each turn is a fortnight; the twentieth date is not on the list
+Rem because nobody who needs it survives the winter.
+
+Def TrailDates() As List Of String
+    { "APRIL 12", "APRIL 26", "MAY 10", "MAY 24", "JUNE 7", "JUNE 21", "JULY 5", "JULY 19", "AUGUST 2", "AUGUST 16", "AUGUST 31", "SEPTEMBER 13", "SEPTEMBER 27", "OCTOBER 11", "OCTOBER 25", "NOVEMBER 8", "NOVEMBER 22", "DECEMBER 6", "DECEMBER 20" }
+
+Def TurnDate(n As Number) As String
+    "MONDAY " & Nth(TrailDates(), n) & " 1847"
+
+Def OutOfTime(n As Number) As Boolean
+    n >= 20
+
+Rem ---- turn housekeeping ---------------------------------------------
+
+Rem Supplies never go negative on the books, everything is whole by
+Rem morning, and the odometer reading is remembered for the final turn.
+Def ClampSupplies(t As Trail) As Trail
+    With(t, Food = Floor(Max(0, Food(t))), Bullets = Floor(Max(0, Bullets(t))), Clothing = Floor(Max(0, Clothing(t))), Misc = Floor(Max(0, Misc(t))), Cash = Floor(Cash(t)), Miles = Floor(Miles(t)), PrevMiles = Floor(Miles(t)))
+
+Def NeedsDoctor(t As Trail) As Boolean
+    Ill(t) Or Injured(t)
+
+Def PayDoctor(t As Trail) As Trail
+    If Cash(t) < DoctorFee() Then
+        Kill(With(t, Cash = 0), "YOU CAN'T AFFORD A DOCTOR\n" & DiedOf(t))
+    Else
+        With(t, Cash = Cash(t) - DoctorFee(), Ill = False, Injured = False)
+
+Rem What the odometer claims: 950 while backtracking over South Pass.
+Def ShownMiles(t As Trail) As Number
+    If ShowPass(t) Then
+        950
+    Else
+        Miles(t)
+
+Rem ---- eating --------------------------------------------------------
+
+Def MealCost(e As Number) As Number
+    8 + 5 * e
+
+Def CanEat(t As Trail, e As Number) As Boolean
+    Food(t) >= MealCost(e)
+
+Def Eat(t As Trail, e As Number) As Trail
+    With(t, Food = Food(t) - MealCost(e), Eating = e)
+
+Def Starved(t As Trail) As Boolean
+    Food(t) < LowFood()
+
+Rem ---- travel --------------------------------------------------------
+Rem A fortnight's progress: a better team goes further; r is in [0,1).
+
+Def Travel(t As Trail, r As Number) As Trail
+    With(t, Miles = Miles(t) + 200 + (Oxen(t) - 220) / 5 + 10 * r)
+
+Rem ---- the fort ------------------------------------------------------
+
+Def BuyFood(t As Trail, p As Number) As Trail
+    With(t, Cash = Cash(t) - p, Food = Food(t) + FortRate() * p)
+
+Def BuyAmmo(t As Trail, p As Number) As Trail
+    With(t, Cash = Cash(t) - p, Bullets = Floor(Bullets(t) + FortRate() * p * 50))
+
+Def BuyClothes(t As Trail, p As Number) As Trail
+    With(t, Cash = Cash(t) - p, Clothing = Clothing(t) + FortRate() * p)
+
+Def BuyMisc(t As Trail, p As Number) As Trail
+    With(t, Cash = Cash(t) - p, Misc = Misc(t) + FortRate() * p)
+
+Rem Stopping anywhere costs the fortnight forty-five miles.
+Def Detour(t As Trail) As Trail
+    With(t, Miles = Miles(t) - 45)
+
+Rem ---- shooting ------------------------------------------------------
+Rem The console times how long the player took to type the word; quality
+Rem is seconds over a two-second grace, eased by claimed inexperience
+Rem (an ace gets no slack). Zero is a perfect shot, nine a ruined one.
+
+Def ShotQuality(elapsedSecs As Number, matched As Boolean, skill As Number) As Number
+    If Not matched Then
+        MissShot()
+    Else
+        Max(0, elapsedSecs - 2 - (skill - 1))
+
+Rem ---- hunting -------------------------------------------------------
+
+Def CanHunt(t As Trail) As Boolean
+    Bullets(t) > FewBullets()
+
+Def BigKill(t As Trail) As Trail
+    With(t, Food = Food(t) + 52 + Rnd() * 6, Bullets = Bullets(t) - 10 - Rnd() * 4)
+
+Def GoodShot(t As Trail, b1 As Number) As Trail
+    With(t, Food = Food(t) + 48 - 2 * b1, Bullets = Bullets(t) - 10 - 3 * b1)
+
+Def GameGotAway(b1 As Number, r As Number) As Boolean
+    100 + r < 13 * b1
+
+Rem ---- riders --------------------------------------------------------
+Rem The chance of riders peaks around the 400-mile mark; r in [0,1).
+
+Def RidersApproach(m As Number, r As Number) As Boolean
+    r * 10 <= ((m / 100 - 4) ^ 2 + 72) / ((m / 100 - 4) ^ 2 + 12) - 1
+
+Rem Looks deceive one time in five.
+Def ActualMood(lookFriendly As Boolean, r As Number) As Boolean
+    If r <= 0.2 Then
+        Not lookFriendly
+    Else
+        lookFriendly
+
+Def FriendlyRun(t As Trail) As Trail
+    With(t, Miles = Miles(t) + 15, Oxen = Oxen(t) - 10)
+
+Def FriendlyAttack(t As Trail) As Trail
+    With(t, Miles = Miles(t) - 5, Bullets = Bullets(t) - 100)
+
+Def FriendlyCircle(t As Trail) As Trail
+    With(t, Miles = Miles(t) - 20)
+
+Def HostileRun(t As Trail) As Trail
+    With(t, Miles = Miles(t) + 20, Misc = Misc(t) - 15, Bullets = Bullets(t) - 150, Oxen = Oxen(t) - 40)
+
+Def HostileShootout(t As Trail, b1 As Number) As Trail
+    With(t, Bullets = Bullets(t) - b1 * 40 - 80)
+
+Def HostileCircle(t As Trail, b1 As Number) As Trail
+    With(t, Bullets = Bullets(t) - b1 * 30 - 80, Miles = Miles(t) - 25)
+
+Rem Continuing past hostiles who attack anyway.
+Def RidersSneak(t As Trail) As Trail
+    With(t, Bullets = Bullets(t) - 150, Misc = Misc(t) - 15)
+
+Def Knifed(t As Trail) As Trail
+    With(t, Injured = True)
+
+Def Massacred(t As Trail) As Boolean
+    Bullets(t) < 0
+
+Rem ---- the misfortune table ------------------------------------------
+Rem The DATA statement of line 3620: a roll of 100*Rnd lands on the
+Rem first level it does not exceed; past them all is event 16, the one
+Rem good thing that can happen on the trail.
+
+Def EventLevels() As List Of Number
+    { 6, 11, 13, 15, 17, 22, 32, 35, 37, 42, 44, 54, 64, 69, 95 }
+
+Def PickFrom(levels As List Of Number, r As Number, k As Number) As Number
+    If IsEmpty(levels) Then
+        k
+    Else
+        If r <= First(levels) Then
+            k
+        Else
+            PickFrom(Rest(levels), r, k + 1)
+
+Def PickEvent(r As Number) As Number
+    PickFrom(EventLevels(), r, 1)
+
+Def WagonBreaks(t As Trail) As Trail
+    With(t, Miles = Miles(t) - 15 - 5 * Rnd(), Misc = Misc(t) - 8)
+
+Def OxLeg(t As Trail) As Trail
+    With(t, Miles = Miles(t) - 25, Oxen = Oxen(t) - 20)
+
+Def BrokenArm(t As Trail) As Trail
+    With(t, Miles = Miles(t) - 5 - 4 * Rnd(), Misc = Misc(t) - 2 - 3 * Rnd())
+
+Def OxWanders(t As Trail) As Trail
+    With(t, Miles = Miles(t) - 17)
+
+Def SonLost(t As Trail) As Trail
+    With(t, Miles = Miles(t) - 10)
+
+Def UnsafeWater(t As Trail) As Trail
+    With(t, Miles = Miles(t) - 10 * Rnd() - 2)
+
+Def HeavyRains(t As Trail) As Trail
+    With(t, Food = Food(t) - 10, Bullets = Bullets(t) - 500, Misc = Misc(t) - 15, Miles = Miles(t) - 10 * Rnd() - 5)
+
+Def BanditsShoot(t As Trail, b1 As Number) As Trail
+    With(t, Bullets = Bullets(t) - 20 * b1)
+
+Def BanditsRob(t As Trail) As Trail
+    With(t, Cash = Cash(t) / 3)
+
+Def BanditsWound(t As Trail) As Trail
+    With(Knifed(t), Misc = Misc(t) - 5, Oxen = Oxen(t) - 20)
+
+Def WagonFire(t As Trail) As Trail
+    With(t, Food = Food(t) - 40, Bullets = Bullets(t) - 400, Misc = Misc(t) - Rnd() * 8 - 3, Miles = Miles(t) - 15)
+
+Def HeavyFog(t As Trail) As Trail
+    With(t, Miles = Miles(t) - 10 - 5 * Rnd())
+
+Def Snakebite(t As Trail) As Trail
+    Let bit = With(t, Bullets = Bullets(t) - 10, Misc = Misc(t) - 5)
+    If Misc(bit) < 0 Then
+        Kill(bit, "YOU DIE OF SNAKEBITE SINCE YOU HAVE NO MEDICINE")
+    Else
+        bit
+
+Def SwampedWagon(t As Trail) As Trail
+    With(t, Food = Food(t) - 30, Clothing = Clothing(t) - 20, Miles = Miles(t) - 20 - 20 * Rnd())
+
+Def WolvesLoot(t As Trail, b1 As Number) As Trail
+    With(t, Bullets = Bullets(t) - 20 * b1, Clothing = Clothing(t) - b1 * 4, Food = Food(t) - b1 * 8)
+
+Def HailStorm(t As Trail) As Trail
+    With(t, Miles = Miles(t) - 5 - Rnd() * 10, Bullets = Bullets(t) - 200, Misc = Misc(t) - 4 - Rnd() * 3)
+
+Rem Cold snap past the 950-mile mark: warm enough or ill.
+Def ClothesEnough(c As Number, r As Number) As Boolean
+    c > 22 + 4 * r
+
+Rem Whether careless eating catches up with you (event 15): poor eaters
+Rem always sicken, moderate ones usually, hearty ones half the time.
+Def IllnessDue(e As Number, r As Number) As Boolean
+    Select Case e
+        Case 1
+            True
+        Case 2
+            r > 0.25
+        Case Else
+            r < 0.5
+
+Def HelpfulIndians(t As Trail) As Trail
+    With(t, Food = Food(t) + 14)
+
+Rem ---- illness -------------------------------------------------------
+Rem 1 wild, 2 bad, 3 serious; how you have been eating shifts the odds.
+Rem Two independent rolls, both in [0,1).
+
+Def IllKind(e As Number, r1 As Number, r2 As Number) As Number
+    If 100 * r1 < 10 + 35 * (e - 1) Then
+        1
+    Else
+        If 100 * r2 < 100 - 40 / 4 ^ (e - 1) Then
+            2
+        Else
+            3
+
+Def Illness(t As Trail, kind As Number) As Trail
+    Let sick = TakeIll(t, kind)
+    If Misc(sick) < 0 Then
+        Kill(sick, "YOU RAN OUT OF MEDICAL SUPPLIES\n" & DiedOf(sick))
+    Else
+        sick
+
+Def TakeIll(t As Trail, kind As Number) As Trail
+    Select Case kind
+        Case 1
+            With(t, Miles = Miles(t) - 5, Misc = Misc(t) - 2)
+        Case 2
+            With(t, Miles = Miles(t) - 5, Misc = Misc(t) - 5)
+        Case Else
+            With(t, Misc = Misc(t) - 10, Ill = True)
+
+Rem ---- mountains -----------------------------------------------------
+
+Def InMountains(m As Number) As Boolean
+    m > 950
+
+Def RoughGoing(m As Number, r As Number) As Boolean
+    r * 10 <= 9 - ((m / 100 - 15) ^ 2 + 72) / ((m / 100 - 15) ^ 2 + 12)
+
+Def GetLost(t As Trail) As Trail
+    With(t, Miles = Miles(t) - 60)
+
+Def WagonDamage(t As Trail) As Trail
+    With(t, Misc = Misc(t) - 5, Bullets = Bullets(t) - 200, Miles = Miles(t) - 20 - 30 * Rnd())
+
+Def SlowGoing(t As Trail) As Trail
+    With(t, Miles = Miles(t) - 45 - 50 * Rnd())
+
+Def PassSnowed(r As Number) As Boolean
+    r < 0.8
+
+Def BlueSnowed(r As Number) As Boolean
+    r < 0.7
+
+Def MarkPass(t As Trail) As Trail
+    With(t, ClearedPass = True)
+
+Def MarkBlue(t As Trail) As Trail
+    With(t, ClearedBlue = True)
+
+Def Blizzard(t As Trail) As Trail
+    With(t, Food = Food(t) - 25, Misc = Misc(t) - 10, Bullets = Bullets(t) - 300, Miles = Miles(t) - 30 - 40 * Rnd())
+
+Def ColdInBlizzard(c As Number, r As Number) As Boolean
+    c < 18 + 2 * r
+
+Rem Driven back below the 950-mile mark, the odometer saves face.
+Def CheckPass(t As Trail) As Trail
+    If Miles(t) > 950 Then
+        t
+    Else
+        With(t, ShowPass = True)
+
+Rem ---- arrival -------------------------------------------------------
+Rem The last fortnight is only partly used: the fraction of it spent on
+Rem the trail fixes the day of the week and the date, and the unused
+Rem days' rations come back.
+
+Def ArrivalFraction(m2 As Number, m As Number) As Number
+    (TotalMiles() - m2) / (m - m2)
+
+Def ArrivalFood(t As Trail, frac As Number) As Trail
+    With(t, Food = Food(t) + (1 - frac) * MealCost(Eating(t)))
+
+Def WeekdayNames() As List Of String
+    { "MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY", "SUNDAY" }
+
+Def WeekdayName(frac As Number) As String
+    Let f9 = Floor(frac * 14) + 1
+    If f9 >= 8 Then
+        Nth(WeekdayNames(), f9 - 7)
+    Else
+        Nth(WeekdayNames(), f9)
+
+Rem Days since the March 29 start, counted in printed dates.
+Def ArrivalDays(turnNo As Number, frac As Number) As Number
+    turnNo * 14 + Floor(frac * 14)
+
+Def ArrivalDate(days As Number) As String
+    Select Case days
+        Case <= 124
+            "JULY " & Str(days - 93) & " 1847"
+        Case <= 155
+            "AUGUST " & Str(days - 124) & " 1847"
+        Case <= 185
+            "SEPTEMBER " & Str(days - 155) & " 1847"
+        Case <= 216
+            "OCTOBER " & Str(days - 185) & " 1847"
+        Case <= 246
+            "NOVEMBER " & Str(days - 216) & " 1847"
+        Case Else
+            "DECEMBER " & Str(days - 246) & " 1847"
+
+Rem Nothing arrives in Oregon City owing money to the ledger.
+Def ClampFinal(t As Trail) As Trail
+    With(t, Food = Max(0, Food(t)), Bullets = Max(0, Bullets(t)), Clothing = Max(0, Clothing(t)), Misc = Max(0, Misc(t)), Cash = Max(0, Cash(t)))

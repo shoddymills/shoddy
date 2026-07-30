@@ -1,0 +1,51 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem Net demo: a whole client/server conversation over TCP/IP, both ends in
+Rem one program on the loopback address. Run with
+Rem     mill run --allow-net tst/net-demo.shoddy
+Rem (the --allow-net flag is required — the network is a gated capability).
+Rem
+Rem It stands up a server, connects a client to it, and trades two
+Rem messages: the client sends a line, the server shouts it back in
+Rem upper case. Everything is single-threaded because the socket words
+Rem never block — after Connect the server's WaitAccept finds the pending
+Rem client at once, and WaitRecv polls (around Sleep) until a line lands.
+
+Include "../machines/net.shoddy"
+Include "../machines/str.shoddy"
+
+Def Main()
+    Print("Shoddy net demo - a loopback conversation")
+    Let port = 7420
+    Let srv = Listen(port)
+    Print("listening on 127.0.0.1:" & Str(port))
+
+    Let client = Connect("127.0.0.1", port)
+    Let server = WaitAccept(srv)
+    Print("connected; server sees peer " & Peer(server))
+    Print("")
+
+    Chat(client, server, "hello")
+    Chat(client, server, "shoddy speaks tcp")
+
+    Close(client)
+    Close(server)
+    Close(srv)
+    Print("")
+    Print("done")
+
+Rem One round trip: the client sends a line, the server reads it and
+Rem echoes it upper-cased, the client reads the reply. Chomp drops the
+Rem \r\n that SendLine adds, so the printed transcript is clean.
+Def Chat(client As Number, server As Number, msg As String)
+    SendLine(client, msg)
+    Let heard = Chomp(WaitRecv(server))
+    SendLine(server, Upper(heard))
+    Let reply = Chomp(WaitRecv(client))
+    Print("  client sent: " & msg)
+    Print("  server said: " & reply)
+
+Rem Strip the trailing line ending a text protocol puts on each line.
+Def Chomp(s As String) As String
+    Replace(Replace(s, "\r", ""), "\n", "")

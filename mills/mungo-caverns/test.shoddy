@@ -1,0 +1,253 @@
+Rem ===================================================================
+Rem test.shoddy -- headless checks on the pure model.
+Rem
+Rem   build.cmd test      (Windows)
+Rem   ./build.sh test     (Unix)
+Rem
+Rem Nothing here touches a terminal, so every check is reproducible.
+Rem Expected values are taken from the reference implementation, not
+Rem from this port: where a number looks arbitrary it was computed by
+Rem running the reference and writing down what came out.
+Rem
+Rem The rule modules are included as well as the core: the rules put
+Rem what they say on the game's output channel rather than printing, so
+Rem everything below the parser can be checked headless. mungo-caverns.shoddy
+Rem is deliberately not included -- it holds the turn loop, which reads.
+Rem ===================================================================
+
+Include "mungo-caverns-core.shoddy"
+Include "mungo-caverns-names.shoddy"        As Name
+
+Include "mungo-caverns-say.shoddy"          As Say
+Include "mungo-caverns-ask.shoddy"          As Ask
+Include "mungo-caverns-state.shoddy"        As State
+Include "mungo-caverns-look.shoddy"         As Look
+Include "mungo-caverns-travel-rules.shoddy" As Travel
+Include "mungo-caverns-curmudgeon.shoddy"   As Curmudgeon
+Include "mungo-caverns-pirate.shoddy"       As Pirate
+Include "mungo-caverns-clock.shoddy"        As Clock
+Include "mungo-caverns-closing.shoddy"      As Closing
+Include "mungo-caverns-hint.shoddy"         As Hint
+Include "mungo-caverns-score.shoddy"        As Score
+Include "mungo-caverns-verb.shoddy"         As Verb
+Include "mungo-caverns-liquid.shoddy"       As Liquid
+Include "mungo-caverns-fight.shoddy"        As Fight
+Include "mungo-caverns-act.shoddy"          As Act
+Include "mungo-caverns-save.shoddy"         As Save
+Include "mungo-caverns-magic.shoddy"        As Magic
+Include "mungo-caverns-turn.shoddy"         As Turn
+
+Rem ---- the generator ------------------------------------------------
+Rem The reference stream below is seed 1494912171, which is the seed
+Rem pinned by the recorded test logs.
+
+Def CheckLcg()
+    Rem the seed reduces mod 2^20 before anything else
+    Assert(SeedX(1494912171) = 691371, "SEED REDUCES MOD 2^20")
+
+    Rem a negative seed is corrected upward, not left negative
+    Assert(SeedX(0 - 1) = 1048575, "NEGATIVE SEED IS CORRECTED")
+    Assert(SeedX(0) = 0, "ZERO SEED STAYS ZERO")
+
+    Rem the first eight values of the stream, read-then-advance
+    Let x0 = SeedX(1494912171)
+    Let x1 = LcgNext(x0)
+    Let x2 = LcgNext(x1)
+    Let x3 = LcgNext(x2)
+    Assert(x0 = 691371, "STREAM 0")
+    Assert(x1 = 915370, "STREAM 1")
+    Assert(x2 = 379493, "STREAM 2")
+    Assert(x3 = 819916, "STREAM 3")
+
+    Rem the recurrence never leaves the ring
+    Assert(LcgNext(1048575) = 220494, "STEP FROM THE TOP OF THE RING")
+    Assert(LcgNext(0) = 221587, "STEP FROM ZERO")
+
+Def CheckRandRange()
+    Rem randrange truncates, so a low state gives zero for small ranges
+    Assert(RandRange(0, 100) = 0, "ZERO STATE DRAWS ZERO")
+    Assert(RandRange(1048575, 100) = 99, "TOP STATE DRAWS THE TOP OF THE RANGE")
+    Assert(RandRange(691371, 100) = 65, "RANDRANGE 100 AT THE REFERENCE SEED")
+    Assert(RandRange(691371, 26) = 17, "RANDRANGE 26 AT THE REFERENCE SEED")
+
+    Rem randrange(1000) is the widest range the game ever asks for
+    Rem and must still be exact
+    Assert(RandRange(1048575, 1000) = 999, "RANDRANGE 1000 STAYS EXACT")
+
+    Rem Pct is randrange(100) < n
+    Assert(Pct(691371, 66), "PCT ABOVE THE DRAW SUCCEEDS")
+    Assert(Not Pct(691371, 65), "PCT AT THE DRAW FAILS")
+
+Def CheckZzWord()
+    Rem five draws, second character forced to an apostrophe
+    Assert(ZzWord(1494912171) = "R'JUW", "ZZWORD AT THE REFERENCE SEED")
+    Assert(Len(ZzWord(1494912171)) = 5, "ZZWORD IS FIVE CHARACTERS")
+    Assert(Mid(ZzWord(12345), 2, 1) = "'", "ZZWORD ALWAYS HAS THE APOSTROPHE")
+
+    Rem seeding consumes exactly those five draws, so the state the game
+    Rem starts from is five steps along -- not the reduced seed itself
+    Assert(SeedState(1494912171) <> SeedX(1494912171), "SEEDING CONSUMES THE ZZWORD DRAWS")
+    Assert(SeedState(1494912171) = SeedAdvance(691371, 5), "SEED STATE IS FIVE STEPS ALONG")
+
+Rem ---- the data tables ------------------------------------------------
+Rem Sizes match the reference tables, so a regenerated cave that drifts
+Rem gets caught here
+Rem rather than three phases later.
+
+Def CheckTables()
+    Assert(Length(Messages()) = 213, "213 ARBITRARY MESSAGES")
+    Assert(Length(Locations()) = 185, "185 LOCATIONS")
+    Assert(Length(Objects()) = 70, "70 OBJECTS")
+    Assert(Length(Motions()) = 76, "76 MOTION WORDS")
+    Assert(Length(Actions()) = 58, "58 ACTION WORDS")
+    Assert(Length(Travels()) = 878, "878 TRAVEL ROWS INCLUDING THE DUMMY")
+    Assert(Length(Tkey()) = 185, "ONE TRAVEL KEY PER LOCATION")
+    Assert(Length(Hints()) = 10, "10 HINTS")
+    Assert(Length(Classes()) = 11, "11 SCORE CLASSES")
+    Assert(Length(TurnThresholds()) = 4, "4 TURN THRESHOLDS")
+    Assert(Length(Obituaries()) = 3, "3 OBITUARIES")
+    Assert(Length(CurmudgeonLocs()) = 6, "6 CURMUDGEON ROOMS, THE LAST THE PIRATE'S")
+
+    Rem LOC_NOWHERE is the only room with no travel rules at all
+    Assert(Nth(Tkey(), 1) = 0, "LOC_NOWHERE HAS NO TRAVEL")
+    Assert(Length(Filter(Tkey(), Fn(k) => k = 0)) = 1, "EVERY OTHER ROOM TRAVELS")
+
+    Rem spot the two ends of the message table
+    Assert(Nth(Messages(), 1) = "", "MESSAGE 0 IS EMPTY")
+    Assert(Tag(Nth(Locations(), 2)) = "LOC_START", "LOCATION 1 IS THE END OF ROAD")
+
+Rem ---- the parser ------------------------------------------------------
+
+Def CheckParser()
+    Rem five-letter significance: the classic case the game itself cites
+    Assert(Norm("northeast") = "north", "WORDS ARE CUT TO FIVE LETTERS")
+    Assert(Norm("NE") = "ne", "SHORT WORDS SURVIVE INTACT")
+    Assert(Norm("Enter") = "enter", "MATCHING IS CASE INSENSITIVE")
+
+    Rem the priority order the classifier tries kinds in
+    Assert(IsMotion(Classify("west", "X'YZZ")), "WEST IS A MOTION")
+    Assert(IsMotion(Classify("in", "X'YZZ")), "IN IS A MOTION")
+    Assert(IsObject(Classify("lamp", "X'YZZ")), "LAMP IS AN OBJECT")
+    Assert(IsObject(Classify("lante", "X'YZZ")), "LANTERN IS THE SAME OBJECT")
+    Assert(IsAction(Classify("carry", "X'YZZ")), "CARRY IS AN ACTION")
+    Assert(IsAction(Classify("take", "X'YZZ")), "TAKE IS A CARRY SYNONYM")
+    Assert(IsUnknown(Classify("qwerty", "X'YZZ")), "NONSENSE IS UNKNOWN")
+
+    Rem Vocabulary is stored already cut to five letters, so a synonym
+    Rem list may only hold stems: singular and plural curmudgeon collapse
+    Rem onto the one entry, and a longer spelling there would match nothing.
+    Assert(IsObject(Classify("curmudgeon", "X'YZZ")), "CURMUDGEON IS AN OBJECT")
+    Assert(IsObject(Classify("curmudgeons", "X'YZZ")), "THE PLURAL IS THE SAME OBJECT")
+
+    Rem the magic word is per-game, drawn from the seed
+    Assert(IsMagic(Classify("X'YZZ", "X'YZZ")), "THE MAGIC WORD IS RECOGNISED")
+    Assert(IsUnknown(Classify("X'YZZ", "Q'ABC")), "AND ONLY THIS GAME'S ONE")
+
+    Rem numbers are only numbers when they are entirely digits, because
+    Rem Val aborts on anything else and there is no catching it
+    Assert(IsNumeric_(Classify("826186526", "X'YZZ")), "A SEED ARGUMENT IS NUMERIC")
+    Assert(Not IsInteger("12ab"), "TRAILING RUBBISH IS NOT AN INTEGER")
+    Assert(Not IsInteger(""), "THE EMPTY STRING IS NOT AN INTEGER")
+    Assert(IsInteger("-5"), "A NEGATIVE IS AN INTEGER")
+
+    Rem XYZZY, PLUGH and PLOVER are motions, not verbs: they are spelled
+    Rem in the travel table as teleports, which is why saying one outside
+    Rem its room gets you the ordinary "you can't go that way" treatment.
+    Rem None of them is the magic word -- that is the random one the cave
+    Rem whispers at you, and it changes every game.
+    Assert(IsMotion(Classify("xyzzy", "X'YZZ")), "XYZZY IS A MOTION")
+    Assert(IsMotion(Classify("plugh", "X'YZZ")), "PLUGH IS A MOTION")
+    Assert(IsMotion(Classify("plove", "X'YZZ")), "PLOVER IS A MOTION")
+
+    Rem tokenizing
+    Assert(Length(Tokens("  get   lamp  ")) = 2, "EXTRA SPACES COLLAPSE")
+    Assert(WordAt(Tokens("get lamp"), 2) = "lamp", "SECOND WORD READS BACK")
+    Assert(WordAt(Tokens("inven"), 2) = "", "A MISSING SECOND WORD IS EMPTY")
+
+Rem Select Case on a variant needs a name to test each arm; these keep
+Rem the assertions above readable.
+Def IsMotion(k As Kind) As Boolean
+    Select Case k
+        Case KMotion(i)
+            True
+        Case Else
+            False
+
+Def IsObject(k As Kind) As Boolean
+    Select Case k
+        Case KObject(i)
+            True
+        Case Else
+            False
+
+Def IsAction(k As Kind) As Boolean
+    Select Case k
+        Case KAction(i)
+            True
+        Case Else
+            False
+
+Def IsMagic(k As Kind) As Boolean
+    Select Case k
+        Case KMagic
+            True
+        Case Else
+            False
+
+Def IsNumeric_(k As Kind) As Boolean
+    Select Case k
+        Case KNumeric(v)
+            True
+        Case Else
+            False
+
+Def IsUnknown(k As Kind) As Boolean
+    Select Case k
+        Case KUnknown
+            True
+        Case Else
+            False
+
+Rem ---- rules, without a console ---------------------------------------
+Rem The rules put what they say on the game's output channel, so a
+Rem rule is a function and can be checked like one: run it, read back
+Rem what it said. The recorded transcripts still grade the whole game;
+Rem these reach in and grade one rule at a time.
+
+Def SaidBy(g As Game) As String
+    Join(Output(g), "")
+
+Def CheckDarkness()
+    Rem Standing in the dark and moving into a lit room says nothing about
+    Rem the dark; the description is the room's own.
+    Let g = NewGame(1)
+    Assert(IsEmpty(Output(g)), "a new game has said nothing yet")
+
+Def CheckSpeaks()
+    Rem A rule that speaks leaves exactly what it said behind it, and a
+    Rem rule that does not leaves the channel alone.
+    Let g = NewGame(1)
+    Let spoke = VoicedId(g, MsgOkMan())
+    Assert(Length(Output(spoke)) = 1, "one message leaves one chunk")
+    Assert(Len(SaidBy(spoke)) = 3, "and the chunk carries the leading blank line")
+    Assert(IsEmpty(Output(VoicedId(g, 0 - 1))), "message -1 says nothing at all")
+    Assert(IsEmpty(Output(Voiced(g, ""))), "an empty message says nothing at all")
+
+Rem The bear announces himself before the room does. That ordering is
+Rem load-bearing, and checkable without playing.
+Def CheckBearFirst()
+    Let g = NewGame(1)
+    Let held = With(g, Held = { ObjNamed("BEAR") })
+    Assert(Length(Output(BearNote(held))) = 1, "the bear speaks when carried")
+    Assert(IsEmpty(Output(BearNote(g))), "and stays quiet when not")
+
+Def Main()
+    CheckLcg()
+    CheckRandRange()
+    CheckZzWord()
+    CheckTables()
+    CheckParser()
+    CheckDarkness()
+    CheckSpeaks()
+    CheckBearFirst()
+    Print("ALL MUNGO CAVERNS CHECKS PASSED")

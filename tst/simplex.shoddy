@@ -1,0 +1,47 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem Revised simplex demo — the supplement mix, via the simplex machine.
+Rem
+Rem Problem (primal):
+Rem   Minimize  Cost = 5x + 7y
+Rem   s.t.      2x + 1y >= 8     (Vitamin A)
+Rem             1x + 2y >= 10    (Vitamin C)
+Rem             x, y    >= 0
+Rem
+Rem The solver lives in machines/simplex.shoddy: Optimize takes a
+Rem Problem record (costs, constraint matrix, right-hand sides) and
+Rem returns a Solution record — status, the variables, the objective,
+Rem and the iteration count. This file only states the problem and
+Rem prints the answer: effects live at the edge.
+Rem
+Rem Build (once): build.cmd build
+Rem Run:          bin\mill weave tst\simplex.shoddy
+Rem               dotnet tst\simplex.dll
+Rem ==================================================================
+
+Include "../machines/simplex.shoddy"
+
+Def Main()
+    Print("REVISED SIMPLEX - SUPPLEMENT MIX (V3: STDLIB MATRIX + SEQ)")
+    Print("MINIMIZE 5X + 7Y  S.T.  2X+Y>=8, X+2Y>=10  (VIA THE DUAL)")
+    Let p = Problem(Costs = ToArray({ 5, 7 }), A = Mat(2, 2, { 2, 1, 1, 2 }), Rhs = ToArray({ 8, 10 }))
+    Let s = Optimize(p)
+    Let xs = X(s)
+    Rem Sensitivity: shadow prices (change in Cost per unit of Rhs) and
+    Rem reduced costs. Silent assertions - the printed report is golden.
+    Assert(Abs(Nth(DualPrices(s), 1) - 1) < 0.000001, "SHADOW PRICE, VITAMIN A")
+    Assert(Abs(Nth(DualPrices(s), 2) - 3) < 0.000001, "SHADOW PRICE, VITAMIN C")
+    Assert(Abs(Nth(Reduced(s), 1)) < 0.000001, "REDUCED COST X")
+    Assert(Abs(Nth(Reduced(s), 2)) < 0.000001, "REDUCED COST Y")
+    Print("STATUS: " & Status(s))
+    If Status(s) = "OPTIMAL" Then
+        Print("  BRAND A  X = " & Str(Nth(xs, 1)))
+        Print("  BRAND B  Y = " & Str(Nth(xs, 2)))
+        Print("  MIN COST   = " & Str(Cost(s)))
+        Print("CONSTRAINT CHECK")
+        Print("  VITAMIN A: 2X + Y  = " & Str(2 * Nth(xs, 1) + Nth(xs, 2)) & "  (>= 8)")
+        Print("  VITAMIN C: X + 2Y  = " & Str(Nth(xs, 1) + 2 * Nth(xs, 2)) & "  (>= 10)")
+    Else
+        Print("NO OPTIMUM FOUND")

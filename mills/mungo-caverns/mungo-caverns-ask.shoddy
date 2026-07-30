@@ -1,0 +1,106 @@
+Rem ===================================================================
+Rem mungo-caverns-ask.shoddy -- reading a line, and cutting it into words.
+Rem 
+Rem Words are significant to five letters, as they have
+Rem been since 1977. When stdin is not a terminal each command is echoed
+Rem back, which is what makes a transcript read as a dialogue.
+Rem ===================================================================
+
+Rem ---- input -------------------------------------------------------------
+
+Rem At end of input there is no command to echo, so the prompt is left
+Rem hanging, exactly as the recorded transcripts expect before the score.
+Rem End of input is not the same as an empty line, and the difference
+Rem decides whether to reprompt or to go and score the game. InputLine
+Rem reports it separately; this lifts its flat carrier into a proper answer.
+Type Line = Eof | Typed(String)
+
+Rem Two entry points. A yes/no prompt reads
+Rem directly, so a blank line reaches it and earns "Please answer
+Rem the question."; a command prompt goes through a skipping reader, which
+Rem throws blank lines away and reads again.
+Rem -o drops the prompt string, leaving only the blank line printed
+Rem before every read.
+Def OldStyleMode() As Boolean
+    Contains(Args(), "-o")
+
+Def Prompt() As String
+    If OldStyleMode() Then
+        "\n"
+    Else
+        "\n> "
+
+Def Ask() As Line
+    Skipping(AskRaw())
+
+Def Skipping(l As Line) As Line
+    Select Case l
+        Case Typed(s)
+            If Len(s) = 0 Then
+                Skipping(AskRaw())
+            Else
+                l
+        Case Else
+            l
+
+Def AskRaw() As Line
+    AskLine(InputLine(Prompt()))
+
+Rem A line beginning with "#" is swallowed whole: no echo,
+Rem no reply, and -- because the blank line is printed once before the read
+Rem loop rather than inside it -- no second prompt either. The recorded test
+Rem scripts are full of these, which is how they carry their own commentary.
+Rem The command reader then throws away a blank line and reads another,
+Rem so a stray newline mid-script costs a prompt and nothing else.
+Def AskLine(r As Array) As Line
+    If Nth(r, 1) Then
+        Eof()
+    Else
+        Let s = Nth(r, 2)
+        If Len(s) > 0 And Left(s, 1) = "#" Then
+            AskLine(InputLine(""))
+        Else
+            Print(s)
+            Typed(s)
+
+Def LineText(l As Line) As String
+    Select Case l
+        Case Typed(s)
+            s
+        Case Else
+            ""
+
+Rem "yes" and "y" both match on their own length, so
+Rem "yesterday" is a yes; that quirk is older than most of its players.
+Def YesNo(question As String, yes As String, no As String) As Boolean
+    Speak(question)
+    Answered(AskRaw(), question, yes, no)
+
+Rem A yes/no question gives up only at end of input. A blank line is not
+Rem that: the answer is read directly rather than through the blank-line-
+Rem skipping command reader, so nothing swallows it, and it earns the same
+Rem scolding as any other answer that is neither yes nor no.
+Def Answered(l As Line, question As String, yes As String, no As String) As Boolean
+    Select Case l
+        Case Eof
+            False
+        Case Typed(raw)
+            Replied(Lower(Trim(raw)), question, yes, no)
+
+Def Replied(reply As String, question As String, yes As String, no As String) As Boolean
+    If Len(reply) = 0 Then
+        SpeakId(MsgPleaseAnswer())
+        YesNo(question, yes, no)
+    Else
+        Let w = First(Tokens(reply))
+        If StartsWith("yes", w) Or StartsWith("y", w) Then
+            Speak(yes)
+            True
+        Else
+            If StartsWith("no", w) Or StartsWith("n", w) Then
+                Speak(no)
+                False
+            Else
+                SpeakId(MsgPleaseAnswer())
+                YesNo(question, yes, no)
+

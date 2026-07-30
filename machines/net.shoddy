@@ -1,0 +1,114 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem net.shoddy — Shoddy standard library: TCP/IP client and server
+Rem
+Rem A friendly layer over the raw TCP* builtins. Handles are Numbers,
+Rem like file handles. Payloads are Strings carrying one byte per
+Rem character (the same binary-safe convention as ReadFile).
+Rem
+Rem The builtins never block: TCPRecv returns "" when nothing has
+Rem arrived yet, TCPAccept returns 0 when no client is waiting. The
+Rem Wait* helpers below turn that into blocking-style convenience by
+Rem polling around Sleep, so a simple program reads as if it blocked
+Rem while a game loop or server can still poll by hand. Everything here
+Rem is effectful, like all i/o words — keep it at the edges.
+Rem
+Rem The whole family is gated: run the mill with --allow-net, or the
+Rem first TCP word raises "network is disabled".
+Rem
+Rem     Def Main()
+Rem         Let reply = Request("example.com", 80,
+Rem             "GET / HTTP/1.0\r\nHost: example.com\r\n\r\n")
+Rem         Print(reply)
+Rem ==================================================================
+
+Rem ---- client ------------------------------------------------------
+
+Def Connect(host As String, port As Number) As Number
+    TCPConnect(host, port)
+
+Def Send(sock As Number, s As String)
+    TCPSend(sock, s)
+
+Def SendLine(sock As Number, s As String)
+    TCPSend(sock, s & "\r\n")
+
+Rem Raw non-blocking read: up to n bytes, "" if none have arrived.
+Def Recv(sock As Number, n As Number) As String
+    TCPRecv(sock, n)
+
+Rem True once the peer has closed its end.
+Def Eof(sock As Number) As Boolean
+    TCPEof(sock)
+
+Rem True when a Recv (or Accept, on a listener) would find something now.
+Def Ready(sock As Number) As Boolean
+    TCPPoll(sock)
+
+Def Peer(sock As Number) As String
+    TCPPeer(sock)
+
+Def Close(sock As Number)
+    TCPClose(sock)
+
+Rem Poll (yielding 5ms between tries) until at least one chunk is
+Rem readable, then return it. Returns "" once the peer has closed.
+Def WaitRecv(sock As Number) As String
+    If TCPPoll(sock) Then
+        TCPRecv(sock, 4096)
+    Else
+        Sleep(5)
+        WaitRecv(sock)
+
+Rem Read the whole response, chunk by chunk, until the peer closes.
+Def RecvAll(sock As Number) As String
+    Let chunk = WaitRecv(sock)
+    If chunk = "" Then
+        ""
+    Else
+        chunk & RecvAll(sock)
+
+Rem Connect, send one message, read the full reply, close. The common
+Rem request/response shape, with the handle managed for you.
+Def Request(host As String, port As Number, msg As String) As String
+    Let s = Connect(host, port)
+    Send(s, msg)
+    Let reply = RecvAll(s)
+    Close(s)
+    reply
+
+Rem A toy HTTP/1.0 GET, to prove the stack end to end.
+Def HttpGet(host As String, path As String) As String
+    Request(host, 80,
+        "GET " & path & " HTTP/1.0\r\nHost: " & host & "\r\n\r\n")
+
+Rem ---- server ------------------------------------------------------
+
+Rem Loopback only — the safe default. Reachable from this machine alone.
+Def Listen(port As Number) As Number
+    TCPListen("127.0.0.1", port)
+
+Rem Bind an explicit address to go wider, e.g. ListenOn("0.0.0.0", 8080).
+Def ListenOn(host As String, port As Number) As Number
+    TCPListen(host, port)
+
+Rem Non-blocking accept: a connection handle, or 0 if none is waiting.
+Def Accept(server As Number) As Number
+    TCPAccept(server)
+
+Rem Poll (yielding 5ms between tries) until a client connects.
+Def WaitAccept(server As Number) As Number
+    Let c = TCPAccept(server)
+    If c = 0 Then
+        Sleep(5)
+        WaitAccept(server)
+    Else
+        c
+
+Rem Accept one client, hand the connection to handler, then close it.
+Def Serve1(server As Number, handler As [ Number -- ])
+    Let conn = WaitAccept(server)
+    Call(handler, conn)
+    Close(conn)

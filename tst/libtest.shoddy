@@ -1,0 +1,358 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem Test program for the standard library (seq.shoddy + matrix.shoddy)
+Rem
+Rem Build (once): build.cmd build
+Rem Run:          bin\mill run tst\libtest.shoddy
+
+Include "../machines/matrix.shoddy"
+Include "../machines/str.shoddy"
+Include "../machines/money.shoddy"
+Include "../machines/file.shoddy"
+Include "../machines/recio.shoddy"
+Include "../machines/dict.shoddy"
+Include "../machines/stats.shoddy"
+Include "../machines/isam.shoddy"
+
+Rem ---- top-level constants -------------------------------------------
+
+Let goldenRatio = (1 + Sqr(5)) / 2
+Let smallPrimes = { 2, 3, 5, 7 }
+Let libTag = "SHODDY-" & Str(Round(goldenRatio * 100))
+
+Def PhiSquared() As Number
+    goldenRatio * goldenRatio
+
+Rem ---- sum types + nested patterns ----------------------------------
+
+Type Shape = Circle(r) | Rect(w, h)
+Type Option = Some(v) | None
+
+Def Area(s As Shape) As Number
+    Select Case s
+        Case Circle(r)
+            Pi() * r ^ 2
+        Case Rect(w, h)
+            w * h
+
+Def Halve(n As Number) As Option
+    If n Mod 2 = 0 Then
+        Some(n / 2)
+    Else
+        None()
+
+Def ShowOpt(o As Option) As String
+    Select Case o
+        Case Some(v) Where v >= 100
+            "SOME BIG " & Str(v)
+        Case Some(v)
+            "SOME " & Str(v)
+        Case None
+            "NONE"
+
+Def NestSum(p As Pair) As Number
+    Select Case p
+        Case Pair(Pair(a, b), c)
+            a + b + c
+        Case Pair(_, _)
+            0
+
+Def Describe(n As Number) As String
+    Select Case n
+        Case 0
+            "ZERO"
+        Case 1, 2, 3
+            "SMALL"
+        Case 4 To 10
+            "MEDIUM"
+        Case Is > 10
+            "BIG"
+        Case Else
+            "NEGATIVE"
+
+Def PairInfo(v As Pair) As String
+    Select Case v
+        Case Pair(a, b) Where a = b
+            "TWINS"
+        Case Pair(a, b) Where a > b
+            "DESCENDING: " & Str(a) & "," & Str(b)
+        Case Pair(a, b)
+            "ASCENDING"
+
+Rem 20-byte Pair records for the recio tests: 12-byte name + number
+Def RdPair(f As Number) As Pair
+    Pair(GetStr(f, 12), GetNum(f))
+
+Def WrPair(f As Number, p As Pair)
+    PutStr(f, Fst(p), 12)
+    PutNum(f, Snd(p))
+
+Def Main()
+    Print("--- ROOT LET ---")
+    Print(Round(goldenRatio * 1000))                Rem 1618
+    Print(Contains(smallPrimes, 5))                 Rem True (global in arg position)
+    Print(libTag)                                   Rem SHODDY-162
+    Assert(Sum(smallPrimes) = 17, "GLOBAL LIST AS ARGUMENT")
+    Assert(Round(PhiSquared() * 1000) = Round((goldenRatio + 1) * 1000), "GLOBAL INSIDE DEF")
+    Print("--- SEQ ---")
+    Print(Any({ 1, 3, 5 }, >(4)))                   Rem True
+    Print(All({ 2, 4 }, >(1)))                      Rem True
+    Print(CountIf({ 1, 2, 3, 4, 5 }, >(2)))         Rem 3
+    Print(Contains({ 1, 2, 3 }, 2))                 Rem True
+    Print(IndexOf({ 5, 6, 7 }, 7))                  Rem 3
+    Print(Taken({ 1, 2, 3, 4, 5 }, 3))              Rem [ 1 2 3 ]
+    Print(DropN({ 1, 2, 3, 4, 5 }, 3))              Rem [ 4 5 ]
+    Print(Append({ 1, 2 }, 3))                      Rem [ 1 2 3 ]
+    Print(Last({ 1, 2, 9 }))                        Rem 9
+    Print(Flatten({ { 1, 2 }, { 3 }, { 4, 5 } }))   Rem [ 1 2 3 4 5 ]
+    Print(Sort({ 3, 1, 4, 1, 5, 9, 2, 6 }))         Rem [ 1 1 2 3 4 5 6 9 ]
+    Print(ZipWith({ 1, 2, 3 }, { 10, 20, 30 }, +))  Rem [ 11 22 33 ]
+    Print(First(Zip({ 1, 2 }, { "A", "B" })))       Rem Pair(Fst = 1, Snd = "A")
+    Print("--- MATRIX ---")
+    Let a = Mat(2, 2, { 1, 2, 3, 4 })
+    Let b = Mat(2, 2, { 5, 6, 7, 8 })
+    Print(MatGet(a, 2, 1))                          Rem 3
+    Print("A*B:")
+    MatShow(MatMul(a, b))                           Rem 19 22 / 43 50
+    Print("TRANSP(A):")
+    MatShow(Transp(a))                              Rem 1 3 / 2 4
+    Print("IDENT(3):")
+    MatShow(Ident(3))
+    Print(MatVec(a, ToArray({ 1, 1 })))             Rem Array(3, 7)
+    Print("A+B:")
+    MatShow(MatAdd(a, b))                           Rem 6 8 / 10 12
+    Print("A-B:")
+    MatShow(MatSub(a, b))                           Rem -4 -4 / -4 -4
+    Print(VAdd(ToArray({ 1, 2, 3 }), ToArray({ 10, 20, 30 })))   Rem Array(11, 22, 33)
+    Print(VMul(ToArray({ 1, 2, 3 }), ToArray({ 4, 5, 6 })))      Rem Array(4, 10, 18)
+    Print("OUTER({1,2,3},{4,5}):")
+    MatShow(Outer(ToArray({ 1, 2, 3 }), ToArray({ 4, 5 })))      Rem 4 5 / 8 10 / 12 15
+    Print(MatGet(MatSet(a, 1, 2, 99), 1, 2))        Rem 99 (pure update)
+    Print(MatGet(a, 1, 2))                          Rem 2 (original untouched)
+    Print("--- STR ---")
+    Print(Instr("HELLO WORLD", "WORLD"))            Rem 7
+    Print(Split("A,B,C", ","))                      Rem [ "A" "B" "C" ]
+    Print(Join({ "A", "B", "C" }, "-"))             Rem a-b-c
+    Print(Trim("  HI  ") & "!")                     Rem hi!
+    Print(Replace("MISSISSIPPI", "SS", "TT"))       Rem mittittippi
+    Print(StartsWith("FOOBAR", "FOO"))              Rem True
+    Print(StrRep("AB", 3))                          Rem ababab
+    Print("LINE1\nLINE2")                           Rem escapes work
+    Print("--- COMMODITY ---")
+    Print(2 ^ 10)                                   Rem 1024
+    Let n = 2
+    Print(-n ^ 2)                                   Rem -4 (basic precedence)
+    Print(2 ^ 3 ^ 2)                                Rem 512 (right-assoc)
+    Print(Sin(0) + Cos(0))                          Rem 1
+    Print(Round(Exp(Log(7))))                       Rem 7
+    Print(Round(100 * Sin(Pi() / 6)))               Rem 50
+    Let e = { }
+    Print(Not IsEmpty(e) And First(e) > 0)          Rem False (short-circuit)
+    Print(IsEmpty(e) Or First(e) > 0)               Rem True (short-circuit)
+    Print(Rnd() >= 0 And Rnd() < 1)                 Rem True
+    Print("--- SELECT CASE ---")
+    Print(Map({ 0, 2, 7, 99, -5 }, Describe))       Rem zero small medium big negative
+    Assert(Join(Split("X;Y;Z", ";"), ";") = "X;Y;Z", "SPLIT/JOIN ROUNDTRIP")
+    Assert(Describe(10) = "MEDIUM", "TO RANGE IS INCLUSIVE")
+    Print(PairInfo(Pair(3, 3)))                     Rem twins
+    Print(PairInfo(Pair(9, 2)))                     Rem descending: 9,2
+    Print(PairInfo(Pair(1, 5)))                     Rem ascending
+    Assert(PairInfo(Pair(7, 7)) = "TWINS", "PATTERN GUARDS")
+    Print("--- MONEY ---")
+    Let price = Dollars(19.99)
+    Print(MoneyFmt(price))                              Rem $19.99
+    Print(MoneyFmt(MoneyAdd(price, Dollars(0.01))))     Rem $20.00
+    Print(0.1 + 0.2 = 0.3)                              Rem False - doubles!
+    Print(MoneyAdd(Dollars(0.1), Dollars(0.2)) = Dollars(0.3))  Rem True
+    Print(MoneyFmt(MoneyMul(Dollars(9.99), 3)))         Rem $29.97
+    Print(Map(MoneySplit(Dollars(10), 3), MoneyFmt))    Rem [ "$3.34" "$3.33" "$3.33" ]
+    Print(MoneyFmt(MoneySub(Dollars(5), Dollars(7.5)))) Rem -$2.50
+    Assert(MoneySum(MoneySplit(Dollars(10), 3)) = Dollars(10), "SPLIT LOSES PENNIES")
+    Assert(MoneyVal("12.34") = Money(1234), "MONEYVAL")
+    Print("--- FILE I/O ---")
+    WriteFile("_iotest.tmp", "HELLO\nFILE\n")
+    Print(FileExists("_iotest.tmp"))                    Rem True
+    Print(ReadLines("_iotest.tmp"))                     Rem [ "HELLO" "FILE" ]
+    AppendLine("_iotest.tmp", "MORE")
+    Print(Length(ReadLines("_iotest.tmp")))             Rem 3
+    WriteLines("_iotest.tmp", { "A", "B", "C" })
+    Assert(Join(ReadLines("_iotest.tmp"), ",") = "A,B,C", "LINES ROUNDTRIP")
+    Assert(ReadFile("_iotest.tmp") = "A\nB\nC\n", "RAW CONTENT")
+    DeleteFile("_iotest.tmp")
+    Print(FileExists("_iotest.tmp"))                    Rem False
+    Print("--- BINARY I/O ---")
+    Rem Fixed 20-byte records: Name is a 12-byte field, Score 8 bytes.
+    Rem Record k starts at byte position 1 + (k - 1) * 20.
+    Let f = BOpen("_bin.tmp")
+    PutStr(f, "ADA", 12)
+    PutNum(f, 96)
+    PutStr(f, "GRACE", 12)
+    PutNum(f, 91)
+    Seek(f, 21)                                         Rem jump to record 2
+    Print(GetStr(f, 12))                                Rem grace
+    Print(GetNum(f))                                    Rem 91
+    Seek(f, 1)                                          Rem back to record 1
+    Print(GetStr(f, 12) & "/" & Str(GetNum(f)))         Rem ada/96
+    Print(BSize(f))                                     Rem 40
+    Seek(f, 13)                                         Rem overwrite in place
+    PutNum(f, 100)
+    Seek(f, 13)
+    Assert(GetNum(f) = 100, "IN-PLACE UPDATE")
+    Assert(BPos(f) = 21, "GET ADVANCES POSITION")
+    PutBool(f, True)
+    Seek(f, 21)
+    Assert(GetBool(f), "BOOL ROUNDTRIP")
+    BClose(f)
+    DeleteFile("_bin.tmp")
+    Print("--- RECIO ---")
+    Let f2 = BOpen("_rec.tmp")
+    PutRec(f2, 1, 20, WrPair, Pair("ADA", 96))
+    AppendRec(f2, 20, WrPair, Pair("GRACE", 91))
+    AppendRec(f2, 20, WrPair, Pair("LIN", 78))
+    Print(RecCount(f2, 20))                             Rem 3
+    Print(Snd(GetRec(f2, 2, 20, RdPair)))               Rem 91
+    PutRec(f2, 2, 20, WrPair, Pair("GRACE", 100))       Rem update in place
+    Print(Map(AllRecs(f2, 20, RdPair), Snd))            Rem [ 96 100 78 ]
+    Assert(Fst(GetRec(f2, 3, 20, RdPair)) = "LIN", "RECIO READBACK")
+    Assert(RecCount(f2, 20) = 3, "UPDATE DID NOT GROW FILE")
+    BClose(f2)
+    DeleteFile("_rec.tmp")
+    Print("--- SUM TYPES + NESTED PATTERNS ---")
+    Print(Round(Area(Circle(2)) * 100))                 Rem 1257
+    Print(Area(Rect(3, 4)))                             Rem 12
+    Print(ShowOpt(Halve(10)))                           Rem Some 5
+    Print(ShowOpt(Halve(7)))                            Rem None
+    Print(ShowOpt(Some(250)))                           Rem Some big 250
+    Print(NestSum(Pair(Pair(1, 2), 3)))                 Rem 6 (nested match)
+    Print(NestSum(Pair(5, 6)))                          Rem 0 (falls through)
+    Assert(Area(Rect(3, 4)) = 12, "SUM TYPE DISPATCH")
+    Assert(Halve(7) = None(), "ZERO-FIELD VARIANT EQUALITY")
+    Print("--- DICT ---")
+    Let d1 = DictPut(DictPut({ }, "ADA", 96), "LIN", 78)
+    Print(DictGet(d1, "ADA"))                           Rem 96
+    Print(DictHas(d1, "BOB"))                           Rem False
+    Print(DictGetOr(d1, "BOB", 0))                      Rem 0
+    Let d2 = DictPut(d1, "ADA", 100)                    Rem replace
+    Print(DictGet(d2, "ADA"))                           Rem 100
+    Print(Length(d2))                                   Rem 2 (no dup key)
+    Print(DictKeys(d2))                                 Rem [ "ADA" "LIN" ]
+    Assert(Not DictHas(DictDel(d2, "ADA"), "ADA"), "DICTDEL")
+    Assert(DictGet(d2, "LIN") = 78, "PUT PRESERVES OTHERS")
+    Print("--- STATS: DESCRIPTIVE ---")
+    Print(Sum({ 1, 2, 3, 4 }))                          Rem 10
+    Print(Product({ 1, 2, 3, 4 }))                      Rem 24
+    Print(Maximum({ 3, 9, 4 }))                         Rem 9
+    Print(Minimum({ 3, 9, 4 }))                         Rem 3
+    Print(Mean({ 2, 4, 6 }))                            Rem 4
+    Print(Average({ 2, 4, 6 }))                         Rem 4 (the alias)
+    Assert(Sum({ 1, 2 }) = 3, "SUM BROKEN")
+    Print(WeightedMean({ 80, 90 }, { 1, 3 }))           Rem 87.5
+    Print(Round(GeoMean({ 2, 8 })))                     Rem 4
+    Print(Round(HarmonicMean({ 2, 6, 6 }) * 10))        Rem 36
+    Print(Median({ 1, 3, 3, 6, 7, 8, 9 }))              Rem 6
+    Print(Median({ 1, 2, 3, 4 }))                       Rem 2.5
+    Print(Quantile({ 1, 2, 3, 4 }, 0.25))               Rem 1.75 (R type 7)
+    Print(Percentile({ 1, 2, 3, 4 }, 75))               Rem 3.25
+    Print(Iqr({ 1, 2, 3, 4 }))                          Rem 1.5
+    Print(RangeOf({ 3, 9, 4 }))                         Rem 6
+    Let sd8 = { 2, 4, 4, 4, 5, 5, 7, 9 }
+    Print(VarP(sd8))                                    Rem 4 (population sigma exactly 2)
+    Print(StdDevP(sd8))                                 Rem 2
+    Print(Var({ 4, 7, 13, 16 }))                        Rem 30 (sample, n-1)
+    Print(Round(StdDev({ 4, 7, 13, 16 }) * 1000))       Rem 5477
+    Print(Round(StdErr({ 2, 4, 6 }) * 1000))            Rem 1155
+    Print(Mad({ 1, 1, 2, 2, 4, 6, 9 }))                 Rem 1
+    Print(Round(Skewness(sd8) * 100000))                Rem 65625 (scipy bias=True)
+    Print(Skewness({ 1, 2, 3 }))                        Rem 0 (symmetric)
+    Print(Round(Kurtosis({ 1, 2, 3, 4, 5 }) * 10))      Rem -13 (excess)
+    Print(ZScore(7, 5, 2))                              Rem 1
+    Print(ZScores({ 2, 4, 6 }))                         Rem [ -1 0 1 ]
+    Print(Outliers({ 1, 2, 3, 4, 100 }))                Rem [ 100 ] (1.5 x IQR fences)
+    Print(OutliersZ({ 10, 10, 10, 10, 500 }, 1.5))      Rem [ 500 ]
+    Print(Ecdf({ 1, 2, 3, 4 }, 2.5))                    Rem 0.5
+    Let fr = Freq({ "A", "B", "A" })
+    Print(DictGet(fr, "A"))                             Rem 2
+    Print(Map(fr, Snd))                                 Rem [ 2 1 ] (first-seen order)
+    Print(DictGet(RelFreq({ "A", "B", "A", "A" }), "A"))    Rem 0.75
+    Print(Modes({ 1, 2, 2, 3, 3, 4 }))                  Rem [ 2 3 ] - both, never one of a tie
+    Print(Cov({ 1, 2, 3 }, { 2, 4, 6 }))                Rem 2
+    Print(Correl({ 1, 2, 3 }, { 6, 4, 2 }))             Rem -1
+    Print(Ranks({ 10, 20, 20, 30 }))                    Rem [ 1 2.5 2.5 4 ] (ties average)
+    Print(Spearman({ 1, 2, 3 }, { 1, 8, 27 }))          Rem 1 (monotone, not linear)
+    Let fit = LinFit({ 1, 2, 3 }, { 3, 5, 7 })
+    Print(Slope(fit))                                   Rem 2
+    Print(Intercept(fit))                               Rem 1
+    Print(R2(fit))                                      Rem 1
+    Print("--- STATS: INFERENCE ---")
+    Rem known answers cross-checked against R / scipy
+    Print(NormCdf(0))                                   Rem 0.5
+    Print(Round(NormCdf(1.96) * 10000))                 Rem 9750
+    Print(Round(NormInv(0.975) * 10000))                Rem 19600
+    Assert(Abs(TInv(0.975, 10) - 2.228138852) < 0.000001, "TINV VS TABLES")
+    Assert(Abs(Chi2Cdf(3.841458820694124, 1) - 0.95) < 0.000000001, "CHI2CDF AT THE 95TH")
+    Assert(Abs(TCdf(0, 7) - 0.5) < 0.000000000001, "TCDF SYMMETRY")
+    Assert(Abs(FCdf(1, 2, 2) - 0.5) < 0.000000000001, "FCDF CLOSED FORM")
+    Let t1 = TTest1({ 1, 2, 3, 4, 5 }, 3)
+    Print(Stat(t1))                                     Rem 0
+    Print(Df(t1))                                       Rem 4
+    Print(PVal(t1))                                     Rem 1
+    Let t2 = TTest2({ 1, 2, 3 }, { 4, 5, 6 })
+    Print(Round(Stat(t2) * 10000))                      Rem -36742
+    Print(Df(t2))                                       Rem 4
+    Print(Round(PVal(t2) * 1000))                       Rem 21 (R: 0.02131)
+    Let tp = TTestPaired({ 1, 2, 3 }, { 2, 4, 3 })
+    Print(Round(Stat(tp) * 10000))                      Rem -17321
+    Print(Round(PVal(tp) * 10000))                      Rem 2254 (R: 0.2254)
+    Print(PVal(ZTest1({ 2, 4, 6 }, 4, 2)))              Rem 1 (z = 0)
+    Print(Round(PVal(ZTest1({ 2, 4, 6 }, 2, Sqr(3))) * 100000))     Rem 4550 (z = 2)
+    Let av = Anova({ { 1, 2, 3 }, { 2, 3, 4 }, { 3, 4, 5 } })
+    Print(Stat(av))                                     Rem 3
+    Print(Df(av))                                       Rem 2 (between; within = 6)
+    Print(Round(PVal(av) * 1000))                       Rem 125
+    Let gof = ChiSqGof({ 50, 30, 20 }, { 40, 40, 20 })
+    Print(Stat(gof))                                    Rem 5
+    Print(Df(gof))                                      Rem 2
+    Print(Round(PVal(gof) * 10000))                     Rem 821 (e^-2.5)
+    Let ind = ChiSqTest({ { 20, 30 }, { 30, 20 } })
+    Print(Stat(ind))                                    Rem 4
+    Print(Df(ind))                                      Rem 1
+    Print(Round(PVal(ind) * 100000))                    Rem 4550 (the 2-sigma constant)
+    Print(PVal(TwoPropZTest(30, 100, 30, 100)))         Rem 1 (identical proportions)
+    Assert(PVal(TwoPropZTest(40, 100, 25, 100)) < 0.05, "TWO-PROP DETECTS A GAP")
+    Let ci = MeanCI({ 2, 4, 6 }, 0.95)
+    Print(Round(Fst(ci) * 1000))                        Rem -968
+    Print(Round(Snd(ci) * 1000))                        Rem 8968
+    Let pci = PropCI(40, 100, 0.95)
+    Print(Round(Fst(pci) * 10000))                      Rem 3040
+    Print(Round(Snd(pci) * 10000))                      Rem 4960
+    Print(CohenD({ 2, 4, 6 }, { 1, 3, 5 }))             Rem 0.5
+    Assert(PVal(TTest1({ 5.1, 4.9, 5.0, 5.2, 4.8 }, 5)) > 0.9, "NULL DATA STAYS NULL")
+    Print("--- ISAM ---")
+    Let db0 = IsamOpen("_isam.tmp", 20, RdPair, WrPair, Fst)
+    Let db3 = IsamInsert(IsamInsert(IsamInsert(db0, Pair("LIN", 78)), Pair("ADA", 96)), Pair("BOB", 55))
+    Print(IsamCount(db3))                               Rem 3
+    Print(Snd(IsamGet(db3, "ADA")))                     Rem 96
+    Print(Map(IsamAll(db3), Fst))                       Rem [ "ADA" "BOB" "LIN" ] - key order
+    Let db4 = IsamUpdate(db3, Pair("BOB", 70))
+    Print(Snd(IsamGet(db4, "BOB")))                     Rem 70
+    Let db5 = IsamDelete(db4, "ADA")
+    Print(IsamHas(db5, "ADA"))                          Rem False
+    Let db6 = IsamInsert(db5, Pair("ZOE", 88))          Rem reuses ada's slot
+    Print(Map(IsamAll(db6), Fst))                       Rem [ "BOB" "LIN" "ZOE" ]
+    Assert(BSize(Fh(db6)) = 63, "SLOT REUSE - FILE DID NOT GROW")
+    Print(Fst(IsamNext(db6, "BOB")))                    Rem lin
+    Print(Fst(IsamPrev(db6, "LIN")))                    Rem bob
+    Print(Map(IsamRange(db6, "B", "M"), Fst))           Rem [ "BOB" "LIN" ]
+    Print(Fst(IsamFirst(db6)) & ".." & Fst(IsamLast(db6)))  Rem bob..zoe
+    IsamClose(db6)
+    Rem reopen: the index is read back from the companion .idx file
+    Let db7 = IsamOpen("_isam.tmp", 20, RdPair, WrPair, Fst)
+    Print(Map(IsamAll(db7), Fst))                       Rem [ "BOB" "LIN" "ZOE" ]
+    Assert(Snd(IsamGet(db7, "ZOE")) = 88, "ISAM PERSISTENCE")
+    Assert(IsamCount(db7) = 3, "ISAM REOPEN COUNT")
+    Assert(IsamGetOr(db7, "NOPE", Pair("", 0)) = Pair("", 0), "ISAMGETOR")
+    IsamClose(db7)
+    DeleteFile("_isam.tmp")
+    DeleteFile("_isam.tmp.idx")
+    Print("ALL ASSERTIONS PASSED")

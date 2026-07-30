@@ -1,0 +1,122 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+REM From: https://jamesmccaffreyblog.com/2023/09/04/neural-network-regression-from-scratch-with-batch-training-using-csharp/
+
+Rem ==================================================================
+Rem demographics.shoddy — PREDICT income interactively. Deserializes
+Rem the trained 8-100-1 model that demographics-train.shoddy wrote to
+Rem dat/people-model.bin (binary, bit-exact, self-describing — see
+Rem NetLoadBin in neural.shoddy), then prompts for a person — sex,
+Rem age, state, political leaning — builds the model's 8-element input
+Rem vector (age scaled by 100, state and politics one-hot), and prints
+Rem the predicted income. Answer N at the ANOTHER prompt to exit.
+Rem
+Rem Build and run: build.cmd run          (Windows)
+Rem                ./build.sh run          (Unix)
+Rem Just run:      dotnet bin\demographics.dll
+Rem
+Rem Run from THIS directory — the model path dat/people-model.bin is
+Rem relative. No model yet? Train one first (about nine minutes):
+Rem build.cmd train (or ./build.sh train).
+Rem
+Rem The model was trained on 25-66 year olds from Michigan, Nebraska,
+Rem and Oklahoma with incomes scaled by $100,000; predictions outside
+Rem that neighborhood are extrapolation and priced accordingly.
+Rem ==================================================================
+
+Include "neural.shoddy"
+Include "math.shoddy"
+Include "money.shoddy"
+
+Rem ---- prompting (each word re-asks until the answer parses) ---------
+
+Def Digits(s As String) As Boolean
+    All(Range(1, Len(s)), Fn(k) => Instr("0123456789", Mid(s, k, 1)) > 0)
+
+Def Ask(prompt As String) As String
+    Upper(Trim(Input(prompt)))
+
+Def AskSex() As Number
+    Let s = Ask("SEX (M/F): ")
+    If s = "M" Then
+        0
+    Else
+        If s = "F" Then
+            1
+        Else
+            AskSex()
+
+Def AskAge() As Number
+    Let s = Ask("AGE (YEARS): ")
+    If Len(s) > 0 And Digits(s) Then
+        Val(s)
+    Else
+        AskAge()
+
+Rem 1 = Michigan, 2 = Nebraska, 3 = Oklahoma — the one-hot order of
+Rem the training data's columns.
+Def AskState() As Number
+    Let s = Ask("STATE (MICHIGAN/NEBRASKA/OKLAHOMA): ")
+    If s = "MICHIGAN" Or s = "MI" Then
+        1
+    Else
+        If s = "NEBRASKA" Or s = "NE" Then
+            2
+        Else
+            If s = "OKLAHOMA" Or s = "OK" Then
+                3
+            Else
+                AskState()
+
+Rem 1 = conservative, 2 = moderate, 3 = liberal — likewise.
+Def AskPolitics() As Number
+    Let s = Ask("POLITICS (CONSERVATIVE/MODERATE/LIBERAL): ")
+    If s = "CONSERVATIVE" Or s = "C" Then
+        1
+    Else
+        If s = "MODERATE" Or s = "M" Then
+            2
+        Else
+            If s = "LIBERAL" Or s = "L" Then
+                3
+            Else
+                AskPolitics()
+
+Rem ---- the input vector ----------------------------------------------
+
+Rem Kron (from matrix.shoddy) is the equality indicator, so a one-hot
+Rem is just Kron mapped along the positions.
+Def OneHot(k As Number, n As Number) As List Of Number
+    Map(Range(1, n), Fn(i) => Kron(i, k))
+
+Def PersonX(sex As Number, age As Number, state As Number, pol As Number) As Array Of Number
+    ToArray(Concat(Concat({ sex, age / 100 }, OneHot(state, 3)), OneHot(pol, 3)))
+
+Rem ---- the loop (state threads through the self tail call) -----------
+
+Def PredictLoop(net As Net)
+    Print("")
+    Let x = PersonX(AskSex(), AskAge(), AskState(), AskPolitics())
+    Let y = NetOut(net, x)
+    Print("PREDICTED INCOME = " & Str(RoundTo(y, 5)) & "  (" & MoneyFmt(Dollars(y * 100000)) & ")")
+    Print("")
+    If Ask("ANOTHER (Y/N)? ") = "Y" Then
+        PredictLoop(net)
+
+Def Main()
+    Print("")
+    Print("NEURAL NETWORK REGRESSION - SHODDY - PREDICTOR")
+    Print("PREDICT INCOME FROM SEX, AGE, STATE, POLITICAL LEANING")
+
+    Print("")
+    If Not FileExists("dat/people-model.bin") Then
+        Error("NO MODEL AT dat/people-model.bin - TRAIN ONE FIRST: build.cmd train (OR ./build.sh train)")
+    Print("LOADING MODEL FROM dat/people-model.bin")
+    Let net = NetLoadBin("dat/people-model.bin")
+    Print("LOADED A " & Str(Cols(W1(net))) & "-" & Str(Rows(W1(net))) & "-" & Str(Rows(W2(net))) & " NETWORK")
+
+    PredictLoop(net)
+
+    Print("")
+    Print("END DEMO")

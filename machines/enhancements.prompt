@@ -1,0 +1,779 @@
+CLAUDE:  DISREGARD THIS FILE!!!!
+
+
+# Two builtins for unambiguous input in the Shoddy runtime
+
+Repo: `c:\github\shoddy`. Runtime is `src/Shoddy.Runtime/Engine.cs`; the object
+model is `src/Shoddy.Runtime/Model.cs`.
+
+## The problem, shared by both
+
+Two input builtins use the empty string as a sentinel for conditions that are
+not mutually exclusive with a legitimate return value, so callers cannot tell
+apart outcomes that demand opposite responses.
+
+**`INPUT`** (search for `case "INPUT"`) ends with `PushStr(In.ReadLine() ?? "")`.
+End-of-input and a blank line are the same value. A program reading a redirected
+script must pick one meaning: treat blank as EOF and lose the ability to
+reprompt on an empty line, or treat it as text and spin forever at the real end
+of the stream.
+
+**`INKEY`** (search for `case "INKEY"`) returns `""` for *three* outcomes:
+nothing pending yet (`!Console.KeyAvailable`), end of input (`In.Peek() < 0` on
+the redirected branch), and a key carrying no character (`k.KeyChar == '\0'` —
+Shift, Ctrl, Home, F5…). The first two mean opposite things: "poll again shortly"
+versus "there will never be another key." So the natural poll loop —
+
+```shoddy
+If k = "" Then <keep polling> Else <handle k>
+```
+
+— is right interactively and **hangs forever** under redirected input. That
+undercuts the reason the redirected branch exists: its comment says it keeps
+`INKEY` testable headless, but you can feed such a program a script and never
+feed it the end of one.
+
+`INKEY` is the more urgent of the two: `INPUT`'s ambiguity costs a wrong answer,
+`INKEY`'s costs a hang, and it lands on headless test runs where a hang is most
+expensive.
+
+## Why these return Arrays and not unions
+
+A builtin **cannot construct a discriminated-union value**. Union variants are
+`VType.Rec` values and `Value.OfRec` requires a `TypeDef`, which the parser
+builds from `Type` declarations in Shoddy source — builtins run below that layer
+and have no handle on the program's type table. The runtime already documents
+this; read the comment on `EventArray` in `Engine.cs` (search for "a builtin
+cannot reach a TypeDef").
+
+The established pattern is: **the builtin returns a fixed-shape flat `Array`
+carrier, and a thin Shoddy-level wrapper lifts it into a union.**
+`SCRIBBLERPOLL`/`SCRIBBLERWAIT` return `EventArray` and
+`machines/scribbler.shoddy` decodes it. Follow that precedent exactly. Do **not**
+add a prelude of runtime-known types or otherwise let builtins reach `TypeDef`s.
+
+Register both new builtins in the vocabulary array near the bottom of
+`Engine.cs` (the list containing `"BOPEN", "BCLOSE", "SEEK"` …) — the compiler
+reads that list. Then find whatever file under `docs/` documents the builtin
+vocabulary and add entries there.
+
+## 1. `InputLine`
+
+    INPUTLINE   ( prompt -- [atEof, text] )
+
+A 2-element `Array`: element 1 a `Boolean`, true only at genuine end-of-stream;
+element 2 the line, an empty string when at EOF. In every other respect behave
+exactly as `INPUT` — write the prompt, flush, read one line, and keep the same
+scribbler-open guard.
+
+```shoddy
+Type Line = Eof | Text(String)
+
+Def ReadLine(prompt As String) As Line
+    Let r = InputLine(prompt)
+    If Nth(r, 1) Then
+        Eof()
+    Else
+        Text(Nth(r, 2))
+```
+
+## 2. `InKeyState`
+
+    INKEYSTATE  ( -- [state, text] )    Rem 0 = none pending, 1 = key, 2 = end of input
+
+A 2-element `Array`: element 1 a `Number` state, element 2 the keystroke text.
+Preserve everything `INKEY` already does — the scribbler-open guard, the
+redirected-vs-console split, and the VT100 sequences for arrows and PF1–4.
+
+State alone resolves all three collisions, so text no longer has to carry a
+sentinel: state 1 with empty text unambiguously means "a key was pressed that
+carries no character," distinct from state 0 and state 2.
+
+```shoddy
+Type Key = Idle | Pressed(String) | Ended
+
+Def NextKey() As Key
+    Let r = InKeyState()
+    Select Case Nth(r, 1)
+        Case 1
+            Pressed(Nth(r, 2))
+        Case 2
+            Ended()
+        Case Else
+            Idle()
+```
+
+Identifying *which* non-character key was pressed (a third carrier element for
+the key code) is out of scope — resolve the hang first.
+
+**Leave `INPUT` and `INKEY` untouched.** Existing programs depend on their
+current behavior; both new builtins are additive.
+
+## Constraints
+
+- **New effectful builtins must never block.** Both are non-blocking as
+  specified: `InputLine` blocks exactly as much as `Input` already does, and
+  `InKeyState` inherits `InKey`'s polling contract. Do **not** implement any
+  variant that peeks a stream to pre-check for EOF (a BASIC-style `Eof()`
+  predicate, say) — peeking blocks on a terminal until a key is pressed.
+- Additive only. No existing builtin changes behavior.
+- `dotnet test src/Shoddy.Tests/Shoddy.Tests.csproj` must stay green
+  (currently 112/112).
+
+## Acceptance
+
+Both builtins registered, documented, and reachable from a Shoddy program.
+Wrappers (`ReadLine`/`Line`, `NextKey`/`Key`) present alongside the scribbler
+decoder if that is the convention, and each exercised by at least one test.
+
+Unit tests must cover the collisions specifically, since they are the entire
+point:
+
+- `InputLine`: end-of-stream, a blank line mid-stream, an ordinary line — the
+  blank line and EOF must produce different results.
+- `InKeyState`: nothing pending, a key, and end of input — feed a `StringReader`
+  and assert that a poll loop **terminates** at EOF rather than spinning.
+
+Report what you added, and anything you chose differently from the above with
+the reason.
+
+
+
+------------------------------------------------------
+
+# Add a weave-time shadowing lint to the Shoddy toolchain
+
+Repo: `c:\github\shoddy`. Object model is `src/Shoddy.Runtime/Model.cs`; the
+weaver entry point is reached from `src/Shoddy.Mill/Program.cs`
+(`Weaver.Execute(...)`).
+
+## The problem
+
+Shoddy resolves a bare word through a fixed chain, with every name case-folded:
+
+    local binding -> top-level Let -> program Def -> machine Def
+                  -> type constructor -> builtin -> field accessor
+
+**Field accessors sit last, so they lose every contest.** And unlike every other
+name in that chain, they are never declared: writing `Type Op` with a `Motion`
+field silently puts `Motion` in scope everywhere the type is visible, including
+in other files. So a parameter named `motion` does not look like a shadowing
+declaration — it looks like a parameter.
+
+Nothing catches it. Annotations are runtime-only, so there is no weave-time
+check; and the shadowing local almost always has the same type the accessor
+would have returned, so there is no runtime error either. The program simply
+computes the wrong answer.
+
+This has cost the `mills/mungo-caverns` port at least nine separate bugs, each found
+only by bisecting wrong output. A parameter `motion` hiding `Op.Motion` made
+every travel lookup match row 1. A parameter `describe` hiding `Describe` made
+all room descriptions vanish. A `heard` parameter hiding `Heard` broke 25 test
+logs. A top-level `Def Hints()` hiding `Room.Hints` meant the hint system never
+ran at all — and both of those were in *generated* files, colliding in a third.
+
+## What to add
+
+A weave-time diagnostic that reports two shadowing classes:
+
+1. a **local binding or parameter** whose folded name equals a field accessor
+2. a **top-level `Def`** whose folded name equals a field accessor
+
+The weaver already holds everything needed: `TypeDef.Fields` (folded) and
+`TypeDef.FDisp` (as-declared) in `Model.cs`, plus the bound names it builds
+while weaving. Parameter and `Let` bindings are recorded on `Node` — see
+`NType.Take` / `NType.Bind` and `Node.Names`; `Node.Line` and `Node.File` carry
+the source position.
+
+Report the **as-declared** spellings (`Disp`/`FDisp`), not the folded ones, and
+name the type the field belongs to. Something like:
+
+    cave.shoddy:1247: warning: parameter 'motion' shadows field accessor
+        'Motion' of type 'Op' — the accessor is unreachable in this scope
+
+Emit it from `mill weave` and `mill run` alike, so it surfaces on a normal build.
+
+## Design constraints
+
+- **Warning, not error.** Shadowing a builtin or an ordinary `Def` with a local
+  is legitimate and common; do not flag it. Only field accessors, which are the
+  one case that is never intentional and never visible at the shadowing site.
+- **Do not change the resolution order.** Making accessors win would break
+  locals in a worse and less predictable way. This is a diagnostic only — no
+  runtime behavior changes.
+- Do not flag the type declaration itself, or legitimate accessor calls.
+
+## Calibrate before finalising
+
+Names like `name`, `text` or `value` are plausible as both fields and
+parameters, so this could be noisy enough that people learn to ignore it. Before
+settling on the output format, **run it over every program under `mills/` and
+`machines/` and report the raw hit count per file.** If it is small, a plain
+warning is right. If it is large, say so and propose how to narrow it — for
+example reporting once per `Def` rather than per occurrence — rather than
+shipping something noisy.
+
+`mills/mungo-caverns` has been hand-audited (98 field names against 1104 `Def`
+names) and should currently report **zero** local-vs-field collisions. That
+makes it a good baseline.
+
+## Acceptance
+
+- The lint runs at weave time and reports both shadowing classes with file, line,
+  as-declared spellings, and the owning type.
+- Unit tests: a program with a parameter shadowing a field accessor, one with a
+  `Def` shadowing a field accessor, and a negative case where a local shadows a
+  builtin or plain `Def` and must **not** warn.
+- `mills/mungo-caverns` weaves with zero collisions reported; deliberately renaming
+  one of its parameters back to `motion` reproduces a warning.
+- `dotnet test src/Shoddy.Tests/Shoddy.Tests.csproj` stays green (currently
+  112/112).
+
+Report the hit counts from the calibration step, and anything you chose
+differently from the above with the reason.
+
+
+================================
+
+
+# Azure Files SDK Helper for C#
+
+This helper class mimics standard `System.IO.File` operations but uses the official Azure Files SDK and `DefaultAzureCredential` under the hood. 
+
+By switching from SMB/UNC paths to this HTTPS-based approach, you eliminate the requirement for a domain-joined Windows host and active directory infrastructure. This allows you to run your C# application on completely free or low-cost hosting options like the **Azure App Service Free Tier** or **Azure Functions Free Tier**.
+
+---
+
+## 1. Install Required NuGet Packages
+
+Run these commands in your project terminal to install the necessary Azure identity and storage packages:
+
+```bash
+dotnet add package Azure.Identity
+dotnet add package Azure.Storage.Files.Shares
+```
+
+---
+
+## 2. Code Implementation (`CloudFile.cs`)
+
+Add this static helper class to your application. It parses standard Azure File Share URLs and handles secure, identity-based communication.
+
+```csharp
+using System;
+using System.IO;
+using System.Text;
+using System.Threading.Tasks;
+using Azure.Identity;
+using Azure.Storage.Files.Shares;
+
+public static class CloudFile
+{
+    // Caches the token credential to optimize performance across calls
+    private static readonly DefaultAzureCredential _credential = new DefaultAzureCredential();
+
+    private static ShareFileClient GetFileClient(string path)
+    {
+        // Expected format: https://<storage_account>.file.core.windows.net/<share_name>/<folder>/<file>
+        var uri = new Uri(path);
+        
+        // Extract the base storage account endpoint
+        var accountUri = new Uri(\$"{uri.Scheme}://{uri.Host}");
+        
+        // Isolate the share name (the first segment after the domain)
+        string shareName = uri.Segments[1].TrimEnd('/');
+        
+        // Reconstruct the remaining directories and file path
+        string remainingPath = string.Join("", uri.Segments, 2, uri.Segments.Length - 2);
+
+        // Initialize the clients using the platform's ambient identity
+        var serviceClient = new ShareServiceClient(accountUri, _credential);
+        var shareClient = serviceClient.GetShareClient(shareName);
+        
+        return shareClient.GetRootDirectoryClient().GetFileClient(remainingPath);
+    }
+
+    /// <summary>
+    /// Asynchronously opens a text file, reads all text, and then closes the file.
+    /// </summary>
+    public static async Task<string> ReadAllTextAsync(string path)
+    {
+        var fileClient = GetFileClient(path);
+        var downloadInfo = await fileClient.DownloadAsync();
+        
+        using (var reader = new StreamReader(downloadInfo.Value.Content, Encoding.UTF8))
+        {
+            return await reader.ReadToEndAsync();
+        }
+    }
+
+    /// <summary>
+    /// Asynchronously creates a new file, writes the specified string to it, and then closes the file. 
+    /// If the target file already exists, it is overwritten.
+    /// </summary>
+    public static async Task WriteAllTextAsync(string path, string contents)
+    {
+        var fileClient = GetFileClient(path);
+        
+        using (var stream = new MemoryStream(Encoding.UTF8.GetBytes(contents)))
+        {
+            // You must initialize the file size in Azure Files before uploading ranges
+            await fileClient.CreateAsync(stream.Length);
+            await fileClient.UploadRangeAsync(new Azure.HttpRange(0, stream.Length), stream);
+        }
+    }
+}
+```
+
+---
+
+## 3. Code Migration Example
+
+Updating your application logic requires minimal changes. You only need to update the path string format and use the `CloudFile` class instead of `System.IO.File`.
+
+### Before (Expensive Setup)
+This approach relies on Windows OS context, SMB port 445 routing, and a domain controller ($110+/month).
+```csharp
+using System.IO;
+
+string uncPath = @"\\mystorageaccount.file.core.windows.net\myfileshare\myfolder\data.txt";
+
+// Throws access errors on standard cloud containers or free hosts
+string content = File.ReadAllText(uncPath); 
+```
+
+### After (Inexpensive/Free Setup)
+This approach leverages standard HTTP/HTTPS channels, allowing deployment to free compute tiers.
+```csharp
+using System.Threading.Tasks;
+
+string httpPath = "https://windows.net";
+
+// Works seamlessly on Free Azure App Services using identity tokens
+string content = await CloudFile.ReadAllTextAsync(httpPath);
+```
+
+
+
+
+
+--------------------------------------
+
+# Azure Files SDK Helper for C# (with Binary Support)
+
+This helper class mimics standard `System.IO.File` operations but uses the official Azure Files SDK and `DefaultAzureCredential` under the hood. 
+
+By switching from SMB/UNC paths to this HTTPS-based approach, you eliminate the requirement for a domain-joined Windows host and active directory infrastructure. This allows you to run your C# application on completely free or low-cost hosting options like the **Azure App Service Free Tier** or **Azure Functions Free Tier**.
+
+---
+
+## 1. Install Required NuGet Packages
+
+Run these commands in your project terminal to install the necessary Azure identity and storage packages:
+
+```bash
+dotnet add package Azure.Identity
+dotnet add package Azure.Storage.Files.Shares
+```
+
+---
+
+## 2. Code Implementation (`CloudFile.cs`)
+
+Add this static helper class to your application. It parses standard Azure File Share URLs and handles secure, identity-based communication, including precise binary reading, writing, and seeking.
+
+```csharp
+using System;
+using System.IO;
+using System.Text;
+using System.Threading.Tasks;
+using Azure;
+using Azure.Identity;
+using Azure.Storage.Files.Shares;
+using Azure.Storage.Files.Shares.Models;
+
+public static class CloudFile
+{
+    // Caches the token credential to optimize performance across calls
+    private static readonly DefaultAzureCredential _credential = new DefaultAzureCredential();
+
+    private static ShareFileClient GetFileClient(string path)
+    {
+        // Expected format: https://<storage_account>.file.core.windows.net/<share_name>/<folder>/<file>
+        var uri = new Uri(path);
+        
+        // Extract the base storage account endpoint
+        var accountUri = new Uri(\$"{uri.Scheme}://{uri.Host}");
+        
+        // Isolate the share name (the first segment after the domain)
+        string shareName = uri.Segments[1].TrimEnd('/');
+        
+        // Reconstruct the remaining directories and file path
+        string remainingPath = string.Join("", uri.Segments, 2, uri.Segments.Length - 2);
+
+        // Initialize the clients using the platform's ambient identity
+        var serviceClient = new ShareServiceClient(accountUri, _credential);
+        var shareClient = serviceClient.GetShareClient(shareName);
+        
+        return shareClient.GetRootDirectoryClient().GetFileClient(remainingPath);
+    }
+
+    /// <summary>
+    /// Reads the entire contents of a file as a byte array.
+    /// </summary>
+    public static async Task<byte[]> ReadAllBytesAsync(string path)
+    {
+        var fileClient = GetFileClient(path);
+        var downloadInfo = await fileClient.DownloadAsync();
+        
+        using (var memoryStream = new MemoryStream())
+        {
+            await downloadInfo.Value.Content.CopyToAsync(memoryStream);
+            return memoryStream.ToArray();
+        }
+    }
+
+    /// <summary>
+    /// Creates a new file, writes the specified byte array to it, and closes the file.
+    /// If the target file already exists, it is overwritten.
+    /// </summary>
+    public static async Task WriteAllBytesAsync(string path, byte[] bytes)
+    {
+        var fileClient = GetFileClient(path);
+        
+        // You must initialize the file size in Azure Files before uploading ranges
+        await fileClient.CreateAsync(bytes.Length);
+        
+        using (var stream = new MemoryStream(bytes))
+        {
+            await fileClient.UploadRangeAsync(new HttpRange(0, bytes.Length), stream);
+        }
+    }
+
+    /// <summary>
+    /// Reads a specific block of bytes from a file starting at a precise byte offset (Seek & Read).
+    /// </summary>
+    /// <param name="path">The HTTPS path to the file.</param>
+    /// <param name="offset">The starting byte position in the remote file (Seek position).</param>
+    /// <param name="count">The number of bytes to read.</param>
+    public static async Task<byte[]> ReadRangeAsync(string path, long offset, int count)
+    {
+        var fileClient = GetFileClient(path);
+        var options = new ShareFileDownloadOptions
+        {
+            Range = new HttpRange(offset, count)
+        };
+
+        try
+        {
+            var downloadInfo = await fileClient.DownloadAsync(options);
+            using (var memoryStream = new MemoryStream())
+            {
+                await downloadInfo.Value.Content.CopyToAsync(memoryStream);
+                return memoryStream.ToArray();
+            }
+        }
+        catch (RequestFailedException ex) when (ex.Status == 416)
+        {
+            // Range Not Satisfiable (e.g., trying to read past the current end of the file)
+            return Array.Empty<byte>();
+        }
+    }
+
+    /// <summary>
+    /// Overwrites or appends a block of bytes at a precise byte offset inside an existing file (Seek & Write).
+    /// </summary>
+    /// <param name="path">The HTTPS path to the file.</param>
+    /// <param name="offset">The starting byte position where writing should begin (Seek position).</param>
+    /// <param name="bytes">The data buffer to write.</param>
+    public static async Task WriteRangeAsync(string path, long offset, byte[] bytes)
+    {
+        var fileClient = GetFileClient(path);
+        
+        // Get current file properties to check its size boundary
+        ShareFileProperties properties = await fileClient.GetPropertiesAsync();
+        long requiredSize = offset + bytes.Length;
+
+        // If the new write position stretches past the current file size, expand the file allocation first
+        if (requiredSize > properties.ContentLength)
+        {
+            await fileClient.SetHttpHeadersAsync(requiredSize);
+        }
+
+        using (var stream = new MemoryStream(bytes))
+        {
+            await fileClient.UploadRangeAsync(new HttpRange(offset, bytes.Length), stream);
+        }
+    }
+
+    /// <summary>
+    /// Appends a block of bytes directly to the end of an existing file.
+    /// </summary>
+    public static async Task AppendBytesAsync(string path, byte[] bytes)
+    {
+        var fileClient = GetFileClient(path);
+        ShareFileProperties properties = await fileClient.GetPropertiesAsync();
+        
+        long currentSize = properties.ContentLength;
+        await fileClient.SetHttpHeadersAsync(currentSize + bytes.Length);
+
+        using (var stream = new MemoryStream(bytes))
+        {
+            await fileClient.UploadRangeAsync(new HttpRange(currentSize, bytes.Length), stream);
+        }
+    }
+
+    /// <summary>
+    /// Asynchronously opens a text file, reads all text, and then closes the file.
+    /// </summary>
+    public static async Task<string> ReadAllTextAsync(string path)
+    {
+        var bytes = await ReadAllBytesAsync(path);
+        return Encoding.UTF8.GetString(bytes);
+    }
+
+    /// <summary>
+    /// Asynchronously creates a new file, writes the specified string to it, and then closes the file.
+    /// </summary>
+    public static async Task WriteAllTextAsync(string path, string contents)
+    {
+        var bytes = Encoding.UTF8.GetBytes(contents);
+        await WriteAllBytesAsync(path, bytes);
+    }
+}
+```
+
+=============================================
+
+## 3. Binary & Seek Usage Example
+
+### Reading a Specific Chunk (Seek and Read)
+If you have a binary file and only need bytes `1024` through `2048`:
+```csharp
+string httpPath = "https://windows.net";
+
+// Seeks to byte 1024 and reads the next 1024 bytes
+byte[] dataChunk = await CloudFile.ReadRangeAsync(httpPath, offset: 1024, count: 1024);
+```
+
+### Modifying File Header/Bytes (Seek and Write)
+If you need to overwrite specific data blocks (like updating a file header at byte index 0) without pulling down the whole file:
+```csharp
+string httpPath = "https://windows.net";
+byte[] newHeader = new byte[] { 0x46, 0x49, 0x4C, 0x45 }; // "FILE" magic bytes
+
+// Overwrites bytes starting at index 0
+await CloudFile.WriteRangeAsync(httpPath, offset: 0, bytes: newHeader);
+```
+
+
+
+
+# Azure Files SDK Helper for C# (with Binary Support)
+
+This helper class mimics standard `System.IO.File` operations but uses the official Azure Files SDK and `DefaultAzureCredential` under the hood. 
+
+By switching from SMB/UNC paths to this HTTPS-based approach, you eliminate the requirement for a domain-joined Windows host and active directory infrastructure. This allows you to run your C# application on completely free or low-cost hosting options like the **Azure App Service Free Tier** or **Azure Functions Free Tier**.
+
+---
+
+## 1. Install Required NuGet Packages
+
+Run these commands in your project terminal to install the necessary Azure identity and storage packages:
+
+```bash
+dotnet add package Azure.Identity
+dotnet add package Azure.Storage.Files.Shares
+```
+
+---
+
+## 2. Code Implementation (`CloudFile.cs`)
+
+Add this static helper class to your application. It parses standard Azure File Share URLs and handles secure, identity-based communication, including precise binary reading, writing, and seeking.
+
+```csharp
+using System;
+using System.IO;
+using System.Text;
+using System.Threading.Tasks;
+using Azure;
+using Azure.Identity;
+using Azure.Storage.Files.Shares;
+using Azure.Storage.Files.Shares.Models;
+
+public static class CloudFile
+{
+    // Caches the token credential to optimize performance across calls
+    private static readonly DefaultAzureCredential _credential = new DefaultAzureCredential();
+
+    private static ShareFileClient GetFileClient(string path)
+    {
+        // Expected format: https://<storage_account>.file.core.windows.net/<share_name>/<folder>/<file>
+        var uri = new Uri(path);
+        
+        // Extract the base storage account endpoint
+        var accountUri = new Uri(\$"{uri.Scheme}://{uri.Host}");
+        
+        // Isolate the share name (the first segment after the domain)
+        string shareName = uri.Segments[1].TrimEnd('/');
+        
+        // Reconstruct the remaining directories and file path
+        string remainingPath = string.Join("", uri.Segments, 2, uri.Segments.Length - 2);
+
+        // Initialize the clients using the platform's ambient identity
+        var serviceClient = new ShareServiceClient(accountUri, _credential);
+        var shareClient = serviceClient.GetShareClient(shareName);
+        
+        return shareClient.GetRootDirectoryClient().GetFileClient(remainingPath);
+    }
+
+    /// <summary>
+    /// Reads the entire contents of a file as a byte array.
+    /// </summary>
+    public static async Task<byte[]> ReadAllBytesAsync(string path)
+    {
+        var fileClient = GetFileClient(path);
+        var downloadInfo = await fileClient.DownloadAsync();
+        
+        using (var memoryStream = new MemoryStream())
+        {
+            await downloadInfo.Value.Content.CopyToAsync(memoryStream);
+            return memoryStream.ToArray();
+        }
+    }
+
+    /// <summary>
+    /// Creates a new file, writes the specified byte array to it, and closes the file.
+    /// If the target file already exists, it is overwritten.
+    /// </summary>
+    public static async Task WriteAllBytesAsync(string path, byte[] bytes)
+    {
+        var fileClient = GetFileClient(path);
+        
+        // You must initialize the file size in Azure Files before uploading ranges
+        await fileClient.CreateAsync(bytes.Length);
+        
+        using (var stream = new MemoryStream(bytes))
+        {
+            await fileClient.UploadRangeAsync(new HttpRange(0, bytes.Length), stream);
+        }
+    }
+
+    /// <summary>
+    /// Reads a specific block of bytes from a file starting at a precise byte offset (Seek & Read).
+    /// </summary>
+    /// <param name="path">The HTTPS path to the file.</param>
+    /// <param name="offset">The starting byte position in the remote file (Seek position).</param>
+    /// <param name="count">The number of bytes to read.</param>
+    public static async Task<byte[]> ReadRangeAsync(string path, long offset, int count)
+    {
+        var fileClient = GetFileClient(path);
+        var options = new ShareFileDownloadOptions
+        {
+            Range = new HttpRange(offset, count)
+        };
+
+        try
+        {
+            var downloadInfo = await fileClient.DownloadAsync(options);
+            using (var memoryStream = new MemoryStream())
+            {
+                await downloadInfo.Value.Content.CopyToAsync(memoryStream);
+                return memoryStream.ToArray();
+            }
+        }
+        catch (RequestFailedException ex) when (ex.Status == 416)
+        {
+            // Range Not Satisfiable (e.g., trying to read past the current end of the file)
+            return Array.Empty<byte>();
+        }
+    }
+
+    /// <summary>
+    /// Overwrites or appends a block of bytes at a precise byte offset inside an existing file (Seek & Write).
+    /// </summary>
+    /// <param name="path">The HTTPS path to the file.</param>
+    /// <param name="offset">The starting byte position where writing should begin (Seek position).</param>
+    /// <param name="bytes">The data buffer to write.</param>
+    public static async Task WriteRangeAsync(string path, long offset, byte[] bytes)
+    {
+        var fileClient = GetFileClient(path);
+        
+        // Get current file properties to check its size boundary
+        ShareFileProperties properties = await fileClient.GetPropertiesAsync();
+        long requiredSize = offset + bytes.Length;
+
+        // If the new write position stretches past the current file size, expand the file allocation first
+        if (requiredSize > properties.ContentLength)
+        {
+            await fileClient.SetHttpHeadersAsync(requiredSize);
+        }
+
+        using (var stream = new MemoryStream(bytes))
+        {
+            await fileClient.UploadRangeAsync(new HttpRange(offset, bytes.Length), stream);
+        }
+    }
+
+    /// <summary>
+    /// Appends a block of bytes directly to the end of an existing file.
+    /// </summary>
+    public static async Task AppendBytesAsync(string path, byte[] bytes)
+    {
+        var fileClient = GetFileClient(path);
+        ShareFileProperties properties = await fileClient.GetPropertiesAsync();
+        
+        long currentSize = properties.ContentLength;
+        await fileClient.SetHttpHeadersAsync(currentSize + bytes.Length);
+
+        using (var stream = new MemoryStream(bytes))
+        {
+            await fileClient.UploadRangeAsync(new HttpRange(currentSize, bytes.Length), stream);
+        }
+    }
+
+    /// <summary>
+    /// Asynchronously opens a text file, reads all text, and then closes the file.
+    /// </summary>
+    public static async Task<string> ReadAllTextAsync(string path)
+    {
+        var bytes = await ReadAllBytesAsync(path);
+        return Encoding.UTF8.GetString(bytes);
+    }
+
+    /// <summary>
+    /// Asynchronously creates a new file, writes the specified string to it, and then closes the file.
+    /// </summary>
+    public static async Task WriteAllTextAsync(string path, string contents)
+    {
+        var bytes = Encoding.UTF8.GetBytes(contents);
+        await WriteAllBytesAsync(path, bytes);
+    }
+}
+```
+
+---
+
+## 3. Binary & Seek Usage Example
+
+### Reading a Specific Chunk (Seek and Read)
+If you have a binary file and only need bytes `1024` through `2048`:
+```csharp
+string httpPath = "https://windows.net";
+
+// Seeks to byte 1024 and reads the next 1024 bytes
+byte[] dataChunk = await CloudFile.ReadRangeAsync(httpPath, offset: 1024, count: 1024);
+```
+
+### Modifying File Header/Bytes (Seek and Write)
+If you need to overwrite specific data blocks (like updating a file header at byte index 0) without pulling down the whole file:
+```csharp
+string httpPath = "https://windows.net";
+byte[] newHeader = new byte[] { 0x46, 0x49, 0x4C, 0x45 }; // "FILE" magic bytes
+
+// Overwrites bytes starting at index 0
+await CloudFile.WriteRangeAsync(httpPath, offset: 0, bytes: newHeader);
+```
+
+

@@ -1,0 +1,207 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem neuraltest.shoddy — test program for neural.shoddy
+Rem
+Rem Training output is floating-point and Rnd-driven, so these are
+Rem CONTRACT checks in the randomtest.shoddy pattern, not golden bytes:
+Rem the analytic gradient against central finite differences (the one
+Rem test that catches nearly every possible backprop mistake, including
+Rem a silent serialization transpose), NetAdd/NetScale shape and value
+Rem checks, a seeded learns-a-line convergence bound, and the
+Rem NetSave/NetLoad round trip.
+Rem
+Rem Build (once): build.cmd build
+Rem Run:          bin\mill run tst\neuraltest.shoddy    (from repo root)
+Rem ==================================================================
+
+Include "../machines/seq.shoddy"
+Include "../machines/neural.shoddy"
+
+Rem A fixed 2-3-1 net with hand-picked weights large enough to push
+Rem tanh off its linear region — a tiny-weight net would pass the
+Rem gradient check even with a wrong derivative.
+Def TestWs() As Array Of Number
+    ToArray({ 0.5, -0.4, 0.3, 0.8, -0.7, 0.2, 0.1, -0.2, 0.3, 0.6, -0.5, 0.4, 0.05 })
+
+Def TestX() As Array Of Number
+    ToArray({ 0.9, -1.2 })
+
+Rem NetGrad's oSig is (o - y) — the gradient of HALF squared error
+Rem (the same convention as the C# reference, where the missing factor
+Rem of 2 is absorbed by the learning rate). The finite differences must
+Rem difference that same half loss or every component is off by 2x.
+Def HalfLoss(n As Net, x As Array Of Number, y As Number) As Number
+    Let d = NetOut(n, x) - y
+    d * d / 2
+
+Rem Central finite difference of HalfLoss along parameter k.
+Def FdAt(ws As Array Of Number, k As Number, x As Array Of Number, y As Number) As Number
+    Let eps = 0.00001
+    Let up = HalfLoss(NetFromList(SetNth(ws, k, Nth(ws, k) + eps), 2, 3, 1), x, y)
+    Let dn = HalfLoss(NetFromList(SetNth(ws, k, Nth(ws, k) - eps), 2, 3, 1), x, y)
+    (up - dn) / (2 * eps)
+
+Rem The gradient has the net's shape, so NetWeightList aligns its
+Rem components one-for-one with the parameter list being perturbed.
+Def CheckGrad(k As Number) As Boolean
+    Let g = Nth(ToArray(NetWeightList(NetGrad(NetFromList(TestWs(), 2, 3, 1), TestX(), 0.5))), k)
+    Abs(g - FdAt(TestWs(), k, TestX(), 0.5)) < 0.0001
+
+Def LineXs() As List Of Array Of Number
+    Map(Range(1, 12), Fn(k) => ToArray({ k / 12 }))
+
+Def LineYs() As List Of Number
+    Map(Range(1, 12), Fn(k) => 2 * (k / 12) + 1)
+
+Rem ---- classification fixtures ---------------------------------------
+
+Rem A fixed 2-3-2 net: 2*3 + 3 + 3*2 + 2 = 17 parameters. Weights again
+Rem chosen large enough to push Tanh off its linear region, where a
+Rem wrong derivative would still pass.
+Def TestWsC() As Array Of Number
+    ToArray({ 0.5, -0.4, 0.3, 0.8, -0.7, 0.2,
+              0.1, -0.2, 0.3,
+              0.6, -0.5, 0.4, 0.25, 0.15, -0.35,
+              0.05, -0.1 })
+
+Def TestYC() As Array Of Number
+    NetOneHot(1, 2)
+
+Rem The claim under test is that softmax + cross-entropy has the SAME
+Rem output-layer error signal as identity + squared error, so one
+Rem backward pass can serve both. If that is wrong, these differences
+Rem disagree with NetGradAt and the whole shared-gradient design falls.
+Def FdAtC(ws As Array Of Number, k As Number) As Number
+    Let eps = 0.00001
+    Let up = NetLogLossAt(NetFromList(SetNth(ws, k, Nth(ws, k) + eps), 2, 3, 2), TestX(), TestYC())
+    Let dn = NetLogLossAt(NetFromList(SetNth(ws, k, Nth(ws, k) - eps), 2, 3, 2), TestX(), TestYC())
+    (up - dn) / (2 * eps)
+
+Def CheckGradC(k As Number) As Boolean
+    Let g = Nth(ToArray(NetWeightList(NetGradAt(NetFromList(TestWsC(), 2, 3, 2), Classify(), TestX(), TestYC()))), k)
+    Abs(g - FdAtC(TestWsC(), k)) < 0.0001
+
+Rem Two classes separated by the second coordinate — learnable, but not
+Rem so trivial that a net which ignored its inputs would score well.
+Def ClsXs() As List Of Array Of Number
+    Map(Range(1, 12), Fn(k) => ToArray({ k / 12, Ifte(k <= 6, 0.2, 0.8) }))
+
+Def ClsYs() As List Of Array Of Number
+    Map(Range(1, 12), Fn(k) => NetOneHot(Ifte(k <= 6, 1, 2), 2))
+
+Def ScaleRows() As List Of Array Of Number
+    { ToArray({ 1, 10, 7 }), ToArray({ 3, 30, 7 }), ToArray({ 5, 50, 7 }) }
+
+Def Main()
+    Print("--- NEURAL ---")
+
+    Rem gradient vs central finite differences, all 13 parameters
+    Assert(All(Range(1, 13), CheckGrad), "NETGRAD MATCHES FINITE DIFFERENCES")
+
+    Rem NetAdd / NetScale: shape preserved, values fieldwise
+    Let n1 = NetFromList(ToArray(Range(1, 13)), 2, 3, 1)
+    Let doubled = NetAdd(n1, n1)
+    Assert(Rows(W1(doubled)) = 3 And Cols(W1(doubled)) = 2, "NETADD KEEPS W1 SHAPE")
+    Assert(Rows(W2(doubled)) = 1 And Cols(W2(doubled)) = 3, "NETADD KEEPS W2 SHAPE")
+    Assert(Length(B1(doubled)) = 3 And Length(B2(doubled)) = 1, "NETADD KEEPS BIAS LENGTHS")
+    Assert(ToArray(NetWeightList(doubled)) = ToArray(Map(NetWeightList(n1), *(2))), "NETADD IS FIELDWISE +")
+    Assert(ToArray(NetWeightList(NetScale(n1, 0.5))) = ToArray(Map(NetWeightList(n1), *(0.5))), "NETSCALE IS FIELDWISE *")
+
+    Rem learns y = 2x + 1: seeded, small, fast
+    Seed(1)
+    Let trained = NetTrain(NetNew(1, 4, 1), LineXs(), LineYs(), 0.1, 4, 500, [ Drop Drop ])
+    Assert(NetMse(trained, LineXs(), LineYs()) < 0.01, "LEARNS A LINE (MSE BOUND)")
+
+    Rem save/load round trip: 1*4 + 4 + 4*1 + 1 = 13 lines, and the
+    Rem reloaded net predicts within Str's 10-significant-digit limit
+    Let wtsPath = "tst/neuraltest-wts.tmp"
+    NetSave(wtsPath, trained)
+    Assert(Length(ReadLines(wtsPath)) = 13, "SAVE WRITES NI*NH + NH + NH*NO + NO LINES")
+    Let reloaded = NetLoad(wtsPath, 1, 4, 1)
+    Assert(Abs(NetOut(reloaded, ToArray({ 0.5 })) - NetOut(trained, ToArray({ 0.5 }))) < 0.00000001, "SAVE/LOAD ROUND TRIP PREDICTS ALIKE")
+    DeleteFile(wtsPath)
+
+    Rem binary save/load: self-describing header (no dims passed), the
+    Rem exact byte size (4 header doubles + 13 weights, 8 bytes each),
+    Rem and BIT-EXACT predictions — raw doubles lose nothing
+    Let binPath = "tst/neuraltest-model.tmp"
+    NetSaveBin(binPath, trained)
+    Let bf = BOpen(binPath)
+    Assert(BSize(bf) = 8 * (4 + 13), "BINARY MODEL IS EXACTLY 8 * (HEADER + WEIGHTS) BYTES")
+    BClose(bf)
+    Let binNet = NetLoadBin(binPath)
+    Assert(Rows(W1(binNet)) = 4 And Cols(W1(binNet)) = 1 And Rows(W2(binNet)) = 1, "BINARY HEADER CARRIES THE ARCHITECTURE")
+    Assert(NetOut(binNet, ToArray({ 0.5 })) = NetOut(trained, ToArray({ 0.5 })), "BINARY ROUND TRIP IS BIT-EXACT")
+    Assert(ToArray(NetWeightList(binNet)) = ToArray(NetWeightList(trained)), "BINARY ROUND TRIP KEEPS EVERY WEIGHT BIT-EXACT")
+    DeleteFile(binPath)
+
+    Rem ---- softmax, argmax, one-hot -----------------------------------
+
+    Let sm = Softmax(ToArray({ 1, 2, 3 }))
+    Assert(Abs(Fold(sm, 0, +) - 1) < 0.0000000001, "SOFTMAX SUMS TO ONE")
+    Assert(Nth(sm, 1) < Nth(sm, 2) And Nth(sm, 2) < Nth(sm, 3), "SOFTMAX KEEPS THE ORDER")
+    Rem shift invariance is what makes the max-subtraction guard safe
+    Let smShift = Softmax(ToArray({ 1001, 1002, 1003 }))
+    Assert(Abs(Nth(sm, 1) - Nth(smShift, 1)) < 0.0000000001, "SOFTMAX IS SHIFT-INVARIANT")
+    Assert(Argmax(ToArray({ 3, 9, 4 })) = 2, "ARGMAX FINDS THE LARGEST")
+    Assert(Argmax(ToArray({ 9, 9, 4 })) = 1, "ARGMAX KEEPS THE FIRST OF A TIE")
+    Assert(NetOneHot(2, 4) = ToArray({ 0, 1, 0, 0 }), "ONE-HOT SETS EXACTLY ONE POSITION")
+
+    Rem ---- the classification gradient ---------------------------------
+
+    Rem The load-bearing test of the shared-gradient design: all 17
+    Rem parameters of a 2-3-2 net, softmax outputs, cross-entropy loss,
+    Rem against central finite differences of that same loss
+    Assert(All(Range(1, 17), CheckGradC), "NETGRADAT MATCHES FINITE DIFFERENCES UNDER CROSS-ENTROPY")
+
+    Rem ---- scaling ------------------------------------------------------
+
+    Let sc = ScalerFit(ScaleRows())
+    Assert(Center(sc) = ToArray({ 3, 30, 7 }), "SCALER CENTRES ON THE COLUMN MEAN")
+    Assert(Abs(Nth(Spread(sc), 1) - Sqr(8 / 3)) < 0.0000000001, "SCALER SPREAD IS THE POPULATION SD")
+    Assert(Nth(Spread(sc), 3) = 1, "A CONSTANT COLUMN GETS SPREAD ONE, NOT ZERO")
+    Assert(ScalerApply(sc, ToArray({ 3, 30, 7 })) = ToArray({ 0, 0, 0 }), "THE MEAN ROW SCALES TO ZERO")
+    Assert(ScalerApply(ScalerNone(3), ToArray({ 2, 4, 8 })) = ToArray({ 2, 4, 8 }), "THE IDENTITY SCALER CHANGES NOTHING")
+
+    Rem ---- NetFit learns a two-class problem -----------------------------
+
+    Seed(2)
+    Let plan = ClassPlan(0.5, 0.9, 4, 300)
+    Let clf = NetFit(NetNewScaled(2, 6, 2), plan, ClsXs(), ClsYs(), [ Drop Drop ])
+    Assert(NetClassAccuracy(clf, ClsXs(), ClsYs()) = 1, "NETFIT SEPARATES TWO CLASSES")
+    Assert(NetLogLoss(clf, ClsXs(), ClsYs()) < 0.1, "NETFIT DRIVES CROSS-ENTROPY DOWN")
+    Rem probabilities, not scores: the winning class is also the most probable
+    Let probs = NetPredict(clf, Classify(), First(ClsXs()))
+    Assert(Abs(Fold(probs, 0, +) - 1) < 0.0000000001, "NETPREDICT UNDER CLASSIFY RETURNS PROBABILITIES")
+    Assert(Argmax(probs) = NetClassOf(clf, First(ClsXs())), "ARGMAX OF PROBABILITIES IS THE PREDICTED CLASS")
+
+    Rem ---- zero momentum is plain descent --------------------------------
+
+    Rem Moment = 0 makes the velocity exactly the step, so NetFit reduces
+    Rem to the descent NetTrain does — the general path really is general
+    Seed(3)
+    Let flat = NetFit(NetNew(1, 4, 1), RegressPlan(0.1, 0, 4, 500), LineXs(), Map(LineYs(), Fn(y) => ToArray({ y })), [ Drop Drop ])
+    Seed(3)
+    Let plain = NetTrain(NetNew(1, 4, 1), LineXs(), LineYs(), 0.1, 4, 500, [ Drop Drop ])
+    Assert(ToArray(NetWeightList(flat)) = ToArray(NetWeightList(plain)), "NETFIT WITH NO MOMENTUM IS BIT-IDENTICAL TO NETTRAIN")
+
+    Rem ---- the model file --------------------------------------------------
+
+    Rem 2*6 + 6 + 6*2 + 2 = 32 weights, 5 header doubles, 2*2 scaler
+    Let mdlPath = "tst/neuraltest-model2.tmp"
+    Let sc2 = ScalerFit(ClsXs())
+    Let mdl = Model(clf, Classify(), sc2)
+    ModelSave(mdlPath, mdl)
+    Let mf = BOpen(mdlPath)
+    Assert(BSize(mf) = 8 * (5 + 32 + 2 * 2), "MODEL FILE IS HEADER + WEIGHTS + SCALER")
+    BClose(mf)
+    Let back = ModelLoad(mdlPath)
+    Assert(ToArray(NetWeightList(Weights(back))) = ToArray(NetWeightList(clf)), "MODEL ROUND TRIP KEEPS EVERY WEIGHT BIT-EXACT")
+    Assert(HeadCode(Task(back)) = 1, "MODEL ROUND TRIP REMEMBERS THE HEAD")
+    Assert(Center(Prep(back)) = Center(sc2) And Spread(Prep(back)) = Spread(sc2), "MODEL ROUND TRIP KEEPS THE SCALER")
+    Assert(ModelPredict(back, ToArray({ 0.5, 0.8 })) = ModelPredict(mdl, ToArray({ 0.5, 0.8 })), "RELOADED MODEL PREDICTS BIT-EXACTLY")
+    DeleteFile(mdlPath)
+
+    Print("ALL NEURAL CHECKS PASSED")

@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
+<meta name="description" content="An overland-trail game — mills/oregon">
+<link rel="stylesheet" href="../style.css">
+<link rel="icon" href="../favicon.svg" type="image/svg+xml">
+<title>oregon — Overland Trail | Shoddy Mills</title>
+</head>
+<body>
+<div class="topbar"><div class="inner">
+  <a class="phase" href="index.html">Shoddy · The Mills</a>
+  <span class="spacer"></span>
+  <nav class="docnav" aria-label="Documentation"><a href="../heritage.html">Story</a><a href="../guide.html">Guide</a><a href="../quickref.html">Reference</a><a href="../machines/index.html">Machines</a><span class="here">Mills</span><a href="../stack.html">Stack</a><a href="../spec.html">Spec</a><a href="../setup.html">Setup</a><a href="../vscode.html">VS Code</a><a href="../build.html">Toolchain</a></nav>
+</div></div>
+<div class="wrap">
+
+<header class="mast"><p class="eyebrow"><a href="index.html#games">The Mills &middot; Games</a></p><h1>oregon</h1><p class="kicker">An overland-trail game — mills/oregon</p></header>
+<nav class="pagertop" aria-label="Mills, in catalog order"><a href="mungo-caverns.html">&larr; mungo-caverns</a><a href="index.html">All mills</a><a href="pac-vt100.html">pac-vt100 &rarr;</a></nav>
+
+<h2 id="summary">Summary</h2>
+<p><code>oregon</code> is a port of the 1971 MECC overland-trail game — the one before the green
+ox-and-wagon graphics, when the whole game was prompts and consequences. Your
+family of five sets out from Independence, Missouri in 1847 with $700 left
+after paying for the wagon, and has 2,040 miles to cover before winter.
+Each turn is a fortnight: you decide how much to eat, whether to hunt or
+push on, whether to stop at a fort, and the trail answers with riders,
+breakdowns, blizzards, and bad water from a sixteen-entry misfortune table.
+When the game tells you to <code>TYPE BANG</code> (or <code>BLAM</code>,
+<code>POW</code>, <code>WHAM</code>), type it fast and press Enter — how
+quickly you type <em>is</em> your marksmanship, exactly as it was on the
+teletypes this game was born on.</p>
+
+<h2 id="history">The Original</h2>
+<p class="tm"><em>The Oregon Trail is a trademark of Houghton Mifflin Harcourt. This mill is
+an independent educational port of the 1971 MECC program, not affiliated with or
+endorsed by the trademark owner. See <code>THIRD-PARTY-NOTICES.md</code>.</em></p>
+<p>The Oregon Trail was written in 1971 by three Minnesota student teachers —
+Don Rawitsch conceived it for his eighth-grade history class, and Bill
+Heinemann and Paul Dillenberger wrote the BASIC — on a teletype connected to
+a timeshared minicomputer. Rawitsch later brought it to MECC, the Minnesota
+Educational Computing Consortium, whose statewide network put it in front of
+a generation of schoolchildren and made it arguably the most-played piece of
+educational software ever written. The BASIC listing this mill is ported
+from, <code>oregon.bas</code>, travels in the folder beside the port —
+diff them if you're curious how 1971 control flow maps onto a language with
+no <code>GOTO</code> at all.</p>
+
+<h2 id="run">Running It</h2>
+<pre><code>bin/mill run mills/oregon/oregon.shoddy</code></pre>
+<p>or, from <code>mills/oregon/</code>, use the wrapper — <code>build.cmd</code>
+on Windows, <code>./build.sh</code> on Linux/macOS/WSL, same subcommands:</p>
+<pre><code>./build.sh          # run the game (also: ./build.sh run)
+./build.sh test     # run the headless model checks</code></pre>
+<p>It's a plain console program — prompts in, text out, no window — so it
+runs anywhere the mill does. The only timing in the game is the shooting:
+the program reads <code>Ticks()</code> around a blocking <code>Input</code>
+and scores you on the difference, which is the same trick the original
+pulled with its <code>CLK</code> function.</p>
+
+<h2 id="built">How It's Built</h2>
+<p>The game is split in the standard mill shape. <strong>The pure model</strong>
+is <code>oregon-core.shoddy</code>: the <code>Trail</code> record, the
+outfitting and eating arithmetic, the date table, the fourteen-day travel
+formula, the rider encounters, the misfortune table, the mountain crossings,
+and the arrival-date computation. It includes nothing, so it runs headless
+and is checked that way by <code>test.shoddy</code>. <strong>The console
+half</strong> is <code>oregon.shoddy</code>: the instructions, the
+<code>Input</code> prompts, the timed shooting, and the turn loop — each turn
+a pipeline of phases, where every phase starts by standing aside if the
+Trail's fate is already sealed, so a death anywhere falls straight through
+to the funeral. The loop's only recursion is a genuine self tail call, which
+the compiler turns into a loop.</p>
+<p>Two design points are worth stealing. First, <strong>randomness arrives as
+a parameter</strong> wherever a roll decides a branch — did riders appear,
+which misfortune struck, did the shot miss — so every branch is reachable
+deterministically from the tests; only rolls that merely jitter a magnitude
+call <code>Rnd</code> directly. Second, the original's one-letter variables
+map one-for-one onto named <code>Trail</code> fields (<code>M</code> is
+<code>Miles</code>, <code>B</code> is <code>Bullets</code>,
+<code>D9</code> is <code>Skill</code>&hellip;), so the port can be audited
+line-against-line with the BASIC.</p>
+
+<h2 id="split">Why More Than One File</h2>
+<p>The 1971 original is one BASIC listing; the port is two files, and the
+seam is drawn exactly where the effects are. Everything the game
+<em>is</em> — the <code>Trail</code> record and every formula and
+misfortune — lives in <code>oregon-core.shoddy</code>, which includes
+nothing and touches nothing: no <code>Print</code>, no <code>Input</code>,
+no clock. Everything the game <em>does to you</em> — prompts, the timed
+shooting, the turn loop — lives in <code>oregon.shoddy</code> on top.</p>
+<p>The payoff is <code>test.shoddy</code>: because the core is pure and
+every branch-deciding roll arrives as a parameter, the whole ruleset runs
+headless under test — you can deterministically summon any of the sixteen
+misfortunes, fail any mountain crossing, and check the arithmetic of each,
+which no amount of playing the interactive game could do reliably. The
+split is also the language's own convention (effects kept at the edges)
+applied at program scale: the shell is the only place an effect happens,
+and it is deliberately too thin to hide a bug in.</p>
+
+<h2 id="machines">The Machines It Uses</h2>
+<table>
+<tr><th>Machine</th><th>Why</th></tr>
+<tr><td><a href="../machines/math.html">math</a></td><td>Included by the
+console shell for exactly one word: <code>Pick</code>, which chooses
+uniformly which of BANG, BLAM, POW, or WHAM you must type when the game
+demands a shot.</td></tr>
+</table>
+<p>That's the whole list — and the shorter fact is the better one: the
+core includes <em>no</em> machines at all. The 1971 game needed nothing but
+arithmetic and a random number, and the port keeps that honest, calling the
+<code>Rnd</code> builtin directly for its magnitude jitters.</p>
+
+<nav class="pager" aria-label="Mills, in catalog order">
+  <a href="mungo-caverns.html"><span class="dir">&larr; Previous mill</span><span class="ttl">mungo-caverns</span></a>
+  <a class="next" href="pac-vt100.html"><span class="dir">Next mill &rarr;</span><span class="ttl">pac-vt100</span></a>
+</nav>
+<footer>Named for the shoddy mills of the West Riding: Useless Things Made
+Useful Through Skill (<a href="../heritage.html">the full story</a>).<br>
+&copy; 2026 Stephen Vincent Foster</footer>
+</div>
+</body>
+</html>

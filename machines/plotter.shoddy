@@ -1,0 +1,268 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem plotter.shoddy — Shoddy standard library: statistical charts
+Rem
+Rem The five classroom charts — Histogram, BarChart, PieChart, BoxPlot,
+Rem ScatterPlot — drawn onto a scribbler, with stats.shoddy doing the
+Rem arithmetic (bins, quantiles, fences) and scribbler.shoddy doing the
+Rem drawing. Every chart word takes a Scribbler first and returns it,
+Rem so charts chain and compose like any other scribbler drawing.
+Rem
+Rem Conventions:
+Rem   * NewPlot(w, h) opens a white canvas; chart words never clear,
+Rem     so a title (PlotTitle) or a second pass can share the surface.
+Rem   * Data is drawn inside fixed margins (left 46, right 12, top 14,
+Rem     bottom 28 pixels) with black axes on the left and bottom edges
+Rem     and min/max labels in the 8x8 builtin font.
+Rem   * Values scale linearly onto the plot area; bar and histogram
+Rem     heights measure from zero, as they must.
+Rem   * Series colours cycle through a fixed six-colour Palette().
+Rem   * Nothing blits: call ScribblerBlit when the picture is ready
+Rem     (tests read pixels without ever showing a window).
+Rem
+Rem Scale: classroom-sized data, like stats.shoddy — and PieChart fills
+Rem wedges by flood fill from each wedge's midpoint, so slices thinner
+Rem than a few degrees may not fill cleanly.
+Rem ==================================================================
+
+Include "scribbler.shoddy"
+Include "stats.shoddy"
+
+Rem ---- canvas and palette ---------------------------------------------
+
+Rem A fresh white canvas of the given pixel size.
+Def NewPlot(width As Number, height As Number) As Scribbler
+    ScribblerFill(ScribblerOpen(width, height), 255, 255, 255)
+
+Type Rgb
+    R As Number
+    G As Number
+    B As Number
+
+Rem The series colours (the familiar chart six); PlotColor cycles them.
+Def Palette() As List Of Rgb
+    { Rgb(31, 119, 180), Rgb(255, 127, 14), Rgb(44, 160, 44), Rgb(214, 39, 40), Rgb(148, 103, 189), Rgb(140, 86, 75) }
+
+Def PlotColor(k As Number) As Rgb
+    Nth(Palette(), Wrap(k - 1, Length(Palette())) + 1)
+
+Rem ---- the plot area ---------------------------------------------------
+Rem Fixed margins; y grows downward, so PlotY0 is the TOP of the area.
+
+Def MarginLeft() As Number
+    46
+
+Def MarginRight() As Number
+    12
+
+Def MarginTop() As Number
+    14
+
+Def MarginBottom() As Number
+    28
+
+Def PlotX0() As Number
+    MarginLeft()
+
+Def PlotX1(sc As Scribbler) As Number
+    ScribblerWidth(sc) - 1 - MarginRight()
+
+Def PlotY0() As Number
+    MarginTop()
+
+Def PlotY1(sc As Scribbler) As Number
+    ScribblerHeight(sc) - 1 - MarginBottom()
+
+Rem Map v from [lo, hi] onto pixel range [p0, p1], rounded. A flat
+Rem domain (hi = lo) lands mid-range rather than dividing by zero.
+Def ScaleTo(v As Number, lo As Number, hi As Number, p0 As Number, p1 As Number) As Number
+    If hi = lo Then
+        Round((p0 + p1) / 2)
+    Else
+        Round(p0 + (v - lo) / (hi - lo) * (p1 - p0))
+
+Rem ---- axes, labels, titles --------------------------------------------
+
+Def DrawAxes(sc As Scribbler) As Scribbler
+    DrawVLine(DrawHLine(sc, PlotY1(sc), PlotX0(), PlotX1(sc), 0, 0, 0), PlotX0(), PlotY0(), PlotY1(sc), 0, 0, 0)
+
+Rem Axis labels round to two decimals — chart lettering, not data.
+Def LabelOf(v As Number) As String
+    Str(Round(v * 100) / 100)
+
+Def XLabels(sc As Scribbler, lo As Number, hi As Number) As Scribbler
+    Let s = ScribblerText(sc, PlotX0(), PlotY1(sc) + 6, 1, 0, 0, 0, LabelOf(lo))
+    ScribblerText(s, PlotX1(sc) - 8 * Len(LabelOf(hi)) + 1, PlotY1(sc) + 6, 1, 0, 0, 0, LabelOf(hi))
+
+Def YLabels(sc As Scribbler, lo As Number, hi As Number) As Scribbler
+    Let s = ScribblerText(sc, PlotX0() - 8 * Len(LabelOf(lo)) - 2, PlotY1(sc) - 8, 1, 0, 0, 0, LabelOf(lo))
+    ScribblerText(s, PlotX0() - 8 * Len(LabelOf(hi)) - 2, PlotY0(), 1, 0, 0, 0, LabelOf(hi))
+
+Rem Centred black title along the top edge.
+Def PlotTitle(sc As Scribbler, s As String) As Scribbler
+    ScribblerText(sc, Round((ScribblerWidth(sc) - 8 * Len(s)) / 2), 3, 1, 0, 0, 0, s)
+
+Rem ---- histogram ---------------------------------------------------------
+
+Def SpanOf(lo As Number, hi As Number) As Number
+    If hi = lo Then
+        1
+    Else
+        hi - lo
+
+Rem Which of the n equal-width bins over [lo, lo+span] x falls in
+Rem (1-based; the top edge belongs to the last bin).
+Def BinIndex(x As Number, lo As Number, span As Number, n As Number) As Number
+    Min(n, Floor((x - lo) / span * n) + 1)
+
+Def BinCounts(xs As List Of Number, n As Number) As List Of Number
+    Let lo = Minimum(xs)
+    Let span = SpanOf(lo, Maximum(xs))
+    Map(Range(1, n), Fn(k) => CountIf(xs, Fn(x) => BinIndex(x, lo, span, n) = k))
+
+Def HistBar(sc As Scribbler, k As Number, n As Number, count As Number, top As Number, c As Rgb) As Scribbler
+    If count = 0 Then
+        sc
+    Else
+        Let pw = PlotX1(sc) - PlotX0() + 1
+        Let bx = PlotX0() + Round((k - 1) * pw / n)
+        Let bw = PlotX0() + Round(k * pw / n) - bx
+        Let ty = ScaleTo(count, 0, top, PlotY1(sc), PlotY0())
+        Let s = FillRect(sc, bx, ty, bw, PlotY1(sc) - ty, R(c), G(c), B(c))
+        DrawRect(s, bx, ty, bw, PlotY1(sc) - ty, 0, 0, 0)
+
+Rem Frequency histogram: xs split into n equal-width bins from min to
+Rem max, bar heights scaled to the fullest bin.
+Def Histogram(sc As Scribbler, xs As List Of Number, n As Number) As Scribbler
+    If n < 1 Then
+        Error("HISTOGRAM: NEED AT LEAST ONE BIN")
+    Else
+        Let counts = BinCounts(xs, n)
+        Let top = Maximum(counts)
+        Let s1 = XLabels(YLabels(DrawAxes(sc), 0, top), Minimum(xs), Maximum(xs))
+        Fold(Range(1, n), s1, Fn(s, k) => HistBar(s, k, n, Nth(counts, k), top, PlotColor(1)))
+
+Rem ---- bar chart ---------------------------------------------------------
+
+Def BarOne(sc As Scribbler, k As Number, slot As Number, v As Number, top As Number, label As String) As Scribbler
+    Let pad = Max(2, Round(slot * 0.15))
+    Let bx = PlotX0() + Round((k - 1) * slot) + pad
+    Let bw = Max(1, Round(slot) - 2 * pad)
+    Let c = PlotColor(k)
+    Let s1 = ScribblerText(sc, PlotX0() + Round((k - 0.5) * slot) - 4 * Len(label), PlotY1(sc) + 6, 1, 0, 0, 0, label)
+    If v = 0 Then
+        s1
+    Else
+        Let ty = ScaleTo(v, 0, top, PlotY1(s1), PlotY0())
+        DrawRect(FillRect(s1, bx, ty, bw, PlotY1(s1) - ty, R(c), G(c), B(c)), bx, ty, bw, PlotY1(s1) - ty, 0, 0, 0)
+
+Rem One coloured bar per category, labelled underneath, heights from
+Rem zero to the largest value. Values must be non-negative.
+Def BarChart(sc As Scribbler, labels As List Of String, values As List Of Number) As Scribbler
+    If Any(values, <(0)) Then
+        Error("BARCHART: VALUES MUST BE NON-NEGATIVE")
+    Else
+        Let n = Length(values)
+        Let top = Maximum(values)
+        Let slot = (PlotX1(sc) - PlotX0() + 1) / n
+        Let s1 = YLabels(DrawAxes(sc), 0, top)
+        Fold(Range(1, n), s1, Fn(s, k) => BarOne(s, k, slot, Nth(values, k), top, Nth(labels, k)))
+
+Rem ---- pie chart ---------------------------------------------------------
+Rem Angles run clockwise from 12 o'clock. Wedges are flood-filled from
+Rem their midpoints, so every slice needs enough angle to hold a seed
+Rem pixel clear of its boundaries.
+
+Def PieCx(sc As Scribbler) As Number
+    Round(ScribblerWidth(sc) * 0.38)
+
+Def PieCy(sc As Scribbler) As Number
+    Round(ScribblerHeight(sc) / 2)
+
+Def PieRad(sc As Scribbler) As Number
+    Round(Min(ScribblerWidth(sc), ScribblerHeight(sc)) * 0.32)
+
+Rem Boundary angle where slice k begins (cumulative share before it).
+Def PieAngle(values As List Of Number, k As Number) As Number
+    2 * Pi() * Sum(Taken(values, k - 1)) / Sum(values)
+
+Def PieMid(values As List Of Number, k As Number) As Number
+    2 * Pi() * (Sum(Taken(values, k - 1)) + Nth(values, k) / 2) / Sum(values)
+
+Def PieEdge(sc As Scribbler, a As Number) As Scribbler
+    Let cx = PieCx(sc)
+    Let cy = PieCy(sc)
+    Let rad = PieRad(sc)
+    DrawLine(sc, cx, cy, cx + Round(Sin(a) * rad), cy - Round(Cos(a) * rad), 0, 0, 0)
+
+Def PieFill(sc As Scribbler, values As List Of Number, k As Number) As Scribbler
+    Let m = PieMid(values, k)
+    Let c = PlotColor(k)
+    FloodFill(sc, PieCx(sc) + Round(Sin(m) * PieRad(sc) / 2), PieCy(sc) - Round(Cos(m) * PieRad(sc) / 2), R(c), G(c), B(c))
+
+Def LegendRow(sc As Scribbler, k As Number, label As String) As Scribbler
+    Let lx = Round(ScribblerWidth(sc) * 0.72)
+    Let ly = PlotY0() + (k - 1) * 14
+    Let c = PlotColor(k)
+    ScribblerText(FillRect(sc, lx, ly, 8, 8, R(c), G(c), B(c)), lx + 12, ly, 1, 0, 0, 0, label)
+
+Rem Pie of the values' shares of their total, with a colour-swatch
+Rem legend on the right. Values must be positive — a zero-size wedge
+Rem has nowhere to seed its fill.
+Def PieChart(sc As Scribbler, labels As List Of String, values As List Of Number) As Scribbler
+    If Any(values, <=(0)) Then
+        Error("PIECHART: VALUES MUST BE POSITIVE")
+    Else
+        Let n = Length(values)
+        Let s1 = DrawCircle(sc, PieCx(sc), PieCy(sc), PieRad(sc), 0, 0, 0)
+        Let s2 = Fold(Range(1, n), s1, Fn(t, k) => PieEdge(t, PieAngle(values, k)))
+        Let s3 = Fold(Range(1, n), s2, Fn(s, k) => PieFill(s, values, k))
+        Fold(Range(1, n), s3, Fn(s, k) => LegendRow(s, k, Nth(labels, k)))
+
+Rem ---- box plot ------------------------------------------------------------
+
+Def BoxDot(sc As Scribbler, x As Number, y As Number) As Scribbler
+    Let c = PlotColor(4)
+    FillCircle(sc, x, y, 2, R(c), G(c), B(c))
+
+Rem Horizontal box-and-whisker plot: box from Q1 to Q3, a line at the
+Rem median, whiskers to the most extreme values inside the 1.5 x IQR
+Rem fences, and every point beyond them dotted in red — the same rule
+Rem as stats.shoddy's Outliers.
+Def BoxPlot(sc As Scribbler, xs As List Of Number) As Scribbler
+    Let lo = Minimum(xs)
+    Let hi = Maximum(xs)
+    Let q1 = Quantile(xs, 0.25)
+    Let q3 = Quantile(xs, 0.75)
+    Let fLo = q1 - 1.5 * (q3 - q1)
+    Let fHi = q3 + 1.5 * (q3 - q1)
+    Let ins = Filter(xs, Fn(x) => x >= fLo And x <= fHi)
+    Let xa = ScaleTo(Minimum(ins), lo, hi, PlotX0(), PlotX1(sc))
+    Let xb = ScaleTo(q1, lo, hi, PlotX0(), PlotX1(sc))
+    Let xm = ScaleTo(Median(xs), lo, hi, PlotX0(), PlotX1(sc))
+    Let xc = ScaleTo(q3, lo, hi, PlotX0(), PlotX1(sc))
+    Let xd = ScaleTo(Maximum(ins), lo, hi, PlotX0(), PlotX1(sc))
+    Let boxH = Round((PlotY1(sc) - PlotY0()) * 0.4)
+    Let midY = Round((PlotY0() + PlotY1(sc)) / 2)
+    Let bTop = midY - Round(boxH / 2)
+    Let s1 = XLabels(DrawHLine(sc, PlotY1(sc), PlotX0(), PlotX1(sc), 0, 0, 0), lo, hi)
+    Let s2 = FillRect(s1, xb, bTop, xc - xb + 1, boxH + 1, 174, 199, 232)
+    Let s3 = DrawRect(s2, xb, bTop, xc - xb + 1, boxH + 1, 0, 0, 0)
+    Let s4 = DrawVLine(s3, xm, bTop, bTop + boxH, 0, 0, 0)
+    Let s5 = DrawHLine(DrawHLine(s4, midY, xa, xb, 0, 0, 0), midY, xc, xd, 0, 0, 0)
+    Let s6 = DrawVLine(DrawVLine(s5, xa, midY - Round(boxH / 4), midY + Round(boxH / 4), 0, 0, 0), xd, midY - Round(boxH / 4), midY + Round(boxH / 4), 0, 0, 0)
+    Fold(Filter(xs, Fn(x) => x < fLo Or x > fHi), s6, Fn(s, v) => BoxDot(s, ScaleTo(v, lo, hi, PlotX0(), PlotX1(s)), midY))
+
+Rem ---- scatter plot ----------------------------------------------------------
+
+Rem One dot per (x, y) pair, both axes scaled to their data's range.
+Def ScatterPlot(sc As Scribbler, xs As List Of Number, ys As List Of Number) As Scribbler
+    Let xLo = Minimum(xs)
+    Let xHi = Maximum(xs)
+    Let yLo = Minimum(ys)
+    Let yHi = Maximum(ys)
+    Let c = PlotColor(1)
+    Let s1 = XLabels(YLabels(DrawAxes(sc), yLo, yHi), xLo, xHi)
+    Fold(Zip(xs, ys), s1, Fn(s, p) => FillCircle(s, ScaleTo(Fst(p), xLo, xHi, PlotX0(), PlotX1(s)), ScaleTo(Snd(p), yLo, yHi, PlotY1(s), PlotY0()), 2, R(c), G(c), B(c)))

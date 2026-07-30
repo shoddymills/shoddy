@@ -1,0 +1,40 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem Scribbler demo: click to paint, press Q to quit. Run with
+Rem     mill run tst/scribbler-demo.shoddy
+Rem The loop blocks in NextEvent, so it sits at zero CPU between clicks —
+Rem there is no idle arm and nothing spins. Every branch of the Select
+Rem Case yields the same arity, so the quit branches return the closed
+Rem scribbler rather than nothing. The demo matches ScribblerTyped, not
+Rem ScribblerKeyDown — "the user typed a q" is a character question, not
+Rem a physical-key one.
+
+Include "../machines/scribbler.shoddy"
+Rem Stamp() is clock's, and must be included in its own right: scribbler
+Rem includes clock too, but a built machine DLL links its includes rather
+Rem than re-exporting them, so nothing leaks through from there.
+Include "../machines/clock.shoddy"
+
+Def Main()
+    Let sc = ScribblerOpen(640, 480)
+    Let sc2 = ScribblerTitle(sc, "Shoddy Scribbler Demo")
+    Let sc3 = ScribblerFill(sc2, 20, 20, 40)
+    Let sc4 = ScribblerText(sc3, 10, 10, 2, 255, 255, 255, "Click to paint, Q to quit")
+    Print("scribbler opened " & Stamp())
+    Let done = EventLoop(ScribblerBlit(sc4))
+    Print("scribbler closed")
+
+Def EventLoop(sc As Scribbler) As Scribbler
+    Select Case NextEvent(sc)
+        Case ScribblerMouseDown(x, y, btn, mods, at)
+            EventLoop(ScribblerBlit(FillRect(sc, x - 2, y - 2, 5, 5, 255, 200, 0)))
+        Case ScribblerTyped(ch, mods, at)
+            If Lower(ch) = "q" Then
+                ScribblerClose(sc)
+            Else
+                EventLoop(sc)
+        Case ScribblerQuit
+            ScribblerClose(sc)
+        Case Else
+            EventLoop(sc)

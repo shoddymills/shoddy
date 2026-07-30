@@ -1,0 +1,74 @@
+Rem ===================================================================
+Rem mungo-caverns-clock.shoddy -- lamp life, and the turn counter.
+Rem 
+Rem The two clocks that count down toward the cave
+Rem closing, and the warnings they print on the way.
+Rem ===================================================================
+
+Rem ---- the clock ---------------------------------------------------------------
+Rem Once per accepted command, after the turn counter
+Rem has moved and before the verb runs: dawdling costs points, and the
+Rem lamp burns down.
+
+Def WarnTime() As Number
+    30
+
+Def BatteryLife() As Number
+    2500
+
+Rem Each threshold fires once, on the turn after it is
+Rem passed, and the points come off the final score rather than showing
+Rem up as a penalty at the time.
+Def Thresholds(g As Game, i As Number, n As Number) As Game
+    If i > n Then
+        g
+    Else
+        Let t = Nth(TurnThresholds(), i)
+        If Turns(g) = Threshold(t) + 1 Then
+            Thresholds(With(Voiced(g, Message(t)), TurnPenalty = TurnPenalty(g) + PointLoss(t)), i + 1, n)
+        Else
+            Thresholds(g, i + 1, n)
+
+Rem The lamp is the real clock of the first half of the
+Rem game; the warnings start thirty turns from the end.
+Def LampCheck(g As Game) As Game
+    Let burning = PropOf(g, Lamp()) = LampBright()
+    Let g1 = Burned(g, burning)
+    Let g2 = Warned(g1)
+    If LampLife(g2) = 0 Then
+        Let g3 = With(g2, LampLife = 0 - 1, Props = SetNth(Props(g2), Lamp() + 1, LampDark()))
+        If Here(g3, Lamp()) Then
+            VoicedId(g3, MsgLampOut())
+        Else
+            g3
+    Else
+        g2
+
+Def Burned(g As Game, burning As Boolean) As Game
+    If burning Then
+        With(g, LampLife = LampLife(g) - 1)
+    Else
+        g
+
+Def Warned(g As Game) As Game
+    Let battery = ObjNamed("BATTERY")
+    Select Case True
+        Case LampLife(g) > WarnTime()
+            g
+        Case Here(g, battery) And PropOf(g, battery) = 0 And Here(g, Lamp())
+            With(VoicedId(g, MsgReplaceBatteries()), Props = SetNth(Props(g), battery + 1, 1),
+                 LampLife = LampLife(g) + BatteryLife(), LampWarned = False)
+        Case Not LampWarned(g) And Here(g, Lamp())
+            With(VoicedId(g, DimMessage(g, battery)), LampWarned = True)
+        Case Else
+            g
+
+Def DimMessage(g As Game, battery As Number) As Number
+    If PropOf(g, battery) = 1 Then
+        MsgMissingBatteries()
+    Else
+        If Nth(ObjectLocation(g), battery + 1) = 0 Then
+            MsgLampDim()
+        Else
+            MsgGetBatteries()
+

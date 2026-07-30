@@ -1,0 +1,254 @@
+Rem ===================================================================
+Rem tests/test-turn.shoddy -- whole turns, driven headless.
+Rem
+Rem   ./build.sh test     (runs this and the rest of tests/)
+Rem
+Rem This file is the reason the port was arranged the way it is. A turn
+Rem is Command(Game, String) -> Done: a game and a line of typing in, a
+Rem game out, with everything the rules said carried on the game's own
+Rem output channel. So a scenario here is not a recorded session to be
+Rem diffed -- it is a function call, and what it produced can be asked
+Rem about directly. No terminal, no subprocess, no golden file.
+Rem
+Rem What that buys, concretely: these scenarios reach into the middle of
+Rem the cave and hold it still. Standing in the dark with the lamp off
+Rem and checking the generator has not been touched is not a thing you
+Rem can do by playing.
+Rem ===================================================================
+
+Include "harness.shoddy"
+
+Rem ---- the opening -----------------------------------------------------
+
+Def CheckOpening()
+    Let g = Fresh()
+    Assert(Location(g) = LocNamed("LOC_START"), "A NEW GAME BEGINS AT THE END OF THE ROAD")
+    Assert(IsEmpty(Output(g)), "AND HAS SAID NOTHING YET")
+    Assert(Turns(g) = 0, "AND NO TURN HAS BEEN TAKEN")
+
+    Let inside = Step(g, "in")
+    Assert(Location(inside) = LocNamed("LOC_BUILDING"), "IN TAKES YOU INTO THE WELL HOUSE")
+    Assert(Turns(inside) = 1, "AND COSTS ONE TURN")
+
+    Rem the room's own description is what arriving says
+    Assert(Mentions(Spoken(Step(Hushed(g), "in")), "well house"),
+           "AND THE WELL HOUSE ANNOUNCES ITSELF")
+
+Rem ---- carrying things -------------------------------------------------
+
+Def CheckCarrying()
+    Let g = Step(Fresh(), "in")
+    Assert(Not Toting(g, Lamp()), "THE LAMP STARTS ON THE FLOOR")
+
+    Let held = Step(g, "take lamp")
+    Assert(Toting(held, Lamp()), "TAKING IT PICKS IT UP")
+    Assert(Not Contains(HereList(held), Lamp()), "AND TAKES IT OUT OF THE ROOM")
+
+    Let dropped = Step(held, "drop lamp")
+    Assert(Not Toting(dropped, Lamp()), "DROPPING IT PUTS IT DOWN")
+    Assert(Contains(HereList(dropped), Lamp()), "BACK INTO THE ROOM IT IS IN")
+
+    Rem the inventory reads the object table in declaration order, so it
+    Rem always says the same thing however you gathered things
+    Let both = Steps(g, { "take lamp", "take keys" })
+    Let bag = Reply(both, "inventory")
+    Assert(Mentions(bag, "Set of keys") And Mentions(bag, "Brass lantern"),
+           "THE INVENTORY LISTS WHAT YOU CARRY")
+    Assert(Instr(bag, "Set of keys") < Instr(bag, "Brass lantern"),
+           "IN TABLE ORDER, NOT THE ORDER PICKED UP")
+
+Rem ---- darkness --------------------------------------------------------
+Rem The darkness rule decides what you see, whether the pit can open
+Rem under you, and whether a room counts as visited. Standing in it with
+Rem the lamp off is a state a recorded session can only stumble into.
+
+Def CheckDarkness()
+    Rem plugh forwards you through a forced room and leaves you in the
+    Rem dark at Y2, with the lamp still off
+    Let dark = Step(Outfitted(), "plugh")
+    Assert(Location(dark) = LocNamed("LOC_Y2"), "PLUGH PUTS YOU DOWN AT Y2")
+    Assert(IsDarkHere(dark), "WHERE IT IS PITCH DARK")
+    Assert(Mentions(Spoken(Step(Hushed(Outfitted()), "plugh")), "pitch dark"),
+           "AND ARRIVING SAYS SO RATHER THAN DESCRIBING THE ROOM")
+
+    Let lit = Step(dark, "light lamp")
+    Assert(Not IsDarkHere(lit), "THE LAMP MAKES THE ROOM VISIBLE")
+    Assert(PropOf(lit, Lamp()) = LampBright(), "AND THE LAMP KNOWS IT IS LIT")
+
+    Let out = Step(lit, "extinguish lamp")
+    Assert(IsDarkHere(out), "PUTTING IT OUT PUTS THE ROOM BACK IN THE DARK")
+
+    Rem a lamp you are not carrying does not light the room you are in
+    Assert(Not IsDarkHere(Step(lit, "drop lamp")),
+           "A LIT LAMP ON THE FLOOR STILL LIGHTS THE ROOM")
+
+Rem ---- the generator ---------------------------------------------------
+Rem This is the port's most expensive kind of bug and the hardest to see:
+Rem a rule that draws one more or one fewer random number than the
+Rem original did. Every seeded game diverges from that moment on, and
+Rem nothing about the turn it happens on looks wrong.
+Rem
+Rem Held still as a function, the accounting is simply checkable: take a
+Rem turn, and ask whether the generator moved.
+
+Def CheckDrawAccounting()
+    Let g = Outfitted()
+
+    Rem An unconditional travel rule tests nothing and rolls nothing.
+    Assert(LcgState(Step(g, "out")) = LcgState(g),
+           "A PLAIN MOVE DOES NOT TOUCH THE GENERATOR")
+
+    Rem Nor does a verb that only looks at what you are holding.
+    Assert(LcgState(Step(g, "inventory")) = LcgState(g),
+           "NOR DOES TAKING STOCK")
+
+    Rem The pit roll is guarded by three tests: not a forced room, dark
+    Rem now, and dark when the prompt went out. In the light the roll must
+    Rem not happen at all -- drawing anyway would cost one number a turn
+    Rem and put every seeded game out of step within a few moves.
+    Let litRoom = With(g, LeftRoomWasDark = True)
+    Assert(LcgState(PitCheck(litRoom)) = LcgState(litRoom),
+           "THE PIT DOES NOT ROLL IN A ROOM YOU CAN SEE")
+
+    Rem and in the dark, with the same three tests passing, it rolls
+    Rem exactly once
+    Let inDark = With(Step(g, "plugh"), LeftRoomWasDark = True)
+    Assert(LcgState(PitCheck(inDark)) = LcgNext(LcgState(inDark)),
+           "AND ROLLS EXACTLY ONCE IN THE DARK")
+
+Rem ---- the grate -------------------------------------------------------
+Rem The way into the cave, and the port's smallest complete puzzle: a
+Rem locked thing, a key, a state change, and a travel rule that reads the
+Rem state.
+
+Def CheckGrate()
+    Rem at the grate without the keys
+    Let bare = Steps(Fresh(), { "in", "take lamp", "out", "down", "down", "depression" })
+    Assert(Location(bare) = LocNamed("LOC_GRATE"), "THE DEPRESSION LEADS TO THE GRATE")
+    Assert(PropOf(bare, Grate()) = GrateClosed(), "WHICH STARTS LOCKED")
+    Assert(Mentions(Reply(bare, "unlock grate"), "no keys"),
+           "AND WILL NOT OPEN WITHOUT THE KEYS")
+    Assert(PropOf(Step(bare, "unlock grate"), Grate()) = GrateClosed(),
+           "SO IT IS STILL LOCKED")
+
+    Rem and with them
+    Let keyed = Steps(Outfitted(), { "out", "down", "down", "depression", "unlock grate" })
+    Assert(PropOf(keyed, Grate()) = GrateOpen(), "THE KEYS UNLOCK IT")
+    Assert(Location(Step(keyed, "down")) = LocNamed("LOC_BELOWGRATE"),
+           "AND THEN THE TRAVEL RULE LETS YOU DOWN")
+
+    Rem the same rule, read the other way: a locked grate refuses
+    Let shut = Steps(Outfitted(), { "out", "down", "down", "depression" })
+    Assert(Location(Step(shut, "down")) = LocNamed("LOC_GRATE"),
+           "A LOCKED GRATE LEAVES YOU WHERE YOU STAND")
+
+Rem ---- the two-word grammar --------------------------------------------
+Rem Five rewrites happen before a command is dispatched, and each one is
+Rem a sentence a player actually types.
+
+Def CheckGrammar()
+    Let g = Step(Fresh(), "in")
+
+    Rem an object followed by a verb is swapped into verb-object order
+    Assert(Toting(Step(g, "lamp get"), Lamp()), "LAMP GET WORKS LIKE GET LAMP")
+
+    Rem a bare object is remembered, and the next verb runs on it
+    Let asked = Step(g, "lamp")
+    Assert(Mentions(Spoken(asked), "do with the lamp"), "A BARE OBJECT ASKS WHAT YOU MEANT")
+    Assert(Toting(Step(asked, "get"), Lamp()), "AND THE NEXT VERB RUNS ON IT")
+
+    Rem say echoes what it is given rather than looking for it
+    Assert(Mentions(Reply(g, "say lamp"), "Okay"), "SAY ECHOES A WORD BACK")
+
+    Rem an unknown word is quoted back at you
+    Assert(Mentions(Reply(g, "blorple"), "blorple"), "AN UNKNOWN WORD IS QUOTED BACK")
+
+    Rem the magic words are motions, not verbs, and outside their rooms
+    Rem they do nothing at all
+    Assert(Mentions(Reply(g, "plover"), "apply that word"),
+           "A MAGIC WORD IN THE WRONG ROOM DOES NOTHING")
+
+Rem ---- the clock -------------------------------------------------------
+
+Def CheckLamp()
+    Rem the lamp burns only while it is lit
+    Let g = Outfitted()
+    Assert(LampLife(Step(g, "out")) = LampLife(g), "AN UNLIT LAMP BURNS NOTHING")
+
+    Let lit = Step(g, "light lamp")
+    Assert(LampLife(Step(lit, "out")) < LampLife(lit), "A LIT ONE BURNS A TURN AT A TIME")
+
+Rem ---- what the game is worth ------------------------------------------
+Rem Scoring is a sum of seven things, and a played session can only ever
+Rem show you the total. Held still, each term can be isolated: set one
+Rem field, ask what changed. That is the whole argument for a state
+Rem record you can copy.
+
+Def CheckScoring()
+    Let g = Fresh()
+
+    Rem thirty for the three lives you have not spent, two for turning up
+    Assert(ScoreOf(g) = 32, "A NEW GAME IS ALREADY WORTH 32")
+    Assert(ScoreOf(With(g, Deaths = 1)) = ScoreOf(g) - 10, "EACH DEATH COSTS TEN")
+
+    Rem the twenty-five for getting well in is not about where you are
+    Rem standing: it is the curmudgeon activation ladder having started,
+    Rem which is what "deep in the cave" actually means here
+    Assert(ScoreOf(With(g, CurmudgeonActivation = 1)) = ScoreOf(g) + 25,
+           "GETTING DEEP ENOUGH FOR THE CURMUDGEONS IS WORTH 25")
+
+    Rem SavePenalty is carried in points rather than in suspends -- a
+    Rem suspend adds five to it -- so it comes straight off the total. You
+    Rem cannot save before a fight and reload until it goes your way.
+    Assert(ScoreOf(With(g, SavePenalty = 5)) = ScoreOf(g) - 5,
+           "THE SUSPEND PENALTY COMES STRAIGHT OFF THE SCORE")
+
+    Rem a treasure is worth two for having been seen and its full value
+    Rem for being carried home to the well house
+    Let nugget = ObjNamed("NUGGET")
+    Assert(ScoreOf(Revealed(g, nugget)) = ScoreOf(g) + 2, "SEEING A TREASURE IS WORTH TWO")
+
+    Let home = With(Revealed(g, nugget),
+                    ObjectLocation = SetNth(ObjectLocation(g), nugget + 1,
+                                            LocNamed("LOC_BUILDING")))
+    Assert(ScoreOf(home) = ScoreOf(g) + TreasureValue(nugget),
+           "AND STOWING IT IN THE WELL HOUSE IS WORTH ALL OF IT")
+
+    Rem a treasure nobody has laid eyes on is worth nothing at all --
+    Rem which is why the tally, not the score, is what closes the cave
+    Assert(IsHidden(g, nugget), "AN UNFOUND TREASURE STARTS HIDDEN")
+
+Rem ---- suspending and resuming -----------------------------------------
+Rem The save file is this port's own format, written field by field. The
+Rem round trip is the whole contract, and it is checkable without a
+Rem terminal: write a game, read it back, and ask whether it is the same
+Rem game. (This is the one check here that touches the disk; it leaves
+Rem tests/roundtrip.adv behind.)
+
+Def SavePath() As String
+    "tests/roundtrip.adv"
+
+Def CheckSaveRoundTrip()
+    Let g = Steps(Outfitted(), { "out", "down", "down", "depression", "unlock grate", "down" })
+    WriteSaveAs(g, SavePath(), SaveVersion())
+    Let back = ReadSave(Fresh(), SavePath())
+
+    Assert(Location(back) = Location(g), "A RESUMED GAME IS WHERE IT WAS SAVED")
+    Assert(Turns(back) = Turns(g), "WITH THE SAME TURN COUNT")
+    Assert(LcgState(back) = LcgState(g), "AND THE SAME PLACE IN THE RANDOM STREAM")
+    Assert(Toting(back, Lamp()) = Toting(g, Lamp()), "STILL CARRYING WHAT IT CARRIED")
+    Assert(PropOf(back, Grate()) = PropOf(g, Grate()), "AND THE GRATE IS STILL OPEN")
+    Assert(LampLife(back) = LampLife(g), "AND THE LAMP HAS THE SAME LIFE LEFT")
+    Assert(ScoreOf(back) = ScoreOf(g), "AND IT IS WORTH WHAT IT WAS WORTH")
+
+Def Main()
+    CheckOpening()
+    CheckCarrying()
+    CheckDarkness()
+    CheckDrawAccounting()
+    CheckGrate()
+    CheckGrammar()
+    CheckLamp()
+    CheckScoring()
+    CheckSaveRoundTrip()
+    Print("ALL MUNGO CAVERNS TURN CHECKS PASSED")

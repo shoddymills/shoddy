@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
+<meta name="description" content="Physical-Key Classification — machines/keys.shoddy">
+<link rel="stylesheet" href="../style.css">
+<link rel="icon" href="../favicon.svg" type="image/svg+xml">
+<title>keys — Physical-Key Classification | Shoddy Machines</title>
+</head>
+<body>
+<div class="topbar"><div class="inner">
+  <a class="phase" href="index.html">Shoddy · The Machines</a>
+  <span class="spacer"></span>
+  <nav class="docnav" aria-label="Documentation"><a href="../heritage.html">Story</a><a href="../guide.html">Guide</a><a href="../quickref.html">Reference</a><span class="here">Machines</span><a href="../mills/index.html">Mills</a><a href="../stack.html">Stack</a><a href="../spec.html">Spec</a><a href="../setup.html">Setup</a><a href="../vscode.html">VS Code</a><a href="../build.html">Toolchain</a></nav>
+</div></div>
+<div class="wrap">
+
+
+<header class="mast"><p class="eyebrow"><a href="index.html#graphics-interaction">The Machines &middot; Graphics &amp; interaction</a></p><h1>keys</h1><p class="kicker">Physical-Key Classification — machines/keys.shoddy</p></header>
+<nav class="pagertop" aria-label="Machines, in catalog order"><a href="plotter.html">&larr; plotter</a><a href="index.html">All machines</a><a href="vt100.html">vt100 &rarr;</a></nav>
+
+<h2 id="summary">Summary</h2>
+<p><code>keys</code> takes the raw number that comes with a keyboard event and
+tells you, in plain terms, which key was pressed. When a program using <a
+href="scribbler.html">scribbler</a> hears that a key went down, all it gets is
+a bare code — <code>262</code>, say, or <code>81</code> — and codes like that
+are no way to write readable game logic. <code>ClassifyKey</code> folds that
+number into a friendly <code>GameKey</code>: <code>262</code> becomes
+<code>ArrowLeft</code>, <code>32</code> becomes <code>SpaceBar</code>, a letter
+or digit becomes a <code>CharKey</code> carrying its code, and anything else
+becomes an <code>OtherKey</code> so nothing is ever lost. From there you can
+match on the key by name, or ask "was that the Q key?" with
+<code>IsKey</code>. It's a small, standalone translation layer — it includes
+nothing else and depends on nothing else — that turns magic numbers into
+something you'd actually want to read.</p>
+
+<h2 id="why">Why It's Useful</h2>
+<p>Any program that responds to the keyboard — a game, a menu, a set of
+hotkeys — has to answer the question "which key just went down?" Without help,
+that means littering your code with numbers: <code>If code = 262</code>,
+<code>If code = 81</code>, and a comment on each to remind you what it meant.
+Get one wrong and the bug is silent and maddening. <code>keys</code> does that
+comparing once, correctly, and hands you names instead:
+<code>Case ArrowLeft()</code> reads like what it does. Reach for it whenever a
+scribbler program needs to steer by the arrow keys, jump on the space bar, or
+watch for a particular letter — the classic controls of anything interactive.</p>
+<p>One distinction is worth getting straight, because <code>keys</code> sits
+firmly on one side of it. This machine answers the <strong>physical-key</strong>
+question — "the Left arrow went down", "the Q key went down" — which is what
+navigation, hotkeys and game controls care about. It does <em>not</em> answer
+the <strong>character</strong> question — "the user produced a
+<code>q</code>". That's a different thing entirely, with keyboard layout,
+Shift and international input already applied, and it belongs to scribbler's
+<code>ScribblerTyped</code> event, not here. If you're moving a player around,
+you want <code>keys</code>. If you're collecting text someone typed, you want
+<code>ScribblerTyped</code>.</p>
+
+<h2 id="guide">User's Guide</h2>
+<p>You feed <code>ClassifyKey</code> the raw code from a scribbler key event
+and match on what comes back. Named keys have their own tags; letters and
+digits arrive as <code>CharKey</code>, and you can pull the character out with
+<code>KeyGlyph</code> or test for a specific one with <code>IsKey</code>.</p>
+<pre><code>Include "keys.shoddy"
+
+Def Handle(code As Number)
+    Let k = ClassifyKey(code)
+    Select Case k
+        Case ArrowLeft()
+            Print("move left")
+        Case ArrowRight()
+            Print("move right")
+        Case SpaceBar()
+            Print("jump")
+        Case Else
+            If IsKey(k, "q") Then Print("quit")   ' matches the Q key</code></pre>
+<p>A few things worth remembering:</p>
+<ul>
+<li><strong>Physical keys report uppercase.</strong> The letter keys sit on
+codes 65–90 ("A"–"Z"), so <code>KeyGlyph</code> of a letter is always a
+capital. That's why <code>IsKey</code> upper-cases what you pass it —
+<code>IsKey(k, "q")</code> and <code>IsKey(k, "Q")</code> both match the Q
+key.</li>
+<li><strong><code>KeyGlyph</code> is empty for named keys.</strong> Only
+<code>CharKey</code> stands for a printable glyph; the arrows, space, Enter and
+the rest return <code>""</code>, as does anything unmapped. Match those by
+their names instead.</li>
+<li><strong>Nothing falls through the cracks.</strong> A code that isn't a
+recognised named key, letter, or digit comes back as <code>OtherKey(code)</code>,
+still carrying the original number, so you can handle or ignore it as you
+like.</li>
+<li><strong>It pairs with <a href="scribbler.html">scribbler</a>.</strong>
+The codes it understands are scribbler's stable <code>ScribblerKeys</code>
+table — the number that rides along on a <code>ScribblerKeyDown</code> or
+<code>ScribblerKeyUp</code> event. And its constructor names deliberately
+avoid the ones <a href="vt100.html">vt100</a> uses
+(<code>KeyUp</code>/<code>KeyDown</code>) and the <code>Left</code>/<code>Right</code>
+string builtins, so you can include it alongside either without a clash.</li>
+</ul>
+
+<h2 id="words">Word Reference</h2>
+<p class="tag">3 words, plus the GameKey type</p>
+
+<h3>The type</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>GameKey</td><td>The friendly key sum type: <code>ArrowLeft</code>,
+<code>ArrowRight</code>, <code>ArrowUp</code>, <code>ArrowDown</code>,
+<code>SpaceBar</code>, <code>EnterKey</code>, <code>EscKey</code>,
+<code>TabKey</code>, <code>BackKey</code>, <code>CharKey(Code)</code> (a letter
+or digit, carrying its raw code), and <code>OtherKey(Code)</code> (anything
+unrecognised, carrying its raw code).</td></tr>
+</table>
+
+<h3>Classifying and testing</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>ClassifyKey(code)</td><td>Fold a raw <code>ScribblerKeys</code> code
+into a <code>GameKey</code>. The arrows, space, Enter, Escape, Tab and
+Backspace get their own tags; letters (65–90) and digits (48–57) become
+<code>CharKey(code)</code>; everything else becomes
+<code>OtherKey(code)</code>.</td></tr>
+<tr><td>KeyGlyph(k)</td><td>The character a <code>CharKey</code> stands for —
+"A".."Z" or "0".."9". Returns <code>""</code> for the named keys and anything
+unmapped.</td></tr>
+<tr><td>IsKey(k, s)</td><td>True when <code>k</code> is the letter or digit
+whose glyph is <code>s</code>. Case-insensitive: since physical letters report
+uppercase, <code>IsKey(k, "q")</code> matches the Q key.</td></tr>
+</table>
+
+
+<nav class="pager" aria-label="Machines, in catalog order">
+  <a href="plotter.html"><span class="dir">&larr; Previous machine</span><span class="ttl">plotter</span></a>
+  <a class="next" href="vt100.html"><span class="dir">Next machine &rarr;</span><span class="ttl">vt100</span></a>
+</nav>
+<footer>Named for the shoddy mills of the West Riding: Useless Things Made
+Useful Through Skill (<a href="../heritage.html">the full story</a>).<br>
+&copy; 2026 Stephen Vincent Foster</footer>
+</div>
+</body>
+</html>

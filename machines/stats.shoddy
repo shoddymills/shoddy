@@ -1,0 +1,393 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem stats.shoddy — Shoddy standard library: statistics
+Rem
+Rem Descriptive statistics, correlation and regression, and the classic
+Rem inference tests, pure Shoddy on top of the runtime's special
+Rem functions (ERF, GAMMAP, BETAI — the CDF primitives that need native
+Rem precision) and the SORT builtin. Every p-value is a real p-value
+Rem computed from a CDF; there are no critical-value tables here.
+Rem
+Rem Scale: lists are linked lists and most words walk them more than
+Rem once, so this is for classroom-sized data — dozens to thousands of
+Rem values — not bulk analytics.
+Rem
+Rem Conventions:
+Rem   * Var/StdDev are the SAMPLE forms (divide by n-1); VarP/StdDevP
+Rem     are the population forms (divide by n).
+Rem   * Quantile uses linear interpolation between order statistics —
+Rem     R type 7, the same rule as Excel's PERCENTILE.INC.
+Rem   * Skewness and Kurtosis are the moment (population) forms, as in
+Rem     scipy with bias=True; Kurtosis is excess (normal = 0).
+Rem   * Modes returns ALL modes; a tie is never silently broken.
+Rem   * Test words return a TestResult(Stat, Df, PVal) record with a
+Rem     two-sided p-value. Df is 0 where no df applies (z-tests); for
+Rem     Anova it is the between-groups df (within = total n - groups).
+Rem   * Frequency words return dict.shoddy association lists, keys in
+Rem     first-seen order.
+Rem ==================================================================
+
+Include "seq.shoddy"
+Include "dict.shoddy"
+
+Rem ---- aggregation (poly) --------------------------------------------
+
+Def Sum(xs As List Of Number) As Number
+    Fold(xs, 0, +)
+
+Def Product(xs As List Of Number) As Number
+    Fold(xs, 1, *)
+
+Def Maximum(xs As List Of Number) As Number
+    Fold(xs, First(xs), Max)
+
+Def Minimum(xs As List Of Number) As Number
+    Fold(xs, First(xs), Min)
+
+Rem ---- central tendency ----------------------------------------------
+
+Def Mean(xs As List Of Number) As Number
+    Sum(xs) / Length(xs)
+
+Rem The everyday name, kept as an alias for Mean.
+Def Average(xs As List Of Number) As Number
+    Mean(xs)
+
+Def WeightedMean(xs As List Of Number, ws As List Of Number) As Number
+    Sum(ZipWith(xs, ws, *)) / Sum(ws)
+
+Rem For rates, ratios, growth factors. All values must be positive.
+Def GeoMean(xs As List Of Number) As Number
+    Exp(Mean(Map(xs, Log)))
+
+Def HarmonicMean(xs As List Of Number) As Number
+    Length(xs) / Sum(Map(xs, Fn(x) => 1 / x))
+
+Rem ---- quantiles -----------------------------------------------------
+
+Rem Linear interpolation between order statistics (R type 7 / Excel
+Rem PERCENTILE.INC): position h = (n-1)p + 1 in the sorted data, then
+Rem interpolate between the values on either side. p is a fraction.
+Def Quantile(xs As List Of Number, p As Number) As Number
+    If p < 0 Or p > 1 Then
+        Error("QUANTILE: P OUTSIDE [0, 1]")
+    Else
+        Let s = Sort(xs)
+        Let h = (Length(s) - 1) * p + 1
+        Let lo = Floor(h)
+        Nth(s, lo) + (h - lo) * (Nth(s, Ceil(h)) - Nth(s, lo))
+
+Rem The same, taking 0..100 instead of 0..1.
+Def Percentile(xs As List Of Number, k As Number) As Number
+    Quantile(xs, k / 100)
+
+Def Median(xs As List Of Number) As Number
+    Quantile(xs, 0.5)
+
+Def Iqr(xs As List Of Number) As Number
+    Quantile(xs, 0.75) - Quantile(xs, 0.25)
+
+Rem Max - min. (Not "Range" — that word is the builtin that builds
+Rem { a .. b }, and a Def would silently shadow it.)
+Def RangeOf(xs As List Of Number) As Number
+    Maximum(xs) - Minimum(xs)
+
+Rem ---- spread --------------------------------------------------------
+
+Rem Two-pass sum of squared deviations: mean first, then deviations —
+Rem numerically stable, and the shared core of the variance words.
+Def SqDevSum(xs As List Of Number) As Number
+    Let m = Mean(xs)
+    Sum(Map(xs, Fn(x) => (x - m) * (x - m)))
+
+Rem Sample variance (n-1) and population variance (n).
+Def Var(xs As List Of Number) As Number
+    SqDevSum(xs) / (Length(xs) - 1)
+
+Def VarP(xs As List Of Number) As Number
+    SqDevSum(xs) / Length(xs)
+
+Def StdDev(xs As List Of Number) As Number
+    Sqr(Var(xs))
+
+Def StdDevP(xs As List Of Number) As Number
+    Sqr(VarP(xs))
+
+Rem Standard error of the mean.
+Def StdErr(xs As List Of Number) As Number
+    StdDev(xs) / Sqr(Length(xs))
+
+Rem Median absolute deviation — robust spread.
+Def Mad(xs As List Of Number) As Number
+    Let m = Median(xs)
+    Median(Map(xs, Fn(x) => Abs(x - m)))
+
+Rem ---- shape ---------------------------------------------------------
+
+Def Skewness(xs As List Of Number) As Number
+    Let m = Mean(xs)
+    Let n = Length(xs)
+    Let m2 = SqDevSum(xs) / n
+    Sum(Map(xs, Fn(x) => (x - m) * (x - m) * (x - m))) / n / m2 ^ 1.5
+
+Rem Excess kurtosis: 0 for the normal distribution.
+Def Kurtosis(xs As List Of Number) As Number
+    Let m = Mean(xs)
+    Let n = Length(xs)
+    Let m2 = SqDevSum(xs) / n
+    Sum(Map(xs, Fn(x) => (x - m) ^ 4)) / n / (m2 * m2) - 3
+
+Rem ---- z-scores and outliers -----------------------------------------
+
+Def ZScore(x As Number, m As Number, s As Number) As Number
+    (x - m) / s
+
+Rem Standardize a whole dataset against its own mean and sample SD.
+Def ZScores(xs As List Of Number) As List Of Number
+    Let m = Mean(xs)
+    Let s = StdDev(xs)
+    Map(xs, Fn(x) => (x - m) / s)
+
+Rem The 1.5 x IQR rule: values beyond the box-plot fences.
+Def Outliers(xs As List Of Number) As List Of Number
+    Let q1 = Quantile(xs, 0.25)
+    Let q3 = Quantile(xs, 0.75)
+    Let lo = q1 - 1.5 * (q3 - q1)
+    Let hi = q3 + 1.5 * (q3 - q1)
+    Filter(xs, Fn(x) => x < lo Or x > hi)
+
+Rem Values more than z sample standard deviations from the mean.
+Def OutliersZ(xs As List Of Number, z As Number) As List Of Number
+    Let m = Mean(xs)
+    Let s = StdDev(xs)
+    Filter(xs, Fn(x) => Abs(x - m) / s > z)
+
+Rem ---- frequencies (dict.shoddy association lists) ---------------------
+
+Def FreqBump(d As List Of Pair, x As t) As List Of Pair
+    If IsEmpty(d) Then
+        { Pair(x, 1) }
+    Else
+        If Fst(First(d)) = x Then
+            Prepend(Pair(x, Snd(First(d)) + 1), Rest(d))
+        Else
+            Prepend(First(d), FreqBump(Rest(d), x))
+
+Rem Value -> count, keys in first-seen order. Works for any key type
+Rem = accepts: numbers, strings, booleans, records.
+Def Freq(xs As List Of t) As List Of Pair
+    Fold(xs, { }, FreqBump)
+
+Rem Value -> proportion of the whole (multiply by 100 for percentages).
+Def RelFreq(xs As List Of t) As List Of Pair
+    Let n = Length(xs)
+    Map(Freq(xs), Fn(p) => Pair(Fst(p), Snd(p) / n))
+
+Rem ALL the most frequent values, in first-seen order — a tie returns
+Rem every winner, never a silent pick (if every value is unique, every
+Rem value is a mode).
+Def Modes(xs As List Of t) As List Of t
+    Let f = Freq(xs)
+    Let top = Maximum(Map(f, Snd))
+    Map(Filter(f, Fn(p) => Snd(p) = top), Fst)
+
+Rem Empirical CDF: the proportion of the data <= x.
+Def Ecdf(xs As List Of Number, x As Number) As Number
+    CountIf(xs, <=(x)) / Length(xs)
+
+Rem ---- correlation and regression ---------------------------------------
+
+Rem Sample covariance (n-1), the primitive under Correl and LinFit.
+Def Cov(xs As List Of Number, ys As List Of Number) As Number
+    Let mx = Mean(xs)
+    Let my = Mean(ys)
+    Sum(ZipWith(xs, ys, Fn(x, y) => (x - mx) * (y - my))) / (Length(xs) - 1)
+
+Rem Pearson correlation coefficient, in [-1, 1].
+Def Correl(xs As List Of Number, ys As List Of Number) As Number
+    Cov(xs, ys) / (StdDev(xs) * StdDev(ys))
+
+Rem Average rank of x within xs (ties share the mean of their ranks).
+Def RankOf(xs As List Of Number, x As Number) As Number
+    CountIf(xs, <(x)) + (CountIf(xs, =(x)) + 1) / 2
+
+Def Ranks(xs As List Of Number) As List Of Number
+    Map(xs, Fn(x) => RankOf(xs, x))
+
+Rem Spearman rank correlation: Pearson on the ranks — the robust,
+Rem nonparametric complement to Correl.
+Def Spearman(xs As List Of Number, ys As List Of Number) As Number
+    Correl(Ranks(xs), Ranks(ys))
+
+Rem Simple linear regression y = Slope * x + Intercept, with R2 the
+Rem share of y's variance the line explains.
+Type Fit
+    Slope As Number
+    Intercept As Number
+    R2 As Number
+
+Def LinFit(xs As List Of Number, ys As List Of Number) As Fit
+    Let b = Cov(xs, ys) / Var(xs)
+    Let r = Correl(xs, ys)
+    Fit(b, Mean(ys) - b * Mean(xs), r * r)
+
+Rem ---- distributions ---------------------------------------------------
+Rem CDFs from the runtime's special functions: normal from ERF,
+Rem chi-square from GAMMAP, t and F from BETAI.
+
+Def NormPdf(z As Number) As Number
+    Exp(-(z * z) / 2) / Sqr(2 * Pi())
+
+Rem Standard normal CDF. For general x, pass ZScore(x, mu, sigma).
+Def NormCdf(z As Number) As Number
+    (1 + Erf(z / Sqr(2))) / 2
+
+Def Chi2Cdf(x As Number, df As Number) As Number
+    GammaP(df / 2, x / 2)
+
+Def TCdf(t As Number, df As Number) As Number
+    If t >= 0 Then
+        1 - BetaI(df / 2, 0.5, df / (df + t * t)) / 2
+    Else
+        BetaI(df / 2, 0.5, df / (df + t * t)) / 2
+
+Def FCdf(f As Number, d1 As Number, d2 As Number) As Number
+    BetaI(d1 / 2, d2 / 2, d1 * f / (d1 * f + d2))
+
+Rem Quantile functions by bisection — these CDFs have no closed-form
+Rem inverses. 80 halvings pin the answer far below the CDFs' own
+Rem accuracy. NormInv covers (-13, 13) sigma; TInv covers |t| < 500,
+Rem enough for any df >= 1 and confidence level taught anywhere.
+
+Def NormInvGo(p As Number, lo As Number, hi As Number, k As Number) As Number
+    Let mid = (lo + hi) / 2
+    If k = 0 Then
+        mid
+    Else
+        If NormCdf(mid) < p Then
+            NormInvGo(p, mid, hi, k - 1)
+        Else
+            NormInvGo(p, lo, mid, k - 1)
+
+Def NormInv(p As Number) As Number
+    If p <= 0 Or p >= 1 Then
+        Error("NORMINV: P OUTSIDE (0, 1)")
+    Else
+        NormInvGo(p, -13, 13, 80)
+
+Def TInvGo(p As Number, df As Number, lo As Number, hi As Number, k As Number) As Number
+    Let mid = (lo + hi) / 2
+    If k = 0 Then
+        mid
+    Else
+        If TCdf(mid, df) < p Then
+            TInvGo(p, df, mid, hi, k - 1)
+        Else
+            TInvGo(p, df, lo, mid, k - 1)
+
+Def TInv(p As Number, df As Number) As Number
+    If p <= 0 Or p >= 1 Then
+        Error("TINV: P OUTSIDE (0, 1)")
+    Else
+        TInvGo(p, df, -500, 500, 80)
+
+Rem ---- inference -------------------------------------------------------
+Rem Every test returns a TestResult; PVal is always two-sided.
+
+Type TestResult
+    Stat As Number
+    Df As Number
+    PVal As Number
+
+Rem Two-sided p for a t statistic — the incomplete beta directly.
+Def TwoSidedTP(t As Number, df As Number) As Number
+    BetaI(df / 2, 0.5, df / (df + t * t))
+
+Rem One-sample t-test of the mean against mu0.
+Def TTest1(xs As List Of Number, mu0 As Number) As TestResult
+    Let df = Length(xs) - 1
+    Let t = (Mean(xs) - mu0) / StdErr(xs)
+    TestResult(t, df, TwoSidedTP(t, df))
+
+Rem Pooled variance of two samples — the classic equal-variance form.
+Def PooledVar(xs As List Of Number, ys As List Of Number) As Number
+    ((Length(xs) - 1) * Var(xs) + (Length(ys) - 1) * Var(ys)) / (Length(xs) + Length(ys) - 2)
+
+Rem Two-sample t-test for independent groups (pooled / equal-variance,
+Rem the textbook form: R's t.test(var.equal = TRUE)).
+Def TTest2(xs As List Of Number, ys As List Of Number) As TestResult
+    Let df = Length(xs) + Length(ys) - 2
+    Let se = Sqr(PooledVar(xs, ys) * (1 / Length(xs) + 1 / Length(ys)))
+    Let t = (Mean(xs) - Mean(ys)) / se
+    TestResult(t, df, TwoSidedTP(t, df))
+
+Rem Paired t-test: a one-sample test on the before/after differences.
+Def TTestPaired(xs As List Of Number, ys As List Of Number) As TestResult
+    TTest1(ZipWith(xs, ys, -), 0)
+
+Rem One-sample z-test of the mean when sigma is known. Df is 0: no
+Rem degrees of freedom apply.
+Def ZTest1(xs As List Of Number, mu0 As Number, sigma As Number) As TestResult
+    Let z = (Mean(xs) - mu0) / (sigma / Sqr(Length(xs)))
+    TestResult(z, 0, 2 * (1 - NormCdf(Abs(z))))
+
+Rem One-way ANOVA over 3+ groups. Stat is F; Df is the between-groups
+Rem df (groups - 1); the within df is total n - groups.
+Def Anova(gs As List Of List Of Number) As TestResult
+    Let gm = Mean(Flatten(gs))
+    Let k = Length(gs)
+    Let n = Length(Flatten(gs))
+    Let ssb = Sum(Map(gs, Fn(g) => Length(g) * (Mean(g) - gm) * (Mean(g) - gm)))
+    Let f = (ssb / (k - 1)) / (Sum(Map(gs, SqDevSum)) / (n - k))
+    TestResult(f, k - 1, 1 - FCdf(f, k - 1, n - k))
+
+Rem One cell's contribution to a chi-square statistic.
+Def ChiCell(o As Number, e As Number) As Number
+    (o - e) * (o - e) / e
+
+Rem Chi-square goodness of fit: observed vs expected counts.
+Def ChiSqGof(obs As List Of Number, exp As List Of Number) As TestResult
+    Let x2 = Sum(ZipWith(obs, exp, ChiCell))
+    TestResult(x2, Length(obs) - 1, 1 - Chi2Cdf(x2, Length(obs) - 1))
+
+Def ColSums(rows As List Of List Of Number) As List Of Number
+    Map(Range(1, Length(First(rows))), Fn(j) => Sum(Map(rows, Fn(r) => Nth(r, j))))
+
+Rem One row's chi-square contribution against its expected counts.
+Def RowChi(r As List Of Number, rsum As Number, csums As List Of Number, total As Number) As Number
+    Sum(Map(Range(1, Length(csums)), Fn(j) => ChiCell(Nth(r, j), rsum * Nth(csums, j) / total)))
+
+Rem Chi-square test of independence on a contingency table given as a
+Rem list of rows; expected counts from the row and column totals.
+Def ChiSqTest(rows As List Of List Of Number) As TestResult
+    Let csums = ColSums(rows)
+    Let total = Sum(Map(rows, Sum))
+    Let x2 = Sum(ZipWith(rows, Map(rows, Sum), Fn(r, rs) => RowChi(r, rs, csums, total)))
+    Let df = (Length(rows) - 1) * (Length(csums) - 1)
+    TestResult(x2, df, 1 - Chi2Cdf(x2, df))
+
+Rem Two-proportion z-test: k1 successes of n1 vs k2 of n2, pooled SE.
+Def TwoPropZTest(k1 As Number, n1 As Number, k2 As Number, n2 As Number) As TestResult
+    Let pp = (k1 + k2) / (n1 + n2)
+    Let z = (k1 / n1 - k2 / n2) / Sqr(pp * (1 - pp) * (1 / n1 + 1 / n2))
+    TestResult(z, 0, 2 * (1 - NormCdf(Abs(z))))
+
+Rem ---- confidence intervals and effect sizes ---------------------------
+
+Rem Confidence interval for the mean (t-based): Pair(lo, hi).
+Def MeanCI(xs As List Of Number, conf As Number) As Pair
+    Let me = TInv(0.5 + conf / 2, Length(xs) - 1) * StdErr(xs)
+    Pair(Mean(xs) - me, Mean(xs) + me)
+
+Rem Confidence interval for a proportion (normal approximation / Wald),
+Rem k successes out of n: Pair(lo, hi).
+Def PropCI(k As Number, n As Number, conf As Number) As Pair
+    Let ph = k / n
+    Let me = NormInv(0.5 + conf / 2) * Sqr(ph * (1 - ph) / n)
+    Pair(ph - me, ph + me)
+
+Rem Cohen's d: standardized difference of two means (pooled SD).
+Def CohenD(xs As List Of Number, ys As List Of Number) As Number
+    (Mean(xs) - Mean(ys)) / Sqr(PooledVar(xs, ys))

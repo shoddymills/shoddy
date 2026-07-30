@@ -1,0 +1,65 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem randomtest.shoddy — test program for random.shoddy
+Rem
+Rem Random() is non-deterministic by design, so this checks the
+Rem CONTRACT (stays in range, integral where promised) across many
+Rem draws rather than any specific value — the only thing that can
+Rem honestly be asserted about a random number.
+Rem
+Rem Build (once): build.cmd build
+Rem Run:          bin\mill run tst\randomtest.shoddy
+Rem ==================================================================
+
+Include "../machines/seq.shoddy"
+Include "../machines/random.shoddy"
+
+Def CheckUnit(k As Number) As Boolean
+    Let r = Random()
+    r >= 0 And r < 1
+
+Def CheckRange1020(k As Number) As Boolean
+    Let r = RandomRange(10, 20)
+    r >= 10 And r < 20
+
+Def CheckRangeNegative(k As Number) As Boolean
+    Let r = RandomRange(-5, 5)
+    r >= -5 And r < 5
+
+Def CheckDice(k As Number) As Boolean
+    Let r = RandomInt(1, 6)
+    r >= 1 And r <= 6 And r = Floor(r)
+
+Def CheckDegenerate(k As Number) As Boolean
+    RandomInt(7, 7) = 7
+
+Rem Lists compare by identity, so multiset checks go through ToArray.
+Def CheckShuffle(k As Number) As Boolean
+    ToArray(Sort(Shuffle({ 3, 1, 4, 1, 5 }))) = ToArray({ 1, 1, 3, 4, 5 })
+
+Def CheckSample(k As Number) As Boolean
+    Let s = Sample(Range(1, 10), 3)
+    Length(s) = 3 And All(s, Fn(x) => x >= 1 And x <= 10)
+
+Def CheckSampleAll(k As Number) As Boolean
+    ToArray(Sort(Sample(Range(1, 10), 10))) = ToArray(Range(1, 10))
+
+Def Main()
+    Print("--- RANDOM ---")
+    Let trials = Range(1, 500)
+    Assert(All(trials, CheckUnit), "RANDOM() STAYS IN [0,1)")
+    Assert(All(trials, CheckRange1020), "RANDOMRANGE STAYS IN [10,20)")
+    Assert(All(trials, CheckRangeNegative), "RANDOMRANGE HANDLES NEGATIVE BOUNDS")
+    Assert(All(trials, CheckDice), "RANDOMINT DICE ROLL STAYS IN [1,6] AND IS INTEGRAL")
+    Assert(All(trials, CheckDegenerate), "RANDOMINT HANDLES LO = HI")
+    Assert(All(trials, CheckShuffle), "SHUFFLE IS A PERMUTATION")
+    Assert(All(trials, CheckSample), "SAMPLE DRAWS N IN-RANGE VALUES")
+    Assert(All(trials, CheckSampleAll), "SAMPLE NEVER REPEATS")
+    Assert(IsEmpty(Shuffle({ })), "SHUFFLE OF EMPTY IS EMPTY")
+    Assert(IsEmpty(Sample({ 1, 2 }, 0)), "SAMPLE OF ZERO IS EMPTY")
+    Assert(Length(Sample({ 1, 2 }, 99)) = 2, "SAMPLE CAPS AT THE LENGTH")
+    Print(Random())
+    Print(RandomInt(1, 6))
+    Print("ALL RANDOM CHECKS PASSED")

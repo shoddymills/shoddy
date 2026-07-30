@@ -1,0 +1,57 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem Buzzer demo: all three note-lifetime models in one program. Run with
+Rem     mill run tst/buzzer-demo.shoddy
+Rem A startup jingle owns its own timing (SoundQueue, via Play); a mouse
+Rem glissando is held state — press to sound, drag to retune with no
+Rem re-attack, release to stop; Space is a fire-and-forget blip from the
+Rem anonymous pool. Drag uses the MOUSE deliberately: the button's own
+Rem up/down is the held state. A KEYBOARD synth must additionally ignore
+Rem GLFW auto-repeat KeyDowns (the scribbler passes them through as
+Rem further ScribblerKeyDown events by design) by carrying a held-key
+Rem set in its loop state — that program is left for later.
+
+Include "../machines/scribbler.shoddy"
+Include "../machines/buzzer.shoddy"
+
+Def Main()
+    Let sc = ScribblerOpen(480, 120)
+    Let sc2 = ScribblerTitle(sc, "Shoddy Buzzer Demo")
+    Let sc3 = ScribblerFill(sc2, 20, 20, 40)
+    Let sc4 = ScribblerText(sc3, 10, 10, 1, 255, 255, 255,
+                            "Drag to slide, Space to blip, Q to quit")
+rem    Play(   1, "T160 O4 L8 C E G > C4")
+    Play(1,"T120 O3 L4 G, G, G, L8 D# E, L4 A#, G, L8 D# E, L2 A#")
+    Let done = EventLoop(ScribblerBlit(sc4), False)
+    Print("buzzer demo closed")
+
+Rem Left edge A3 (midi 57), one semitone per 20 pixels.
+Def PitchAt(x As Number) As Number
+    MidiFreq(57 + Floor(x / 20))
+
+Def EventLoop(sc As Scribbler, held As Boolean) As Scribbler
+    Select Case NextEvent(sc)
+        Case ScribblerMouseDown(x, y, btn, mods, at)
+            NoteOn(2, PitchAt(x))
+            EventLoop(sc, True)
+        Case ScribblerMouseMove(x, y, mods, at)
+            If held Then
+                NoteOn(2, PitchAt(x))   Rem retune in place, no re-attack
+            EventLoop(sc, held)
+        Case ScribblerMouseUp(x, y, btn, mods, at)
+            NoteOff(2)
+            EventLoop(sc, False)
+        Case ScribblerTyped(ch, mods, at)
+            If ch = " " Then
+                Sound(880, 60)
+            If Lower(ch) = "q" Then
+                ScribblerClose(sc)
+            Else
+                EventLoop(sc, held)
+        Case ScribblerQuit
+            SoundStop(1)
+            SoundStop(2)
+            ScribblerClose(sc)
+        Case Else
+            EventLoop(sc, held)

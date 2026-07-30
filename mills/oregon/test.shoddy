@@ -1,0 +1,89 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem Headless checks for the Oregon Trail pure model — no prompts. Run
+Rem with `./build.sh test` (or `mill run test.shoddy`). Branch-deciding
+Rem rolls are parameters in the core, so every path here is exact.
+
+Include "oregon-core.shoddy"
+
+Def Main()
+    Rem outfitting: $700 less the team and supplies; a dollar is 50 bullets
+    Let t = NewTrail(250, 100, 100, 50, 50, 2)
+    Assert(Cash(t) = 150, "CASH LEFT AFTER OUTFITTING")
+    Assert(Bullets(t) = 5000, "A DOLLAR BUYS FIFTY BULLETS")
+    Assert(Miles(t) = 0 And IsRolling(t), "FRESH TRAIL")
+
+    Rem the calendar: nineteen dates, then winter takes the rest
+    Assert(TurnDate(1) = "MONDAY APRIL 12 1847", "FIRST DATE OUT")
+    Assert(TurnDate(19) = "MONDAY DECEMBER 20 1847", "LAST PRINTABLE DATE")
+    Assert(OutOfTime(20) And Not OutOfTime(19), "TWENTY FORTNIGHTS IS TOO LONG")
+
+    Rem the books: negatives clamp to zero and everything is whole
+    Let messy = With(t, Food = -3, Bullets = 7.5, Miles = 100.5)
+    Let tidy = ClampSupplies(messy)
+    Assert(Food(tidy) = 0 And Bullets(tidy) = 7 And Miles(tidy) = 100, "MORNING BOOKKEEPING")
+    Assert(PrevMiles(tidy) = 100, "ODOMETER REMEMBERED FOR THE FINAL TURN")
+
+    Rem the doctor: $20 to clear the flags, fatal if you cannot pay
+    Let sick = With(t, Ill = True)
+    Assert(NeedsDoctor(sick) And Not NeedsDoctor(t), "ILLNESS NEEDS A DOCTOR")
+    Let cured = PayDoctor(sick)
+    Assert(Cash(cured) = 130 And Not Ill(cured), "DOCTOR CHARGES TWENTY")
+    Assert(Not IsRolling(PayDoctor(With(sick, Cash = 10))), "NO CASH FOR THE DOCTOR IS FATAL")
+
+    Rem eating: 8 + 5e a fortnight; under 13 food you starve
+    Assert(MealCost(3) = 23, "EATING WELL COSTS 23")
+    Let fed = Eat(t, 2)
+    Assert(Food(fed) = 82 And Eating(fed) = 2, "MODERATE MEALS COST 18")
+    Assert(Not CanEat(With(t, Food = 12), 1), "TOO POOR TO EAT POORLY")
+    Assert(Starved(With(t, Food = 12)) And Not Starved(t), "THIRTEEN FOOD IS THE LINE")
+
+    Rem travel: 200 + (oxen - 220) / 5 + 10r miles a fortnight
+    Assert(Miles(Travel(With(t, Oxen = 220), 0.5)) = 205, "TRAVEL FORMULA")
+
+    Rem shooting: seconds past the grace, eased by claimed inexperience
+    Assert(ShotQuality(2, True, 1) = 0, "AN INSTANT SHOT IS PERFECT")
+    Assert(ShotQuality(5, True, 1) = 3, "AN ACE GETS NO SLACK")
+    Assert(ShotQuality(5, True, 4) = 0, "MODESTY EASES THE CLOCK")
+    Assert(ShotQuality(0, False, 1) = 9, "THE WRONG WORD MISSES")
+    Assert(GameGotAway(9, 0.5) And Not GameGotAway(1, 0.99), "SLOW SHOTS LOSE DINNER")
+
+    Rem the misfortune table walks the DATA levels in order
+    Assert(PickEvent(0) = 1 And PickEvent(6) = 1, "LOW ROLLS BREAK THE WAGON")
+    Assert(PickEvent(6.5) = 2, "JUST PAST THE FIRST LEVEL")
+    Assert(PickEvent(50) = 12, "MID ROLLS FORD THE RIVER")
+    Assert(PickEvent(96) = 16, "HELPFUL INDIANS TOP THE TABLE")
+    Assert(Food(HelpfulIndians(t)) = 114, "INDIANS SHARE FOURTEEN FOOD")
+    Assert(Not IsRolling(Snakebite(With(t, Misc = 4))), "SNAKEBITE WITHOUT MEDICINE IS FATAL")
+    Assert(IsRolling(Snakebite(t)), "MEDICINE BEATS THE SNAKE")
+
+    Rem riders: looks deceive one time in five; empty guns are fatal
+    Assert(Not ActualMood(True, 0.1) And ActualMood(True, 0.5), "MOODS FLIP ON A LOW ROLL")
+    Let ran = HostileRun(t)
+    Assert(Miles(ran) = 20 And Bullets(ran) = 4850 And Oxen(ran) = 210, "RUNNING FROM HOSTILES")
+    Assert(Bullets(HostileShootout(t, 2)) = 4840, "A SHOOTOUT SPENDS BULLETS")
+    Assert(Massacred(With(t, Bullets = -1)) And Not Massacred(t), "EMPTY GUNS ARE FATAL")
+
+    Rem illness: eating shifts the kind; no medicine is fatal
+    Assert(IllKind(1, 0.05, 0) = 1, "WILD ILLNESS ON A LOW ROLL")
+    Assert(IllKind(1, 0.5, 0.5) = 2, "BAD ILLNESS IN THE MIDDLE")
+    Assert(IllKind(3, 0.99, 0.99) = 3, "SERIOUS ILLNESS AT THE TOP")
+    Assert(Ill(TakeIll(t, 3)), "SERIOUS ILLNESS WAITS FOR A DOCTOR")
+    Assert(Not IsRolling(Illness(With(t, Misc = 3), 3)), "NO MEDICINE IS FATAL")
+
+    Rem mountains: back over the pass the odometer reads 950
+    Assert(InMountains(951) And Not InMountains(950), "THE MOUNTAINS START AT 951")
+    Assert(ShowPass(CheckPass(With(t, Miles = 900))), "DRIVEN BACK READS 950")
+    Assert(ShownMiles(With(t, Miles = 900, ShowPass = True)) = 950, "THE ODOMETER SAVES FACE")
+
+    Rem arrival: the unused fraction of the last fortnight dates the finish
+    Assert(ArrivalFraction(1970, 2110) = 0.5, "HALF THE FORTNIGHT USED")
+    Assert(WeekdayName(0.5) = "MONDAY", "SEVEN DAYS ON LANDS ON MONDAY")
+    Assert(ArrivalDays(15, 0.5) = 217, "DAYS COUNTED IN PRINTED DATES")
+    Assert(ArrivalDate(100) = "JULY 7 1847", "EARLY ARRIVALS LAND IN JULY")
+    Assert(ArrivalDate(217) = "NOVEMBER 1 1847", "LATE ARRIVALS LAND IN NOVEMBER")
+    Let starved = ArrivalFood(With(fed, Food = 10), 0.5)
+    Assert(Food(starved) = 19, "UNUSED RATIONS COME BACK")
+
+    Print("ALL OREGON CHECKS PASSED")

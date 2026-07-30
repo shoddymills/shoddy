@@ -1,0 +1,328 @@
+Rem ===================================================================
+Rem mungo-caverns-save.shoddy -- suspending and resuming.
+Rem 
+Rem WriteSaveAs enumerates every field with an explicit
+Rem PutNum or PutBool: it is a positional write sequence, not reflection
+Rem over the record. Renaming fields is therefore byte-safe. Reordering
+Rem or adding a Put call is not.
+Rem ===================================================================
+
+Rem ---- suspend and resume --------------------------------------------------------
+Rem A raw memory image of the game would not be portable -- padding,
+Rem endianness
+Rem and field width all leak into such a file. This port writes its own
+Rem format through Shoddy's binary words instead: a version, then every
+Rem scalar and array in a fixed order. The transcripts do not look at the
+Rem bytes, only at the prompts and the game that comes back, so they
+Rem grade this just as well.
+Rem
+Rem The prompt loop is the fiddly part: it re-asks until a file opens,
+Rem and prints the failure with the name you typed.
+
+Rem SAVE_VERSION 32, printed as major.minor by halving
+Rem it at the decimal point. The format on disk is this port's own, but
+Rem the version number is kept so a mismatched file reports the same
+Rem version the recorded transcripts expect.
+Def SaveVersion() As Number
+    32
+
+Rem With stdin redirected the file-name prompt and its echo are
+Rem suppressed, so a
+Rem recorded session shows the failure message but not what was typed --
+Rem and shows a bare "File name:" only on the read that hits end of
+Rem input. This reproduces those bytes; it is matched against the
+Rem recorded transcripts, which are the authority for them.
+Def AskFile() As String
+    Let name = Trim(Input(""))
+    If Len(name) = 0 Then
+        Rem Input writes its prompt with no trailing newline, which is
+        Rem what the hanging "File name: " at end of input needs; the
+        Rem read itself returns empty again straight away.
+        Let again = Input("\nFile name: ")
+        ""
+    Else
+        name
+
+Rem "Can't open file X, try again." prints with no leading blank,
+Rem then loops back to the prompt.
+Rem The ask loops until a file opens or input runs out, so naming
+Rem somewhere unwritable costs you a complaint and another
+Rem prompt rather than the game. TryWriteFile both asks the question and
+Rem creates the file in one step.
+Def AskUntilWritable(g As Game) As String
+    Let name = AskFile()
+    If Len(name) = 0 Then
+        ""
+    Else
+        If TryWriteFile(name, "") Then
+            name
+        Else
+            Print("Can't open file " & name & ", try again.")
+            AskUntilWritable(g)
+
+Rem Three of the ten reads that sit between two writes: what the rules
+Rem have said has to be out before the question goes up.
+Def DoSuspend(gIn As Game) As Done
+    Let g = Flushed(gIn)
+    SpeakId(MsgSuspendWarning())
+    Let ok = Nth(Messages(), MsgOkMan() + 1)
+    If Not YesNo(Nth(Messages(), MsgThisAcceptable() + 1), ok, ok) Then
+        Done(g, GoClearObj())
+    Else
+        Let g1 = With(g, SavePenalty = SavePenalty(g) + 5)
+        Let name = AskUntilWritable(g1)
+        If Len(name) = 0 Then
+            Done(g1, GoTop())
+        Else
+            WriteSave(g1, name)
+            SpeakId(MsgResumeHelp())
+            Done(With(g1, Outcome = Suspended()), GoClearObj())
+
+Rem Resuming mid-game asks whether you really mean
+Rem to abandon the one you are in.
+Def DoResume(gIn As Game) As Done
+    Let g = Flushed(gIn)
+    Let ok = Nth(Messages(), MsgOkMan() + 1)
+    If (Location(g) <> LocNamed("LOC_START") Or Nth(LocationSeen(g), LocNamed("LOC_START") + 1) <> 1) Then
+        SpeakId(MsgResumeAbandon())
+        If Not YesNo(Nth(Messages(), MsgThisAcceptable() + 1), ok, ok) Then
+            Done(g, GoClearObj())
+        Else
+            ResumeFrom(g)
+    Else
+        ResumeFrom(g)
+
+Def ResumeFrom(g As Game) As Done
+    Let name = AskFile()
+    If Len(name) = 0 Then
+        Done(g, GoTop())
+    Else
+        If Not FileExists(name) Then
+            Print("Can't open file " & name & ", try again.")
+            ResumeFrom(g)
+        Else
+            Rem restore hands back GO_TOP, so the
+            Rem restored room is described where it stands rather than
+            Rem being moved into.
+            Done(ReadSave(g, name), GoTop())
+
+Rem ---- the save file ---------------------------------------------------------------
+Rem One version word, the scalars, then the arrays and lists. Nothing
+Rem clever: this is read back in exactly the order it is written.
+
+Def WriteSave(g As Game, name As String)
+    WriteSaveAs(g, name, SaveVersion())
+
+Rem The magic number is stamped ahead of everything else, which is
+Rem what lets restore tell "not one of ours" from "ours, wrong era" -- two
+Rem refusals the transcripts word differently.
+Def SaveMagic() As Number
+    193765
+
+Def WriteSaveAs(g As Game, name As String, version As Number)
+    Let f = BOpen(name)
+    PutNum(f, SaveMagic())
+    PutNum(f, version)
+    PutNum(f, Location(g))
+    PutNum(f, PreviousLocation(g))
+    PutNum(f, LocationBeforeLast(g))
+    PutNum(f, Turns(g))
+    PutNum(f, Deaths(g))
+    PutNum(f, Tally(g))
+    PutNum(f, CurmudgeonActivation(g))
+    PutNum(f, CurmudgeonsKilled(g))
+    PutNum(f, KnifeLocation(g))
+    PutNum(f, TurnPenalty(g))
+    PutNum(f, SavePenalty(g))
+    PutNum(f, ClockToClosing(g))
+    PutNum(f, ClockToBlinding(g))
+    PutNum(f, Detail(g))
+    PutNum(f, AbbrevInterval(g))
+    PutNum(f, LcgState(g))
+    PutNum(f, LampLife(g))
+    PutBool(f, LampWarned(g))
+    PutBool(f, Blooded(g))
+    PutBool(f, ClosingTime(g))
+    PutBool(f, Closed(g))
+    PutBool(f, Panic(g))
+    PutBool(f, Novice(g))
+    PutBool(f, LeftRoomWasDark(g))
+    PutStr(f, MagicWord(g), 8)
+    PutArray(f, Props(g), 1, Length(Props(g)))
+    PutArray(f, ObjectLocation(g), 1, Length(ObjectLocation(g)))
+    PutArray(f, Fixture(g), 1, Length(Fixture(g)))
+    PutArray(f, LocationSeen(g), 1, Length(LocationSeen(g)))
+    PutList(f, Held(g), 1, Length(Held(g)))
+    PutRooms(f, ObjectsAt(g), 1, Length(ObjectsAt(g)))
+    PutCurmudgeons(f, Curmudgeons(g), 1, NCurmudgeons())
+    PutHints(f, HintState(g), 1, Length(Hints()))
+    BClose(f)
+
+Rem These walk to the end and stop. The base case writes nothing at all --
+Rem an earlier version padded it with a zero, which the Get side never read
+Rem back, so every array after the first came home shifted by one slot and a
+Rem resumed game quietly wore the wrong state.
+Def PutArray(f As Number, a As Array, i As Number, n As Number)
+    If i <= n Then
+        PutNum(f, Nth(a, i))
+        PutArray(f, a, i + 1, n)
+
+Def PutList(f As Number, xs As List, i As Number, n As Number)
+    PutNum(f, n)
+    PutItems(f, xs, i, n)
+
+Def PutItems(f As Number, xs As List, i As Number, n As Number)
+    If i <= n Then
+        PutNum(f, Nth(xs, i))
+        PutItems(f, xs, i + 1, n)
+
+Def PutRooms(f As Number, a As Array, i As Number, n As Number)
+    If i <= n Then
+        PutList(f, Nth(a, i), 1, Length(Nth(a, i)))
+        PutRooms(f, a, i + 1, n)
+
+Def PutCurmudgeons(f As Number, ds As List, i As Number, n As Number)
+    If i <= n Then
+        Let d = Nth(ds, i)
+        PutNum(f, DLoc(d))
+        PutNum(f, DOld(d))
+        PutBool(f, DSeen(d))
+        PutCurmudgeons(f, ds, i + 1, n)
+
+Def PutHints(f As Number, hs As List, i As Number, n As Number)
+    If i <= n Then
+        Let h = Nth(hs, i)
+        PutBool(f, Used(h))
+        PutNum(f, Lc(h))
+        PutHints(f, hs, i + 1, n)
+
+Rem Read back in exactly the order WriteSave laid it down. A file whose
+Rem first word is not our version is not ours.
+Rem Three ways a save file can be refused, and they
+Rem read differently on purpose: bad magic means it is not one of ours at
+Rem all, a version mismatch means it is ours but from another era, and
+Rem failing is_valid means somebody has been editing it -- which the game
+Rem treats as meddling with magic and throws you out for.
+Def ReadSave(g As Game, name As String) As Game
+    Let f = BOpen(name)
+    Let magic = GetNum(f)
+    Let v = GetNum(f)
+    If magic <> SaveMagic() Then
+        BClose(f)
+        VoicedId(g, MsgBadSave())
+    Else
+      If v <> SaveVersion() Then
+        BClose(f)
+        SpeakArgs(MsgVersionSkew(), { Str(Div10(v)), Str(Rem10(v)),
+                                      Str(Div10(SaveVersion())), Str(Rem10(SaveVersion())) })
+        g
+      Else
+        Let g1 = ReadScalars(g, f)
+        Let g2 = ReadTables(g1, f)
+        BClose(f)
+        Validated(g2)
+
+Rem Deaths beyond the three the game offers is the giveaway
+Rem checked for: nobody reaches it by playing.
+Def Validated(g As Game) As Game
+    If Deaths(g) >= NDeaths() Then
+        With(VoicedId(g, MsgSaveTampering()), Outcome = Suspended())
+    Else
+        g
+
+Rem C integer division truncates toward zero, so a negative version prints
+Rem as -133.-7 rather than -134.3. Floor would round the wrong way.
+Def Div10(n As Number) As Number
+    If n < 0 Then
+        0 - Floor((0 - n) / 10)
+    Else
+        Floor(n / 10)
+
+Def Rem10(n As Number) As Number
+    n - (Div10(n) * 10)
+
+Def ReadScalars(g As Game, f As Number) As Game
+    Let loc = GetNum(f)
+    Let oldloc = GetNum(f)
+    Let oldlc2 = GetNum(f)
+    Let turns = GetNum(f)
+    Let deaths = GetNum(f)
+    Let tally = GetNum(f)
+    Let dflag = GetNum(f)
+    Let dkill = GetNum(f)
+    Let knfloc = GetNum(f)
+    Let trnluz = GetNum(f)
+    Let saved = GetNum(f)
+    Let c1 = GetNum(f)
+    Let c2 = GetNum(f)
+    Let detail = GetNum(f)
+    Let abbnum = GetNum(f)
+    Let lcg = GetNum(f)
+    Let limit = GetNum(f)
+    Let lmw = GetBool(f)
+    Let blood = GetBool(f)
+    Let closng = GetBool(f)
+    Let closed = GetBool(f)
+    Let pan = GetBool(f)
+    Let novice = GetBool(f)
+    Let wz = GetBool(f)
+    Let magic = GetStr(f, 8)
+    With(g, Location = loc, PreviousLocation = oldloc, LocationBeforeLast = oldlc2, Turns = turns,
+            Deaths = deaths, Tally = tally, CurmudgeonActivation = dflag, CurmudgeonsKilled = dkill,
+            KnifeLocation = knfloc, TurnPenalty = trnluz, SavePenalty = saved,
+            ClockToClosing = c1, ClockToBlinding = c2, Detail = detail, AbbrevInterval = abbnum,
+            LcgState = lcg, LampLife = limit, LampWarned = lmw, Blooded = blood,
+            ClosingTime = closng, Closed = closed, Panic = pan, Novice = novice,
+            LeftRoomWasDark = wz, MagicWord = magic)
+
+Def ReadTables(g As Game, f As Number) As Game
+    Let props = GetArray(f, Dim(Length(Objects()), 0), 1, Length(Objects()))
+    Let where = GetArray(f, Dim(Length(Objects()), 0), 1, Length(Objects()))
+    Let fix = GetArray(f, Dim(Length(Objects()), 0), 1, Length(Objects()))
+    Let abb = GetArray(f, Dim(Length(Locations()), 0), 1, Length(Locations()))
+    Let held = GetList(f)
+    Let at = GetRooms(f, Dim(Length(Locations()), 0), 1, Length(Locations()))
+    Let dw = GetCurmudgeons(f, 1, NCurmudgeons(), { })
+    Let hs = GetHints(f, 1, Length(Hints()), { })
+    With(g, Props = props, ObjectLocation = where, Fixture = fix, LocationSeen = abb,
+            Held = held, ObjectsAt = at, Curmudgeons = dw, HintState = hs)
+
+Def GetArray(f As Number, a As Array, i As Number, n As Number) As Array
+    If i > n Then
+        a
+    Else
+        GetArray(f, SetNth(a, i, GetNum(f)), i + 1, n)
+
+Def GetList(f As Number) As List
+    Let n = GetNum(f)
+    GetItems(f, 1, n, { })
+
+Def GetItems(f As Number, i As Number, n As Number, acc As List) As List
+    If i > n Then
+        acc
+    Else
+        GetItems(f, i + 1, n, Append(acc, GetNum(f)))
+
+Def GetRooms(f As Number, a As Array, i As Number, n As Number) As Array
+    If i > n Then
+        a
+    Else
+        GetRooms(f, SetNth(a, i, GetList(f)), i + 1, n)
+
+Def GetCurmudgeons(f As Number, i As Number, n As Number, acc As List) As List
+    If i > n Then
+        acc
+    Else
+        Let dl = GetNum(f)
+        Let dold = GetNum(f)
+        Let ds = GetBool(f)
+        GetCurmudgeons(f, i + 1, n, Append(acc, Curmudgeon(dl, dold, ds)))
+
+Def GetHints(f As Number, i As Number, n As Number, acc As List) As List
+    If i > n Then
+        acc
+    Else
+        Let u = GetBool(f)
+        Let l = GetNum(f)
+        GetHints(f, i + 1, n, Append(acc, HintRec(u, l)))
+

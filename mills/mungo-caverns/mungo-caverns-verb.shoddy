@@ -1,0 +1,817 @@
+Rem ===================================================================
+Rem mungo-caverns-verb.shoddy -- the verbs that move things about.
+Rem 
+Rem Take, drop, open, lock, and the rest of the
+Rem transitive core.
+Rem ===================================================================
+
+Rem ---- verbs -------------------------------------------------------------------
+
+Def Sub1(msg As String, n As Number) As String
+    Render(msg, { Str(n) })
+
+Rem Reseeding is free: it winds the turn counter back
+Rem so a transcript that pins the stream is not charged for it. This is
+Rem why 92 of the recorded test games open with a seed line.
+Def DoSeed(g As Game, arg As String, msg As String) As Game
+    If Not IsInteger(arg) Then
+        VoicedId(g, MsgNumericRequired())
+    Else
+        Let n = Val(arg)
+        With(Voiced(g, Sub1(msg, n)), LcgState = SeedState(n), MagicWord = ZzWord(n), Turns = Turns(g) - 1)
+
+Rem Waste burns lamp turns for testing purposes.
+Def DoWaste(g As Game, arg As String, msg As String) As Game
+    If Not IsInteger(arg) Then
+        VoicedId(g, MsgNumericRequired())
+    Else
+        Let g1 = With(g, LampLife = LampLife(g) - Val(arg))
+        Voiced(g1, Sub1(msg, LampLife(g1)))
+
+Rem Picking up removes the object from the room list;
+Rem the list order is why this is a removal rather than a flag.
+Def InvLimit() As Number
+    7
+
+Rem Picking a thing up is the busiest verb in the game:
+Rem the immovable things each have their own excuse, the liquids are really
+Rem the bottle, and the bird will not be caught bare-handed or by anyone
+Rem still waving the rod at it.
+Rem The object table's fixed flag is copied into the game state,
+Rem and it is state, not a constant: killing the dragon frees the rug it
+Rem was lying on, and a broken vase or a dead bear becomes part of the
+Rem scenery. Reading the static flag instead refuses to pick up things
+Rem the game has since released.
+Def IsStuck(g As Game, i As Number) As Boolean
+    Nth(Fixture(g), i + 1) = 1
+
+Def SetStuck(g As Game, i As Number, stuck As Boolean) As Game
+    With(g, Fixture = SetNth(Fixture(g), i + 1, StuckFlag(stuck)))
+
+Def StuckFlag(stuck As Boolean) As Number
+    If stuck Then
+        1
+    Else
+        0
+
+Def SeedFixture(a As Array, n As Number) As Array
+    Range(1, n)
+        Filter(Fn(i) => Fixed(Nth(Objects(), i)))
+        Fold(a, Fn(acc, i) => SetNth(acc, i, 1))
+
+Def TakeObject(g As Game, i As Number, msg As String) As Game
+    Select Case True
+        Case Toting(g, i)
+            Voiced(g, msg)
+        Case i = ObjNamed("MESSAG")
+            Rem the dust is not for taking.
+            Destroy(VoicedId(g, MsgRemoveMessage()), i)
+        Case IsStuck(g, i)
+            VoicedId(g, ImmovableReply(g, i))
+        Case Else
+            TakeLiquidOr(g, i)
+
+Def ImmovableReply(g As Game, i As Number) As Number
+    Select Case True
+        Case i = ObjNamed("PLANT") And PropOf(g, i) = 0
+            MsgDeepRoots()
+        Case i = ObjNamed("BEAR") And PropOf(g, i) = 1
+            MsgBearChained()
+        Case i = ObjNamed("CHAIN") And PropOf(g, ObjNamed("BEAR")) <> 0
+            MsgStillLocked()
+        Case i = ObjNamed("RUG") And PropOf(g, i) = 2
+            MsgRugHovers()
+        Case Else
+            OddmentReply(i)
+
+Def OddmentReply(i As Number) As Number
+    Select Case i
+        Case ObjNamed("URN")
+            MsgUrnNobudge()
+        Case ObjNamed("CAVITY")
+            MsgDoughnutHoles()
+        Case ObjNamed("BLOOD")
+            MsgFewDrops()
+        Case ObjNamed("SIGN")
+            MsgHandPassthrough()
+        Case Else
+            MsgYouJoking()
+
+Rem Asking for water or oil is really asking for the bottle they are in.
+Def TakeLiquidOr(g As Game, i As Number) As Game
+    If i <> ObjNamed("WATER") And i <> ObjNamed("OIL") Then
+        TakeIfRoom(g, i)
+    Else
+        Let bottle = ObjNamed("BOTTLE")
+        Select Case True
+            Case Here(g, bottle) And Liquid(g) = i
+                TakeIfRoom(g, bottle)
+            Case Not Toting(g, bottle)
+                VoicedId(g, MsgNoContainer())
+            Case PropOf(g, bottle) = EmptyBottle()
+                After(DoFill(g, bottle, ""))
+            Case Else
+                VoicedId(g, MsgBottleFull())
+
+Rem The liquid's place is set directly rather than going
+Rem through Lifted, so what is in the bottle never counts against the
+Rem seven things you are allowed to hold.
+Rem And the bird is weightless -- an ugly hack needed
+Rem so "take bird" and "take cage" both work when the bird is caged.
+Def HoldCount(g As Game) As Number
+    Length(Filter(Held(g), Fn(x) => (x <> ObjNamed("WATER") And x <> ObjNamed("OIL")
+                                     And x <> ObjNamed("BIRD"))))
+
+Def TakeIfRoom(g As Game, i As Number) As Game
+    If HoldCount(g) >= InvLimit() Then
+        VoicedId(g, MsgCarryLimit())
+    Else
+        TakeBird(g, i)
+
+Rem The bird has to be caught in the cage, and it will not be caught at
+Rem all by someone brandishing the rod.
+Def TakeBird(g As Game, i As Number) As Game
+    Let bird = ObjNamed("BIRD")
+    Rem a stashed bird -- caged in the repository --
+    Rem skips the catching rules just as a plainly caged one does.
+    If i <> bird Or PropOf(g, bird) = 1 Or PropOf(g, bird) < 0 - 1 Then
+        Grasp(g, i)
+    Else
+        Select Case True
+            Case PropOf(g, bird) = 2
+                Destroy(VoicedId(g, MsgBirdCrap()), bird)
+            Case Not Toting(g, ObjNamed("CAGE"))
+                VoicedId(g, MsgCannotCarry())
+            Case Toting(g, ObjNamed("ROD"))
+                VoicedId(g, MsgBirdEvades())
+            Case Else
+                Grasp(With(g, Props = SetNth(Props(g), bird + 1, 1)), i)
+
+Rem The bird and its cage travel together once the bird is inside.
+Def Grasp(g As Game, i As Number) As Game
+    Let bird = ObjNamed("BIRD")
+    Let cage = ObjNamed("CAGE")
+    Let g1 = Lifted(g, i)
+    Let g2 = WithCagemate(g1, i, bird, cage)
+    Let g3 = LiftedLiquid(g2, i)
+    Let g4 = GemUnstashed(g3, i)
+    VoicedId(g4, MsgOkMan())
+
+Rem Picking up a gem that is not plainly FOUND --
+Rem fresh from its hiding place, or prised back out of the cavity --
+Rem leaves the cavity open for the next one.
+Def GemUnstashed(g As Game, i As Number) As Game
+    If Gemstone(i) And PropOf(g, i) <> 0 Then
+        With(g, Props = SetNth(SetNth(Props(g), i + 1, 0),
+                               ObjNamed("CAVITY") + 1, 1))
+    Else
+        g
+
+Def WithCagemate(g As Game, i As Number, bird As Number, cage As Number) As Game
+    If ((i = bird Or i = cage)
+        And (PropOf(g, bird) = 1 Or PropOf(g, bird) = 0 - 2)) Then
+        Lifted(g, bird + cage - i)
+    Else
+        g
+
+Def LiftedLiquid(g As Game, i As Number) As Game
+    If i = ObjNamed("BOTTLE") And Liquid(g) <> NoObject() And Not Toting(g, Liquid(g)) Then
+        With(g, Held = Append(Held(g), Liquid(g)))
+    Else
+        g
+
+Rem carry() returns at once if the thing is already in
+Rem your hands, so taking the caged bird does not pick the cage up twice.
+Def Lifted(g As Game, i As Number) As Game
+    If Toting(g, i) Then
+        g
+    Else
+        With(g, ObjectsAt = SetNth(ObjectsAt(g), Location(g) + 1,
+                               Filter(HereList(g), Fn(x) => x <> i)),
+                Held = Append(Held(g), i),
+                ObjectLocation = SetNth(ObjectLocation(g), i + 1, Carried()))
+
+Rem Intransitive carry works only when the room holds
+Rem exactly one thing; otherwise the game asks which.
+Rem The first letter of what you actually typed is upcased,
+Rem so mistyping "GET" back at you keeps your own word.
+Def Capitalize(s As String) As String
+    If Len(s) = 0 Then
+        s
+    Else
+        Upper(Left(s, 1)) & Mid(s, 2, Len(s))
+
+Def DoCarry(g As Game, i As Number, msg As String) As Done
+    If i = NoObject() Then
+        Let here = HereList(g)
+        Rem a curmudgeon in the room makes a bare "take"
+        Rem ambiguous even when only one thing is lying about.
+        If Length(here) = 1 And CurmudgeonsHere(g) <= 0 Then
+            Done(TakeObject(g, First(here), msg), GoClearObj())
+        Else
+            Rem more than one thing here, so the game has to ask which
+            Done(g, GoUnknown())
+    Else
+        Done(TakeObject(g, i, msg), GoClearObj())
+
+Rem Dropping prefixes the object to the room's list,
+Rem which is why what you put down is listed before what was already
+Rem lying there.
+Rem Two substitutions before anything else: the
+Rem black rod stands in for the striped one when only that is in hand, and
+Rem putting down the water means putting down the bottle it lives in --
+Rem which empties it, because the liquid goes nowhere.
+Def RodSwap(g As Game, i As Number) As Number
+    Let rod = ObjNamed("ROD")
+    If (i = rod And Not Toting(g, rod) And Toting(g, ObjNamed("ROD2"))) Then
+        ObjNamed("ROD2")
+    Else
+        i
+
+Def LiquidSwap(g As Game, i As Number) As Number
+    If i = Liquid(g) Then
+        ObjNamed("BOTTLE")
+    Else
+        i
+
+Def Emptied(g As Game, i As Number) As Game
+    If (i = ObjNamed("BOTTLE") And Liquid(g) <> NoObject()) Then
+        Destroy(g, Liquid(g))
+    Else
+        g
+
+Def DoDrop(g As Game, raw As Number, msg As String) As Done
+    If raw = NoObject() Then
+        Done(g, GoUnknown())
+    Else
+        DoDrop2(g, RodSwap(g, raw), msg)
+
+Rem The carrying test is made against what you named; only once it passes
+Rem does the water become the bottle it is sitting in.
+Def DoDrop2(g As Game, named As Number, msg As String) As Done
+    If Not Toting(g, named) Then
+        Done(Voiced(g, msg), GoClearObj())
+    Else
+        DoDrop3(g, LiquidSwap(g, named))
+
+Def DoDrop3(g0 As Game, i As Number) As Done
+    Let g = Emptied(g0, i)
+    Select Case True
+        Case (Gemstone(i) And At(g, ObjNamed("CAVITY"))
+              And PropOf(g, ObjNamed("CAVITY")) <> 0)
+            DropGem(g, i)
+        Case i = ObjNamed("COINS") And Here(g, ObjNamed("VEND"))
+            DropCoins(g, i)
+        Case i = ObjNamed("BEAR") And At(g, ObjNamed("TROLL"))
+            BearRoutsTroll(g, i)
+        Case i = ObjNamed("BIRD")
+            DropBird(g, i)
+        Case i = ObjNamed("VASE")
+            DropVase(g, i)
+        Case Else
+            DropPlain(g, i)
+
+Def Gemstone(i As Number) As Boolean
+    (i = ObjNamed("EMERALD") Or i = ObjNamed("RUBY")
+     Or i = ObjNamed("AMBER") Or i = ObjNamed("SAPPH"))
+
+Rem A gem fits the cavity, and the rug reacts: it
+Rem rises over the emerald, settles when the ruby displaces it, and only
+Rem wiggles if you are holding on to it.
+Def DropGem(g As Game, gem As Number) As Done
+    Let cavity = ObjNamed("CAVITY")
+    Let gf = VoicedId(g, MsgGemFits())
+    Let g1 = With(gf, Props = SetNth(SetNth(Props(gf), gem + 1, 1), cavity + 1, 0))
+    Done(Put(RugReacts(g1, gem), gem), GoClearObj())
+
+Def RugReacts(g As Game, gem As Number) As Game
+    Let rug = ObjNamed("RUG")
+    If (Here(g, rug)
+        And ((gem = ObjNamed("EMERALD") And PropOf(g, rug) <> 2)
+             Or (gem = ObjNamed("RUBY") And PropOf(g, rug) = 2))) Then
+        RugMoves(g, gem, rug)
+    Else
+        g
+
+Def RugMoves(g As Game, gem As Number, rug As Number) As Game
+    Let gr = VoicedId(g, RugWord(g, gem, rug))
+    If Not Toting(gr, rug) Or gem = ObjNamed("RUBY") Then
+        RugToggled(gr, rug)
+    Else
+        gr
+
+Def RugWord(g As Game, gem As Number, rug As Number) As Number
+    If gem = ObjNamed("RUBY") Then
+        MsgRugSettles()
+    Else
+        If Toting(g, rug) Then
+            MsgRugWiggles()
+        Else
+            MsgRugRises()
+
+Rem The hovering rug shows in the sapphire's room through its second
+Rem placement, the way the troll shows at both ends of the bridge.
+Def RugToggled(g As Game, rug As Number) As Game
+    If PropOf(g, rug) = 2 Then
+        Let g1 = With(g, Props = SetNth(Props(g), rug + 1, 0))
+        SetStuck(SecondMoved(g1, rug, 0), rug, False)
+    Else
+        Let g1 = With(g, Props = SetNth(Props(g), rug + 1, 2))
+        SetStuck(SecondMoved(g1, rug,
+                             First(Places(ObjAt(ObjNamed("SAPPH"))))),
+                 rug, True)
+
+Rem For the fixed half of a two-placement object: relocate
+Rem only the second placement, leaving the primary room's listing alone.
+Rem A destination of zero parks it nowhere.
+Def SecondMoved(g As Game, i As Number, dest As Number) As Game
+    Let g1 = ClearSecondFrom(g, i, 1, Length(Locations()))
+    If dest = 0 Then
+        g1
+    Else
+        With(g1, ObjectsAt = SetNth(ObjectsAt(g1), dest + 1,
+                                Prepend(i, Nth(ObjectsAt(g1), dest + 1))))
+
+Def ClearSecondFrom(g As Game, i As Number, k As Number, n As Number) As Game
+    If k > n Then
+        g
+    Else
+        Let room = Nth(ObjectsAt(g), k)
+        If Contains(room, i) And k <> Nth(ObjectLocation(g), i + 1) + 1 Then
+            ClearSecondFrom(With(g, ObjectsAt = SetNth(ObjectsAt(g), k,
+                                                   Filter(room, Fn(x) => x <> i))),
+                            i, k + 1, n)
+        Else
+            ClearSecondFrom(g, i, k + 1, n)
+
+Rem Coins in the vending machine buy fresh batteries.
+Def DropCoins(g As Game, coins As Number) As Done
+    Let battery = ObjNamed("BATTERY")
+    Let g1 = Destroy(g, coins)
+    Let g2 = Put(g1, battery)
+    Done(Voiced(g2, First(Descs(ObjAt(battery)))), GoClearObj())
+
+Rem The tame bear chases the troll off for good.
+Def BearRoutsTroll(g As Game, bear As Number) As Done
+    Let troll = ObjNamed("TROLL")
+    Let troll2 = ObjNamed("TROLL2")
+    Let ps = Places(ObjAt(troll))
+    Let g1 = StateChange(g, troll, 2)
+    Let g2 = Destroy(g1, troll)
+    Let g3 = PlaceSecond(Relocated(g2, troll2, First(ps)), troll2, ps)
+    Let g4 = Juggled(g3, ObjNamed("CHASM"))
+    Done(Put(g4, bear), GoClearObj())
+
+Rem Dropping the cage lets a caged bird out with it.
+Def DropPlain(g As Game, i As Number) As Done
+    Done(Put(CagedBirdOut(VoicedId(g, MsgOkMan()), i), i), GoClearObj())
+
+Def CagedBirdOut(g As Game, i As Number) As Game
+    If i = ObjNamed("CAGE") And PropOf(g, ObjNamed("BIRD")) = 1 Then
+        Put(g, ObjNamed("BIRD"))
+    Else
+        g
+
+Rem The vase survives being put down only on the
+Rem pillow; anywhere else it shatters and becomes part of the floor.
+Def DropVase(g As Game, vase As Number) As Done
+    Let pillow = ObjNamed("PILLOW")
+    If Location(g) = First(Places(ObjAt(pillow))) Then
+        Done(Put(VoicedId(g, MsgOkMan()), vase), GoClearObj())
+    Else
+        Let whole = At(g, pillow)
+        Let g1 = StateChange(g, vase, VaseState(whole))
+        Done(Put(Broken(g1, vase, whole), vase), GoClearObj())
+
+Def VaseState(whole As Boolean) As Number
+    If whole Then
+        0
+    Else
+        1
+
+Def Broken(g As Game, vase As Number, whole As Boolean) As Game
+    If whole Then
+        g
+    Else
+        SetStuck(g, vase, True)
+
+Rem Take an object out of your hands and lay it in this room. It is
+Rem prefixed to the room's list, so what you just dropped is named
+Rem first next time the room is described.
+Def Put(g As Game, i As Number) As Game
+    With(g, Held = Filter(Held(g), Fn(x) => x <> i),
+            ObjectsAt = SetNth(ObjectsAt(g), Location(g) + 1, Prepend(i, HereList(g))),
+            ObjectLocation = SetNth(ObjectLocation(g), i + 1, Location(g)))
+
+Rem Remove an object from play altogether. Sweeps every room list, not
+Rem just the player's, because a two-ended object (troll, bridge) sits in
+Rem two lists and may be destroyed from a third room entirely.
+Def Destroy(g As Game, i As Number) As Game
+    Let cleared = ClearFrom(g, i, 1, Length(Locations()))
+    With(cleared, Held = Filter(Held(cleared), Fn(x) => x <> i),
+                  ObjectLocation = SetNth(ObjectLocation(cleared), i + 1, 0))
+
+Rem Letting the bird go where the snake is drives the
+Rem snake off -- the central puzzle of the first half of the cave. The
+Rem snake's state is what the travel table then consults to let you past.
+Def DropBird(g As Game, bird As Number) As Done
+    If (At(g, ObjNamed("DRAGON"))
+        And PropOf(g, ObjNamed("DRAGON")) = 0) Then
+        Done(Destroy(VoicedId(g, MsgBirdBurnt()), bird), GoClearObj())
+    Else
+        DropBird2(g, bird)
+
+Def DropBird2(g As Game, bird As Number) As Done
+    Let snake = ObjNamed("SNAKE")
+    If Here(g, snake) Then
+        Let ga = VoicedId(g, MsgBirdAttacks())
+        If Closed(ga) Then
+            CurmudgeonWake(ga)
+        Else
+            Let g1 = Destroy(ga, snake)
+            Let g2 = With(g1, Props = SetNth(Props(g1), snake + 1, 1))
+            Done(Put(FreedBird(g2, bird), bird), GoClearObj())
+    Else
+        Done(Put(FreedBird(VoicedId(g, MsgOkMan()), bird), bird), GoClearObj())
+
+Rem A bird let go in the forest behaves differently from one let go
+Rem underground, and the state records which.
+Def FreedBird(g As Game, bird As Number) As Game
+    If Contains(Conds(RoomAt(g)), "FOREST") Then
+        With(g, Props = SetNth(Props(g), bird + 1, 2))
+    Else
+        With(g, Props = SetNth(Props(g), bird + 1, 0))
+
+Rem Waving does nothing unless it is the rod, and
+Rem then only at the fissure or at the bird -- but those two cases are
+Rem the crystal bridge and the jade necklace, so it earns its keep.
+Def DoWave(g As Game, i As Number, msg As String) As Done
+    Let rod = ObjNamed("ROD")
+    Let bird = ObjNamed("BIRD")
+    Let fissure = ObjNamed("FISSURE")
+    If i <> rod Or Not Toting(g, rod) Or (Not Here(g, bird) And Not At(g, fissure)) Then
+        If Not Toting(g, i) Then
+            Done(VoicedId(g, MsgArentCarrying()), GoClearObj())
+        Else
+            Done(Voiced(g, msg), GoClearObj())
+    Else
+        WaveTheRod(g, bird, fissure)
+
+Rem The bird, loose on the steps with the necklace still unseen, fetches
+Rem it out of the crack for you.
+Def WaveTheRod(g As Game, bird As Number, fissure As Number) As Done
+    Let jade = ObjNamed("JADE")
+    Let steps = ObjNamed("STEPS")
+    If (PropOf(g, bird) = 0 And Location(g) = First(Places(ObjAt(steps)))
+        And IsHidden(g, jade)) Then
+        Let g1 = Put(g, jade)
+        Let g2 = With(g1, Props = SetNth(Props(g1), jade + 1, 0), Tally = Tally(g1) - 1)
+        Done(VoicedId(g2, MsgNecklaceFly()), GoClearObj())
+    Else
+        If Closed(g) Then
+            Rem waving anything about in the closed
+            Rem repository disturbs the curmudgeons.
+            CurmudgeonWake(VoicedId(g, BirdFlyMessage(g, bird)))
+        Else
+            WaveAtFissure(g, bird, fissure)
+
+Def WaveAtFissure(g As Game, bird As Number, fissure As Number) As Done
+    If ClosingTime(g) Or Not At(g, fissure) Then
+        Done(VoicedId(g, BirdFlyMessage(g, bird)), GoClearObj())
+    Else
+        Let g1 = Fluttered(g, bird)
+        Done(StateChange(g1, fissure, Spanned(g1, fissure)), GoClearObj())
+
+Def Fluttered(g As Game, bird As Number) As Game
+    If Here(g, bird) Then
+        VoicedId(g, BirdFlyMessage(g, bird))
+    Else
+        g
+
+Rem The bridge is a toggle: wave once to raise it, again to drop it.
+Def Spanned(g As Game, fissure As Number) As Number
+    If PropOf(g, fissure) = 1 Then
+        0
+    Else
+        1
+
+Def BirdFlyMessage(g As Game, bird As Number) As Number
+    If PropOf(g, bird) = 1 Then
+        MsgCageFly()
+    Else
+        MsgFreeFly()
+
+Rem The walk is over the object table in declaration order, not the
+Rem order things were picked up, so the inventory always reads the same
+Rem way round however you gathered it.
+Def ShowHeld(g As Game, i As Number, n As Number) As Game
+    If i > n Then
+        Rem Speak("") prints nothing at all, so there is
+        Rem nothing to say here -- the list just ends.
+        g
+    Else
+        If Toting(g, i) And i <> ObjNamed("BEAR") Then
+            ShowHeld(VoicedFlat(g, Inventory(ObjAt(i))), i + 1, n)
+        Else
+            ShowHeld(g, i + 1, n)
+
+Rem The bear is never on the list; being followed by
+Rem him gets its own line after it, even when the list itself is empty.
+Def DoInventory(g As Game) As Game
+    Let bear = ObjNamed("BEAR")
+    Let burden = Filter(Held(g), Fn(x) => x <> bear)
+    If IsEmpty(burden) Then
+        VoicedId(BearTrails(g), MsgNoCarry())
+    Else
+        BearTrails(ShowHeld(VoicedId(g, MsgNowHolding()), 1, Length(Objects()) - 1))
+
+Def BearTrails(g As Game) As Game
+    If Toting(g, ObjNamed("BEAR")) Then
+        VoicedId(g, MsgTameBear())
+    Else
+        g
+
+Rem A verb returns a phase code to say what should happen to the command
+Rem after it: clear the object, redescribe the room, ask what the player
+Rem meant, take the curmudgeons' turn as well, or hand the second word
+Rem back to the parser. Only the turn loop reads them. The subtle ones:
+Rem GoClearObj drops back to the prompt with the room unchanged, while
+Rem GoTop leaves the command half-processed so the outer loop falls
+Rem through and paints the room again -- which is why reseeding reprints
+Rem where you are standing. GoUnknown is the "Get what?" case: the verb
+Rem is remembered but the object is dropped, so naming a thing next turn
+Rem runs the verb on it. GoMove is a null move, which re-describes the
+Rem room AND gives the curmudgeons their turn; GoTop re-describes without
+Rem them. GoKeep is this port's own: the command is finished and whatever
+Rem pending state it set stands as it is.
+Type Phase = GoClearObj | GoTop | GoUnknown | GoMove | GoWord2 | GoKeep
+
+Rem What the turn loop needs back: whether to paint the room again before
+Rem the next prompt. By the time a command has been Resolved, the phases
+Rem that move you have all become GoTop.
+Def Redescribes(p As Phase) As Boolean
+    Select Case p
+        Case GoTop
+            True
+        Case Else
+            False
+
+Type Done
+    After As Game
+    How   As Phase
+
+Rem Light. Lamp or urn; lighting the lamp in a dark
+Rem room returns GO_TOP so the room you can suddenly see gets painted,
+Rem and a lamp past its limit will not light at all.
+Def DoLight(g As Game, i As Number, msg As String) As Done
+    Let obj = ChooseLightable(g, i)
+    Select Case True
+        Case obj = NoObject()
+            Done(g, GoUnknown())
+        Case obj = ObjNamed("URN")
+            Done(StateChange(g, obj, LitUrnState(g, obj)), GoClearObj())
+        Case obj <> Lamp()
+            Done(Voiced(g, msg), GoClearObj())
+        Case Else
+            LightLamp(g)
+
+Rem Lighting an empty urn re-announces its empty state instead.
+Def LitUrnState(g As Game, urn As Number) As Number
+    If PropOf(g, urn) = 0 Then
+        0
+    Else
+        2
+
+Def LightLamp(g As Game) As Done
+    If LampLife(g) < 0 Then
+        Done(VoicedId(g, MsgLampOut()), GoClearObj())
+    Else
+        Let g1 = StateChange(g, Lamp(), LampBright())
+        If IsDarkHere(g) Then
+            Done(g1, GoTop())
+        Else
+            Done(g1, GoClearObj())
+
+Rem With no object named there must be exactly one
+Rem plausible candidate, or the game asks which you meant.
+Def ChooseLightable(g As Game, i As Number) As Number
+    If i <> NoObject() Then
+        i
+    Else
+        Let lampOk = (Here(g, Lamp()) And PropOf(g, Lamp()) = LampDark()
+                      And LampLife(g) >= 0)
+        Let urnOk = (Here(g, ObjNamed("URN"))
+                     And PropOf(g, ObjNamed("URN")) = 1)
+        Select Case True
+            Case lampOk And urnOk
+                NoObject()
+            Case urnOk
+                ObjNamed("URN")
+            Case lampOk
+                Lamp()
+            Case Else
+                NoObject()
+
+Rem Putting the lamp out in a dark place says so; the
+Rem urn goes dark but keeps its oil; the dragon and the volcano are
+Rem beyond your power.
+Def DoExtinguish(g As Game, i As Number, msg As String) As Done
+    Let obj = ChooseExtinguishable(g, i)
+    Select Case True
+        Case obj = NoObject()
+            Done(g, GoUnknown())
+        Case obj = ObjNamed("URN")
+            Done(UrnDoused(g, obj), GoClearObj())
+        Case obj = Lamp()
+            LampDoused(g)
+        Case obj = ObjNamed("DRAGON") Or obj = ObjNamed("VOLCANO")
+            Done(VoicedId(g, MsgBeyondPower()), GoClearObj())
+        Case Else
+            Done(Voiced(g, msg), GoClearObj())
+
+Rem Dousing an empty urn re-announces the dark state without moving it.
+Def UrnDoused(g As Game, urn As Number) As Game
+    If PropOf(g, urn) <> 0 Then
+        StateChange(g, urn, 1)
+    Else
+        Voiced(g, Nth(Changes(ObjAt(urn)), 2))
+
+Def LampDoused(g As Game) As Done
+    Let g1 = StateChange(g, Lamp(), LampDark())
+    If IsDarkHere(g1) Then
+        Done(VoicedId(g1, MsgPitchDark()), GoClearObj())
+    Else
+        Done(g1, GoClearObj())
+
+Def ChooseExtinguishable(g As Game, i As Number) As Number
+    Select Case True
+        Case i <> NoObject()
+            i
+        Case Here(g, ObjNamed("URN")) And PropOf(g, ObjNamed("URN")) = 2
+            ObjNamed("URN")
+        Case Here(g, Lamp()) And PropOf(g, Lamp()) = LampBright()
+            Lamp()
+        Case Else
+            NoObject()
+
+Rem With no object named, the game looks round for
+Rem something lockable. Each candidate is tested in turn and the last
+Rem match wins, so the order below is load-bearing, not a preference.
+Def LockableHere(g As Game, cands As List, i As Number, n As Number, best As Number) As Number
+    If i > n Then
+        best
+    Else
+        Let obj = ObjNamed(Nth(cands, i))
+        If LockInReach(g, obj, Nth(cands, i)) Then
+            LockableHere(g, cands, i + 1, n, obj)
+        Else
+            LockableHere(g, cands, i + 1, n, best)
+
+Rem The door and the grate must be at hand; the
+Rem clam, the oyster and the chain may also be carried.
+Def LockInReach(g As Game, obj As Number, tag As String) As Boolean
+    If tag = "DOOR" Or tag = "GRATE" Then
+        At(g, obj)
+    Else
+        Here(g, obj)
+
+Def ChooseLockable(g As Game, i As Number) As Number
+    If i <> NoObject() Then
+        i
+    Else
+        LockableHere(g, { "CLAM", "OYSTER", "DOOR", "GRATE", "CHAIN" }, 1, 5, NoObject())
+
+Rem Everything else you might try to lock has its
+Rem own answer: the clam and oyster want a trident, the door depends on
+Rem whether it has been oiled, and the cage simply has no lock.
+Def LockOther(g As Game, i As Number, shut As Boolean, msg As String) As Done
+    Select Case i
+        Case ObjNamed("CAGE")
+            Done(VoicedId(g, MsgNoLock()), GoClearObj())
+        Case Keys()
+            Done(VoicedId(g, MsgCannotUnlock()), GoClearObj())
+        Case ObjNamed("DOOR")
+            Done(VoicedId(g, DoorReply(g)), GoClearObj())
+        Case Else
+            Shellfish(g, i, shut, msg)
+
+Def DoorReply(g As Game) As Number
+    If PropOf(g, ObjNamed("DOOR")) = 1 Then
+        MsgOkMan()
+    Else
+        MsgRustyDoor()
+
+Rem The clam and the oyster answer the same way, but only the clam holds
+Rem the pearl.
+Def Shellfish(g As Game, i As Number, shut As Boolean, msg As String) As Done
+    Let clam = ObjNamed("CLAM")
+    Let oyster = ObjNamed("OYSTER")
+    Select Case True
+        Case i <> clam And i <> oyster
+            Done(Voiced(g, msg), GoClearObj())
+        Case shut
+            Done(VoicedId(g, MsgHuhMan()), GoClearObj())
+        Case Toting(g, i)
+            Done(VoicedId(g, DropIt(i, clam)), GoClearObj())
+        Case Not Toting(g, ObjNamed("TRIDENT"))
+            Done(VoicedId(g, NeedOpener(i, clam)), GoClearObj())
+        Case Else
+            Prised(g, i, clam, oyster)
+
+Def DropIt(i As Number, clam As Number) As Number
+    If i = clam Then
+        MsgDropClam()
+    Else
+        MsgDropOyster()
+
+Def NeedOpener(i As Number, clam As Number) As Number
+    If i = clam Then
+        MsgClamOpener()
+    Else
+        MsgOysterOpener()
+
+Def Prised(g As Game, i As Number, clam As Number, oyster As Number) As Done
+    If i <> clam Then
+        Done(VoicedId(g, MsgOysterOpens()), GoClearObj())
+    Else
+        Let g1 = Destroy(g, clam)
+        Let g2 = Put(g1, oyster)
+        Let g3 = Relocated(g2, ObjNamed("PEARL"), LocNamed("LOC_CULDESAC"))
+        Done(VoicedId(g3, MsgPearlFalls()), GoClearObj())
+
+Rem The grate and the chain have locks worth the
+Rem name, and both want the keys -- in reach, not necessarily in hand.
+Def DoLock(g As Game, want As Number, shut As Boolean, msg As String) As Done
+    Let i = ChooseLockable(g, want)
+    Select Case True
+        Case i = NoObject()
+            Done(VoicedId(g, MsgNothingLocked()), GoClearObj())
+        Case i <> Grate() And i <> ObjNamed("CHAIN")
+            LockOther(g, i, shut, msg)
+        Case Not Here(g, Keys())
+            Done(VoicedId(g, MsgNoKeys()), GoClearObj())
+        Case i = ObjNamed("CHAIN")
+            DoChain(g, shut)
+        Case Else
+            LockGrate(g, shut)
+
+Rem During closing the grate stays shut, and asking
+Rem it to open is how most players find out they are trapped.
+Def LockGrate(g As Game, shut As Boolean) As Done
+    If ClosingTime(g) Then
+        Done(Panicked(VoicedId(g, MsgExitClosed())), GoClearObj())
+    Else
+        If shut Then
+            Done(StateChange(g, Grate(), GrateClosed()), GoClearObj())
+        Else
+            Done(StateChange(g, Grate(), GrateOpen()), GoClearObj())
+
+Rem The bear's chain. Unlocking frees the bear along
+Rem with the chain, unless the bear is dead and stays where it fell.
+Def DoChain(g As Game, shut As Boolean) As Done
+    If shut Then
+        LockChain(g)
+    Else
+        UnlockChain(g)
+
+Def UnlockChain(g As Game) As Done
+    Let bear = ObjNamed("BEAR")
+    Let ch = ObjNamed("CHAIN")
+    If PropOf(g, bear) = 0 Then
+        Done(VoicedId(g, MsgBearBlocks()), GoClearObj())
+    Else
+        If PropOf(g, ch) = 0 Then
+            Done(VoicedId(g, MsgAlreadyUnlocked()), GoClearObj())
+        Else
+            Let g1 = Freed(g, ch, 0)
+            Let g2 = LoosedBear(g1, bear)
+            Done(VoicedId(g2, MsgChainUnlocked()), GoClearObj())
+
+Def LoosedBear(g As Game, bear As Number) As Game
+    If PropOf(g, bear) = 3 Then
+        SetStuck(g, bear, True)
+    Else
+        Freed(g, bear, 2)
+
+Rem Locking wants the chain back at its anchor in the bear's room.
+Def LockChain(g As Game) As Done
+    Let ch = ObjNamed("CHAIN")
+    If PropOf(g, ch) <> 0 Then
+        Done(VoicedId(g, MsgAlreadyLocked()), GoClearObj())
+    Else
+        If Location(g) <> First(Places(ObjAt(ch))) Then
+            Done(VoicedId(g, MsgNoLocksite()), GoClearObj())
+        Else
+            Done(ChainedUp(VoicedId(g, MsgChainLocked()), ch), GoClearObj())
+
+Def ChainedUp(g As Game, ch As Number) As Game
+    Let g1 = With(g, Props = SetNth(Props(g), ch + 1, 2))
+    Let g2 = DroppedIfHeld(g1, ch)
+    SetStuck(g2, ch, True)
+
+Def DroppedIfHeld(g As Game, i As Number) As Game
+    If Toting(g, i) Then
+        Put(g, i)
+    Else
+        g
+

@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
+<meta name="description" content="Neural species classification — mills/iris">
+<link rel="stylesheet" href="../style.css">
+<link rel="icon" href="../favicon.svg" type="image/svg+xml">
+<title>iris — Neural Species Classification | Shoddy Mills</title>
+</head>
+<body>
+<div class="topbar"><div class="inner">
+  <a class="phase" href="index.html">Shoddy · The Mills</a>
+  <span class="spacer"></span>
+  <nav class="docnav" aria-label="Documentation"><a href="../heritage.html">Story</a><a href="../guide.html">Guide</a><a href="../quickref.html">Reference</a><a href="../machines/index.html">Machines</a><span class="here">Mills</span><a href="../stack.html">Stack</a><a href="../spec.html">Spec</a><a href="../setup.html">Setup</a><a href="../vscode.html">VS Code</a><a href="../build.html">Toolchain</a></nav>
+</div></div>
+<div class="wrap">
+
+<header class="mast"><p class="eyebrow"><a href="index.html#learning">The Mills &middot; Machine learning</a></p><h1>iris</h1><p class="kicker">Neural species classification — mills/iris</p></header>
+<nav class="pagertop" aria-label="Mills, in catalog order"><a href="demographics.html">&larr; demographics</a><a href="index.html">All mills</a><a href="simplex-from-mps.html">simplex-from-mps &rarr;</a></nav>
+
+<h2 id="summary">Summary</h2>
+<p><code>iris</code> is two programs sharing one model.
+<code>iris-train.shoddy</code> fits a 4-8-3 tanh/softmax neural network from
+the <a href="../machines/neural.html">neural</a> machine to 120 rows of
+Fisher's iris data by mini-batch SGD with momentum, evaluates it against 30
+held-out rows, prints a confusion matrix, and serializes the trained model —
+weights, head, <em>and</em> input scaler — to <code>dat/iris-model.bin</code>.
+<code>iris.shoddy</code> then loads that model and classifies interactively:
+it prompts for four measurements in centimetres and names the species, with
+the probability it assigns to each of the three. Answer <code>N</code> at the
+<code>ANOTHER</code> prompt to exit.</p>
+
+<h2 id="why">Why This Mill Exists</h2>
+<p>It is the classification counterpart to
+<a href="demographics.html">demographics</a>, and the contrast is the point.
+Demographics predicts a <strong>number</strong> — an income — and is scored on
+how close it gets. This predicts a <strong>category</strong> — a species — is
+scored on how often it is right, and reports how sure it was, which a
+regression network has no way to express. Same machine, same two-program
+shape, different head.</p>
+<p>It also demonstrates three things the machine could not do before:
+<code>Softmax</code> outputs and cross-entropy loss, both running through the
+same backward pass regression uses; momentum, which is why 300 epochs suffice
+here where plain descent would want thousands; and a <code>Scaler</code>
+stored inside the model file, so the predictor never has to know how the
+inputs were scaled.</p>
+<p>And it is <em>fast</em>. Demographics takes nine minutes to train; this
+takes about four seconds. When you change
+<code>machines/neural.shoddy</code>, this is the mill to run first.</p>
+
+<h2 id="data">The Data</h2>
+
+<div class="gallery hero">
+  <a class="shot" href="../machines/neural.html"><img src="../media/iris.svg" alt="Scatter plot of iris petal length against petal width. Setosa forms a tight cluster at short, narrow petals, well away from the others. Versicolor and virginica sit along a common diagonal and overlap where they meet." loading="lazy"><span class="lab"><b>All 150 flowers, petal length against petal width</b><span>Setosa (blue) separates cleanly. Versicolor (orange) and virginica (green) overlap along their shared boundary — which is where every one of the model's errors falls.</span></span></a>
+</div>
+
+<p>R. A. Fisher's 1936 paper <em>The Use of Multiple Measurements in Taxonomic
+Problems</em> introduced the measurements that have been the canonical
+classification data set ever since: 150 flowers, 50 each of three species,
+four measurements apiece. It is used here precisely <em>because</em> the
+expected result is known — setosa is linearly separable from the other two,
+and versicolor and virginica overlap along a handful of specimens, exactly as
+the chart above shows. A working network lands within a percent or two of what
+this one gets; anything wildly different is a bug, not a discovery.</p>
+<p>The split is systematic: every fifth row of each species is held out, the
+other forty train. No shuffle, so the split is a property of the file and
+anyone can reproduce it. That choice is deliberate and the header of
+<code>dat/iris-train.dat</code> records why. The obvious alternative — take
+the last ten of each species — is a trap: the handful of rows on the
+versicolor/virginica boundary sit early in their blocks, so taking the tail
+puts every single hard case into <em>training</em> and leaves a test set with
+nothing difficult in it. That split reports 100% and has measured
+nothing.</p>
+
+<h2 id="run">Running It</h2>
+<p>From <code>mills/iris/</code> — the wrapper is <code>build.cmd</code> on
+Windows, <code>./build.sh</code> on Linux/macOS/WSL, same subcommands:</p>
+<pre><code>./build.sh build    # weave both programs into bin/ (plain ./build.sh works too)
+./build.sh train    # train the model — writes dat/iris-model.bin, ~4 seconds
+./build.sh run      # classify interactively from the trained model
+./build.sh clean    # remove built binaries</code></pre>
+<p>Like demographics, this mill is <em>woven</em>: the build compiles both
+programs to self-contained assemblies in <code>bin/</code>, so once built they
+run with no toolchain at all — <code>dotnet bin/iris.dll</code>. Run from the
+mill's own directory; the data and model paths under <code>dat/</code> are
+relative. Train before you classify; the predictor aborts politely without a
+model. <code>Seed(0)</code> at the top of training makes every run
+identical.</p>
+
+<h2 id="results">What It Gets, And How To Read It</h2>
+<p>Seeded, the trained model scores <strong>0.9833 on the training rows
+(118/120)</strong> and <strong>0.90 on the held-out rows (27/30)</strong>, and
+the confusion matrix says where the three errors went:</p>
+<pre><code> TRUE \ PRED      SETOSA  VERSICOLOR   VIRGINICA
+      SETOSA          10           0           0
+  VERSICOLOR           0          10           0
+   VIRGINICA           0           3           7</code></pre>
+<p>Every error is a virginica called versicolor, and all three are specimens
+whose petals fall inside versicolor's range — the overlap in the chart above,
+showing up exactly where the botany says it should. That gap between train and
+test is not a defect to tune away; it <em>is</em> the overlap. Configurations
+that drive training accuracy to 100% are memorizing those rows.</p>
+<p>Two honest caveats belong with that number:</p>
+<ul>
+<li><strong>Thirty test rows means one row is worth 3.3 points.</strong> Across
+eight seeds this setup gets 27 or 28 right — stable, but there is no precision
+in the second digit and it would be wrong to claim any.</li>
+<li><strong>A confident classifier is not thereby a correct one.</strong> Two
+of the three errors come with the two candidate species split near 0.53 —
+the model saying, accurately, that it is guessing. The third it announces at
+<strong>0.999</strong>. This data set is small enough to show you that in a
+single run, which is a better lesson than a tuned score would have been.</li>
+</ul>
+
+<h2 id="built">How It's Built</h2>
+<p>Everything neural comes from the
+<a href="../machines/neural.html">neural</a> machine: the 4-8-3 architecture,
+mini-batch SGD with gradients as net-shaped values, momentum (a velocity is a
+net too), and the <code>ModelSave</code>/<code>ModelLoad</code> pair. The
+trainer's hyperparameters travel as a single <code>Plan</code> value —
+<code>ClassPlan(0.1, 0.9, 10, 300)</code> — so a training run can be named and
+printed rather than smeared across seven arguments.</p>
+<p>The reporting is worth a look for its own sake. <code>NetFit</code> calls
+the caller's report quotation after <em>every</em> epoch, so the mill decides
+when to print and when to pay for metrics; the confusion matrix is built from
+<a href="../machines/matrix.html">matrix</a>' <code>Kron</code>, the equality
+indicator, where the product of two <code>Kron</code>s counts a row only when
+it is both truly <em>t</em> and predicted <em>p</em>.</p>
+
+<h2 id="split">The Seam Between The Two Programs</h2>
+<p>Like demographics this mill splits <strong>train once, predict many</strong>,
+and the interface between the halves is a file. But this one carries more
+than weights, and that difference is the mill's quietest lesson.</p>
+<p>A network is not a predictor on its own. Whoever trained it also chose a
+head, and chose how to centre and scale the inputs — and a prediction made on
+differently-scaled inputs is simply wrong, with nothing to announce it. In
+demographics those decisions live in <em>two</em> places: <code>RowX</code> in
+the trainer and <code>PersonX</code> in the predictor each build the input
+vector by hand, in different files, with nothing tying them together. They
+agree today. Reorder a column and nothing in the repo would notice.</p>
+<p>So <code>dat/iris-model.bin</code> holds the weights, the head, and the
+scaler, and <code>ModelPredict</code> takes <strong>raw centimetres</strong>
+and applies the scaling the file remembers. The predictor contains no mention
+of scaling at all — there is no second copy to drift. The trainer proves it
+rather than assuming it: its closing assertion feeds a raw row to the reloaded
+model and a hand-scaled row to the trained net, and requires the two answers
+to be equal, not merely close.</p>
+
+<h2 id="machines">The Machines It Uses</h2>
+<table>
+<tr><th>Machine</th><th>Why</th></tr>
+<tr><td><a href="../machines/neural.html">neural</a></td><td>Both programs;
+the reason the mill exists. The 4-8-3 tanh/softmax architecture and the
+<code>Classify</code> head, <code>NetFit</code> with momentum and a
+<code>Plan</code>, <code>ScalerFit</code> for the inputs, <code>NetLogLoss</code>
+and <code>NetClassAccuracy</code> for the trainer's report, and the
+<code>ModelSave</code> / <code>ModelLoad</code> pair whose bit-exact format is
+the contract between the two programs. (It brings
+<a href="../machines/matrix.html">matrix</a>,
+<a href="../machines/random.html">random</a>,
+<a href="../machines/file.html">file</a>, and
+<a href="../machines/recio.html">recio</a> along with it — the algebra, the
+shuffling, and the model file's binary I/O. <code>Kron</code>, from matrix,
+also builds the confusion matrix.)</td></tr>
+<tr><td><a href="../machines/math.html">math</a></td><td>Both programs:
+<code>RoundTo</code> trims raw model output to printable precision — in the
+trainer's loss and accuracy report and the predictor's probability
+table.</td></tr>
+</table>
+
+<nav class="pager" aria-label="Mills, in catalog order">
+  <a href="demographics.html"><span class="dir">&larr; Previous mill</span><span class="ttl">demographics</span></a>
+  <a class="next" href="simplex-from-mps.html"><span class="dir">Next mill &rarr;</span><span class="ttl">simplex-from-mps</span></a>
+</nav>
+<footer>Named for the shoddy mills of the West Riding: Useless Things Made
+Useful Through Skill (<a href="../heritage.html">the full story</a>).<br>
+&copy; 2026 Stephen Vincent Foster</footer>
+</div>
+</body>
+</html>

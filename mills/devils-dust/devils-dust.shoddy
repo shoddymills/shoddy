@@ -5,28 +5,112 @@ Rem ==================================================================
 Rem devils-dust.shoddy — Devil's Dust on the scribbler (window + loop).
 Rem
 Rem Run: mill run mills/devils-dust/devils-dust.shoddy
-Rem      Q or Escape quits. Nothing else to do — this one is for
-Rem      watching: wool in the air of a shoddy mill, a hundred wisps
-Rem      flocking by the three boids rules while the devil's drum
-Rem      turns below.
+Rem      Wool in the air of a shoddy mill: wisps flocking by the three
+Rem      boids rules while the devil's drum turns below — and a tuning
+Rem      panel to reshape the storm while it blows.
 Rem
-Rem The pure model — the flock, the steering, the step — is in
-Rem devils-dust-core.shoddy and is unit-tested headless. This file is
-Rem the window half: the mill interior, the devil silhouette, the wisp
-Rem trails, and the event loop. Frames come from ScribblerTick at a
-Rem fixed FPS (SetFps), so the loop sits at zero CPU between frames.
-Rem Every branch of Loop's Select Case calls Loop directly (or closes)
-Rem — a genuine SELF tail call, which CodeGen turns into a loop.
+Rem Panel controls (mouse): click a tab to switch groups, click or drag
+Rem a slider to set it. The button row is the machine's speed lever,
+Rem left to right: four lever POSITIONS, each a preset of knob values
+Rem the machine winds to, sliders turning as it goes. SLOW is the
+Rem gentle end (speeds and drum at about a third, loft kept — the sky
+Rem never empties), NORMAL is the frozen defaults, MAX is every knob at
+Rem its rail — the loudest legal setting — and ELEVEN is every knob at
+Rem a quarter past its rail (Spinal Tap owns the rest of that
+Rem sentence). Below the lever, the red STOP bar is the emergency stop:
+Rem most of the drive dies in the instant of the pull, the rest coasts
+Rem down, and the wool settles where it falls. The position the goal
+Rem sits on lights up. X hides the panel, the PANEL [H] hint brings it
+Rem back.
+Rem (Keyboard): 1-4 or Tab switch groups, Up/Down pick a knob,
+Rem Left/Right nudge it (Shift for coarse), H hides or shows the panel,
+Rem S slow motion, N normal, M max, E eleven. Q or Escape quits.
 Rem
-Rem A wisp draws as a fading streak: the bright head, then a segment to
-Rem each remembered Knot on its trail, dimmer with age. The trail is
-Rem data on the fiber itself, so the fade needs no alpha and no
-Rem framebuffer tricks — just shorter numbers.
+Rem The pure model — the flock, the steering, the step, and the knob
+Rem TABLE the panel reflects — is in devils-dust-core.shoddy and is
+Rem unit-tested headless. This file is the window half: the mill
+Rem interior, the devil silhouette, the wisp trails, the panel, and the
+Rem event loop. Frames come from ScribblerTick at a fixed FPS (SetFps),
+Rem so the loop sits at zero CPU between frames. Every branch of Loop's
+Rem Select Case calls Loop directly (or closes) — a genuine SELF tail
+Rem call, which CodeGen turns into a loop.
+Rem
+Rem The Studio record is the whole app: the Dust (which carries its own
+Rem Knobs) plus the Panel's UI state. Every input handler is a pure
+Rem Studio -> Studio function; the panel never touches the model except
+Rem through KnobGet/KnobSet on the table.
 Rem ==================================================================
 
 Include "devils-dust-core.shoddy"
 Include "scribbler.shoddy"
 Include "math.shoddy"
+Include "keys.shoddy"
+
+Rem ---- app state -----------------------------------------------------
+
+Type Panel
+    PTab  As Number          Rem which tab is open, 1..4
+    PRow  As Number          Rem which knob row is selected on that tab
+    PShow As Boolean
+    PDrag As Boolean         Rem a slider is being mouse-dragged
+
+Def NewPanel() As Panel
+    Panel(1, 1, True, False)
+
+Type Studio
+    Sd    As Dust
+    Sp    As Panel
+    SFps  As Number          Rem measured frame rate, smoothed
+    SThru As Number          Rem wool through the devil per second, smoothed
+    SAt   As Number          Rem previous tick timestamp; 0 = no tick yet
+    SGoal As Knobs           Rem where the levers are set; Tune winds toward it
+
+Rem The machine's inertia: the fraction of the remaining distance to
+Rem the goal covered each frame. Tons of iron on a belt drive take a
+Rem few seconds from lever-pull to full change.
+Def GlideT() As Number
+    0.02
+
+Rem ---- panel geometry ------------------------------------------------
+
+Def PanX() As Number
+    WorldW() - 372
+Def PanY() As Number
+    14
+Def PanW() As Number
+    358
+Def TabH() As Number
+    24
+Def TabW() As Number
+    76
+Def RowH() As Number
+    30
+Def TrackW() As Number
+    PanW() - 20
+Def RowsY() As Number
+    PanY() + TabH() + 8
+Def PanH(tab As Number) As Number
+    TabH() + 12 + KnobRows(tab) * RowH() + 46
+
+Rem The button row, below the last slider — the machine's speed lever,
+Rem left to right in increasing fury: SLOW, NORMAL, MAX, ELEVEN. Four
+Rem equal buttons filling the panel's inner width, evenly gapped.
+Def BtnY(tab As Number) As Number
+    RowsY() + KnobRows(tab) * RowH()
+Def BtnW() As Number
+    80
+Def BtnSx() As Number
+    PanX() + 10
+Def BtnNx() As Number
+    BtnSx() + BtnW() + 6
+Def BtnMx() As Number
+    BtnNx() + BtnW() + 6
+Def BtnEx() As Number
+    BtnMx() + BtnW() + 6
+
+Rem The emergency stop: a full-width red bar below the lever.
+Def StopY(tab As Number) As Number
+    BtnY(tab) + 22
 
 Rem ---- wisps ---------------------------------------------------------
 
@@ -80,43 +164,362 @@ Def DrawDevil(sc As Scribbler, turn As Number) As Scribbler
     Let rim = DrawCircle(barrel, DevilX(), DevilY(), DrumR(), 128, 120, 128)
     Fold(Range(0, 7), rim, Fn(s, k) => DrawTooth(s, turn, k))
 
-Def Draw(sc As Scribbler, d As Dust) As Scribbler
+Rem ---- the colour language -------------------------------------------
+Rem One heat scale for the whole console, the same liveries as the
+Rem lever: brick red at the bottom (stopped), mute yellow low (slow),
+Rem mute green at normal, steel ivory at the legal top (max), ember
+Rem past it (eleven). Sliders, meters and buttons all speak it.
+
+Def MixDye(a As Dye, b As Dye, t As Number) As Dye
+    Let u = Clamp(t, 0, 1)
+    Dye(Round(Lerp(Dr(a), Dr(b), u)), Round(Lerp(Dg(a), Dg(b), u)), Round(Lerp(Db(a), Db(b), u)))
+
+Rem Place v on the scale: lo is red, halfway to mid is yellow, mid is
+Rem green, hi is ivory, and hot overrides everything with ember. The
+Rem gauge anchors are deliberately more saturated than the button
+Rem liveries — same hues, more chroma — a colour has to survive being
+Rem five pixels tall.
+Def HeatRamp(v As Number, lo As Number, mid As Number, hi As Number, hot As Boolean) As Dye
+    If hot Then
+        Dye(255, 102, 48)
+    Else
+        If v >= mid Then
+            MixDye(Dye(96, 158, 82), Dye(236, 228, 206), Ifte(hi > mid, (v - mid) / (hi - mid), 1))
+        Else
+            Let u = Ifte(mid > lo, (v - lo) / (mid - lo), 1)
+            If u < 0.5 Then
+                MixDye(Dye(186, 58, 48), Dye(188, 158, 56), u * 2)
+            Else
+                MixDye(Dye(188, 158, 56), Dye(96, 158, 82), (u - 0.5) * 2)
+
+Rem ---- the panel -----------------------------------------------------
+
+Rem Where the slider fill sits for knob id, as a fraction of its rails.
+Def KnobFrac(kb As Knobs, id As Number) As Number
+    (KnobGet(kb, id) - KnobLo(id)) / (KnobHi(id) - KnobLo(id))
+
+Rem A knob's value translated into the colour language: red toward its
+Rem floor, green at its NORMAL default, ivory at its rail, ember past.
+Def KnobDye(kb As Knobs, id As Number) As Dye
+    HeatRamp(KnobGet(kb, id), KnobLo(id), KnobGet(NewKnobs(), id), KnobHi(id), KnobHot(kb, id))
+
+Def DrawTab(sc As Scribbler, p As Panel, t As Number) As Scribbler
+    Let x = PanX() + 4 + (t - 1) * (TabW() + 2)
+    Let active = t = PTab(p)
+    Let box = FillRect(sc, x, PanY() + 4, TabW(), TabH() - 8, Ifte(active, 188, 46), Ifte(active, 178, 42), Ifte(active, 158, 40))
+    ScribblerText(box, x + Round((TabW() - Len(TabName(t)) * 8) / 2), PanY() + 8, 1, Ifte(active, 40, 150), Ifte(active, 36, 142), Ifte(active, 34, 132), TabName(t))
+
+Rem One knob row: name, value, slider track, fill, and handle. The
+Rem selected row draws brighter; the fill is kept at least a pixel so
+Rem the track never reads as empty. The handle is the LEVER — it sits
+Rem at the goal and moves the instant you set it; the fill and the
+Rem value are the MACHINE, winding toward it at the pace of iron.
+Rem The track is guarded: fill and handle clamp at the rail no matter
+Rem the value. Fill, value and handle wear the heat colour of what they
+Rem show — the fill and value the machine's, the handle the goal's — so
+Rem a gauge past its rail burns ember, unmistakable next to MAX's legal
+Rem ivory. It's max... or eleven.
+Def DrawKnobRow(sc As Scribbler, kb As Knobs, goal As Knobs, p As Panel, row As Number) As Scribbler
+    Let id = KnobId(PTab(p), row)
+    Let y = RowsY() + (row - 1) * RowH()
+    Let sel = row = PRow(p)
+    Let heat = KnobDye(kb, id)
+    Let gleam = KnobDye(goal, id)
+    Let name = ScribblerText(sc, PanX() + 10, y, 1, Ifte(sel, 235, 150), Ifte(sel, 226, 142), Ifte(sel, 210, 132), KnobName(id))
+    Let vink = MixDye(heat, Dye(255, 255, 255), 0.1)
+    Let vtxt = ScribblerText(name, PanX() + PanW() - 66, y, 1, Dr(vink), Dg(vink), Db(vink), PadL(Str(RoundTo(KnobGet(kb, id), 3)), 7))
+    Let track = FillRect(vtxt, PanX() + 10, y + 13, TrackW(), 5, 58, 52, 48)
+    Let fw = Clamp(Round(KnobFrac(kb, id) * TrackW()), 1, TrackW())
+    Let gw = Clamp(Round(KnobFrac(goal, id) * TrackW()), 1, TrackW())
+    Let fill = FillRect(track, PanX() + 10, y + 13, fw, 5, Dr(heat), Dg(heat), Db(heat))
+    Let lever = MixDye(gleam, Dye(255, 255, 255), Ifte(sel, 0.45, 0.2))
+    FillRect(fill, PanX() + 9 + gw, y + 10, 3, 11, Dr(lever), Dg(lever), Db(lever))
+
+Rem A panel button in its own livery: dimmed to embers when idle, full
+Rem colour when the lever sits on it (text goes dark for contrast).
+Def DrawBtn(sc As Scribbler, x As Number, w As Number, y As Number, lit As Boolean, r As Number, g As Number, b As Number, label As String) As Scribbler
+    Let box = FillRect(sc, x, y, w, 16, Ifte(lit, r, Round(r * 0.35)), Ifte(lit, g, Round(g * 0.35)), Ifte(lit, b, Round(b * 0.35)))
+    Let edge = DrawRect(box, x, y, w, 16, 104, 96, 88)
+    ScribblerText(edge, x + Round((w - Len(label) * 8) / 2), y + 4, 1, Ifte(lit, 36, Round(r * 0.8)), Ifte(lit, 32, Round(g * 0.8)), Ifte(lit, 30, Round(b * 0.8)), label)
+
+Def DrawPanel(sc As Scribbler, st As Studio) As Scribbler
+    Let p = Sp(st)
+    If Not PShow(p) Then
+        ScribblerText(sc, WorldW() - 108, 16, 1, 110, 102, 94, "PANEL [H]")
+    Else
+        Let kb = Tune(Sd(st))
+        Let goal = SGoal(st)
+        Let bg = FillRect(sc, PanX(), PanY(), PanW(), PanH(PTab(p)), 27, 24, 22)
+        Let border = DrawRect(bg, PanX(), PanY(), PanW(), PanH(PTab(p)), 104, 96, 88)
+        Let tabs = Fold(Range(1, 4), border, Fn(s, t) => DrawTab(s, p, t))
+        Let xbox = ScribblerText(tabs, PanX() + PanW() - 16, PanY() + 8, 1, 168, 110, 100, "X")
+        Rem The lever position the goal sits on lights up; hand-tuned
+        Rem sliders light nothing. Liveries: SLOW mute yellow, NORMAL
+        Rem mute green, MAX steel ivory (the gauge's legal full-white),
+        Rem ELEVEN ember (the gauges' overload glow), STOP brick red on
+        Rem its own full-width bar.
+        Let rows = Fold(Range(1, KnobRows(PTab(p))), xbox, Fn(s, r) => DrawKnobRow(s, kb, goal, p, r))
+        Let b1 = DrawBtn(rows, BtnSx(), BtnW(), BtnY(PTab(p)), KnobsMatch(goal, SlowKnobs()), 158, 138, 64, "SLOW [S]")
+        Let b2 = DrawBtn(b1, BtnNx(), BtnW(), BtnY(PTab(p)), KnobsMatch(goal, NewKnobs()), 96, 134, 80, "NORMAL [N]")
+        Let b3 = DrawBtn(b2, BtnMx(), BtnW(), BtnY(PTab(p)), KnobsMatch(goal, MaxKnobs()), 176, 168, 152, "MAX [M]")
+        Let b4 = DrawBtn(b3, BtnEx(), BtnW(), BtnY(PTab(p)), KnobsMatch(goal, ElevenKnobs()), 214, 92, 54, "ELEVEN [E]")
+        DrawBtn(b4, BtnSx(), PanW() - 20, StopY(PTab(p)), KnobsMatch(goal, StopKnobs()), 168, 64, 56, "STOP [0]")
+
+Rem ---- input: keyboard -----------------------------------------------
+
+Rem Every control writes the GOAL; the live Tune chases it each tick.
+Rem Slider input goes through KnobSet, so hands clamp at the rails —
+Rem only ELEVEN's constructor reaches past them.
+Def PutKnob(st As Studio, id As Number, v As Number) As Studio
+    With(st, SGoal = KnobSet(SGoal(st), id, v))
+
+Rem The four lever positions. Each sets the GOAL; the machine winds its
+Rem values there at the pace of iron, sliders turning as it goes.
+
+Rem Gentle values, loft kept — slow wool is still flying wool.
+Def GoSlow(st As Studio) As Studio
+    With(st, SGoal = SlowKnobs())
+
+Rem Every lever back to the frozen defaults — the N key and the panel's
+Rem NORMAL button both land here.
+Def GoNormal(st As Studio) As Studio
+    With(st, SGoal = NewKnobs())
+
+Rem Everything the panel can legally give.
+Def GoMax(st As Studio) As Studio
+    With(st, SGoal = MaxKnobs())
+
+Rem One louder.
+Def GoEleven(st As Studio) As Studio
+    With(st, SGoal = ElevenKnobs())
+
+Rem The emergency stop. Throwing the belt off is not a glide: most of
+Rem the drive vanishes in the instant of the pull (the one-time 0.7
+Rem cut), then what momentum is left coasts down through the usual
+Rem winding. Quick, but the drum still visibly runs down rather than
+Rem freezing mid-turn.
+Def GoStop(st As Studio) As Studio
+    Let cut = With(Sd(st), Tune = BlendKnobs(Tune(Sd(st)), StopKnobs(), 0.7))
+    With(st, Sd = cut, SGoal = StopKnobs())
+
+Def SetTab(st As Studio, t As Number) As Studio
+    Let p = With(Sp(st), PTab = Clamp(t, 1, 4))
+    With(st, Sp = With(p, PRow = Clamp(PRow(p), 1, KnobRows(PTab(p)))))
+
+Def MoveSel(st As Studio, dir As Number) As Studio
+    Let p = Sp(st)
+    With(st, Sp = With(p, PRow = Clamp(PRow(p) + dir, 1, KnobRows(PTab(p)))))
+
+Rem Left/Right steps the knob by a fiftieth of its rails; Shift (bit 1
+Rem of Mods) makes the step five times coarser.
+Def NudgeKnob(st As Studio, dir As Number, mods As Number) As Studio
+    Let p = Sp(st)
+    Let id = KnobId(PTab(p), PRow(p))
+    Let stp = (KnobHi(id) - KnobLo(id)) / 50 * Ifte(mods Mod 2 >= 1, 5, 1)
+    PutKnob(st, id, KnobGet(SGoal(st), id) + dir * stp)
+
+Def OnKey(st As Studio, gk As GameKey, mods As Number) As Studio
+    Select Case gk
+        Case ArrowUp
+            MoveSel(st, -1)
+        Case ArrowDown
+            MoveSel(st, 1)
+        Case ArrowLeft
+            NudgeKnob(st, -1, mods)
+        Case ArrowRight
+            NudgeKnob(st, 1, mods)
+        Case TabKey
+            SetTab(st, Ifte(PTab(Sp(st)) = 4, 1, PTab(Sp(st)) + 1))
+        Case CharKey(c) Where c >= 49 And c <= 52
+            SetTab(st, c - 48)
+        Case CharKey(c) Where c = Asc("H")
+            With(st, Sp = With(Sp(st), PShow = Not PShow(Sp(st))))
+        Case CharKey(c) Where c = Asc("S")
+            GoSlow(st)
+        Case CharKey(c) Where c = Asc("N")
+            GoNormal(st)
+        Case CharKey(c) Where c = Asc("M")
+            GoMax(st)
+        Case CharKey(c) Where c = Asc("E")
+            GoEleven(st)
+        Case CharKey(c) Where c = 48
+            GoStop(st)
+        Case SpaceBar
+            GoStop(st)
+        Case Else
+            st
+
+Rem ---- input: mouse --------------------------------------------------
+
+Def RowAt(y As Number) As Number
+    Floor((y - RowsY()) / RowH()) + 1
+
+Rem Set the selected knob from a mouse x on its slider track.
+Def SlideTo(st As Studio, x As Number) As Studio
+    Let p = Sp(st)
+    Let id = KnobId(PTab(p), PRow(p))
+    Let frac = Clamp((x - (PanX() + 10)) / TrackW(), 0, 1)
+    PutKnob(st, id, KnobLo(id) + frac * (KnobHi(id) - KnobLo(id)))
+
+Rem A click lands on the hidden-panel hint, the tab bar (a tab or the X
+Rem close box), or a knob row — which selects it, starts a drag, and
+Rem jumps the slider to the click.
+Def OnClick(st As Studio, x As Number, y As Number) As Studio
+    Let p = Sp(st)
+    If Not PShow(p) Then
+        If x > WorldW() - 116 And y < 32 Then
+            With(st, Sp = With(p, PShow = True))
+        Else
+            st
+    Else
+        If x < PanX() Or x > PanX() + PanW() Or y < PanY() Or y > PanY() + PanH(PTab(p)) Then
+            st
+        Else
+            If y < PanY() + TabH() Then
+                If x > PanX() + PanW() - 24 Then
+                    With(st, Sp = With(p, PShow = False))
+                Else
+                    SetTab(st, Clamp(Floor((x - PanX() - 4) / (TabW() + 2)) + 1, 1, 4))
+            Else
+                If RowAt(y) >= 1 And RowAt(y) <= KnobRows(PTab(p)) Then
+                    SlideTo(With(st, Sp = With(p, PRow = RowAt(y), PDrag = True)), x)
+                Else
+                    If y >= BtnY(PTab(p)) And y <= BtnY(PTab(p)) + 16 Then
+                        OnButtons(st, x)
+                    Else
+                        If y >= StopY(PTab(p)) And y <= StopY(PTab(p)) + 16 Then
+                            GoStop(st)
+                        Else
+                            st
+
+Rem Which of the four buttons a click in the button row landed on.
+Def OnButtons(st As Studio, x As Number) As Studio
+    If x >= BtnSx() And x <= BtnSx() + BtnW() Then
+        GoSlow(st)
+    Else
+        If x >= BtnNx() And x <= BtnNx() + BtnW() Then
+            GoNormal(st)
+        Else
+            If x >= BtnMx() And x <= BtnMx() + BtnW() Then
+                GoMax(st)
+            Else
+                If x >= BtnEx() And x <= BtnEx() + BtnW() Then
+                    GoEleven(st)
+                Else
+                    st
+
+Def OnMove(st As Studio, x As Number) As Studio
+    If PDrag(Sp(st)) Then
+        SlideTo(st, x)
+    Else
+        st
+
+Rem ---- number formatting ---------------------------------------------
+Rem The font is monospace, so fixed-width fields keep the readouts from
+Rem jittering as values change size: PadL right-aligns in a field of n,
+Rem Fixed always shows exactly p decimals ("0.40", never "0.4").
+
+Def PadL(s As String, n As Number) As String
+    If Len(s) >= n Then
+        s
+    Else
+        PadL(" " & s, n)
+
+Def PadZ(s As String, n As Number) As String
+    If Len(s) >= n Then
+        s
+    Else
+        PadZ("0" & s, n)
+
+Def Fixed(x As Number, p As Number) As String
+    Let s = 10 ^ p
+    Let n = Round(x * s)
+    Str(Fix(n / s)) & "." & PadZ(Str(Abs(n Mod s)), p)
+
+Rem ---- the footer ----------------------------------------------------
+Rem The meters, one line on the floor strip: measured FPS, the
+Rem lifecycle census, the flocking order parameter, mean speed, mean
+Rem altitude, and wool through the devil per second. Census, order,
+Rem speed and altitude are pure reads from the core; FPS and throughput
+Rem are the two smoothed numbers Studio carries. Each meter wears the
+Rem heat colour of its own reading — label dimmed, value full — so the
+Rem footer reads like a row of gauges: a red ALOFT is an empty sky, a
+Rem green FPS is a healthy clock, an ember SPEED is eleven's doing.
+
+Def Meter(sc As Scribbler, x As Number, label As String, val As String, d As Dye) As Scribbler
+    Let lab = ScribblerText(sc, x, FloorTop() + 7, 1, Round(Dr(d) * 0.62), Round(Dg(d) * 0.62), Round(Db(d) * 0.62), label)
+    ScribblerText(lab, x + Len(label) * 8, FloorTop() + 7, 1, Dr(d), Dg(d), Db(d), val)
+
+Def DrawFooter(sc As Scribbler, st As Studio) As Scribbler
+    Let flock = Fibers(Sd(st))
+    Let kb = Tune(Sd(st))
+    Let c = TakeCensus(flock)
+    Let want = FiberCount(kb)
+    Let spd = MeanSpeed(flock)
+    Let x0 = Round((WorldW() - 736) / 2)
+    Let m1 = Meter(sc, x0, "FPS ", PadL(Str(Round(SFps(st))), 3), HeatRamp(SFps(st), 0, 30, 34, False))
+    Let m2 = Meter(m1, x0 + 80, "ALOFT ", PadL(Str(Aloft(c)), 3), HeatRamp(Aloft(c), 0, want * 0.7, want, False))
+    Let m3 = Meter(m2, x0 + 176, "RAIN ", PadL(Str(Raining(c)), 3), HeatRamp(Raining(c), 0, want * 0.2, want, False))
+    Let m4 = Meter(m3, x0 + 264, "DOWN ", PadL(Str(Landed(c)), 3), HeatRamp(Landed(c), 0, want * 0.03, want, False))
+    Let m5 = Meter(m4, x0 + 352, "ORDER ", Fixed(OrderParam(flock), 2), HeatRamp(OrderParam(flock), 0, 0.4, 1, False))
+    Let m6 = Meter(m5, x0 + 456, "SPEED ", PadL(Fixed(spd, 1), 4), HeatRamp(spd, 0, 2, KnobHi(7), spd > KnobHi(7)))
+    Let m7 = Meter(m6, x0 + 560, "ALT ", PadL(Str(Round(Altitude(flock))), 3), HeatRamp(Altitude(flock), 0, 300, FloorY(), False))
+    Meter(m7, x0 + 640, "THRU ", PadL(Fixed(SThru(st), 1), 5) & "/S", HeatRamp(SThru(st), 0, 5, 25, False))
+
+Rem ---- drawing the frame ---------------------------------------------
+
+Def Draw(sc As Scribbler, st As Studio) As Scribbler
+    Let d = Sd(st)
     Let bg = ScribblerFill(sc, 22, 19, 17)
     Let fl = DrawFloor(bg)
     Let haze = DrawMotes(fl, Motes(d))
     Let dv = DrawDevil(haze, Whirl(d))
     Let wool = Fold(Fibers(d), dv, DrawFiber)
     Let t1 = ScribblerText(wool, 20, 16, 3, 128, 118, 108, "DEVIL'S DUST")
-    Let t2 = ScribblerText(t1, 20, 46, 2, 84, 78, 72, "WOOL IN THE AIR OF A SHODDY MILL - Q QUITS")
-    ScribblerBlit(t2)
+    Let t2 = ScribblerText(t1, 20, 46, 2, 84, 78, 72, "WOOL IN THE AIR OF A SHODDY MILL - H PANEL, Q QUITS")
+    ScribblerBlit(DrawPanel(DrawFooter(t2, st), st))
 
 Rem ---- the loop ------------------------------------------------------
 
-Def Loop(sc As Scribbler, d As Dust) As Scribbler
+Def Loop(sc As Scribbler, st As Studio) As Scribbler
     Select Case NextEvent(sc)
         Case ScribblerTick(at)
-            Let d2 = Advance(d)
-            Loop(Draw(sc, d2), d2)
-        Case ScribblerTyped(ch, mods, at)
-            If Lower(ch) = "q" Then
-                ScribblerClose(sc)
-            Else
-                Loop(sc, d)
+            Rem The machine winds toward its levers first (BlendKnobs),
+            Rem then the frame steps. The FPS sample guards its own
+            Rem first frame (SAt = 0) and division (Clamp floors the
+            Rem delta at 1ms); throughput smooths harder because
+            Rem respawns arrive 0-2 at a time.
+            Let tuned = With(Sd(st), Tune = BlendKnobs(Tune(Sd(st)), SGoal(st), GlideT()))
+            Let d2 = Advance(tuned)
+            Let samp = Ifte(SAt(st) = 0, SFps(st), 1000 / Clamp(at - SAt(st), 1, 1000))
+            Let thru2 = Ifte(SAt(st) = 0, 0, SThru(st) + 0.05 * (FreshCount(Fibers(d2)) * samp - SThru(st)))
+            Let st2 = With(st, Sd = d2, SFps = SFps(st) + 0.1 * (samp - SFps(st)), SThru = thru2, SAt = at)
+            Loop(Draw(sc, st2), st2)
         Case ScribblerKeyDown(key, mods, at)
-            If key = 27 Then
+            If key = 27 Or key = Asc("Q") Then
                 ScribblerClose(sc)
             Else
-                Loop(sc, d)
+                Loop(sc, OnKey(st, ClassifyKey(key), mods))
+        Case ScribblerMouseDown(x, y, btn, mods, at)
+            Loop(sc, OnClick(st, x, y))
+        Case ScribblerMouseMove(x, y, mods, at)
+            Loop(sc, OnMove(st, x))
+        Case ScribblerMouseUp(x, y, btn, mods, at)
+            Loop(sc, With(st, Sp = With(Sp(st), PDrag = False)))
         Case ScribblerQuit
             ScribblerClose(sc)
         Case Else
-            Loop(sc, d)
+            Loop(sc, st)
 
 Def Main()
     Let sc0 = ScribblerOpen(WorldW(), WorldH())
     Let sc1 = ScribblerTitle(sc0, "Devil's Dust")
     Let sc2 = SetFps(sc1, 30)
-    Print("Devil's Dust - wool in the air of a shoddy mill. Q or Escape quits.")
-    Let d = NewDust()
-    Let done = Loop(Draw(sc2, d), d)
+    Print("Devil's Dust - wool in the air of a shoddy mill.")
+    Print("Panel: 1-4/Tab pick a group, Up/Down pick a knob, Left/Right nudge")
+    Print("(Shift = coarse), or click and drag the sliders. H panel. Speed")
+    Print("lever: S slow, N normal, M max, E goes to eleven; 0 or Space is the")
+    Print("full stop. Q or Escape quits.")
+    Let st = Studio(NewDust(), NewPanel(), 30, 0, 0, NewKnobs())
+    Let done = Loop(Draw(sc2, st), st)
     Print("the mill rests")

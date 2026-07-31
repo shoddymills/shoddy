@@ -9,71 +9,157 @@ Include "devils-dust-core.shoddy"
 
 Def Main()
     Seed(42)
+    Let kb = NewKnobs()
 
     Let d = NewDust()
-    Assert(Length(Fibers(d)) = FiberCount(), "FRESH DUST HAS THE FULL FLOCK")
-    Assert(Length(Motes(d)) = MoteCount(), "FRESH DUST HAS THE FINE HAZE")
+    Assert(Length(Fibers(d)) = FiberCount(kb), "FRESH DUST HAS THE FULL FLOCK")
+    Assert(Length(Motes(d)) = MoteCount(kb), "FRESH DUST HAS THE FINE HAZE")
     Assert(Whirl(d) = 0, "DRUM STARTS AT REST")
 
     Rem one frame: same head count, drum turned, trails growing
     Let d2 = Advance(d)
-    Assert(Length(Fibers(d2)) = FiberCount(), "ADVANCE PRESERVES THE FLOCK")
-    Assert(Length(Motes(d2)) = MoteCount(), "ADVANCE PRESERVES THE HAZE")
-    Assert(Abs(Whirl(d2) - DrumStep()) < 0.0001, "DRUM TURNS EACH FRAME")
+    Assert(Length(Fibers(d2)) = FiberCount(kb), "ADVANCE PRESERVES THE FLOCK")
+    Assert(Length(Motes(d2)) = MoteCount(kb), "ADVANCE PRESERVES THE HAZE")
+    Assert(Abs(Whirl(d2) - DrumStep(kb)) < 0.0001, "DRUM TURNS EACH FRAME")
 
     Rem ten frames: every trail stays capped at TrailLen
     Let d10 = Fold(Range(1, 10), d, Fn(acc, k) => Advance(acc))
     Assert(All(Fibers(d10), Fn(f) => Length(Trail(f)) <= TrailLen()), "TRAILS STAY CAPPED")
 
     Rem the speed clamp holds both ends and keeps the heading
-    Let fast = LimitSpeed(99, 0, MinSpeed(), MaxSpeed())
-    Assert(Abs(Gx(fast) - MaxSpeed()) < 0.0001 And Gy(fast) = 0, "FAST WOOL IS REINED IN")
-    Let slow = LimitSpeed(0.1, 0, MinSpeed(), MaxSpeed())
-    Assert(Abs(Gx(slow) - MinSpeed()) < 0.0001, "SLOW WOOL KEEPS DRIFTING")
+    Let fast = LimitSpeed(99, 0, MinSpeed(kb), MaxSpeed(kb))
+    Assert(Abs(Gx(fast) - MaxSpeed(kb)) < 0.0001 And Gy(fast) = 0, "FAST WOOL IS REINED IN")
+    Let slow = LimitSpeed(0.1, 0, MinSpeed(kb), MaxSpeed(kb))
+    Assert(Abs(Gx(slow) - MinSpeed(kb)) < 0.0001, "SLOW WOOL KEEPS DRIFTING")
 
     Rem a mote rides the air but wraps instead of respawning
-    Let speck = StepMote(Mote(WorldW() - 0.01, 240, 0.6, 0, 80))
+    Let speck = StepMote(Mote(WorldW() - 0.01, 240, 0.6, 0, 80), kb)
     Assert(Mx(speck) >= 0 And Mx(speck) < WorldW(), "DUST WRAPS AT THE WALLS")
     Assert(My(speck) >= 15 And My(speck) < FloorY(), "DUST STAYS OFF THE FLOOR")
     Assert(Mb(speck) = 80, "A SPECK KEEPS ITS SHADE")
 
     Rem a wisp off the world respawns at the devil's rim, trail fresh
     Let gone = Fiber(WorldW() + 100, 240, 3, 0, { }, 200, 200, 200, 100)
-    Let back = StepFiber(gone, { gone })
+    Let back = StepFiber(gone, { gone }, kb)
     Assert(Dist(Fx(back), Fy(back), DevilX(), DevilY()) < DrumR() + 6, "LOST WOOL RETURNS TO THE DEVIL")
     Assert(IsEmpty(Trail(back)), "RESPAWN STARTS A FRESH TRAIL")
     Assert(Vy(back) < 0, "THE DEVIL FLINGS WOOL UPWARD")
 
     Rem falling wool stops at the floor (or is already back at the drum)
-    Let lander = StepFiber(Fiber(300, FloorY() - 0.5, 0, 2, { }, 255, 255, 255, 100), { })
+    Let lander = StepFiber(Fiber(300, FloorY() - 0.5, 0, 2, { }, 255, 255, 255, 100), { }, kb)
     Assert(Fy(lander) <= FloorY(), "WOOL NEVER SINKS THROUGH THE FLOOR")
 
     Rem the mid-room drum sprays to both sides, always with fresh loft
-    Let sprays = Map(Range(1, 40), Fn(k) => RimFiber())
+    Let sprays = Map(Range(1, 40), Fn(k) => RimFiber(kb))
     Assert(Any(sprays, Fn(f) => Vx(f) < 0) And Any(sprays, Fn(f) => Vx(f) > 0), "THE DEVIL BURSTS BOTH WAYS")
-    Assert(All(sprays, Fn(f) => Loft(f) >= LoftMin()), "FRESH WOOL IS BUOYANT")
+    Assert(All(sprays, Fn(f) => Loft(f) >= LoftMin(kb)), "FRESH WOOL IS BUOYANT")
 
     Rem spent wool rains down: forty frames of a loftless wisp descend
     Let tired = Fiber(600, 200, 1, 0, { }, 255, 255, 255, 0)
-    Let rained = Fold(Range(1, 40), tired, Fn(w, k) => StepFiber(w, { w }))
+    Let rained = Fold(Range(1, 40), tired, Fn(w, k) => StepFiber(w, { w }, kb))
     Assert(Fy(rained) > Fy(tired) + 5, "SPENT WOOL RAINS DOWN")
 
     Rem separation pushes crowded wisps apart ...
     Let a = Fiber(300, 200, 0, 0, { }, 255, 255, 255, 100)
     Let b = Fiber(306, 200, 0, 0, { }, 255, 255, 255, 100)
-    Assert(Gx(Separate(a, Neighbors(a, { a, b }))) < 0, "CROWDED WOOL PUSHES APART")
+    Assert(Gx(Separate(a, Neighbors(a, { a, b }, kb), kb)) < 0, "CROWDED WOOL PUSHES APART")
 
     Rem ... cohesion pulls a straggler toward the flock ...
     Let far = Fiber(340, 200, 0, 0, { }, 255, 255, 255, 100)
-    Assert(Gx(Cohere(a, Neighbors(a, { a, far }))) > 0, "LONE WOOL DRIFTS TOWARD THE FLOCK")
+    Assert(Gx(Cohere(a, Neighbors(a, { a, far }, kb), kb)) > 0, "LONE WOOL DRIFTS TOWARD THE FLOCK")
 
     Rem ... alignment turns a wisp to match its neighbours' heading
     Let mover = Fiber(320, 200, 2, 0, { }, 255, 255, 255, 100)
-    Assert(Gx(Align(a, Neighbors(a, { a, mover }))) > 0, "WOOL FALLS IN WITH ITS NEIGHBOURS")
+    Assert(Gx(Align(a, Neighbors(a, { a, mover }, kb), kb)) > 0, "WOOL FALLS IN WITH ITS NEIGHBOURS")
 
     Rem a wisp alone feels no flock forces at all
-    Let ns0 = Neighbors(a, { a })
+    Let ns0 = Neighbors(a, { a }, kb)
     Assert(IsEmpty(ns0), "A WISP IS NOT ITS OWN NEIGHBOUR")
-    Assert(Gx(Cohere(a, ns0)) = 0 And Gy(Cohere(a, ns0)) = 0, "NO FLOCK, NO COHESION")
+    Assert(Gx(Cohere(a, ns0, kb)) = 0 And Gy(Cohere(a, ns0, kb)) = 0, "NO FLOCK, NO COHESION")
+
+    Rem ---- the knob table --------------------------------------------
+
+    Assert(Fold(Range(1, 4), 0, Fn(acc, t) => acc + KnobRows(t)) = 21, "EVERY KNOB SITS ON A TAB")
+    Assert(KnobId(4, KnobRows(4)) = 21, "TABS TILE THE KNOB TABLE")
+    Assert(All(Range(1, 21), Fn(i) => KnobGet(kb, i) >= KnobLo(i) And KnobGet(kb, i) <= KnobHi(i)), "DEFAULTS SIT INSIDE THEIR RAILS")
+    Assert(All(Range(1, 21), Fn(i) => Abs(KnobGet(KnobSet(kb, i, KnobLo(i)), i) - KnobLo(i)) < 0.0001), "EVERY KNOB SETS AND GETS")
+    Assert(Abs(KnobGet(KnobSet(kb, 3, 99), 3) - KnobHi(3)) < 0.0001, "A KNOB CLAMPS AT ITS RAIL")
+    Assert(KnobGet(KnobSet(kb, 19, 33.7), 19) = 34, "WISP COUNT STAYS WHOLE")
+
+    Rem live resize: the flock grows and shrinks to the WISPS knob
+    Let more = Advance(With(d, Tune = KnobSet(kb, 19, 130)))
+    Assert(Length(Fibers(more)) = 130, "THE FLOCK GROWS TO THE KNOB")
+    Let fewer = Advance(With(d, Tune = KnobSet(kb, 19, 40)))
+    Assert(Length(Fibers(fewer)) = 40, "THE FLOCK TRIMS TO THE KNOB")
+
+    Rem ---- the meters ------------------------------------------------
+
+    Rem census: one of each state — flying, raining, on the floor.
+    Rem (Locals must not be named raining/landed — a local word shadows
+    Rem the case-folded Census accessor of the same name.)
+    Let flyer = Fiber(200, 200, 1, 0, { Knot(199, 200) }, 255, 255, 255, 100)
+    Let rainer = Fiber(400, 300, 0, 1, { Knot(400, 299) }, 255, 255, 255, 0)
+    Let grounded = Fiber(600, FloorY(), 1, 0, { Knot(599, FloorY()) }, 255, 255, 255, 0)
+    Let c = TakeCensus({ flyer, rainer, grounded })
+    Assert(Aloft(c) = 1 And Raining(c) = 1 And Landed(c) = 1, "THE CENSUS SORTS THE WOOL")
+
+    Rem grounded wool is not airborne, and the meters skip it
+    Assert(Length(Airborne({ flyer, grounded })) = 1, "THE FLOOR IS NOT THE AIR")
+    Assert(Abs(MeanSpeed({ Fiber(100, 100, 3, 4, { }, 255, 255, 255, 50), grounded }) - 5) < 0.0001, "MEAN SPEED READS THE AIR ONLY")
+    Assert(Abs(Altitude({ Fiber(100, FloorY() - 120, 0, 1, { }, 255, 255, 255, 50), grounded }) - 120) < 0.0001, "ALTITUDE IS HEIGHT ABOVE THE FLOOR")
+
+    Rem order: same headings read 1, opposite headings read 0
+    Let east = Fiber(100, 100, 2, 0, { }, 255, 255, 255, 50)
+    Let east2 = Fiber(300, 100, 2, 0, { }, 255, 255, 255, 50)
+    Let west = Fiber(300, 100, -2, 0, { }, 255, 255, 255, 50)
+    Assert(Abs(OrderParam({ east, east2 }) - 1) < 0.0001, "A MARCHING FLOCK IS ORDERED")
+    Assert(Abs(OrderParam({ east, west })) < 0.0001, "OPPOSED WOOL IS DISORDERED")
+    Assert(OrderParam({ }) = 0, "EMPTY AIR HAS NO ORDER")
+
+    Rem throughput: a fresh respawn has an empty trail, stepped wool has not
+    Assert(FreshCount({ RimFiber(kb), flyer }) = 1, "FRESH WOOL IS COUNTED THROUGH THE DEVIL")
+
+    Rem stop: the machine goes dark, legally — drum still, no lift, no
+    Rem sweep, nothing recycles — and it is its own lever position
+    Let halt = StopKnobs()
+    Assert(All(Range(1, 21), Fn(i) => KnobGet(halt, i) >= KnobLo(i) And KnobGet(halt, i) <= KnobHi(i)), "STOP STAYS ON THE RAILS")
+    Assert(DrumStep(halt) = 0 And LiftK(halt) = 0 And SweepP(halt) = 0 And RecycleP(halt) = 0, "A STOPPED MILL IS STILL")
+    Assert(Not KnobsMatch(halt, kb) And Not KnobsMatch(halt, SlowKnobs()), "STOP IS ITS OWN LEVER POSITION")
+
+    Rem slow: legal values, motion wound down, loft untouched
+    Let slow2 = SlowKnobs()
+    Assert(All(Range(1, 21), Fn(i) => KnobGet(slow2, i) >= KnobLo(i) And KnobGet(slow2, i) <= KnobHi(i)), "SLOW STAYS ON THE RAILS")
+    Assert(MaxSpeed(slow2) < MaxSpeed(kb) And Settle(slow2) < Settle(kb) And DrumStep(slow2) < DrumStep(kb), "SLOW IS GENTLER THAN NORMAL")
+    Assert(LoftMin(slow2) = LoftMin(kb) And LoftMax(slow2) = LoftMax(kb), "SLOW KEEPS THE LOFT")
+    Assert(KnobsMatch(slow2, SlowKnobs()) And Not KnobsMatch(slow2, kb), "LEVER POSITIONS ARE DISTINGUISHABLE")
+
+    Rem max: every knob exactly at its rail; eleven: strictly past it
+    Assert(All(Range(1, 21), Fn(i) => Abs(KnobGet(MaxKnobs(), i) - KnobHi(i)) < 0.0001), "MAX IS TEN")
+    Assert(All(Range(1, 21), Fn(i) => KnobGet(ElevenKnobs(), i) > KnobGet(MaxKnobs(), i)), "ELEVEN IS ONE LOUDER THAN MAX")
+    Assert(All(Range(1, 21), Fn(i) => KnobGet(ElevenKnobs(), i) > KnobHi(i)), "ELEVEN IS ONE LOUDER")
+    Assert(Length(Fibers(Advance(With(d, Tune = ElevenKnobs())))) = KnobGet(ElevenKnobs(), 19), "THE FLOCK FOLLOWS ELEVEN")
+
+    Rem the overload lamp: max runs cool, eleven burns, and a value
+    Rem cooling down from eleven goes white well before it touches the
+    Rem rail (the glide hugs the rail from above and never quite lands)
+    Assert(All(Range(1, 21), Fn(i) => Not KnobHot(MaxKnobs(), i)), "MAX RUNS COOL")
+    Assert(All(Range(1, 21), Fn(i) => KnobHot(ElevenKnobs(), i)), "ELEVEN BURNS")
+    Assert(All(Range(1, 21), Fn(i) => Not KnobHot(BlendKnobs(MaxKnobs(), ElevenKnobs(), 0.2), i)), "COOLING WOOL GOES WHITE EARLY")
+
+    Rem the glide: an 1875 machine winds toward its levers
+    Let ele = ElevenKnobs()
+    Assert(All(Range(1, 21), Fn(i) => Abs(KnobGet(BlendKnobs(kb, ele, 1), i) - KnobGet(ele, i)) < 0.0001), "A FULL GLIDE ARRIVES")
+    Assert(All(Range(1, 21), Fn(i) => Abs(KnobGet(BlendKnobs(kb, ele, 0), i) - KnobGet(kb, i)) < 0.0001), "A ZERO GLIDE STAYS PUT")
+    Let mid = BlendKnobs(kb, ele, 0.5)
+    Assert(KnobGet(mid, 3) > KnobGet(kb, 3) And KnobGet(mid, 3) < KnobGet(ele, 3), "THE GLIDE PASSES BETWEEN")
+    Assert(KnobGet(mid, 19) = Round(KnobGet(mid, 19)) And KnobGet(mid, 20) = Round(KnobGet(mid, 20)), "COUNTS STAY WHOLE MID-GLIDE")
+
+    Rem counts never stall short of the goal: inside the rounding dead
+    Rem zone they still move one per frame, in both directions, and a
+    Rem long glide actually arrives
+    Assert(WindCount(210, 200, 0.02) = 209 And WindCount(190, 200, 0.02) = 191, "COUNTS CREEP THROUGH THE DEAD ZONE")
+    Assert(WindCount(200, 200, 0.02) = 200, "AN ARRIVED COUNT RESTS")
+    Let wound = Fold(Range(1, 300), kb, Fn(acc, k) => BlendKnobs(acc, MaxKnobs(), 0.02))
+    Assert(FiberCount(wound) = FiberCount(MaxKnobs()) And MoteCount(wound) = MoteCount(MaxKnobs()), "THE FLOCK COUNT REACHES ITS GOAL")
 
     Print("ALL DEVILS DUST CHECKS PASSED")

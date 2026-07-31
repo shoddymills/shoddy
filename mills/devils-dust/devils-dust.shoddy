@@ -1,0 +1,122 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem devils-dust.shoddy — Devil's Dust on the scribbler (window + loop).
+Rem
+Rem Run: mill run mills/devils-dust/devils-dust.shoddy
+Rem      Q or Escape quits. Nothing else to do — this one is for
+Rem      watching: wool in the air of a shoddy mill, a hundred wisps
+Rem      flocking by the three boids rules while the devil's drum
+Rem      turns below.
+Rem
+Rem The pure model — the flock, the steering, the step — is in
+Rem devils-dust-core.shoddy and is unit-tested headless. This file is
+Rem the window half: the mill interior, the devil silhouette, the wisp
+Rem trails, and the event loop. Frames come from ScribblerTick at a
+Rem fixed FPS (SetFps), so the loop sits at zero CPU between frames.
+Rem Every branch of Loop's Select Case calls Loop directly (or closes)
+Rem — a genuine SELF tail call, which CodeGen turns into a loop.
+Rem
+Rem A wisp draws as a fading streak: the bright head, then a segment to
+Rem each remembered Knot on its trail, dimmer with age. The trail is
+Rem data on the fiber itself, so the fade needs no alpha and no
+Rem framebuffer tricks — just shorter numbers.
+Rem ==================================================================
+
+Include "devils-dust-core.shoddy"
+Include "scribbler.shoddy"
+Include "math.shoddy"
+
+Rem ---- wisps ---------------------------------------------------------
+
+Rem Brightness of trail segment k (1 = newest). Older wool fades.
+Def Fade(k As Number) As Number
+    Nth({ 95, 70, 50, 33, 18 }, Min(k, 5)) / 100
+
+Def Shade(c As Number, k As Number) As Number
+    Round(c * Fade(k))
+
+Def FiberSeg(sc As Scribbler, f As Fiber, x As Number, y As Number, knots As List Of Knot, k As Number) As Scribbler
+    If IsEmpty(knots) Then
+        sc
+    Else
+        Let q = First(knots)
+        Let s = DrawLine(sc, Round(x), Round(y), Round(Kx(q)), Round(Ky(q)), Shade(Cr(f), k), Shade(Cg(f), k), Shade(Cb(f), k))
+        FiberSeg(s, f, Kx(q), Ky(q), Rest(knots), k + 1)
+
+Def DrawFiber(sc As Scribbler, f As Fiber) As Scribbler
+    Let tail = FiberSeg(sc, f, Fx(f), Fy(f), Trail(f), 1)
+    FillRect(tail, Round(Fx(f)) - 1, Round(Fy(f)) - 1, 2, 2, Cr(f), Cg(f), Cb(f))
+
+Rem A speck of fine dust is a single warm-grey pixel, drawn behind the
+Rem devil so the machine reads solid through the haze.
+Def DrawMotes(sc As Scribbler, motes As List Of Mote) As Scribbler
+    Fold(motes, sc, Fn(s, m) => ScribblerPixel(s, Round(Mx(m)), Round(My(m)), Mb(m), Mb(m) - 4, Mb(m) - 8))
+
+Rem ---- the mill ------------------------------------------------------
+
+Def DrawFloor(sc As Scribbler) As Scribbler
+    Let strip = FillRect(sc, 0, FloorTop(), WorldW(), WorldH() - FloorTop(), 38, 33, 29)
+    DrawHLine(strip, FloorTop() - 1, 0, WorldW() - 1, 60, 52, 46)
+
+Rem One tooth on the drum: a spoke from mid-radius out past the rim,
+Rem rotated by the drum angle.
+Def DrawTooth(sc As Scribbler, turn As Number, k As Number) As Scribbler
+    Let a = turn + k * Tau() / 8
+    DrawLine(sc, Round(DevilX() + Cos(a) * DrumR() * 0.45), Round(DevilY() + Sin(a) * DrumR() * 0.45), Round(DevilX() + Cos(a) * (DrumR() + 6)), Round(DevilY() + Sin(a) * (DrumR() + 6)), 150, 142, 134)
+
+Rem The devil in silhouette, mid-room: housing centred on the floor,
+Rem feed hopper at its left shoulder, and the toothed drum exposed at
+Rem the top centre — spraying wool to both sides, which is where
+Rem RimFiber's upper arc sends it. Everything hangs off DevilX so the
+Rem machine and the model can never drift apart.
+Def DrawDevil(sc As Scribbler, turn As Number) As Scribbler
+    Let housing = FillRect(sc, DevilX() - 99, FloorTop() - 90, 198, 90, 58, 54, 58)
+    Let hedge = DrawRect(housing, DevilX() - 99, FloorTop() - 90, 198, 90, 96, 90, 96)
+    Let hopper = FillRect(hedge, DevilX() - 93, FloorTop() - 130, 80, 42, 52, 48, 52)
+    Let hopedge = DrawRect(hopper, DevilX() - 93, FloorTop() - 130, 80, 42, 96, 90, 96)
+    Let barrel = FillCircle(hopedge, DevilX(), DevilY(), DrumR(), 74, 70, 78)
+    Let rim = DrawCircle(barrel, DevilX(), DevilY(), DrumR(), 128, 120, 128)
+    Fold(Range(0, 7), rim, Fn(s, k) => DrawTooth(s, turn, k))
+
+Def Draw(sc As Scribbler, d As Dust) As Scribbler
+    Let bg = ScribblerFill(sc, 22, 19, 17)
+    Let fl = DrawFloor(bg)
+    Let haze = DrawMotes(fl, Motes(d))
+    Let dv = DrawDevil(haze, Whirl(d))
+    Let wool = Fold(Fibers(d), dv, DrawFiber)
+    Let t1 = ScribblerText(wool, 20, 16, 3, 128, 118, 108, "DEVIL'S DUST")
+    Let t2 = ScribblerText(t1, 20, 46, 2, 84, 78, 72, "WOOL IN THE AIR OF A SHODDY MILL - Q QUITS")
+    ScribblerBlit(t2)
+
+Rem ---- the loop ------------------------------------------------------
+
+Def Loop(sc As Scribbler, d As Dust) As Scribbler
+    Select Case NextEvent(sc)
+        Case ScribblerTick(at)
+            Let d2 = Advance(d)
+            Loop(Draw(sc, d2), d2)
+        Case ScribblerTyped(ch, mods, at)
+            If Lower(ch) = "q" Then
+                ScribblerClose(sc)
+            Else
+                Loop(sc, d)
+        Case ScribblerKeyDown(key, mods, at)
+            If key = 27 Then
+                ScribblerClose(sc)
+            Else
+                Loop(sc, d)
+        Case ScribblerQuit
+            ScribblerClose(sc)
+        Case Else
+            Loop(sc, d)
+
+Def Main()
+    Let sc0 = ScribblerOpen(WorldW(), WorldH())
+    Let sc1 = ScribblerTitle(sc0, "Devil's Dust")
+    Let sc2 = SetFps(sc1, 30)
+    Print("Devil's Dust - wool in the air of a shoddy mill. Q or Escape quits.")
+    Let d = NewDust()
+    Let done = Loop(Draw(sc2, d), d)
+    Print("the mill rests")

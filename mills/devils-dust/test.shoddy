@@ -1,0 +1,79 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem Headless checks for the Devil's Dust pure model — no window. Run
+Rem with `./build.sh test` (or `mill run test.shoddy`). Seeded, so every
+Rem run sees the same random spawns.
+
+Include "devils-dust-core.shoddy"
+
+Def Main()
+    Seed(42)
+
+    Let d = NewDust()
+    Assert(Length(Fibers(d)) = FiberCount(), "FRESH DUST HAS THE FULL FLOCK")
+    Assert(Length(Motes(d)) = MoteCount(), "FRESH DUST HAS THE FINE HAZE")
+    Assert(Whirl(d) = 0, "DRUM STARTS AT REST")
+
+    Rem one frame: same head count, drum turned, trails growing
+    Let d2 = Advance(d)
+    Assert(Length(Fibers(d2)) = FiberCount(), "ADVANCE PRESERVES THE FLOCK")
+    Assert(Length(Motes(d2)) = MoteCount(), "ADVANCE PRESERVES THE HAZE")
+    Assert(Abs(Whirl(d2) - DrumStep()) < 0.0001, "DRUM TURNS EACH FRAME")
+
+    Rem ten frames: every trail stays capped at TrailLen
+    Let d10 = Fold(Range(1, 10), d, Fn(acc, k) => Advance(acc))
+    Assert(All(Fibers(d10), Fn(f) => Length(Trail(f)) <= TrailLen()), "TRAILS STAY CAPPED")
+
+    Rem the speed clamp holds both ends and keeps the heading
+    Let fast = LimitSpeed(99, 0, MinSpeed(), MaxSpeed())
+    Assert(Abs(Gx(fast) - MaxSpeed()) < 0.0001 And Gy(fast) = 0, "FAST WOOL IS REINED IN")
+    Let slow = LimitSpeed(0.1, 0, MinSpeed(), MaxSpeed())
+    Assert(Abs(Gx(slow) - MinSpeed()) < 0.0001, "SLOW WOOL KEEPS DRIFTING")
+
+    Rem a mote rides the air but wraps instead of respawning
+    Let speck = StepMote(Mote(WorldW() - 0.01, 240, 0.6, 0, 80))
+    Assert(Mx(speck) >= 0 And Mx(speck) < WorldW(), "DUST WRAPS AT THE WALLS")
+    Assert(My(speck) >= 15 And My(speck) < FloorY(), "DUST STAYS OFF THE FLOOR")
+    Assert(Mb(speck) = 80, "A SPECK KEEPS ITS SHADE")
+
+    Rem a wisp off the world respawns at the devil's rim, trail fresh
+    Let gone = Fiber(WorldW() + 100, 240, 3, 0, { }, 200, 200, 200, 100)
+    Let back = StepFiber(gone, { gone })
+    Assert(Dist(Fx(back), Fy(back), DevilX(), DevilY()) < DrumR() + 6, "LOST WOOL RETURNS TO THE DEVIL")
+    Assert(IsEmpty(Trail(back)), "RESPAWN STARTS A FRESH TRAIL")
+    Assert(Vy(back) < 0, "THE DEVIL FLINGS WOOL UPWARD")
+
+    Rem falling wool stops at the floor (or is already back at the drum)
+    Let lander = StepFiber(Fiber(300, FloorY() - 0.5, 0, 2, { }, 255, 255, 255, 100), { })
+    Assert(Fy(lander) <= FloorY(), "WOOL NEVER SINKS THROUGH THE FLOOR")
+
+    Rem the mid-room drum sprays to both sides, always with fresh loft
+    Let sprays = Map(Range(1, 40), Fn(k) => RimFiber())
+    Assert(Any(sprays, Fn(f) => Vx(f) < 0) And Any(sprays, Fn(f) => Vx(f) > 0), "THE DEVIL BURSTS BOTH WAYS")
+    Assert(All(sprays, Fn(f) => Loft(f) >= LoftMin()), "FRESH WOOL IS BUOYANT")
+
+    Rem spent wool rains down: forty frames of a loftless wisp descend
+    Let tired = Fiber(600, 200, 1, 0, { }, 255, 255, 255, 0)
+    Let rained = Fold(Range(1, 40), tired, Fn(w, k) => StepFiber(w, { w }))
+    Assert(Fy(rained) > Fy(tired) + 5, "SPENT WOOL RAINS DOWN")
+
+    Rem separation pushes crowded wisps apart ...
+    Let a = Fiber(300, 200, 0, 0, { }, 255, 255, 255, 100)
+    Let b = Fiber(306, 200, 0, 0, { }, 255, 255, 255, 100)
+    Assert(Gx(Separate(a, Neighbors(a, { a, b }))) < 0, "CROWDED WOOL PUSHES APART")
+
+    Rem ... cohesion pulls a straggler toward the flock ...
+    Let far = Fiber(340, 200, 0, 0, { }, 255, 255, 255, 100)
+    Assert(Gx(Cohere(a, Neighbors(a, { a, far }))) > 0, "LONE WOOL DRIFTS TOWARD THE FLOCK")
+
+    Rem ... alignment turns a wisp to match its neighbours' heading
+    Let mover = Fiber(320, 200, 2, 0, { }, 255, 255, 255, 100)
+    Assert(Gx(Align(a, Neighbors(a, { a, mover }))) > 0, "WOOL FALLS IN WITH ITS NEIGHBOURS")
+
+    Rem a wisp alone feels no flock forces at all
+    Let ns0 = Neighbors(a, { a })
+    Assert(IsEmpty(ns0), "A WISP IS NOT ITS OWN NEIGHBOUR")
+    Assert(Gx(Cohere(a, ns0)) = 0 And Gy(Cohere(a, ns0)) = 0, "NO FLOCK, NO COHESION")
+
+    Print("ALL DEVILS DUST CHECKS PASSED")

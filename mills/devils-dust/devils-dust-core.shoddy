@@ -1,0 +1,310 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem devils-dust-core.shoddy — Devil's Dust, the pure model.
+Rem
+Rem "Devil's dust" was the airborne fibre that filled a shoddy mill,
+Rem thrown off by the devil — the toothed drum that tore rags back into
+Rem wool. This models that air: a flock of wool wisps steered by the
+Rem three classic boids rules (Reynolds 1987) — separation, alignment,
+Rem cohesion — plus a fourth steering force, the draft rising off the
+Rem devil. The flock is a value; each frame is a pure function of the
+Rem last one. No mutation anywhere.
+Rem
+Rem Everything here is headless: the state records, the per-frame step,
+Rem the steering arithmetic. It includes no scribbler, so test.shoddy
+Rem exercises it without a window. devils-dust.shoddy adds the drawing
+Rem and the event loop on top.
+Rem
+Rem Each wisp carries its own past as data — Trail is the last few
+Rem positions, capped at TrailLen — so the renderer needs no framebuffer
+Rem tricks to fade a streak. Loft is the wisp's buoyancy budget in
+Rem frames: while it lasts the wisp rides the flock and the draft; when
+Rem it runs out the wisp drops out of the flock and rains down where it
+Rem is. Gravity (Settle) floats every falling wisp toward
+Rem the floor at no more than FallMax; landed wool skids at FloorY until
+Rem the sweep returns it to the devil. A wisp that leaves the world
+Rem respawns at the devil's rim, flung up and out — and wool deep in the
+Rem exit zones may be recycled a little early (RecycleP), so the drum
+Rem spits a steady trickle rather than a burst each time a clump escapes.
+Rem
+Rem Alongside the wool rides the fine dust: Motes, a second population
+Rem of single-pixel particles that drift on the draft without flocking
+Rem (no O(n^2) for them) and wrap at the edges, so the air is never
+Rem clear anywhere in the room.
+Rem ==================================================================
+
+Include "seq.shoddy"
+Include "math.shoddy"
+
+Rem ---- tunables ------------------------------------------------------
+
+Def WorldW() As Number
+    1280
+Def WorldH() As Number
+    720
+Def FiberCount() As Number
+    100
+Def TrailLen() As Number
+    5
+
+Rem The room's geometry all hangs together: the floor strip sits at the
+Rem bottom, wool rests just above it, and the devil stands mid-room on
+Rem the floor — so resizing the world moves everything along with it.
+Def FloorTop() As Number
+    WorldH() - 22
+Def FloorY() As Number
+    FloorTop() - 7
+Def DevilX() As Number
+    WorldW() / 2
+Def DevilY() As Number
+    FloorTop() - 102
+Def DrumR() As Number
+    42
+Def DrumStep() As Number
+    0.264
+Def NeighborR() As Number
+    55
+Def SepR() As Number
+    16
+Def CohereK() As Number
+    0.003
+Def AlignK() As Number
+    0.025
+Def SepK() As Number
+    0.06
+Def DraftR() As Number
+    260
+Def LiftK() As Number
+    0.1
+Def Settle() As Number
+    0.035
+Def FallMax() As Number
+    1.3
+Def SweepP() As Number
+    0.12
+Def LoftMin() As Number
+    240
+Def LoftMax() As Number
+    480
+Def FlutterK() As Number
+    0.12
+Def TumbleP() As Number
+    0.04
+Def TumbleK() As Number
+    0.9
+Def MinSpeed() As Number
+    0.7
+Def MaxSpeed() As Number
+    3.1
+Def RecycleP() As Number
+    0.012
+Def MoteCount() As Number
+    180
+Def MoteFlutter() As Number
+    0.02
+Def MoteMin() As Number
+    0.18
+Def MoteMax() As Number
+    0.84
+
+Rem ---- state ---------------------------------------------------------
+
+Rem A remembered position on a wisp's trail.
+Type Knot
+    Kx As Number
+    Ky As Number
+
+Rem A rag colour from the mixed stock; real shoddy was mottled because
+Rem the rags were.
+Type Dye
+    Dr As Number
+    Dg As Number
+    Db As Number
+
+Type Fiber
+    Fx    As Number
+    Fy    As Number
+    Vx    As Number
+    Vy    As Number
+    Trail As List Of Knot
+    Cr    As Number
+    Cg    As Number
+    Cb    As Number
+    Loft  As Number          Rem frames of buoyancy left; spent wool rains down
+
+Rem A speck of fine dust: position, drift, and a fixed grey brightness.
+Rem Not Vx/Vy — those are Fiber accessors, and two types sharing
+Rem accessor names is asking for trouble.
+Type Mote
+    Mx As Number
+    My As Number
+    Ux As Number
+    Uy As Number
+    Mb As Number
+
+Type Dust
+    Fibers As List Of Fiber
+    Motes  As List Of Mote
+    Whirl  As Number         Rem drum angle, radians; only the renderer reads it
+
+Rem A steering force, or a velocity — any little 2-vector. Not "Vec":
+Rem Vx/Vy are already Fiber accessors, and two types sharing accessor
+Rem names is asking for trouble.
+Type Gust
+    Gx As Number
+    Gy As Number
+
+Def AddGust(a As Gust, b As Gust) As Gust
+    Gust(Gx(a) + Gx(b), Gy(a) + Gy(b))
+
+Rem ---- spawning ------------------------------------------------------
+
+Rem Mostly pale wool, streaked with dulled madder, indigo and brown —
+Rem the mixed rag stock that made shoddy cloth mottled.
+Def Dyes() As List Of Dye
+    { Dye(234, 228, 214), Dye(216, 208, 190), Dye(222, 216, 206), Dye(238, 232, 222), Dye(178, 172, 162), Dye(196, 188, 174), Dye(172, 98, 88), Dye(106, 112, 148), Dye(148, 120, 94), Dye(208, 196, 152) }
+
+Rem A wisp flung off the devil's rim: spawned on the drum edge somewhere
+Rem along the upper arc — left-leaning throws and right-leaning throws
+Rem alike — velocity along the same angle, fresh trail.
+Def RimFiber() As Fiber
+    Let a = RandRange(-2.9, -0.24)
+    Let sp = RandRange(2, 3.3)
+    Let d = Pick(Dyes())
+    Fiber(DevilX() + Cos(a) * (DrumR() + 3), DevilY() + Sin(a) * (DrumR() + 3), Cos(a) * sp, Sin(a) * sp, { }, Dr(d), Dg(d), Db(d), RandRange(LoftMin(), LoftMax()))
+
+Rem A wisp already adrift — the opening frame should look mid-storm,
+Rem not like a machine warming up. Its loft is already part-spent, so
+Rem the first rain starts within seconds.
+Def SkyFiber() As Fiber
+    Let a = RandRange(0, Tau())
+    Let sp = RandRange(1, 2.3)
+    Let d = Pick(Dyes())
+    Fiber(RandRange(60, WorldW() - 40), RandRange(40, WorldH() - 270), Cos(a) * sp, Sin(a) * sp, { }, Dr(d), Dg(d), Db(d), RandRange(60, 300))
+
+Rem A speck already anywhere in the room, barely moving, warm grey.
+Def NewMote() As Mote
+    Mote(RandRange(0, WorldW()), RandRange(20, FloorY() - 1), RandRange(-0.3, 0.4), RandRange(-0.2, 0.2), RandInt(60, 110))
+
+Def NewDust() As Dust
+    Dust(Map(Range(1, FiberCount()), Fn(k) => SkyFiber()), Map(Range(1, MoteCount()), Fn(k) => NewMote()), 0)
+
+Rem ---- steering ------------------------------------------------------
+Rem The three Reynolds rules, each a Gust. Neighbors excludes the wisp
+Rem itself by position — no identity exists on a value, and two wisps
+Rem sharing an exact position is as good as one.
+
+Def Neighbors(f As Fiber, flock As List Of Fiber) As List Of Fiber
+    Filter(flock, Fn(n) => (Fx(n) <> Fx(f) Or Fy(n) <> Fy(f)) And Dist(Fx(f), Fy(f), Fx(n), Fy(n)) < NeighborR())
+
+Def SumBy(xs As List Of Fiber, sel As [ Fiber -- Number ]) As Number
+    Fold(xs, 0, Fn(a, x) => a + Call(sel, x))
+
+Rem Only meaningful on a non-empty list; the rules guard with IsEmpty.
+Def AvgBy(xs As List Of Fiber, sel As [ Fiber -- Number ]) As Number
+    SumBy(xs, sel) / Length(xs)
+
+Rem Cohesion: drift toward the neighbours' centre of mass.
+Def Cohere(f As Fiber, ns As List Of Fiber) As Gust
+    If IsEmpty(ns) Then
+        Gust(0, 0)
+    Else
+        Gust((AvgBy(ns, Fn(n) => Fx(n)) - Fx(f)) * CohereK(), (AvgBy(ns, Fn(n) => Fy(n)) - Fy(f)) * CohereK())
+
+Rem Alignment: match the neighbours' average heading.
+Def Align(f As Fiber, ns As List Of Fiber) As Gust
+    If IsEmpty(ns) Then
+        Gust(0, 0)
+    Else
+        Gust((AvgBy(ns, Fn(n) => Vx(n)) - Vx(f)) * AlignK(), (AvgBy(ns, Fn(n) => Vy(n)) - Vy(f)) * AlignK())
+
+Rem Separation: push directly away from anyone closer than SepR.
+Def Separate(f As Fiber, ns As List Of Fiber) As Gust
+    Fold(ns, Gust(0, 0), Fn(g, n) => Ifte(Dist(Fx(f), Fy(f), Fx(n), Fy(n)) < SepR(), Gust(Gx(g) + (Fx(f) - Fx(n)) * SepK(), Gy(g) + (Fy(f) - Fy(n)) * SepK()), g))
+
+Rem The fourth force: the room's air. With the devil mid-room the air
+Rem blows outward from the machine toward both walls (Sgn picks the
+Rem side); real gravity (Settle) presses everything gently down; a
+Rem strong updraft near the devil (full strength at the drum, gone by
+Rem DraftR); a soft push off the ceiling. No push off the floor any
+Rem more — wool is allowed to land now, and StepFiber handles the rest.
+Rem Both side edges stay open — wisps that escape respawn at the drum,
+Rem which is the cycle of the mill.
+Def Draft(f As Fiber) As Gust
+    Let lift = Smoothstep(DraftR(), 0, Dist(Fx(f), Fy(f), DevilX(), DevilY()))
+    Let ax = 0.014 * Sgn(Fx(f) - DevilX())
+    Let ay = Settle() - LiftK() * lift + Ifte(Fy(f) < 40, 0.09, 0)
+    Gust(ax, ay)
+
+Rem Random turbulence so the wool flutters instead of gliding — and,
+Rem with probability TumbleP a frame, a real tumble: a kick hard enough
+Rem to bend the flight line. Cotton doesn't hold a heading the way a
+Rem starling does.
+Def Flutter() As Gust
+    Let kick = Ifte(Chance(TumbleP()), TumbleK(), 0)
+    Gust(RandRange(-FlutterK(), FlutterK()) + RandRange(-kick, kick), RandRange(-FlutterK(), FlutterK()) + RandRange(-kick, kick))
+
+Rem Clamp speed into [lo, hi] without changing heading — wool never
+Rem stalls dead and never streaks like a bullet; motes use gentler bounds.
+Def LimitSpeed(vx As Number, vy As Number, lo As Number, hi As Number) As Gust
+    Let sp = Hypot(vx, vy)
+    If sp < 0.0001 Then
+        Gust(0, -lo)
+    Else
+        Let s2 = Clamp(sp, lo, hi)
+        Gust(vx * s2 / sp, vy * s2 / sp)
+
+Rem ---- the step ------------------------------------------------------
+
+Def OffWorld(x As Number, y As Number) As Boolean
+    x < -20 Or x > WorldW() + 20 Or y < -20 Or y > WorldH() + 20
+
+Rem While a wisp has loft it flies the full flock — the three Reynolds
+Rem rules, the draft, the flutter. When its loft runs out it drops out
+Rem of the flock in the literal sense: no cohesion, no alignment, no
+Rem updraft, no outward drift — just separation (fluff still does not
+Rem interpenetrate), gravity, and flutter — so it rains down more or
+Rem less where it is instead of being herded to a wall first.
+Def FiberSteer(f As Fiber, ns As List Of Fiber) As Gust
+    If Loft(f) <= 0 Then
+        AddGust(AddGust(Separate(f, ns), Gust(0, Settle())), Flutter())
+    Else
+        AddGust(AddGust(AddGust(AddGust(Cohere(f, ns), Align(f, ns)), Separate(f, ns)), Draft(f)), Flutter())
+
+Rem One wisp, one frame: steer (by loft), clamp the speed, move, spend
+Rem a frame of loft, remember where it was. Falling is capped at
+Rem FallMax — fluff has a terminal velocity, so it floats down rather
+Rem than drops — and the floor stops it at FloorY, where it skids and
+Rem bounces in the draft until the sweep (Chance(SweepP) per frame)
+Rem carries it back to the devil. Off the world means back to the devil
+Rem too, and wool deep in either exit zone near the side walls may go
+Rem back early (Chance(RecycleP) per frame), which spreads the respawns
+Rem out: a steady trickle off the drum instead of a burst each time a
+Rem clump escapes together.
+Def StepFiber(f As Fiber, flock As List Of Fiber) As Fiber
+    Let ns = Neighbors(f, flock)
+    Let steer = FiberSteer(f, ns)
+    Let v = LimitSpeed(Vx(f) + Gx(steer), Vy(f) + Gy(steer), MinSpeed(), MaxSpeed())
+    Let vy = Min(Gy(v), FallMax())
+    Let nx = Fx(f) + Gx(v)
+    Let ny = Min(Fy(f) + vy, FloorY())
+    If OffWorld(nx, ny) Or ((nx < 160 Or nx > WorldW() - 160) And Chance(RecycleP())) Or (ny >= FloorY() And Chance(SweepP())) Then
+        RimFiber()
+    Else
+        Fiber(nx, ny, Gx(v), vy, Taken(Prepend(Knot(Fx(f), Fy(f)), Trail(f)), TrailLen()), Cr(f), Cg(f), Cb(f), Loft(f) - 1)
+
+Rem One speck, one frame: ride the outward drift and the devil's
+Rem updraft with a little flutter, then wrap — off one side is back in
+Rem at the other, under the floor is back at the ceiling — so the fine
+Rem dust stays spread through the whole room forever.
+Def StepMote(m As Mote) As Mote
+    Let lift = Smoothstep(DraftR(), 0, Dist(Mx(m), My(m), DevilX(), DevilY()))
+    Let v = LimitSpeed(Ux(m) + 0.003 * Sgn(Mx(m) - DevilX()) + RandRange(-MoteFlutter(), MoteFlutter()), Uy(m) + 0.003 - 0.02 * lift + RandRange(-MoteFlutter(), MoteFlutter()), MoteMin(), MoteMax())
+    Mote(Wrap(Mx(m) + Gx(v), WorldW()), 15 + Wrap(My(m) + Gy(v) - 15, FloorY() - 15), Gx(v), Gy(v), Mb(m))
+
+Rem The whole room, one frame: every wisp steps against the same
+Rem previous flock — a pure function of the last frame's value.
+Def Advance(d As Dust) As Dust
+    Dust(Map(Fibers(d), Fn(f) => StepFiber(f, Fibers(d))), Map(Motes(d), Fn(m) => StepMote(m)), Whirl(d) + DrumStep())

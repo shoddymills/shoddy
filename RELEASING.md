@@ -107,9 +107,9 @@ reaches users is the one the Release workflow builds from the tag.
 ## 3 — Watch the Release workflow
 
 Actions → **Release**. It verifies the tag matches `package.json`, runs
-`./build.sh all`, composes the body from `release-notes/v1.0.0.md` (falling back to
+`./build.sh all`, composes the body from `release-notes/vX.Y.Z.md` (falling back to
 the merge log if that file isn't in the tagged commit), and publishes the GitHub
-Release with `vscode-shoddy-1.0.0.vsix` attached — one asset, batteries included: the
+Release with `vscode-shoddy-X.Y.Z.vsix` attached — one asset, batteries included: the
 package carries its own mill and machines, so installing it needs only the .NET 10
 runtime. The job log prints the body it chose under `--- release body ---`, so you can
 see which path it took without opening the release.
@@ -122,7 +122,7 @@ its **Run workflow** button and pass the tag.
 ## 4 — Smoke-test the published package
 
 ```sh
-code --install-extension vscode-shoddy-1.0.0.vsix
+code --install-extension vscode-shoddy-X.Y.Z.vsix   # the version you just tagged
 ```
 
 Open a `.shoddy` file; Ctrl+R runs it via the bundled mill.

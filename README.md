@@ -129,12 +129,10 @@ is in [the heritage of the name](https://shoddymills.github.io/shoddy/heritage.h
 ## Install
 
 Most people want the VS Code extension. It carries its own mill and the whole
-machine library, so it is the entire install — grab the `.vsix` from
-[Releases](https://github.com/shoddymills/shoddy/releases) and:
-
-```
-code --install-extension vscode-shoddy-<version>.vsix
-```
+machine library, so it is the entire install — download the latest `.vsix` from
+[the latest release](https://github.com/shoddymills/shoddy/releases/latest),
+then in VS Code press **Ctrl+Shift+P** (**Cmd+Shift+P** on macOS), run
+**Extensions: Install from VSIX…**, and choose the file you downloaded.
 
 The only prerequisite is the [.NET 10 runtime](https://dotnet.microsoft.com/download/dotnet/10.0)
 (the runtime, not the SDK). Nothing to clone, nothing to build, no environment to

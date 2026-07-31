@@ -60,19 +60,16 @@ pinned to its own machines.
 
 ### Install the packaged .vsix (recommended)
 
-A packaged `.vsix` ships in this folder. From here:
+The `.vsix` isn't committed — download the latest one from
+[the latest release](https://github.com/shoddymills/shoddy/releases/latest),
+then in VS Code: Extensions view → `···` menu → **Install from VSIX…** →
+pick the file you downloaded.
 
-```sh
-code --install-extension vscode-shoddy-1.1.0.vsix
-```
-
-(To rebuild it yourself: `./build.sh vsix` from the repo root, or
-`build.cmd vsix` on Windows.)
+(To build one yourself instead: `./build.sh vsix` from the repo root, or
+`build.cmd vsix` on Windows — it lands in this folder.)
 
 The extension then appears in the Extensions view and can be updated
-or uninstalled from there like any other. (If `code` isn't on your
-PATH: `Cmd+Shift+P` → **Shell Command: Install 'code' command in
-PATH**.)
+or uninstalled from there like any other.
 
 ### Rebuild the .vsix and bump the version
 

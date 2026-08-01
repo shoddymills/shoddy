@@ -35,6 +35,7 @@ public class BuzzerTests
             "    Sound(880, 60)",
             "    NoteOn(2, 440)",
             "    SoundGain(2, 0.5)",
+            "    SoundWave(2, 1)",
             "    SoundQueue(3, 261.63, 250)",
             "    SoundQueue(3, 0, 125)",     // freq 0: a rest, legal
             "    NoteOff(2)",
@@ -46,6 +47,7 @@ public class BuzzerTests
             "Sound 880 60",
             "NoteOn 2 440",
             "Gain 2 0.5",
+            "Wave 2 1",
             "Queue 3 261.63 250",
             "Queue 3 0 125",
             "NoteOff 2",
@@ -62,6 +64,7 @@ public class BuzzerTests
             "    Sound(880, 0)",             // 0 ms: legal no-op
             "    NoteOn(2, 440)",
             "    SoundGain(2, 1)",
+            "    SoundWave(2, 2)",
             "    SoundQueue(3, 261.63, 250)",
             "    NoteOff(2)",
             "    SoundStop(3)",
@@ -94,6 +97,9 @@ public class BuzzerTests
     [InlineData("SoundGain(0, 0.5)", "SoundGain: channel must be 1..8")]
     [InlineData("SoundGain(1, 1.5)", "SoundGain: volume must be 0..1, got 1.5")]
     [InlineData("SoundGain(1, -0.1)", "SoundGain: volume must be 0..1")]
+    [InlineData("SoundWave(0, 1)", "SoundWave: channel must be 1..8")]
+    [InlineData("SoundWave(1, 3)", "SoundWave: wave must be 0 (square), 1 (triangle) or 2 (sine), got 3")]
+    [InlineData("SoundWave(1, 0.5)", "SoundWave: wave must be 0 (square), 1 (triangle) or 2 (sine)")]
     public void BadArgumentsRaiseEvenInSilence(string call, string expect)
     {
         // Null delegates: headless tests exercise real validation.
@@ -330,6 +336,7 @@ public class BuzzerTests
             BuzzerRegistry.Queue   = (ch, f, ms) => fakes.Add($"Queue {ch} {N(f)} {N(ms)}");
             BuzzerRegistry.Stop    = ch          => fakes.Add($"Stop {ch}");
             BuzzerRegistry.Gain    = (ch, v)     => fakes.Add($"Gain {ch} {N(v)}");
+            BuzzerRegistry.Wave    = (ch, wv)    => fakes.Add($"Wave {ch} {wv}");
         }
         string ws = Workspace();
         string sb = Path.Combine(ws, "prog.shoddy");
@@ -354,6 +361,7 @@ public class BuzzerTests
             BuzzerRegistry.Sound = null; BuzzerRegistry.NoteOn = null;
             BuzzerRegistry.NoteOff = null; BuzzerRegistry.Queue = null;
             BuzzerRegistry.Stop = null; BuzzerRegistry.Gain = null;
+            BuzzerRegistry.Wave = null;
         }
     }
 

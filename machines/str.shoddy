@@ -4,6 +4,10 @@ Rem Licensed under the MIT License. See the LICENSE file in the project root.
 Rem ==================================================================
 Rem str.shoddy — Shoddy standard library: strings
 Rem Built on the Instr / Left / Right / Mid / Len builtins. Pure.
+Rem Three families: surgery (Split .. StrRep), boolean conversions
+Rem (IsBool / Bool / BoolOr — the string-to-number side lives in the
+Rem IsNumeric / ValOr builtins beside Val), and fixed-width formatting
+Rem (PadLeft / PadRight / PadZero / ToFixed / Commas).
 Rem ==================================================================
 
 Def Split(s As String, sep As String) As List Of String
@@ -55,3 +59,82 @@ Def StrRep(s As String, n As Number) As String
         ""
     Else
         s & StrRep(s, n - 1)
+
+Rem ---- conversions -----------------------------------------------------
+Rem The boolean side of the guard family. Val crashes on a non-number by
+Rem design, and the IsNumeric / ValOr builtins guard it; these do the
+Rem same office for booleans. Bool is strict — TRUE or FALSE, any case,
+Rem outer space ignored — and BoolOr also accepts the prompt vocabulary:
+Rem TRUE/T/YES/Y/1 and FALSE/F/NO/N/0.
+
+Def IsBool(s As String) As Boolean
+    Let u = Upper(Trim(s))
+    u = "TRUE" Or u = "FALSE"
+
+Def Bool(s As String) As Boolean
+    If IsBool(s) Then
+        Upper(Trim(s)) = "TRUE"
+    Else
+        Error("BOOL: '" & s & "' is not TRUE or FALSE")
+
+Def BoolOr(s As String, fallback As Boolean) As Boolean
+    Let u = Upper(Trim(s))
+    If u = "TRUE" Or u = "T" Or u = "YES" Or u = "Y" Or u = "1" Then
+        True
+    Else
+        If u = "FALSE" Or u = "F" Or u = "NO" Or u = "N" Or u = "0" Then
+            False
+        Else
+            fallback
+
+Rem ---- formatting ------------------------------------------------------
+Rem Fixed-width fields for monospace readouts. Every mill was growing its
+Rem own pads and decimal formatter; these are the library versions.
+
+Rem s padded with spaces to width n; unchanged if already that wide.
+Def PadLeft(s As String, n As Number) As String
+    StrRep(" ", n - Len(s)) & s
+
+Def PadRight(s As String, n As Number) As String
+    s & StrRep(" ", n - Len(s))
+
+Rem x as a whole number zero-padded to at least n digits ("07"); a minus
+Rem sign rides outside the padding.
+Def PadZero(x As Number, n As Number) As String
+    If x < 0 Then
+        "-" & PadZero(0 - x, n)
+    Else
+        Let d = Str(Round(x))
+        StrRep("0", n - Len(d)) & d
+
+Rem x with exactly p decimal places — "0.40", never "0.4" — rounded
+Rem half-up at the last shown digit. p = 0 is the whole-number
+Rem formatter: no decimal point.
+Def ToFixed(x As Number, p As Number) As String
+    If p <= 0 Then
+        Str(Round(x))
+    Else
+        Let s = 10 ^ p
+        Let n = Round(x * s)
+        Let a = Abs(n)
+        Ifte(n < 0, "-", "") & Str(Fix(a / s)) & "." & PadZero(a Mod s, p)
+
+Rem A digit string grouped in threes from the right: "1234567" becomes
+Rem "1,234,567". Commas' helper; digits only, no sign.
+Def CommaGroup(digits As String) As String
+    If Len(digits) <= 3 Then
+        digits
+    Else
+        CommaGroup(Left(digits, Len(digits) - 3)) & "," & Right(digits, 3)
+
+Rem The classic ##,###.## — x with thousands commas and p decimals.
+Def Commas(x As Number, p As Number) As String
+    Let q = Max(p, 0)
+    Let s = 10 ^ q
+    Let n = Round(x * s)
+    Let a = Abs(n)
+    Let head = Ifte(n < 0, "-", "") & CommaGroup(Str(Fix(a / s)))
+    If q = 0 Then
+        head
+    Else
+        head & "." & PadZero(a Mod s, q)

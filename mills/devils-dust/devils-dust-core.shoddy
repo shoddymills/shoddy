@@ -1,0 +1,819 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem devils-dust-core.shoddy — Devil's Dust, the pure model.
+Rem
+Rem "Devil's dust" was the airborne fibre that filled a shoddy mill,
+Rem thrown off by the devil — the toothed drum that tore rags back into
+Rem wool. This models that air: a flock of wool wisps steered by the
+Rem three classic boids rules — separation, alignment, cohesion — from
+Rem Craig W. Reynolds, "Flocks, Herds, and Schools: A Distributed
+Rem Behavioral Model", SIGGRAPH 1987 (see THIRD-PARTY-NOTICES.md), plus
+Rem a fourth steering force his model allows for: the draft rising off
+Rem the devil. The flock is a value; each frame is a pure function of
+Rem the last one. No mutation anywhere.
+Rem
+Rem Everything here is headless: the state records, the per-frame step,
+Rem the steering arithmetic. It includes no scribbler, so test.shoddy
+Rem exercises it without a window. devils-dust.shoddy adds the drawing,
+Rem the event loop, and the tuning panel on top.
+Rem
+Rem The behavioural constants live in a Knobs record carried inside the
+Rem Dust — NewKnobs() holds the defaults — so the panel can retune the
+Rem storm while it blows. The knob TABLE (KnobId/KnobName/KnobLo/KnobHi/
+Rem KnobGet/KnobSet) is the pure model of that panel: four tabs, each a
+Rem few knobs, every value clamped to its rails. Only behaviour is a
+Rem knob; the room's geometry stays fixed Defs below.
+Rem
+Rem Each wisp carries its own past as data — Trail is the last few
+Rem positions, capped at TrailLen — so the renderer needs no framebuffer
+Rem tricks to fade a streak. Loft is the wisp's buoyancy budget in
+Rem frames: while it lasts the wisp rides the flock and the draft; when
+Rem it runs out the wisp drops out of the flock and rains down where it
+Rem is. Gravity (Settle) floats every falling wisp toward the floor at
+Rem no more than FallMax; landed wool skids at FloorY until the sweep
+Rem returns it to the devil. A wisp that leaves the world respawns at
+Rem the devil's rim, flung up and out — and wool deep in the exit zones
+Rem may be recycled a little early (RecycleP), so the drum spits a
+Rem steady trickle rather than a burst each time a clump escapes.
+Rem
+Rem Alongside the wool rides the fine dust: Motes, a second population
+Rem of single-pixel particles that drift on the draft without flocking
+Rem (no O(n^2) for them) and wrap at the edges, so the air is never
+Rem clear anywhere in the room.
+Rem ==================================================================
+
+Include "seq.shoddy"
+Include "math.shoddy"
+
+Rem ---- fixed geometry and grain --------------------------------------
+Rem The room's geometry all hangs together: the floor strip sits at the
+Rem bottom, wool rests just above it, and the devil stands mid-room on
+Rem the floor — so resizing the world moves everything along with it.
+
+Def WorldW() As Number
+    1280
+Def WorldH() As Number
+    720
+Def TrailLen() As Number
+    5
+Def FloorTop() As Number
+    WorldH() - 22
+Def FloorY() As Number
+    FloorTop() - 7
+Def DevilX() As Number
+    WorldW() / 2
+Def DevilY() As Number
+    FloorTop() - 102
+Def DrumR() As Number
+    42
+Def MoteFlutter() As Number
+    0.02
+Def MoteMin() As Number
+    0.18
+Def MoteMax() As Number
+    0.84
+
+Rem ---- the knobs -----------------------------------------------------
+Rem Every behavioural tunable, one record. Constructor order matters —
+Rem record fields are positional — so NewKnobs below lists them in the
+Rem same order, tab by tab: LIFE, TEMPO, FLOCK, PACE.
+
+Type Knobs
+    LoftMin    As Number     Rem LIFE  1 - frames of buoyancy, at least
+    LoftMax    As Number     Rem LIFE  2 - frames of buoyancy, at most
+    Settle     As Number     Rem LIFE  3 - gravity
+    LiftK      As Number     Rem LIFE  4 - devil updraft strength
+    DraftR     As Number     Rem LIFE  5 - devil updraft reach
+    MinSpeed   As Number     Rem TEMPO 1 - wisp speed floor
+    MaxSpeed   As Number     Rem TEMPO 2 - wisp speed ceiling
+    FallMax    As Number     Rem TEMPO 3 - terminal fall rate
+    FlutterK   As Number     Rem TEMPO 4 - constant turbulence
+    TumbleP    As Number     Rem TEMPO 5 - tumble chance per frame
+    TumbleK    As Number     Rem TEMPO 6 - tumble kick size
+    AlignK     As Number     Rem FLOCK 1 - match neighbour headings
+    CohereK    As Number     Rem FLOCK 2 - drift to centre of mass
+    SepK       As Number     Rem FLOCK 3 - personal-space push
+    SepR       As Number     Rem FLOCK 4 - personal-space radius
+    NeighborR  As Number     Rem FLOCK 5 - who counts as a neighbour
+    SweepP     As Number     Rem PACE  1 - floor sweep chance per frame
+    RecycleP   As Number     Rem PACE  2 - exit-zone recycle chance
+    FiberCount As Number     Rem PACE  3 - wisps in the air
+    MoteCount  As Number     Rem PACE  4 - specks in the haze
+    DrumStep   As Number     Rem PACE  5 - drum spin, radians per frame
+
+Rem The frozen defaults, in field order.
+Def NewKnobs() As Knobs
+    Knobs(240, 480, 0.035, 0.1, 260, 0.7, 3.1, 1.3, 0.12, 0.04, 0.9, 0.025, 0.003, 0.06, 16, 55, 0.02, 0.012, 100, 180, 0.264)
+
+Rem Full stop: the machine goes dark. The drum winds to a standstill,
+Rem the updraft dies, throws and tumbles cease, the sweep stops and
+Rem nothing recycles — airborne wool loses its driver, settles under
+Rem plain gravity, and lies where it lands. Loft at the rail minimum so
+Rem any stray respawn drops almost at once. Every value sits legally on
+Rem its rails; STOP is a lever position, not a cheat.
+Def StopKnobs() As Knobs
+    Knobs(30, 60, 0.035, 0, 260, 0, 1.2, 1.3, 0.01, 0, 0, 0.025, 0.003, 0.06, 16, 55, 0, 0, 100, 180, 0)
+
+Rem The gentle end of the lever: every motion knob wound down to about
+Rem a third — languid speeds, floaty gravity, a lazy drum, wool left
+Rem lying on the floor — but the LOFT stays at the defaults, so the sky
+Rem never empties. Slow wool is still flying wool.
+Def SlowKnobs() As Knobs
+    Knobs(240, 480, 0.012, 0.04, 260, 0.25, 1.1, 0.45, 0.04, 0.015, 0.3, 0.009, 0.001, 0.02, 16, 55, 0.006, 0.004, 100, 180, 0.09)
+
+Rem True when two settings are the same lever position — the panel uses
+Rem this to light the preset the goal currently sits on.
+Def KnobsMatch(a As Knobs, b As Knobs) As Boolean
+    All(AllKnobs(), Fn(k) => Abs(KnobGet(a, k) - KnobGet(b, k)) < 0.0001)
+
+Rem Overloaded: a value meaningfully past its rail — reachable only
+Rem through the ELEVEN lever, never by hand. The ignition point sits 8%
+Rem past the rail (a third of eleven's 25% margin), and it is RELATIVE
+Rem for a reason: the glide approaches a goal exponentially, so winding
+Rem down from eleven the value hugs the rail from above — against an
+Rem absolute epsilon the ember would smoulder for half a minute after
+Rem the lever moved to MAX. At 8% it cools in a couple of seconds and
+Rem ignites within one on the way up.
+Def KnobHot(kb As Knobs, k As Knob) As Boolean
+    KnobGet(kb, k) > KnobHi(k) * 1.08
+
+Rem Every knob at exactly its rail — the loudest setting the panel can
+Rem reach by hand. This is ten.
+Def MaxKnobs() As Knobs
+    Fold(AllKnobs(), NewKnobs(), Fn(acc, k) => KnobPut(acc, k, KnobHi(k)))
+
+Rem These go to eleven. Every knob a full quarter past its rail —
+Rem KnobSet clamps mere mortals at KnobHi, but this goes through
+Rem KnobPut, the raw write, so the values sit where no slider can
+Rem reach and the gauges burn ember to say so.
+Def ElevenKnobs() As Knobs
+    Fold(AllKnobs(), NewKnobs(), Fn(acc, k) => KnobPut(acc, k, ElevenVal(k)))
+
+Rem A quarter past the rail; the population counts stay whole.
+Def ElevenVal(k As Knob) As Number
+    Select Case k
+        Case WispsKnob
+            Round(KnobHi(k) * 1.25)
+        Case MotesKnob
+            Round(KnobHi(k) * 1.25)
+        Case Else
+            KnobHi(k) * 1.25
+
+Rem A population count mid-glide: whole, and never stalled. A rounded
+Rem Lerp freezes once the remaining gap drops under 1/(2t) — the step
+Rem rounds back to where it started and WISPS sits 20 short of its goal
+Rem forever — so when rounding eats the step, the count moves by one
+Rem anyway. One wisp a frame is a fine trickle for the last stretch.
+Def WindCount(a As Number, b As Number, t As Number) As Number
+    Let stepped = Round(Lerp(a, b, t))
+    If t > 0 And stepped = a And a <> b Then
+        a + Sgn(b - a)
+    Else
+        stepped
+
+Rem Glide between two knob settings: an 1875 devil is tons of iron on a
+Rem belt drive — it does not jump to a new speed, it winds there. A
+Rem straight Lerp on every field, deliberately unclamped so a goal past
+Rem the rails (ELEVEN) stays reachable; the population counts go
+Rem through WindCount so they stay whole and always arrive.
+Def BlendKnobs(a As Knobs, b As Knobs, t As Number) As Knobs
+    Knobs(Lerp(LoftMin(a), LoftMin(b), t), Lerp(LoftMax(a), LoftMax(b), t), Lerp(Settle(a), Settle(b), t), Lerp(LiftK(a), LiftK(b), t), Lerp(DraftR(a), DraftR(b), t), Lerp(MinSpeed(a), MinSpeed(b), t), Lerp(MaxSpeed(a), MaxSpeed(b), t), Lerp(FallMax(a), FallMax(b), t), Lerp(FlutterK(a), FlutterK(b), t), Lerp(TumbleP(a), TumbleP(b), t), Lerp(TumbleK(a), TumbleK(b), t), Lerp(AlignK(a), AlignK(b), t), Lerp(CohereK(a), CohereK(b), t), Lerp(SepK(a), SepK(b), t), Lerp(SepR(a), SepR(b), t), Lerp(NeighborR(a), NeighborR(b), t), Lerp(SweepP(a), SweepP(b), t), Lerp(RecycleP(a), RecycleP(b), t), WindCount(FiberCount(a), FiberCount(b), t), WindCount(MoteCount(a), MoteCount(b), t), Lerp(DrumStep(a), DrumStep(b), t))
+
+Rem ---- tabs, knobs, and the table -------------------------------------
+Rem The panel's four tabs and twenty-one knobs as SUM TYPES, so every
+Rem dispatch below is a Select Case over names rather than magic
+Rem numbers. Grid geometry still needs ordinals — rows, x positions,
+Rem iteration — so NthTab/NthKnob/TabIdx convert at the edges and
+Rem AllTabs/AllKnobs enumerate for folds. The window half only ever
+Rem asks this table for names, rails, and values — it holds no
+Rem knowledge of its own.
+
+Type Tab = LifeTab | TempoTab | FlockTab | PaceTab
+
+Type Knob = LoftMinKnob | LoftMaxKnob | SettleKnob | LiftKnob | DraftRKnob | MinSpeedKnob | MaxSpeedKnob | FallMaxKnob | FlutterKnob | TumblePKnob | TumbleKKnob | AlignKnob | CohereKnob | SepKKnob | SepRKnob | NeighborKnob | SweepKnob | RecycleKnob | WispsKnob | MotesKnob | SpinKnob
+
+Def AllTabs() As List Of Tab
+    { LifeTab(), TempoTab(), FlockTab(), PaceTab() }
+
+Def AllKnobs() As List Of Knob
+    Map(Range(1, 21), Fn(i) => NthKnob(i))
+
+Def TabIdx(t As Tab) As Number
+    Select Case t
+        Case LifeTab
+            1
+        Case TempoTab
+            2
+        Case FlockTab
+            3
+        Case Else
+            4
+
+Def NthTab(n As Number) As Tab
+    Select Case n
+        Case 1
+            LifeTab()
+        Case 2
+            TempoTab()
+        Case 3
+            FlockTab()
+        Case Else
+            PaceTab()
+
+Def TabName(t As Tab) As String
+    Select Case t
+        Case LifeTab
+            "LIFE"
+        Case TempoTab
+            "TEMPO"
+        Case FlockTab
+            "FLOCK"
+        Case Else
+            "PACE"
+
+Def KnobRows(t As Tab) As Number
+    Select Case t
+        Case TempoTab
+            6
+        Case Else
+            5
+
+Rem Knob number n in field order, 1..21.
+Def NthKnob(n As Number) As Knob
+    Select Case n
+        Case 1
+            LoftMinKnob()
+        Case 2
+            LoftMaxKnob()
+        Case 3
+            SettleKnob()
+        Case 4
+            LiftKnob()
+        Case 5
+            DraftRKnob()
+        Case 6
+            MinSpeedKnob()
+        Case 7
+            MaxSpeedKnob()
+        Case 8
+            FallMaxKnob()
+        Case 9
+            FlutterKnob()
+        Case 10
+            TumblePKnob()
+        Case 11
+            TumbleKKnob()
+        Case 12
+            AlignKnob()
+        Case 13
+            CohereKnob()
+        Case 14
+            SepKKnob()
+        Case 15
+            SepRKnob()
+        Case 16
+            NeighborKnob()
+        Case 17
+            SweepKnob()
+        Case 18
+            RecycleKnob()
+        Case 19
+            WispsKnob()
+        Case 20
+            MotesKnob()
+        Case Else
+            SpinKnob()
+
+Rem Row r on tab t, as a Knob.
+Def TabKnob(t As Tab, row As Number) As Knob
+    Select Case t
+        Case LifeTab
+            NthKnob(row)
+        Case TempoTab
+            NthKnob(5 + row)
+        Case FlockTab
+            NthKnob(11 + row)
+        Case Else
+            NthKnob(16 + row)
+
+Def KnobName(k As Knob) As String
+    Select Case k
+        Case LoftMinKnob
+            "LOFT MIN"
+        Case LoftMaxKnob
+            "LOFT MAX"
+        Case SettleKnob
+            "GRAVITY"
+        Case LiftKnob
+            "LIFT"
+        Case DraftRKnob
+            "DRAFT R"
+        Case MinSpeedKnob
+            "MIN SPD"
+        Case MaxSpeedKnob
+            "MAX SPD"
+        Case FallMaxKnob
+            "FALL MAX"
+        Case FlutterKnob
+            "FLUTTER"
+        Case TumblePKnob
+            "TUMBLE P"
+        Case TumbleKKnob
+            "TUMBLE K"
+        Case AlignKnob
+            "ALIGN"
+        Case CohereKnob
+            "COHERE"
+        Case SepKKnob
+            "SEPARATE"
+        Case SepRKnob
+            "SEP R"
+        Case NeighborKnob
+            "NEIGHBOR"
+        Case SweepKnob
+            "SWEEP"
+        Case RecycleKnob
+            "RECYCLE"
+        Case WispsKnob
+            "WISPS"
+        Case MotesKnob
+            "MOTES"
+        Case Else
+            "SPIN"
+
+Def KnobLo(k As Knob) As Number
+    Select Case k
+        Case LoftMinKnob
+            30
+        Case LoftMaxKnob
+            60
+        Case DraftRKnob
+            40
+        Case MaxSpeedKnob
+            0.5
+        Case FallMaxKnob
+            0.2
+        Case SepRKnob
+            2
+        Case NeighborKnob
+            10
+        Case WispsKnob
+            10
+        Case Else
+            0
+
+Def KnobHi(k As Knob) As Number
+    Select Case k
+        Case LoftMinKnob
+            900
+        Case LoftMaxKnob
+            1200
+        Case SettleKnob
+            0.15
+        Case LiftKnob
+            0.3
+        Case DraftRKnob
+            500
+        Case MinSpeedKnob
+            1.6
+        Case MaxSpeedKnob
+            6
+        Case FallMaxKnob
+            3.5
+        Case FlutterKnob
+            0.35
+        Case TumblePKnob
+            0.2
+        Case TumbleKKnob
+            2.2
+        Case AlignKnob
+            0.1
+        Case CohereKnob
+            0.015
+        Case SepKKnob
+            0.22
+        Case SepRKnob
+            48
+        Case NeighborKnob
+            150
+        Case SweepKnob
+            0.35
+        Case RecycleKnob
+            0.06
+        Case WispsKnob
+            200
+        Case MotesKnob
+            350
+        Case Else
+            0.8
+
+Def KnobGet(kb As Knobs, k As Knob) As Number
+    Select Case k
+        Case LoftMinKnob
+            LoftMin(kb)
+        Case LoftMaxKnob
+            LoftMax(kb)
+        Case SettleKnob
+            Settle(kb)
+        Case LiftKnob
+            LiftK(kb)
+        Case DraftRKnob
+            DraftR(kb)
+        Case MinSpeedKnob
+            MinSpeed(kb)
+        Case MaxSpeedKnob
+            MaxSpeed(kb)
+        Case FallMaxKnob
+            FallMax(kb)
+        Case FlutterKnob
+            FlutterK(kb)
+        Case TumblePKnob
+            TumbleP(kb)
+        Case TumbleKKnob
+            TumbleK(kb)
+        Case AlignKnob
+            AlignK(kb)
+        Case CohereKnob
+            CohereK(kb)
+        Case SepKKnob
+            SepK(kb)
+        Case SepRKnob
+            SepR(kb)
+        Case NeighborKnob
+            NeighborR(kb)
+        Case SweepKnob
+            SweepP(kb)
+        Case RecycleKnob
+            RecycleP(kb)
+        Case WispsKnob
+            FiberCount(kb)
+        Case MotesKnob
+            MoteCount(kb)
+        Case Else
+            DrumStep(kb)
+
+Rem The raw positional write — no clamping. ELEVEN reaches past the
+Rem rails through this; hands go through KnobSet.
+Def KnobPut(kb As Knobs, k As Knob, v As Number) As Knobs
+    Select Case k
+        Case LoftMinKnob
+            With(kb, LoftMin = v)
+        Case LoftMaxKnob
+            With(kb, LoftMax = v)
+        Case SettleKnob
+            With(kb, Settle = v)
+        Case LiftKnob
+            With(kb, LiftK = v)
+        Case DraftRKnob
+            With(kb, DraftR = v)
+        Case MinSpeedKnob
+            With(kb, MinSpeed = v)
+        Case MaxSpeedKnob
+            With(kb, MaxSpeed = v)
+        Case FallMaxKnob
+            With(kb, FallMax = v)
+        Case FlutterKnob
+            With(kb, FlutterK = v)
+        Case TumblePKnob
+            With(kb, TumbleP = v)
+        Case TumbleKKnob
+            With(kb, TumbleK = v)
+        Case AlignKnob
+            With(kb, AlignK = v)
+        Case CohereKnob
+            With(kb, CohereK = v)
+        Case SepKKnob
+            With(kb, SepK = v)
+        Case SepRKnob
+            With(kb, SepR = v)
+        Case NeighborKnob
+            With(kb, NeighborR = v)
+        Case SweepKnob
+            With(kb, SweepP = v)
+        Case RecycleKnob
+            With(kb, RecycleP = v)
+        Case WispsKnob
+            With(kb, FiberCount = v)
+        Case MotesKnob
+            With(kb, MoteCount = v)
+        Case Else
+            With(kb, DrumStep = v)
+
+Rem A value fit for the rails: clamped, and whole for the population
+Rem counts — named constructors say so instead of "id = 19 or 20".
+Def RailVal(k As Knob, v As Number) As Number
+    Select Case k
+        Case WispsKnob
+            Round(Clamp(v, KnobLo(k), KnobHi(k)))
+        Case MotesKnob
+            Round(Clamp(v, KnobLo(k), KnobHi(k)))
+        Case Else
+            Clamp(v, KnobLo(k), KnobHi(k))
+
+Rem Set knob k to v, clamped to its rails — the only write the panel's
+Rem hands are given.
+Def KnobSet(kb As Knobs, k As Knob, v As Number) As Knobs
+    KnobPut(kb, k, RailVal(k, v))
+
+Rem ---- state ---------------------------------------------------------
+
+Rem A remembered position on a wisp's trail.
+Type Knot
+    Kx As Number
+    Ky As Number
+
+Rem A rag colour from the mixed stock; real shoddy was mottled because
+Rem the rags were.
+Type Dye
+    Dr As Number
+    Dg As Number
+    Db As Number
+
+Type Fiber
+    Fx    As Number
+    Fy    As Number
+    Vx    As Number
+    Vy    As Number
+    Trail As List Of Knot
+    Cr    As Number
+    Cg    As Number
+    Cb    As Number
+    Loft  As Number          Rem frames of buoyancy left; spent wool rains down
+
+Rem A speck of fine dust: position, drift, and a fixed grey brightness.
+Rem Not Vx/Vy — those are Fiber accessors, and two types sharing
+Rem accessor names is asking for trouble.
+Type Mote
+    Mx As Number
+    My As Number
+    Ux As Number
+    Uy As Number
+    Mb As Number
+
+Type Dust
+    Fibers As List Of Fiber
+    Motes  As List Of Mote
+    Whirl  As Number         Rem drum angle, radians; only the renderer reads it
+    Tune   As Knobs          Rem the live knob settings the step runs on
+
+Rem A steering force, or a velocity — any little 2-vector. Not "Vec":
+Rem Vx/Vy are already Fiber accessors, and two types sharing accessor
+Rem names is asking for trouble.
+Type Gust
+    Gx As Number
+    Gy As Number
+
+Def AddGust(a As Gust, b As Gust) As Gust
+    Gust(Gx(a) + Gx(b), Gy(a) + Gy(b))
+
+Rem ---- spawning ------------------------------------------------------
+
+Rem Mostly pale wool, streaked with dulled madder, indigo and brown —
+Rem the mixed rag stock that made shoddy cloth mottled.
+Def Dyes() As List Of Dye
+    { Dye(234, 228, 214), Dye(216, 208, 190), Dye(222, 216, 206), Dye(238, 232, 222), Dye(178, 172, 162), Dye(196, 188, 174), Dye(172, 98, 88), Dye(106, 112, 148), Dye(148, 120, 94), Dye(208, 196, 152) }
+
+Rem A wisp flung off the devil's rim: spawned on the drum edge somewhere
+Rem along the upper arc — left-leaning throws and right-leaning throws
+Rem alike — velocity along the same angle, fresh trail, fresh loft.
+Def RimFiber(kb As Knobs) As Fiber
+    Let a = RandRange(-2.9, -0.24)
+    Let sp = RandRange(2, 3.3)
+    Let d = Pick(Dyes())
+    Fiber(DevilX() + Cos(a) * (DrumR() + 3), DevilY() + Sin(a) * (DrumR() + 3), Cos(a) * sp, Sin(a) * sp, { }, Dr(d), Dg(d), Db(d), RandRange(LoftMin(kb), LoftMax(kb)))
+
+Rem A wisp already adrift — the opening frame should look mid-storm,
+Rem not like a machine warming up. Its loft is already part-spent, so
+Rem the first rain starts within seconds.
+Def SkyFiber() As Fiber
+    Let a = RandRange(0, Tau())
+    Let sp = RandRange(1, 2.3)
+    Let d = Pick(Dyes())
+    Fiber(RandRange(60, WorldW() - 40), RandRange(40, WorldH() - 270), Cos(a) * sp, Sin(a) * sp, { }, Dr(d), Dg(d), Db(d), RandRange(60, 300))
+
+Rem A speck already anywhere in the room, barely moving, warm grey.
+Def NewMote() As Mote
+    Mote(RandRange(0, WorldW()), RandRange(20, FloorY() - 1), RandRange(-0.3, 0.4), RandRange(-0.2, 0.2), RandInt(60, 110))
+
+Def NewDust() As Dust
+    Let kb = NewKnobs()
+    Dust(Map(Range(1, FiberCount(kb)), Fn(i) => SkyFiber()), Map(Range(1, MoteCount(kb)), Fn(i) => NewMote()), 0, kb)
+
+Rem ---- steering ------------------------------------------------------
+Rem The three Reynolds rules, each a Gust. Neighbors excludes the wisp
+Rem itself by position — no identity exists on a value, and two wisps
+Rem sharing an exact position is as good as one.
+
+Def Neighbors(f As Fiber, flock As List Of Fiber, kb As Knobs) As List Of Fiber
+    Filter(flock, Fn(n) => (Fx(n) <> Fx(f) Or Fy(n) <> Fy(f)) And Dist(Fx(f), Fy(f), Fx(n), Fy(n)) < NeighborR(kb))
+
+Def SumBy(xs As List Of Fiber, sel As [ Fiber -- Number ]) As Number
+    Fold(xs, 0, Fn(a, x) => a + Call(sel, x))
+
+Rem Only meaningful on a non-empty list; the rules guard with IsEmpty.
+Def AvgBy(xs As List Of Fiber, sel As [ Fiber -- Number ]) As Number
+    SumBy(xs, sel) / Length(xs)
+
+Rem Cohesion: drift toward the neighbours' centre of mass.
+Def Cohere(f As Fiber, ns As List Of Fiber, kb As Knobs) As Gust
+    If IsEmpty(ns) Then
+        Gust(0, 0)
+    Else
+        Gust((AvgBy(ns, Fn(n) => Fx(n)) - Fx(f)) * CohereK(kb), (AvgBy(ns, Fn(n) => Fy(n)) - Fy(f)) * CohereK(kb))
+
+Rem Alignment: match the neighbours' average heading.
+Def Align(f As Fiber, ns As List Of Fiber, kb As Knobs) As Gust
+    If IsEmpty(ns) Then
+        Gust(0, 0)
+    Else
+        Gust((AvgBy(ns, Fn(n) => Vx(n)) - Vx(f)) * AlignK(kb), (AvgBy(ns, Fn(n) => Vy(n)) - Vy(f)) * AlignK(kb))
+
+Rem Separation: push directly away from anyone closer than SepR.
+Def Separate(f As Fiber, ns As List Of Fiber, kb As Knobs) As Gust
+    Fold(ns, Gust(0, 0), Fn(g, n) => Ifte(Dist(Fx(f), Fy(f), Fx(n), Fy(n)) < SepR(kb), Gust(Gx(g) + (Fx(f) - Fx(n)) * SepK(kb), Gy(g) + (Fy(f) - Fy(n)) * SepK(kb)), g))
+
+Rem The fourth force: the room's air. With the devil mid-room the air
+Rem blows outward from the machine toward both walls (Sgn picks the
+Rem side); real gravity (Settle) presses everything gently down; a
+Rem strong updraft near the devil (full strength at the drum, gone by
+Rem DraftR); a soft push off the ceiling. No push off the floor —
+Rem wool is allowed to land, and StepFiber handles the rest. Both side
+Rem edges stay open — wisps that escape respawn at the drum, which is
+Rem the cycle of the mill.
+Def Draft(f As Fiber, kb As Knobs) As Gust
+    Let lift = Smoothstep(DraftR(kb), 0, Dist(Fx(f), Fy(f), DevilX(), DevilY()))
+    Let ax = 0.014 * Sgn(Fx(f) - DevilX())
+    Let ay = Settle(kb) - LiftK(kb) * lift + Ifte(Fy(f) < 40, 0.09, 0)
+    Gust(ax, ay)
+
+Rem Random turbulence so the wool flutters instead of gliding — and,
+Rem with probability TumbleP a frame, a real tumble: a kick hard enough
+Rem to bend the flight line. Wool doesn't hold a heading the way a
+Rem starling does.
+Def Flutter(kb As Knobs) As Gust
+    Let kick = Ifte(Chance(TumbleP(kb)), TumbleK(kb), 0)
+    Gust(RandRange(-FlutterK(kb), FlutterK(kb)) + RandRange(-kick, kick), RandRange(-FlutterK(kb), FlutterK(kb)) + RandRange(-kick, kick))
+
+Rem Clamp speed into [lo, hi] without changing heading — wool never
+Rem stalls dead and never streaks like a bullet; motes use gentler bounds.
+Def LimitSpeed(vx As Number, vy As Number, lo As Number, hi As Number) As Gust
+    Let sp = Hypot(vx, vy)
+    If sp < 0.0001 Then
+        Gust(0, -lo)
+    Else
+        Let s2 = Clamp(sp, lo, hi)
+        Gust(vx * s2 / sp, vy * s2 / sp)
+
+Rem ---- the step ------------------------------------------------------
+
+Def OffWorld(x As Number, y As Number) As Boolean
+    x < -20 Or x > WorldW() + 20 Or y < -20 Or y > WorldH() + 20
+
+Rem While a wisp has loft it flies the full flock — the three Reynolds
+Rem rules, the draft, the flutter. When its loft runs out it drops out
+Rem of the flock in the literal sense: no cohesion, no alignment, no
+Rem updraft, no outward drift — just separation (fluff still does not
+Rem interpenetrate), gravity, and flutter — so it rains down more or
+Rem less where it is instead of being herded to a wall first.
+Def FiberSteer(f As Fiber, ns As List Of Fiber, kb As Knobs) As Gust
+    If Loft(f) <= 0 Then
+        AddGust(AddGust(Separate(f, ns, kb), Gust(0, Settle(kb))), Flutter(kb))
+    Else
+        AddGust(AddGust(AddGust(AddGust(Cohere(f, ns, kb), Align(f, ns, kb)), Separate(f, ns, kb)), Draft(f, kb)), Flutter(kb))
+
+Rem One wisp, one frame: steer (by loft), clamp the speed, move, spend
+Rem a frame of loft, remember where it was. Falling is capped at
+Rem FallMax — fluff has a terminal velocity, so it floats down rather
+Rem than drops — and the floor stops it at FloorY, where it skids and
+Rem bounces in the draft until the sweep (Chance(SweepP) per frame)
+Rem carries it back to the devil. Off the world means back to the devil
+Rem too, and wool deep in either exit zone near the side walls may go
+Rem back early (Chance(RecycleP) per frame), which spreads the respawns
+Rem out: a steady trickle off the drum instead of a burst each time a
+Rem clump escapes together.
+Def StepFiber(f As Fiber, flock As List Of Fiber, kb As Knobs) As Fiber
+    Let ns = Neighbors(f, flock, kb)
+    Let steer = FiberSteer(f, ns, kb)
+    Let v = LimitSpeed(Vx(f) + Gx(steer), Vy(f) + Gy(steer), MinSpeed(kb), MaxSpeed(kb))
+    Let vy = Min(Gy(v), FallMax(kb))
+    Let nx = Fx(f) + Gx(v)
+    Let ny = Min(Fy(f) + vy, FloorY())
+    If OffWorld(nx, ny) Or ((nx < 160 Or nx > WorldW() - 160) And Chance(RecycleP(kb))) Or (ny >= FloorY() And Chance(SweepP(kb))) Then
+        RimFiber(kb)
+    Else
+        Fiber(nx, ny, Gx(v), vy, Taken(Prepend(Knot(Fx(f), Fy(f)), Trail(f)), TrailLen()), Cr(f), Cg(f), Cb(f), Loft(f) - 1)
+
+Rem One speck, one frame: ride the outward drift and the devil's
+Rem updraft with a little flutter, then wrap — off one side is back in
+Rem at the other, under the floor is back at the ceiling — so the fine
+Rem dust stays spread through the whole room forever.
+Def StepMote(m As Mote, kb As Knobs) As Mote
+    Let lift = Smoothstep(DraftR(kb), 0, Dist(Mx(m), My(m), DevilX(), DevilY()))
+    Let v = LimitSpeed(Ux(m) + 0.003 * Sgn(Mx(m) - DevilX()) + RandRange(-MoteFlutter(), MoteFlutter()), Uy(m) + 0.003 - 0.02 * lift + RandRange(-MoteFlutter(), MoteFlutter()), MoteMin(), MoteMax())
+    Mote(Wrap(Mx(m) + Gx(v), WorldW()), 15 + Wrap(My(m) + Gy(v) - 15, FloorY() - 15), Gx(v), Gy(v), Mb(m))
+
+Rem ---- population sizing ---------------------------------------------
+Rem The WISPS and MOTES knobs resize the live populations: a deficit is
+Rem made up with fresh spawns off the drum (a visible burst — good
+Rem feedback), a surplus is trimmed. At the right size the list passes
+Rem through untouched, so the common frame costs nothing extra.
+
+Def SizeFlock(flock As List Of Fiber, kb As Knobs) As List Of Fiber
+    Let want = FiberCount(kb)
+    Let have = Length(flock)
+    Select Case Sgn(want - have)
+        Case 1
+            Concat(flock, Map(Range(1, want - have), Fn(i) => RimFiber(kb)))
+        Case 0
+            flock
+        Case Else
+            Taken(flock, want)
+
+Def SizeMotes(motes As List Of Mote, kb As Knobs) As List Of Mote
+    Let want = MoteCount(kb)
+    Let have = Length(motes)
+    Select Case Sgn(want - have)
+        Case 1
+            Concat(motes, Map(Range(1, want - have), Fn(i) => NewMote()))
+        Case 0
+            motes
+        Case Else
+            Taken(motes, want)
+
+Rem The whole room, one frame: size the populations to the knobs, then
+Rem every wisp steps against the same previous flock — a pure function
+Rem of the last frame's value, under the settings it carries.
+Def Advance(d As Dust) As Dust
+    Let kb = Tune(d)
+    Let flock = SizeFlock(Fibers(d), kb)
+    Dust(Map(flock, Fn(f) => StepFiber(f, flock, kb)), Map(SizeMotes(Motes(d), kb), Fn(m) => StepMote(m, kb)), Whirl(d) + DrumStep(kb), kb)
+
+Rem ---- meters --------------------------------------------------------
+Rem Read-only measurements of the storm, one cheap O(n) pass each —
+Rem nothing here feeds back into the step. The footer readout draws
+Rem these; the window half adds only the two meters that need memory
+Rem across frames (measured FPS and smoothed throughput).
+
+Rem Wool that has not landed. Landed wool sits pinned at FloorY, so the
+Rem position alone decides.
+Def Airborne(flock As List Of Fiber) As List Of Fiber
+    Filter(flock, Fn(f) => Fy(f) < FloorY())
+
+Rem The lifecycle census: riding the flock, raining down, or on the
+Rem floor awaiting the sweep. Position outranks loft — grounded wool is
+Rem LANDED even if a fresh gust could still lift it.
+Type Census
+    Aloft   As Number
+    Raining As Number
+    Landed  As Number
+
+Def AddWisp(c As Census, f As Fiber) As Census
+    If Fy(f) >= FloorY() Then
+        With(c, Landed = Landed(c) + 1)
+    Else
+        If Loft(f) > 0 Then
+            With(c, Aloft = Aloft(c) + 1)
+        Else
+            With(c, Raining = Raining(c) + 1)
+
+Def TakeCensus(flock As List Of Fiber) As Census
+    Fold(flock, Census(0, 0, 0), AddWisp)
+
+Rem Polarization, the classic flocking order parameter: |mean velocity|
+Rem over mean speed of the airborne wool. 1 means everyone flies the
+Rem same way (starlings); near 0 means incoherent drift (wool).
+Def OrderParam(flock As List Of Fiber) As Number
+    Let air = Airborne(flock)
+    If IsEmpty(air) Then
+        0
+    Else
+        Let sx = SumBy(air, Fn(f) => Vx(f))
+        Let sy = SumBy(air, Fn(f) => Vy(f))
+        Let sp = SumBy(air, Fn(f) => Hypot(Vx(f), Vy(f)))
+        If sp < 0.0001 Then
+            0
+        Else
+            Hypot(sx, sy) / sp
+
+Rem Mean speed of the airborne wool.
+Def MeanSpeed(flock As List Of Fiber) As Number
+    Let air = Airborne(flock)
+    If IsEmpty(air) Then
+        0
+    Else
+        SumBy(air, Fn(f) => Hypot(Vx(f), Vy(f))) / Length(air)
+
+Rem Mean height of the airborne wool above the floor, in pixels.
+Def Altitude(flock As List Of Fiber) As Number
+    Let air = Airborne(flock)
+    If IsEmpty(air) Then
+        0
+    Else
+        SumBy(air, Fn(f) => FloorY() - Fy(f)) / Length(air)
+
+Rem Wool that went through the devil this frame: a respawn starts with
+Rem an empty trail, so no extra bookkeeping is needed to spot one.
+Def FreshCount(flock As List Of Fiber) As Number
+    CountIf(flock, Fn(f) => IsEmpty(Trail(f)))

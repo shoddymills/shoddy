@@ -14,7 +14,7 @@ namespace Shoddy.Runtime;
 
 /// <summary>Delegates the mill installs at startup; all null when no
 /// audio backend is running (woven output run via dotnet, headless
-/// tests). All six are called from the Shoddy thread — OpenAL has no
+/// tests). All seven are called from the Shoddy thread — OpenAL has no
 /// thread affinity, so there is no main-thread dispatch and no blocking
 /// marshal. Every call site is <c>?.Invoke</c>: null means silence.</summary>
 public static class BuzzerRegistry
@@ -25,4 +25,5 @@ public static class BuzzerRegistry
     public static Action<int, double, double>? Queue;   // (ch, freqHz, ms) back-to-back
     public static Action<int>?            Stop;         // (ch) silence + flush
     public static Action<int, double>?    Gain;         // (ch, vol 0..1) sticky
+    public static Action<int, int>?       Wave;         // (ch, 0 square / 1 triangle / 2 sine) sticky
 }

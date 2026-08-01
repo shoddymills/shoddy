@@ -56,6 +56,29 @@ a tuning console that goes to eleven.*
   </tr>
 </table>
 
+## Two minutes to running
+
+<table>
+  <tr>
+    <td width="55%" valign="middle">
+      <b>One download is the whole toolchain.</b> The VS Code extension
+      carries the mill and all twenty-two machines inside it — install the
+      <a href="https://dotnet.microsoft.com/download/dotnet/10.0">.NET 10 runtime</a>
+      (the runtime, not the SDK), install the
+      <a href="https://github.com/shoddymills/shoddy/releases/latest">latest <code>.vsix</code></a>,
+      open any folder, and run. Nothing to clone, nothing to build, no
+      environment to set: a bare <code>Include "seq.shoddy"</code> resolves
+      anywhere, and breakpoints, variables, and the call stack work out of
+      the box. Details under <a href="#install">Install</a>, or
+      <a href="https://shoddymills.github.io/shoddy/setup.html">the two-step setup guide</a>.
+    </td>
+    <td width="45%" align="center" valign="middle">
+      <a href="https://shoddymills.github.io/shoddy/vscode.html"><img src="docs/media/vscode-debug.svg" alt="Debugging invaders in VS Code, stopped at the collision-scoring line" width="100%"></a><br>
+      <b>Debug in VS Code</b><br><sub>breakpoints, variables, call stack</sub>
+    </td>
+  </tr>
+</table>
+
 ## See it run — every mill
 
 Complete programs woven from the machines — each split into a headless,
@@ -190,16 +213,6 @@ The only prerequisite is the [.NET 10 runtime](https://dotnet.microsoft.com/down
 (the runtime, not the SDK). Nothing to clone, nothing to build, no environment to
 set: a bare `Include "seq.shoddy"` resolves in any folder you open. See
 [the setup guide](https://shoddymills.github.io/shoddy/setup.html).
-
-<table>
-  <tr>
-    <td width="50%" align="center" valign="top">
-      <a href="https://shoddymills.github.io/shoddy/vscode.html"><img src="docs/media/vscode-debug.svg" alt="Debugging invaders in VS Code, stopped at the collision-scoring line" width="100%"></a><br>
-      <b>Debug in VS Code</b><br><sub>breakpoints, variables, call stack — the whole toolchain rides inside the extension</sub>
-    </td>
-    <td width="50%"></td>
-  </tr>
-</table>
 
 ## Build from source
 

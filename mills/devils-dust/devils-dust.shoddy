@@ -426,32 +426,60 @@ Def LeverSlot(x As Number) As Number
     Else
         0
 
+Rem ---- region predicates, each a sentence ----
+
+Def InHint(x As Number, y As Number) As Boolean
+    x > WorldW() - 116 And y < 32
+
+Def InPanel(p As Panel, x As Number, y As Number) As Boolean
+    x >= PanX() And x <= PanX() + PanW() And y >= PanY() And y <= PanY() + PanH(PTab(p))
+
+Def InTabBar(y As Number) As Boolean
+    y < PanY() + TabH()
+
+Rem One of the 16px button bands (the lever row, the stop bar).
+Def InBand(y As Number, top As Number) As Boolean
+    y >= top And y <= top + 16
+
+Def OnRows(p As Panel, y As Number) As Boolean
+    RowAt(y) >= 1 And RowAt(y) <= KnobRows(PTab(p))
+
+Rem ---- and the classifier reads top to bottom, like the panel ----
+
 Def HitAt(p As Panel, x As Number, y As Number) As Hit
     If Not PShow(p) Then
-        If x > WorldW() - 116 And y < 32 Then
+        If InHint(x, y) Then
             HitHint()
         Else
             HitMiss()
     Else
-        If x < PanX() Or x > PanX() + PanW() Or y < PanY() Or y > PanY() + PanH(PTab(p)) Then
+        If Not InPanel(p, x, y) Then
             HitMiss()
         Else
-            If y < PanY() + TabH() Then
-                If x > PanX() + PanW() - 24 Then
-                    HitClose()
-                Else
-                    HitTab(Clamp(Floor((x - PanX() - 4) / (TabW() + 2)) + 1, 1, 4))
+            If InTabBar(y) Then
+                TabBarHit(x)
             Else
-                If RowAt(y) >= 1 And RowAt(y) <= KnobRows(PTab(p)) Then
-                    HitRow(RowAt(y))
-                Else
-                    If y >= BtnY(PTab(p)) And y <= BtnY(PTab(p)) + 16 Then
-                        HitLever(LeverSlot(x))
-                    Else
-                        If y >= StopY(PTab(p)) And y <= StopY(PTab(p)) + 16 Then
-                            HitStop()
-                        Else
-                            HitMiss()
+                BodyHit(p, x, y)
+
+Rem The tab bar: the X close box at its right end, else one of the tabs.
+Def TabBarHit(x As Number) As Hit
+    If x > PanX() + PanW() - 24 Then
+        HitClose()
+    Else
+        HitTab(Clamp(Floor((x - PanX() - 4) / (TabW() + 2)) + 1, 1, 4))
+
+Rem Below the tab bar: the slider rows, then the lever, then the stop.
+Def BodyHit(p As Panel, x As Number, y As Number) As Hit
+    If OnRows(p, y) Then
+        HitRow(RowAt(y))
+    Else
+        If InBand(y, BtnY(PTab(p))) Then
+            HitLever(LeverSlot(x))
+        Else
+            If InBand(y, StopY(PTab(p))) Then
+                HitStop()
+            Else
+                HitMiss()
 
 Def OnClick(st As Studio, x As Number, y As Number) As Studio
     Select Case HitAt(Sp(st), x, y)

@@ -663,6 +663,7 @@ public static class Lint
 
         void WalkQuot(Quot q, HashSet<string> locals)
         {
+            if (r == null) return;
             foreach (Node it in q.Items)
             {
                 switch (it.T)

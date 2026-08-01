@@ -1,0 +1,214 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem sound-lab.shoddy — the Devil's Dust sound workbench.
+Rem
+Rem Run: mill run mills/devils-dust/sound-lab.shoddy
+Rem
+Rem No wool, no devil — just instruments. Iterating a drone by editing
+Rem the mill and relaunching the demo is the slowest possible way to
+Rem search a sound-design space; here every parameter is a keypress and
+Rem A/B is instant. Whatever wins gets transcribed back into
+Rem devils-dust-sound.shoddy as plain numbers.
+Rem
+Rem   1-8       pick a recipe (see RecipeName)
+Rem   Up/Down   base pitch, semitone steps
+Rem   Lt/Right  detune of the pair, thousandths
+Rem   PgUp/PgDn overall gain
+Rem   R         cycle the churn rate (recipe 7 gain LFO; recipe 8 beat)
+Rem   Space     re-strike the held notes
+Rem   0         silence on/off
+Rem   Q or Esc  quits
+Rem
+Rem The recipes probe the escape routes from chip-tune square-ness:
+Rem detuned unison (beating thickness), added sub octave, inharmonic
+Rem partial ratios (shimmer instead of video-game sterility), the
+Rem demo's current fifth stack and sour chord for comparison, a churned
+Rem pair, and a pair whose detune is set in Hz so the BEAT RATE itself
+Rem is the rhythm.
+Rem ==================================================================
+
+Include "scribbler.shoddy"
+Include "buzzer.shoddy"
+Include "math.shoddy"
+
+Rem ---- lab state ------------------------------------------------------
+
+Type Lab
+    LRecipe As Number        Rem 1..8
+    LHz     As Number        Rem base pitch
+    LDet    As Number        Rem pair detune as a ratio offset (0.006 = +0.6%)
+    LGain   As Number        Rem overall bed gain 0..0.5
+    LCIdx   As Number        Rem churn rate index, 1..5 (see ChurnRate)
+    LOn     As Boolean       Rem silenced with 0
+    LDirty  As Boolean       Rem params moved; re-strike next tick
+
+Def NewLab() As Lab
+    Lab(2, 55, 0.006, 0.3, 3, True, True)
+
+Def ChurnRate(idx As Number) As Number
+    Select Case idx
+        Case 1
+            0
+        Case 2
+            0.6
+        Case 3
+            1.3
+        Case 4
+            2.5
+        Case Else
+            5
+
+Def RecipeName(r As Number) As String
+    Select Case r
+        Case 1
+            "SINGLE SQUARE"
+        Case 2
+            "DETUNED PAIR"
+        Case 3
+            "PAIR + SUB OCTAVE"
+        Case 4
+            "FIFTH STACK (THE DEMO)"
+        Case 5
+            "INHARMONIC SHIMMER"
+        Case 6
+            "SOUR (OVERLOAD)"
+        Case 7
+            "CHURNED PAIR"
+        Case Else
+            "BEAT-RATE PAIR"
+
+Rem What channel ch should sound under the current recipe; 0 = off.
+Rem Recipe 8 sets the second voice LITERALLY rate Hz above the first,
+Rem so the pair beats at exactly the churn rate — rhythm from physics.
+Def VoiceHz(lb As Lab, ch As Number) As Number
+    Select Case LRecipe(lb)
+        Case 1
+            Ifte(ch = 1, LHz(lb), 0)
+        Case 2
+            Ifte(ch = 1, LHz(lb), Ifte(ch = 2, LHz(lb) * (1 + LDet(lb)), 0))
+        Case 3
+            Ifte(ch = 1, LHz(lb), Ifte(ch = 2, LHz(lb) * (1 + LDet(lb)), LHz(lb) * 0.5))
+        Case 4
+            Ifte(ch = 1, LHz(lb), Ifte(ch = 2, LHz(lb) * 1.5, LHz(lb) * 2))
+        Case 5
+            Ifte(ch = 1, LHz(lb), Ifte(ch = 2, LHz(lb) * 1.498, LHz(lb) * 2.03))
+        Case 6
+            Ifte(ch = 1, LHz(lb), Ifte(ch = 2, LHz(lb) * (1 + LDet(lb)), LHz(lb) * 2.1189))
+        Case 7
+            Ifte(ch = 1, LHz(lb), Ifte(ch = 2, LHz(lb) * (1 + LDet(lb)), 0))
+        Case Else
+            Ifte(ch = 1, LHz(lb), Ifte(ch = 2, LHz(lb) + ChurnRate(LCIdx(lb)), 0))
+
+Rem ---- driving the buzzer ---------------------------------------------
+
+Def StrikeCh(lb As Lab, ch As Number)
+    If VoiceHz(lb, ch) > 0 Then
+        NoteOn(ch, VoiceHz(lb, ch))
+    Else
+        NoteOff(ch)
+
+Def Strike(lb As Lab)
+    StrikeCh(lb, 1)
+    StrikeCh(lb, 2)
+    StrikeCh(lb, 3)
+
+Def Hush()
+    NoteOff(1)
+    NoteOff(2)
+    NoteOff(3)
+
+Rem Gains every tick; recipe 7 puts the churn LFO on them.
+Def LabGains(lb As Lab, at As Number)
+    Let mul = Ifte(LRecipe(lb) = 7 And ChurnRate(LCIdx(lb)) > 0, 0.75 + 0.25 * Sin(at / 1000 * ChurnRate(LCIdx(lb)) * Tau()), 1)
+    SoundGain(1, LGain(lb) * mul)
+    SoundGain(2, LGain(lb) * 0.9 * mul)
+    SoundGain(3, LGain(lb) * 0.5 * mul)
+
+Def TickLab(lb As Lab, at As Number) As Lab
+    If LOn(lb) Then
+        LabGains(lb, at)
+        If LDirty(lb) Then
+            Strike(lb)
+            With(lb, LDirty = False)
+        Else
+            lb
+    Else
+        lb
+
+Rem ---- input ----------------------------------------------------------
+
+Def OnLabKey(lb As Lab, key As Number) As Lab
+    Select Case key
+        Case 49 To 56
+            With(lb, LRecipe = key - 48, LDirty = True)
+        Case 264
+            With(lb, LHz = Min(LHz(lb) * 1.0595, 220), LDirty = True)
+        Case 265
+            With(lb, LHz = Max(LHz(lb) / 1.0595, 25), LDirty = True)
+        Case 263
+            With(lb, LDet = Min(LDet(lb) + 0.001, 0.03), LDirty = True)
+        Case 262
+            With(lb, LDet = Max(LDet(lb) - 0.001, 0), LDirty = True)
+        Case 260
+            With(lb, LGain = Min(LGain(lb) + 0.03, 0.5))
+        Case 261
+            With(lb, LGain = Max(LGain(lb) - 0.03, 0))
+        Case 82
+            With(lb, LCIdx = Ifte(LCIdx(lb) = 5, 1, LCIdx(lb) + 1), LDirty = True)
+        Case 32
+            With(lb, LDirty = True)
+        Case 48
+            If LOn(lb) Then
+                Hush()
+                With(lb, LOn = False)
+            Else
+                With(lb, LOn = True, LDirty = True)
+        Case Else
+            lb
+
+Rem ---- display --------------------------------------------------------
+
+Def Line(sc As Scribbler, row As Number, bright As Boolean, s As String) As Scribbler
+    ScribblerText(sc, 24, 24 + row * 30, 2, Ifte(bright, 226, 138), Ifte(bright, 218, 130), Ifte(bright, 200, 120), s)
+
+Def Draw(sc As Scribbler, lb As Lab) As Scribbler
+    Let bg = ScribblerFill(sc, 24, 21, 19)
+    Let l0 = Line(bg, 0, True, "DEVIL'S DUST SOUND LAB")
+    Let l1 = Line(l0, 1, True, "RECIPE " & Str(LRecipe(lb)) & ": " & RecipeName(LRecipe(lb)))
+    Let l2 = Line(l1, 2, False, "PITCH  " & Str(RoundTo(LHz(lb), 1)) & " HZ   (UP/DOWN)")
+    Let l3 = Line(l2, 3, False, "DETUNE " & Str(RoundTo(LDet(lb) * 1000, 1)) & "/1000   (LEFT/RIGHT)")
+    Let l4 = Line(l3, 4, False, "GAIN   " & Str(RoundTo(LGain(lb), 2)) & "   (PGUP/PGDN)")
+    Let l5 = Line(l4, 5, False, "CHURN  " & Str(RoundTo(ChurnRate(LCIdx(lb)), 1)) & " HZ   (R CYCLES)")
+    Let l6 = Line(l5, 6, False, "SPACE RESTRIKE   0 SILENCE   Q QUITS")
+    Let l7 = Line(l6, 7, True, Ifte(LOn(lb), "SOUNDING", "SILENT"))
+    ScribblerBlit(l7)
+
+Rem ---- the loop -------------------------------------------------------
+
+Def Loop(sc As Scribbler, lb As Lab) As Scribbler
+    Select Case NextEvent(sc)
+        Case ScribblerTick(at)
+            Let lb2 = TickLab(lb, at)
+            Loop(Draw(sc, lb2), lb2)
+        Case ScribblerKeyDown(key, mods, at)
+            If key = 27 Or key = 81 Then
+                Hush()
+                ScribblerClose(sc)
+            Else
+                Loop(sc, OnLabKey(lb, key))
+        Case ScribblerQuit
+            Hush()
+            ScribblerClose(sc)
+        Case Else
+            Loop(sc, lb)
+
+Def Main()
+    Let sc0 = ScribblerOpen(560, 280)
+    Let sc1 = ScribblerTitle(sc0, "Devil's Dust Sound Lab")
+    Let sc2 = SetFps(sc1, 30)
+    Print("Sound lab: 1-8 recipes, Up/Down pitch, Left/Right detune,")
+    Print("PgUp/PgDn gain, R churn rate, Space restrike, 0 silence, Q quits.")
+    Let done = Loop(Draw(sc2, NewLab()), NewLab())
+    Print("lab closed")

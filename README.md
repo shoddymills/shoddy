@@ -68,6 +68,10 @@ write-up on each one.
 <table>
   <tr>
     <td width="33%" align="center" valign="top">
+      <a href="https://shoddymills.github.io/shoddy/mills/devils-dust.html"><img src="docs/media/devils-dust.svg" alt="Devil's Dust: wool wisps flocking above the devil's drum, tuning panel open" width="100%"></a><br>
+      <b>Devil's Dust</b><br><sub>boids with a console · goes to eleven</sub>
+    </td>
+    <td width="33%" align="center" valign="top">
       <a href="https://shoddymills.github.io/shoddy/mills/invaders.html"><img src="docs/media/invaders.svg" alt="Space Invaders in a scribbler window" width="100%"></a><br>
       <b>Invaders</b><br><sub>graphical window · colour + sound</sub>
     </td>
@@ -75,12 +79,12 @@ write-up on each one.
       <a href="https://shoddymills.github.io/shoddy/mills/oregon.html"><img src="docs/media/oregon.svg" alt="The Oregon Trail in a terminal" width="100%"></a><br>
       <b>The Oregon Trail</b><br><sub>the 1971 classic, reclaimed</sub>
     </td>
+  </tr>
+  <tr>
     <td width="33%" align="center" valign="top">
       <a href="https://shoddymills.github.io/shoddy/mills/pac-vt100.html"><img src="docs/media/pac-vt100.svg" alt="Pac-Man drawn with VT100 escapes" width="100%"></a><br>
       <b>Pac-VT100</b><br><sub>arcade chase in the terminal</sub>
     </td>
-  </tr>
-  <tr>
     <td width="33%" align="center" valign="top">
       <a href="https://shoddymills.github.io/shoddy/mills/iris.html"><img src="docs/media/iris.svg" alt="Scatter plot of iris petal length against petal width, with the three species in three colours: setosa separates cleanly, versicolor and virginica overlap" width="100%"></a><br>
       <b>Iris</b><br><sub>from-scratch neural net &middot; trains in 4s</sub>
@@ -89,10 +93,14 @@ write-up on each one.
       <a href="https://shoddymills.github.io/shoddy/mills/simplex-from-mps.html"><img src="docs/media/simplex-blend.svg" alt="Terminal output solving the BLEND linear program" width="100%"></a><br>
       <b>Simplex · BLEND</b><br><sub>83-var LP, solved from MPS</sub>
     </td>
+  </tr>
+  <tr>
     <td width="33%" align="center" valign="top">
       <a href="https://shoddymills.github.io/shoddy/vscode.html"><img src="docs/media/vscode-debug.svg" alt="Debugging invaders in VS Code, stopped at the collision-scoring line" width="100%"></a><br>
       <b>Debug in VS Code</b><br><sub>breakpoints, variables, call stack</sub>
     </td>
+    <td width="33%"></td>
+    <td width="33%"></td>
   </tr>
 </table>
 

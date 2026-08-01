@@ -1,0 +1,1357 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Every error and warning the Shoddy toolchain can raise — the message, its cause, broken and fixed code side by side">
+<title>Errors &amp; Warnings | Shoddy</title>
+<link rel="stylesheet" href="style.css">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+</head>
+<body>
+<div class="topbar"><div class="inner">
+  <a class="phase" href="index.html">Shoddy · Documentation</a>
+  <span class="spacer"></span>
+  <nav class="docnav" aria-label="Documentation"><a href="heritage.html">Story</a><a href="guide.html">Guide</a><a href="quickref.html">Reference</a><a href="machines/index.html">Machines</a><a href="mills/index.html">Mills</a><a href="stack.html">Stack</a><a href="spec.html">Spec</a><a href="setup.html">Setup</a><a href="vscode.html">VS Code</a><a href="build.html">Toolchain</a><span class="here">Errors</span></nav>
+</div></div>
+<div class="wrap">
+<header class="mast">
+<p class="eyebrow"><a href="build.html">The Toolchain</a></p>
+<h1>Errors &amp; Warnings</h1>
+<p class="kicker">Every message the mill can raise — the cause, and the fix, side by side</p>
+</header>
+
+<p>Three voices speak on stderr. <strong>Weave errors</strong> stop the build
+before anything runs — <code>ERROR (file.shoddy:N): message</code>, with the
+file named because an <code>Include</code> can put the fault in another file.
+<strong>Lint warnings</strong> never stop anything — <code>file:N: warning:
+message</code>, silenced by <code>--no-lint</code>. <strong>Runtime
+errors</strong> stop the program at the failing line — <code>ERROR (line N):
+message</code>. A bare <code>ERROR: message</code> has no source line:
+something structural, usually across machine DLLs.</p>
+<p>Every message is below, grouped by voice, each with broken code on the
+left and the fix on the right. Placeholders like <code>{name}</code> stand
+for whatever your program supplied.</p>
+<blockquote><b>Find your message:</b>
+<a href="#env">0. Setup &amp; environment</a> &nbsp;|&nbsp;
+<a href="#weave">1. Weave errors</a> —
+<a href="#layout">layout &amp; blocks</a> ·
+<a href="#declarations">declarations</a> ·
+<a href="#expressions">expressions &amp; quotations</a> ·
+<a href="#select">Select Case &amp; patterns</a> &nbsp;|&nbsp;
+<a href="#lint">2. Lint warnings</a> &nbsp;|&nbsp;
+<a href="#runtime">3. Runtime errors</a> —
+<a href="#rt-types">types &amp; stack</a> ·
+<a href="#rt-math">arithmetic</a> ·
+<a href="#rt-seq">sequences</a> ·
+<a href="#rt-io">files, network &amp; devices</a></blockquote>
+
+<h2 id="env">0. Setup &amp; environment — before the mill speaks</h2>
+<p>A fourth voice comes first: the operating system and the .NET host,
+complaining before any Shoddy code is involved. These aren't Shoddy
+messages, but they're the ones a first day most often meets. The one-line
+summary: <em>running</em> Shoddy needs only the
+<a href="https://dotnet.microsoft.com/download/dotnet/10.0">.NET&nbsp;10
+runtime</a>; <em>building the toolchain from source</em> needs the SDK; the
+VS Code extension carries everything else inside it
+(<a href="setup.html">Setup</a>).</p>
+
+<div class="err">
+<p class="emsg"><code>You must install .NET to run this application.</code>
+<code>The framework 'Microsoft.NETCore.App', version '10.0.0' was not found.</code>
+<code>It was not possible to find any compatible framework version</code></p>
+<p>The .NET&nbsp;10 <em>runtime</em> is missing — or only an older one
+(8, 9) is installed. Every path needs it: <code>mill</code> itself, a woven
+<code>dotnet x.dll</code>, and the mill bundled inside the VS Code
+extension (where this message appears in the extension's terminal). The
+message usually ends with the right download link; check what you have
+with:</p>
+<div class="fixpair">
+<div class="bad"><b>Broken</b><pre><code>$ dotnet --list-runtimes
+Microsoft.NETCore.App 8.0.11 [...]
+$ mill run hello.shoddy
+You must install .NET to run this application.</code></pre></div>
+<div class="good"><b>Fixed</b><pre><code>' install the .NET 10 RUNTIME (not the SDK) from
+'   dotnet.microsoft.com/download/dotnet/10.0
+$ dotnet --list-runtimes
+Microsoft.NETCore.App 10.0.x [...]
+$ mill run hello.shoddy</code></pre></div>
+</div>
+</div>
+
+<div class="err">
+<p class="emsg"><code>'dotnet' is not recognized as an internal or external command</code>
+<code>dotnet: command not found</code></p>
+<p>No .NET host on the PATH at all. Install the runtime (above) — the
+installer sets the PATH — then open a <em>new</em> terminal: an already-open
+one keeps its old PATH.</p>
+</div>
+
+<div class="err">
+<p class="emsg"><code>'mill' is not recognized as an internal or external command</code>
+<code>mill: command not found</code>
+<code>mill: Permission denied</code></p>
+<p>The mill isn't built, isn't on the PATH, or (on Unix) lost its execute
+bit — a <code>.vsix</code> is a zip, and the executable bit doesn't survive
+every route through one. The extension restores it automatically; a
+hand-unzipped copy may need it back.</p>
+<div class="fixpair">
+<div class="bad"><b>Broken</b><pre><code>$ mill run hello.shoddy
+mill: command not found</code></pre></div>
+<div class="good"><b>Fixed</b><pre><code>$ ./build.sh build          # builds bin/mill
+$ bin/mill run hello.shoddy # or add bin/ to PATH
+$ chmod +x path/to/mill     # Unix, if unzipped by hand</code></pre></div>
+</div>
+</div>
+
+<div class="err">
+<p class="emsg"><code>The current .NET SDK does not support targeting .NET 10.0.</code>
+<code>No .NET SDKs were found.</code></p>
+<p>Building the toolchain <em>from source</em> — <code>./build.sh
+build</code>, <code>dotnet test</code> — needs the .NET&nbsp;10
+<em>SDK</em>, a bigger install than the runtime. Only contributors need it;
+writing and running Shoddy programs never does.</p>
+<div class="fixpair">
+<div class="bad"><b>Broken</b><pre><code>$ dotnet --list-sdks
+(nothing, or only 8.x/9.x)
+$ ./build.sh build
+error NETSDK1045: The current .NET SDK does not
+support targeting .NET 10.0.</code></pre></div>
+<div class="good"><b>Fixed</b><pre><code>' install the .NET 10 SDK from
+'   dotnet.microsoft.com/download/dotnet/10.0
+$ dotnet --list-sdks
+10.0.xxx [...]
+$ ./build.sh build</code></pre></div>
+</div>
+</div>
+
+<div class="err">
+<p class="emsg"><code>… running scripts is disabled on this system.</code></p>
+<p>Windows PowerShell refusing the unsigned <code>build.ps1</code>. The
+repo ships the answer: <code>build.cmd</code> is a shim that invokes the
+script with an execution-policy bypass.</p>
+<div class="fixpair">
+<div class="bad"><b>Broken</b><pre><code>PS&gt; .\build.ps1 build
+.\build.ps1 cannot be loaded because running
+scripts is disabled on this system.</code></pre></div>
+<div class="good"><b>Fixed</b><pre><code>PS&gt; build.cmd build
+' or, directly:
+PS&gt; powershell -ExecutionPolicy Bypass -File .\build.ps1 build</code></pre></div>
+</div>
+</div>
+
+<div class="err">
+<p class="emsg"><code>cannot open '{path}'</code> <em>(for a bare machine include that should just work)</em></p>
+<p>A stale <code>SHODDYLIB</code>. Bare includes resolve through
+<code>SHODDYLIB</code> <em>before</em> the library beside the mill, so a
+variable pointing at an old or moved checkout shadows the real machines.
+The VS Code extension manages the variable for its own terminals; a shell
+you configured by hand keeps whatever you set.</p>
+<div class="fixpair">
+<div class="bad"><b>Broken</b><pre><code>$ echo $SHODDYLIB
+/old/checkout/machines      # moved months ago
+$ mill run game.shoddy
+ERROR (game.shoddy:1): cannot open 'seq.shoddy'</code></pre></div>
+<div class="good"><b>Fixed</b><pre><code>$ unset SHODDYLIB           # let the mill's own
+$ mill run game.shoddy      # library resolve it</code></pre></div>
+</div>
+</div>
+
+<h2 id="weave">1. Weave errors — the build stops</h2>
+
+<h3 id="layout">Layout and blocks</h3>
+
+<div class="err">
+<p class="emsg"><code>unexpected indent</code>
+<code>unexpected indent at top level (expected DEF at left margin)</code></p>
+<p>A line is indented deeper than its context allows. The top level holds
+<code>Def</code>, <code>Type</code>, <code>Let</code>, and
+<code>Include</code> at the left margin; a body indents one step under its
+header, and stays there.</p>
+<div class="fixpair">
+<div class="bad"><b>Broken</b><pre><code>Def Greet()
+    Print("HELLO")
+      Print("WORLD")   ' deeper for no reason</code></pre></div>
+<div class="good"><b>Fixed</b><pre><code>Def Greet()
+    Print("HELLO")
+    Print("WORLD")     ' one body, one depth</code></pre></div>
+</div>
+</div>
+
+<div class="err">
+<p class="emsg"><code>expected indented block after IF</code>
+<code>expected indented block after ELSE</code>
+<code>expected indented block after CASE</code></p>
+<p>The header line parsed, but nothing indented follows it. Every
+<code>If … Then</code>, <code>Else</code>, and <code>Case</code> needs at
+least one line of body, indented one step.</p>
+<div class="fixpair">
+<div class="bad"><b>Broken</b><pre><code>Def Sign(n As Number) As String
+    If n &lt; 0 Then
+    "NEGATIVE"        ' body not indented past If
+    Else
+        "NOT NEGATIVE"</code></pre></div>
+<div class="good"><b>Fixed</b><pre><code>Def Sign(n As Number) As String
+    If n &lt; 0 Then
+        "NEGATIVE"    ' one step deeper than If
+    Else
+        "NOT NEGATIVE"</code></pre></div>
+</div>
+</div>
+
+<div class="err">
+<p class="emsg"><code>ELSE without matching IF</code></p>
+<p>An <code>Else</code> at a depth where no <code>If</code> is open —
+almost always an indentation slip, one column off the <code>If</code> it
+belongs to.</p>
+<div class="fixpair">
+<div class="bad"><b>Broken</b><pre><code>Def Fee(age As Number) As Number
+    If age &lt; 12 Then
+        5
+        Else          ' deeper than its If
+        9</code></pre></div>
+<div class="good"><b>Fixed</b><pre><code>Def Fee(age As Number) As Number
+    If age &lt; 12 Then
+        5
+    Else              ' same column as If
+        9</code></pre></div>
+</div>
+</div>
+
+<div class="err">
+<p class="emsg"><code>IF must end its line</code>
+<code>IF line must end with THEN</code>
+<code>malformed IF condition</code></p>
+<p>Statement-style <code>If</code> takes nothing after <code>Then</code>,
+and nothing in place of it: the branch lives on the next line. For a choice
+inside an expression, use <code>Ifte(cond, a, b)</code>.</p>
+<div class="fixpair">
+<div class="bad"><b>Broken</b><pre><code>Def Cap(n As Number) As Number
+    If n &gt; 10 Then 10   ' branch on the If line
+
+Def Cap2(n As Number) As Number
+    If n &gt; 10           ' Then missing
+        10</code></pre></div>
+<div class="good"><b>Fixed</b><pre><code>Def Cap(n As Number) As Number
+    Ifte(n &gt; 10, 10, n)  ' inline choice
+
+Def Cap2(n As Number) As Number
+    If n &gt; 10 Then
+        10
+    Else
+        n</code></pre></div>
+</div>
+</div>
+
+<div class="err">
+<p class="emsg"><code>DEF needs a name</code>
+<code>expected DEF at top level</code>
+<code>unexpected tokens after DEF name</code></p>
+<p>A malformed <code>Def</code> header, or a statement sitting at the left
+margin where only declarations may. The three header shapes:
+<code>Def Name(p As T, …) As T</code>, <code>Def Name()</code>, and the
+concatenative <code>Def Name ( T … -- T )</code>.</p>
+<div class="fixpair">
+<div class="bad"><b>Broken</b><pre><code>Def (n As Number) As Number   ' no name
+    n * 2
+
+Print("HI")     ' a statement at top level</code></pre></div>
+<div class="good"><b>Fixed</b><pre><code>Def Twice(n As Number) As Number
+    n * 2
+
+Def Main()
+    Print("HI")   ' statements live in bodies</code></pre></div>
+</div>
+</div>
+
+<div class="err">
+<p class="emsg"><code>DEF {name} has an empty body (body must be indented)</code>
+<code>TYPE {name} has no fields (fields must be indented)</code></p>
+<p>The header parsed and then the next line was back at the left margin —
+the body or field list is missing, or not indented.</p>
+<div class="fixpair">
+<div class="bad"><b>Broken</b><pre><code>Type Point
+X As Number      ' fields at the margin
+Y As Number
+
+Def Origin() As Point
+Point(0, 0)      ' body at the margin</code></pre></div>
+<div class="good"><b>Fixed</b><pre><code>Type Point
+    X As Number
+    Y As Number
+
+Def Origin() As Point
+    Point(0, 0)</code></pre></div>
+</div>
+</div>
+
+<div class="err">
+<p class="emsg"><code>missing ) in DEF header</code>
+<code>missing ) in variant</code>
+<code>missing ) in pattern</code>
+<code>expected parameter name, got '{tok}'</code></p>
+<p>An opening parenthesis in the named construct never closed on its
+line.</p>
+<div class="fixpair">
+<div class="bad"><b>Broken</b><pre><code>Def Area(w As Number, h As Number As Number
+    w * h</code></pre></div>
+<div class="good"><b>Fixed</b><pre><code>Def Area(w As Number, h As Number) As Number
+    w * h</code></pre></div>
+</div>
+</div>
+
+<div class="err">
+<p class="emsg"><code>cannot open '{path}'</code></p>
+<p>An <code>Include</code> whose file can't be found. Paths resolve relative
+to the <em>including file</em>, then <code>SHODDYLIB</code>, then the machine
+library beside the mill — so a bare machine name needs no path at all.</p>
+<div class="fixpair">
+<div class="bad"><b>Broken</b><pre><code>Include "machines/sqe.shoddy"   ' typo, wrong path</code></pre></div>
+<div class="good"><b>Fixed</b><pre><code>Include "seq.shoddy"   ' bare name finds the library</code></pre></div>
+</div>
+</div>
+
+<div class="err">
+<p class="emsg"><code>unterminated string literal</code></p>
+<p>A string opened and the line ended before its closing quote. Strings are
+single-line; a quote <em>inside</em> a string is written <code>\"</code>.</p>
+<div class="fixpair">
+<div class="bad"><b>Broken</b><pre><code>Print("HELLO)   ' the quote never closes</code></pre></div>
+<div class="good"><b>Fixed</b><pre><code>Print("HELLO")
+Print("SHE SAID \"HELLO\"")</code></pre></div>
+</div>
+</div>
+
+<div class="err">
+<p class="emsg"><code>unclosed '{c}'</code></p>
+<p>A bracket — <code>(</code>, <code>{</code>, <code>[</code> — was still
+open at the end of the file. An open bracket is also how a long line
+<em>continues</em>, so this often means a continuation you didn't intend;
+the error points at the line that opened it.</p>
+<div class="fixpair">
+<div class="bad"><b>Broken</b><pre><code>Def Main()
+    Print(Sum({ 1, 2, 3 })   ' one ) short
+    Print("DONE")            ' swallowed as continuation</code></pre></div>
+<div class="good"><b>Fixed</b><pre><code>Def Main()
+    Print(Sum({ 1, 2, 3 }))
+    Print("DONE")</code></pre></div>
+</div>
+</div>
+
+<div class="err">
+<p class="emsg"><code>'{word}': the characters ! % # $ ? are reserved and may not appear in words</code></p>
+<p>Classic BASIC's type sigils and the predicate question mark are reserved.
+Types live in declarations, not names; predicates take an <code>Is</code>
+prefix.</p>
+<div class="fixpair">
+<div class="bad"><b>Broken</b><pre><code>Let name$ = "ADA"
+
+Def Empty?(xs As List Of t) As Boolean
+    IsEmpty(xs)</code></pre></div>
+<div class="good"><b>Fixed</b><pre><code>Let name = "ADA"
+
+Def IsBlank(xs As List Of t) As Boolean
+    IsEmpty(xs)</code></pre></div>
+</div>
+</div>
+
+<div class="err">
+<p class="emsg"><code>expected INCLUDE "FILE" or INCLUDE "FILE" AS NAMESPACE …</code>
+<code>'{tok}' is not usable as a namespace — …</code>
+<code>'{file}' is included twice under different namespaces …</code></p>
+<p>The two <code>Include</code> shapes are a quoted filename, optionally
+followed by <code>As Name</code> where the name is a plain word — and one
+file gets at most one namespace, however many routes reach it.</p>
+<div class="fixpair">
+<div class="bad"><b>Broken</b><pre><code>Include seq.shoddy            ' quotes required
+Include "vt100.shoddy" As "T" ' namespace is a word
+Include "util.shoddy" As A
+Include "util.shoddy" As B    ' same file, two names</code></pre></div>
+<div class="good"><b>Fixed</b><pre><code>Include "seq.shoddy"
+Include "vt100.shoddy" As T
+Include "util.shoddy" As A    ' one file, one name</code></pre></div>
+</div>
+</div>
+
+<div class="err">
+<p class="emsg"><code>IN wants a plain name on each side, as in 'CaveNearby In Msg'</code></p>
+<p><code>In</code> picks a namespaced meaning for a bare word:
+<code>Name In Namespace</code>, both sides plain words, collapsing to the
+single word <code>NamespaceName</code>.</p>
+<div class="fixpair">
+<div class="bad"><b>Broken</b><pre><code>Print(Camp() In N)   ' a call is not a plain name</code></pre></div>
+<div class="good"><b>Fixed</b><pre><code>Print(Camp In N)     ' resolves, then calls</code></pre></div>
+</div>
+</div>
+
+<h3 id="declarations">Declarations</h3>
+
+<div class="err">
+<p class="emsg"><code>duplicate definition of {name} — …</code></p>
+<p>Two top-level declarations claim one case-folded name — remember
+<code>total</code>, <code>Total</code>, and <code>TOTAL</code> are the same
+word. The message names the earlier site, which may be in an
+<code>Include</code>d file. Rename one, or namespace an include with
+<code>As</code>.</p>
+<div class="fixpair">
+<div class="bad"><b>Broken</b><pre><code>Def Total(xs As List Of Number) As Number
+    Fold(xs, 0, +)
+
+Let total = 100    ' same word, case-folded</code></pre></div>
+<div class="good"><b>Fixed</b><pre><code>Def Total(xs As List Of Number) As Number
+    Fold(xs, 0, +)
+
+Let startingTotal = 100</code></pre></div>
+</div>
+</div>
+
+<div class="err">
+<p class="emsg"><code>{name} is a builtin — a Def of that name would …</code></p>
+<p>Builtins can't be redefined by accident. Pick another name — or, if the
+shadowing is deliberate, declare it with <code>Redef</code>, which waives the
+check on purpose.</p>
+<div class="fixpair">
+<div class="bad"><b>Broken</b><pre><code>Def Str(n As Number) As String
+    "#" &amp; "?"      ' STR is the builtin</code></pre></div>
+<div class="good"><b>Fixed</b><pre><code>Def Tagged(n As Number) As String
+    "#" &amp; Str(n)</code></pre></div>
+</div>
+</div>
+
+<div class="err">
+<p class="emsg"><code>duplicate definition of {name} across machines — include one of them under a namespace (AS)</code></p>
+<p>Two machine DLLs export the same word and both were included bare. Give
+one a namespace; its words then answer to the prefixed name.</p>
+<div class="fixpair">
+<div class="bad"><b>Broken</b><pre><code>Include "net.shoddy"
+Include "turtle.shoddy"   ' both export CLOSE</code></pre></div>
+<div class="good"><b>Fixed</b><pre><code>Include "net.shoddy"
+Include "turtle.shoddy" As T
+
+' net's Close, and CLOSE In T (TCLOSE)</code></pre></div>
+</div>
+</div>
+
+<div class="err">
+<p class="emsg"><code>machine {name} declares dependency {dep}, but {path} is missing</code>
+<code>machine {name} references {dep}, but {path} is missing</code>
+<code>'{path}' is not a Shoddy machine (no manifest)</code></p>
+<p>A machine DLL needs a sibling DLL that isn't beside it, or a stray
+non-machine DLL sits where a machine was expected. Not a code problem — a
+build-state problem. Rebuild the library:</p>
+<div class="fixpair">
+<div class="bad"><b>Broken</b><pre><code># machines/bin holds Isam.dll but
+# someone deleted Seq.dll beside it</code></pre></div>
+<div class="good"><b>Fixed</b><pre><code>./build.sh machines     # Unix
+build.cmd machines      # Windows</code></pre></div>
+</div>
+</div>
+
+<div class="err">
+<p class="emsg"><code>machines cannot have top-level Let</code>
+<code>no DEF MAIN found</code></p>
+<p>Two sides of one rule: a library built with <code>mill machine</code>
+holds only <code>Def</code>s and <code>Type</code>s (no program-wide state),
+and a program run with <code>mill run</code> must define <code>Main</code>.</p>
+<div class="fixpair">
+<div class="bad"><b>Broken</b><pre><code>' compiled with: mill machine lib.shoddy
+Let limit = 10        ' state in a library
+
+Def Capped(n As Number) As Number
+    Min(n, limit)</code></pre></div>
+<div class="good"><b>Fixed</b><pre><code>' a machine keeps values in Defs
+Def Limit() As Number
+    10
+
+Def Capped(n As Number) As Number
+    Min(n, Limit())</code></pre></div>
+</div>
+</div>
+
+<div class="err">
+<p class="emsg"><code>expected TYPE NAME or TYPE NAME = VARIANT | ...</code>
+<code>duplicate field {name}</code>
+<code>expected field name, got '{tok}'</code>
+<code>expected AS after field name</code></p>
+<p>A malformed record. The shape: <code>Type Name</code> on its own line,
+then one <code>Field As Type</code> per indented line, each field named
+once.</p>
+<div class="fixpair">
+<div class="bad"><b>Broken</b><pre><code>Type Student
+    Name As String
+    Name As Number     ' duplicate field
+    Score              ' As Type missing</code></pre></div>
+<div class="good"><b>Fixed</b><pre><code>Type Student
+    Name  As String
+    Score As Number</code></pre></div>
+</div>
+</div>
+
+<div class="err">
+<p class="emsg"><code>expected variant name, got '{tok}'</code>
+<code>expected | between variants</code>
+<code>trailing | in sum type</code>
+<code>sum type needs at least one variant</code></p>
+<p>A malformed sum type. The shape is all on the header line:
+<code>Type T = A | B(X) | C</code> — variants separated by <code>|</code>,
+none trailing, a bare variant meaning zero fields.</p>
+<div class="fixpair">
+<div class="bad"><b>Broken</b><pre><code>Type Coin = Heads Tails |   ' missing |, then trailing</code></pre></div>
+<div class="good"><b>Fixed</b><pre><code>Type Coin = Heads | Tails</code></pre></div>
+</div>
+</div>
+
+<h3 id="expressions">Expressions, calls, and quotations</h3>
+
+<div class="err">
+<p class="emsg"><code>unknown word: {name}</code></p>
+<p>Nothing declares the word — not a local, <code>Let</code>,
+<code>Def</code>, machine word, constructor, builtin, or field accessor. A
+typo, or a missing <code>Include</code>. Raised at weave time by the linter,
+and no flag overrides it: the program would die at the same spot at
+runtime.</p>
+<div class="fixpair">
+<div class="bad"><b>Broken</b><pre><code>Def Main()
+    Print(Lenght("HELLO"))   ' typo
+
+    Print(Trim("  HI  "))    ' str never included</code></pre></div>
+<div class="good"><b>Fixed</b><pre><code>Include "str.shoddy"
+
+Def Main()
+    Print(Len("HELLO"))
+    Print(Trim("  HI  "))</code></pre></div>
+</div>
+</div>
+
+<div class="err">
+<p class="emsg"><code>'{name}' is ambiguous — it names {A} and {B}; write '{name} In &lt;namespace&gt;' to choose</code></p>
+<p>Two namespaces both declare the bare word, so the mill refuses to pick
+one silently. Qualify the use site.</p>
+<div class="fixpair">
+<div class="bad"><b>Broken</b><pre><code>Include "north.shoddy" As N
+Include "south.shoddy" As S
+' both declare Def Camp()
+
+Def Main()
+    Print(Camp())</code></pre></div>
+<div class="good"><b>Fixed</b><pre><code>Include "north.shoddy" As N
+Include "south.shoddy" As S
+
+Def Main()
+    Print(Camp In N)</code></pre></div>
+</div>
+</div>
+
+<div class="err">
+<p class="emsg"><code>{Type} expects {n} fields, got {m}</code></p>
+<p>A constructor call with the wrong number of arguments. Fields are
+positional and all required — check the <code>Type</code> declaration's
+order.</p>
+<div class="fixpair">
+<div class="bad"><b>Broken</b><pre><code>Type Student
+    Name  As String
+    Score As Number
+
+Def Main()
+    Print(Student("ADA"))   ' Score missing</code></pre></div>
+<div class="good"><b>Fixed</b><pre><code>Type Student
+    Name  As String
+    Score As Number
+
+Def Main()
+    Print(Student("ADA", 96))</code></pre></div>
+</div>
+</div>
+
+<div class="err">
+<p class="emsg"><code>{Type} has no field {name}</code>
+<code>{Type}: missing field {name}</code>
+<code>WITH needs at least one FIELD = value</code>
+<code>WITH expects FIELD = value, got '{tok}'</code></p>
+<p>A <code>With(record, Field = value)</code> naming a field the type
+doesn't have, or naming none, or malformed. <code>With</code> returns a new
+record with the named fields replaced.</p>
+<div class="fixpair">
+<div class="bad"><b>Broken</b><pre><code>Type Student
+    Name  As String
+    Score As Number
+
+Def Bump(s As Student) As Student
+    With(s, Points = 100)   ' no such field</code></pre></div>
+<div class="good"><b>Fixed</b><pre><code>Type Student
+    Name  As String
+    Score As Number
+
+Def Bump(s As Student) As Student
+    With(s, Score = Score(s) + 1)</code></pre></div>
+</div>
+</div>
+
+<div class="err">
+<p class="emsg"><code>unexpected '{tok}' in expression</code>
+<code>unexpected end of line in expression</code></p>
+<p>The expression parser hit something it can't place — a missing operand, a
+stray comma, or a line that ended mid-thought. To wrap a long expression,
+put it in parentheses: an open bracket continues the line.</p>
+<div class="fixpair">
+<div class="bad"><b>Broken</b><pre><code>Def Main()
+    Print(1 + )        ' operand missing
+    Let x = 2 +        ' line ends mid-expression
+        3</code></pre></div>
+<div class="good"><b>Fixed</b><pre><code>Def Main()
+    Print(1 + 2)
+    Let x = (2 +
+        3)             ' parentheses carry the wrap</code></pre></div>
+</div>
+</div>
+
+<div class="err">
+<p class="emsg"><code>missing ] (quotations may not span lines)</code>
+<code>] without matching [</code>
+<code>{tok} is not allowed inside [ ] — use IFTE for inline conditionals</code></p>
+<p>A quotation literal <code>[ … ]</code> closes on its own line and holds
+words and literals only — no <code>If</code>, no statements. For logic
+inside a function value, use <code>Ifte</code> or <code>Fn</code>.</p>
+<div class="fixpair">
+<div class="bad"><b>Broken</b><pre><code>Def Main()
+    Print(Map({ 1, 2 }, [ Dup If ]))</code></pre></div>
+<div class="good"><b>Fixed</b><pre><code>Def Main()
+    Print(Map({ 1, 2 }, Fn(n) =&gt; Ifte(n &gt; 1, n, 0)))</code></pre></div>
+</div>
+</div>
+
+<div class="err">
+<p class="emsg"><code>expected LET NAME = expression</code>
+<code>expected Let NAME = expression</code>
+<code>Let expects a name, got '{tok}'</code>
+<code>unexpected tokens after LET expression</code>
+<code>unexpected tokens after Let expression</code></p>
+<p>Malformed <code>Let</code>. Exactly <code>Let name = expression</code>,
+one binding per line, and the binding is final — <code>Let</code> never
+rebinds.</p>
+<div class="fixpair">
+<div class="bad"><b>Broken</b><pre><code>Def Main()
+    Let 2x = 10        ' names start with a letter
+    Let y = 1 Let z = 2   ' one per line</code></pre></div>
+<div class="good"><b>Fixed</b><pre><code>Def Main()
+    Let doubled = 10
+    Let y = 1
+    Let z = 2</code></pre></div>
+</div>
+</div>
+
+<div class="err">
+<p class="emsg"><code>TAKE belongs to concatenative bodies; use LET or named parameters here</code>
+<code>TAKE needs at least one name</code>
+<code>TAKE expects names, got '{tok}'</code>
+<code>FN expects parameter names, got '{tok}'</code></p>
+<p><code>Take</code> pops stack values by name and lives only in
+stack-style bodies. Call-style code binds with parameters and
+<code>Let</code>; inline functions bind with <code>Fn(name, …) =&gt;</code>.</p>
+<div class="fixpair">
+<div class="bad"><b>Broken</b><pre><code>Def Twice(n As Number) As Number
+    Take m           ' Take in a call-style body
+    m * 2</code></pre></div>
+<div class="good"><b>Fixed</b><pre><code>Def Twice(n As Number) As Number
+    n * 2
+
+Def Twice2 ( Number -- Number )
+    Take n           ' Take at home, stack-style
+    n * 2</code></pre></div>
+</div>
+</div>
+
+<h3 id="select">Select Case and patterns</h3>
+
+<div class="err">
+<p class="emsg"><code>expected SELECT CASE expression</code>
+<code>malformed SELECT CASE expression</code>
+<code>SELECT CASE needs at least one CASE</code>
+<code>expected indented CASE clauses after SELECT CASE</code>
+<code>expected CASE inside SELECT CASE</code>
+<code>malformed CASE</code></p>
+<p>The <code>Select Case</code> grammar: a scrutinee on the header line,
+then indented <code>Case</code> clauses — values, any-of lists, ranges,
+comparisons — each with its own indented body.</p>
+<div class="fixpair">
+<div class="bad"><b>Broken</b><pre><code>Def Grade(s As Number) As String
+    Select Case          ' scrutinee missing
+        Case Is &gt;= 90
+            "A"
+        "B"              ' body without a Case</code></pre></div>
+<div class="good"><b>Fixed</b><pre><code>Def Grade(s As Number) As String
+    Select Case s
+        Case Is &gt;= 90
+            "A"
+        Case 70 To 89
+            "B"
+        Case Else
+            "F"</code></pre></div>
+</div>
+</div>
+
+<div class="err">
+<p class="emsg"><code>CASE after CASE ELSE</code>
+<code>ELSE must be alone on its line</code></p>
+<p><code>Case Else</code> is the default and comes last; nothing follows
+it, and <code>Else</code> shares its line with nothing.</p>
+<div class="fixpair">
+<div class="bad"><b>Broken</b><pre><code>    Select Case n
+        Case Else
+            0
+        Case 1        ' after the default
+            1</code></pre></div>
+<div class="good"><b>Fixed</b><pre><code>    Select Case n
+        Case 1
+            1
+        Case Else
+            0</code></pre></div>
+</div>
+</div>
+
+<div class="err">
+<p class="emsg"><code>incomplete pattern</code>
+<code>pattern expects names or TYPE(...), got '{tok}'</code>
+<code>unknown type '{tok}' in pattern</code>
+<code>{Type} has {n} fields but the pattern names {m}</code>
+<code>malformed CASE pattern</code></p>
+<p>A destructuring <code>Case</code> must name a declared type and bind
+every field — use <code>_</code> for the ones you don't need. Patterns
+nest.</p>
+<div class="fixpair">
+<div class="bad"><b>Broken</b><pre><code>Type Student
+    Name  As String
+    Score As Number
+
+Def Show(s As Student) As String
+    Select Case s
+        Case Student(n)      ' two fields, one name
+            n</code></pre></div>
+<div class="good"><b>Fixed</b><pre><code>Type Student
+    Name  As String
+    Score As Number
+
+Def Show(s As Student) As String
+    Select Case s
+        Case Student(n, _)   ' _ ignores Score
+            n</code></pre></div>
+</div>
+</div>
+
+<h2 id="lint">2. Lint warnings — the build continues</h2>
+<p>Doctrine and flags live in <a href="build.html#linter">The linter</a>:
+warnings go to stderr, never stop a build, and fire only on what the checker
+can prove. Silence them with <code>--no-lint</code>; see coverage with
+<code>--lint-verbose</code>.</p>
+
+<div class="err">
+<p class="emsg"><code>'{name}' shadows field accessor '{Field}' of type '{Type}' — the accessor is unreachable in this scope</code>
+<code>Def '{name}' shadows field accessor '{Field}' of type '{Type}' — the accessor is unreachable</code></p>
+<p>A mid-body <code>Let</code> (or a whole <code>Def</code>) reuses the name
+of a field this program reads by accessor. Inside that scope the accessor
+silently stops working — the program computes a wrong answer, not an error.
+Rename the binding. Parameters named after fields are deliberately allowed;
+only <code>Let</code>s warn.</p>
+<div class="fixpair">
+<div class="bad"><b>Broken</b><pre><code>Type Census
+    Aloft  As Number
+    Landed As Number
+
+Def Report(c As Census) As Number
+    Let landed = 99        ' shadows the accessor
+    Landed(c) + landed     ' Landed no longer reads c</code></pre></div>
+<div class="good"><b>Fixed</b><pre><code>Type Census
+    Aloft  As Number
+    Landed As Number
+
+Def Report(c As Census) As Number
+    Let bonus = 99
+    Landed(c) + bonus</code></pre></div>
+</div>
+</div>
+
+<div class="err">
+<p class="emsg"><code>Def '{name}' ({site}) collides with field accessor '{Field}' of type '{Type}' — the word wins and the accessor is unreachable; rename one of them</code>
+<code>machine word '{name}' … collides with field accessor …</code></p>
+<p>A word and a record field share one case-folded name, and the program
+writes that word somewhere — every mention resolves to the word, never the
+field. Rename one side. (str's decimal formatter is spelled
+<code>ToFixed</code> for exactly this reason: mungo owns a
+<code>Fixed</code> field.)</p>
+<div class="fixpair">
+<div class="bad"><b>Broken</b><pre><code>Type Crate
+    Weight As Number
+    Sealed As Boolean
+
+Def Sealed(c As Crate) As String   ' the word wins
+    "STAMPED"</code></pre></div>
+<div class="good"><b>Fixed</b><pre><code>Type Crate
+    Weight As Number
+    Sealed As Boolean
+
+Def SealStamp(c As Crate) As String
+    Ifte(Sealed(c), "STAMPED", "OPEN")</code></pre></div>
+</div>
+</div>
+
+<div class="err">
+<p class="emsg"><code>Def '{name}' leaves {n} values on the stack — a Def yields one value, or none</code></p>
+<p>The body provably pushes more than one value. The usual cause is an
+expression on its own line that was meant to combine with the next — every
+path through a <code>Def</code> must net exactly one value (a value Def) or
+zero (a void one).</p>
+<div class="fixpair">
+<div class="bad"><b>Broken</b><pre><code>Def Total(a As Number, b As Number) As Number
+    a
+    b            ' two values left behind</code></pre></div>
+<div class="good"><b>Fixed</b><pre><code>Def Total(a As Number, b As Number) As Number
+    a + b        ' one value out</code></pre></div>
+</div>
+</div>
+
+<div class="err">
+<p class="emsg"><code>Def '{name}' reaches {n} value(s) below its own parameters — something consumed more than it was given</code></p>
+<p>Something in the body eats more values than the parameters supplied —
+typically a word that silently resolved to something with a different arity
+than you meant (an accessor where a local was intended, a two-argument word
+called with one).</p>
+<div class="fixpair">
+<div class="bad"><b>Broken</b><pre><code>Def Third ( Number Number -- Number )
+    Drop
+    Drop
+    Drop        ' three drops, two values given</code></pre></div>
+<div class="good"><b>Fixed</b><pre><code>Def Third ( Number Number Number -- Number )
+    Drop
+    Drop
+    Drop        ' the signature now supplies three</code></pre></div>
+</div>
+</div>
+
+<div class="err">
+<p class="emsg"><code>the branches of this IF disagree — one nets {n} value(s), the other {m}; every branch must leave the same number of values</code></p>
+<p>One arm yields a value and the other doesn't. Both arms of an expression
+<code>If</code> must produce; both arms of a void one must not. A void base
+case "padded" with a spare call is this warning's classic cause.</p>
+<div class="fixpair">
+<div class="bad"><b>Broken</b><pre><code>Def Fee(vip As Boolean) As Number
+    If vip Then
+        0
+    Else
+        Print("FULL PRICE")   ' prints, yields nothing</code></pre></div>
+<div class="good"><b>Fixed</b><pre><code>Def Fee(vip As Boolean) As Number
+    If vip Then
+        0
+    Else
+        9</code></pre></div>
+</div>
+</div>
+
+<div class="err">
+<p class="emsg"><code>a quotation reaches '{op}', which needs a number — an operator called function-style is a section; write `a Op b` (infix) or parenthesize the operand</code>
+<code>IF's condition is a quotation — …</code>
+<code>IFTE's condition is a quotation — …</code></p>
+<p>Calling an operator like a function — <code>Mod(a, 2)</code> — is legal
+syntax, but it builds an operator <em>section</em> (a function value), not a
+result. So does a unary minus before parentheses. The value then reaches a
+slot that needed a number or boolean. Write the operator infix.</p>
+<div class="fixpair">
+<div class="bad"><b>Broken</b><pre><code>Def IsOdd(n As Number) As Boolean
+    Mod(n, 2) = 1        ' a section, not a number
+
+Def Wave(z As Number) As Number
+    Sin(-(z * z))        ' section of binary minus</code></pre></div>
+<div class="good"><b>Fixed</b><pre><code>Def IsOdd(n As Number) As Boolean
+    n Mod 2 = 1          ' infix
+
+Def Wave(z As Number) As Number
+    Sin(0 - z * z)       ' subtract from zero</code></pre></div>
+</div>
+</div>
+
+<div class="err">
+<p class="emsg"><code>bare name '{name}' was passed as a function value, but nothing defines it — a typo is auto-quoted silently in argument position</code></p>
+<p>A bare name in argument position is passed as a function, not called —
+that's how <code>Map(xs, Square)</code> works — which means a typo there
+becomes a quotation of nothing instead of an error. Check the spelling.</p>
+<div class="fixpair">
+<div class="bad"><b>Broken</b><pre><code>Def Double(n As Number) As Number
+    n * 2
+
+Def Main()
+    Print(Map({ 1, 2 }, Duoble))   ' typo, quoted</code></pre></div>
+<div class="good"><b>Fixed</b><pre><code>Def Double(n As Number) As Number
+    n * 2
+
+Def Main()
+    Print(Map({ 1, 2 }, Double))</code></pre></div>
+</div>
+</div>
+
+<div class="err">
+<p class="emsg"><code>this line begins with '{And/Or}' — a wrapped condition must be parenthesized to continue the previous line</code></p>
+<p>Lines continue only inside open brackets. A condition wrapped without
+them parses as a <em>new</em> statement whose infix grabs a stray stack
+value, and the wrong answer surfaces far away. Parenthesize the whole
+condition.</p>
+<div class="fixpair">
+<div class="bad"><b>Broken</b><pre><code>Def Ok(a As Number, b As Number) As Boolean
+    a &gt; 0
+    And b &gt; 0      ' a fresh statement, not a wrap</code></pre></div>
+<div class="good"><b>Fixed</b><pre><code>Def Ok(a As Number, b As Number) As Boolean
+    (a &gt; 0
+     And b &gt; 0)    ' brackets carry the wrap</code></pre></div>
+</div>
+</div>
+
+<div class="err">
+<p class="emsg"><code>'{callee}' matches this parameter against sum constructors, but a number/string/boolean can never match one — this call always falls to Case Else</code></p>
+<p>The callee <code>Select Case</code>s that parameter over a sum type. A
+literal can never equal a constructor, so the dispatch silently takes
+<code>Case Else</code> — no error, just the wrong arm, forever. Pass the
+constructor.</p>
+<div class="fixpair">
+<div class="bad"><b>Broken</b><pre><code>Type Speed = Slow | Fast
+
+Def Limit(s As Speed) As Number
+    Select Case s
+        Case Slow
+            30
+        Case Else
+            70
+
+Def Main()
+    Print(Limit(1))     ' always 70</code></pre></div>
+<div class="good"><b>Fixed</b><pre><code>Type Speed = Slow | Fast
+
+Def Limit(s As Speed) As Number
+    Select Case s
+        Case Slow
+            30
+        Case Else
+            70
+
+Def Main()
+    Print(Limit(Slow()))   ' 30</code></pre></div>
+</div>
+</div>
+
+<div class="err">
+<p class="emsg"><code>top-level Let '{name}' in a namespaced include shares its name with another namespace — resolution here is known to misfire; move the value into a Def</code></p>
+<p>File-scope <code>Let</code>s under <code>Include … As</code> resolve
+unreliably when another namespace claims the same bare name. A
+<code>Def</code> holding the value is immune.</p>
+<div class="fixpair">
+<div class="bad"><b>Broken</b><pre><code>' colors.shoddy — included As C
+Let limit = 16
+
+' sizes.shoddy — included As S
+Let limit = 100</code></pre></div>
+<div class="good"><b>Fixed</b><pre><code>' colors.shoddy — included As C
+Def Limit() As Number
+    16
+
+' sizes.shoddy — included As S
+Def Limit() As Number
+    100</code></pre></div>
+</div>
+</div>
+
+<h2 id="runtime">3. Runtime errors — the program stops</h2>
+
+<h3 id="rt-types">Types and the stack</h3>
+
+<div class="err">
+<p class="emsg"><code>{who} expects a NUMBER, got {type}</code>
+<code>{who} expects a STRING, got {type}</code>
+<code>{who} expects a BOOLEAN, got {type} (booleans are not numbers in Shoddy)</code>
+<code>{who} expects a LIST or ARRAY, got {type}</code>
+<code>{who} expects a QUOTATION, got {type}</code>
+<code>{who} expects a QUOTATION or LIST, got {type}</code>
+<code>{who} expects a RECORD, got {type}</code>
+<code>{who} expects a SCRIBBLER, got {type}</code></p>
+<p>The named word popped the wrong kind of value. Two causes account for
+almost all of them: a number used where a boolean belongs (they are distinct
+types in Shoddy — <code>If n Then</code> is not "if nonzero"), and a
+quotation arriving where a number belongs, which usually means an operator
+was called function-style — see the section warning above.</p>
+<div class="fixpair">
+<div class="bad"><b>Broken</b><pre><code>Def Main()
+    Let n = 3
+    If n Then            ' a number is not a boolean
+        Print("YES")</code></pre></div>
+<div class="good"><b>Fixed</b><pre><code>Def Main()
+    Let n = 3
+    If n &lt;&gt; 0 Then       ' say the comparison
+        Print("YES")</code></pre></div>
+</div>
+</div>
+
+<div class="err">
+<p class="emsg"><code>stack underflow</code></p>
+<p>A word needed more values than the stack held — in stack-style code, an
+arity slip. (In call-style code the linter's depth checks usually say this
+earlier, with a better message.)</p>
+<div class="fixpair">
+<div class="bad"><b>Broken</b><pre><code>Def Sum2 ( Number Number -- Number )
+    + +          ' second + has one value, needs two</code></pre></div>
+<div class="good"><b>Fixed</b><pre><code>Def Sum2 ( Number Number -- Number )
+    +</code></pre></div>
+</div>
+</div>
+
+<div class="err">
+<p class="emsg"><code>unknown word: {name}</code> <em>(at runtime)</em></p>
+<p>The runtime backstop for the weave-time error of the same name. Reaching
+it at runtime means the program was woven before the linter existed —
+rebuild it and the weave will point at the site instead.</p>
+</div>
+
+<div class="err">
+<p class="emsg"><code>{Type} has no field {name}</code>
+<code>WITH expects a RECORD, got {type}</code></p>
+<p>A field read, or a <code>With</code>, met a value of the wrong record
+type — usually the wrong record reached the site, not the wrong field
+name.</p>
+<div class="fixpair">
+<div class="bad"><b>Broken</b><pre><code>Type Point
+    X As Number
+    Y As Number
+
+Type Size
+    W As Number
+    H As Number
+
+Def Main()
+    Let s = Size(3, 4)
+    Print(X(s))         ' a Size has no X</code></pre></div>
+<div class="good"><b>Fixed</b><pre><code>Type Point
+    X As Number
+    Y As Number
+
+Type Size
+    W As Number
+    H As Number
+
+Def Main()
+    Let s = Size(3, 4)
+    Print(W(s))</code></pre></div>
+</div>
+</div>
+
+<div class="err">
+<p class="emsg"><code>ASSERTION FAILED: {msg}</code>
+<code>SELECT CASE: no matching CASE</code>
+<em>… and any text your own <code>Error("…")</code> prints</em></p>
+<p><code>Assert(cond, "MSG")</code> failed; a <code>Select Case</code> with
+no <code>Case Else</code> met a value no arm matched; or the program called
+<code>Error</code> itself. The library speaks through the same channel —
+<code>SPLIT: EMPTY SEPARATOR</code>, <code>BOOL: '{s}' is not TRUE or
+FALSE</code>, <code>MPS: NO OBJECTIVE (N) ROW</code> — each documented on
+its <a href="machines/index.html">machine's page</a>.</p>
+<div class="fixpair">
+<div class="bad"><b>Broken</b><pre><code>Def Name(k As Number) As String
+    Select Case k
+        Case 1
+            "ONE"
+        Case 2
+            "TWO"
+' Name(3) aborts: no matching CASE</code></pre></div>
+<div class="good"><b>Fixed</b><pre><code>Def Name(k As Number) As String
+    Select Case k
+        Case 1
+            "ONE"
+        Case 2
+            "TWO"
+        Case Else
+            "MANY"</code></pre></div>
+</div>
+</div>
+
+<h3 id="rt-math">Arithmetic and domain</h3>
+
+<div class="err">
+<p class="emsg"><code>division by zero</code> <code>MOD by zero</code>
+<code>WRAP by zero</code> <code>invalid exponentiation</code>
+<code>SQR of negative number</code>
+<code>LOG of non-positive number</code> <code>LOG10 of non-positive number</code>
+<code>ASIN outside [-1, 1]</code> <code>ACOS outside [-1, 1]</code>
+<code>GAMMAP: A must be positive</code> <code>GAMMAP: X must be non-negative</code>
+<code>BETAI: A and B must be positive</code> <code>BETAI: X outside [0, 1]</code></p>
+<p>Out-of-domain mathematics. Guard the argument before the call — division
+and <code>Mod</code> by zero, roots of negatives, and logs of zero are
+questions with no numeric answer, and Shoddy stops rather than inventing
+one.</p>
+<div class="fixpair">
+<div class="bad"><b>Broken</b><pre><code>Def Share(total As Number, people As Number) As Number
+    total / people        ' people may be 0</code></pre></div>
+<div class="good"><b>Fixed</b><pre><code>Def Share(total As Number, people As Number) As Number
+    If people = 0 Then
+        0
+    Else
+        total / people</code></pre></div>
+</div>
+</div>
+
+<div class="err">
+<p class="emsg"><code>VAL: '{s}' is not a number</code></p>
+<p><code>Val</code> is strict by design — garbage in is a stop, not a zero.
+Guard with <code>IsNumeric</code>, or use <code>ValOr(s, fallback)</code>
+when a default is the right answer.</p>
+<div class="fixpair">
+<div class="bad"><b>Broken</b><pre><code>Def Main()
+    Let age = Val(Input("AGE? "))   ' "ten" aborts</code></pre></div>
+<div class="good"><b>Fixed</b><pre><code>Def AskAge() As Number
+    Let s = Input("AGE? ")
+    If IsNumeric(s) Then
+        Val(s)
+    Else
+        AskAge()          ' re-ask until it parses</code></pre></div>
+</div>
+</div>
+
+<h3 id="rt-seq">Sequences and strings</h3>
+
+<div class="err">
+<p class="emsg"><code>FIRST of empty sequence</code>
+<code>REST of empty list</code></p>
+<p>The base case goes before the destructuring — guard with
+<code>IsEmpty</code>, and recursion's shape follows.</p>
+<div class="fixpair">
+<div class="bad"><b>Broken</b><pre><code>Def Sum(xs As List Of Number) As Number
+    First(xs) + Sum(Rest(xs))   ' no floor</code></pre></div>
+<div class="good"><b>Fixed</b><pre><code>Def Sum(xs As List Of Number) As Number
+    If IsEmpty(xs) Then
+        0
+    Else
+        First(xs) + Sum(Rest(xs))</code></pre></div>
+</div>
+</div>
+
+<div class="err">
+<p class="emsg"><code>NTH: index {k} out of range 1..{n}</code>
+<code>SETNTH: index {k} out of range 1..{n}</code>
+<code>DIM: negative size</code></p>
+<p>Shoddy indexes from 1, inclusive at both ends — the classic off-by-one is
+asking for index 0, or for <code>Length(xs)</code> + 1.</p>
+<div class="fixpair">
+<div class="bad"><b>Broken</b><pre><code>Def Main()
+    Let xs = { "A", "B", "C" }
+    Print(Nth(xs, 0))     ' there is no zeroth</code></pre></div>
+<div class="good"><b>Fixed</b><pre><code>Def Main()
+    Let xs = { "A", "B", "C" }
+    Print(Nth(xs, 1))     ' first is 1
+    Print(Nth(xs, Length(xs)))   ' last is Length</code></pre></div>
+</div>
+</div>
+
+<div class="err">
+<p class="emsg"><code>MAP quotation must leave exactly one value</code>
+<code>FILTER quotation must leave exactly one value</code></p>
+<p>The per-element function must yield exactly one value —
+<code>Print</code> yields none, a stray pair yields two.</p>
+<div class="fixpair">
+<div class="bad"><b>Broken</b><pre><code>Def Main()
+    Print(Map({ 1, 2 }, Fn(n) =&gt; Print(n)))</code></pre></div>
+<div class="good"><b>Fixed</b><pre><code>Def Main()
+    Each({ 1, 2 }, Fn(n) =&gt; Print(n))  ' effects: Each
+    Print(Map({ 1, 2 }, Fn(n) =&gt; n * 2))</code></pre></div>
+</div>
+</div>
+
+<div class="err">
+<p class="emsg"><code>list element must yield exactly one value</code>
+<code>{who}: each list item must yield exactly one value</code></p>
+<p>Each element of a list literal is an expression that must produce
+exactly one value — a <code>Print</code> produces none.</p>
+<div class="fixpair">
+<div class="bad"><b>Broken</b><pre><code>Def Main()
+    Let xs = { 1, Print("TWO"), 3 }</code></pre></div>
+<div class="good"><b>Fixed</b><pre><code>Def Main()
+    Let xs = { 1, 2, 3 }
+    Print("TWO")</code></pre></div>
+</div>
+</div>
+
+<div class="err">
+<p class="emsg"><code>SORT expects all NUMBERs or all STRINGs</code>
+<code>{op} expects two NUMBERs or two STRINGs</code>
+<code>CONCAT expects two LISTs or two ARRAYs</code>
+<code>ASC of empty string</code></p>
+<p>Mixed or mismatched operands — comparisons (<code>&lt;</code>,
+<code>&gt;</code>, <code>&lt;=</code>, <code>&gt;=</code>) raise the same
+complaint when the two sides differ in kind. Sort one kind at a time,
+compare like with like, and give <code>Asc</code> at least one
+character.</p>
+<div class="fixpair">
+<div class="bad"><b>Broken</b><pre><code>Def Main()
+    Print(Sort({ 3, "TWO", 1 }))</code></pre></div>
+<div class="good"><b>Fixed</b><pre><code>Def Main()
+    Print(Sort({ 3, 2, 1 }))
+    Print(Sort({ "C", "B", "A" }))</code></pre></div>
+</div>
+</div>
+
+<h3 id="rt-io">Files, records, network, and devices</h3>
+
+<div class="err">
+<p class="emsg"><code>READFILE: cannot open '{path}'</code>
+<code>BOPEN: cannot open '{path}'</code>
+<code>DELETEFILE: cannot delete '{path}'</code>
+<code>BOPEN: too many open files</code></p>
+<p>Path, permission, or a leak — binary files stay open until
+<code>BClose</code>. Guard existence with <code>FileExists</code> when
+absence is an ordinary case.</p>
+<div class="fixpair">
+<div class="bad"><b>Broken</b><pre><code>Def Main()
+    Print(ReadFile("scores.txt"))   ' may not exist</code></pre></div>
+<div class="good"><b>Fixed</b><pre><code>Def Main()
+    If FileExists("scores.txt") Then
+        Print(ReadFile("scores.txt"))
+    Else
+        Print("NO SCORES YET")</code></pre></div>
+</div>
+</div>
+
+<div class="err">
+<p class="emsg"><code>GETNUM: read past end of file</code>
+<code>GETBOOL: read past end of file</code>
+<code>GETSTR: read past end of file</code>
+<code>SEEK: position must be &gt;= 1</code>
+<code>GETSTR: field length must be &gt;= 1</code>
+<code>PUTSTR: field length must be &gt;= 1</code>
+<code>PUTSTR: string of {n} bytes exceeds the {len}-byte field</code></p>
+<p>Binary record I/O is exact: fixed field widths, 1-based positions, and
+the file ends where it ends. Let <a href="machines/recio.html">recio</a> do
+the offset arithmetic — <code>RecSeek</code>, <code>GetRec</code>,
+<code>RecCount</code> — instead of hand-rolled seeks.</p>
+<div class="fixpair">
+<div class="bad"><b>Broken</b><pre><code>Def ReadAll(f As Number)
+    Print(GetNum(f))
+    ReadAll(f)          ' reads past the end</code></pre></div>
+<div class="good"><b>Fixed</b><pre><code>Def ReadAll(f As Number, k As Number, n As Number)
+    If k &lt;= n Then
+        Print(GetNum(f))
+        ReadAll(f, k + 1, n)
+' count records first: RecCount(f, size)</code></pre></div>
+</div>
+</div>
+
+<div class="err">
+<p class="emsg"><code>{word}: bad file handle</code>
+<code>{word}: bad socket handle</code></p>
+<p>A number reached a file or socket word that no <code>BOpen</code> /
+<code>TcpConnect</code> ever returned — or one that was already closed.
+Thread the handle from open to close, and close exactly once.</p>
+<div class="fixpair">
+<div class="bad"><b>Broken</b><pre><code>Def Main()
+    Let f = BOpen("data.bin")
+    BClose(f)
+    Print(GetNum(f))     ' used after close</code></pre></div>
+<div class="good"><b>Fixed</b><pre><code>Def Main()
+    Let f = BOpen("data.bin")
+    Print(GetNum(f))
+    BClose(f)            ' close last</code></pre></div>
+</div>
+</div>
+
+<div class="err">
+<p class="emsg"><code>Input: cannot read the console while a scribbler window is open — read keystrokes with ScribblerWait or ScribblerPoll.</code>
+<code>InputLine: cannot read the console while a scribbler window is open …</code>
+<code>InKey: cannot read the console while a scribbler window is open …</code></p>
+<p>The console and a scribbler window are separate input channels routed by
+OS focus — a program with a window open reads keys from the window's
+events, not the console prompt.</p>
+<div class="fixpair">
+<div class="bad"><b>Broken</b><pre><code>Def Loop(sc As Scribbler) As Scribbler
+    Let cmd = Input("&gt; ")   ' window is open</code></pre></div>
+<div class="good"><b>Fixed</b><pre><code>Def Loop(sc As Scribbler) As Scribbler
+    Select Case NextEvent(sc)
+        Case ScribblerKeyDown(key, mods, at)
+            Loop(OnKey(sc, key))
+        Case Else
+            Loop(sc)</code></pre></div>
+</div>
+</div>
+
+<div class="err">
+<p class="emsg"><code>{word}: network is disabled — run the mill with --allow-net</code></p>
+<p>The TCP builtins are a gated capability, off by default. Not a code fix —
+a command-line one.</p>
+<div class="fixpair">
+<div class="bad"><b>Broken</b><pre><code>mill run chat.shoddy</code></pre></div>
+<div class="good"><b>Fixed</b><pre><code>mill run --allow-net chat.shoddy</code></pre></div>
+</div>
+</div>
+
+<div class="err">
+<p class="emsg"><code>TCPCONNECT: '{host}:{port}' timed out</code>
+<code>TCPCONNECT: cannot reach '{host}:{port}'</code>
+<code>TCPLISTEN: cannot bind {host}:{port}</code>
+<code>TCPLISTEN: '{host}' is not an IP address (try "127.0.0.1")</code>
+<code>TCPSEND: send timed out</code>
+<code>TCPRECV: byte count must be &gt;= 1</code>
+<code>TCPSEND / TCPRECV: {socket error}</code>
+<code>TCPACCEPT: too many open sockets</code></p>
+<p>Ordinary socket weather, reported with the peer and port: the far side
+isn't listening, the port is taken, the hostname needed to be an address, or
+sockets leaked without <code>TcpClose</code>.</p>
+</div>
+
+<div class="err">
+<p class="emsg"><code>ScribblerOpen: no window backend — scribbler programs require `mill run`</code>
+<code>ScribblerWait: no window backs this scribbler — the wait would never wake</code>
+<code>ScribblerOpen: size must be at least 1x1, got {w}x{h}</code></p>
+<p>Windows exist only under <code>mill run</code> (and the editor's
+debugger). A woven program run with bare <code>dotnet</code> has no window
+backend — weave console programs, run graphical ones.</p>
+<div class="fixpair">
+<div class="bad"><b>Broken</b><pre><code>mill weave sketch.shoddy
+dotnet sketch.dll        ' no window backend</code></pre></div>
+<div class="good"><b>Fixed</b><pre><code>mill run sketch.shoddy</code></pre></div>
+</div>
+</div>
+
+<div class="err">
+<p class="emsg"><code>Sound: frequency must be positive, got {f}</code>
+<code>Sound: duration must be &gt;= 0 ms, got {ms}</code>
+<code>SoundQueue: frequency must be positive (or 0 for a rest), got {f}</code>
+<code>SoundQueue: duration must be &gt;= 0 ms, got {ms}</code>
+<code>SoundQueue: more than {n} minutes queued ahead on channel {ch} — feed long scores incrementally from Tick events</code>
+<code>SoundGain: volume must be 0..1, got {v}</code>
+<code>SoundWave: wave must be 0 (square), 1 (triangle) or 2 (sine), got {w}</code>
+<code>NoteOn: frequency must be positive, got {f}</code>
+<code>{who}: channel must be 1..8, got {c}</code></p>
+<p>Sound argument validation. Frequencies in hertz, positive (a
+<code>SoundQueue</code> frequency of 0 is a rest); gain between 0 and 1; and
+the queue is capped so a runaway score can't buffer unbounded audio.</p>
+<div class="fixpair">
+<div class="bad"><b>Broken</b><pre><code>Def Main()
+    SoundGain(1, 3)      ' 0..1, not 0..10
+    NoteOn(1, -440)</code></pre></div>
+<div class="good"><b>Fixed</b><pre><code>Def Main()
+    SoundGain(1, 0.3)
+    NoteOn(1, 440)</code></pre></div>
+</div>
+</div>
+
+<div class="err">
+<p class="emsg"><code>internal: cannot weave node {t}</code>
+<code>internal: generated C# failed to compile (source dumped to {path})</code></p>
+<p>Anything beginning <code>internal:</code> is a toolchain bug, not a
+program bug — the dump path in the second holds the evidence. Please report
+either one.</p>
+</div>
+
+<p>The three shapes and the golden-suite testing rule live on
+<a href="build.html#testing">the toolchain page</a>; the linter's doctrine in
+<a href="build.html#linter">The linter</a>. Machine-specific stops — what
+makes <code>Split</code> or <code>MoneyVal</code> or
+<code>LoadMpsModel</code> give up — are on each
+<a href="machines/index.html">machine's own page</a>.</p>
+
+<footer>Named for the shoddy mills of the West Riding: Useless Things Made
+Useful Through Skill (<a href="heritage.html">the full story</a>).<br>
+&copy; 2026 Stephen Vincent Foster</footer>
+</div>
+</body>
+</html>

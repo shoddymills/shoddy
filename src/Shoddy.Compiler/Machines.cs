@@ -14,6 +14,7 @@ public sealed class MachineInfo
     public required string DllPath;
     public required string ClassName;   // e.g. "Shoddy.Machines.Seq"
     public readonly Dictionary<string, string> Defs = new();   // name -> method
+    public readonly Dictionary<string, (int Pops, int Pushes)> DefEffects = new();
     public readonly Dictionary<string, (string Field, TypeDef Shape)> Types = new();
 
     public static MachineInfo From(Assembly asm, string dllPath)
@@ -27,7 +28,11 @@ public sealed class MachineInfo
             ClassName = m.ClassName,
         };
         foreach (var d in asm.GetCustomAttributes<ShoddyDefAttribute>())
+        {
             info.Defs[d.Name] = d.Method;
+            if (d.Pops >= 0 && d.Pushes >= 0)
+                info.DefEffects[d.Name] = (d.Pops, d.Pushes);
+        }
         foreach (var t in asm.GetCustomAttributes<ShoddyTypeAttribute>())
         {
             var shape = new TypeDef { Name = t.Name, Disp = t.Disp };
@@ -64,8 +69,8 @@ public sealed class MachineSet
     /// spliced file's is; the Lexer reports the AS here instead.
     ///
     /// This is what makes two machines that export the same word usable in
-    /// one program. Unqualified, clock and money both export PAD2 (as do
-    /// net and turtle with CLOSE) and including both is a hard error.</summary>
+    /// one program: unqualified, a shared export name (net and turtle both
+    /// export CLOSE) makes including both a hard error.</summary>
     readonly Dictionary<string, string> qualByDll = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>The Lexer's onQualified hook: this machine's include said
@@ -101,6 +106,20 @@ public sealed class MachineSet
         Assembly asm = Assembly.LoadFrom(dllPath);
         if (!loaded.Add(asm.GetName().Name!)) return;
         Machines.Add(MachineInfo.From(asm, dllPath));
+        // Manifest-declared dependencies first: a pure re-export Include
+        // (isam's seq) has no code reference for Roslyn to keep, so the
+        // assembly-reference walk below cannot see it.
+        foreach (var dep in asm.GetCustomAttributes<ShoddyDependsOnAttribute>())
+        {
+            if (loaded.Contains(dep.AssemblyName)) continue;
+            string dpath = Path.Combine(Path.GetDirectoryName(dllPath)!,
+                                        dep.AssemblyName + ".dll");
+            if (!File.Exists(dpath))
+                throw new ShoddyError(0,
+                    $"machine {asm.GetName().Name} declares dependency " +
+                    $"{dep.AssemblyName}, but {dpath} is missing");
+            LoadRecursive(dpath);
+        }
         foreach (AssemblyName rn in asm.GetReferencedAssemblies())
         {
             if (!rn.Name!.StartsWith("Shoddy.Machines.", StringComparison.Ordinal))
@@ -128,6 +147,8 @@ public sealed class MachineSet
                     throw new ShoddyError(0, $"duplicate definition of {name} across machines" +
                         (q == null ? " — include one of them under a namespace (AS)" : ""));
                 prog.ExternalDefs[name] = $"{m.ClassName}.{method}";
+                if (m.DefEffects.TryGetValue(bare, out (int, int) fx))
+                    prog.ExternalEffects[name] = fx;
                 prog.NoteBare(bare, name);
             }
             foreach ((string bare, (string field, TypeDef shape)) in m.Types)

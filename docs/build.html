@@ -12,7 +12,7 @@
 <div class="topbar"><div class="inner">
   <a class="phase" href="index.html">Shoddy · Documentation</a>
   <span class="spacer"></span>
-  <nav class="docnav" aria-label="Documentation"><a href="heritage.html">Story</a><a href="guide.html">Guide</a><a href="quickref.html">Reference</a><a href="machines/index.html">Machines</a><a href="mills/index.html">Mills</a><a href="stack.html">Stack</a><a href="spec.html">Spec</a><a href="setup.html">Setup</a><a href="vscode.html">VS Code</a><span class="here">Toolchain</span></nav>
+  <nav class="docnav" aria-label="Documentation"><a href="heritage.html">Story</a><a href="guide.html">Guide</a><a href="quickref.html">Reference</a><a href="machines/index.html">Machines</a><a href="mills/index.html">Mills</a><a href="stack.html">Stack</a><a href="spec.html">Spec</a><a href="setup.html">Setup</a><a href="vscode.html">VS Code</a><span class="here">Toolchain</span><a href="errors.html">Errors</a></nav>
 </div></div>
 <div class="wrap">
 <header class="mast">
@@ -115,9 +115,44 @@ re-exported, colliding with the real machine downstream.</p>
 prints the generated C#. Self-tail-recursive defs show
 <code>continue;  // self tail call — the loop is the TCO</code>.</p>
 </li>
+<li><p><strong>Stale DLLs rebuild themselves.</strong> When a machine's
+<code>.shoddy</code> source (or any machine DLL it depends on) is newer than its
+DLL, the mill rebuilds it in place before loading — with a one-line note on
+stderr. An edited machine can no longer be silently shadowed by yesterday's
+build.</p>
+</li>
 </ul>
 
-<h2 id="testing">5. Errors and testing</h2>
+<h2 id="linter">5. The linter</h2>
+<p>Every <code>mill run</code>, <code>weave</code>, and <code>machine</code> lints the parsed
+program before anything executes. The doctrine: <strong>warnings, never
+errors</strong> — on stderr, never stdout, never the exit code — and <strong>only on
+the provable</strong>. A <code>Def</code> the checker cannot model (one that reaches
+<code>Call</code> on a quotation of unknown effect, say) is skipped, not guessed;
+<code>--lint-verbose</code> prints how many <code>Def</code>s were checked so coverage
+stays visible. <code>--no-lint</code> (or <code>SHODDY_LINT=0</code>) silences the
+warnings.</p>
+<p>What it checks: each <code>Def</code>'s net stack effect (one value, or none);
+that the branches of every <code>If</code> and <code>Select Case</code> arm agree; that
+call sites have the depth their callee needs — machine manifests carry each
+word's effect, so precompiled calls are checked too; that a <code>Let</code> does
+not shadow a field accessor the program actually reads; that an operator
+called function-style (a <em>section</em>) does not flow into a numeric or boolean
+slot; that a bare name auto-quoted in argument position resolves to
+<em>something</em>; that a line does not begin with a stray <code>And</code>/<code>Or</code>;
+and that a literal is not matched against sum-type constructors it can never
+equal.</p>
+<p>The one <strong>error</strong>: an unknown word. Nothing legitimate survives
+resolution without a meaning, and the same program would die at runtime with
+less context — so the weave stops, and no flag overrides it.</p>
+<p>Every message the linter can print — alongside every weave and runtime
+error — is cataloged with its cause and fix on
+<a href="errors.html">the errors page</a>.</p>
+
+<h2 id="testing">6. Errors and testing</h2>
+<p>(The full catalog — every message, its cause, its fix — is
+<a href="errors.html">the errors page</a>; this section is the shape of the
+system.)</p>
 <p>Errors print to stderr and exit 1, in one of three shapes. A compile-time
 error that can point across an <code>Include</code> boundary — a duplicate
 definition, a shadowed builtin, a bad <code>Def</code> header — names the
@@ -133,36 +168,33 @@ constitution. After touching anything under <code>src/</code>, run
 the five goldens compiled and run in-process, the machines path, and the
 TCO check, all byte-identical. Green means the mill is honest.</p>
 
-<p>One weave-time warning is available, and it is off by default. Declaring a
-<code>Type</code> puts a field accessor in scope everywhere the type is
-visible, often from another file — and an accessor loses every naming contest,
-because a word resolves through local binding, top-level <code>Let</code>,
-program <code>Def</code>, machine <code>Def</code>, type constructor, builtin,
-and only then accessor. So a parameter named <code>Name</code> does not read
-like a shadowing declaration, it reads like a parameter, and the accessor it
-hides simply stops being reachable in that scope. (This chain decides what a
-word <em>means</em> once declarations are in place; how a name finds its
-declaration across namespaces is the separate resolution described in
+<p>The subtlest warning deserves its own explanation: accessor shadowing.
+Declaring a <code>Type</code> puts a field accessor in scope everywhere the
+type is visible, often from another file — and an accessor loses every naming
+contest, because a word resolves through local binding, top-level
+<code>Let</code>, program <code>Def</code>, machine <code>Def</code>, type
+constructor, builtin, and only then accessor. So a mid-body
+<code>Let landed = …</code> does not read like a shadowing declaration, it
+reads like a variable — and the accessor it hides simply stops being reachable
+in that scope. (This chain decides what a word <em>means</em> once
+declarations are in place; how a name finds its declaration across namespaces
+is the separate resolution described in
 <a href="spec.html#namespaces">spec §13.1</a>.) Nothing else catches this:
-annotations are runtime-only, so there is no check at weave time, and the
-shadowing name almost always has the type the accessor would have returned, so
-there is no error at run time either. The program just computes the wrong
-answer. Set <code>SHODDY_LINT</code> to anything to hear about it:</p>
-<pre><code>SHODDY_LINT=1 ./build.sh run mill.shoddy      # Unix
-$env:SHODDY_LINT=1; .\build.ps1 run mill.shoddy   # Windows
-
-mill.shoddy:5: warning: 'NAME' shadows field accessor 'Name'
-    of type 'Player' — the accessor is unreachable in this scope</code></pre>
-<p>These are warnings, never errors: they go to stderr so stdout stays the
-program's, and they never stop a build. Only accessors are reported —
-shadowing a builtin or an ordinary <code>Def</code> is legitimate and common.
-Two things are deliberately quiet. A one-field type is a union variant
-carrying a payload — <code>Died(Msg)</code>, <code>KNumeric(N)</code> — whose
-payload is read by pattern matching rather than by calling the accessor, and
-<code>n</code>, <code>msg</code>, <code>id</code> are names any program wants
-for a parameter; warning on them would bury the records, which is where the
-damage actually happens. And a namespaced accessor is not reachable by the
-bare field name in the first place, so shadowing that name costs nothing.</p>
+annotations are runtime-only, and the shadowing name almost always has the
+type the accessor would have returned, so there is no error at run time
+either. The program just computes the wrong answer.</p>
+<pre><code>mill.shoddy:5: warning: 'LANDED' shadows field accessor 'Landed'
+    of type 'Census' — the accessor is unreachable in this scope</code></pre>
+<p>Three things are deliberately quiet. A <em>parameter</em> named after a
+field stays silent — every graphics helper takes an <code>x</code> and a
+<code>y</code>, and misuse inside such a scope is the stack checker's to
+catch; only a mid-body <code>Let</code> warns. A shadow of a field the
+program never reads by accessor costs nothing and says nothing. And a
+one-field type is a union variant whose payload is read by pattern matching —
+<code>Died(Msg)</code>, <code>KNumeric(N)</code> — so its accessor is not
+worth defending. The mirror case — a <code>Def</code> or machine word taking
+the same name as a field accessor — is warned at the definition that creates
+the collision, whenever the program actually writes the contested word.</p>
 
 <p>The language itself is documented in the
 <a href="guide.html">guide</a>, the <a href="spec.html">spec</a>, the

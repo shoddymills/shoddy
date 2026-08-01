@@ -69,9 +69,13 @@ docs say.
 
 ```sh
 node scripts/verify-docs.js
+node scripts/verify-errors.js
 ```
 
-Read-only, and rebuilds its ground truth from the tree on every run: each
+The second asserts every diagnostic string the toolchain can raise appears
+on `docs/errors.html` — a new or reworded message cannot ship undocumented.
+The first is read-only too, and rebuilds its ground truth from the tree on
+every run: each
 machine page's **"Who Uses It"** (machines that `Include` it, mills that call
 its words) and **"The Machines It Uses"** (its own `Include`s) must match the
 sources exactly, both directions. `ALL PAGES MATCH GROUND TRUTH` is the pass;

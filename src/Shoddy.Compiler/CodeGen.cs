@@ -51,14 +51,16 @@ public sealed class CodeGen
     // Bind/Mark/Release for the variables view. Output is unchanged —
     // only the instrumentation calls are added.
     readonly bool debug;
+    readonly IReadOnlyList<MachineInfo>? deps;
     readonly Dictionary<string, int> fileIds = new();
     readonly List<string> fileList = new();
 
-    public CodeGen(ShoddyProgram prog, string? machineClass = null, bool debug = false)
+    public CodeGen(ShoddyProgram prog, string? machineClass, bool debug, IReadOnlyList<MachineInfo>? deps = null)
     {
         this.prog = prog;
         this.machineClass = machineClass;
         this.debug = debug;
+        this.deps = deps;
         if (debug)
         {
             if (prog.InitQuot != null) CollectFiles(prog.InitQuot);
@@ -197,8 +199,19 @@ public sealed class CodeGen
         {
             string full = $"Shoddy.Machines.{machineClass}";
             W($"[assembly: ShoddyMachine({StrLit(full)})]");
+            // Declared dependencies survive even when Roslyn drops an
+            // unused assembly reference (a pure re-export Include).
+            if (deps != null)
+                foreach (MachineInfo dm in deps)
+                    W($"[assembly: ShoddyDependsOn({StrLit(dm.AssemblyName)})]");
+            // The manifest carries each word's stack effect when the
+            // linter could infer one, so downstream programs get their
+            // machine calls depth-checked without reading the source.
+            Dictionary<string, Lint.DefEffect> fx = Lint.DefEffects(prog);
             foreach ((string name, string id) in defIds)
-                W($"[assembly: ShoddyDef({StrLit(name)}, {StrLit(id)})]");
+                W(fx.TryGetValue(name, out Lint.DefEffect e)
+                    ? $"[assembly: ShoddyDef({StrLit(name)}, {StrLit(id)}, Pops = {e.Pops}, Pushes = {e.Pushes})]"
+                    : $"[assembly: ShoddyDef({StrLit(name)}, {StrLit(id)})]");
             foreach (TypeDef t in prog.Types)
                 W($"[assembly: ShoddyType({StrLit(t.Name)}, {StrLit(t.Disp ?? t.Name)}, " +
                   $"{StrLit(typeField[t.Name])}, {StrArr(t.Fields)}, {StrArr(t.FDisp)})]");

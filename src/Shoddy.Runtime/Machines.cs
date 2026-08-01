@@ -21,7 +21,27 @@ public sealed class ShoddyDefAttribute : Attribute
 {
     public string Name { get; }
     public string Method { get; }
+
+    /// <summary>Stack effect, when the linter could infer one at machine
+    /// build time: how many values the word pops and pushes. -1 = not
+    /// declared (an older DLL, or a word the checker could not model) —
+    /// callers of such a word are skipped, not guessed.</summary>
+    public int Pops { get; set; } = -1;
+    public int Pushes { get; set; } = -1;
+
     public ShoddyDefAttribute(string name, string method) { Name = name; Method = method; }
+}
+
+/// <summary>A machine this machine's Include chain reaches. Assembly
+/// references alone cannot carry this: a pure re-export Include (isam's
+/// seq) calls no dependency code, Roslyn drops the unused reference, and
+/// the dependency's surface silently vanishes from programs that include
+/// the DLL. The manifest states what the source said.</summary>
+[AttributeUsage(AttributeTargets.Assembly, AllowMultiple = true)]
+public sealed class ShoddyDependsOnAttribute : Attribute
+{
+    public string AssemblyName { get; }
+    public ShoddyDependsOnAttribute(string assemblyName) => AssemblyName = assemblyName;
 }
 
 [AttributeUsage(AttributeTargets.Assembly, AllowMultiple = true)]

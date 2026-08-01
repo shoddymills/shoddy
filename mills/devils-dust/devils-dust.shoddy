@@ -410,52 +410,79 @@ Def SlideTo(st As Studio, x As Number) As Studio
     Let frac = Clamp((x - (PanX() + 10)) / TrackW(), 0, 1)
     PutKnob(st, id, KnobLo(id) + frac * (KnobHi(id) - KnobLo(id)))
 
-Rem A click lands on the hidden-panel hint, the tab bar (a tab or the X
-Rem close box), or a knob row — which selects it, starts a drag, and
-Rem jumps the slider to the click.
-Def OnClick(st As Studio, x As Number, y As Number) As Studio
-    Let p = Sp(st)
+Rem What a click at (x, y) lands on, as a VALUE — the classify-then-
+Rem switch idiom. Coordinates are continuous, so something must compare
+Rem them, but here every branch is a leaf constructor: the geometry
+Rem happens once, and OnClick dispatches on the result with Select Case
+Rem instead of acting from inside a four-deep If.
+Type Hit = HitHint | HitClose | HitTab(TabNo) | HitRow(RowNo) | HitLever(Slot) | HitStop | HitMiss
+
+Rem Which lever button x falls on, 1..4 left to right; 0 for the gaps
+Rem between them and everything outside the row.
+Def LeverSlot(x As Number) As Number
+    Let off = x - BtnSx()
+    If off >= 0 And off < 4 * (BtnW() + 6) And off Mod (BtnW() + 6) < BtnW() Then
+        Floor(off / (BtnW() + 6)) + 1
+    Else
+        0
+
+Def HitAt(p As Panel, x As Number, y As Number) As Hit
     If Not PShow(p) Then
         If x > WorldW() - 116 And y < 32 Then
-            With(st, Sp = With(p, PShow = True))
+            HitHint()
         Else
-            st
+            HitMiss()
     Else
         If x < PanX() Or x > PanX() + PanW() Or y < PanY() Or y > PanY() + PanH(PTab(p)) Then
-            st
+            HitMiss()
         Else
             If y < PanY() + TabH() Then
                 If x > PanX() + PanW() - 24 Then
-                    With(st, Sp = With(p, PShow = False))
+                    HitClose()
                 Else
-                    SetTab(st, NthTab(Clamp(Floor((x - PanX() - 4) / (TabW() + 2)) + 1, 1, 4)))
+                    HitTab(Clamp(Floor((x - PanX() - 4) / (TabW() + 2)) + 1, 1, 4))
             Else
                 If RowAt(y) >= 1 And RowAt(y) <= KnobRows(PTab(p)) Then
-                    SlideTo(With(st, Sp = With(p, PRow = RowAt(y), PDrag = True)), x)
+                    HitRow(RowAt(y))
                 Else
                     If y >= BtnY(PTab(p)) And y <= BtnY(PTab(p)) + 16 Then
-                        OnButtons(st, x)
+                        HitLever(LeverSlot(x))
                     Else
                         If y >= StopY(PTab(p)) And y <= StopY(PTab(p)) + 16 Then
-                            GoStop(st)
+                            HitStop()
                         Else
-                            st
+                            HitMiss()
 
-Rem Which of the four buttons a click in the button row landed on.
-Def OnButtons(st As Studio, x As Number) As Studio
-    If x >= BtnSx() And x <= BtnSx() + BtnW() Then
-        GoSlow(st)
-    Else
-        If x >= BtnNx() And x <= BtnNx() + BtnW() Then
+Def OnClick(st As Studio, x As Number, y As Number) As Studio
+    Select Case HitAt(Sp(st), x, y)
+        Case HitHint
+            With(st, Sp = With(Sp(st), PShow = True))
+        Case HitClose
+            With(st, Sp = With(Sp(st), PShow = False))
+        Case HitTab(n)
+            SetTab(st, NthTab(n))
+        Case HitRow(r)
+            SlideTo(With(st, Sp = With(Sp(st), PRow = r, PDrag = True)), x)
+        Case HitLever(slot)
+            OnLever(st, slot)
+        Case HitStop
+            GoStop(st)
+        Case Else
+            st
+
+Rem The speed lever by slot; 0 (a click in a gap) falls to Else.
+Def OnLever(st As Studio, slot As Number) As Studio
+    Select Case slot
+        Case 1
+            GoSlow(st)
+        Case 2
             GoNormal(st)
-        Else
-            If x >= BtnMx() And x <= BtnMx() + BtnW() Then
-                GoMax(st)
-            Else
-                If x >= BtnEx() And x <= BtnEx() + BtnW() Then
-                    GoEleven(st)
-                Else
-                    st
+        Case 3
+            GoMax(st)
+        Case 4
+            GoEleven(st)
+        Case Else
+            st
 
 Def OnMove(st As Studio, x As Number) As Studio
     If PDrag(Sp(st)) Then

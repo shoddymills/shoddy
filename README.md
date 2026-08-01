@@ -295,6 +295,11 @@ The programs in `mills/` are not syntax demonstrations; they are
 complete, working software.
 
 Shoddy is young, and there is work still ahead. Type annotations are
-parsed and enforced at runtime; static checking with stack-effect
-inference is the headline item of future work, alongside a REPL and
-catchable errors.
+parsed and enforced at runtime, but the mill now carries a weave-time
+linter with stack-effect inference: every `Def`'s net effect is checked,
+branches must agree, call sites are depth-checked against declared
+arities (machine manifests carry their words' effects), and an unknown
+word is a weave error rather than a runtime crash. Warnings never stop a
+build (`--no-lint` silences them; `--lint-verbose` reports coverage), and
+the checker skips what it cannot prove rather than guess. Full static
+*type* checking remains ahead, alongside a REPL and catchable errors.

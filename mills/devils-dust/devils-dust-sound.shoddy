@@ -1,0 +1,135 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem devils-dust-sound.shoddy — the devil, heard.
+Rem
+Rem A West Riding mill ran on sound, and this file gives the devil its
+Rem voice: a deep polyphonic drone that reads the LIVE Tune — not the
+Rem goal — so everything built for the eyes happens for the ears. The
+Rem 1875 inertia is audible for free: pull the lever to ELEVEN and the
+Rem pitch climbs over seconds as the belt loads; hit STOP and the drone
+Rem glides down and dies as the drum coasts to rest.
+Rem
+Rem The chord (square waves, rich in odd harmonics, so the bass reads
+Rem even on small speakers):
+Rem   ch 1  sub fundamental, ~36 Hz at NORMAL, held with NoteOn and
+Rem         re-pitched only when it moves ~2% — a stepped glissando,
+Rem         not a 30 Hz zipper
+Rem   ch 2  the fifth above, quieter — thickens the hum into a chord
+Rem   ch 3  the overload voice: an octave normally, but when the live
+Rem         values run hot it slides to a flat ninth and swells — the
+Rem         chord sours as the gauges burn ember, and resolves as they
+Rem         cool
+Rem   ch 5  lever gestures (short MML phrases), driven by the window
+Rem   ch 6  a soft pat when wool reaches the floor
+Rem
+Rem The rhythm is the CHURN: the drone's gain breathes once per drum
+Rem revolution, so the tempo IS the machine speed — and because it is
+Rem pure gain modulation on held notes, it cannot tick. (Its ancestor,
+Rem a queued sub-bass kick, read as morse code on small speakers: a
+Rem 40 Hz square's fundamental is inaudible there, leaving only clicky
+Rem harmonics at whatever rate the drum happened to turn.)
+Rem
+Rem Everything here is fire-and-forget — sound never blocks — and the
+Rem mapping half (DroneHz, PartialHz, AnyHot, BedGain, RevCrossed) is
+Rem PURE, tested headless in test.shoddy. Only MillVoice and its
+Rem helpers touch the buzzer, and they are no-ops on a silent machine.
+Rem ==================================================================
+
+Include "devils-dust-core.shoddy"
+Include "buzzer.shoddy"
+Include "math.shoddy"
+
+Rem ---- the pure mapping ----------------------------------------------
+
+Rem The drone fundamental from the live knobs: 36 Hz at the NORMAL drum
+Rem speed, rising with a gentle power curve to ~80 Hz at eleven, and
+Rem falling toward nothing as the drum winds down.
+Def DroneHz(kb As Knobs) As Number
+    36 * (DrumStep(kb) / 0.264) ^ 0.6
+
+Rem Below this the mill is considered silent — the drone gates off part
+Rem way down a STOP coast, which is the dying fall.
+Def DroneGate() As Number
+    20
+
+Rem The overload voice's ratio: a clean octave, or a flat ninth (an
+Rem octave and a semitone) when the machine runs past its rails.
+Def PartialHz(f As Number, hot As Boolean) As Number
+    Ifte(hot, f * 2.1189, f * 2)
+
+Rem Is any gauge past its rail? Eleven's signature.
+Def AnyHot(kb As Knobs) As Boolean
+    Any(Range(1, 21), Fn(i) => KnobHot(kb, i))
+
+Rem The drone bed's loudness follows the drum: quiet at NORMAL, fuller
+Rem as the machine loads, capped well short of obnoxious.
+Def BedGain(kb As Knobs) As Number
+    Clamp(0.1 + 0.15 * DrumStep(kb) / 0.264, 0, 0.4)
+
+Rem The churn: how hard the drone breathes at this drum angle — a
+Rem swell per revolution, between 0.5 and 1 of full bed gain.
+Def Churn(turn As Number) As Number
+    0.75 + 0.25 * Sin(turn)
+
+Rem ---- the effectful half --------------------------------------------
+
+Rem Kill the drone chord. Idempotent: lastHz 0 means nothing was held.
+Def BedOff(lastHz As Number) As Number
+    If lastHz > 0 Then
+        NoteOff(1)
+        NoteOff(2)
+        NoteOff(3)
+        0
+    Else
+        0
+
+Rem Full silence: chord off and every effect channel stopped. Used by
+Rem the mute key and at quit.
+Def AllQuiet(lastHz As Number) As Number
+    SoundStop(5)
+    SoundStop(6)
+    BedOff(lastHz)
+
+Rem Retune the drone chord. Gains follow every frame — cheap, and this
+Rem is where the churn lives: the fundamental and fifth breathe with
+Rem the drum angle while the overload partial holds steady above them
+Rem (contrast makes the sour note carry). Pitches resend only on retrig
+Rem (the fundamental moved) or rehot (the chord soured or resolved) —
+Rem NoteOn re-pitches a held note.
+Def VoiceBed(kb As Knobs, f As Number, retrig As Boolean, rehot As Boolean, turn As Number)
+    SoundGain(1, BedGain(kb) * Churn(turn))
+    SoundGain(2, BedGain(kb) * 0.5 * Churn(turn))
+    SoundGain(3, BedGain(kb) * Ifte(AnyHot(kb), 0.6, 0.35))
+    If retrig Then
+        NoteOn(1, f)
+        NoteOn(2, f * 1.5)
+    If retrig Or rehot Then
+        NoteOn(3, PartialHz(f, AnyHot(kb)))
+
+Rem A soft distant pat when wool reaches the floor, on its own quiet
+Rem channel, pitched where small speakers can actually voice it.
+Rem Throws off the rim make no sound at all — the churn carries the
+Rem machine's rhythm — and nothing here may use the anonymous pool:
+Rem Sound() plays at a FIXED effect volume with no gain control, which
+Rem turned every throw into a loud stream of morse code.
+Def LandPat(before As Dust, after As Dust)
+    If Landed(TakeCensus(Fibers(after))) > Landed(TakeCensus(Fibers(before))) Then
+        SoundGain(6, 0.1)
+        SoundQueue(6, 85, 100)
+
+Rem One frame of the mill's voice: pats always, the churning drone
+Rem chord when the drum turns fast enough to hum. Returns the drone Hz
+Rem actually sounding (0 = gated off) so the caller can rate-limit the
+Rem next retune.
+Def MillVoice(before As Dust, after As Dust, lastHz As Number) As Number
+    Let kb = Tune(after)
+    LandPat(before, after)
+    Let f = DroneHz(kb)
+    If f < DroneGate() Then
+        BedOff(lastHz)
+    Else
+        Let f2 = Ifte(lastHz > 0 And Abs(f - lastHz) < lastHz * 0.03, lastHz, f)
+        VoiceBed(kb, f2, f2 <> lastHz, AnyHot(kb) <> AnyHot(Tune(before)), Whirl(after))
+        f2

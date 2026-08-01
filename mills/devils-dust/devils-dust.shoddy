@@ -24,7 +24,13 @@ Rem sits on lights up. X hides the panel, the PANEL [H] hint brings it
 Rem back.
 Rem (Keyboard): 1-4 or Tab switch groups, Up/Down pick a knob,
 Rem Left/Right nudge it (Shift for coarse), H hides or shows the panel,
-Rem S slow motion, N normal, M max, E eleven. Q or Escape quits.
+Rem S slow, N normal, M max, E eleven, 0/Space full stop, B mutes the
+Rem mill (a MUTED lamp shows on the footer). Q or Escape quits.
+Rem
+Rem The devil is HEARD as well as seen — devils-dust-sound.shoddy gives
+Rem it a deep polyphonic drone, a rev thump, and lever gestures, all
+Rem read from the live Tune, so the machine's inertia is audible: the
+Rem pitch climbs as the belt loads and dies away on a STOP coast.
 Rem
 Rem The pure model — the flock, the steering, the step, and the knob
 Rem TABLE the panel reflects — is in devils-dust-core.shoddy and is
@@ -42,9 +48,11 @@ Rem through KnobGet/KnobSet on the table.
 Rem ==================================================================
 
 Include "devils-dust-core.shoddy"
+Include "devils-dust-sound.shoddy"
 Include "scribbler.shoddy"
 Include "math.shoddy"
 Include "keys.shoddy"
+Include "buzzer.shoddy"
 
 Rem ---- app state -----------------------------------------------------
 
@@ -64,6 +72,16 @@ Type Studio
     SThru As Number          Rem wool through the devil per second, smoothed
     SAt   As Number          Rem previous tick timestamp; 0 = no tick yet
     SGoal As Knobs           Rem where the levers are set; Tune winds toward it
+    SHz   As Number          Rem drone Hz last sent to the buzzer; 0 = gated off
+    SMute As Boolean         Rem B key: the mill runs silent
+
+Rem One frame of sound, or enforced silence. AllQuiet is idempotent,
+Rem so a muted mill costs three no-op words a frame.
+Def MillTick(st As Studio, d2 As Dust) As Number
+    If SMute(st) Then
+        AllQuiet(SHz(st))
+    Else
+        MillVoice(Sd(st), d2, SHz(st))
 
 Rem The machine's inertia: the fraction of the remaining distance to
 Rem the goal covered each frame. Tons of iron on a belt drive take a
@@ -273,34 +291,59 @@ Rem only ELEVEN's constructor reaches past them.
 Def PutKnob(st As Studio, id As Number, v As Number) As Studio
     With(st, SGoal = KnobSet(SGoal(st), id, v))
 
-Rem The four lever positions. Each sets the GOAL; the machine winds its
-Rem values there at the pace of iron, sliders turning as it goes.
+Rem The five lever positions. Each sets the GOAL; the machine winds its
+Rem values there at the pace of iron, sliders turning as it goes. Each
+Rem pull also speaks — a short low phrase on channel 5 — unless the
+Rem mill is muted, in which case the branch that plays nothing is taken
+Rem whole (Ifte is eager, so a sound call can never hide inside one).
 
 Rem Gentle values, loft kept — slow wool is still flying wool.
 Def GoSlow(st As Studio) As Studio
-    With(st, SGoal = SlowKnobs())
+    If SMute(st) Then
+        With(st, SGoal = SlowKnobs())
+    Else
+        Play(5, "T90 O2 L8 E C")
+        With(st, SGoal = SlowKnobs())
 
 Rem Every lever back to the frozen defaults — the N key and the panel's
 Rem NORMAL button both land here.
 Def GoNormal(st As Studio) As Studio
-    With(st, SGoal = NewKnobs())
+    If SMute(st) Then
+        With(st, SGoal = NewKnobs())
+    Else
+        Play(5, "T120 O2 L8 G E C")
+        With(st, SGoal = NewKnobs())
 
 Rem Everything the panel can legally give.
 Def GoMax(st As Studio) As Studio
-    With(st, SGoal = MaxKnobs())
+    If SMute(st) Then
+        With(st, SGoal = MaxKnobs())
+    Else
+        Play(5, "T140 O2 L8 C E G > C")
+        With(st, SGoal = MaxKnobs())
 
-Rem One louder.
+Rem One louder. The riff climbs by semitones — of course it does.
 Def GoEleven(st As Studio) As Studio
-    With(st, SGoal = ElevenKnobs())
+    If SMute(st) Then
+        With(st, SGoal = ElevenKnobs())
+    Else
+        Play(5, "T160 O2 L16 C C# D D# E8")
+        With(st, SGoal = ElevenKnobs())
 
 Rem The emergency stop. Throwing the belt off is not a glide: most of
 Rem the drive vanishes in the instant of the pull (the one-time 0.7
 Rem cut), then what momentum is left coasts down through the usual
 Rem winding. Quick, but the drum still visibly runs down rather than
-Rem freezing mid-turn.
+Rem freezing mid-turn. The slap is the belt hitting the floor; the
+Rem drone's dying fall follows on its own.
 Def GoStop(st As Studio) As Studio
     Let cut = With(Sd(st), Tune = BlendKnobs(Tune(Sd(st)), StopKnobs(), 0.7))
-    With(st, Sd = cut, SGoal = StopKnobs())
+    If SMute(st) Then
+        With(st, Sd = cut, SGoal = StopKnobs())
+    Else
+        SoundQueue(5, 55, 70)
+        SoundQueue(5, 38, 140)
+        With(st, Sd = cut, SGoal = StopKnobs())
 
 Def SetTab(st As Studio, t As Number) As Studio
     Let p = With(Sp(st), PTab = Clamp(t, 1, 4))
@@ -346,6 +389,8 @@ Def OnKey(st As Studio, gk As GameKey, mods As Number) As Studio
             GoStop(st)
         Case SpaceBar
             GoStop(st)
+        Case CharKey(c) Where c = Asc("B")
+            With(st, SMute = Not SMute(st))
         Case Else
             st
 
@@ -464,7 +509,11 @@ Def DrawFooter(sc As Scribbler, st As Studio) As Scribbler
     Let m5 = Meter(m4, x0 + 352, "ORDER ", Fixed(OrderParam(flock), 2), HeatRamp(OrderParam(flock), 0, 0.4, 1, False))
     Let m6 = Meter(m5, x0 + 456, "SPEED ", PadL(Fixed(spd, 1), 4), HeatRamp(spd, 0, 2, KnobHi(7), spd > KnobHi(7)))
     Let m7 = Meter(m6, x0 + 560, "ALT ", PadL(Str(Round(Altitude(flock))), 3), HeatRamp(Altitude(flock), 0, 300, FloorY(), False))
-    Meter(m7, x0 + 640, "THRU ", PadL(Fixed(SThru(st), 1), 5) & "/S", HeatRamp(SThru(st), 0, 5, 25, False))
+    Let m8 = Meter(m7, x0 + 640, "THRU ", PadL(Fixed(SThru(st), 1), 5) & "/S", HeatRamp(SThru(st), 0, 5, 25, False))
+    If SMute(st) Then
+        ScribblerText(m8, WorldW() - 62, FloorTop() + 7, 1, 186, 58, 48, "MUTED")
+    Else
+        m8
 
 Rem ---- drawing the frame ---------------------------------------------
 
@@ -481,6 +530,12 @@ Def Draw(sc As Scribbler, st As Studio) As Scribbler
 
 Rem ---- the loop ------------------------------------------------------
 
+Rem Silence everything still sounding, then close the window. The
+Rem lastHz of 1 forces the NoteOffs whether or not a drone was held.
+Def CloseDown(sc As Scribbler) As Scribbler
+    Let z = AllQuiet(1)
+    ScribblerClose(sc)
+
 Def Loop(sc As Scribbler, st As Studio) As Scribbler
     Select Case NextEvent(sc)
         Case ScribblerTick(at)
@@ -491,13 +546,14 @@ Def Loop(sc As Scribbler, st As Studio) As Scribbler
             Rem respawns arrive 0-2 at a time.
             Let tuned = With(Sd(st), Tune = BlendKnobs(Tune(Sd(st)), SGoal(st), GlideT()))
             Let d2 = Advance(tuned)
+            Let hz2 = MillTick(st, d2)
             Let samp = Ifte(SAt(st) = 0, SFps(st), 1000 / Clamp(at - SAt(st), 1, 1000))
             Let thru2 = Ifte(SAt(st) = 0, 0, SThru(st) + 0.05 * (FreshCount(Fibers(d2)) * samp - SThru(st)))
-            Let st2 = With(st, Sd = d2, SFps = SFps(st) + 0.1 * (samp - SFps(st)), SThru = thru2, SAt = at)
+            Let st2 = With(st, Sd = d2, SFps = SFps(st) + 0.1 * (samp - SFps(st)), SThru = thru2, SAt = at, SHz = hz2)
             Loop(Draw(sc, st2), st2)
         Case ScribblerKeyDown(key, mods, at)
             If key = 27 Or key = Asc("Q") Then
-                ScribblerClose(sc)
+                CloseDown(sc)
             Else
                 Loop(sc, OnKey(st, ClassifyKey(key), mods))
         Case ScribblerMouseDown(x, y, btn, mods, at)
@@ -507,7 +563,7 @@ Def Loop(sc As Scribbler, st As Studio) As Scribbler
         Case ScribblerMouseUp(x, y, btn, mods, at)
             Loop(sc, With(st, Sp = With(Sp(st), PDrag = False)))
         Case ScribblerQuit
-            ScribblerClose(sc)
+            CloseDown(sc)
         Case Else
             Loop(sc, st)
 
@@ -519,7 +575,8 @@ Def Main()
     Print("Panel: 1-4/Tab pick a group, Up/Down pick a knob, Left/Right nudge")
     Print("(Shift = coarse), or click and drag the sliders. H panel. Speed")
     Print("lever: S slow, N normal, M max, E goes to eleven; 0 or Space is the")
-    Print("full stop. Q or Escape quits.")
-    Let st = Studio(NewDust(), NewPanel(), 30, 0, 0, NewKnobs())
+    Print("full stop. B mutes the mill. Q or Escape quits.")
+    SoundGain(5, 0.3)
+    Let st = Studio(NewDust(), NewPanel(), 30, 0, 0, NewKnobs(), 0, False)
     Let done = Loop(Draw(sc2, st), st)
     Print("the mill rests")

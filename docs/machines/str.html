@@ -30,9 +30,14 @@ gives you a small set of built-in string primitives &mdash;
 <code>Left</code>, <code>Right</code>, and <code>Mid</code> (grab a piece off
 the front, the back, or the middle), and <code>Len</code> (how long it is).
 Those are sharp but low-level; <code>str</code> stacks the friendlier,
-more-often-wanted verbs on top of them. Everything here is pure &mdash; it
-reads its inputs and returns a fresh string, never touching a file or the
-screen.</p>
+more-often-wanted verbs on top of them. Alongside the surgery it carries the
+conversion guards (<code>IsBool</code> / <code>Bool</code> /
+<code>BoolOr</code> for booleans, partnering the <code>IsNumeric</code> /
+<code>ValOr</code> builtins that guard <code>Val</code>) and the fixed-width
+number formatters every readout wants (<code>PadLeft</code>,
+<code>PadRight</code>, <code>PadZero</code>, <code>ToFixed</code>,
+<code>Commas</code>). Everything here is pure &mdash; it reads its inputs and
+returns a fresh string, never touching a file or the screen.</p>
 
 <h2 id="why">Why It's Useful</h2>
 <p>Text is how programs talk to people, and it almost never arrives in the
@@ -70,7 +75,13 @@ Def Main()
     Print(StartsWith("shoddy", "sho"))   ' True
     Print(EndsWith("shoddy", "xyz"))     ' False
 
-    Print(StrRep("ab", 3))               ' ababab</code></pre>
+    Print(StrRep("ab", 3))               ' ababab
+
+    Print(BoolOr(Input("READY (Y/N)? "), False))   ' y, yes, true, 1 ...
+    Print(ToFixed(0.4, 2))               ' 0.40  (never "0.4")
+    Print(Commas(1234567.891, 2))        ' 1,234,567.89
+    Print(PadLeft(Str(42), 6))           '     42
+    Print(PadZero(7, 2))                 ' 07</code></pre>
 <p>A few things worth remembering:</p>
 <ul>
 <li><strong>Split and Join are opposites.</strong> <code>Split</code> turns
@@ -94,10 +105,25 @@ the whole string swapping every occurrence of <code>old</code> for
 <code>StartsWith</code> and <code>EndsWith</code> compare literally &mdash;
 <code>"Sho"</code> is not <code>"sho"</code>. An empty pattern matches
 anything (every string starts and ends with nothing).</li>
+<li><strong>Strict and forgiving conversions are different words.</strong>
+<code>Bool</code> accepts only TRUE and FALSE (any case, outer space
+ignored) and stops the program on anything else &mdash; exactly as the
+<code>Val</code> builtin does for numbers. <code>BoolOr</code> never stops:
+it also understands the prompt vocabulary (T/Y/YES/1 and F/N/NO/0) and hands
+back your fallback for anything else, the way <code>ValOr</code> does for
+numbers. Guard with <code>IsBool</code> / <code>IsNumeric</code> when you
+want to ask first.</li>
+<li><strong>The formatters are for monospace readouts.</strong>
+<code>ToFixed</code> always shows exactly the decimals you asked for
+(<code>ToFixed(x, 0)</code> is the whole-number form, no decimal point), and
+<code>Commas</code> adds the thousands grouping of BASIC's
+<code>PRINT USING "##,###.##"</code>. Both round half-up at the last shown
+digit. The pads never truncate &mdash; a string already wider than the field
+comes back unchanged.</li>
 </ul>
 
 <h2 id="words">Word Reference</h2>
-<p class="tag">7 words</p>
+<p class="tag">15 words (plus a helper)</p>
 
 <h3>Splitting and joining</h3>
 <table>
@@ -140,20 +166,74 @@ True.</td></tr>
 empty string.</td></tr>
 </table>
 
+<h3>Boolean conversions</h3>
+<p>The string-to-number side of this family lives in the builtins:
+<code>IsNumeric(s)</code> is true when <code>Val(s)</code> would succeed,
+and <code>ValOr(s, fallback)</code> is the total conversion that hands back
+the fallback instead of stopping.</p>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>IsBool(s)</td><td>True when <code>s</code> names a boolean strictly:
+<code>TRUE</code> or <code>FALSE</code>, any case, outer spaces
+ignored.</td></tr>
+<tr><td>Bool(s)</td><td>The strict conversion: <code>TRUE</code> and
+<code>FALSE</code> only (any case, trimmed). Stops the program on anything
+else, as <code>Val</code> does for numbers.</td></tr>
+<tr><td>BoolOr(s, fallback)</td><td>The total conversion, with the prompt
+vocabulary included: <code>TRUE</code>/<code>T</code>/<code>YES</code>/<code>Y</code>/<code>1</code>
+are True, <code>FALSE</code>/<code>F</code>/<code>NO</code>/<code>N</code>/<code>0</code>
+are False, anything else is <code>fallback</code>.</td></tr>
+</table>
+
+<h3>Formatting numbers</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>PadLeft(s, n)</td><td><code>s</code> right-aligned in a field of
+<code>n</code> by padding spaces on the left; unchanged if already that
+wide.</td></tr>
+<tr><td>PadRight(s, n)</td><td><code>s</code> left-aligned in a field of
+<code>n</code> by padding spaces on the right; unchanged if already that
+wide.</td></tr>
+<tr><td>PadZero(x, n)</td><td><code>x</code> as a whole number zero-padded
+to at least <code>n</code> digits (<code>PadZero(7, 2)</code> is
+<code>"07"</code>). A minus sign rides outside the padding.</td></tr>
+<tr><td>ToFixed(x, p)</td><td><code>x</code> with exactly <code>p</code>
+decimal places &mdash; <code>"0.40"</code>, never <code>"0.4"</code> &mdash;
+rounded half-up at the last shown digit. <code>p</code> of 0 gives the whole
+number with no decimal point. (Named like <code>ToArray</code> and
+<code>ToList</code> &mdash; and because <code>Fixed</code> is too handy a
+field name to claim.)</td></tr>
+<tr><td>Commas(x, p)</td><td><code>x</code> with thousands commas and
+<code>p</code> decimals &mdash; the classic <code>##,###.##</code>:
+<code>Commas(1234567.891, 2)</code> is <code>"1,234,567.89"</code>,
+<code>Commas(n, 0)</code> groups a whole number.</td></tr>
+<tr><td>CommaGroup(digits)</td><td>Commas' helper: a digit string grouped in
+threes from the right. Digits only &mdash; no sign, no decimal
+point.</td></tr>
+</table>
+
 
 <h2 id="usedby">Who Uses It</h2>
 <table>
 <tr><th></th><th>User</th><th>How</th></tr>
+<tr><td class="uicon"><a href="clock.html"><img src="../media/icons/clock.svg" alt=""></a></td><td><a href="clock.html">clock</a></td><td><code>PadZero</code>
+keeps the timestamp fields two and three digits wide.</td></tr>
 <tr><td class="uicon"><a href="file.html"><img src="../media/icons/file.svg" alt=""></a></td><td><a href="file.html">file</a></td><td><code>Split</code>,
 <code>Join</code>, <code>Replace</code> and <code>EndsWith</code> for line
 and path chores.</td></tr>
+<tr><td class="uicon"><a href="money.html"><img src="../media/icons/money.svg" alt=""></a></td><td><a href="money.html">money</a></td><td><code>MoneyFmt</code>
+is <code>CommaGroup</code> dollars and <code>PadZero</code> cents.</td></tr>
 <tr><td class="uicon"><a href="mps.html"><img src="../media/icons/mps.svg" alt=""></a></td><td><a href="mps.html">mps</a></td><td><code>Split</code>,
 <code>Replace</code> and <code>StartsWith</code> parse the fixed-format MPS
 sections.</td></tr>
+<tr><td class="uicon"><a href="../mills/devils-dust.html"><img src="../media/devils-dust.svg" alt=""></a></td><td><a href="../mills/devils-dust.html">devils-dust</a></td><td><code>PadLeft</code>
+and <code>ToFixed</code> keep the footer gauges and knob readouts from
+jittering.</td></tr>
 <tr><td class="uicon"><a href="../mills/iris.html"><img src="../media/iris.svg" alt=""></a></td><td><a href="../mills/iris.html">iris</a></td><td>CSV carving in
 the trainer (<code>Split</code>, <code>Trim</code>,
-<code>StartsWith</code>); <code>Trim</code>med prompts and
-<code>StrRep</code> probability bars in the predictor.</td></tr>
+<code>StartsWith</code>); <code>Trim</code>med prompts,
+<code>StrRep</code> probability bars, and the
+<code>PadLeft</code>/<code>PadRight</code> report columns.</td></tr>
 <tr><td class="uicon"><a href="../mills/demographics.html"><img src="../media/demographics.svg" alt=""></a></td><td><a href="../mills/demographics.html">demographics</a></td><td>CSV
 carving in the trainer, <code>Trim</code> on the predictor's
 prompts.</td></tr>

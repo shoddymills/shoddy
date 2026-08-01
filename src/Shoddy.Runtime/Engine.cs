@@ -465,6 +465,14 @@ public sealed partial class Engine
                 if (!Strtod(s, out double v)) throw Die(line, $"VAL: '{s}' is not a number");
                 PushNum(v); return true;
             }
+            case "ISNUMERIC":                   // ( s -- bool ), true iff VAL would succeed
+                PushBool(Strtod(PopStr(line, w), out _)); return true;
+            case "VALOR":                       // ( s fallback -- n ), total VAL
+            {
+                double d = PopNum(line, w);
+                string s = PopStr(line, w);
+                PushNum(Strtod(s, out double v) ? v : d); return true;
+            }
             case "LEFT":
             {
                 int n = (int)PopNum(line, w);
@@ -1472,7 +1480,7 @@ public sealed partial class Engine
         "ERROR", "ASSERT", "INSTR",
         "=", "<>", "<", ">", "<=", ">=",
         "AND", "OR", "NOT", "TRUE", "FALSE",
-        "&", "LEN", "STR", "VAL", "LEFT", "RIGHT", "MID", "CHR", "ASC",
+        "&", "LEN", "STR", "VAL", "ISNUMERIC", "VALOR", "LEFT", "RIGHT", "MID", "CHR", "ASC",
         "UPPER", "LOWER",
         "PRINT", "READFILE", "WRITEFILE", "APPENDFILE", "TRYWRITEFILE", "FILEEXISTS",
         "DELETEFILE", "BOPEN", "BCLOSE", "SEEK", "BPOS", "BSIZE",

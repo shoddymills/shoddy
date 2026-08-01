@@ -18,6 +18,7 @@ only copy that ships.
 ## The short version
 
 ```sh
+node scripts/verify-docs.js             # doc review — pages must match the sources
 $EDITOR release-notes/v1.0.0.md         # write the notes FIRST — see below
 scripts/shoddy-feature.sh ship          # merge your feature into main
 scripts/shoddy-release.sh 1.0.0         # build, test, tag, push — CI publishes
@@ -57,6 +58,30 @@ generates a body from the `--no-ff` merge subjects since the previous tag — ne
 empty, but it reads like a list of branch names. Acceptable for a patch nobody will
 read; not for a release you're linking to. You can always edit the body on the
 Releases page afterwards.
+
+---
+
+## Doc review — before you ship
+
+The tests gate the code; this gates the documentation. Run it on the feature
+branch, before the notes are finalized, so what the notes describe is what the
+docs say.
+
+```sh
+node scripts/verify-docs.js
+```
+
+Read-only, and rebuilds its ground truth from the tree on every run: each
+machine page's **"Who Uses It"** (machines that `Include` it, mills that call
+its words) and **"The Machines It Uses"** (its own `Include`s) must match the
+sources exactly, both directions. `ALL PAGES MATCH GROUND TRUTH` is the pass;
+any drift prints page-vs-truth and exits non-zero.
+
+The script covers what a machine can check. The judgment half — do the mill
+pages' uses tables still tell the truth, does the quickref know every new
+builtin, does the editor grammar highlight them — has its own review prompt in
+the maintainer's working notes; new builtins and machine words are the usual
+suspects.
 
 ---
 

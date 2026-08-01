@@ -8,8 +8,9 @@ repeat the version as a heading — the release is already titled with it.
 **Write it before you cut the release.** The
 [Release workflow](../.github/workflows/release.yml) checks out the tag and reads only
 what that commit contains, so notes committed afterwards are invisible to it. The
-sequence is: write the file, commit it on your feature branch, ship the feature, then
-run `scripts/shoddy-release.sh X.Y.Z`. The release script prints whether it found the
+sequence is: run the doc review (`node scripts/verify-docs.js` — the docs must match
+the sources before the notes describe them), write the file, commit it on your feature
+branch, ship the feature, then run `scripts/shoddy-release.sh X.Y.Z`. The release script prints whether it found the
 file before it asks you to confirm — if it says MISSING, answer `n` and go write it.
 
 If the file is absent the release still publishes, with a body generated from the

@@ -18,7 +18,13 @@ using Shoddy.Runtime;
 //                             launched by the editor, not by hand)
 //
 // An Include resolves to Shoddy.Machines.<Name>.dll beside the source if
-// present — compiled include-once — and splices the source otherwise.
+// present — compiled include-once — and splices the source otherwise. A
+// DLL older than its source (or than a dependency's DLL) is rebuilt in
+// place before loading.
+//
+// The linter runs on every run/weave/machine: warnings to stderr,
+// --no-lint (or SHODDY_LINT=0) to silence them, --lint-verbose for the
+// coverage line. Unknown words are weave errors no flag overrides.
 
 // --allow-net arms the gated TCP/IP builtins for this run (and any woven
 // program it spawns in-process) by setting the ambient switch the Engine
@@ -29,6 +35,14 @@ if (args.Contains("--allow-net"))
     Environment.SetEnvironmentVariable("SHODDY_ALLOW_NET", "1");
     args = args.Where(a => a != "--allow-net").ToArray();
 }
+
+// The linter is on by default; --no-lint (or SHODDY_LINT=0) silences the
+// warnings. The unknown-word error is a correctness error — the program
+// would die at runtime anyway — and no flag silences it.
+bool lintOff = args.Contains("--no-lint") ||
+    Environment.GetEnvironmentVariable("SHODDY_LINT") == "0";
+bool lintVerbose = args.Contains("--lint-verbose");
+args = args.Where(a => a is not ("--no-lint" or "--lint-verbose")).ToArray();
 
 if (args.Length == 1 && args[0] == "dap")
     // The perch: DAP over stdio for the editor. The serve loop runs on a
@@ -68,13 +82,13 @@ try
             return 0;
         case "gen":
         {
-            (ShoddyProgram prog, _) = ParseWithMachines(file);
+            (ShoddyProgram prog, _) = ParseWithMachines(file, lintOff, lintVerbose);
             Console.Write(Weaver.GenerateSource(prog));
             return 0;
         }
         case "weave":
         {
-            (ShoddyProgram prog, MachineSet machines) = ParseWithMachines(file);
+            (ShoddyProgram prog, MachineSet machines) = ParseWithMachines(file, lintOff, lintVerbose);
             string outDll = Path.ChangeExtension(file, ".dll");
             Weaver.Weave(prog, outDll, machines.Machines);
             string via = machines.Machines.Count > 0
@@ -85,14 +99,14 @@ try
         }
         case "machine":
         {
-            (ShoddyProgram prog, MachineSet machines) = ParseWithMachines(file);
+            (ShoddyProgram prog, MachineSet machines) = ParseWithMachines(file, lintOff, lintVerbose);
             string outDll = Weaver.WeaveMachine(prog, file, machines.Machines);
             Console.Error.WriteLine($"mill: built machine {file} -> {outDll}");
             return 0;
         }
         default:
         {
-            (ShoddyProgram prog, MachineSet machines) = ParseWithMachines(file);
+            (ShoddyProgram prog, MachineSet machines) = ParseWithMachines(file, lintOff, lintVerbose);
             // The program runs on a background thread; this (the main)
             // thread serves scribbler windows, because GLFW requires them
             // here. A console program costs one blocked wait — and if the
@@ -114,18 +128,70 @@ catch (ShoddyError e)
     return 1;
 }
 
-static (ShoddyProgram, MachineSet) ParseWithMachines(string file)
+static (ShoddyProgram, MachineSet) ParseWithMachines(
+    string file, bool lintOff = false, bool lintVerbose = false)
 {
     var machines = new MachineSet();
-    List<Line> lines = Lexer.ReadProgram(file, machines.TryResolve, machines.SetQualifier);
+    List<Line> lines = Lexer.ReadProgram(file, p => ResolveMachine(machines, p),
+                                         machines.SetQualifier);
     var prog = new ShoddyProgram();
     machines.SeedInto(prog);
     ShoddyProgram parsed = Parser.Parse(lines, prog);
-    // Shadowed field accessors are silent at both weave and run time, so
-    // this is the only place they surface. Warnings on stderr: they never
-    // stop a build, and stdout belongs to the program.
-    if (Environment.GetEnvironmentVariable("SHODDY_LINT") is not null)
-        foreach (string w in Lint.ShadowedAccessors(parsed))
+    // The linter: warnings on stderr — they never stop a build, and
+    // stdout belongs to the program. Unknown words are errors: nothing
+    // legitimate survives resolution, and runtime would die at the same
+    // spot with less context.
+    Lint.Result lint = Lint.Run(parsed, lines);
+    if (!lintOff)
+        foreach (string w in lint.Warnings)
             Console.Error.WriteLine(w);
+    if (lintVerbose)
+        Console.Error.WriteLine(
+            $"lint: checked {lint.DefsChecked} of {lint.DefsTotal} Defs " +
+            "(the rest touch dynamic constructs and are skipped, not guessed)");
+    if (lint.UnknownWords.Count > 0)
+    {
+        foreach ((string msg, string? f, int ln) in lint.UnknownWords)
+            Console.Error.WriteLine(
+                $"{(f == null ? "?" : Path.GetFileName(f))}:{ln}: error: {msg}");
+        (string m0, string? f0, int l0) = lint.UnknownWords[0];
+        throw new ShoddyError(l0, f0, m0);
+    }
     return (parsed, machines);
+}
+
+// A machine DLL that is older than its source (or than any machine DLL it
+// depends on) is rebuilt in place before it is loaded — the stale-DLL trap
+// cost two debugging rounds in one week, and the mill already knows how to
+// build a machine. Rebuild failures fall through to the normal error path.
+static bool ResolveMachine(MachineSet machines, string sbPath)
+{
+    string dll = MachineSet.DllPathFor(sbPath);
+    if (File.Exists(dll) && IsStale(sbPath, dll))
+    {
+        Console.Error.WriteLine(
+            $"mill: machine {Path.GetFileName(sbPath)} is newer than its DLL — rebuilding");
+        (ShoddyProgram mprog, MachineSet msub) = ParseWithMachines(sbPath, lintOff: true);
+        Weaver.WeaveMachine(mprog, sbPath, msub.Machines);
+    }
+    return machines.TryResolve(sbPath);
+}
+
+static bool IsStale(string sbPath, string dll)
+{
+    DateTime built = File.GetLastWriteTimeUtc(dll);
+    if (File.GetLastWriteTimeUtc(sbPath) > built) return true;
+    // A dependency rebuilt after this DLL also staled it: its calls bind
+    // against the dependency's surface. Includes are cheap to scan.
+    string dir = Path.GetDirectoryName(Path.GetFullPath(sbPath))!;
+    foreach (string line in File.ReadLines(sbPath))
+    {
+        System.Text.RegularExpressions.Match m =
+            System.Text.RegularExpressions.Regex.Match(
+                line, "^Include \"([A-Za-z0-9_.-]+\\.shoddy)\"");
+        if (!m.Success) continue;
+        string depDll = MachineSet.DllPathFor(Path.Combine(dir, m.Groups[1].Value));
+        if (File.Exists(depDll) && File.GetLastWriteTimeUtc(depDll) > built) return true;
+    }
+    return false;
 }

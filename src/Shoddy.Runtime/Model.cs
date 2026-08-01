@@ -137,6 +137,11 @@ public sealed class ShoddyProgram
     public readonly Dictionary<string, string> ExternalDefs = new();      // name -> call target
     public readonly Dictionary<string, ExternalType> ExternalTypes = new();
 
+    /// <summary>Machine word -> its declared stack effect (pops, pushes),
+    /// for the words whose manifest carries one. The linter checks call
+    /// sites against these; words absent here are skipped, not guessed.</summary>
+    public readonly Dictionary<string, (int Pops, int Pushes)> ExternalEffects = new();
+
     /// <summary>Where each top-level name was declared, for the duplicate
     /// diagnostic. Include splices every file into one line list, so a
     /// collision usually spans two files and the second one alone does not

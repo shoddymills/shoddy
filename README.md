@@ -37,70 +37,114 @@ is recursion and `Map`/`Filter`/`Fold`. And the whole surface desugars to
 stack code you can also write directly: `Def Square ( Number -- Number )`
 / `Dup *`.
 
-## Our showpiece example
+## The showpieces
 
-*Mungo Caverns: a purely functional reimagining of our favourite text
-adventure game.*
+*Mungo Caverns, a purely functional reimagining of our favourite text
+adventure — and Devil's Dust, the language's own name-story animated, with
+a tuning console that goes to eleven.*
 
 <table>
   <tr>
-    <td width="33%" align="center" valign="top">
+    <td width="50%" align="center" valign="top">
       <a href="https://shoddymills.github.io/shoddy/mills/mungo-caverns.html"><img src="docs/media/mungo-caverns.svg" alt="Mungo Caverns in a terminal: the well house and a brass lamp" width="100%"></a><br>
-      <b>Mungo Caverns</b><br><sub>the cave crawl, purely functional</sub>
+      <b>Mungo Caverns</b><br><sub>the cave crawl, purely functional · graded against the original's transcripts</sub>
     </td>
-    <td width="33%" align="center" valign="top">
-      <a href="https://shoddymills.github.io/shoddy/mills/mungo-caverns.html"><img src="docs/media/mungo-travel.svg" alt="Shoddy source showing the TravelCond union, one travel-table row, and the Select Case that reads it" width="100%"></a><br>
-      <b>The travel table</b><br><sub>the cave's database is Shoddy source</sub>
-    </td>
-    <td width="33%" align="center" valign="top">
-      <a href="https://shoddymills.github.io/shoddy/mills/mungo-caverns.html"><img src="docs/media/mungo-pure.svg" alt="Diagram: the rule modules return what they say on the Game record; the turn loop decides when it is printed" width="100%"></a><br>
-      <b>What the rules return</b><br><sub>output is a value, not a Print</sub>
+    <td width="50%" align="center" valign="top">
+      <a href="https://shoddymills.github.io/shoddy/mills/devils-dust.html"><img src="docs/media/devils-dust.svg" alt="Devil's Dust: wool wisps flocking above the devil's drum, tuning panel open" width="100%"></a><br>
+      <b>Devil's Dust</b><br><sub>boids over the devil's drum · live console, machine-room drone</sub>
     </td>
   </tr>
 </table>
 
-## See it run
+## See it run — every mill
 
 Complete programs woven from the machines — each split into a headless,
 unit-tested pure core and a thin I/O shell. Click through for the full
-write-up on each one.
+write-up on each one, or start at
+[the mills catalog](https://shoddymills.github.io/shoddy/mills/index.html).
 
 <table>
   <tr>
-    <td width="33%" align="center" valign="top">
-      <a href="https://shoddymills.github.io/shoddy/mills/devils-dust.html"><img src="docs/media/devils-dust.svg" alt="Devil's Dust: wool wisps flocking above the devil's drum, tuning panel open" width="100%"></a><br>
-      <b>Devil's Dust</b><br><sub>boids with a console · goes to eleven</sub>
+    <td width="25%" align="center" valign="top">
+      <a href="https://shoddymills.github.io/shoddy/mills/mungo-caverns.html"><img src="docs/media/mungo-caverns.svg" alt="Mungo Caverns in a terminal" width="100%"></a><br>
+      <b>mungo-caverns</b><br><sub>the cave crawl, purely functional</sub>
     </td>
-    <td width="33%" align="center" valign="top">
+    <td width="25%" align="center" valign="top">
+      <a href="https://shoddymills.github.io/shoddy/mills/devils-dust.html"><img src="docs/media/devils-dust.svg" alt="Devil's Dust: flocking wool and the tuning panel" width="100%"></a><br>
+      <b>devils-dust</b><br><sub>boids with a console · goes to eleven</sub>
+    </td>
+    <td width="25%" align="center" valign="top">
       <a href="https://shoddymills.github.io/shoddy/mills/invaders.html"><img src="docs/media/invaders.svg" alt="Space Invaders in a scribbler window" width="100%"></a><br>
-      <b>Invaders</b><br><sub>graphical window · colour + sound</sub>
+      <b>invaders</b><br><sub>graphical window · colour + sound</sub>
     </td>
-    <td width="33%" align="center" valign="top">
+    <td width="25%" align="center" valign="top">
       <a href="https://shoddymills.github.io/shoddy/mills/oregon.html"><img src="docs/media/oregon.svg" alt="The Oregon Trail in a terminal" width="100%"></a><br>
-      <b>The Oregon Trail</b><br><sub>the 1971 classic, reclaimed</sub>
+      <b>oregon</b><br><sub>the 1971 classic, reclaimed</sub>
     </td>
   </tr>
   <tr>
-    <td width="33%" align="center" valign="top">
+    <td width="25%" align="center" valign="top">
       <a href="https://shoddymills.github.io/shoddy/mills/pac-vt100.html"><img src="docs/media/pac-vt100.svg" alt="Pac-Man drawn with VT100 escapes" width="100%"></a><br>
-      <b>Pac-VT100</b><br><sub>arcade chase in the terminal</sub>
+      <b>pac-vt100</b><br><sub>arcade chase in the terminal</sub>
     </td>
-    <td width="33%" align="center" valign="top">
-      <a href="https://shoddymills.github.io/shoddy/mills/iris.html"><img src="docs/media/iris.svg" alt="Scatter plot of iris petal length against petal width, with the three species in three colours: setosa separates cleanly, versicolor and virginica overlap" width="100%"></a><br>
-      <b>Iris</b><br><sub>from-scratch neural net &middot; trains in 4s</sub>
+    <td width="25%" align="center" valign="top">
+      <a href="https://shoddymills.github.io/shoddy/mills/iris.html"><img src="docs/media/iris.svg" alt="Scatter plot of iris petal measurements, three species in three colours" width="100%"></a><br>
+      <b>iris</b><br><sub>neural classifier · trains in 4s</sub>
     </td>
-    <td width="33%" align="center" valign="top">
+    <td width="25%" align="center" valign="top">
+      <a href="https://shoddymills.github.io/shoddy/mills/demographics.html"><img src="docs/media/demographics.svg" alt="Neural income model chart" width="100%"></a><br>
+      <b>demographics</b><br><sub>neural regression · the other head</sub>
+    </td>
+    <td width="25%" align="center" valign="top">
       <a href="https://shoddymills.github.io/shoddy/mills/simplex-from-mps.html"><img src="docs/media/simplex-blend.svg" alt="Terminal output solving the BLEND linear program" width="100%"></a><br>
-      <b>Simplex · BLEND</b><br><sub>83-var LP, solved from MPS</sub>
+      <b>simplex-from-mps</b><br><sub>83-var LP, solved from MPS</sub>
     </td>
   </tr>
+</table>
+
+## The machines — all twenty-two
+
+The standard library, one folder of Shoddy source per machine — graphics,
+sound, statistics, neural nets, an LP solver, keyed files, and TCP/IP,
+batteries included. Full word references in
+[the machines catalog](https://shoddymills.github.io/shoddy/machines/index.html).
+
+<table>
   <tr>
-    <td width="33%" align="center" valign="top">
-      <a href="https://shoddymills.github.io/shoddy/vscode.html"><img src="docs/media/vscode-debug.svg" alt="Debugging invaders in VS Code, stopped at the collision-scoring line" width="100%"></a><br>
-      <b>Debug in VS Code</b><br><sub>breakpoints, variables, call stack</sub>
-    </td>
-    <td width="33%"></td>
-    <td width="33%"></td>
+    <td width="25%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/seq.html"><img src="docs/media/machines/seq.svg" alt="seq" width="100%"></a><br><b>seq</b><br><sub>Map, Filter, Fold and friends</sub></td>
+    <td width="25%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/str.html"><img src="docs/media/machines/str.svg" alt="str" width="100%"></a><br><b>str</b><br><sub>string helpers</sub></td>
+    <td width="25%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/math.html"><img src="docs/media/machines/math.svg" alt="math" width="100%"></a><br><b>math</b><br><sub>the derived math layer</sub></td>
+    <td width="25%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/matrix.html"><img src="docs/media/machines/matrix.svg" alt="matrix" width="100%"></a><br><b>matrix</b><br><sub>flat row-major matrices</sub></td>
+  </tr>
+  <tr>
+    <td width="25%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/stats.html"><img src="docs/media/machines/stats.svg" alt="stats" width="100%"></a><br><b>stats</b><br><sub>means to real p-values</sub></td>
+    <td width="25%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/random.html"><img src="docs/media/machines/random.svg" alt="random" width="100%"></a><br><b>random</b><br><sub>shuffles, samples, ranges</sub></td>
+    <td width="25%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/neural.html"><img src="docs/media/machines/neural.svg" alt="neural" width="100%"></a><br><b>neural</b><br><sub>feed-forward nets, two heads</sub></td>
+    <td width="25%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/money.html"><img src="docs/media/machines/money.svg" alt="money" width="100%"></a><br><b>money</b><br><sub>exact cents, no drift</sub></td>
+  </tr>
+  <tr>
+    <td width="25%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/file.html"><img src="docs/media/machines/file.svg" alt="file" width="100%"></a><br><b>file</b><br><sub>line-oriented text I/O</sub></td>
+    <td width="25%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/recio.html"><img src="docs/media/machines/recio.svg" alt="recio" width="100%"></a><br><b>recio</b><br><sub>fixed-size binary records</sub></td>
+    <td width="25%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/dict.html"><img src="docs/media/machines/dict.svg" alt="dict" width="100%"></a><br><b>dict</b><br><sub>key/value over Pair lists</sub></td>
+    <td width="25%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/isam.html"><img src="docs/media/machines/isam.svg" alt="isam" width="100%"></a><br><b>isam</b><br><sub>keyed files, B+tree index</sub></td>
+  </tr>
+  <tr>
+    <td width="25%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/net.html"><img src="docs/media/machines/net.svg" alt="net" width="100%"></a><br><b>net</b><br><sub>TCP/IP, non-blocking</sub></td>
+    <td width="25%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/simplex.html"><img src="docs/media/machines/simplex.svg" alt="simplex" width="100%"></a><br><b>simplex</b><br><sub>linear programming</sub></td>
+    <td width="25%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/mps.html"><img src="docs/media/machines/mps.svg" alt="mps" width="100%"></a><br><b>mps</b><br><sub>the LP file format</sub></td>
+    <td width="25%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/clock.html"><img src="docs/media/machines/clock.svg" alt="clock" width="100%"></a><br><b>clock</b><br><sub>timing and timestamps</sub></td>
+  </tr>
+  <tr>
+    <td width="25%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/vt100.html"><img src="docs/media/machines/vt100.svg" alt="vt100" width="100%"></a><br><b>vt100</b><br><sub>terminal control codes</sub></td>
+    <td width="25%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/keys.html"><img src="docs/media/machines/keys.svg" alt="keys" width="100%"></a><br><b>keys</b><br><sub>key codes to GameKeys</sub></td>
+    <td width="25%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/scribbler.html"><img src="docs/media/machines/scribbler.svg" alt="scribbler" width="100%"></a><br><b>scribbler</b><br><sub>pixels in a window</sub></td>
+    <td width="25%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/turtle.html"><img src="docs/media/machines/turtle.svg" alt="turtle" width="100%"></a><br><b>turtle</b><br><sub>purely functional turtles</sub></td>
+  </tr>
+  <tr>
+    <td width="25%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/plotter.html"><img src="docs/media/machines/plotter.svg" alt="plotter" width="100%"></a><br><b>plotter</b><br><sub>statistical charts</sub></td>
+    <td width="25%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/buzzer.html"><img src="docs/media/machines/buzzer.svg" alt="buzzer" width="100%"></a><br><b>buzzer</b><br><sub>notes, MML tunes, three waves</sub></td>
+    <td width="25%"></td>
+    <td width="25%"></td>
   </tr>
 </table>
 
@@ -146,6 +190,16 @@ The only prerequisite is the [.NET 10 runtime](https://dotnet.microsoft.com/down
 (the runtime, not the SDK). Nothing to clone, nothing to build, no environment to
 set: a bare `Include "seq.shoddy"` resolves in any folder you open. See
 [the setup guide](https://shoddymills.github.io/shoddy/setup.html).
+
+<table>
+  <tr>
+    <td width="50%" align="center" valign="top">
+      <a href="https://shoddymills.github.io/shoddy/vscode.html"><img src="docs/media/vscode-debug.svg" alt="Debugging invaders in VS Code, stopped at the collision-scoring line" width="100%"></a><br>
+      <b>Debug in VS Code</b><br><sub>breakpoints, variables, call stack — the whole toolchain rides inside the extension</sub>
+    </td>
+    <td width="50%"></td>
+  </tr>
+</table>
 
 ## Build from source
 

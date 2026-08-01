@@ -17,6 +17,7 @@ Rem   Up/Down   base pitch, semitone steps
 Rem   Lt/Right  detune of the pair, thousandths
 Rem   PgUp/PgDn overall gain
 Rem   R         cycle the churn rate (recipe 7 gain LFO; recipe 8 beat)
+Rem   W         cycle the waveform: square / triangle / sine
 Rem   Space     re-strike the held notes
 Rem   0         silence on/off
 Rem   Q or Esc  quits
@@ -36,16 +37,26 @@ Include "math.shoddy"
 Rem ---- lab state ------------------------------------------------------
 
 Type Lab
-    LRecipe As Number        Rem 1..8
+    LRecipe As Number        Rem 1..9
     LHz     As Number        Rem base pitch
     LDet    As Number        Rem pair detune as a ratio offset (0.006 = +0.6%)
     LGain   As Number        Rem overall bed gain 0..0.5
     LCIdx   As Number        Rem churn rate index, 1..5 (see ChurnRate)
+    LWave   As Number        Rem 0 square, 1 triangle, 2 sine (W cycles)
     LOn     As Boolean       Rem silenced with 0
     LDirty  As Boolean       Rem params moved; re-strike next tick
 
 Def NewLab() As Lab
-    Lab(2, 55, 0.006, 0.3, 3, True, True)
+    Lab(2, 55, 0.006, 0.3, 3, 0, True, True)
+
+Def WaveName(w As Number) As String
+    Select Case w
+        Case 0
+            "SQUARE"
+        Case 1
+            "TRIANGLE"
+        Case Else
+            "SINE"
 
 Def ChurnRate(idx As Number) As Number
     Select Case idx
@@ -108,6 +119,7 @@ Def VoiceHz(lb As Lab, ch As Number) As Number
 Rem ---- driving the buzzer ---------------------------------------------
 
 Def StrikeCh(lb As Lab, ch As Number)
+    SoundWave(ch, LWave(lb))
     If VoiceHz(lb, ch) > 0 Then
         NoteOn(ch, VoiceHz(lb, ch))
     Else
@@ -161,6 +173,8 @@ Def OnLabKey(lb As Lab, key As Number) As Lab
             With(lb, LGain = Max(LGain(lb) - 0.03, 0))
         Case 82
             With(lb, LCIdx = Ifte(LCIdx(lb) = 5, 1, LCIdx(lb) + 1), LDirty = True)
+        Case 87
+            With(lb, LWave = Ifte(LWave(lb) = 2, 0, LWave(lb) + 1), LDirty = True)
         Case 32
             With(lb, LDirty = True)
         Case 48
@@ -185,9 +199,10 @@ Def Draw(sc As Scribbler, lb As Lab) As Scribbler
     Let l3 = Line(l2, 3, False, "DETUNE " & Str(RoundTo(LDet(lb) * 1000, 1)) & "/1000   (LEFT/RIGHT)")
     Let l4 = Line(l3, 4, False, "GAIN   " & Str(RoundTo(LGain(lb), 2)) & "   (PGUP/PGDN)")
     Let l5 = Line(l4, 5, False, "CHURN  " & Str(RoundTo(ChurnRate(LCIdx(lb)), 1)) & " HZ   (R CYCLES)")
-    Let l6 = Line(l5, 6, False, "SPACE RESTRIKE   0 SILENCE   Q QUITS")
-    Let l7 = Line(l6, 7, True, Ifte(LOn(lb), "SOUNDING", "SILENT"))
-    ScribblerBlit(l7)
+    Let l6 = Line(l5, 6, True, "WAVE   " & WaveName(LWave(lb)) & "   (W CYCLES)")
+    Let l7 = Line(l6, 7, False, "SPACE RESTRIKE   0 SILENCE   Q QUITS")
+    Let l8 = Line(l7, 8, True, Ifte(LOn(lb), "SOUNDING", "SILENT"))
+    ScribblerBlit(l8)
 
 Rem ---- the loop -------------------------------------------------------
 
@@ -209,7 +224,7 @@ Def Loop(sc As Scribbler, lb As Lab) As Scribbler
             Loop(sc, lb)
 
 Def Main()
-    Let sc0 = ScribblerOpen(560, 280)
+    Let sc0 = ScribblerOpen(560, 316)
     Let sc1 = ScribblerTitle(sc0, "Devil's Dust Sound Lab")
     Let sc2 = SetFps(sc1, 30)
     Print("Sound lab: 1-9 recipes, Up/Down pitch, Left/Right detune,")

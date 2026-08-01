@@ -1333,7 +1333,7 @@ public sealed partial class Engine
             }
 
             /* ---- the buzzer (no window required) ----
-               All six words are zero-result and fire-and-forget: the
+               All seven words are zero-result and fire-and-forget: the
                runtime validates — bad arguments are program bugs and
                raise even in silence — then calls through BuzzerRegistry,
                where null means headless and the word does nothing.
@@ -1403,6 +1403,15 @@ public sealed partial class Engine
                 if (vol < 0 || vol > 1)
                     throw Die(line, $"SoundGain: volume must be 0..1, got {Format.Num(vol)}");
                 BuzzerRegistry.Gain?.Invoke(ch, vol);
+                return true;
+            }
+            case "SOUNDWAVE":                   // ( ch wave -- ) 0 square, 1 triangle, 2 sine; sticky
+            {
+                double wv = PopNum(line, w);
+                int ch = PopBuzzerChannel(line, w, "SoundWave");
+                if (wv != 0 && wv != 1 && wv != 2)
+                    throw Die(line, $"SoundWave: wave must be 0 (square), 1 (triangle) or 2 (sine), got {Format.Num(wv)}");
+                BuzzerRegistry.Wave?.Invoke(ch, (int)wv);
                 return true;
             }
         }
@@ -1481,6 +1490,7 @@ public sealed partial class Engine
         "SCRIBBLERBLIT", "SCRIBBLERCLOSE", "SCRIBBLERTITLE", "SCRIBBLERPOLL",
         "SCRIBBLERWAIT", "SCRIBBLERSETINTERVAL",
         "SOUND", "NOTEON", "NOTEOFF", "SOUNDQUEUE", "SOUNDSTOP", "SOUNDGAIN",
+        "SOUNDWAVE",
     };
 
     // ---- special functions ----------------------------------------------

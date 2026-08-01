@@ -56,24 +56,27 @@ public static class Buzzer
         public Mode Mode;
         public uint HeldBuf;            // loop buffer when Held; 0 otherwise
         public double HeldBufFreq;      // the loop buffer's effective Hz (pitch base)
+        public double HeldFreq;         // the Hz NOTEON last asked for (re-voice target)
+        public int HeldWave;            // waveform baked into HeldBuf
         public double GainSet = 1;      // SOUNDGAIN's sticky value; what ramps restore
+        public int WaveSet;             // SOUNDWAVE's sticky value: 0 square, 1 tri, 2 sine
         public double QueueEndAt;       // Ticker instant the queue drains (teardown cap)
     }
     static readonly Channel[] chans = new Channel[ChannelCount + 1];   // 1-based
 
-    // ---- synthesis cache: PCM keyed by (freq, ms); ms < 0 keys a loop ----
+    // ---- synthesis cache: PCM keyed by (freq, ms, wave); ms < 0 keys a loop ----
     sealed class CacheEntry
     {
-        public (double F, double Ms) Key;
+        public (double F, double Ms, int Wave) Key;
         public short[] Pcm = Array.Empty<short>();
         public double BufFreq;          // effective Hz of the data (loops round to whole periods)
     }
-    static readonly Dictionary<(double, double), LinkedListNode<CacheEntry>> cache = new();
+    static readonly Dictionary<(double, double, int), LinkedListNode<CacheEntry>> cache = new();
     static readonly LinkedList<CacheEntry> lru = new();
 
     // ---- the seam -------------------------------------------------------
 
-    /// <summary>Install the six delegates. Costs nothing until the first
+    /// <summary>Install the seven delegates. Costs nothing until the first
     /// sound call — a program that never beeps never touches OpenAL, and
     /// `mill lex`/`weave`/`machine` never come near this.</summary>
     public static void Install()
@@ -84,6 +87,7 @@ public static class Buzzer
         BuzzerRegistry.Queue   = (ch, f, ms) => Guard(() => QueueCh(ch, f, ms));
         BuzzerRegistry.Stop    = ch          => Guard(() => StopCh(ch));
         BuzzerRegistry.Gain    = (ch, v)     => Guard(() => GainCh(ch, v));
+        BuzzerRegistry.Wave    = (ch, wv)    => Guard(() => WaveCh(ch, wv));
     }
 
     /// <summary>Mill exit: held notes stop immediately — they would never
@@ -96,6 +100,7 @@ public static class Buzzer
         BuzzerRegistry.Sound = null; BuzzerRegistry.NoteOn = null;
         BuzzerRegistry.NoteOff = null; BuzzerRegistry.Queue = null;
         BuzzerRegistry.Stop = null; BuzzerRegistry.Gain = null;
+        BuzzerRegistry.Wave = null;
         if (al == null) return;
         try
         {
@@ -180,7 +185,7 @@ public static class Buzzer
 
     static void PoolPlay(double freq, double ms)
     {
-        CacheEntry e = Synth(freq, ms);
+        CacheEntry e = Synth(freq, ms, 0);           // the pool speaks square only
         if (e.Pcm.Length == 0) return;
         int pick = -1; long oldest = long.MaxValue; int oldestI = 0;
         for (int i = 0; i < PoolSize; i++)
@@ -200,15 +205,17 @@ public static class Buzzer
     static void NoteOnCh(int ch, double freq)
     {
         Channel c = chans[ch];
-        if (c.Mode == Mode.Held)
+        c.HeldFreq = freq;
+        if (c.Mode == Mode.Held && c.HeldWave == c.WaveSet)
         {
             // Retune in place — no re-attack; AL_PITCH only. What a
             // keyboard glide or pitch-bend wants.
             al!.SetSourceProperty(c.Src, SourceFloat.Pitch, (float)(freq / c.HeldBufFreq));
             return;
         }
+        if (c.Mode == Mode.Held) ReleaseHeld(c);     // timbre changed: rebuild the loop
         if (c.Mode == Mode.Queue) Flush(c);          // deterministic replace
-        CacheEntry e = Synth(freq, -1);
+        CacheEntry e = Synth(freq, -1, c.WaveSet);
         ReplaceStatic(c.Src, ref c.HeldBuf, e);
         al!.SetSourceProperty(c.Src, SourceBoolean.Looping, true);
         al.SetSourceProperty(c.Src, SourceFloat.Pitch, (float)(freq / e.BufFreq));
@@ -216,6 +223,7 @@ public static class Buzzer
         al.SourcePlay(c.Src);
         c.Mode = Mode.Held;
         c.HeldBufFreq = e.BufFreq;
+        c.HeldWave = c.WaveSet;
     }
 
     static void NoteOffCh(int ch)
@@ -229,7 +237,7 @@ public static class Buzzer
         Channel c = chans[ch];
         if (c.Mode == Mode.Held) ReleaseHeld(c);     // queueing releases a held note first
         DrainProcessed(c);                           // also where queue buffers die
-        CacheEntry e = Synth(freq, ms);
+        CacheEntry e = Synth(freq, ms, c.WaveSet);
         if (e.Pcm.Length == 0) return;               // 0 ms: nothing to queue
         uint buf = MakeBuffer(e.Pcm);
         unsafe { al!.SourceQueueBuffers(c.Src, 1, &buf); }
@@ -262,6 +270,17 @@ public static class Buzzer
         Channel c = chans[ch];
         c.GainSet = vol;
         al!.SetSourceProperty(c.Src, SourceFloat.Gain, (float)vol);
+    }
+
+    /// <summary>SOUNDWAVE: sticky per channel, like gain. A held note
+    /// re-voices in place at its current frequency — the timbre changes
+    /// mid-note, which is what a live instrument wants.</summary>
+    static void WaveCh(int ch, int wave)
+    {
+        Channel c = chans[ch];
+        if (c.WaveSet == wave) return;
+        c.WaveSet = wave;
+        if (c.Mode == Mode.Held) NoteOnCh(ch, c.HeldFreq);
     }
 
     // ---- source plumbing ---------------------------------------------------
@@ -351,19 +370,31 @@ public static class Buzzer
     }
 
     // ---- synthesis ---------------------------------------------------------
-    // 16-bit mono square waves at 0.2 of full scale. Pure math over the
-    // cache; nothing below here touches a source.
+    // 16-bit mono waves at 0.2 of full scale: square (wave 0, the
+    // default and the only voice the anonymous pool speaks), triangle
+    // (1), and sine (2). Below ~60 Hz a square is perceptually a click
+    // train — its edges are all a small speaker can voice — which is
+    // what SOUNDWAVE exists to escape. Pure math over the cache;
+    // nothing below here touches a source.
 
-    static CacheEntry Synth(double freq, double ms)
+    /// <summary>One sample of the waveform at phase frac in [0, 1).</summary>
+    static double Sample(double frac, int wave) => wave switch
     {
-        (double, double) key = (freq, ms);
+        1 => Amplitude * (1 - 4 * Math.Abs(frac - 0.5)),    // triangle
+        2 => Amplitude * Math.Sin(frac * 2 * Math.PI),      // sine
+        _ => frac < 0.5 ? Amplitude : -Amplitude,           // square
+    };
+
+    static CacheEntry Synth(double freq, double ms, int wave)
+    {
+        (double, double, int) key = (freq, ms, wave);
         if (cache.TryGetValue(key, out LinkedListNode<CacheEntry>? node))
         {
             lru.Remove(node);
             lru.AddFirst(node);
             return node.Value;
         }
-        CacheEntry e = ms < 0 ? SynthLoop(freq) : SynthFixed(freq, ms);
+        CacheEntry e = ms < 0 ? SynthLoop(freq, wave) : SynthFixed(freq, ms, wave);
         e.Key = key;
         cache[key] = lru.AddFirst(e);
         if (cache.Count > CacheCap)
@@ -377,7 +408,7 @@ public static class Buzzer
     /// <summary>A fixed-duration note (or, at freq 0, a rest) with the
     /// ~5 ms linear attack and release baked in — without the ramps every
     /// note edge clicks; with them, queued melodies articulate.</summary>
-    static CacheEntry SynthFixed(double freq, double ms)
+    static CacheEntry SynthFixed(double freq, double ms, int wave)
     {
         int n = (int)Math.Round(SampleRate * ms / 1000.0);
         if (n < 0) n = 0;                           // absurd durations: silence, not a crash
@@ -388,7 +419,7 @@ public static class Buzzer
             double step = freq / SampleRate, phase = 0;
             for (int i = 0; i < n; i++)
             {
-                double v = phase - Math.Floor(phase) < 0.5 ? Amplitude : -Amplitude;
+                double v = Sample(phase - Math.Floor(phase), wave);
                 if (ramp > 0)
                 {
                     if (i < ramp) v *= i / (double)ramp;
@@ -407,7 +438,7 @@ public static class Buzzer
     /// fractional period at the seam buzzes. Rounding n to whole samples
     /// shifts the pitch by well under a cent; BufFreq reports the
     /// effective value so retunes pitch against the truth.</summary>
-    static CacheEntry SynthLoop(double freq)
+    static CacheEntry SynthLoop(double freq, int wave)
     {
         int periods = Math.Max(1, (int)Math.Ceiling(MinLoopMs / 1000.0 * freq));
         int n = Math.Max(2, (int)Math.Round(periods * SampleRate / freq));
@@ -415,7 +446,7 @@ public static class Buzzer
         for (int i = 0; i < n; i++)
         {
             double cyc = i * (double)periods / n;   // exactly `periods` cycles over n samples
-            pcm[i] = (short)(cyc - Math.Floor(cyc) < 0.5 ? Amplitude : -Amplitude);
+            pcm[i] = (short)Sample(cyc - Math.Floor(cyc), wave);
         }
         return new CacheEntry { Pcm = pcm, BufFreq = periods * (double)SampleRate / n };
     }

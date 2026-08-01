@@ -46,11 +46,11 @@ a tuning console that goes to eleven.*
 <table>
   <tr>
     <td width="50%" align="center" valign="top">
-      <a href="https://shoddymills.github.io/shoddy/mills/mungo-caverns.html"><img src="docs/media/mungo-caverns.svg" alt="Mungo Caverns in a terminal: the well house and a brass lamp" width="100%"></a><br>
+      <a href="https://shoddymills.github.io/shoddy/mills/mungo-caverns.html"><img src="docs/media/mungo-caverns.gif" alt="Mungo Caverns played in a terminal: into the well house, take the lamp, xyzzy to the debris room" width="100%"></a><br>
       <b>Mungo Caverns</b><br><sub>the cave crawl, purely functional · graded against the original's transcripts</sub>
     </td>
     <td width="50%" align="center" valign="top">
-      <a href="https://shoddymills.github.io/shoddy/mills/devils-dust.html"><img src="docs/media/devils-dust.svg" alt="Devil's Dust: wool wisps flocking above the devil's drum, tuning panel open" width="100%"></a><br>
+      <a href="https://shoddymills.github.io/shoddy/mills/devils-dust.html"><img src="docs/media/devils-dust.gif" alt="Devil's Dust running: the lever pulled to eleven, wool erupting, then the full stop raining the sky out" width="100%"></a><br>
       <b>Devil's Dust</b><br><sub>boids over the devil's drum · live console, machine-room drone</sub>
     </td>
   </tr>

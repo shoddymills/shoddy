@@ -22,9 +22,11 @@ Rem         and quickening with the machine (the lab's detuned pair,
 Rem         transcribed and turned up)
 Rem   ch 2  the fifth above, TRIANGLE, quieter — warmth over the sub
 Rem   ch 3  the overload voice — a TRIANGLE octave while the machine is
-Rem         calm (the whole bed hums), but when the live values run hot
-Rem         it turns SQUARE and slides to a flat ninth: the buzz IS the
-Rem         overload, arriving and leaving with the ember on the gauges
+Rem         calm (the whole bed hums); as the live values run past the
+Rem         rails it sours BY DEGREES with the Heat: gain swelling,
+Rem         octave bending toward a flat ninth, turning SQUARE past
+Rem         half heat — the buzz is the overload, and it arrives and
+Rem         leaves with the ember on the gauges, never as a cliff
 Rem   ch 5  lever gestures (short MML phrases), driven by the window
 Rem   ch 6  a soft pat when wool reaches the floor
 Rem
@@ -61,14 +63,17 @@ Rem way down a STOP coast, which is the dying fall.
 Def DroneGate() As Number
     20
 
-Rem The overload voice's ratio: a clean octave, or a flat ninth (an
-Rem octave and a semitone) when the machine runs past its rails.
-Def PartialHz(f As Number, hot As Boolean) As Number
-    Ifte(hot, f * 2.1189, f * 2)
+Rem How far past the rails the machine is running: 0 at or below them,
+Rem 1 at eleven (a quarter past). The most overloaded knob speaks for
+Rem the machine. This is what makes the sour voice arrive BY DEGREES —
+Rem a binary hot/cold switch made eleven land as a sudden harsh cliff.
+Def Heat(kb As Knobs) As Number
+    Fold(Range(1, 21), 0, Fn(a, i) => Max(a, Clamp((KnobGet(kb, i) / KnobHi(i) - 1) / 0.25, 0, 1)))
 
-Rem Is any gauge past its rail? Eleven's signature.
-Def AnyHot(kb As Knobs) As Boolean
-    Any(Range(1, 21), Fn(i) => KnobHot(kb, i))
+Rem The overload voice's ratio: a clean octave when cool, BENDING
+Rem toward a flat ninth (an octave and a semitone) as the heat rises.
+Def PartialHz(f As Number, heat As Number) As Number
+    f * Lerp(2, 2.1189, heat)
 
 Rem The drone bed's loudness follows the drum: strong at NORMAL, a
 Rem little fuller as the machine loads — the slope is gentle because
@@ -119,24 +124,22 @@ Def AllQuiet(lastHz As Number) As Number
     SoundStop(6)
     BedOff(lastHz)
 
-Rem Retune the drone chord. Gains follow every frame — cheap, and this
-Rem is where the churn lives: the fundamental and fifth breathe with
-Rem the drum angle while the overload partial holds steady above them
-Rem (contrast makes the sour note carry). Pitches resend only on retrig
-Rem (the fundamental moved) or rehot (the chord soured or resolved) —
-Rem NoteOn re-pitches a held note.
-Def VoiceBed(kb As Knobs, f As Number, retrig As Boolean, rehot As Boolean, turn As Number)
+Rem Drive the drone chord, every frame. Gains and pitches alike:
+Rem NoteOn on a held note is a pure AL_PITCH property set — no
+Rem re-attack — so per-frame retuning is a true glissando, not a
+Rem zipper. The overload voice rises with the heat: its gain swells,
+Rem its octave bends toward the flat ninth, and past half heat it
+Rem turns square — sourness by degrees, never a cliff.
+Def VoiceBed(kb As Knobs, f As Number, turn As Number, heat As Number)
     SoundGain(1, BedGain(kb) * Churn(turn))
     SoundGain(4, BedGain(kb) * Churn(turn))
     SoundGain(2, BedGain(kb) * 0.5 * Churn(turn))
-    SoundGain(3, BedGain(kb) * Ifte(AnyHot(kb), 0.6, 0.28))
-    SoundWave(3, Ifte(AnyHot(kb), WaveSquare(), WaveTriangle()))
-    If retrig Then
-        NoteOn(1, f)
-        NoteOn(4, f * 1.018)
-        NoteOn(2, f * 1.5)
-    If retrig Or rehot Then
-        NoteOn(3, PartialHz(f, AnyHot(kb)))
+    SoundGain(3, BedGain(kb) * Lerp(0.28, 0.55, heat))
+    SoundWave(3, Ifte(heat > 0.5, WaveSquare(), WaveTriangle()))
+    NoteOn(1, f)
+    NoteOn(4, f * 1.018)
+    NoteOn(2, f * 1.5)
+    NoteOn(3, PartialHz(f, heat))
 
 Rem A soft distant pat when wool reaches the floor, on its own quiet
 Rem channel, pitched where small speakers can actually voice it.
@@ -151,8 +154,7 @@ Def LandPat(before As Dust, after As Dust)
 
 Rem One frame of the mill's voice: pats always, the churning drone
 Rem chord when the drum turns fast enough to hum. Returns the drone Hz
-Rem actually sounding (0 = gated off) so the caller can rate-limit the
-Rem next retune.
+Rem sounding (0 = gated off) so the caller knows whether the bed holds.
 Def MillVoice(before As Dust, after As Dust, lastHz As Number) As Number
     Let kb = Tune(after)
     LandPat(before, after)
@@ -160,6 +162,5 @@ Def MillVoice(before As Dust, after As Dust, lastHz As Number) As Number
     If f < DroneGate() Then
         BedOff(lastHz)
     Else
-        Let f2 = Ifte(lastHz > 0 And Abs(f - lastHz) < lastHz * 0.03, lastHz, f)
-        VoiceBed(kb, f2, f2 <> lastHz, AnyHot(kb) <> AnyHot(Tune(before)), Whirl(after))
-        f2
+        VoiceBed(kb, f, Whirl(after), Heat(kb))
+        f

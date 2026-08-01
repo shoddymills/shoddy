@@ -377,12 +377,17 @@ public static class Buzzer
     // what SOUNDWAVE exists to escape. Pure math over the cache;
     // nothing below here touches a source.
 
-    /// <summary>One sample of the waveform at phase frac in [0, 1).</summary>
+    /// <summary>One sample of the waveform at phase frac in [0, 1).
+    /// The gentler waves get more peak — perceptual compensation: at
+    /// equal peak a triangle reads much quieter than a square and a
+    /// sine quieter still, low sines doubly so, living where the ear
+    /// is least sensitive. The factors keep any sane pair of channels
+    /// inside full scale.</summary>
     static double Sample(double frac, int wave) => wave switch
     {
-        1 => Amplitude * (1 - 4 * Math.Abs(frac - 0.5)),    // triangle
-        2 => Amplitude * Math.Sin(frac * 2 * Math.PI),      // sine
-        _ => frac < 0.5 ? Amplitude : -Amplitude,           // square
+        1 => 1.5 * Amplitude * (1 - 4 * Math.Abs(frac - 0.5)),  // triangle
+        2 => 1.9 * Amplitude * Math.Sin(frac * 2 * Math.PI),    // sine
+        _ => frac < 0.5 ? Amplitude : -Amplitude,               // square
     };
 
     static CacheEntry Synth(double freq, double ms, int wave)

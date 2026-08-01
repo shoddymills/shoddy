@@ -92,6 +92,24 @@ is a trademark of Taito Corporation / Square Enix. This project is an
 educational homage and is not affiliated with, endorsed by, or sponsored by the
 trademark owner.
 
+### Boids (`mills/devils-dust/`)
+
+The flocking simulation in the `devils-dust*.shoddy` files implements
+**boids**, the distributed behavioral model created by **Craig W. Reynolds**
+and published as *Flocks, Herds, and Schools: A Distributed Behavioral
+Model*, Computer Graphics 21(4) (SIGGRAPH '87 Conference Proceedings),
+pp. 25–34, ACM, 1987 (https://doi.org/10.1145/37402.37406). The three
+steering rules — separation, alignment, cohesion — and the additional
+steering-force composition the mill uses are Reynolds's; the term "boids"
+is his coinage. His reference page is https://www.red3d.com/cwr/boids/.
+**No third-party code is included** — the Shoddy implementation is original,
+and the algorithm and model are credited to Reynolds.
+
+The mill's "eleven" lever position is a nod to a scene in *This Is Spinal
+Tap* (1984); no material from the film is included. The sound workbench's
+cowbell recipe (`sound-lab.shoddy`) follows the widely documented two-square
+voicing of the Roland TR-808 rhythm machine; no Roland material is included.
+
 ### Neural-network regression reference (`mills/demographics/`)
 
 The `demographics*.shoddy` files are an original port of James D. McCaffrey's

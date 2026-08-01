@@ -9,8 +9,8 @@ Rem      Wool in the air of a shoddy mill: wisps flocking by the three
 Rem      boids rules while the devil's drum turns below — and a tuning
 Rem      panel to reshape the storm while it blows.
 Rem
-Rem Panel controls (mouse): click a tab to switch groups, click or drag
-Rem a slider to set it. The button row is the machine's speed lever,
+Rem Panel controls (mouse): click a tab to switch groups, click a
+Rem knob's name to select it, click or drag its slider to set it. The button row is the machine's speed lever,
 Rem left to right: four lever POSITIONS, each a preset of knob values
 Rem the machine winds to, sliders turning as it goes. SLOW is the
 Rem gentle end (speeds and drum at about a third, loft kept — the sky
@@ -417,7 +417,7 @@ Def OnKey(st As Studio, gk As GameKey, mods As Number) As Studio
         Case CharKey(c) Where c >= 49 And c <= 52
             SetTab(st, NthTab(c - 48))
         Case CharKey(c) Where c = Asc("H")
-            With(st, Sp = With(Sp(st), PShow = Not PShow(Sp(st))))
+            With(st, Sp = With(Sp(st), PShow = Not PShow(Sp(st)), PDrag = False))
         Case CharKey(c) Where c = Asc("S")
             GoSlow(st)
         Case CharKey(c) Where c = Asc("N")
@@ -452,7 +452,7 @@ Rem switch idiom. Coordinates are continuous, so something must compare
 Rem them, but here every branch is a leaf constructor: the geometry
 Rem happens once, and OnClick dispatches on the result with Select Case
 Rem instead of acting from inside a four-deep If.
-Type Hit = HitHint | HitClose | HitTab(TabNo) | HitRow(RowNo) | HitLever(Slot) | HitStop | HitMiss
+Type Hit = HitHint | HitClose | HitTab(TabNo) | HitRow(RowNo) | HitSlide(SlideRow) | HitLever(Slot) | HitStop | HitMiss
 
 Rem Which lever button x falls on, 1..4 left to right; 0 for the gaps
 Rem between them and everything outside the row.
@@ -481,6 +481,11 @@ Def InBand(y As Number, top As Number) As Boolean
 Def OnRows(p As Panel, y As Number) As Boolean
     RowAt(y) >= 1 And RowAt(y) <= KnobRows(PTab(p))
 
+Rem The slider half of a row — below the name and value text. A click
+Rem on the text half selects the row without moving its knob.
+Def InSlide(y As Number) As Boolean
+    y - RowsY() - (RowAt(y) - 1) * RowH() >= 9
+
 Rem ---- and the classifier reads top to bottom, like the panel ----
 
 Def HitAt(p As Panel, x As Number, y As Number) As Hit
@@ -508,7 +513,10 @@ Def TabBarHit(x As Number) As Hit
 Rem Below the tab bar: the slider rows, then the lever, then the stop.
 Def BodyHit(p As Panel, x As Number, y As Number) As Hit
     If OnRows(p, y) Then
-        HitRow(RowAt(y))
+        If InSlide(y) Then
+            HitSlide(RowAt(y))
+        Else
+            HitRow(RowAt(y))
     Else
         If InBand(y, BtnY(PTab(p))) Then
             HitLever(LeverSlot(x))
@@ -527,6 +535,8 @@ Def OnClick(st As Studio, x As Number, y As Number) As Studio
         Case HitTab(n)
             SetTab(st, NthTab(n))
         Case HitRow(r)
+            With(st, Sp = With(Sp(st), PRow = r))
+        Case HitSlide(r)
             SlideTo(With(st, Sp = With(Sp(st), PRow = r, PDrag = True)), x)
         Case HitLever(slot)
             OnLever(st, slot)
@@ -575,7 +585,8 @@ Def PadZ(s As String, n As Number) As String
 Def Fixed(x As Number, p As Number) As String
     Let s = 10 ^ p
     Let n = Round(x * s)
-    Str(Fix(n / s)) & "." & PadZ(Str(Abs(n Mod s)), p)
+    Let a = Abs(n)
+    Ifte(n < 0, "-", "") & Str(Fix(a / s)) & "." & PadZ(Str(a Mod s), p)
 
 Rem ---- the footer ----------------------------------------------------
 Rem The meters, one line on the floor strip: measured FPS, the
@@ -603,7 +614,7 @@ Def DrawFooter(sc As Scribbler, st As Studio) As Scribbler
     Let m3 = Meter(m2, x0 + 176, "RAIN ", PadL(Str(Raining(c)), 3), HeatRamp(Raining(c), 0, want * 0.2, want, False))
     Let m4 = Meter(m3, x0 + 264, "DOWN ", PadL(Str(Landed(c)), 3), HeatRamp(Landed(c), 0, want * 0.03, want, False))
     Let m5 = Meter(m4, x0 + 352, "ORDER ", Fixed(OrderParam(flock), 2), HeatRamp(OrderParam(flock), 0, 0.4, 1, False))
-    Let m6 = Meter(m5, x0 + 456, "SPEED ", PadL(Fixed(spd, 1), 4), HeatRamp(spd, 0, 2, KnobHi(7), spd > KnobHi(7)))
+    Let m6 = Meter(m5, x0 + 456, "SPEED ", PadL(Fixed(spd, 1), 4), HeatRamp(spd, 0, 2, KnobHi(MaxSpeedKnob()), spd > KnobHi(MaxSpeedKnob())))
     Let m7 = Meter(m6, x0 + 560, "ALT ", PadL(Str(Round(Altitude(flock))), 3), HeatRamp(Altitude(flock), 0, 300, FloorY(), False))
     Let m8 = Meter(m7, x0 + 640, "THRU ", PadL(Fixed(SThru(st), 1), 5) & "/S", HeatRamp(SThru(st), 0, 5, 25, False))
     If SMute(st) Then

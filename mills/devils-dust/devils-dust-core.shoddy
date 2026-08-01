@@ -124,7 +124,7 @@ Def SlowKnobs() As Knobs
 Rem True when two settings are the same lever position — the panel uses
 Rem this to light the preset the goal currently sits on.
 Def KnobsMatch(a As Knobs, b As Knobs) As Boolean
-    All(Range(1, 21), Fn(i) => Abs(KnobGet(a, i) - KnobGet(b, i)) < 0.0001)
+    All(AllKnobs(), Fn(k) => Abs(KnobGet(a, k) - KnobGet(b, k)) < 0.0001)
 
 Rem Overloaded: a value meaningfully past its rail — reachable only
 Rem through the ELEVEN lever, never by hand. The ignition point sits 8%
@@ -134,21 +134,30 @@ Rem down from eleven the value hugs the rail from above — against an
 Rem absolute epsilon the ember would smoulder for half a minute after
 Rem the lever moved to MAX. At 8% it cools in a couple of seconds and
 Rem ignites within one on the way up.
-Def KnobHot(kb As Knobs, id As Number) As Boolean
-    KnobGet(kb, id) > KnobHi(id) * 1.08
+Def KnobHot(kb As Knobs, k As Knob) As Boolean
+    KnobGet(kb, k) > KnobHi(k) * 1.08
 
 Rem Every knob at exactly its rail — the loudest setting the panel can
 Rem reach by hand. This is ten.
 Def MaxKnobs() As Knobs
-    Knobs(KnobHi(1), KnobHi(2), KnobHi(3), KnobHi(4), KnobHi(5), KnobHi(6), KnobHi(7), KnobHi(8), KnobHi(9), KnobHi(10), KnobHi(11), KnobHi(12), KnobHi(13), KnobHi(14), KnobHi(15), KnobHi(16), KnobHi(17), KnobHi(18), KnobHi(19), KnobHi(20), KnobHi(21))
+    Fold(AllKnobs(), NewKnobs(), Fn(acc, k) => KnobPut(acc, k, KnobHi(k)))
 
 Rem These go to eleven. Every knob a full quarter past its rail —
-Rem KnobSet clamps mere mortals at KnobHi, but this constructor doesn't
-Rem go through the panel, so the values sit where no slider can reach
-Rem and the gauges burn ember to say so. The two population counts stay
-Rem whole.
+Rem KnobSet clamps mere mortals at KnobHi, but this goes through
+Rem KnobPut, the raw write, so the values sit where no slider can
+Rem reach and the gauges burn ember to say so.
 Def ElevenKnobs() As Knobs
-    Knobs(KnobHi(1) * 1.25, KnobHi(2) * 1.25, KnobHi(3) * 1.25, KnobHi(4) * 1.25, KnobHi(5) * 1.25, KnobHi(6) * 1.25, KnobHi(7) * 1.25, KnobHi(8) * 1.25, KnobHi(9) * 1.25, KnobHi(10) * 1.25, KnobHi(11) * 1.25, KnobHi(12) * 1.25, KnobHi(13) * 1.25, KnobHi(14) * 1.25, KnobHi(15) * 1.25, KnobHi(16) * 1.25, KnobHi(17) * 1.25, KnobHi(18) * 1.25, Round(KnobHi(19) * 1.25), Round(KnobHi(20) * 1.25), KnobHi(21) * 1.25)
+    Fold(AllKnobs(), NewKnobs(), Fn(acc, k) => KnobPut(acc, k, ElevenVal(k)))
+
+Rem A quarter past the rail; the population counts stay whole.
+Def ElevenVal(k As Knob) As Number
+    Select Case k
+        Case WispsKnob
+            Round(KnobHi(k) * 1.25)
+        Case MotesKnob
+            Round(KnobHi(k) * 1.25)
+        Case Else
+            KnobHi(k) * 1.25
 
 Rem A population count mid-glide: whole, and never stalled. A rounded
 Rem Lerp freezes once the remaining gap drops under 1/(2t) — the step
@@ -170,269 +179,341 @@ Rem through WindCount so they stay whole and always arrive.
 Def BlendKnobs(a As Knobs, b As Knobs, t As Number) As Knobs
     Knobs(Lerp(LoftMin(a), LoftMin(b), t), Lerp(LoftMax(a), LoftMax(b), t), Lerp(Settle(a), Settle(b), t), Lerp(LiftK(a), LiftK(b), t), Lerp(DraftR(a), DraftR(b), t), Lerp(MinSpeed(a), MinSpeed(b), t), Lerp(MaxSpeed(a), MaxSpeed(b), t), Lerp(FallMax(a), FallMax(b), t), Lerp(FlutterK(a), FlutterK(b), t), Lerp(TumbleP(a), TumbleP(b), t), Lerp(TumbleK(a), TumbleK(b), t), Lerp(AlignK(a), AlignK(b), t), Lerp(CohereK(a), CohereK(b), t), Lerp(SepK(a), SepK(b), t), Lerp(SepR(a), SepR(b), t), Lerp(NeighborR(a), NeighborR(b), t), Lerp(SweepP(a), SweepP(b), t), Lerp(RecycleP(a), RecycleP(b), t), WindCount(FiberCount(a), FiberCount(b), t), WindCount(MoteCount(a), MoteCount(b), t), Lerp(DrumStep(a), DrumStep(b), t))
 
-Rem ---- the knob table ------------------------------------------------
-Rem The pure model of the tuning panel: knobs are numbered 1..21 in
-Rem field order, arranged on four tabs. The window half only ever asks
-Rem this table for names, rails, and values — it holds no knowledge of
-Rem its own.
+Rem ---- tabs, knobs, and the table -------------------------------------
+Rem The panel's four tabs and twenty-one knobs as SUM TYPES, so every
+Rem dispatch below is a Select Case over names rather than magic
+Rem numbers. Grid geometry still needs ordinals — rows, x positions,
+Rem iteration — so NthTab/NthKnob/TabIdx convert at the edges and
+Rem AllTabs/AllKnobs enumerate for folds. The window half only ever
+Rem asks this table for names, rails, and values — it holds no
+Rem knowledge of its own.
 
-Def TabName(tab As Number) As String
-    Select Case tab
+Type Tab = LifeTab | TempoTab | FlockTab | PaceTab
+
+Type Knob = LoftMinKnob | LoftMaxKnob | SettleKnob | LiftKnob | DraftRKnob | MinSpeedKnob | MaxSpeedKnob | FallMaxKnob | FlutterKnob | TumblePKnob | TumbleKKnob | AlignKnob | CohereKnob | SepKKnob | SepRKnob | NeighborKnob | SweepKnob | RecycleKnob | WispsKnob | MotesKnob | SpinKnob
+
+Def AllTabs() As List Of Tab
+    { LifeTab(), TempoTab(), FlockTab(), PaceTab() }
+
+Def AllKnobs() As List Of Knob
+    Map(Range(1, 21), Fn(i) => NthKnob(i))
+
+Def TabIdx(t As Tab) As Number
+    Select Case t
+        Case LifeTab
+            1
+        Case TempoTab
+            2
+        Case FlockTab
+            3
+        Case Else
+            4
+
+Def NthTab(n As Number) As Tab
+    Select Case n
         Case 1
-            "LIFE"
+            LifeTab()
         Case 2
-            "TEMPO"
+            TempoTab()
         Case 3
+            FlockTab()
+        Case Else
+            PaceTab()
+
+Def TabName(t As Tab) As String
+    Select Case t
+        Case LifeTab
+            "LIFE"
+        Case TempoTab
+            "TEMPO"
+        Case FlockTab
             "FLOCK"
         Case Else
             "PACE"
 
-Def KnobRows(tab As Number) As Number
-    Select Case tab
-        Case 2
+Def KnobRows(t As Tab) As Number
+    Select Case t
+        Case TempoTab
             6
         Case Else
             5
 
-Rem Row r on tab t, as a knob id 1..21.
-Def KnobId(tab As Number, row As Number) As Number
-    Select Case tab
+Rem Knob number n in field order, 1..21.
+Def NthKnob(n As Number) As Knob
+    Select Case n
         Case 1
-            row
+            LoftMinKnob()
         Case 2
-            5 + row
+            LoftMaxKnob()
         Case 3
-            11 + row
-        Case Else
-            16 + row
-
-Def KnobName(id As Number) As String
-    Select Case id
-        Case 1
-            "LOFT MIN"
-        Case 2
-            "LOFT MAX"
-        Case 3
-            "GRAVITY"
+            SettleKnob()
         Case 4
-            "LIFT"
+            LiftKnob()
         Case 5
-            "DRAFT R"
+            DraftRKnob()
         Case 6
-            "MIN SPD"
+            MinSpeedKnob()
         Case 7
-            "MAX SPD"
+            MaxSpeedKnob()
         Case 8
-            "FALL MAX"
+            FallMaxKnob()
         Case 9
-            "FLUTTER"
+            FlutterKnob()
         Case 10
-            "TUMBLE P"
+            TumblePKnob()
         Case 11
-            "TUMBLE K"
+            TumbleKKnob()
         Case 12
-            "ALIGN"
+            AlignKnob()
         Case 13
-            "COHERE"
+            CohereKnob()
         Case 14
-            "SEPARATE"
+            SepKKnob()
         Case 15
-            "SEP R"
+            SepRKnob()
         Case 16
-            "NEIGHBOR"
+            NeighborKnob()
         Case 17
-            "SWEEP"
+            SweepKnob()
         Case 18
-            "RECYCLE"
+            RecycleKnob()
         Case 19
-            "WISPS"
+            WispsKnob()
         Case 20
+            MotesKnob()
+        Case Else
+            SpinKnob()
+
+Rem Row r on tab t, as a Knob.
+Def TabKnob(t As Tab, row As Number) As Knob
+    Select Case t
+        Case LifeTab
+            NthKnob(row)
+        Case TempoTab
+            NthKnob(5 + row)
+        Case FlockTab
+            NthKnob(11 + row)
+        Case Else
+            NthKnob(16 + row)
+
+Def KnobName(k As Knob) As String
+    Select Case k
+        Case LoftMinKnob
+            "LOFT MIN"
+        Case LoftMaxKnob
+            "LOFT MAX"
+        Case SettleKnob
+            "GRAVITY"
+        Case LiftKnob
+            "LIFT"
+        Case DraftRKnob
+            "DRAFT R"
+        Case MinSpeedKnob
+            "MIN SPD"
+        Case MaxSpeedKnob
+            "MAX SPD"
+        Case FallMaxKnob
+            "FALL MAX"
+        Case FlutterKnob
+            "FLUTTER"
+        Case TumblePKnob
+            "TUMBLE P"
+        Case TumbleKKnob
+            "TUMBLE K"
+        Case AlignKnob
+            "ALIGN"
+        Case CohereKnob
+            "COHERE"
+        Case SepKKnob
+            "SEPARATE"
+        Case SepRKnob
+            "SEP R"
+        Case NeighborKnob
+            "NEIGHBOR"
+        Case SweepKnob
+            "SWEEP"
+        Case RecycleKnob
+            "RECYCLE"
+        Case WispsKnob
+            "WISPS"
+        Case MotesKnob
             "MOTES"
         Case Else
             "SPIN"
 
-Def KnobLo(id As Number) As Number
-    Select Case id
-        Case 1
+Def KnobLo(k As Knob) As Number
+    Select Case k
+        Case LoftMinKnob
             30
-        Case 2
+        Case LoftMaxKnob
             60
-        Case 3
-            0
-        Case 4
-            0
-        Case 5
+        Case DraftRKnob
             40
-        Case 6
-            0
-        Case 7
+        Case MaxSpeedKnob
             0.5
-        Case 8
+        Case FallMaxKnob
             0.2
-        Case 9
-            0
-        Case 10
-            0
-        Case 11
-            0
-        Case 12
-            0
-        Case 13
-            0
-        Case 14
-            0
-        Case 15
+        Case SepRKnob
             2
-        Case 16
+        Case NeighborKnob
             10
-        Case 17
-            0
-        Case 18
-            0
-        Case 19
+        Case WispsKnob
             10
-        Case 20
-            0
         Case Else
             0
 
-Def KnobHi(id As Number) As Number
-    Select Case id
-        Case 1
+Def KnobHi(k As Knob) As Number
+    Select Case k
+        Case LoftMinKnob
             900
-        Case 2
+        Case LoftMaxKnob
             1200
-        Case 3
+        Case SettleKnob
             0.15
-        Case 4
+        Case LiftKnob
             0.3
-        Case 5
+        Case DraftRKnob
             500
-        Case 6
+        Case MinSpeedKnob
             1.6
-        Case 7
+        Case MaxSpeedKnob
             6
-        Case 8
+        Case FallMaxKnob
             3.5
-        Case 9
+        Case FlutterKnob
             0.35
-        Case 10
+        Case TumblePKnob
             0.2
-        Case 11
+        Case TumbleKKnob
             2.2
-        Case 12
+        Case AlignKnob
             0.1
-        Case 13
+        Case CohereKnob
             0.015
-        Case 14
+        Case SepKKnob
             0.22
-        Case 15
+        Case SepRKnob
             48
-        Case 16
+        Case NeighborKnob
             150
-        Case 17
+        Case SweepKnob
             0.35
-        Case 18
+        Case RecycleKnob
             0.06
-        Case 19
+        Case WispsKnob
             200
-        Case 20
+        Case MotesKnob
             350
         Case Else
             0.8
 
-Def KnobGet(kb As Knobs, id As Number) As Number
-    Select Case id
-        Case 1
+Def KnobGet(kb As Knobs, k As Knob) As Number
+    Select Case k
+        Case LoftMinKnob
             LoftMin(kb)
-        Case 2
+        Case LoftMaxKnob
             LoftMax(kb)
-        Case 3
+        Case SettleKnob
             Settle(kb)
-        Case 4
+        Case LiftKnob
             LiftK(kb)
-        Case 5
+        Case DraftRKnob
             DraftR(kb)
-        Case 6
+        Case MinSpeedKnob
             MinSpeed(kb)
-        Case 7
+        Case MaxSpeedKnob
             MaxSpeed(kb)
-        Case 8
+        Case FallMaxKnob
             FallMax(kb)
-        Case 9
+        Case FlutterKnob
             FlutterK(kb)
-        Case 10
+        Case TumblePKnob
             TumbleP(kb)
-        Case 11
+        Case TumbleKKnob
             TumbleK(kb)
-        Case 12
+        Case AlignKnob
             AlignK(kb)
-        Case 13
+        Case CohereKnob
             CohereK(kb)
-        Case 14
+        Case SepKKnob
             SepK(kb)
-        Case 15
+        Case SepRKnob
             SepR(kb)
-        Case 16
+        Case NeighborKnob
             NeighborR(kb)
-        Case 17
+        Case SweepKnob
             SweepP(kb)
-        Case 18
+        Case RecycleKnob
             RecycleP(kb)
-        Case 19
+        Case WispsKnob
             FiberCount(kb)
-        Case 20
+        Case MotesKnob
             MoteCount(kb)
         Case Else
             DrumStep(kb)
 
-Rem Set knob id to v, clamped to its rails; the two population counts
-Rem are kept whole.
-Def KnobSet(kb As Knobs, id As Number, v As Number) As Knobs
-    Let v2 = Ifte(id = 19 Or id = 20, Round(Clamp(v, KnobLo(id), KnobHi(id))), Clamp(v, KnobLo(id), KnobHi(id)))
-    Select Case id
-        Case 1
-            With(kb, LoftMin = v2)
-        Case 2
-            With(kb, LoftMax = v2)
-        Case 3
-            With(kb, Settle = v2)
-        Case 4
-            With(kb, LiftK = v2)
-        Case 5
-            With(kb, DraftR = v2)
-        Case 6
-            With(kb, MinSpeed = v2)
-        Case 7
-            With(kb, MaxSpeed = v2)
-        Case 8
-            With(kb, FallMax = v2)
-        Case 9
-            With(kb, FlutterK = v2)
-        Case 10
-            With(kb, TumbleP = v2)
-        Case 11
-            With(kb, TumbleK = v2)
-        Case 12
-            With(kb, AlignK = v2)
-        Case 13
-            With(kb, CohereK = v2)
-        Case 14
-            With(kb, SepK = v2)
-        Case 15
-            With(kb, SepR = v2)
-        Case 16
-            With(kb, NeighborR = v2)
-        Case 17
-            With(kb, SweepP = v2)
-        Case 18
-            With(kb, RecycleP = v2)
-        Case 19
-            With(kb, FiberCount = v2)
-        Case 20
-            With(kb, MoteCount = v2)
+Rem The raw positional write — no clamping. ELEVEN reaches past the
+Rem rails through this; hands go through KnobSet.
+Def KnobPut(kb As Knobs, k As Knob, v As Number) As Knobs
+    Select Case k
+        Case LoftMinKnob
+            With(kb, LoftMin = v)
+        Case LoftMaxKnob
+            With(kb, LoftMax = v)
+        Case SettleKnob
+            With(kb, Settle = v)
+        Case LiftKnob
+            With(kb, LiftK = v)
+        Case DraftRKnob
+            With(kb, DraftR = v)
+        Case MinSpeedKnob
+            With(kb, MinSpeed = v)
+        Case MaxSpeedKnob
+            With(kb, MaxSpeed = v)
+        Case FallMaxKnob
+            With(kb, FallMax = v)
+        Case FlutterKnob
+            With(kb, FlutterK = v)
+        Case TumblePKnob
+            With(kb, TumbleP = v)
+        Case TumbleKKnob
+            With(kb, TumbleK = v)
+        Case AlignKnob
+            With(kb, AlignK = v)
+        Case CohereKnob
+            With(kb, CohereK = v)
+        Case SepKKnob
+            With(kb, SepK = v)
+        Case SepRKnob
+            With(kb, SepR = v)
+        Case NeighborKnob
+            With(kb, NeighborR = v)
+        Case SweepKnob
+            With(kb, SweepP = v)
+        Case RecycleKnob
+            With(kb, RecycleP = v)
+        Case WispsKnob
+            With(kb, FiberCount = v)
+        Case MotesKnob
+            With(kb, MoteCount = v)
         Case Else
-            With(kb, DrumStep = v2)
+            With(kb, DrumStep = v)
+
+Rem A value fit for the rails: clamped, and whole for the population
+Rem counts — named constructors say so instead of "id = 19 or 20".
+Def RailVal(k As Knob, v As Number) As Number
+    Select Case k
+        Case WispsKnob
+            Round(Clamp(v, KnobLo(k), KnobHi(k)))
+        Case MotesKnob
+            Round(Clamp(v, KnobLo(k), KnobHi(k)))
+        Case Else
+            Clamp(v, KnobLo(k), KnobHi(k))
+
+Rem Set knob k to v, clamped to its rails — the only write the panel's
+Rem hands are given.
+Def KnobSet(kb As Knobs, k As Knob, v As Number) As Knobs
+    KnobPut(kb, k, RailVal(k, v))
 
 Rem ---- state ---------------------------------------------------------
 

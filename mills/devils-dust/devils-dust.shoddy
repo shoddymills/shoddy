@@ -57,13 +57,13 @@ Include "buzzer.shoddy"
 Rem ---- app state -----------------------------------------------------
 
 Type Panel
-    PTab  As Number          Rem which tab is open, 1..4
+    PTab  As Tab             Rem which tab is open
     PRow  As Number          Rem which knob row is selected on that tab
     PShow As Boolean
     PDrag As Boolean         Rem a slider is being mouse-dragged
 
 Def NewPanel() As Panel
-    Panel(1, 1, True, False)
+    Panel(LifeTab(), 1, True, False)
 
 Type Studio
     Sd    As Dust
@@ -107,14 +107,14 @@ Def TrackW() As Number
     PanW() - 20
 Def RowsY() As Number
     PanY() + TabH() + 8
-Def PanH(tab As Number) As Number
-    TabH() + 12 + KnobRows(tab) * RowH() + 46
+Def PanH(t As Tab) As Number
+    TabH() + 12 + KnobRows(t) * RowH() + 46
 
 Rem The button row, below the last slider — the machine's speed lever,
 Rem left to right in increasing fury: SLOW, NORMAL, MAX, ELEVEN. Four
 Rem equal buttons filling the panel's inner width, evenly gapped.
-Def BtnY(tab As Number) As Number
-    RowsY() + KnobRows(tab) * RowH()
+Def BtnY(t As Tab) As Number
+    RowsY() + KnobRows(t) * RowH()
 Def BtnW() As Number
     80
 Def BtnSx() As Number
@@ -127,8 +127,8 @@ Def BtnEx() As Number
     BtnMx() + BtnW() + 6
 
 Rem The emergency stop: a full-width red bar below the lever.
-Def StopY(tab As Number) As Number
-    BtnY(tab) + 22
+Def StopY(t As Tab) As Number
+    BtnY(t) + 22
 
 Rem ---- wisps ---------------------------------------------------------
 
@@ -213,19 +213,23 @@ Def HeatRamp(v As Number, lo As Number, mid As Number, hi As Number, hot As Bool
 Rem ---- the panel -----------------------------------------------------
 
 Rem Where the slider fill sits for knob id, as a fraction of its rails.
-Def KnobFrac(kb As Knobs, id As Number) As Number
-    (KnobGet(kb, id) - KnobLo(id)) / (KnobHi(id) - KnobLo(id))
+Def KnobFrac(kb As Knobs, k As Knob) As Number
+    (KnobGet(kb, k) - KnobLo(k)) / (KnobHi(k) - KnobLo(k))
 
 Rem A knob's value translated into the colour language: red toward its
 Rem floor, green at its NORMAL default, ivory at its rail, ember past.
-Def KnobDye(kb As Knobs, id As Number) As Dye
-    HeatRamp(KnobGet(kb, id), KnobLo(id), KnobGet(NewKnobs(), id), KnobHi(id), KnobHot(kb, id))
+Def KnobDye(kb As Knobs, k As Knob) As Dye
+    HeatRamp(KnobGet(kb, k), KnobLo(k), KnobGet(NewKnobs(), k), KnobHi(k), KnobHot(kb, k))
 
-Def DrawTab(sc As Scribbler, p As Panel, t As Number) As Scribbler
-    Let x = PanX() + 4 + (t - 1) * (TabW() + 2)
-    Let active = t = PTab(p)
+Rem Drawn by ordinal (the Fold hands out 1..4 for geometry); the tab's
+Rem IDENTITY is NthTab(i), and active is an index compare — sum values
+Rem dispatch through Select Case, not "=".
+Def DrawTab(sc As Scribbler, p As Panel, i As Number) As Scribbler
+    Let x = PanX() + 4 + (i - 1) * (TabW() + 2)
+    Let active = i = TabIdx(PTab(p))
+    Let label = TabName(NthTab(i))
     Let box = FillRect(sc, x, PanY() + 4, TabW(), TabH() - 8, Ifte(active, 188, 46), Ifte(active, 178, 42), Ifte(active, 158, 40))
-    ScribblerText(box, x + Round((TabW() - Len(TabName(t)) * 8) / 2), PanY() + 8, 1, Ifte(active, 40, 150), Ifte(active, 36, 142), Ifte(active, 34, 132), TabName(t))
+    ScribblerText(box, x + Round((TabW() - Len(label) * 8) / 2), PanY() + 8, 1, Ifte(active, 40, 150), Ifte(active, 36, 142), Ifte(active, 34, 132), label)
 
 Rem One knob row: name, value, slider track, fill, and handle. The
 Rem selected row draws brighter; the fill is kept at least a pixel so
@@ -238,7 +242,7 @@ Rem show — the fill and value the machine's, the handle the goal's — so
 Rem a gauge past its rail burns ember, unmistakable next to MAX's legal
 Rem ivory. It's max... or eleven.
 Def DrawKnobRow(sc As Scribbler, kb As Knobs, goal As Knobs, p As Panel, row As Number) As Scribbler
-    Let id = KnobId(PTab(p), row)
+    Let id = TabKnob(PTab(p), row)
     Let y = RowsY() + (row - 1) * RowH()
     Let sel = row = PRow(p)
     Let heat = KnobDye(kb, id)
@@ -288,7 +292,7 @@ Rem ---- input: keyboard -----------------------------------------------
 Rem Every control writes the GOAL; the live Tune chases it each tick.
 Rem Slider input goes through KnobSet, so hands clamp at the rails —
 Rem only ELEVEN's constructor reaches past them.
-Def PutKnob(st As Studio, id As Number, v As Number) As Studio
+Def PutKnob(st As Studio, id As Knob, v As Number) As Studio
     With(st, SGoal = KnobSet(SGoal(st), id, v))
 
 Rem The five lever positions. Each sets the GOAL; the machine winds its
@@ -345,8 +349,8 @@ Def GoStop(st As Studio) As Studio
         SoundQueue(5, 38, 140)
         With(st, Sd = cut, SGoal = StopKnobs())
 
-Def SetTab(st As Studio, t As Number) As Studio
-    Let p = With(Sp(st), PTab = Clamp(t, 1, 4))
+Def SetTab(st As Studio, t As Tab) As Studio
+    Let p = With(Sp(st), PTab = t)
     With(st, Sp = With(p, PRow = Clamp(PRow(p), 1, KnobRows(PTab(p)))))
 
 Def MoveSel(st As Studio, dir As Number) As Studio
@@ -357,7 +361,7 @@ Rem Left/Right steps the knob by a fiftieth of its rails; Shift (bit 1
 Rem of Mods) makes the step five times coarser.
 Def NudgeKnob(st As Studio, dir As Number, mods As Number) As Studio
     Let p = Sp(st)
-    Let id = KnobId(PTab(p), PRow(p))
+    Let id = TabKnob(PTab(p), PRow(p))
     Let stp = (KnobHi(id) - KnobLo(id)) / 50 * Ifte(mods Mod 2 >= 1, 5, 1)
     PutKnob(st, id, KnobGet(SGoal(st), id) + dir * stp)
 
@@ -372,9 +376,9 @@ Def OnKey(st As Studio, gk As GameKey, mods As Number) As Studio
         Case ArrowRight
             NudgeKnob(st, 1, mods)
         Case TabKey
-            SetTab(st, Ifte(PTab(Sp(st)) = 4, 1, PTab(Sp(st)) + 1))
+            SetTab(st, NthTab(Ifte(TabIdx(PTab(Sp(st))) = 4, 1, TabIdx(PTab(Sp(st))) + 1)))
         Case CharKey(c) Where c >= 49 And c <= 52
-            SetTab(st, c - 48)
+            SetTab(st, NthTab(c - 48))
         Case CharKey(c) Where c = Asc("H")
             With(st, Sp = With(Sp(st), PShow = Not PShow(Sp(st))))
         Case CharKey(c) Where c = Asc("S")
@@ -402,7 +406,7 @@ Def RowAt(y As Number) As Number
 Rem Set the selected knob from a mouse x on its slider track.
 Def SlideTo(st As Studio, x As Number) As Studio
     Let p = Sp(st)
-    Let id = KnobId(PTab(p), PRow(p))
+    Let id = TabKnob(PTab(p), PRow(p))
     Let frac = Clamp((x - (PanX() + 10)) / TrackW(), 0, 1)
     PutKnob(st, id, KnobLo(id) + frac * (KnobHi(id) - KnobLo(id)))
 
@@ -424,7 +428,7 @@ Def OnClick(st As Studio, x As Number, y As Number) As Studio
                 If x > PanX() + PanW() - 24 Then
                     With(st, Sp = With(p, PShow = False))
                 Else
-                    SetTab(st, Clamp(Floor((x - PanX() - 4) / (TabW() + 2)) + 1, 1, 4))
+                    SetTab(st, NthTab(Clamp(Floor((x - PanX() - 4) / (TabW() + 2)) + 1, 1, 4)))
             Else
                 If RowAt(y) >= 1 And RowAt(y) <= KnobRows(PTab(p)) Then
                     SlideTo(With(st, Sp = With(p, PRow = RowAt(y), PDrag = True)), x)

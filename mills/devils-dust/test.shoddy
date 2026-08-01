@@ -80,17 +80,17 @@ Def Main()
 
     Rem ---- the knob table --------------------------------------------
 
-    Assert(Fold(Range(1, 4), 0, Fn(acc, t) => acc + KnobRows(t)) = 21, "EVERY KNOB SITS ON A TAB")
-    Assert(KnobId(4, KnobRows(4)) = 21, "TABS TILE THE KNOB TABLE")
-    Assert(All(Range(1, 21), Fn(i) => KnobGet(kb, i) >= KnobLo(i) And KnobGet(kb, i) <= KnobHi(i)), "DEFAULTS SIT INSIDE THEIR RAILS")
-    Assert(All(Range(1, 21), Fn(i) => Abs(KnobGet(KnobSet(kb, i, KnobLo(i)), i) - KnobLo(i)) < 0.0001), "EVERY KNOB SETS AND GETS")
-    Assert(Abs(KnobGet(KnobSet(kb, 3, 99), 3) - KnobHi(3)) < 0.0001, "A KNOB CLAMPS AT ITS RAIL")
-    Assert(KnobGet(KnobSet(kb, 19, 33.7), 19) = 34, "WISP COUNT STAYS WHOLE")
+    Assert(Fold(AllTabs(), 0, Fn(acc, t) => acc + KnobRows(t)) = 21, "EVERY KNOB SITS ON A TAB")
+    Assert(KnobName(TabKnob(PaceTab(), KnobRows(PaceTab()))) = "SPIN", "TABS TILE THE KNOB TABLE")
+    Assert(All(AllKnobs(), Fn(k) => KnobGet(kb, k) >= KnobLo(k) And KnobGet(kb, k) <= KnobHi(k)), "DEFAULTS SIT INSIDE THEIR RAILS")
+    Assert(All(AllKnobs(), Fn(k) => Abs(KnobGet(KnobSet(kb, k, KnobLo(k)), k) - KnobLo(k)) < 0.0001), "EVERY KNOB SETS AND GETS")
+    Assert(Abs(KnobGet(KnobSet(kb, SettleKnob(), 99), SettleKnob()) - KnobHi(SettleKnob())) < 0.0001, "A KNOB CLAMPS AT ITS RAIL")
+    Assert(KnobGet(KnobSet(kb, WispsKnob(), 33.7), WispsKnob()) = 34, "WISP COUNT STAYS WHOLE")
 
     Rem live resize: the flock grows and shrinks to the WISPS knob
-    Let more = Advance(With(d, Tune = KnobSet(kb, 19, 130)))
+    Let more = Advance(With(d, Tune = KnobSet(kb, WispsKnob(), 130)))
     Assert(Length(Fibers(more)) = 130, "THE FLOCK GROWS TO THE KNOB")
-    Let fewer = Advance(With(d, Tune = KnobSet(kb, 19, 40)))
+    Let fewer = Advance(With(d, Tune = KnobSet(kb, WispsKnob(), 40)))
     Assert(Length(Fibers(fewer)) = 40, "THE FLOCK TRIMS TO THE KNOB")
 
     Rem ---- the meters ------------------------------------------------
@@ -123,37 +123,37 @@ Def Main()
     Rem stop: the machine goes dark, legally — drum still, no lift, no
     Rem sweep, nothing recycles — and it is its own lever position
     Let halt = StopKnobs()
-    Assert(All(Range(1, 21), Fn(i) => KnobGet(halt, i) >= KnobLo(i) And KnobGet(halt, i) <= KnobHi(i)), "STOP STAYS ON THE RAILS")
+    Assert(All(AllKnobs(), Fn(k) => KnobGet(halt, k) >= KnobLo(k) And KnobGet(halt, k) <= KnobHi(k)), "STOP STAYS ON THE RAILS")
     Assert(DrumStep(halt) = 0 And LiftK(halt) = 0 And SweepP(halt) = 0 And RecycleP(halt) = 0, "A STOPPED MILL IS STILL")
     Assert(Not KnobsMatch(halt, kb) And Not KnobsMatch(halt, SlowKnobs()), "STOP IS ITS OWN LEVER POSITION")
 
     Rem slow: legal values, motion wound down, loft untouched
     Let slow2 = SlowKnobs()
-    Assert(All(Range(1, 21), Fn(i) => KnobGet(slow2, i) >= KnobLo(i) And KnobGet(slow2, i) <= KnobHi(i)), "SLOW STAYS ON THE RAILS")
+    Assert(All(AllKnobs(), Fn(k) => KnobGet(slow2, k) >= KnobLo(k) And KnobGet(slow2, k) <= KnobHi(k)), "SLOW STAYS ON THE RAILS")
     Assert(MaxSpeed(slow2) < MaxSpeed(kb) And Settle(slow2) < Settle(kb) And DrumStep(slow2) < DrumStep(kb), "SLOW IS GENTLER THAN NORMAL")
     Assert(LoftMin(slow2) = LoftMin(kb) And LoftMax(slow2) = LoftMax(kb), "SLOW KEEPS THE LOFT")
     Assert(KnobsMatch(slow2, SlowKnobs()) And Not KnobsMatch(slow2, kb), "LEVER POSITIONS ARE DISTINGUISHABLE")
 
     Rem max: every knob exactly at its rail; eleven: strictly past it
-    Assert(All(Range(1, 21), Fn(i) => Abs(KnobGet(MaxKnobs(), i) - KnobHi(i)) < 0.0001), "MAX IS TEN")
-    Assert(All(Range(1, 21), Fn(i) => KnobGet(ElevenKnobs(), i) > KnobGet(MaxKnobs(), i)), "ELEVEN IS ONE LOUDER THAN MAX")
-    Assert(All(Range(1, 21), Fn(i) => KnobGet(ElevenKnobs(), i) > KnobHi(i)), "ELEVEN IS ONE LOUDER")
-    Assert(Length(Fibers(Advance(With(d, Tune = ElevenKnobs())))) = KnobGet(ElevenKnobs(), 19), "THE FLOCK FOLLOWS ELEVEN")
+    Assert(All(AllKnobs(), Fn(k) => Abs(KnobGet(MaxKnobs(), k) - KnobHi(k)) < 0.0001), "MAX IS TEN")
+    Assert(All(AllKnobs(), Fn(k) => KnobGet(ElevenKnobs(), k) > KnobGet(MaxKnobs(), k)), "ELEVEN IS ONE LOUDER THAN MAX")
+    Assert(All(AllKnobs(), Fn(k) => KnobGet(ElevenKnobs(), k) > KnobHi(k)), "ELEVEN IS ONE LOUDER")
+    Assert(Length(Fibers(Advance(With(d, Tune = ElevenKnobs())))) = KnobGet(ElevenKnobs(), WispsKnob()), "THE FLOCK FOLLOWS ELEVEN")
 
     Rem the overload lamp: max runs cool, eleven burns, and a value
     Rem cooling down from eleven goes white well before it touches the
     Rem rail (the glide hugs the rail from above and never quite lands)
-    Assert(All(Range(1, 21), Fn(i) => Not KnobHot(MaxKnobs(), i)), "MAX RUNS COOL")
-    Assert(All(Range(1, 21), Fn(i) => KnobHot(ElevenKnobs(), i)), "ELEVEN BURNS")
-    Assert(All(Range(1, 21), Fn(i) => Not KnobHot(BlendKnobs(MaxKnobs(), ElevenKnobs(), 0.2), i)), "COOLING WOOL GOES WHITE EARLY")
+    Assert(All(AllKnobs(), Fn(k) => Not KnobHot(MaxKnobs(), k)), "MAX RUNS COOL")
+    Assert(All(AllKnobs(), Fn(k) => KnobHot(ElevenKnobs(), k)), "ELEVEN BURNS")
+    Assert(All(AllKnobs(), Fn(k) => Not KnobHot(BlendKnobs(MaxKnobs(), ElevenKnobs(), 0.2), k)), "COOLING WOOL GOES WHITE EARLY")
 
     Rem the glide: an 1875 machine winds toward its levers
     Let ele = ElevenKnobs()
-    Assert(All(Range(1, 21), Fn(i) => Abs(KnobGet(BlendKnobs(kb, ele, 1), i) - KnobGet(ele, i)) < 0.0001), "A FULL GLIDE ARRIVES")
-    Assert(All(Range(1, 21), Fn(i) => Abs(KnobGet(BlendKnobs(kb, ele, 0), i) - KnobGet(kb, i)) < 0.0001), "A ZERO GLIDE STAYS PUT")
+    Assert(All(AllKnobs(), Fn(k) => Abs(KnobGet(BlendKnobs(kb, ele, 1), k) - KnobGet(ele, k)) < 0.0001), "A FULL GLIDE ARRIVES")
+    Assert(All(AllKnobs(), Fn(k) => Abs(KnobGet(BlendKnobs(kb, ele, 0), k) - KnobGet(kb, k)) < 0.0001), "A ZERO GLIDE STAYS PUT")
     Let mid = BlendKnobs(kb, ele, 0.5)
-    Assert(KnobGet(mid, 3) > KnobGet(kb, 3) And KnobGet(mid, 3) < KnobGet(ele, 3), "THE GLIDE PASSES BETWEEN")
-    Assert(KnobGet(mid, 19) = Round(KnobGet(mid, 19)) And KnobGet(mid, 20) = Round(KnobGet(mid, 20)), "COUNTS STAY WHOLE MID-GLIDE")
+    Assert(KnobGet(mid, SettleKnob()) > KnobGet(kb, SettleKnob()) And KnobGet(mid, SettleKnob()) < KnobGet(ele, SettleKnob()), "THE GLIDE PASSES BETWEEN")
+    Assert(KnobGet(mid, WispsKnob()) = Round(KnobGet(mid, WispsKnob())) And KnobGet(mid, MotesKnob()) = Round(KnobGet(mid, MotesKnob())), "COUNTS STAY WHOLE MID-GLIDE")
 
     Rem counts never stall short of the goal: inside the rounding dead
     Rem zone they still move one per frame, in both directions, and a

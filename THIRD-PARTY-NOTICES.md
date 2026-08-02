@@ -131,3 +131,15 @@ are known to differ between Fisher's paper and the raw UCI file; they are
 carried here in their corrected form, which is what R's `datasets::iris` and
 scikit-learn's `load_iris` ship and what the widely published summary
 statistics reflect.
+
+### Besley (`docs/media/font/`)
+
+The documentation site sets its page titles in **Besley SemiBold**, a Clarendon
+revival by Owen Earl / Indestructible Type. It is licensed under the **SIL Open
+Font License 1.1**; the full licence travels with the font at
+[`docs/media/font/OFL.txt`](docs/media/font/OFL.txt). Only a latin subset ships
+(`besley-semibold-latin.woff2`, ~17 KB), which the OFL permits — subsetted and
+converted copies remain covered by the same licence and are not sold on their
+own. The wordmark and lockup SVGs under `docs/media/brand/` were set in the
+same face and **converted to outlines**, so they carry no font dependency and
+embed no font data.

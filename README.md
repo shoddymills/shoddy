@@ -64,7 +64,7 @@ a tuning console that goes to eleven.*
   <tr>
     <td width="55%" valign="middle">
       <b>One download is the whole toolchain.</b> The VS Code extension
-      carries the mill and all twenty-two machines inside it — install the
+      carries the mill and every machine inside it — install the
       <a href="https://dotnet.microsoft.com/download/dotnet/10.0">.NET 10 runtime</a>
       (the runtime, not the SDK), install the
       <a href="https://github.com/shoddymills/shoddy/releases/latest">latest <code>.vsix</code></a>,
@@ -98,6 +98,13 @@ the same craft with an AI assistant.*
     </td>
   </tr>
 </table>
+
+Using Copilot or Claude on Shoddy? Ground it first —
+[**Grounding an Assistant**](https://shoddymills.github.io/shoddy/assistants.html)
+is a standing instructions file to drop in your project, plus worked
+examples — a small program, the prompt you would type, and the Shoddy that
+comes back. Every answer on the page was compiled and run before it went
+there.
 
 ## See it run — every mill
 
@@ -145,7 +152,7 @@ write-up on each one, or start at
   </tr>
 </table>
 
-## The machines — all twenty-two
+## The machines — the whole shed
 
 The standard library, one folder of Shoddy source per machine — graphics,
 sound, statistics, neural nets, an LP solver, keyed files, and TCP/IP,

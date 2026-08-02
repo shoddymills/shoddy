@@ -10,9 +10,23 @@
 //                            record fields excluded so shared names don't lie)
 //   "The Machines It Uses" - the machine's own direct Includes
 //
+// Then four structural checks, so the docs can't quietly fall behind the tree
+// as Shoddy grows:
+//
+//   catalogs   - every machine and mill has a page, is listed in its catalog,
+//                the docs home and the README; and no page is an orphan
+//   navigation - every docs page carries the same nav bar (adding a page means
+//                adding it everywhere, and this is what says you missed one)
+//   runtime    - the .NET version quoted in the docs matches what the mill
+//                actually targets
+//
 // Exit 0 and "ALL PAGES MATCH GROUND TRUTH" is the pass. Any mismatch prints
 // page vs truth and exits 1. Run it before cutting a release, and whenever
 // machines gain or lose an Include or a mill starts using a new machine.
+//
+// Deliberately NOT checked: counts in prose. Docs should not say "twenty-two
+// machines" at all - a number that has to be revised every time the tree grows
+// is a divergence waiting to happen, so the prose says "every machine" instead.
 
 const fs = require("fs");
 const path = require("path");
@@ -95,5 +109,57 @@ for (const m of Object.keys(includes).sort()) {
   if (sorted(us.machines) !== sorted(includes[m]))
     { console.log(m + " uses: page[" + sorted(us.machines) + "] truth[" + sorted(includes[m]) + "]"); bad++; }
 }
+// ---- catalogs: nothing added to the tree may go unlisted ----
+const machineNames = Object.keys(includes).sort();
+const read = f => fs.readFileSync(path.join(root, f), "utf8");
+const listings = [
+  ["machine", machineNames, "docs/machines/index.html", n => n + ".html"],
+  ["machine", machineNames, "docs/index.html", n => "machines/" + n + ".html"],
+  ["machine", machineNames, "README.md", n => "machines/" + n + ".html"],
+  ["mill", mills, "docs/mills/index.html", n => n + ".html"],
+  ["mill", mills, "docs/index.html", n => "mills/" + n + ".html"],
+  ["mill", mills, "README.md", n => "mills/" + n + ".html"],
+];
+for (const [kind, names, file, link] of listings) {
+  const txt = read(file);
+  for (const n of names)
+    if (!txt.includes(link(n))) { console.log(file + ": " + kind + " " + n + " is not listed"); bad++; }
+}
+for (const [dir, names] of [["machines", machineNames], ["mills", mills]])
+  for (const f of fs.readdirSync(path.join(root, "docs", dir)))
+    if (f.endsWith(".html") && f !== "index.html" && !names.includes(f.replace(".html", "")))
+      { console.log("docs/" + dir + "/" + f + ": page with no " + dir.replace(/s$/, "") + " behind it"); bad++; }
+
+// ---- navigation: one nav bar, copied into every page ----
+const pages = [];
+(function walk(d) {
+  for (const f of fs.readdirSync(d)) {
+    const p = path.join(d, f);
+    if (fs.statSync(p).isDirectory()) { if (f !== "media") walk(p); }
+    else if (f.endsWith(".html") && f !== "404.html") pages.push(p);
+  }
+})(path.join(root, "docs"));
+const navs = {};
+for (const p of pages) {
+  const m = read(path.relative(root, p)).match(/<nav class="docnav"[^>]*>([\s\S]*?)<\/nav>/);
+  const rel = path.relative(root, p).replace(/\\/g, "/");
+  if (!m) { console.log(rel + ": no nav bar"); bad++; continue; }
+  const key = [...m[1].matchAll(/<(?:a href="[^"]+"|span class="here")>([^<]+)</g)].map(x => x[1].trim()).join(" | ");
+  (navs[key] = navs[key] || []).push(rel);
+}
+if (Object.keys(navs).length > 1) {
+  const majority = Object.entries(navs).sort((a, b) => b[1].length - a[1].length)[0][0];
+  for (const [key, where] of Object.entries(navs))
+    if (key !== majority)
+      { console.log("nav differs on " + where.join(", ") + ":\n  has  " + key + "\n  want " + majority); bad++; }
+}
+
+// ---- runtime: the version the docs quote is the one the mill targets ----
+const tfm = read("src/Shoddy.Mill/Shoddy.Mill.csproj").match(/<TargetFramework>net([0-9]+)\./);
+if (!tfm) { console.log("cannot read TargetFramework from the mill's csproj"); bad++; }
+else for (const f of [...pages.map(p => path.relative(root, p).replace(/\\/g, "/")), "README.md"])
+  for (const m of read(f).matchAll(/\.NET(?:&nbsp;|\s)([0-9]+)\b/g))
+    if (m[1] !== tfm[1]) { console.log(f + ': says ".NET ' + m[1] + '", the mill targets net' + tfm[1] + ".0"); bad++; }
+
 console.log(bad === 0 ? "ALL PAGES MATCH GROUND TRUTH" : bad + " mismatches");
 process.exit(bad === 0 ? 0 : 1);

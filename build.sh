@@ -95,8 +95,11 @@ stage() {
     cp machines/bin/*.dll "$STAGE_LIB/bin"
     # Roslyn, Silk.NET, GLFW and OpenAL Soft are redistributed in the
     # package, so their notices have to travel with it — LGPL-2.1 for
-    # OpenAL Soft, attribution for the rest.
+    # OpenAL Soft, attribution for the rest. The authorship statement and
+    # its AI disclosure travel with it for the same reason: the .vsix is
+    # the whole install for most people, and never sees the repository.
     cp THIRD-PARTY-NOTICES.md vscode-shoddy
+    cp AUTHORSHIP.md vscode-shoddy
     echo "staged mill + machines into vscode-shoddy/ ($(du -shc "$STAGE_MILL" "$STAGE_LIB" | tail -1 | cut -f1) total)"
 }
 

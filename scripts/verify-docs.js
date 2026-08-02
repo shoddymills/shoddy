@@ -10,13 +10,15 @@
 //                            record fields excluded so shared names don't lie)
 //   "The Machines It Uses" - the machine's own direct Includes
 //
-// Then four structural checks, so the docs can't quietly fall behind the tree
+// Then five structural checks, so the docs can't quietly fall behind the tree
 // as Shoddy grows:
 //
 //   catalogs   - every machine and mill has a page, is listed in its catalog,
 //                the docs home and the README; and no page is an orphan
 //   navigation - every docs page carries the same nav bar (adding a page means
 //                adding it everywhere, and this is what says you missed one)
+//   grounding  - the copyable instruction blocks on the AI pages still carry
+//                every fact an assistant gets wrong without being told
 //   runtime    - the .NET version quoted in the docs matches what the mill
 //                actually targets
 //
@@ -131,6 +133,10 @@ for (const [dir, names] of [["machines", machineNames], ["mills", mills]])
       { console.log("docs/" + dir + "/" + f + ": page with no " + dir.replace(/s$/, "") + " behind it"); bad++; }
 
 // ---- navigation: one nav bar, copied into every page ----
+// The bar is two <nav class="docnav"> rows — "meta" (Story, Authorship)
+// beside the wordmark, "main" beneath — so every row is collected and the
+// items compared as one sequence. Checking only the first would leave the
+// twelve items in the second row unguarded.
 const pages = [];
 (function walk(d) {
   for (const f of fs.readdirSync(d)) {
@@ -141,10 +147,12 @@ const pages = [];
 })(path.join(root, "docs"));
 const navs = {};
 for (const p of pages) {
-  const m = read(path.relative(root, p)).match(/<nav class="docnav"[^>]*>([\s\S]*?)<\/nav>/);
+  const rows = [...read(path.relative(root, p)).matchAll(/<nav class="docnav[^"]*"[^>]*>([\s\S]*?)<\/nav>/g)];
   const rel = path.relative(root, p).replace(/\\/g, "/");
-  if (!m) { console.log(rel + ": no nav bar"); bad++; continue; }
-  const key = [...m[1].matchAll(/<(?:a href="[^"]+"|span class="here")>([^<]+)</g)].map(x => x[1].trim()).join(" | ");
+  if (!rows.length) { console.log(rel + ": no nav bar"); bad++; continue; }
+  const key = rows
+    .flatMap(r => [...r[1].matchAll(/<(?:a href="[^"]+"|span class="here")>([^<]+)</g)])
+    .map(x => x[1].trim()).join(" | ");
   (navs[key] = navs[key] || []).push(rel);
 }
 if (Object.keys(navs).length > 1) {
@@ -152,6 +160,37 @@ if (Object.keys(navs).length > 1) {
   for (const [key, where] of Object.entries(navs))
     if (key !== majority)
       { console.log("nav differs on " + where.join(", ") + ":\n  has  " + key + "\n  want " + majority); bad++; }
+}
+
+// ---- grounding: the copyable blocks handed to an assistant must agree ----
+// Three pages carry a block of Shoddy facts meant to be pasted into a session.
+// They are deliberately separate artifacts (each has to work alone), so they
+// cannot be deduplicated - but they must not contradict each other. Every fact
+// below is one an assistant gets wrong without being told, and dropping it from
+// one block while the others keep it is exactly the drift this catches.
+const grounding = [
+  ["assistants.html", "docs/assistants.html"],
+  ["with-ai.html", "docs/tutorials/with-ai.html"],
+  ["backgammon.html", "docs/tutorials/backgammon.html"],
+];
+const facts = [
+  ["only numeric type", /only\s+numeric\s+type/i],
+  ["no bitwise operators", /no\s+bitwise\s+operators/i],
+  ["arrays vs lists", /recurse\s+over\s+lists/i],
+  ["structural record equality", /compare\s+structurally/i],
+  ["mutual recursion costs stack", /mutual\s+recursion/i],
+  ["no exceptions", /no\s+exceptions/i],
+  ["1-based indexing", /1-based/i],
+  // The three trees an assistant should read rather than guess from.
+  ["docs/* as a source", /`docs\/\*`/],
+  ["machines/* as a source", /`machines\/\*`/],
+  ["mills/* as a source", /`mills\/\*`/],
+];
+for (const [label, file] of grounding) {
+  if (!fs.existsSync(path.join(root, file))) continue;   // page not present yet
+  const txt = read(file);
+  for (const [name, re] of facts)
+    if (!re.test(txt)) { console.log(file + ": grounding block has lost \"" + name + "\""); bad++; }
 }
 
 // ---- runtime: the version the docs quote is the one the mill targets ----

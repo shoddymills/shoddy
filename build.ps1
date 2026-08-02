@@ -105,8 +105,11 @@ function Invoke-Stage {
     Copy-Item machines/bin/*.dll (Join-Path $StageLib 'bin')
     # Roslyn, Silk.NET, GLFW and OpenAL Soft are redistributed in the
     # package, so their notices have to travel with it — LGPL-2.1 for
-    # OpenAL Soft, attribution for the rest.
+    # OpenAL Soft, attribution for the rest. The authorship statement and
+    # its AI disclosure travel with it for the same reason: the .vsix is
+    # the whole install for most people, and never sees the repository.
     Copy-Item THIRD-PARTY-NOTICES.md vscode-shoddy
+    Copy-Item AUTHORSHIP.md vscode-shoddy
     $size = (Get-ChildItem $StageMill, $StageLib -Recurse -File |
         Measure-Object Length -Sum).Sum
     Write-Host ('staged mill + machines into vscode-shoddy/ ({0:N1} MB)' -f ($size / 1MB))

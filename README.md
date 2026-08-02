@@ -1,8 +1,17 @@
-# Shoddy
+<!-- The -white / -black variants bake in their own ground, so each matches the
+     GitHub theme it is served to; the transparent lockup's ink would vanish on dark. -->
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/media/brand/shoddy-lockup-black.svg">
+  <img src="docs/media/brand/shoddy-lockup-white.svg" alt="Shoddy" width="440">
+</picture>
 
 [![CI](https://github.com/shoddymills/shoddy/actions/workflows/ci.yml/badge.svg)](https://github.com/shoddymills/shoddy/actions/workflows/ci.yml)
 
 *Useless Things Made Useful Through Skill*
+
+Three threads enter loose and run woven: rag stock in, cloth out. The mark,
+the colours, and why they are these colours and no others, are in
+[the heritage of the name](https://shoddymills.github.io/shoddy/heritage.html#the-mark).
 
 A purely functional BASIC. Friendly typed syntax on the surface —
 parenthesized calls, infix operators, `Let`, records, `Select Case`

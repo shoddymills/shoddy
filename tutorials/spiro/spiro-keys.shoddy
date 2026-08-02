@@ -1,0 +1,77 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem spiro-keys.shoddy — the spirograph, under your hands.
+Rem
+Rem Run: mill run spiro-keys.shoddy   (or open it and press Ctrl+R)
+Rem      Up / Down change the turn angle by a degree and redraw.
+Rem      Q or Escape closes the window.
+Rem
+Rem spiro.shoddy draws once and returns. This one keeps a loop going:
+Rem it asks the window for the next event, does something about it, and
+Rem calls itself again. That recursion IS the loop — there is no while,
+Rem and nothing changes in place; the angle travels as an argument and
+Rem every redraw hands back a new turtle.
+Rem
+Rem NextEvent BLOCKS until something happens, so a program waiting on a
+Rem keypress uses no processor at all. Programs that animate ask for a
+Rem tick instead (SetFps) — that is what the mills in mills/ do.
+Rem
+Rem Every branch below calls Loop directly, which makes it a genuine
+Rem tail call: the weave turns it into a jump, so this can run all day
+Rem without the stack growing.
+Rem ==================================================================
+
+Include "turtle.shoddy"
+Include "scribbler.shoddy"
+Include "keys.shoddy"
+Include "spiro-core.shoddy"
+
+Rem One step of the plan, drawn — the same words as spiro.shoddy.
+Def Draw(t As Turtle, s As Step) As Turtle
+    Let inked = SetPenColor(t, Red(s), Green(s), Blue(s))
+    TurnRight(Forward(inked, Ahead(s)), Turn(s))
+
+Rem Angles that still make a pattern: 90 exactly closes the square and
+Rem draws nothing new, and the extremes wander off the window.
+Def AngleIn(a As Number) As Number
+    Max(60, Min(120, a))
+
+Rem Wipe the surface, send the turtle home, draw the whole plan again at
+Rem this angle, and say which angle it is in the title bar. Home keeps
+Rem the pen and colour and resets only position and heading, so every
+Rem redraw starts exactly as the first draw did.
+Def Redraw(t As Turtle, angle As Number) As Turtle
+    Let cleared = ScribblerFill(Sc(t), 0, 0, 0)
+    Let home = Home(t)
+    Let drawn = Fold(PlanWith(DefaultSteps(), angle), home, Draw)
+    Let named = Title(drawn, "Shoddy Spirograph - angle " & Str(angle) & " - Up/Down, Q quits")
+    Blit(named)
+
+Def Loop(t As Turtle, angle As Number) As Turtle
+    Select Case NextEvent(Sc(t))
+        Case ScribblerKeyDown(key, mods, at)
+            Select Case ClassifyKey(key)
+                Case ArrowUp
+                    Let up = AngleIn(angle + 1)
+                    Loop(Redraw(t, up), up)
+                Case ArrowDown
+                    Let down = AngleIn(angle - 1)
+                    Loop(Redraw(t, down), down)
+                Case EscKey
+                    Close(t)
+                Case CharKey(c) Where c = Asc("Q")
+                    Close(t)
+                Case Else
+                    Loop(t, angle)
+        Case ScribblerQuit
+            Close(t)
+        Case Else
+            Loop(t, angle)
+
+Def Main()
+    Let start = NewTurtle(640, 480)
+    Let shown = Redraw(start, TurnAngle())
+    Let done = Loop(shown, TurnAngle())
+    Print("closed")

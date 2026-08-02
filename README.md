@@ -64,7 +64,7 @@ a tuning console that goes to eleven.*
   <tr>
     <td width="55%" valign="middle">
       <b>One download is the whole toolchain.</b> The VS Code extension
-      carries the mill and all twenty-two machines inside it — install the
+      carries the mill and every machine inside it — install the
       <a href="https://dotnet.microsoft.com/download/dotnet/10.0">.NET 10 runtime</a>
       (the runtime, not the SDK), install the
       <a href="https://github.com/shoddymills/shoddy/releases/latest">latest <code>.vsix</code></a>,
@@ -80,6 +80,35 @@ a tuning console that goes to eleven.*
     </td>
   </tr>
 </table>
+
+## Start here — the tutorials
+
+*Build a real program from an empty folder, learn the method for driving the
+same craft with an AI assistant, then watch that method run at full size.*
+
+<table>
+  <tr>
+    <td width="33%" align="center" valign="top">
+      <a href="https://shoddymills.github.io/shoddy/tutorials/first-mill.html"><img src="docs/media/icons/tutorials.gif" alt="a turtle drawing a colour spirograph, line by line" width="100%"></a><br>
+      <b>Your First Mill</b><br><sub>an empty folder to a spirograph · tests, build files, and the debugger from the first run</sub>
+    </td>
+    <td width="33%" align="center" valign="top">
+      <a href="https://shoddymills.github.io/shoddy/tutorials/with-ai.html"><img src="docs/media/icons/with-ai.gif" alt="a question typed to an assistant, answered in Shoddy, and run" width="100%"></a><br>
+      <b>Building with an AI</b><br><sub>requirements to shippable code · briefs, plans, verification, and blank templates</sub>
+    </td>
+    <td width="33%" align="center" valign="top">
+      <a href="https://shoddymills.github.io/shoddy/tutorials/backgammon.html"><img src="docs/media/icons/backgammon.gif" alt="a backgammon board drawing itself, point by point" width="100%"></a><br>
+      <b>Backgammon, by Specification</b><br><sub>the method at full size · every prompt for an engine and a game, written by a model</sub>
+    </td>
+  </tr>
+</table>
+
+Using Copilot or Claude on Shoddy? Ground it first —
+[**Grounding an Assistant**](https://shoddymills.github.io/shoddy/assistants.html)
+is a standing instructions file to drop in your project, plus worked
+examples — a small program, the prompt you would type, and the Shoddy that
+comes back. Every answer on the page was compiled and run before it went
+there.
 
 ## See it run — every mill
 
@@ -127,7 +156,7 @@ write-up on each one, or start at
   </tr>
 </table>
 
-## The machines — all twenty-two
+## The machines — the whole shed
 
 The standard library, one folder of Shoddy source per machine — graphics,
 sound, statistics, neural nets, an LP solver, keyed files, and TCP/IP,
@@ -199,7 +228,7 @@ is in [the heritage of the name](https://shoddymills.github.io/shoddy/heritage.h
 | `bin/`| Build output — the published `mill` toolchain lands here after `dotnet publish` (not committed; build it, then run `bin/mill`) |
 | `machines/`| Standard library (the machines): `seq` `str` `math` `matrix` `stats` `random` `neural` `money` `file` `recio` `dict` `isam` `net` `simplex` `mps` `clock` `vt100` `keys` `scribbler` `turtle` `plotter` `buzzer` |
 | `mills/`| Complete example programs (the mills), each with its own build wrapper: `mungo-caverns` (Colossal Cave Adventure) · `oregon` (overland-trail game, after MECC's 1971 original) · `pac-vt100` · `invaders` · `demographics` (neural income model, regression) · `iris` (neural species classifier, ~4s to train) · `simplex-from-mps` (LP solver) |
-| `docs/`| `index.html` (start here) · `guide.html` · `setup.html` (one-time machine setup) · `vscode.html` (editor) · `build.html` (the toolchain) · `stack.html` (the stack, traced) · `spec.html` · `quickref.html` · `machines/` and `mills/` (one page each) |
+| `docs/`| `index.html` (start here) · `guide.html` · `tutorials/` (three build-alongs) · `setup.html` (one-time machine setup) · `vscode.html` (editor) · `build.html` (the toolchain) · `stack.html` (the stack, traced) · `spec.html` · `quickref.html` · `errors.html` (every message and its cause) · `assistants.html` (grounding an AI) · `heritage.html` (the name) · `machines/` and `mills/` (one page each) |
 | `tst/`| `libtest.shoddy` (assertion suite) · `examples.shoddy` · `gradebook.shoddy` · `simplex.shoddy` · demos (`scribbler-` `turtle-` `plotter-` `buzzer-` `net-demo.shoddy`) · `golden/` (the constitution) |
 | `vscode-shoddy/`| VS Code extension: highlighting, snippets, debugging, mill commands |
 
@@ -241,13 +270,44 @@ the Windows PowerShell notes — is in [the toolchain guide](https://shoddymills
 
 ## Documentation
 
-- [docs/index.html](https://shoddymills.github.io/shoddy/index.html) — the front door: every guide and reference,
-  organized by what you came for.
-- [docs/guide.html](https://shoddymills.github.io/shoddy/guide.html) — the beginner's guide; assumes no prior knowledge.
-- [docs/spec.html](https://shoddymills.github.io/shoddy/spec.html) — the language specification, including the concatenative
-  core (Appendix A) and design rationale (Appendix B).
-- [docs/quickref.html](https://shoddymills.github.io/shoddy/quickref.html) — one-page reference of every builtin word, type,
-  and syntax form, plus a map of the machines.
+The whole site is at **[shoddymills.github.io/shoddy](https://shoddymills.github.io/shoddy/)**.
+
+**Learn** — [the front door](https://shoddymills.github.io/shoddy/index.html), every guide and
+reference organized by what you came for ·
+[the beginner's guide](https://shoddymills.github.io/shoddy/guide.html), which assumes no prior
+knowledge · [the tutorials](https://shoddymills.github.io/shoddy/tutorials/index.html), three
+build-alongs starting from an empty folder ·
+[grounding an assistant](https://shoddymills.github.io/shoddy/assistants.html), a standing
+instructions file for Copilot or Claude.
+
+**Reference** — [the specification](https://shoddymills.github.io/shoddy/spec.html), including the
+concatenative core (Appendix A) and design rationale (Appendix B) ·
+[the quick reference](https://shoddymills.github.io/shoddy/quickref.html), every builtin word, type
+and syntax form on one page, plus a map of the machines ·
+[errors and warnings](https://shoddymills.github.io/shoddy/errors.html), every message the toolchain
+can raise, its cause, and broken and fixed code side by side ·
+[the stack](https://shoddymills.github.io/shoddy/stack.html), the machine under the costume, watched
+one word at a time.
+
+**Set up and build** — [setup](https://shoddymills.github.io/shoddy/setup.html), two steps once per
+machine · [VS Code](https://shoddymills.github.io/shoddy/vscode.html), debugging, snippets and the
+Run button · [the toolchain](https://shoddymills.github.io/shoddy/build.html), every mill command,
+wrapper and convention.
+
+**Also** — [the machines](https://shoddymills.github.io/shoddy/machines/index.html) and
+[the mills](https://shoddymills.github.io/shoddy/mills/index.html), one page each ·
+[the heritage of the name](https://shoddymills.github.io/shoddy/heritage.html) ·
+[authorship](https://shoddymills.github.io/shoddy/authorship.html), who made
+Shoddy and with what tools.
+
+## Getting help, and what's new
+
+- **[Discussions](https://github.com/shoddymills/shoddy/discussions)** — questions, ideas, and
+  anything that doesn't fit an issue.
+- **[Issues](https://github.com/shoddymills/shoddy/issues)** — bugs and feature requests.
+- **[Releases](https://github.com/shoddymills/shoddy/releases)** — what changed in each version,
+  with the `.vsix` to download. The notes are written per tag in
+  [release-notes/](release-notes/); there is no separate changelog.
 
 ## Language at a glance
 
@@ -283,6 +343,11 @@ its [LICENSE](mills/mungo-caverns/LICENSE) and
 Contributions are welcome under the MIT License; see
 [CONTRIBUTING.md](CONTRIBUTING.md) and the [Code of Conduct](CODE_OF_CONDUCT.md).
 This project intends to join the [.NET Foundation](https://dotnetfoundation.org/).
+
+Authorship, and the disclosure of which tools were used in the making of Shoddy
+and how, is in **[AUTHORSHIP.md](AUTHORSHIP.md)** — stated at length, with the
+development record and the legal position, on
+[the Authorship page](https://shoddymills.github.io/shoddy/authorship.html).
 
 ## Status
 

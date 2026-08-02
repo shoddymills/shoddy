@@ -12,15 +12,6 @@ contribution, you agree that your contribution is licensed under the same
 MIT License, and you certify that you have the right to submit it under
 that license (see the [Developer Certificate of Origin](https://developercertificate.org/)).
 
-## Contributor License Agreement
-
-This project intends to join the [.NET Foundation](https://dotnetfoundation.org/).
-Contributors will be asked to sign the **.NET Foundation Contributor
-License Agreement (CLA)** the first time they open a pull request; the
-CLA-assistant bot comments on the PR with a one-click signing link. You
-only sign once, and it covers all future contributions to .NET Foundation
-projects.
-
 ## How to contribute
 
 1. Open an issue to discuss anything non-trivial before you start.

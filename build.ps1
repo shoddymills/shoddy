@@ -105,8 +105,11 @@ function Invoke-Stage {
     Copy-Item machines/bin/*.dll (Join-Path $StageLib 'bin')
     # Roslyn, Silk.NET, GLFW and OpenAL Soft are redistributed in the
     # package, so their notices have to travel with it — LGPL-2.1 for
-    # OpenAL Soft, attribution for the rest.
+    # OpenAL Soft, attribution for the rest. The authorship statement and
+    # its AI disclosure travel with it for the same reason: the .vsix is
+    # the whole install for most people, and never sees the repository.
     Copy-Item THIRD-PARTY-NOTICES.md vscode-shoddy
+    Copy-Item AUTHORSHIP.md vscode-shoddy
     $size = (Get-ChildItem $StageMill, $StageLib -Recurse -File |
         Measure-Object Length -Sum).Sum
     Write-Host ('staged mill + machines into vscode-shoddy/ ({0:N1} MB)' -f ($size / 1MB))
@@ -124,6 +127,12 @@ function Invoke-Test {
     # network is a gated capability — without the flag the first socket
     # word aborts, so this run also proves the gate opens.
     & $Mill run --allow-net tst/net-demo.shoddy
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    # The tutorial's program is documentation that has to keep working:
+    # its pure half is headless by design, so the checks run here beside
+    # everything else and the tutorial cannot drift from code that no
+    # longer compiles.
+    & $Mill run tutorials/spiro/test.shoddy
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 }
 

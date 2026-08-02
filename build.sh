@@ -123,6 +123,11 @@ case "${1:-help}" in
         # because the network is a gated capability — without the flag the
         # first socket word aborts, so this run also proves the gate opens.
         "$MILL" run --allow-net tst/net-demo.shoddy
+        # The tutorial's program is documentation that has to keep
+        # working: its pure half is headless by design, so the checks run
+        # here beside everything else and the tutorial cannot drift from
+        # code that no longer compiles.
+        "$MILL" run tutorials/spiro/test.shoddy
         ;;
     run)
         [ $# -ge 2 ] || { echo "usage: ./build.sh run FILE.shoddy" >&2; exit 2; }

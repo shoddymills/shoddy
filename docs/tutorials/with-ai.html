@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="A working method for building Shoddy programs with an AI assistant: briefs, plans, acceptance criteria, verification, and the review gates that stay human — with copyable templates.">
+<title>Building with an AI | Shoddy Tutorials</title>
+<link rel="stylesheet" href="../style.css">
+<link rel="icon" href="../favicon.svg" type="image/svg+xml">
+</head>
+<body>
+<div class="topbar"><div class="inner">
+  <a class="phase" href="../index.html">Shoddy · Documentation</a>
+  <span class="spacer"></span>
+  <nav class="docnav" aria-label="Documentation"><a href="../heritage.html">Story</a><span class="here">Tutorials</span><a href="../guide.html">Guide</a><a href="../quickref.html">Reference</a><a href="../machines/index.html">Machines</a><a href="../mills/index.html">Mills</a><a href="../stack.html">Stack</a><a href="../spec.html">Spec</a><a href="../setup.html">Setup</a><a href="../vscode.html">VS Code</a><a href="../build.html">Toolchain</a><a href="../errors.html">Errors</a></nav>
+</div></div>
+<div class="wrap">
+<header class="mast">
+<p class="eyebrow"><a href="index.html">Tutorials</a></p>
+<h1>Building with an AI</h1>
+<p class="kicker">From requirements to shippable code — a method, and the templates to run it</p>
+</header>
+
+<p>An AI assistant can write Shoddy faster than you can type it. That is the
+least interesting thing about working with one. The interesting question is
+how to get code you would be willing to <em>ship</em> — code whose behaviour
+you can state, whose correctness something other than your own optimism has
+checked, and which you can hand to someone else six months from now.</p>
+
+<p>This page is a working method for that, and a set of blank templates to
+run it with. It doesn't teach a particular program: bring your own. Every
+template below has slots for the thing you're building.</p>
+
+<div class="takeaway"><b>The one-sentence version.</b> Write the requirement
+down as a document, make the assistant produce a plan you approve before it
+writes code, state acceptance as tests you wrote, and let the toolchain —
+not the assistant, and not your reading — decide whether it works.</div>
+
+<h2 id="loop">1. The loop</h2>
+
+<p>Eight steps, two of which are yours alone:</p>
+
+<ol>
+<li><b>Requirement</b> — what you want, in your own words, before any tool is
+involved.</li>
+<li><b>Brief</b> — that requirement turned into a document the assistant
+reads: context, facts, numbered requirements, acceptance.</li>
+<li><b>Plan</b> — the assistant answers with what it intends to do, and what
+it needs to know. <b>You approve it. Nothing is written yet.</b></li>
+<li><b>Build</b> — the assistant writes the code, the tests, and the
+comments.</li>
+<li><b>Verify</b> — machines check: tests, linter, a real run. Not opinions.</li>
+<li><b>Review</b> — <b>you</b> read what a machine can't judge: naming,
+intent, whether it answers the question you actually asked.</li>
+<li><b>Ship</b> — build files, a headless test, a commit message that
+explains why.</li>
+<li><b>Capture</b> — fold what you learned back into the brief, so the next
+feature starts further along.</li>
+</ol>
+
+<p>Steps 3 and 6 are the gates. Everything between them can be delegated
+completely; those two are where the work becomes yours.</p>
+
+<h2 id="brief">2. Write a brief, not a chat message</h2>
+
+<p>A chat message is a keystroke that vanishes. A brief is an artifact: you
+can revise it, re-run it against a different assistant, diff it against what
+was actually built, and read it a year later to find out what you meant.
+Keep it in a file next to the code — briefs are cheap and they age well.</p>
+
+<p>The single highest-value section is the one most people skip:
+<b>facts the assistant should not have to re-derive</b>. An assistant asked
+to write Shoddy will otherwise reinvent the conventions from first
+principles, get most of them right, and quietly get the rest wrong.</p>
+
+<pre><code># &lt;Name&gt; — Implementation Brief
+
+## Purpose
+&lt;One paragraph: what this is and who it is for. If it has a name, say
+where the name comes from — it will end up in the comments.&gt;
+
+## Context
+- Language: Shoddy (purely functional BASIC, compiled to .NET).
+- Where the code goes: &lt;folder&gt;/&lt;name&gt;.shoddy, plus
+  &lt;name&gt;-core.shoddy and test.shoddy.
+- May depend on: &lt;machines it may Include, e.g. seq, str, math&gt;.
+- Must not depend on: &lt;anything out of bounds&gt;.
+
+## Facts — do not re-derive these
+&lt;Paste the fact sheet from §3, plus anything specific to your project.&gt;
+
+## Requirements
+1. &lt;A statement of behaviour, testable as written.&gt;
+2. &lt;…&gt;
+3. &lt;…&gt;
+
+## Out of scope
+- &lt;Things that would be nice, and are not this change.&gt;
+
+## Acceptance
+- Every requirement above has at least one assertion in test.shoddy.
+- &lt;Named cases whose answers you already know: the empty input, the
+  extreme input, the case everyone gets wrong.&gt;
+- The linter is silent, and the repository's tests still pass.
+
+## Open questions
+&lt;Leave this empty. The assistant fills it in the plan — see §4.&gt;</code></pre>
+
+<p class="note">Write the requirements so that each one could become an
+<code>Assert</code> without translation. "Handles errors gracefully" cannot.
+"An empty input returns zero rather than stopping the program" can.</p>
+
+<h2 id="facts">3. The fact sheet</h2>
+
+<p>Copy this into the brief's <b>Facts</b> section. These are the things that
+make Shoddy code idiomatic rather than merely valid, and the places a
+confident guess goes wrong. Nothing here is obscure — it's all in the
+<a href="../guide.html">guide</a>, the <a href="../spec.html">spec</a> and
+the <a href="../quickref.html">quick reference</a> — but an assistant that
+has it up front writes the right thing the first time.</p>
+
+<pre><code>## Facts — do not re-derive these
+
+Purity and shape
+- Nothing mutates. `Let` binds a name once; "updating" a record returns a
+  new record (`With(r, Field = v)`). There is no assignment and no `goto`.
+- There is no `for` loop. Iteration is recursion, or Map / Filter / Fold /
+  Each / Times over a list. `Fold` is the workhorse: thread a value through.
+- Indentation is structure — no `end`, no braces, no semicolons.
+- A Def's last line is its result; there is no `return`.
+- Effects live at the edge: Print and Input belong in Main, not in the
+  functions that compute.
+
+Names and types
+- Names are case-insensitive: `total`, `Total` and `TOTAL` are one word.
+- Declaring `Type T` creates a constructor plus one accessor function per
+  field. Fields are POSITIONAL — inserting one mid-record shifts every
+  later argument silently.
+- An accessor loses every naming contest, so never name a local, parameter
+  or Def after a field the program reads by accessor.
+- Booleans are not numbers. `If n Then` is an error; write `If n <> 0 Then`.
+- Sequences are 1-based, and ranges include both ends.
+
+Syntax that surprises
+- Operators are infix. `a Mod b`, not `Mod(a, b)` — the call form builds a
+  function value (a "section"), not a result. Same for a unary minus before
+  parentheses: write `0 - x * x`.
+- A line continues onto the next only inside open brackets; parenthesize a
+  wrapped condition.
+- A bare name in argument position is passed as a function, not called:
+  `Map(xs, Double)`.
+
+Structure and tooling
+- Split every program: a pure core (`NAME-core.shoddy`) that computes and
+  can be tested headless, and a thin shell (`NAME.shoddy`) that does I/O.
+- Tests are a program: `test.shoddy` with `Assert(cond, "MESSAGE")`, run
+  like anything else. A run that reaches the end passed.
+- The standard library is 22 "machines"; `Include "seq.shoddy"` resolves
+  from any folder with no configuration.
+- The linter runs on every compile and warns about stack-effect mistakes,
+  shadowed accessors, and operator sections. A clean build prints nothing.
+- Programs that open a window run under `mill run`; console programs can
+  also be woven to a .NET assembly.</code></pre>
+
+<h2 id="plan">4. Demand a plan, and read the questions</h2>
+
+<p>Before a line is written, ask for a plan. The request is one sentence —
+"review the brief and give me your plan; don't write anything yet" — and
+what comes back tells you more about the eventual code than the code
+will.</p>
+
+<p>A plan worth approving says:</p>
+
+<ul>
+<li><b>Which files</b> it will create or change, and what goes in each.</li>
+<li><b>The shape of the data</b> — the records and their fields, in order;
+the types; what the core's central function takes and returns.</li>
+<li><b>The words it will add</b>, with one line each on what they do.</li>
+<li><b>What it will test</b>, named case by case.</li>
+<li><b>Open questions</b> — the ambiguities it found in your brief.</li>
+</ul>
+
+<p class="note"><b>A plan with no questions is a warning sign</b> on any
+brief longer than a paragraph. Real requirements have gaps; an assistant
+that found none either got lucky or is about to choose for you silently.
+When you get questions, answer them <em>in the brief</em>, not in the reply —
+that way the answer survives.</p>
+
+<p>This is also where you kill scope creep. If the plan proposes improving
+something you didn't ask about, say no now: it costs one sentence here and a
+review argument later.</p>
+
+<h2 id="acceptance">5. Acceptance criteria are the contract</h2>
+
+<p>Two assistants given the same brief will write different code. Your tests
+are the only part of the exchange that stays fixed — so write them, or at
+least specify them, <b>yourself</b>, and before the implementation exists.</p>
+
+<pre><code>Include "seq.shoddy"
+Include "&lt;name&gt;-core.shoddy"
+
+Def Main()
+    Rem The obvious case: the answer you'd work out on paper.
+    Assert(&lt;call&gt; = &lt;expected&gt;, "&lt;WHAT THIS PROVES&gt;")
+
+    Rem The empty / zero / nothing-to-do case.
+    Assert(&lt;call with empty input&gt; = &lt;expected&gt;, "&lt;…&gt;")
+
+    Rem The extreme: the largest, the perfect score, the boundary.
+    Assert(&lt;call&gt; = &lt;expected&gt;, "&lt;…&gt;")
+
+    Rem The one everybody gets wrong. If your problem has a famous
+    Rem edge case, it belongs here, named.
+    Assert(&lt;call&gt; = &lt;expected&gt;, "&lt;…&gt;")
+
+    Rem A property, not a number: something that must hold for every
+    Rem input, stated as a rule. These survive refactoring.
+    Assert(All(&lt;inputs&gt;, Fn(x) =&gt; &lt;invariant&gt;), "&lt;…&gt;")
+
+    Print("ALL &lt;NAME&gt; CHECKS PASSED")</code></pre>
+
+<p>Note the last two. A test that pins down <em>why</em> the code is right —
+an invariant, a property — outlives the test that checks one number, and it
+catches the class of mistake an assistant is most likely to make: code that
+satisfies the examples it was shown and nothing else.</p>
+
+<h2 id="verify">6. Let the machine check the machine</h2>
+
+<p>Reading generated code carefully feels like verification. It isn't:
+plausible-looking Shoddy that computes the wrong answer reads exactly like
+plausible-looking Shoddy that computes the right one. Run things instead.</p>
+
+<pre><code>## Verification checklist
+
+[ ] The tests pass:            mill run test.shoddy
+[ ] The linter is silent:      mill gen &lt;name&gt;.shoddy      (warnings go to stderr)
+[ ] Coverage is honest:        mill run test.shoddy --lint-verbose
+[ ] The program actually runs: mill run &lt;name&gt;.shoddy
+[ ] It still compiles cold:    delete any build output and run again
+[ ] Nothing else broke:        the rest of the project's tests</code></pre>
+
+<p>Three of those deserve a word:</p>
+
+<ul>
+<li><b>The linter is not optional.</b> It runs by default and warns only
+about things it can prove — a Def that leaves stray values, branches that
+disagree, an operator used as a function value, a local shadowing an
+accessor. Every one of those is a mistake that produces a <em>wrong answer</em>
+rather than an error, which is exactly the failure mode you can't catch by
+reading. Treat a warning as a build failure even though the toolchain
+doesn't.</li>
+<li><b>Coverage is honest, or it isn't.</b> <code>--lint-verbose</code>
+reports how many definitions the checker could analyse. If that number is
+well below the total, the code leans on constructs the checker can't model,
+and your tests are carrying more weight than you think.</li>
+<li><b>Cold compile.</b> Delete build output and start clean before you
+believe anything. Stale artifacts are the oldest lie in software.</li>
+</ul>
+
+<h2 id="review">7. Review what a machine can't</h2>
+
+<p>Tests prove behaviour. They say nothing about whether the code is worth
+keeping. This is the second gate, and it's short:</p>
+
+<ul>
+<li><b>Does it answer the question you asked?</b> Re-read your requirements,
+not the code. Assistants are excellent at solving a nearby problem
+beautifully.</li>
+<li><b>Are the names right?</b> They're the part you'll live with. Generated
+names trend generic — <code>Process</code>, <code>Handle</code>,
+<code>Data</code>; yours should say what the thing is.</li>
+<li><b>Do the comments explain <em>why</em>?</b> A comment restating the code
+is noise. The valuable comment records the constraint that isn't visible:
+why this angle, why this order, why not the obvious way.</li>
+<li><b>Is the split honest?</b> Anything in the core that needs a screen or a
+file means the tests aren't testing what you think.</li>
+<li><b>Would you have written the tests this way?</b> If the assistant wrote
+them, check they don't merely re-state the implementation. A test that would
+pass against a wrong implementation is decoration.</li>
+</ul>
+
+<h2 id="ship">8. Ship it</h2>
+
+<pre><code>## Definition of done
+
+[ ] &lt;name&gt;-core.shoddy   — pure; no Print, no Input, no window
+[ ] &lt;name&gt;.shoddy        — the shell; effects live here
+[ ] test.shoddy          — headless; every requirement asserted
+[ ] build.sh / build.cmd — run and test targets, both platforms
+[ ] A header comment on each file: what it is, and why it is that way
+[ ] The linter silent, the tests green, the program run at least once
+[ ] A commit message that explains the change, not the diff</code></pre>
+
+<p>That last line is worth insisting on. An assistant will happily write
+"Update core file" or list what changed — which the diff already says. Ask
+instead for the <em>reason</em>: what was wrong before, what is true now, and
+what a reader six months from now would need to know. It is the one piece of
+prose in the whole exchange that cannot be regenerated from the code.</p>
+
+<h2 id="capture">9. Capture what you learned</h2>
+
+<p>The brief was your input. After the work lands, it becomes a record —
+worth ten minutes to close the loop:</p>
+
+<ul>
+<li>Mark it <b>implemented</b>, and note where the result differs from the
+plan and why. Those deltas are the most useful paragraph in the document.</li>
+<li>Add any fact you had to explain mid-session to your fact sheet. That's
+the file that makes the next feature cheaper than this one.</li>
+<li>If a mistake got past you and a test caught it, write down the shape of
+the mistake — not to assign blame, but because the same shape recurs.</li>
+</ul>
+
+<p>Do this for a few features and you accumulate something more valuable than
+any single program: a description of your project that a competent stranger —
+or a fresh assistant with no memory of last week — can pick up and be useful
+with immediately.</p>
+
+<h2 id="wrong">10. Where this goes wrong</h2>
+
+<p>Honest failure modes, so you recognise them early:</p>
+
+<ul>
+<li><b>The confident wrong answer.</b> Assistants produce fluent, idiomatic,
+incorrect code with exactly the same demeanour as correct code. There is no
+tell. This is the entire argument for gates and tests, and it does not go
+away with a better model.</li>
+<li><b>Silent resolution.</b> Shoddy's worst bugs don't raise errors: a name
+that quietly resolves to something else, a record field read through a
+shadowed accessor, a branch that returns nothing where a value was expected.
+The linter catches most; tests catch the rest; reading catches almost
+none.</li>
+<li><b>Verification theatre.</b> Tests written by the same assistant that
+wrote the code can encode the same misunderstanding twice and pass
+triumphantly. This is why §5 says <em>you</em> write the acceptance cases,
+first.</li>
+<li><b>Scope drift.</b> Unasked-for improvements arrive bundled with asked-for
+ones, and they're hard to unpick after the fact. The brief's <b>out of
+scope</b> section is the cheap fix.</li>
+<li><b>Stale context.</b> A long session accumulates assumptions about code
+that has since changed. When something inexplicable happens, re-read the
+file rather than the conversation.</li>
+<li><b>Plausible history.</b> Ask why a line is the way it is and you may get
+a reasonable-sounding story rather than a fact. Trust the file, the test, and
+the run; treat everything else as a hypothesis.</li>
+</ul>
+
+<p>None of these are reasons not to work this way. They are the reasons the
+loop has gates in it.</p>
+
+<h2 id="next">11. Where next</h2>
+
+<ul>
+<li><a href="first-mill.html">Your First Mill</a> — if you haven't built a
+Shoddy program by hand yet, build one. Reviewing generated code is far easier
+when you've written the shape yourself once.</li>
+<li><a href="../guide.html">The Beginner's Guide</a> and the
+<a href="../quickref.html">Quick Reference</a> — what to point an assistant
+at, and what to check its output against.</li>
+<li><a href="../errors.html">Errors &amp; Warnings</a> — every message the
+toolchain can produce, with causes and fixes. Useful to you, and useful
+pasted into a session when something goes wrong.</li>
+<li><a href="../mills/index.html">The mills</a> — complete programs in the
+house style, worth handing over as examples of the shape you want.</li>
+</ul>
+
+<footer>Named for the shoddy mills of the West Riding: Useless Things Made
+Useful Through Skill (<a href="../heritage.html">the full story</a>).<br>
+&copy; 2026 Stephen Vincent Foster</footer>
+</div>
+</body>
+</html>

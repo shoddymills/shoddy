@@ -125,6 +125,12 @@ function Invoke-Test {
     # word aborts, so this run also proves the gate opens.
     & $Mill run --allow-net tst/net-demo.shoddy
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    # The tutorial's program is documentation that has to keep working:
+    # its pure half is headless by design, so the checks run here beside
+    # everything else and the tutorial cannot drift from code that no
+    # longer compiles.
+    & $Mill run tutorials/spiro/test.shoddy
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 }
 
 function Invoke-Vsix {

@@ -81,6 +81,24 @@ a tuning console that goes to eleven.*
   </tr>
 </table>
 
+## Start here — two tutorials
+
+*Build a real program from an empty folder, or learn the method for driving
+the same craft with an AI assistant.*
+
+<table>
+  <tr>
+    <td width="50%" align="center" valign="top">
+      <a href="https://shoddymills.github.io/shoddy/tutorials/first-mill.html"><img src="docs/media/icons/tutorials.gif" alt="a turtle drawing a colour spirograph, line by line" width="100%"></a><br>
+      <b>Your First Mill</b><br><sub>an empty folder to a spirograph · tests, build files, and the debugger from the first run</sub>
+    </td>
+    <td width="50%" align="center" valign="top">
+      <a href="https://shoddymills.github.io/shoddy/tutorials/with-ai.html"><img src="docs/media/icons/with-ai.svg" alt="a brief with its acceptance criteria ticked" width="100%"></a><br>
+      <b>Building with an AI</b><br><sub>requirements to shippable code · briefs, plans, verification, and blank templates</sub>
+    </td>
+  </tr>
+</table>
+
 ## See it run — every mill
 
 Complete programs woven from the machines — each split into a headless,

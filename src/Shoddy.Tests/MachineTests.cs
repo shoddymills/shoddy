@@ -23,11 +23,11 @@ public class MachineTests
 
     // seq and str first; the rest reference them (stats also needs dict).
     // json goes after dict, whose association list is an object's member
-    // list, and after str, whose Join it serializes with. neural is built
-    // last for compile coverage only — libtest does not include it, so it
-    // never joins the resolved-machine count below.
+    // list, and after str, whose Join it serializes with. crypto and neural
+    // are built last for compile coverage only — libtest includes neither,
+    // so neither joins the resolved-machine count below.
     static readonly string[] BuildOrder =
-        { "seq", "str", "matrix", "money", "file", "recio", "dict", "stats", "isam", "json", "neural" };
+        { "seq", "str", "matrix", "money", "file", "recio", "dict", "stats", "isam", "json", "crypto", "neural" };
 
     [Fact]
     public void LibTestWovenAgainstMachines()

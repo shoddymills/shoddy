@@ -14,6 +14,7 @@ Include "../machines/recio.shoddy"
 Include "../machines/dict.shoddy"
 Include "../machines/stats.shoddy"
 Include "../machines/isam.shoddy"
+Include "../machines/json.shoddy"
 
 Rem ---- top-level constants -------------------------------------------
 
@@ -385,4 +386,35 @@ Def Main()
     IsamClose(db7)
     DeleteFile("_isam.tmp")
     DeleteFile("_isam.tmp.idx")
+    Print("--- JSON ---")
+    Rem The full exercise is tst/jsontest.shoddy, which reads the real
+    Rem api.weather.gov fixture; this is the smoke test that json arrived
+    Rem through the machine references like everything else here.
+    Let jq = Chr(34)
+    Let jsrc = "{" & jq & "name" & jq & ":" & jq & "shoddy" & jq & "," & jq & "n" & jq & ":[1,2.5,-3]," & jq & "ok" & jq & ":true," & jq & "nil" & jq & ":null}"
+    Let jdoc = JsonParse(jsrc)
+    Print(JKeys(jdoc))                                  Rem [ "name" "n" "ok" "nil" ]
+    Print(JCount(jdoc))                                 Rem 4
+    Print(JStrOr(JGet(jdoc, "name"), "?"))              Rem shoddy
+    Print(JNumOr(JNth(JGet(jdoc, "n"), 2), 0))          Rem 2.5
+    Print(JBoolOr(JGet(jdoc, "ok"), False))             Rem True
+    Print(IsJNull(JGet(jdoc, "nil")))                   Rem True
+    Print(JsonText(jdoc) = jsrc)                        Rem True (compact text is byte-stable)
+    Print(JNumOr(JPathOr(jdoc, { "nope" }, JNum(7)), 0))   Rem 7
+    Print(JsonText(JsonCanonical(jdoc)))                Rem {"n":[1,2.5,-3],"name":"shoddy","nil":null,"ok":true}
+    Print(JsonEscape(jq & Chr(9)))                      Rem \"\t
+    Print(JsonPretty(JNumList({ 1, 2 }), 2))            Rem [\n  1,\n  2\n]
+    Assert(JEqual(JsonParse(JsonText(jdoc)), jdoc), "JSON ROUND TRIP")
+    Assert(JsonText(JPut(JObj({ }), "k", JStr("v"))) = "{" & jq & "k" & jq & ":" & jq & "v" & jq & "}", "JPUT THEN WRITE")
+    Assert(ErrAtOr(jq & "unterminated", 0) = 14, "A BAD DOCUMENT IS A VALUE, NOT AN ABORT")
     Print("ALL ASSERTIONS PASSED")
+
+Rem The offset a bad document gave up at, or dflt if it parsed. JsonRead
+Rem is total, so a malformed document can be tested without Error ending
+Rem the run — which is the whole reason it returns a JRead.
+Def ErrAtOr(s As String, dflt As Number) As Number
+    Select Case JsonRead(s)
+        Case JErr(w, at)
+            at
+        Case Else
+            dflt

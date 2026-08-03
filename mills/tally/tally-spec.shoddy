@@ -1,0 +1,180 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem tally-spec.shoddy — the spec file: flat dotted keys, one per line.
+Rem
+Rem     # what to read
+Rem     data.file    = files/grades.csv
+Rem     data.comment = #
+Rem
+Rem     chart.type   = scatter
+Rem     chart.x      = HOURS
+Rem     chart.y      = SCORE
+Rem     chart.title  = STUDY TIME AGAINST SCORE
+Rem
+Rem     window.size    = 640 480
+Rem     window.at      = 100 100
+Rem     window.capture = out/scatter.png
+Rem
+Rem A spec is a dict.shoddy association list — key in Fst, value in Snd —
+Rem so DictGet and friends work on it unchanged, and the words below are
+Rem the typed conveniences over that: SpecNum, SpecFlag, SpecWords.
+Rem
+Rem WHY FLAT AND NOT [SECTIONS]. Sections buy one thing, saying the
+Rem prefix once, and cost a state machine in the parser and a flattening
+Rem pass after it. Dotted keys are the same information with neither, and
+Rem "every line is a complete statement" means a line can be moved,
+Rem copied or commented out without reading the twenty lines above it to
+Rem find out which section it is in.
+Rem
+Rem ---- the rules, all of them --------------------------------------
+Rem
+Rem A line is blank, a comment, or key = value.
+Rem
+Rem A COMMENT IS A LINE WHOSE FIRST NON-SPACE CHARACTER IS #. There are
+Rem no trailing comments, and that is deliberate rather than lazy: this
+Rem file's own data.comment key takes # as its VALUE, and a parser that
+Rem stripped from the first # onwards would eat it. Trailing comments
+Rem would need quoting to fix, quoting needs escaping, and a config file
+Rem that needs an escaping rule has stopped being a config file.
+Rem
+Rem The key is everything before the FIRST =, uppercased, so chart.Type
+Rem and CHART.TYPE are the same key. The value is everything after it,
+Rem verbatim except for outer spaces — titles keep their case and their
+Rem inner punctuation, = included.
+Rem
+Rem An empty value is legal and means the empty string. A repeated key is
+Rem last-wins; the pairs are held newest-first so that DictGet's
+Rem first-match IS the last assignment, which is why there is no dedupe
+Rem pass here. SpecUnder reverses to hand back document order.
+Rem
+Rem Anything else — a line with no = at all — is an error carrying its
+Rem line number, because a spec file is written by hand and a typo that
+Rem is silently ignored is a spec that silently does the wrong thing.
+Rem ==================================================================
+
+Include "../../machines/dict.shoddy"
+Include "../../machines/str.shoddy"
+Include "../../machines/file.shoddy"
+
+Rem The result of a total read: the pairs, or why and which line.
+Type SpecFile = SpecOk(SpecPairs As List Of Pair) | SpecBad(SpecWhy As String, SpecLine As Number)
+
+Rem ---- reading ---------------------------------------------------------
+
+Def SpecIsComment(s As String) As Boolean
+    StartsWith(Trim(s), "#")
+
+Def SpecIsBlank(s As String) As Boolean
+    Len(Trim(s)) = 0
+
+Rem One line onto the accumulator, or the reason it would not go. n is
+Rem the 1-based line number, for the message.
+Def SpecLineOn(s As String, n As Number, acc As List Of Pair) As SpecFile
+    If SpecIsBlank(s) Or SpecIsComment(s) Then
+        SpecOk(acc)
+    Else
+        Let k = Instr(s, "=")
+        If k = 0 Then
+            SpecBad("EXPECTED key = value", n)
+        Else
+            Let name = Upper(Trim(Left(s, k - 1)))
+            If Len(name) = 0 Then
+                SpecBad("A LINE CANNOT BEGIN WITH =", n)
+            Else
+                SpecOk(Prepend(Pair(name, Trim(Mid(s, k + 1, Len(s)))), acc))
+
+Rem The line loop. A self tail call, so a long spec costs no stack.
+Def SpecLines(xs As List Of String, n As Number, acc As List Of Pair) As SpecFile
+    If IsEmpty(xs) Then
+        SpecOk(acc)
+    Else
+        Select Case SpecLineOn(First(xs), n, acc)
+            Case SpecBad(why, at)
+                SpecBad(why, at)
+            Case SpecOk(next)
+                SpecLines(Rest(xs), n + 1, next)
+            Case Else
+                SpecBad("UNREACHABLE", n)
+
+Def SpecRead(text As String) As SpecFile
+    SpecLines(Split(Replace(text, "\r", ""), "\n"), 1, { })
+
+Def SpecLoadFile(path As String) As SpecFile
+    SpecRead(ReadFile(path))
+
+Rem The strict half of the pair, for a caller who has already decided a
+Rem bad spec is fatal.
+Def SpecParse(text As String) As List Of Pair
+    Select Case SpecRead(text)
+        Case SpecOk(ps)
+            ps
+        Case SpecBad(why, at)
+            Error("SPEC: LINE " & Str(at) & ": " & why)
+        Case Else
+            Error("SPEC: UNREACHABLE")
+
+Rem ---- asking ----------------------------------------------------------
+Rem The parameter is k and not key: words are case-folded and a local
+Rem outranks everything, so a parameter named after a common record field
+Rem is a trap laid for whoever writes that record later.
+
+Def SpecHas(sp As List Of Pair, k As String) As Boolean
+    DictHas(sp, Upper(k))
+
+Def SpecGet(sp As List Of Pair, k As String) As String
+    If SpecHas(sp, k) Then
+        DictGet(sp, Upper(k))
+    Else
+        Error("SPEC: NO KEY '" & Lower(k) & "'")
+
+Def SpecGetOr(sp As List Of Pair, k As String, dflt As String) As String
+    DictGetOr(sp, Upper(k), dflt)
+
+Def SpecNum(sp As List Of Pair, k As String) As Number
+    Val(SpecGet(sp, k))
+
+Def SpecNumOr(sp As List Of Pair, k As String, dflt As Number) As Number
+    ValOr(SpecGetOr(sp, k, ""), dflt)
+
+Rem yes/no as well as true/false — BoolOr already takes the whole prompt
+Rem vocabulary, which is the right one for a file a person types.
+Def SpecFlag(sp As List Of Pair, k As String, dflt As Boolean) As Boolean
+    BoolOr(SpecGetOr(sp, k, ""), dflt)
+
+Rem ---- values that are lists -------------------------------------------
+Rem "640 480" is two numbers and "SCORE HOURS" is two column names. One
+Rem rule for both: split on spaces, drop the empties, so any amount of
+Rem spacing lines up in a text editor without changing the meaning.
+
+Def SpecWordsOf(s As String) As List Of String
+    Filter(Split(s, " "), Fn(t) => Len(t) > 0)
+
+Def SpecWords(sp As List Of Pair, k As String) As List Of String
+    SpecWordsOf(SpecGetOr(sp, k, ""))
+
+Def SpecNums(sp As List Of Pair, k As String) As List Of Number
+    Map(SpecWords(sp, k), Fn(t) => Val(t))
+
+Rem The n-th word of a key's value, or a default — for window.size and
+Rem window.at, where the pair is the whole point and a missing key means
+Rem "use the default for both".
+Def SpecNthNum(sp As List Of Pair, k As String, n As Number, dflt As Number) As Number
+    Let ws = SpecWords(sp, k)
+    If Length(ws) < n Then
+        dflt
+    Else
+        ValOr(Nth(ws, n), dflt)
+
+Rem ---- whole families of keys ------------------------------------------
+Rem What makes derive.X, filter.X and report.X work without a section
+Rem parser: ask for every key under a prefix, in the order the file gave
+Rem them. The stored list is newest-first, so this reverses.
+
+Def SpecUnder(sp As List Of Pair, prefix As String) As List Of Pair
+    Filter(Reverse(sp), Fn(p) => StartsWith(Fst(p), Upper(prefix)))
+
+Rem The same, with the prefix cut off the keys: derive.Z becomes Z.
+Def SpecSuffixed(sp As List Of Pair, prefix As String) As List Of Pair
+    Map(SpecUnder(sp, prefix), Fn(p) => Pair(Mid(Fst(p), Len(prefix) + 1, Len(Fst(p))), Snd(p)))

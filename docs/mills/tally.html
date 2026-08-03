@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="A spec-driven statistics and charting tool — mills/tally">
+<title>tally — Statistics From a Spec File | Shoddy Mills</title>
+<link rel="stylesheet" href="../style.css">
+<link rel="icon" href="../favicon.svg" type="image/svg+xml">
+<link rel="alternate icon" href="../favicon.ico" sizes="48x48">
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+</head>
+<body>
+<div class="topbar"><div class="inner">
+  <div class="row">
+    <a class="phase" href="index.html"><img class="mark" src="../media/brand/shoddy-icon.svg" alt="" width="23" height="23">Shoddy · The Mills</a>
+    <span class="spacer"></span>
+    <nav class="docnav meta" aria-label="About"><a href="../heritage.html">Heritage</a><a href="../authorship.html">Authorship</a></nav>
+  </div>
+  <nav class="docnav main" aria-label="Documentation"><a href="../tutorials/index.html">Tutorials</a><a href="../guide.html">Guide</a><a href="../quickref.html">Reference</a><a href="../machines/index.html">Machines</a><span class="here">Mills</span><a href="../stack.html">Stack</a><a href="../spec.html">Spec</a><a href="../setup.html">Setup</a><a href="../vscode.html">VS Code</a><a href="../assistants.html">AI</a><a href="../build.html">Toolchain</a><a href="../errors.html">Errors</a></nav>
+</div></div>
+<div class="wrap">
+
+<header class="mast has-icon"><div><p class="eyebrow"><a href="index.html#data">The Mills &middot; Data &amp; statistics</a></p><h1>tally</h1><p class="kicker">Statistics and charts from a spec file — mills/tally</p></div><img class="micon" src="../media/tally.svg" alt="A spec file on the left, and the scatter plot with its regression line that the spec produces on the right"></header>
+<nav class="pagertop" aria-label="Mills, in catalog order"><a href="simplex-from-mps.html">&larr; simplex-from-mps</a><a href="index.html">All mills</a><a href="index.html">All mills &rarr;</a></nav>
+
+<h2 id="summary">Summary</h2>
+<p>Point it at a CSV file and a spec file and it prints a statistical report
+and draws a chart. Nothing is passed on the command line but the spec — which
+data to read, which columns to use, what to compute, what to draw, how big the
+window is, where to put it, and where to save the picture all live in a text
+file you can keep beside the data and put under version control.</p>
+<pre><code>bin/mill run mills/tally/tally.shoddy mills/tally/files/grades.spec</code></pre>
+<p>Named for the tally: the count kept at the loom, the stick notched as the
+pieces came off. It is a thin program over thick machines —
+<a href="../machines/csv.html">csv</a> reads the file,
+<a href="../machines/stats.html">stats</a> does every calculation, and
+<a href="../machines/plotter.html">plotter</a> draws every chart. What tally
+adds is the spec file, the dispatch, and the layout.</p>
+
+<h2 id="spec">The Spec File</h2>
+<p>Flat dotted keys, one per line, <code>#</code> for a comment:</p>
+<pre><code># tally spec - study hours against final marks
+
+data.file      = mills/tally/files/grades.csv
+
+derive.Z       = zscores FINAL
+derive.RES     = residuals HOURS FINAL
+
+report.count   = count
+report.stats   = describe HOURS MIDTERM FINAL
+report.corr    = correl HOURS FINAL
+report.line    = fit HOURS FINAL
+report.groups  = freq GROUP
+report.strays  = outliers FINAL
+
+chart.type     = scatter
+chart.x        = HOURS
+chart.y        = FINAL
+chart.fit      = yes
+chart.title    = HOURS AGAINST FINAL MARK
+
+window.size    = 480 320
+window.at      = 120 90
+window.capture = mills/tally/files/grades.png
+window.show    = no</code></pre>
+<p>Not <code>[sections]</code>, deliberately. Sections buy one thing — saying
+the prefix once — and cost a state machine in the parser and a flattening pass
+after it. Dotted keys are the same information with neither, and "every line is
+a complete statement" means a line can be moved, copied or commented out
+without reading the twenty above it to find out which section it is in.</p>
+<p>One rule is worth stating on its own: <strong>a comment is a line whose
+first non-space character is <code>#</code></strong>. There are no trailing
+comments. That is not laziness — the spec's own <code>data.comment</code> key
+takes <code>#</code> as its <em>value</em>, and a parser that stripped from the
+first <code>#</code> onwards would eat it. Trailing comments would need
+quoting, quoting needs escaping, and a config file that needs an escaping rule
+has stopped being a config file.</p>
+
+<h2 id="verbs">Verbs, Not Expressions</h2>
+<p>A <code>derive</code> line names a verb and its columns —
+<code>zscores FINAL</code>, <code>residuals HOURS FINAL</code>,
+<code>add MIDTERM FINAL</code> — and never an arithmetic expression. That is
+the load-bearing decision in this mill.</p>
+<p>An expression language needs a tokenizer, a precedence table, a parser and
+its own error messages, and everything it would buy can be had by naming one
+more verb — which is two lines of Shoddy and cannot be got syntactically wrong
+by whoever writes the spec. When a verb is genuinely missing, the fix is to add
+a <code>Case</code>, not a grammar.</p>
+<p>Every verb is a thin wrapper over a word
+<a href="../machines/stats.html">stats</a> already exports and already tests.
+The mill does dispatch and layout; it does no statistics of its own.</p>
+<table>
+<tr><th>Family</th><th>Verbs</th></tr>
+<tr><td><code>derive.*</code><br>a new column</td><td><code>zscores</code>
+<code>ranks</code> <code>log</code> <code>abs</code> <code>pct</code>
+<code>residuals</code> <code>add</code> <code>sub</code> <code>mul</code>
+<code>div</code></td></tr>
+<tr><td><code>filter.*</code><br>fewer rows</td><td><code>inliers</code>
+<code>outliers</code> <code>above</code> <code>below</code>
+<code>equals</code></td></tr>
+<tr><td><code>report.*</code><br>lines of text</td><td><code>count</code>
+<code>describe</code> <code>correl</code> <code>fit</code> <code>freq</code>
+<code>ttest2</code> <code>anova</code> <code>outliers</code></td></tr>
+<tr><td><code>chart.type</code><br>a picture</td><td><code>histogram</code>
+<code>bar</code> <code>pie</code> <code>box</code> <code>scatter</code>
+<code>none</code></td></tr>
+</table>
+<p>The order is fixed and matters: <strong>derive, then filter, then
+report</strong>. A filter may name a column a derive made, and a report should
+only ever see the rows that survived. Derives run in file order too, so a later
+one can name an earlier one's column.</p>
+
+<h2 id="running">Running It</h2>
+<pre><code>./build.sh run [SPEC]       report, then the chart in a window
+./build.sh capture [SPEC]   the same with nothing on screen — the PNG is the output
+./build.sh test             the headless suite: no window, no display
+./build.sh build            weave the program into bin/
+./build.sh clean            remove bin/</code></pre>
+<p><code>build.cmd</code> takes the same subcommands on Windows. Paths inside a
+spec are relative to the directory you run from — the build targets run from
+the repo root, so the shipped specs say <code>mills/tally/files/...</code>. A
+spec is a small thing you keep beside your data, and a path that meant
+different things depending on which folder the spec happened to live in would
+be a path nobody could read.</p>
+<p><code>capture</code> passes <a href="../build.html">the mill's
+<code>--no-window</code> flag</a>, which opens every scribbler hidden. Pair it
+with <code>window.show = no</code> in the spec. The two knobs answer two
+different questions: <code>window.show</code> is the <em>program's</em> — does
+it wait for someone to dismiss the picture, or is the file the whole output?
+<code>--no-window</code> is the <em>run's</em> — may this invocation put pixels
+on a display?</p>
+
+<h2 id="built">How It's Built</h2>
+<p>Three files, and the split is the reason the mill is testable at all:</p>
+<table>
+<tr><th>File</th><th>What's in it</th></tr>
+<tr><td><code>tally-spec.shoddy</code></td><td>The spec file: the line parser
+and the typed accessors over it. A spec is a
+<a href="../machines/dict.html">dict</a> association list, so
+<code>SpecGet</code> is <code>DictGet</code> with the key folded to upper case.
+The total reader returns the line number a bad spec failed at.</td></tr>
+<tr><td><code>tally-core.shoddy</code></td><td><strong>Pure.</strong> Loading,
+the derive/filter/report verbs, the layout, and <code>TallyCheck</code>.
+Nothing here reads a file, opens a window or prints — it takes text and gives
+back a sheet or a list of lines.</td></tr>
+<tr><td><code>tally.shoddy</code></td><td>The shell: arguments, files, the
+window, the picture. Forty lines of scribbler handling and five plotter
+calls.</td></tr>
+</table>
+<p>The order of operations in the shell is the part worth copying. The spec is
+read, the data is read, the pipeline runs, the report prints,
+<code>TallyCheck</code> passes — <strong>and only then is a window
+opened</strong>. A bad spec is a message and an exit code, never a window that
+appears and then dies. That matters more than it sounds: <code>Error</code>
+under <code>mill run</code> is caught by the program itself, so a window
+already on screen would be left standing with nothing behind it.</p>
+<p><code>TallyCheck</code> is why that is possible. Shoddy has no catchable
+errors, so a validator that aborted would be no use to a shell trying to decide
+whether to open anything; this one returns a <em>string</em> — empty when the
+spec is drawable, and a complaint naming the offending key or column when it is
+not. It catches an unknown chart type, a missing <code>chart.x</code>, a column
+the file does not have, and — the one that actually bites — a
+<code>filter.*</code> that removed every row.</p>
+
+<h2 id="testing">How It's Tested</h2>
+<p><code>test.shoddy</code> Includes <code>tally-core.shoddy</code> and
+<em>not</em> <code>tally.shoddy</code>, so nothing in the suite can draw even
+by accident. It needs no display and no network. The centrepiece runs
+<code>files/grades.spec</code> through the whole pipeline and compares the
+report against <code>files/expected.out</code> <strong>line by line</strong>, so
+a change to any verb, any format string or any statistic shows up as a diff
+rather than as a number nobody checked.</p>
+<p>What is left untested is the window handling in the shell, and the five
+plotter calls — which <a href="../machines/plotter.html">plotter</a>'s own
+suite already grades pixel by pixel.</p>
+
+<h2 id="uses">The Machines It Uses</h2>
+<table>
+<tr><th></th><th>Machine</th><th>Why</th></tr>
+<tr><td class="uicon"><a href="../machines/csv.html"><img src="../media/icons/csv.svg" alt=""></a></td><td><a href="../machines/csv.html">csv</a></td><td>Reads the data file
+the spec names, header and all. Every stage of the pipeline is a
+<code>CsvSheet</code> in and a <code>CsvSheet</code> out.</td></tr>
+<tr><td class="uicon"><a href="../machines/stats.html"><img src="../media/icons/stats.svg" alt=""></a></td><td><a href="../machines/stats.html">stats</a></td><td>Every number in
+the report and every derived column: <code>Mean</code>, <code>Quantile</code>,
+<code>ZScores</code>, <code>Correl</code>, <code>LinFit</code>,
+<code>Freq</code>, <code>TTest2</code>, <code>Anova</code>,
+<code>Outliers</code>.</td></tr>
+<tr><td class="uicon"><a href="../machines/plotter.html"><img src="../media/icons/plotter.svg" alt=""></a></td><td><a href="../machines/plotter.html">plotter</a></td><td>All five charts, plus
+<code>ScaleTo</code> and <code>PlotColor</code> for the regression line drawn
+over the scatter.</td></tr>
+<tr><td class="uicon"><a href="../machines/scribbler.html"><img src="../media/icons/scribbler.svg" alt=""></a></td><td><a href="../machines/scribbler.html">scribbler</a></td><td>The window and the
+event loop that waits for it to be dismissed.</td></tr>
+<tr><td class="uicon"><a href="../machines/dict.html"><img src="../media/icons/dict.svg" alt=""></a></td><td><a href="../machines/dict.html">dict</a></td><td>A spec is an
+association list; <code>DictGet</code> and <code>DictGetOr</code> are what
+<code>SpecGet</code> and <code>SpecGetOr</code> are made of.</td></tr>
+<tr><td class="uicon"><a href="../machines/str.html"><img src="../media/icons/str.svg" alt=""></a></td><td><a href="../machines/str.html">str</a></td><td><code>Split</code> and
+<code>Trim</code> take a spec line apart; <code>PadLeft</code>,
+<code>PadRight</code> and <code>ToFixed</code> lay the report out in
+columns.</td></tr>
+<tr><td class="uicon"><a href="../machines/seq.html"><img src="../media/icons/seq.svg" alt=""></a></td><td><a href="../machines/seq.html">seq</a></td><td><code>Contains</code>,
+<code>Append</code>, <code>Flatten</code> and <code>Zip</code> thread through
+every stage.</td></tr>
+<tr><td class="uicon"><a href="../machines/file.html"><img src="../media/icons/file.svg" alt=""></a></td><td><a href="../machines/file.html">file</a></td><td><code>ReadLines</code>
+reads the golden report the headless suite grades against.</td></tr>
+</table>
+
+<nav class="pager" aria-label="Mills, in catalog order">
+  <a href="simplex-from-mps.html"><span class="dir">&larr; Previous mill</span><span class="ttl">simplex-from-mps</span></a>
+  <a class="next" href="index.html"><span class="dir">All mills &rarr;</span><span class="ttl">index</span></a>
+</nav>
+<footer>Named for the shoddy mills of the West Riding: Useless Things Made
+Useful Through Skill (<a href="../heritage.html">the heritage of the name</a>).<br>
+&copy; 2026 Stephen Vincent Foster</footer>
+</div>
+</body>
+</html>

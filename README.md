@@ -172,7 +172,10 @@ write-up on each one, or start at
       <a href="https://shoddymills.github.io/shoddy/mills/weather-glass.html"><img src="docs/media/weather-glass.svg" alt="weather-glass: a barometer dial beside forecast rows" width="100%"></a><br>
       <b>weather-glass</b><br><sub>a forecast, in VT100</sub>
     </td>
-    <td width="25%"></td>
+    <td width="25%" align="center" valign="top">
+      <a href="https://shoddymills.github.io/shoddy/mills/tally.html"><img src="docs/media/tally.svg" alt="tally: a spec file and the scatter plot it produces" width="100%"></a><br>
+      <b>tally</b><br><sub>statistics from a spec file</sub>
+    </td>
     <td width="25%"></td>
   </tr>
 </table>
@@ -207,6 +210,7 @@ batteries included. Full word references in
     <td width="25%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/json.html"><img src="docs/media/icons/json.svg" alt="json" width="100%"></a><br><b>json</b><br><sub>JSON, both directions</sub></td>
     <td width="25%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/xml.html"><img src="docs/media/icons/xml.svg" alt="xml" width="100%"></a><br><b>xml</b><br><sub>XML, both directions</sub></td>
     <td width="25%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/html.html"><img src="docs/media/icons/html.svg" alt="html" width="100%"></a><br><b>html</b><br><sub>web pages, forgivingly</sub></td>
+    <td width="25%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/csv.html"><img src="docs/media/icons/csv.svg" alt="csv" width="100%"></a><br><b>csv</b><br><sub>tables, quoted properly</sub></td>
     <td width="25%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/shaker.html"><img src="docs/media/icons/shaker.svg" alt="shaker" width="100%"></a><br><b>shaker</b><br><sub>reversible obfuscation</sub></td>
   </tr>
   <tr>

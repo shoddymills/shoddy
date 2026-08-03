@@ -26,7 +26,18 @@ $ErrorActionPreference = 'Stop'
 function Fail([string]$Msg) { Write-Host "RELEASE STOPPED: $Msg" -ForegroundColor Red; exit 1 }
 function G {
     Write-Host ("> git " + ($args -join ' ')) -ForegroundColor Cyan
-    git @args
+    # Hardening, not a fix for anything this script does wrong on its own.
+    # git says perfectly ordinary things on stderr - "Already on 'main'",
+    # "Switched to branch", the push summary. Run plainly that is harmless,
+    # but the moment a CALLER redirects (.\shoddy-release.ps1 1.0.0 2>&1 | tee
+    # log.txt, or a CI step that captures both streams) Windows PowerShell
+    # wraps each stderr line in a NativeCommandError, and with
+    # $ErrorActionPreference = 'Stop' that terminates the release halfway
+    # through. The exit code is the only honest signal a native program
+    # gives, so judge the call on that alone.
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try { git @args } finally { $ErrorActionPreference = $prev }
     if ($LASTEXITCODE -ne 0) { Fail "git $($args -join ' ') failed (exit $LASTEXITCODE)." }
 }
 

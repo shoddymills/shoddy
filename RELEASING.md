@@ -100,6 +100,11 @@ builtin, does the editor grammar highlight them — has its own review prompt in
 the maintainer's working notes; new builtins and machine words are the usual
 suspects.
 
+One lint-specific step: sweep once with `machines/bin` set aside. The release
+build splices machine *source* into programs, and a spliced program can lint
+differently than the DLL-mode sweep — a machine's local `Let` and a program's
+accessor read only meet when spliced.
+
 ---
 
 ## 1 — Merge the feature into main

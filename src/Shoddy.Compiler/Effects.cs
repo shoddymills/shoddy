@@ -68,7 +68,7 @@ public static class Effects
         ["TCPACCEPT"] = new(1, 1), ["TCPSEND"] = new(2, 0),
         ["TCPRECV"] = new(2, 1), ["TCPEOF"] = new(1, 1),
         ["TCPPOLL"] = new(1, 1), ["TCPPEER"] = new(1, 1),
-        ["TCPCLOSE"] = new(1, 0),
+        ["TCPCLOSE"] = new(1, 0), ["TCPSECURE"] = new(2, 0),
         // input
         ["INPUT"] = new(1, 1), ["INPUTLINE"] = new(1, 1),
         ["INKEY"] = new(0, 1), ["ARGS"] = new(0, 1),

@@ -8,12 +8,40 @@ Rem A friendly layer over the raw TCP* builtins. Handles are Numbers,
 Rem like file handles. Payloads are Strings carrying one byte per
 Rem character (the same binary-safe convention as ReadFile).
 Rem
-Rem The builtins never block: TCPRecv returns "" when nothing has
-Rem arrived yet, TCPAccept returns 0 when no client is waiting. The
-Rem Wait* helpers below turn that into blocking-style convenience by
-Rem polling around Sleep, so a simple program reads as if it blocked
-Rem while a game loop or server can still poll by hand. Everything here
-Rem is effectful, like all i/o words — keep it at the edges.
+Rem On a PLAIN socket the builtins never block: TCPRecv returns "" when
+Rem nothing has arrived yet, TCPAccept returns 0 when no client is
+Rem waiting. The Wait* helpers below turn that into blocking-style
+Rem convenience by polling around Sleep, so a simple program reads as if
+Rem it blocked while a game loop or server can still poll by hand.
+Rem Everything here is effectful, like all i/o words — keep it at the
+Rem edges.
+Rem
+Rem ---- a secured socket is the exception ---------------------------
+Rem
+Rem Secure(sock, host) upgrades a connected socket to TLS in place, and
+Rem from that moment the contract for THAT HANDLE changes:
+Rem
+Rem     Recv     blocks until data, the peer closes, or 30s pass, and
+Rem              returns "" only at end of input
+Rem     Eof      reads a flag rather than polling
+Rem     Ready    IS REFUSED — it aborts the program
+Rem
+Rem That is deliberate, not an oversight. Once TLS records wrap the
+Rem stream a TCP-level poll stops telling the truth about plaintext: a
+Rem partial record makes bytes look ready that decrypt to nothing yet,
+Rem and a fully buffered record makes plaintext look absent when a read
+Rem would return it at once. Rather than answer dishonestly, Ready
+Rem refuses.
+Rem
+Rem The two worlds genuinely differ and both keep their own truth.
+Rem Nobody polls a TLS socket in a game loop: TLS is here for
+Rem request/response at the edges, while the polling contract is what
+Rem scribbler windows and game loops on the loopback are built on. Since
+Rem a program cannot ask a handle whether it is secured, know which kind
+Rem you are holding — in practice you always do, because you secured it.
+Rem
+Rem Server-side TLS is not supported: Accept always hands back a plain
+Rem socket. This is a TLS client.
 Rem
 Rem The whole family is gated: run the mill with --allow-net, or the
 Rem first TCP word raises "network is disabled".
@@ -22,7 +50,13 @@ Rem     Def Main()
 Rem         Let reply = Request("example.com", 80,
 Rem             "GET / HTTP/1.0\r\nHost: example.com\r\n\r\n")
 Rem         Print(reply)
+Rem
+Rem For HTTP over TLS, and for taking a reply apart, use https.shoddy —
+Rem it is built on these words.
 Rem ==================================================================
+
+Include "seq.shoddy"
+Include "str.shoddy"
 
 Rem ---- client ------------------------------------------------------
 
@@ -62,13 +96,82 @@ Def WaitRecv(sock As Number) As String
         Sleep(5)
         WaitRecv(sock)
 
-Rem Read the whole response, chunk by chunk, until the peer closes.
+Rem Poll until a chunk is readable or the deadline passes, whichever
+Rem comes first; "" on expiry. WaitRecv waits forever, which is right for
+Rem a peer that will close and wrong for one that will not — a keep-alive
+Rem server that never hangs up spins WaitRecv until the heat death. Reach
+Rem for this one when you cannot promise the peer closes.
+Def WaitRecvFor(sock As Number, ms As Number) As String
+    WaitRecvUntil(sock, Ticks() + ms)
+
+Def WaitRecvUntil(sock As Number, deadline As Number) As String
+    If TCPPoll(sock) Then
+        TCPRecv(sock, 4096)
+    Else
+        If Ticks() >= deadline Then
+            ""
+        Else
+            Sleep(5)
+            WaitRecvUntil(sock, deadline)
+
+Rem Read the whole response, chunk by chunk, until the peer CLOSES —
+Rem HTTP/1.0 with Connection: close, which is what Request and HttpGet
+Rem send. Against a peer that keeps the connection open this never
+Rem returns; use WaitRecvFor and assemble the pieces yourself.
+Rem
+Rem Fragments into a list, joined once at the end. Building the answer
+Rem with chunk & RecvAll(...) instead would copy the whole accumulated
+Rem body per chunk — quadratic in the reply, which is exactly the shape a
+Rem reader is — and would not be tail-recursive either, so a large body
+Rem would grow the stack a frame per chunk as well.
 Def RecvAll(sock As Number) As String
+    Join(Reverse(RecvAllR(sock, { })), "")
+
+Def RecvAllR(sock As Number, acc As List Of String) As List Of String
     Let chunk = WaitRecv(sock)
     If chunk = "" Then
-        ""
+        acc
     Else
-        chunk & RecvAll(sock)
+        RecvAllR(sock, Prepend(chunk, acc))
+
+Rem ---- TLS ---------------------------------------------------------
+Rem Read the header: securing a handle changes what Recv, Eof and Ready
+Rem mean on it, and Ready stops being answerable at all.
+
+Rem Upgrade a connected socket to TLS in place. host drives both SNI and
+Rem certificate name validation, so it must be the name the certificate
+Rem was issued for — an IP address will not match one. A failed handshake
+Rem takes the handle with it.
+Def Secure(sock As Number, host As String)
+    TCPSecure(sock, host)
+
+Rem Connect and secure with the SAME host, which is the pairing that
+Rem keeps SNI honest.
+Def ConnectTls(host As String, port As Number) As Number
+    Let s = Connect(host, port)
+    Secure(s, host)
+    s
+
+Rem Drain a SECURED socket to end of input. Recv blocks there, so this
+Rem needs no poll and no Sleep — and must not use WaitRecv or RecvAll,
+Rem whose TCPPoll would abort on a secured handle.
+Def RecvAllTls(sock As Number) As String
+    Join(Reverse(RecvAllTlsR(sock, { })), "")
+
+Def RecvAllTlsR(sock As Number, acc As List Of String) As List Of String
+    Let chunk = Recv(sock, 4096)
+    If chunk = "" Then
+        acc
+    Else
+        RecvAllTlsR(sock, Prepend(chunk, acc))
+
+Rem The secured mirror of Request: connect, secure, send, drain, close.
+Def RequestTls(host As String, port As Number, msg As String) As String
+    Let s = ConnectTls(host, port)
+    Send(s, msg)
+    Let reply = RecvAllTls(s)
+    Close(s)
+    reply
 
 Rem Connect, send one message, read the full reply, close. The common
 Rem request/response shape, with the handle managed for you.
@@ -79,7 +182,11 @@ Def Request(host As String, port As Number, msg As String) As String
     Close(s)
     reply
 
-Rem A minimal HTTP/1.0 GET, to prove the stack end to end.
+Rem A minimal HTTP/1.0 GET, to prove the stack end to end. It sends only
+Rem a Host header and speaks plaintext on port 80, which is enough for a
+Rem demo and not enough for the modern web — most hosts now redirect to
+Rem HTTPS, and many refuse a request with no User-Agent. See https.shoddy
+Rem for the one that holds a real conversation.
 Def HttpGet(host As String, path As String) As String
     Request(host, 80,
         "GET " & path & " HTTP/1.0\r\nHost: " & host & "\r\n\r\n")

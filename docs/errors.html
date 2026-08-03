@@ -1303,6 +1303,51 @@ sockets leaked without <code>TcpClose</code>.</p>
 </div>
 
 <div class="err">
+<p class="emsg"><code>TCPSECURE: handshake with '{host}' failed &mdash; {reason}</code>
+<code>TCPSECURE: already secured</code>
+<code>TCPSECURE: handle is a listener</code></p>
+<p><code>TcpSecure</code> upgrades a connected socket to TLS. The host you
+pass drives both the SNI extension and certificate name validation, so it
+must be the name the certificate was issued for &mdash; an IP address will
+not match one. A failed handshake takes the handle with it: the socket is
+closed and its slot cleared, because a half-open connection is no use to a
+language with no catchable errors. The reason comes from the platform, and
+<em>certificate is not trusted</em> is the usual one when a server presents
+a self-signed certificate.</p>
+<p>Only a connected socket can be secured &mdash; a listener cannot, and
+server-side TLS is not supported &mdash; and securing twice is refused
+rather than silently layering a second stream on the first.</p>
+<div class="fixpair">
+<div class="bad"><b>Broken</b><pre><code>Let s = Connect("93.184.216.34", 443)
+Secure(s, "93.184.216.34")   ' an IP is not a certificate name</code></pre></div>
+<div class="good"><b>Fixed</b><pre><code>Let s = Connect("example.com", 443)
+Secure(s, "example.com")</code></pre></div>
+</div>
+</div>
+
+<div class="err">
+<p class="emsg"><code>TCPPOLL: not meaningful on a secured connection</code>
+<code>TCPRECV: secure read timed out</code></p>
+<p>A secured socket reads <strong>blocking</strong>, and that is deliberate.
+Once TLS records wrap the stream a TCP-level poll stops telling the truth
+about plaintext: a partial record makes bytes look ready that decrypt to
+nothing yet, and a fully buffered record makes plaintext look absent when a
+read would return it at once. Rather than answer dishonestly,
+<code>TcpPoll</code> refuses &mdash; and so does <code>Ready</code>, which
+is built on it.</p>
+<p>Read the socket instead. On a secured handle <code>TcpRecv</code> blocks
+until data arrives, the peer closes, or thirty seconds pass; <code>""</code>
+means end of input and only that, with <code>TcpEof</code> confirming it.
+The timeout is there so a hung server dies with a line number instead of
+freezing the run.</p>
+<div class="fixpair">
+<div class="bad"><b>Broken</b><pre><code>If Ready(s) Then          ' refused on a secured socket
+    Print(Recv(s, 4096))</code></pre></div>
+<div class="good"><b>Fixed</b><pre><code>Print(Recv(s, 4096))      ' blocks until there is an answer</code></pre></div>
+</div>
+</div>
+
+<div class="err">
 <p class="emsg"><code>ScribblerOpen: no window backend — scribbler programs require `mill run`</code>
 <code>ScribblerWait: no window backs this scribbler — the wait would never wake</code>
 <code>ScribblerOpen: size must be at least 1x1, got {w}x{h}</code></p>

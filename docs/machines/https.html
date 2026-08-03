@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="An HTTP Client over TLS — machines/https.shoddy">
+<title>https — An HTTP Client over TLS | Shoddy Machines</title>
+<link rel="stylesheet" href="../style.css">
+<link rel="icon" href="../favicon.svg" type="image/svg+xml">
+<link rel="alternate icon" href="../favicon.ico" sizes="48x48">
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+</head>
+<body>
+<div class="topbar"><div class="inner">
+  <div class="row">
+    <a class="phase" href="index.html"><img class="mark" src="../media/brand/shoddy-icon.svg" alt="" width="23" height="23">Shoddy · The Machines</a>
+    <span class="spacer"></span>
+    <nav class="docnav meta" aria-label="About"><a href="../heritage.html">Heritage</a><a href="../authorship.html">Authorship</a></nav>
+  </div>
+  <nav class="docnav main" aria-label="Documentation"><a href="../tutorials/index.html">Tutorials</a><a href="../guide.html">Guide</a><a href="../quickref.html">Reference</a><span class="here">Machines</span><a href="../mills/index.html">Mills</a><a href="../stack.html">Stack</a><a href="../spec.html">Spec</a><a href="../setup.html">Setup</a><a href="../vscode.html">VS Code</a><a href="../assistants.html">AI</a><a href="../build.html">Toolchain</a><a href="../errors.html">Errors</a></nav>
+</div></div>
+<div class="wrap">
+
+
+<header class="mast has-icon"><div><p class="eyebrow"><a href="index.html#networking">The Machines &middot; Networking</a></p><h1>https</h1><p class="kicker">An HTTP Client over TLS — machines/https.shoddy</p></div><img class="micon" src="../media/icons/https.svg" alt="the https machine&#39;s icon"></header>
+<nav class="pagertop" aria-label="Machines, in catalog order"><a href="net.html">&larr; net</a><a href="index.html">All machines</a><a href="buzzer.html">buzzer &rarr;</a></nav>
+
+<h2 id="summary">Summary</h2>
+<p><code>https</code> fetches a page or an API response over TLS and gives you
+words to take the reply apart: the status, the headers, the body. It is built
+on <a href="net.html">net</a>, which supplies the sockets and the encryption;
+this machine is the HTTP.</p>
+<pre><code>Let reply = HttpsGet("api.weather.gov", "/points/41.88,-87.63",
+    { Pair("User-Agent", "my-mill (me@example.com)"),
+      Pair("Accept", "application/geo+json") })
+If HttpStatus(reply) = 200 Then
+    Print(HttpBody(reply))</code></pre>
+
+<h2 id="why">Why It's Useful</h2>
+<p>The plain <code>HttpGet</code> in <a href="net.html">net</a> proves the
+socket stack works and cannot talk to the modern web. Almost nothing answers
+on port 80 any more except to say "go and ask on 443", and a good deal of what
+does answer refuses a request that arrives without a
+<code>User-Agent</code>.</p>
+<p>The concrete target that shaped every decision here is
+<code>api.weather.gov</code>, which was probed live. Port 80 returns
+<code>301 Moved Permanently</code> with an empty body and a
+<code>strict-transport-security</code> header carrying <code>preload</code> —
+there is no plaintext path at all. An empty User-Agent gets <code>403</code>.
+Forced to HTTP/1.0 it answers cleanly, with a <code>Content-Length</code>,
+<code>Connection: close</code>, no chunked encoding and no gzip. Every choice
+below follows from those three facts.</p>
+
+<h2 id="history">A Brief History of HTTP over TLS</h2>
+<p>HTTP arrived in 1991 as a page of text: a request line, a response, no
+headers, no status codes. It said nothing about privacy because the network it
+ran on was a few thousand people who mostly knew each other.</p>
+<p>Netscape added SSL in 1994 and got it wrong twice — version 1.0 never
+shipped, 2.0 was broken within a year — before SSL 3.0 in 1996 became the
+thing the web actually ran on for a decade. The IETF took it over, renamed it
+TLS to avoid Netscape's trademark, and shipped TLS 1.0 in 1999 as what was
+essentially SSL 3.1 with the serial numbers filed off. Everything before TLS
+1.2 is now deprecated and everything before 1.0 is broken beyond repair.</p>
+<p>The interesting part for a language like this one is what <em>didn't</em>
+change. TLS is a layer under HTTP, not a modification of it: the bytes above
+the encryption are the same bytes HTTP always spoke, which is why this machine
+is small. The transport got harder; the protocol did not. What the layering
+does cost is the ability to ask a socket whether data is waiting, and
+<a href="net.html">net</a>'s page explains what that costs in turn.</p>
+<p>The other thing that changed is the default. HTTPS was for payment pages
+and login forms until roughly 2014; then Snowden, Let's Encrypt, and browsers
+marking plain HTTP as "not secure" turned it into the ordinary case within
+about five years. That is why a machine that speaks only port 80 is now a
+teaching aid rather than a tool.</p>
+
+<h2 id="guide">User's Guide</h2>
+<h3>Pure where it can be</h3>
+<p>This is the design rule and it is worth stating first. Building a request
+and reading a reply are <strong>functions on Strings</strong>:
+<code>HttpRequestText</code>, <code>HttpStatus</code>, <code>HttpReason</code>,
+<code>HttpHeaders</code>, <code>HttpHeader</code> and <code>HttpBody</code>
+touch no socket, need no <code>--allow-net</code>, and are tested offline
+against fixture text in <code>tst/nettest.shoddy</code>. Only
+<code>HttpsGet</code> and <code>HttpsRequest</code> reach the network.</p>
+<p>The practical effect is that the interesting half of your program is
+testable without a server, and the half that needs one is four lines.</p>
+
+<h3>Headers are a dictionary</h3>
+<p>Headers come back as a <code>List Of Pair</code> — which is
+<a href="dict.html">dict</a>'s association list, so <code>DictGetOr</code>
+works on them with no help from this machine:</p>
+<pre><code>Let hs = HttpHeaders(reply)
+Print(DictGetOr(hs, "content-type", "unknown"))
+Print(HttpHeader(reply, "Content-Type", "unknown"))   ' the same answer</code></pre>
+<p>Names are <strong>lowercased on the way in</strong>. HTTP header names are
+case-insensitive, and normalising at the boundary is what lets that lookup
+just work instead of your having to guess whether this particular server
+wrote <code>Content-Type</code> or <code>content-type</code>. The name you ask
+<code>HttpHeader</code> with is lowercased for you too, so both sides of the
+question are case-blind.</p>
+
+<h3>Sending a request</h3>
+<p><code>HttpRequestText</code> emits <code>Host</code> first and always;
+everything else is yours. Send a <code>User-Agent</code> — it is courteous,
+it is how an operator tells your traffic from a scraper's, and more hosts
+than you would expect return <code>403</code> without one.</p>
+
+<h2 id="hood">Under the Hood</h2>
+<h3>HTTP/1.0, deliberately</h3>
+<p>Every request this machine sends says <code>HTTP/1.0</code>, and that is a
+choice rather than an oversight. It is what makes <em>the peer closes when it
+has finished</em> the correct end-of-body rule — so
+<code>RecvAllTls</code> reads to end of input and stops, and there is no
+chunked decoder here because a server answering 1.0 does not send
+<code>Transfer-Encoding: chunked</code>.</p>
+<p>Speaking 1.1 would buy keep-alive and cost a chunk decoder, a
+Content-Length reader and a connection cache. That is a fair trade one day and
+an entire second machine's worth of work; it is not this one.</p>
+
+<h3>What it will not do for you</h3>
+<ul>
+<li><strong>Redirects are reported, not chased.</strong> A 301 comes back as a
+301 with its <code>location</code> header intact. Following one means
+deciding about loops, cross-host hops and whether a POST stays a POST, and
+those are your policy rather than a library's.</li>
+<li><strong>No compression.</strong> Nothing sends
+<code>Accept-Encoding</code>, so nothing arrives gzipped. Do not add the
+header without adding a decoder.</li>
+<li><strong>The body is bytes.</strong> One per character, exactly as
+<code>ReadFile</code> hands them over, so a UTF-8 page arrives as its bytes:
+writing it back out with <code>WriteFile</code> reproduces the file exactly.
+Turning those bytes into characters is a separate concern this machine does
+not have.</li>
+<li><strong>Client only.</strong> Server-side TLS is not something Shoddy has.
+See <a href="../mills/rag-and-bone.html">rag-and-bone</a> for a server, which
+necessarily speaks plaintext on the loopback.</li>
+</ul>
+
+<h3>A secured socket blocks</h3>
+<p>Worth knowing even if you never touch the transport directly: once
+<code>Secure</code> has upgraded a handle, <code>Recv</code> on it blocks and
+<code>Ready</code> is <strong>refused outright</strong> — it aborts the
+program. <a href="net.html#blocking">net's page</a> explains why a poll cannot
+answer honestly through TLS records. Nothing in this machine calls
+<code>Ready</code>, so you will not meet the refusal by using
+<code>HttpsGet</code>; you will meet it if you build your own loop on a
+secured socket.</p>
+
+<h2 id="words">Word Reference</h2>
+<h3>Building a request — pure</h3>
+<table>
+<tr><th>Word</th><th>What it does</th></tr>
+<tr><td><code>HttpRequestText(method, path, host, headers)</code></td><td>The request exactly as it goes on the wire: request line, <code>Host</code>, your headers, blank line, CRLF throughout.</td></tr>
+</table>
+<h3>Reading a reply — pure</h3>
+<table>
+<tr><th>Word</th><th>What it does</th></tr>
+<tr><td><code>HttpStatus(reply)</code></td><td>The status number, or <code>0</code> if this is not a reply.</td></tr>
+<tr><td><code>HttpReason(reply)</code></td><td>The reason phrase — <code>OK</code>, <code>Not Found</code>.</td></tr>
+<tr><td><code>HttpHeaders(reply)</code></td><td>Every header as a <code>List Of Pair</code>, names lowercased, values trimmed.</td></tr>
+<tr><td><code>HttpHeader(reply, name, dflt)</code></td><td>One header, asked for in any case.</td></tr>
+<tr><td><code>HttpBody(reply)</code></td><td>Everything after the blank line; a bare LF gap is tolerated.</td></tr>
+<tr><td><code>HttpHead(reply)</code></td><td>The header block without the body.</td></tr>
+</table>
+<h3>Fetching — effectful, and gated</h3>
+<table>
+<tr><th>Word</th><th>What it does</th></tr>
+<tr><td><code>HttpsGet(host, path, headers)</code></td><td>One GET over TLS on port 443, returning the whole raw reply.</td></tr>
+<tr><td><code>HttpsRequest(method, host, path, headers)</code></td><td>The same for any method.</td></tr>
+<tr><td><code>HttpsPort()</code></td><td>443.</td></tr>
+</table>
+
+<h2 id="usedby">Who Uses It</h2>
+<table>
+<tr><th></th><th>User</th><th>How</th></tr>
+<tr><td class="uicon"><a href="../mills/rag-and-bone.html"><img src="../media/icons/net.svg" alt=""></a></td><td><a href="../mills/rag-and-bone.html">rag-and-bone</a></td><td>The server
+reads its incoming <em>requests</em> with <code>HttpHeaders</code> — a request
+has the same header block a reply does, so the words read one without knowing
+the difference.</td></tr>
+</table>
+
+<h2 id="uses">The Machines It Uses</h2>
+<table>
+<tr><th></th><th>Machine</th><th>Why</th></tr>
+<tr><td class="uicon"><a href="net.html"><img src="../media/icons/net.svg" alt=""></a></td><td><a href="net.html">net</a></td><td>The sockets and the
+TLS upgrade: <code>RequestTls</code> does the connecting, securing, sending
+and draining.</td></tr>
+<tr><td class="uicon"><a href="dict.html"><img src="../media/icons/dict.svg" alt=""></a></td><td><a href="dict.html">dict</a></td><td>Headers <em>are</em> an
+association list, so <code>HttpHeader</code> is <code>DictGetOr</code> with
+the name lowercased first.</td></tr>
+<tr><td class="uicon"><a href="str.html"><img src="../media/icons/str.svg" alt=""></a></td><td><a href="str.html">str</a></td><td><code>Split</code>,
+<code>Join</code>, <code>Trim</code> and <code>StartsWith</code> do the
+parsing; there is no other machinery in here.</td></tr>
+</table>
+
+<nav class="pager" aria-label="Machines, in catalog order">
+  <a href="net.html"><span class="dir">&larr; Previous machine</span><span class="ttl">net</span></a>
+  <a class="next" href="buzzer.html"><span class="dir">Next machine &rarr;</span><span class="ttl">buzzer</span></a>
+</nav>
+<footer>Named for the shoddy mills of the West Riding: Useless Things Made
+Useful Through Skill (<a href="../heritage.html">the heritage of the name</a>).<br>
+&copy; 2026 Stephen Vincent Foster</footer>
+</div>
+</body>
+</html>

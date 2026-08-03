@@ -1,0 +1,238 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem rag-and-bone-core.shoddy — an HTTP server, in Shoddy: all of it
+Rem
+Rem except Main, which lives in the shell beside it. Nothing here
+Rem prints a greeting or opens a port, so test.shoddy can include the
+Rem whole thing and call it.
+Rem
+Rem Named for the rag-and-bone man, who went door to door taking what he
+Rem was given and handing something back. So does this.
+Rem
+Rem THE WHOLE SERVER IS ONE PURE FUNCTION plus twenty lines of socket at
+Rem the edge:
+Rem
+Rem     Respond(request As String) As String
+Rem
+Rem Raw request text in, raw response text out. No socket, no clock, no
+Rem state — so every route can be tested by calling it with a string,
+Rem which is exactly what test.shoddy does, with no network and no
+Rem --allow-net. The effectful half is Serve: accept, read, hand the text
+Rem to Respond, write what comes back, close. It is the same seam
+Rem mungo-caverns draws when it makes a turn a function, and it is the
+Rem reason this mill has tests at all.
+Rem
+Rem ---- what it is not ----------------------------------------------
+Rem
+Rem One connection at a time, answered and closed. No keep-alive, no
+Rem threads, no chunked encoding, no HTTPS — server-side TLS is not
+Rem something Shoddy has, so this speaks plaintext and binds the loopback
+Rem only. It is a demonstration and a test fixture, not something to put
+Rem on a public address. ListenOn is there if you disagree; the risk is
+Rem then yours.
+Rem
+Rem It answers HTTP/1.0 with Connection: close, which is what makes
+Rem read-to-EOF correct on the client side and lets a browser render the
+Rem page without being told a length.
+Rem ==================================================================
+
+Include "../../machines/https.shoddy"
+Include "../../machines/file.shoddy"
+
+Rem ---- configuration ---------------------------------------------------
+Rem Machines cannot carry a top-level Let and neither can a mill that
+Rem wants to stay weavable, so the constants are zero-arg Defs.
+
+Def Port() As Number
+    8080
+
+Def CRLF() As String
+    Chr(13) & Chr(10)
+
+Rem How long to wait for a request to finish arriving before giving up on
+Rem that connection. A browser sends its headers in one go; a telnet
+Rem session might not, and must not wedge the server forever.
+Def ReadTimeoutMs() As Number
+    2000
+
+Rem ======================================================================
+Rem THE PURE HALF — everything below here is a function on Strings
+Rem ======================================================================
+
+Rem The request line's method, uppercased. "" if there is not one.
+Def ReqMethod(req As String) As String
+    Upper(ReqWord(req, 1))
+
+Rem The path, with any ?query left on it — routing here is exact-match,
+Rem so ReqRoute strips the query and this does not.
+Def ReqPath(req As String) As String
+    ReqWord(req, 2)
+
+Def ReqWord(req As String, n As Number) As String
+    Let parts = Filter(Split(ReqLine(req), " "), Fn(p) => p <> "")
+    If Length(parts) < n Then
+        ""
+    Else
+        Nth(parts, n)
+
+Def ReqLine(req As String) As String
+    Let one = First(Split(req, Chr(10)))
+    If Len(one) > 0 And Right(one, 1) = Chr(13) Then
+        Left(one, Len(one) - 1)
+    Else
+        one
+
+Rem The path without its query string, which is what the routes match on.
+Def ReqRoute(req As String) As String
+    Let p = ReqPath(req)
+    If Instr(p, "?") = 0 Then
+        p
+    Else
+        Left(p, Instr(p, "?") - 1)
+
+Rem ---- building a reply ------------------------------------------------
+
+Rem A complete HTTP/1.0 response. Connection: close is not decoration —
+Rem it is the promise that makes read-to-EOF the right rule for whoever
+Rem is reading this, including net.shoddy's own RecvAll.
+Def Reply(status As Number, reason As String, ctype As String, body As String) As String
+    Join({ "HTTP/1.0 " & Str(status) & " " & reason,
+           "Content-Type: " & ctype,
+           "Content-Length: " & Str(Len(body)),
+           "Connection: close",
+           "Server: rag-and-bone (Shoddy)",
+           CRLF() & body }, CRLF())
+
+Def Html(status As Number, reason As String, body As String) As String
+    Reply(status, reason, "text/html; charset=utf-8", Page(body))
+
+Rem One small stylesheet, inline, so the mill is one file and needs no
+Rem second request to look like anything.
+Def Page(inner As String) As String
+    Join({ "<!DOCTYPE html>",
+           "<html lang=" & Chr(34) & "en" & Chr(34) & "><head><meta charset=" & Chr(34) & "utf-8" & Chr(34) & ">",
+           "<title>rag-and-bone</title><style>",
+           "body{background:#efece4;color:#2E2A26;font:16px/1.5 system-ui,sans-serif;margin:0;padding:2rem}",
+           "main{max-width:44rem;margin:0 auto}",
+           "h1{font-size:1.6rem;margin:0 0 .2rem}p.sub{color:#6b6559;margin:0 0 2rem}",
+           "a{color:#9c3b28}code,pre{background:#e9e5da;border-radius:3px}",
+           "code{padding:.1rem .3rem}pre{padding:1rem;overflow-x:auto}",
+           "table{border-collapse:collapse;width:100%}td,th{text-align:left;padding:.3rem .6rem;border-bottom:1px solid #ddd8cc}",
+           "</style></head><body><main>",
+           inner,
+           "</main></body></html>" }, Chr(10))
+
+Rem ---- the routes ------------------------------------------------------
+
+Rem The whole server. Raw request in, raw response out.
+Def Respond(req As String) As String
+    If ReqMethod(req) <> "GET" And ReqMethod(req) <> "HEAD" Then
+        Html(405, "Method Not Allowed",
+            "<h1>405</h1><p class=" & Chr(34) & "sub" & Chr(34) & ">This mill only answers GET.</p>")
+    Else
+        Route(ReqRoute(req), req)
+
+Def Route(path As String, req As String) As String
+    Select Case path
+        Case "/"
+            Html(200, "OK", IndexPage())
+        Case "/echo"
+            Html(200, "OK", EchoPage(req))
+        Case "/plain"
+            Reply(200, "OK", "text/plain; charset=utf-8",
+                "Useless Things Made Useful Through Skill" & Chr(10))
+        Case Else
+            Html(404, "Not Found", NotFoundPage(path))
+
+Def IndexPage() As String
+    Join({ "<h1>rag-and-bone</h1>",
+           "<p class=" & Chr(34) & "sub" & Chr(34) & ">An HTTP server written in Shoddy. The routing is a pure function; the socket is twenty lines at the edge.</p>",
+           "<table>",
+           Row("/", "this page"),
+           Row("/echo", "the request you just sent, taken apart"),
+           Row("/plain", "text/plain, for curl"),
+           Row("/anything-else", "a 404, to prove it can"),
+           "</table>",
+           "<p>Served by <code>mills/rag-and-bone/</code> &mdash; see ",
+           "<a href=" & Chr(34) & "https://shoddymills.github.io/shoddy/machines/net.html" & Chr(34) & ">net</a> and ",
+           "<a href=" & Chr(34) & "https://shoddymills.github.io/shoddy/machines/https.html" & Chr(34) & ">https</a>.</p>" }, Chr(10))
+
+Def Row(path As String, what As String) As String
+    "<tr><td><a href=" & Chr(34) & path & Chr(34) & "><code>" & path & "</code></a></td><td>" & what & "</td></tr>"
+
+Rem The route that proves the parsing works: it shows what arrived.
+Rem HttpHeaders comes from https.shoddy, which was written to read a
+Rem RESPONSE — but a request has the same header block, so it reads one
+Rem without knowing the difference.
+Def EchoPage(req As String) As String
+    Join({ "<h1>Your request</h1>",
+           "<p class=" & Chr(34) & "sub" & Chr(34) & ">Parsed by the same words that read a reply.</p>",
+           "<table>",
+           "<tr><th>method</th><td><code>" & Esc(ReqMethod(req)) & "</code></td></tr>",
+           "<tr><th>path</th><td><code>" & Esc(ReqPath(req)) & "</code></td></tr>",
+           "<tr><th>route</th><td><code>" & Esc(ReqRoute(req)) & "</code></td></tr>",
+           "</table>",
+           "<h2>Headers</h2><table>",
+           Join(Map(HttpHeaders(req), Fn(h) => "<tr><th>" & Esc(Fst(h)) & "</th><td>" & Esc(Snd(h)) & "</td></tr>"), Chr(10)),
+           "</table>",
+           "<h2>Raw</h2><pre>" & Esc(req) & "</pre>",
+           "<p><a href=" & Chr(34) & "/" & Chr(34) & ">back</a></p>" }, Chr(10))
+
+Def NotFoundPage(path As String) As String
+    Join({ "<h1>404</h1>",
+           "<p class=" & Chr(34) & "sub" & Chr(34) & ">Nothing at <code>" & Esc(path) & "</code>.</p>",
+           "<p><a href=" & Chr(34) & "/" & Chr(34) & ">back</a></p>" }, Chr(10))
+
+Rem Anything echoed back into the page is escaped. The request is a
+Rem stranger's text, and a server that pastes it into HTML unescaped has
+Rem written its own cross-site scripting hole.
+Def Esc(s As String) As String
+    Replace(Replace(Replace(s, "&", "&amp;"), "<", "&lt;"), ">", "&gt;")
+
+Rem ======================================================================
+Rem THE EFFECTFUL HALF — the socket, and nothing else
+Rem ======================================================================
+
+Rem Accept, answer, close, again. Accept is non-blocking and returns 0
+Rem when nobody is at the door, so the idle path is a poll around Sleep
+Rem rather than a spin. Not named Loop: that is a reserved word, and a
+Rem Def of it is silently not there when you come to call it.
+Def ServeForever(srv As Number)
+    Let conn = Accept(srv)
+    If conn = 0 Then
+        Sleep(10)
+        ServeForever(srv)
+    Else
+        Answer(conn)
+        ServeForever(srv)
+
+Def Answer(conn As Number)
+    Let req = ReadRequest(conn)
+    If req = "" Then
+        Close(conn)
+    Else
+        Print(ReqMethod(req) & " " & ReqPath(req))
+        Send(conn, Respond(req))
+        Close(conn)
+
+Rem Read until the blank line that ends the headers, or until the client
+Rem stops talking. This server answers GET, which has no body, so the
+Rem header block is the whole request.
+Def ReadRequest(conn As Number) As String
+    ReadUntilGap(conn, { }, Ticks() + ReadTimeoutMs())
+
+Def ReadUntilGap(conn As Number, acc As List Of String, deadline As Number) As String
+    Let sofar = Join(Reverse(acc), "")
+    If Instr(sofar, CRLF() & CRLF()) > 0 Or Instr(sofar, Chr(10) & Chr(10)) > 0 Then
+        sofar
+    Else
+        If Ticks() >= deadline Then
+            sofar
+        Else
+            Let chunk = WaitRecvFor(conn, 200)
+            If chunk = "" Then
+                sofar
+            Else
+                ReadUntilGap(conn, Prepend(chunk, acc), deadline)

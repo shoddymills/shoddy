@@ -1,0 +1,97 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem test.shoddy — the rag-and-bone server, tested without a socket.
+Rem
+Rem     bin/mill run mills/rag-and-bone/test.shoddy     (from the repo root)
+Rem     ./build.sh test                                 (from here)
+Rem
+Rem NO NETWORK AND NO --allow-net. That is the whole point of the seam:
+Rem the server is Respond(request) -> response, a function on Strings, so
+Rem every route can be graded by calling it with fixture text. What is
+Rem left outside is accept / read / write / close, which is twenty lines
+Rem and has nothing in it to get wrong.
+Rem
+Rem It is the same trick mungo-caverns plays by making a turn a function,
+Rem and it is why a web server can have assertions at all.
+Rem ==================================================================
+
+Include "rag-and-bone-core.shoddy"
+
+Rem ---- helpers ---------------------------------------------------------
+
+Def CR() As String
+    Chr(13)
+
+Def LF() As String
+    Chr(10)
+
+Rem A request as a browser would actually send it.
+Def Get(path As String) As String
+    Join({ "GET " & path & " HTTP/1.1",
+           "Host: 127.0.0.1:8080",
+           "User-Agent: test-harness/1.0",
+           "Accept: text/html",
+           "" }, CR() & LF()) & CR() & LF()
+
+Def StatusOf(reply As String) As Number
+    HttpStatus(reply)
+
+Def Main()
+    Print("--- the request line ---")
+    Print(ReqMethod(Get("/")))                       Rem GET
+    Print(ReqPath(Get("/echo?x=1")))                 Rem /echo?x=1
+    Print(ReqRoute(Get("/echo?x=1")))                Rem /echo
+    Assert(ReqMethod(Get("/")) = "GET", "THE METHOD IS READ")
+    Assert(ReqPath(Get("/a/b")) = "/a/b", "AND THE PATH")
+    Assert(ReqRoute(Get("/a?q=1&r=2")) = "/a", "AND THE QUERY IS STRIPPED FOR ROUTING")
+    Assert(ReqMethod("get / HTTP/1.0") = "GET", "A LOWERCASE METHOD IS THE SAME METHOD")
+    Assert(ReqMethod("") = "", "AN EMPTY REQUEST HAS NO METHOD")
+    Assert(ReqPath("GET") = "", "AND A TRUNCATED ONE HAS NO PATH")
+
+    Print("--- routing ---")
+    Print(StatusOf(Respond(Get("/"))))               Rem 200
+    Print(StatusOf(Respond(Get("/nope"))))           Rem 404
+    Assert(StatusOf(Respond(Get("/"))) = 200, "THE INDEX IS THERE")
+    Assert(StatusOf(Respond(Get("/echo"))) = 200, "AND THE ECHO PAGE")
+    Assert(StatusOf(Respond(Get("/plain"))) = 200, "AND THE PLAIN ONE")
+    Assert(StatusOf(Respond(Get("/nothing-here"))) = 404, "AND ANYTHING ELSE IS A 404")
+    Assert(StatusOf(Respond(Get("/echo?x=1"))) = 200, "A QUERY STRING STILL ROUTES")
+
+    Rem Only GET and HEAD; anything else is refused rather than answered
+    Rem wrongly.
+    Let post = "POST /" & " HTTP/1.1" & CR() & LF() & "Host: x" & CR() & LF() & CR() & LF()
+    Assert(StatusOf(Respond(post)) = 405, "POST IS REFUSED WITH A 405")
+
+    Print("--- the reply is a well-formed HTTP message ---")
+    Let r = Respond(Get("/"))
+    Assert(StartsWith(r, "HTTP/1.0 200 OK"), "IT STARTS WITH A STATUS LINE")
+    Assert(HttpHeader(r, "content-type", "") = "text/html; charset=utf-8", "AND CARRIES A CONTENT TYPE")
+    Assert(HttpHeader(r, "connection", "") = "close", "AND PROMISES TO CLOSE, WHICH IS WHAT MAKES READ-TO-EOF RIGHT")
+    Assert(Val(HttpHeader(r, "content-length", "0")) = Len(HttpBody(r)),
+           "AND ITS CONTENT-LENGTH IS THE LENGTH OF ITS BODY")
+    Assert(StartsWith(HttpBody(r), "<!DOCTYPE html>"), "THE BODY IS A PAGE")
+
+    Rem The client half of the library reads the server half's output.
+    Rem If these two ever disagree, one of them is wrong.
+    Assert(Length(HttpHeaders(r)) = 4, "AND https.shoddy READS ITS FOUR HEADERS BACK")
+
+    Print("--- the echo page reads a REQUEST with response words ---")
+    Let e = HttpBody(Respond(Get("/echo")))
+    Assert(Instr(e, "test-harness/1.0") > 0, "THE USER-AGENT CAME BACK")
+    Assert(Instr(e, "127.0.0.1:8080") > 0, "AND THE HOST HEADER")
+    Rem HttpHeaders was written for replies; a request has the same header
+    Rem block, so it reads one without being told.
+    Assert(Length(HttpHeaders(Get("/echo"))) = 3, "THREE HEADERS PARSED OUT OF A REQUEST")
+
+    Print("--- a stranger's text never reaches the page unescaped ---")
+    Rem The path is attacker-controlled. A server that pastes it into HTML
+    Rem raw has written its own cross-site scripting hole.
+    Let nasty = Respond(Get("/<script>alert(1)</script>"))
+    Assert(StatusOf(nasty) = 404, "THE NASTY PATH 404s")
+    Assert(Instr(HttpBody(nasty), "<script>") = 0, "AND ITS TAGS DO NOT SURVIVE INTO THE BODY")
+    Assert(Instr(HttpBody(nasty), "&lt;script&gt;") > 0, "THEY COME BACK ESCAPED")
+    Assert(Esc("a & b") = "a &amp; b", "AND THE AMPERSAND GOES FIRST, SO ESCAPES ARE NOT DOUBLE-ESCAPED")
+
+    Print("ALL ASSERTIONS PASSED")

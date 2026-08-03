@@ -1,0 +1,157 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem nettest.shoddy — test program for the pure half of machines/https.shoddy
+Rem
+Rem Assert-driven, in the isamtest.shoddy / jsontest.shoddy pattern: it
+Rem prints what it is doing and stops the run at the first assertion
+Rem that fails, ending with ALL ASSERTIONS PASSED when it does not.
+Rem
+Rem NO NETWORK, and that is the point. Building a request and taking a
+Rem reply apart are pure functions on Strings, so they can be graded
+Rem against fixture text with no server, no --allow-net and no C#. The
+Rem effectful half — Secure, ConnectTls, RecvAllTls, HttpsGet — is
+Rem covered by NetTests against an in-process TLS server instead, since
+Rem exercising it needs a second party to schedule.
+Rem
+Rem The fixtures are written with Chr(13) and Chr(10) rather than escapes
+Rem so the bytes under test are unmistakable: HTTP is a wire format and
+Rem this file is about the wire.
+Rem
+Rem Build (once): build.cmd build
+Rem Run:          bin\mill run tst\nettest.shoddy       (from the repo root)
+Rem ==================================================================
+
+Include "../machines/https.shoddy"
+
+Rem ---- helpers ---------------------------------------------------------
+
+Def CR() As String
+    Chr(13)
+
+Def LF() As String
+    Chr(10)
+
+Def CRLF() As String
+    CR() & LF()
+
+Rem A reply built from lines, with the blank line and body appended.
+Def ReplyOf(lines As List Of String, body As String) As String
+    Join(lines, CRLF()) & CRLF() & CRLF() & body
+
+Rem Control characters made visible, so a failure names what it saw.
+Def Show(s As String) As String
+    Replace(Replace(s, CR(), "<CR>"), LF(), "<LF>")
+
+Def Main()
+    Print("--- building a request ---")
+    Let req = HttpRequestText("GET", "/points/41.88,-87.63", "api.weather.gov",
+        { Pair("User-Agent", "shoddy-mill (me@example.com)"),
+          Pair("Accept", "application/geo+json") })
+    Print(Show(req))
+
+    Rem The exact bytes, CRLF and all. A request that is one byte wrong
+    Rem is a request some server somewhere will reject.
+    Rem Built with Join rather than a wrapped & chain: a continuation line
+    Rem starting with & outside brackets takes a stray value off the stack
+    Rem instead of continuing the expression.
+    Let want = Join({ "GET /points/41.88,-87.63 HTTP/1.0",
+                      "Host: api.weather.gov",
+                      "User-Agent: shoddy-mill (me@example.com)",
+                      "Accept: application/geo+json",
+                      CRLF() }, CRLF())
+    Assert(req = want, "THE REQUEST IS BYTE-EXACT")
+    Assert(Right(req, 4) = CRLF() & CRLF(), "AND ENDS WITH A BLANK LINE")
+
+    Rem Host comes first and always, even with no headers of your own.
+    Let bare = HttpRequestText("GET", "/", "example.com", { })
+    Assert(bare = "GET / HTTP/1.0" & CRLF() & "Host: example.com" & CRLF() & CRLF(),
+           "HOST IS EMITTED WITH NO HEADERS AT ALL")
+    Assert(Instr(HttpRequestText("get", "/", "h", { }), "GET /") = 1,
+           "THE METHOD IS UPPERCASED")
+    Assert(Instr(req, "HTTP/1.0") > 0, "AND THE VERSION IS 1.0, DELIBERATELY")
+
+    Print("--- the status line ---")
+    Let ok = ReplyOf({ "HTTP/1.1 200 OK", "Content-Type: application/json" }, "{}")
+    Print(HttpStatus(ok))                                Rem 200
+    Print(HttpReason(ok))                                Rem OK
+    Assert(HttpStatus(ok) = 200, "200 READS AS A NUMBER")
+    Assert(HttpReason(ok) = "OK", "AND THE REASON COMES BACK")
+
+    Let missing = ReplyOf({ "HTTP/1.0 404 Not Found" }, "")
+    Assert(HttpStatus(missing) = 404, "SO DOES 404")
+    Assert(HttpReason(missing) = "Not Found", "AND A TWO-WORD REASON")
+
+    Rem A reply that is not one at all reports 0 rather than guessing.
+    Assert(HttpStatus("") = 0, "AN EMPTY STRING IS NOT A REPLY")
+    Assert(HttpStatus("garbage") = 0, "NOR IS LINE NOISE")
+    Assert(HttpStatus("HTTP/1.1 OK") = 0, "NOR IS A STATUS LINE WITH NO NUMBER")
+
+    Print("--- headers ---")
+    Let r = ReplyOf({ "HTTP/1.1 200 OK",
+                      "Content-Type: application/geo+json",
+                      "Content-Length: 42",
+                      "X-Empty:",
+                      "Strict-Transport-Security: max-age=31536000 ; preload" },
+                    "the body")
+    Print(Length(HttpHeaders(r)))                        Rem 4
+    Print(Join(Map(HttpHeaders(r), Fst), ","))
+    Assert(Length(HttpHeaders(r)) = 4, "FOUR HEADERS, AND NOT THE STATUS LINE")
+
+    Rem Names are lowercased on the way in, so asking is case-insensitive
+    Rem in both directions: the header as sent, and the name you ask with.
+    Assert(HttpHeader(r, "content-type", "?") = "application/geo+json", "A HEADER READS BACK")
+    Assert(HttpHeader(r, "Content-Type", "?") = "application/geo+json", "ASKED IN ANY CASE")
+    Assert(HttpHeader(r, "CONTENT-LENGTH", "?") = "42", "AND SHOUTED")
+    Assert(DictGetOr(HttpHeaders(r), "content-length", "") = "42",
+           "THE LIST IS DICT-SHAPED, SO DICTGETOR WORKS ON IT UNAIDED")
+    Assert(HttpHeader(r, "nope", "fallback") = "fallback", "A MISSING HEADER FALLS BACK")
+    Assert(HttpHeader(r, "x-empty", "MISSING") = "", "AN EMPTY VALUE IS PRESENT, NOT ABSENT")
+
+    Rem A value may contain colons and spaces; only the FIRST colon splits.
+    Let colons = ReplyOf({ "HTTP/1.1 200 OK", "Date: Mon, 03 Aug 2026 13:45:01 GMT" }, "")
+    Assert(HttpHeader(colons, "date", "") = "Mon, 03 Aug 2026 13:45:01 GMT",
+           "ONLY THE FIRST COLON SPLITS A HEADER")
+
+    Print("--- the body ---")
+    Print(HttpBody(r))                                   Rem the body
+    Assert(HttpBody(r) = "the body", "THE BODY IS WHAT FOLLOWS THE BLANK LINE")
+    Assert(HttpBody(ok) = "{}", "EVEN A SHORT ONE")
+
+    Rem Not every server is careful, so a bare LF gap is tolerated.
+    Let lax = "HTTP/1.0 200 OK" & LF() & "Server: careless" & LF() & LF() & "still a body"
+    Assert(HttpBody(lax) = "still a body", "A BARE LF GAP IS TOLERATED")
+    Assert(HttpStatus(lax) = 200, "AND THE STATUS STILL READS")
+    Assert(HttpHeader(lax, "server", "") = "careless", "AND SO DO THE HEADERS")
+
+    Rem A truncated reply has no gap at all: "" rather than a guess.
+    Assert(HttpBody("HTTP/1.0 200 OK" & CRLF() & "Server: cut off") = "",
+           "NO BLANK LINE MEANS NO BODY")
+
+    Rem A body containing a blank line of its own must survive whole —
+    Rem only the FIRST gap separates.
+    Let twogaps = ReplyOf({ "HTTP/1.1 200 OK" }, "para one" & CRLF() & CRLF() & "para two")
+    Assert(HttpBody(twogaps) = "para one" & CRLF() & CRLF() & "para two",
+           "ONLY THE FIRST BLANK LINE SEPARATES")
+
+    Rem Bytes, not characters: a body is whatever arrived, high bytes and
+    Rem all, exactly as ReadFile would have handed it over.
+    Let bytes = ReplyOf({ "HTTP/1.1 200 OK" }, Chr(200) & Chr(255) & Chr(1))
+    Assert(Len(HttpBody(bytes)) = 3, "A BODY IS BYTES, NOT CHARACTERS")
+    Assert(Asc(Left(HttpBody(bytes), 1)) = 200, "AND THEY ARRIVE UNCHANGED")
+
+    Print("--- a real reply, as api.weather.gov actually answers ---")
+    Rem Port 80 answers a redirect with no body, which is exactly why
+    Rem this machine exists. The words report it; they do not chase it.
+    Let redirect = ReplyOf({ "HTTP/1.0 301 Moved Permanently",
+                             "Location: https://api.weather.gov/points/41.88,-87.63",
+                             "Content-Length: 0" }, "")
+    Print(HttpStatus(redirect))                          Rem 301
+    Print(HttpHeader(redirect, "location", ""))
+    Assert(HttpStatus(redirect) = 301, "A REDIRECT IS REPORTED")
+    Assert(HttpBody(redirect) = "", "WITH AN EMPTY BODY")
+    Assert(StartsWith(HttpHeader(redirect, "location", ""), "https://"),
+           "AND THE LOCATION IS THERE TO FOLLOW BY HAND")
+
+    Print("ALL ASSERTIONS PASSED")

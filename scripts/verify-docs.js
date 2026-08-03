@@ -83,6 +83,10 @@ for (const mill of mills) {
 // Hand-verified exclusions for string-literal false positives the filters
 // above cannot see. Re-check by eye if either side changes.
 usedByMills["buzzer"] = usedByMills["buzzer"].filter(m => m !== "pac-vt100"); // "P - Play" menu text
+// rag-and-bone closes SOCKETS. Close is net's and turtle's alike - the very
+// collision net.shoddy's header documents - and the scan cannot tell which
+// one a bare call meant. The mill includes net and not turtle.
+usedByMills["turtle"] = usedByMills["turtle"].filter(m => m !== "rag-and-bone");
 
 // ---- extract page sections and diff ----
 function extract(page, sectionId) {
@@ -181,6 +185,10 @@ const facts = [
   ["mutual recursion costs stack", /mutual\s+recursion/i],
   ["no exceptions", /no\s+exceptions/i],
   ["1-based indexing", /1-based/i],
+  // A secured socket breaks the never-blocks promise the rest of the family
+  // keeps, and an assistant told only "sockets never block" writes a poll
+  // loop that aborts.
+  ["a secured socket blocks", /secured\s+socket/i],
   // The three trees an assistant should read rather than guess from.
   ["docs/* as a source", /`docs\/\*`/],
   ["machines/* as a source", /`machines\/\*`/],

@@ -5,8 +5,6 @@
 #   ./build.sh          play the game
 #   ./build.sh run      same as above
 #   ./build.sh test     run every headless suite (test.shoddy, tests/test-*)
-#   ./build.sh smoke    replay 16 recorded transcripts   (~3 minutes)
-#   ./build.sh check    replay all 107                   (~18 minutes)
 #
 # mungo-caverns is a console program: prompts in, text out, no window. Words
 # are significant to five letters, as they have been since 1977 -- XYZZY,
@@ -15,13 +13,12 @@
 # The cave lives in the mungo-caverns-*.shoddy tables, which are
 # hand-edited source.
 #
-# Testing comes in layers.  test.shoddy covers the generator, the tables
-# and the parser; tests/test-tables.shoddy asserts what must be true of
-# the cave itself; tests/test-turn.shoddy drives whole turns as a
+# Testing is five headless suites.  test.shoddy covers the generator, the
+# tables and the parser; tests/test-tables.shoddy asserts what must be
+# true of the cave itself; tests/test-turn.shoddy drives whole turns as a
 # function; tests/test-walk.shoddy plays a game to the gold and back; and
-# tests/test-fuzz.shoddy throws random commands at it.  Above them,
-# tests/run.sh replays the recorded transcripts, which are the port's
-# specification.  See tests/README.
+# tests/test-fuzz.shoddy throws random commands at it.  194 assertions,
+# about twenty seconds, and "test" runs the lot.  See tests/README.
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -47,16 +44,8 @@ case "${1:-run}" in
             "$MILL" run "$suite" < /dev/null || exit 1
         done
         ;;
-    smoke)
-        ensure_mill
-        tests/run.sh --smoke
-        ;;
-    check)
-        ensure_mill
-        tests/run.sh
-        ;;
     *)
-        echo "usage: ./build.sh [run|test|smoke|check]" >&2
+        echo "usage: ./build.sh [run|test]" >&2
         exit 2
         ;;
 esac

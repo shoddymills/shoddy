@@ -72,8 +72,9 @@ The port is **modified** from upstream: the game itself is called Mungo
 Caverns, and the cave's knife-throwing folk are called curmudgeons
 rather than by their upstream name, which renames one vocabulary word, the
 symbols built from it, and the messages and room descriptions that mention
-them. Both renames are mechanical, and the mill's transcript harness maps them
-back so that upstream's recorded games still grade the port. It plays
+them. Both renames are mechanical, and the harness the port was graded with
+mapped them back so that upstream's recorded games could grade it byte for
+byte. **Those recorded games are not redistributed here either.** It plays
 identically otherwise.
 
 ### Pac-Man homage (`mills/pac-vt100/`)
@@ -131,3 +132,15 @@ are known to differ between Fisher's paper and the raw UCI file; they are
 carried here in their corrected form, which is what R's `datasets::iris` and
 scikit-learn's `load_iris` ship and what the widely published summary
 statistics reflect.
+
+### Besley (`docs/media/font/`)
+
+The documentation site sets its page titles in **Besley SemiBold**, a Clarendon
+revival by Owen Earl / Indestructible Type. It is licensed under the **SIL Open
+Font License 1.1**; the full licence travels with the font at
+[`docs/media/font/OFL.txt`](docs/media/font/OFL.txt). Only a latin subset ships
+(`besley-semibold-latin.woff2`, ~17 KB), which the OFL permits — subsetted and
+converted copies remain covered by the same licence and are not sold on their
+own. The wordmark and lockup SVGs under `docs/media/brand/` were set in the
+same face and **converted to outlines**, so they carry no font dependency and
+embed no font data.

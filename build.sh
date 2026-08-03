@@ -95,8 +95,11 @@ stage() {
     cp machines/bin/*.dll "$STAGE_LIB/bin"
     # Roslyn, Silk.NET, GLFW and OpenAL Soft are redistributed in the
     # package, so their notices have to travel with it — LGPL-2.1 for
-    # OpenAL Soft, attribution for the rest.
+    # OpenAL Soft, attribution for the rest. The authorship statement and
+    # its AI disclosure travel with it for the same reason: the .vsix is
+    # the whole install for most people, and never sees the repository.
     cp THIRD-PARTY-NOTICES.md vscode-shoddy
+    cp AUTHORSHIP.md vscode-shoddy
     echo "staged mill + machines into vscode-shoddy/ ($(du -shc "$STAGE_MILL" "$STAGE_LIB" | tail -1 | cut -f1) total)"
 }
 
@@ -123,6 +126,11 @@ case "${1:-help}" in
         # because the network is a gated capability — without the flag the
         # first socket word aborts, so this run also proves the gate opens.
         "$MILL" run --allow-net tst/net-demo.shoddy
+        # The tutorial's program is documentation that has to keep
+        # working: its pure half is headless by design, so the checks run
+        # here beside everything else and the tutorial cannot drift from
+        # code that no longer compiles.
+        "$MILL" run tutorials/spiro/test.shoddy
         ;;
     run)
         [ $# -ge 2 ] || { echo "usage: ./build.sh run FILE.shoddy" >&2; exit 2; }

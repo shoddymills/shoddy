@@ -1,0 +1,256 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem shaker.shoddy — Shoddy standard library: reversible obfuscation
+Rem
+Rem Named for the machine that came first in a shoddy mill: the shaker
+Rem tumbled the incoming rags to beat the dust and grit out of them
+Rem before anything else was done. It rearranged what it was given and
+Rem handed the same material on. That is this machine's whole ambition,
+Rem and the name is deliberately not "crypto" — see WHAT THIS IS NOT.
+Rem
+Rem A four-round Feistel network over a list of Numbers, keyed by
+Rem another list of Numbers, with a checksum appended so tampering is
+Rem detectable. Numbers in, numbers out: no strings, no bytes, no
+Rem bitwise operators — Shoddy has none of the last, and this machine
+Rem wants none.
+Rem
+Rem     Let key    = { 91, 3355, 17, 40213 }
+Rem     Let cipher = ShakeEncrypt({ 11, 22, 33, 44 }, key)
+Rem     ShakeDecrypt(cipher, key)          ' { 11, 22, 33, 44 }
+Rem     ShakeDecryptOr(cipher, wrongKey, { })
+Rem
+Rem Values are FIELD ELEMENTS: whole numbers in 0 .. ShakeModulus() - 1.
+Rem Anything else is refused by name rather than quietly mangled. Text
+Rem is not this machine's business, but it is one Map away — Asc each
+Rem code unit in, Chr each one out.
+Rem
+Rem The guard-pair convention, as everywhere else in the library:
+Rem ShakeDecrypt aborts when the checksum does not match, ShakeDecryptOr
+Rem hands back your default, and ShakeVerify asks the question on its
+Rem own.
+Rem
+Rem The tag catches TAMPERING, not the wrong key. It is computed over
+Rem the ciphertext and knows nothing about your key, so decrypting with
+Rem the wrong one passes the check and hands back plausible-looking
+Rem nonsense. If you need to know the key was right, put something
+Rem recognisable in the message and look for it afterwards.
+Rem
+Rem ---- WHAT THIS IS NOT --------------------------------------------
+Rem
+Rem This is an obfuscation layer, NOT a cryptosystem, and the difference
+Rem is not a formality. The key schedule is a bare rotation through your
+Rem key list, four rounds is far too few, the round function is cheap
+Rem arithmetic rather than a studied S-box, and the checksum is a
+Rem Fletcher-style sum that detects accidents rather than forgeries.
+Rem Anyone who wants to read your data will read it. Use it to keep a
+Rem save file from being edited in a text editor, not to keep a secret.
+Rem
+Rem ---- WHY THE MODULUS IS SMALL ------------------------------------
+Rem
+Rem Shoddy's only numeric type is the IEEE double, which holds integers
+Rem exactly only up to 2^53. The round function squares its argument, so
+Rem the modulus has to sit below 2^26 for that square to stay exact:
+Rem 67108859 is the largest prime that does. Reaching for a 2^32-sized
+Rem modulus, as is natural elsewhere, silently overflows into a region
+Rem where the fractional part of a product is always zero — which is a
+Rem mistake with no symptom at all, since the round function then
+Rem returns 0 forever, every round degenerates to a swap, and an even
+Rem number of rounds hands back the plaintext unchanged.
+Rem ==================================================================
+
+Include "seq.shoddy"
+
+Rem ---- the field ---------------------------------------------------
+Rem Machines cannot carry a top-level Let, so the constants are zero-arg
+Rem Defs, as vt100's Esc() is.
+
+Rem The largest prime below 2^26. Its square is 4.5e15, comfortably
+Rem inside the double's exact-integer range of 2^53 = 9.0e15.
+Def ShakeModulus() As Number
+    67108859
+
+Def ShakeRounds() As Number
+    4
+
+Rem x reduced into 0 .. modulus - 1. Floored, so negatives come back
+Rem positive and subtraction is as safe as addition.
+Def ShakeWrap(x As Number) As Number
+    Let m = ShakeModulus()
+    Let r = x - Floor(x / m) * m
+    If r < 0 Then
+        r + m
+    Else
+        r
+
+Def ShakeIsField(x As Number) As Boolean
+    x >= 0 And x < ShakeModulus() And x = Floor(x)
+
+Def ShakeAllField(xs As List Of Number) As Boolean
+    All(xs, ShakeIsField)
+
+Rem ---- the round function ------------------------------------------
+Rem Not a bijection, and it does not need to be: a Feistel network is
+Rem invertible whatever its round function does, which is the whole
+Rem charm of the construction. Every intermediate is kept under 2^52.
+
+Rem The key list is walked round and round, so a key shorter than the
+Rem message simply repeats — which is exactly as weak as it sounds, and
+Rem is why the header says what it says.
+Def ShakeKeyAt(keys As List Of Number, at As Number) As Number
+    If IsEmpty(keys) Then
+        Error("SHAKEKEYAT: THE KEY IS EMPTY")
+    Else
+        Nth(keys, 1 + ShakeWrapTo(at - 1, Length(keys)))
+
+Rem n reduced into 0 .. width - 1, for indexing rather than arithmetic.
+Def ShakeWrapTo(n As Number, width As Number) As Number
+    Let r = n - Floor(n / width) * width
+    If r < 0 Then
+        r + width
+    Else
+        r
+
+Rem x is under 2^26, so x * x is under 2^52 and exact; y is under 2^26,
+Rem so y * 31 is under 2^31. Nothing here can reach 2^53.
+Rem
+Rem The offset matters: without it a small value and a small key give a
+Rem small x, whose square is also small, so a message of zeros would come
+Rem out barely disturbed. Shifting into the middle of the field first
+Rem means even 0 with key 0 squares to something spread across it.
+Def ShakeMix(v As Number, part As Number) As Number
+    Let x = ShakeWrap(v + part + 33554393)
+    Let y = ShakeWrap(x * x)
+    ShakeWrap(y * 31 + x * 17 + 11)
+
+Rem Encrypting round: (a, b) becomes (b, a + F(b)).
+Def ShakeRoundFwd(a As Number, b As Number, part As Number) As Pair
+    Pair(b, ShakeWrap(a + ShakeMix(b, part)))
+
+Rem Its exact inverse: (a, b) becomes (b - F(a), a). Read it against the
+Rem line above — the halves come back in the other order, and F is fed
+Rem the half that survived the round rather than the one that changed.
+Rem Getting this backwards still round-trips single blocks by accident
+Rem when F is degenerate, which is how a broken cipher passes a test.
+Def ShakeRoundBack(a As Number, b As Number, part As Number) As Pair
+    Pair(ShakeWrap(b - ShakeMix(a, part)), a)
+
+Def ShakeBlockEnc(a As Number, b As Number, keys As List Of Number, at As Number) As Pair
+    Let p1 = ShakeRoundFwd(a, b, ShakeKeyAt(keys, at))
+    Let p2 = ShakeRoundFwd(Fst(p1), Snd(p1), ShakeKeyAt(keys, at + 1))
+    Let p3 = ShakeRoundFwd(Fst(p2), Snd(p2), ShakeKeyAt(keys, at + 2))
+    ShakeRoundFwd(Fst(p3), Snd(p3), ShakeKeyAt(keys, at + 3))
+
+Rem The same four keys, spent in the opposite order.
+Def ShakeBlockDec(a As Number, b As Number, keys As List Of Number, at As Number) As Pair
+    Let p1 = ShakeRoundBack(a, b, ShakeKeyAt(keys, at + 3))
+    Let p2 = ShakeRoundBack(Fst(p1), Snd(p1), ShakeKeyAt(keys, at + 2))
+    Let p3 = ShakeRoundBack(Fst(p2), Snd(p2), ShakeKeyAt(keys, at + 1))
+    ShakeRoundBack(Fst(p3), Snd(p3), ShakeKeyAt(keys, at))
+
+Rem A message of odd length has one value with no partner. Passing it
+Rem through untouched would leave a plaintext number sitting in the
+Rem ciphertext, so it is shifted by a pad derived from the key and the
+Rem position — deterministic, and its own inverse under subtraction.
+Def ShakePad(keys As List Of Number, at As Number) As Number
+    ShakeMix(ShakeKeyAt(keys, at), at)
+
+Rem ---- walking the message -----------------------------------------
+Rem Accumulate with Prepend and Reverse once at the end. Append is
+Rem Concat(xs, { x }) — O(n) per element, O(n^2) over a message.
+
+Def ShakeEncList(xs As List Of Number, keys As List Of Number, at As Number, acc As List Of Number) As List Of Number
+    If IsEmpty(xs) Then
+        Reverse(acc)
+    Else
+        If IsEmpty(Rest(xs)) Then
+            Reverse(Prepend(ShakeWrap(First(xs) + ShakePad(keys, at)), acc))
+        Else
+            Let p = ShakeBlockEnc(First(xs), First(Rest(xs)), keys, at)
+            ShakeEncList(Rest(Rest(xs)), keys, at + ShakeRounds(), Prepend(Snd(p), Prepend(Fst(p), acc)))
+
+Def ShakeDecList(xs As List Of Number, keys As List Of Number, at As Number, acc As List Of Number) As List Of Number
+    If IsEmpty(xs) Then
+        Reverse(acc)
+    Else
+        If IsEmpty(Rest(xs)) Then
+            Reverse(Prepend(ShakeWrap(First(xs) - ShakePad(keys, at)), acc))
+        Else
+            Let p = ShakeBlockDec(First(xs), First(Rest(xs)), keys, at)
+            ShakeDecList(Rest(Rest(xs)), keys, at + ShakeRounds(), Prepend(Snd(p), Prepend(Fst(p), acc)))
+
+Rem ---- the tag -----------------------------------------------------
+Rem Fletcher-style: a running sum and a running sum of sums, so a value
+Rem moving position changes the tag where a plain total would not.
+Rem Combined with a shift of 2^16, which keeps the product under 2^42.
+
+Rem Everything but the tag on the end. Self-tail-recursive with an
+Rem accumulator, so it compiles to a loop: seq's Taken builds its result
+Rem with Prepend on the way OUT of the recursion, which costs a stack
+Rem frame per element and overflows on a long message.
+Def ShakeBody(xs As List Of Number) As List Of Number
+    ShakeTakeN(xs, Length(xs) - 1, { })
+
+Def ShakeTakeN(xs As List Of Number, n As Number, acc As List Of Number) As List Of Number
+    If n <= 0 Or IsEmpty(xs) Then
+        Reverse(acc)
+    Else
+        ShakeTakeN(Rest(xs), n - 1, Prepend(First(xs), acc))
+
+Def ShakeChecksum(xs As List Of Number) As Number
+    ShakeSumLoop(xs, 0, 0)
+
+Def ShakeSumLoop(xs As List Of Number, s1 As Number, s2 As Number) As Number
+    If IsEmpty(xs) Then
+        ShakeWrap(s2 * 65536 + s1)
+    Else
+        Let n1 = ShakeWrap(s1 + First(xs))
+        ShakeSumLoop(Rest(xs), n1, ShakeWrap(s2 + n1))
+
+Rem ---- the public words --------------------------------------------
+
+Rem The ciphertext, one value per input value, with the checksum last —
+Rem so the result is always one longer than the message.
+Def ShakeEncrypt(xs As List Of Number, keys As List Of Number) As List Of Number
+    If IsEmpty(keys) Then
+        Error("SHAKEENCRYPT: THE KEY IS EMPTY")
+    Else
+        If Not ShakeAllField(keys) Then
+            Error("SHAKEENCRYPT: EVERY KEY VALUE MUST BE A WHOLE NUMBER IN 0 .. " & Str(ShakeModulus() - 1))
+        Else
+            If Not ShakeAllField(xs) Then
+                Error("SHAKEENCRYPT: EVERY MESSAGE VALUE MUST BE A WHOLE NUMBER IN 0 .. " & Str(ShakeModulus() - 1))
+            Else
+                Let body = ShakeEncList(xs, keys, 1, { })
+                Concat(body, { ShakeChecksum(body) })
+
+Rem Is the checksum on the end still the one that belongs to the body?
+Rem False for anything too short to carry a tag.
+Def ShakeVerify(xs As List Of Number) As Boolean
+    If IsEmpty(xs) Then
+        False
+    Else
+        Last(xs) = ShakeChecksum(ShakeBody(xs))
+
+Rem Strict: aborts if the message was altered, so a caller that ignores
+Rem the possibility cannot proceed on rubbish.
+Def ShakeDecrypt(xs As List Of Number, keys As List Of Number) As List Of Number
+    If IsEmpty(keys) Then
+        Error("SHAKEDECRYPT: THE KEY IS EMPTY")
+    Else
+        If Not ShakeVerify(xs) Then
+            Error("SHAKEDECRYPT: CHECKSUM MISMATCH — THE MESSAGE WAS ALTERED OR IS NOT A CIPHERTEXT")
+        Else
+            ShakeDecList(ShakeBody(xs), keys, 1, { })
+
+Rem Total: the other half of the guard pair, for a ciphertext that
+Rem arrived from somewhere you do not control.
+Def ShakeDecryptOr(xs As List Of Number, keys As List Of Number, dflt As List Of Number) As List Of Number
+    If IsEmpty(keys) Or Not ShakeAllField(keys) Then
+        dflt
+    Else
+        If Not ShakeVerify(xs) Then
+            dflt
+        Else
+            ShakeDecList(ShakeBody(xs), keys, 1, { })

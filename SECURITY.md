@@ -8,7 +8,7 @@ with the same caution as any code you would run locally.
 
 Please **do not** open a public issue for security problems.
 
-Report suspected vulnerabilities privately to **stephen@shoddymills.com**, or use
+Report suspected vulnerabilities privately to **stephen@shoddymills.dev**, or use
 GitHub's [private vulnerability reporting](https://docs.github.com/en/code-security/security-advisories/guidance-on-reporting-and-writing-information-about-vulnerabilities/privately-reporting-a-security-vulnerability)
 ("Report a vulnerability" under the Security tab).
 

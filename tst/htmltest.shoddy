@@ -1,0 +1,200 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem htmltest.shoddy — test program for machines/html.shoddy
+Rem
+Rem Assert-driven, in the isamtest.shoddy / jsontest.shoddy pattern: it
+Rem prints what it is doing and stops the run at the first assertion
+Rem that fails, ending with ALL ASSERTIONS PASSED when it does not.
+Rem
+Rem Two fixtures.
+Rem
+Rem tst/html/soup.html is written badly ON PURPOSE, once for every rule
+Rem the reader is forgiving about: paragraphs and list items with no end
+Rem tags, a table with none at all, uppercase tags, unquoted and bare
+Rem attributes, a stray < in prose, an end tag belonging to nothing, a
+Rem script full of < and >, and an entity that does not exist.
+Rem tst/html/soup-clean.html is what HtmlText makes of it, byte for
+Rem byte, which is the only way to pin down what "forgiving" means.
+Rem
+Rem tst/html/page.html is real: one of this repository's own machine
+Rem pages, frozen here so the test does not move when the docs do. It is
+Rem hand-written HTML of the kind the machine exists to read.
+Rem
+Rem What cannot be tested here: the aborting half of each guard pair.
+Rem HtmlParse, HById, HTitle and the xml words underneath them call
+Rem Error, which would kill this whole run — the same limitation
+Rem isamtest documents. The total halves are exercised instead.
+Rem
+Rem Build (once): build.cmd build
+Rem Run:          bin\mill run tst\htmltest.shoddy      (from the repo root)
+Rem ==================================================================
+
+Include "../machines/html.shoddy"
+
+Rem ---- helpers ---------------------------------------------------------
+
+Def Quo(s As String) As String
+    XQt() & s & XQt()
+
+Rem The tag of the first element with this name, which is how most of
+Rem the one-liners below ask "did that parse the way I meant".
+Def TagsIn(s As String, tag As String) As Number
+    Length(HByTag(HtmlParse(s), tag))
+
+Def TextIn(s As String, tag As String) As String
+    XTextOf(XFind(HtmlParse(s), tag))
+
+Rem Whatever the source, writing twice agrees with writing once.
+Def FixedPoint(s As String) As Boolean
+    Let once = HtmlText(HtmlParse(s))
+    once = HtmlText(HtmlParse(once))
+
+Def Main()
+    Print("--- reading ---")
+    Let basic = "<html><body><h1>Title</h1><p>Text</p></body></html>"
+    Let page = HtmlParse(basic)
+    Print(XTag(XRoot(page)))                             Rem html
+    Print(TextIn(basic, "h1"))                           Rem Title
+    Print(TagsIn(basic, "p"))                            Rem 1
+    Assert(Length(XDescend(page, { })) = 4, "FOUR ELEMENTS IN THE TREE")
+
+    Print("--- names fold to lower case ---")
+    Print(TagsIn("<DIV><SPAN>x</SPAN></DIV>", "div"))    Rem 1
+    Print(XAttrOr(XRoot(HtmlParse("<a HREF=" & Quo("/x") & ">y</a>")), "href", "?"))   Rem /x
+    Assert(TagsIn("<P>a</P>", "p") = 1, "AN UPPERCASE TAG IS THE SAME TAG")
+    Assert(HIsVoid("BR") And HIsVoid("br"), "AND SO IS A VOID ONE")
+
+    Print("--- void elements ---")
+    Print(TagsIn("<p>a<br>b<hr>c</p>", "br"))            Rem 1
+    Assert(XCount(XRoot(HtmlParse("<div><br><img src=" & Quo("x") & "></div>"))) = 2, "A VOID ELEMENT TAKES NO CHILDREN")
+    Assert(Instr(HtmlText(HtmlParse("<div><br></div>")), "<br>") > 0, "AND IS WRITTEN BARE")
+    Assert(Instr(HtmlText(HtmlParse("<div><br/></div>")), "<br/>") = 0, "EVEN WHEN IT ARRIVED CLOSED")
+    Rem An empty non-void element must NOT come back self-closed: a
+    Rem browser reads <div/> as an open div and swallows the rest.
+    Assert(Instr(HtmlText(HtmlParse("<div></div>")), "<div></div>") > 0, "AN EMPTY DIV IS WRITTEN AS A PAIR")
+
+    Print("--- attributes, three spellings ---")
+    Let three = "<img src=bare.png alt=" & XAp() & "single" & XAp() & " title=" & Quo("double") & " hidden>"
+    Let img = XRoot(HtmlParse(three))
+    Print(XAttr(img, "src"))                             Rem bare.png
+    Print(XAttr(img, "alt"))                             Rem single
+    Print(XAttr(img, "title"))                           Rem double
+    Print(XAttrOr(img, "hidden", "MISSING"))             Rem "" — present, valueless
+    Assert(XHasAttr(img, "hidden"), "A VALUELESS ATTRIBUTE IS STILL PRESENT")
+    Assert(XAttr(img, "hidden") = "", "AND ITS VALUE IS THE EMPTY STRING")
+    Rem HTML keeps the FIRST of a repeat; a JSON object keeps the last.
+    Assert(XAttr(XRoot(HtmlParse("<i a=" & Quo("1") & " a=" & Quo("2") & ">x</i>")), "a") = "1", "A REPEATED ATTRIBUTE KEEPS THE FIRST")
+
+    Print("--- implied end tags ---")
+    Print(TagsIn("<div><p>one<p>two<p>three</div>", "p"))          Rem 3
+    Print(TagsIn("<ul><li>a<li>b<li>c</ul>", "li"))                Rem 3
+    Print(TagsIn("<dl><dt>t<dd>d<dt>t2<dd>d2</dl>", "dd"))         Rem 2
+    Print(TagsIn("<table><tr><td>a<td>b<tr><td>c<td>d</table>", "tr"))   Rem 2
+    Print(TagsIn("<table><tr><td>a<td>b<tr><td>c<td>d</table>", "td"))   Rem 4
+    Assert(TextIn("<ul><li>a<li>b</ul>", "li") = "a", "A LIST ITEM ENDS WHERE THE NEXT BEGINS")
+    Rem The one that catches a naive implementation: a cell has to be
+    Rem closed by the next ROW as well as by the next cell, or row two
+    Rem lands inside the last cell of row one.
+    Assert(XCount(XFind(HtmlParse("<table><tr><td>a<td>b<tr><td>c</table>"), "table")) = 2, "TWO ROWS, NOT ONE NESTED IN THE OTHER")
+    Assert(TagsIn("<p>para<div>block</div>", "div") = 1, "A BLOCK ELEMENT CLOSES AN OPEN PARAGRAPH")
+
+    Print("--- raw text ---")
+    Let js = "<script>if (a < b && c > d) { x(" & Quo("</p>") & "); }</script>"
+    Print(TagsIn(js, "p"))                               Rem 0 — none of that is markup
+    Assert(Instr(XTextOf(XRoot(HtmlParse(js))), "a < b") > 0, "A < INSIDE SCRIPT IS TEXT")
+    Assert(TagsIn("<style>p > em { color: red }</style>", "em") = 0, "AND SO IS ONE INSIDE STYLE")
+    Assert(Instr(HtmlText(HtmlParse(js)), "a < b") > 0, "IT GOES BACK OUT UNESCAPED TOO")
+
+    Print("--- entities ---")
+    Print(XTextOf(XRoot(HtmlParse("<p>&amp;&lt;&gt;</p>"))))       Rem &<>
+    Print(XTextOf(XRoot(HtmlParse("<p>&#72;&#105;&#x21;</p>"))))   Rem Hi!
+    Assert(HtmlEntity("mdash") <> "", "THE TABLE KNOWS AN EM DASH")
+    Assert(HtmlEntity("nosuchthing") = "", "AND ADMITS WHEN IT DOES NOT KNOW ONE")
+    Rem An unknown reference is not an error and is not dropped: it is
+    Rem left standing as its own text, which is what a browser does.
+    Assert(XTextOf(XRoot(HtmlParse("<p>&nosuch;</p>"))) = "&nosuch;", "AN UNKNOWN ENTITY IS ITS OWN TEXT")
+    Assert(XTextOf(XRoot(HtmlParse("<p>a & b</p>"))) = "a & b", "AND SO IS A BARE AMPERSAND")
+    Assert(FixedPoint("<p>10 < 20 & 30 > 5</p>"), "WHICH STILL ROUND TRIPS")
+
+    Rem The entity and the literal character have to be the SAME string,
+    Rem which is only true because the table holds UTF-8 bytes. Chr(8212)
+    Rem would be one character with no byte to be written as.
+    Assert(HtmlEntity("mdash") = XUtf8(8212), "&mdash; IS THE UTF-8 BYTES OF AN EM DASH")
+    Assert(Len(HtmlEntity("mdash")) = 3, "WHICH IS THREE OF THEM")
+    Assert(HtmlEntity("nbsp") = XUtf8(160), "AND &nbsp; IS THE TWO OF A NO-BREAK SPACE")
+    Assert(HtmlEntity("#8212") = HtmlEntity("mdash"), "THE NUMERIC FORM AGREES WITH THE NAMED ONE")
+
+    Print("--- broken markup is tolerated, not repaired ---")
+    Assert(TagsIn("<p>unclosed", "p") = 1, "AN UNCLOSED ELEMENT STILL PARSES")
+    Assert(TagsIn("</p>stray", "p") = 0, "A STRAY END TAG IS DROPPED")
+    Rem The one the open-element stack exists for: a </p> belonging to
+    Rem nothing must not close the elements around it.
+    Assert(TagsIn("<div><span>a</span></p><b>b</b></div>", "b") = 1, "AND DOES NOT TEAR OFF WHAT FOLLOWS IT")
+    Assert(XCount(XRoot(HtmlParse("<div><span>a</span></p><b>b</b></div>"))) = 2, "THE DIV STILL HOLDS BOTH CHILDREN")
+    Assert(XTextOf(XRoot(HtmlParse("<p>a < b</p>"))) = "a < b", "A STRAY < IS TEXT")
+    Assert(TagsIn("<div><p>x</div>", "p") = 1, "AN ANCESTOR'S END TAG CLOSES WHAT IS OPEN")
+
+    Print("--- finding things ---")
+    Let doc = HtmlLoad("tst/html/soup.html")
+    Print(HTitle(doc))
+    Print(Length(HLinks(doc)))                           Rem 3 — the fourth <a> carries no href
+    Print(Join(HImages(doc), ","))                       Rem bare.png
+    Print(Length(HIds(doc)))                             Rem 1
+    Print(XTag(HById(doc, "main")))                      Rem h1
+    Print(Length(HByClass(doc, "has-icon")))             Rem 1
+    Assert(Length(HByClass(doc, "mast")) = 1, "A CLASS LIST IS SEARCHED BY MEMBER")
+    Assert(Length(HByClass(doc, "mas")) = 0, "NOT BY PREFIX")
+    Assert(XTag(HByIdOr(doc, "nothere", XLeaf("q", ""))) = "q", "HBYIDOR FALLS BACK")
+    Assert(HTitleOr(HtmlParse("<p>no head</p>"), "none") = "none", "AND SO DOES HTITLEOR")
+    Assert(Instr(HtmlTextOf(doc), "Soup") > 0, "THE VISIBLE TEXT HAS THE HEADING")
+    Assert(Instr(HtmlTextOf(doc), "document.write") = 0, "AND NOT THE SCRIPT")
+    Assert(Instr(XTextOf(doc), "document.write") > 0, "WHICH XTEXTOF DOES STILL SEE")
+
+    Print("--- the soup fixture, byte for byte ---")
+    Assert(HtmlText(doc) = ReadFile("tst/html/soup-clean.html"), "THE CLEANED SOUP IS BYTE-EXACT")
+    Assert(FixedPoint(ReadFile("tst/html/soup.html")), "AND THE SOUP REACHES A FIXED POINT")
+
+    Print("--- a real page ---")
+    Let real = HtmlLoad("tst/html/page.html")
+    Print(HTitle(real))
+    Print(Length(XDescend(real, { })))                   Rem 223
+    Print(Length(HLinks(real)))
+    Assert(Instr(HTitle(real), "dict") > 0, "IT IS THE DICT PAGE")
+    Assert(Length(HByTag(real, "table")) > 0, "IT HAS TABLES")
+    Assert(Length(HLinks(real)) > 20, "AND PLENTY OF LINKS")
+    Assert(NoDuplicates(HIds(real)), "ITS IDS ARE UNIQUE, AS A PAGE'S MUST BE")
+    Assert(FixedPoint(ReadFile("tst/html/page.html")), "A REAL PAGE REACHES A FIXED POINT")
+
+    Rem Every link on a real page is either external, an anchor, or a
+    Rem relative path — never empty, which is the bug this catches.
+    Assert(All(HLinks(real), Fn(h) => h <> ""), "AND CARRIES NO EMPTY HREF")
+
+    Print("--- the tree is xml's ---")
+    Rem The whole design in one assertion: the words xml defines work on
+    Rem a parsed page without html redefining any of them.
+    Assert(XTag(XFind(real, "title")) = "title", "XFIND WORKS ON HTML")
+    Assert(Length(XFindAll(real, "td")) > 0, "AND SO DOES XFINDALL")
+    Assert(XEqual(HtmlParse("<p>a</p>"), HtmlParse("<p>a</p>")), "AND XEQUAL")
+    Assert(Not XEqual(HtmlParse("<p>a</p>"), HtmlParse("<p>b</p>")), "BOTH WAYS")
+    Assert(XTextOf(XPath(XRoot(HtmlParse("<html><body><p>deep</p></body></html>")), { "body", "p" })) = "deep", "AND XPATH")
+
+    Print("--- pretty ---")
+    Let small = HtmlParse("<div><ul><li>a</li><li>b</li></ul></div>")
+    Print(HtmlPretty(small, 2))
+    Assert(Instr(HtmlPretty(HtmlParse("<div><script>a<b</script></div>"), 2), "a<b") > 0, "A SCRIPT IS NEVER RE-INDENTED")
+    Assert(Instr(HtmlPretty(HtmlParse("<p>the <em>word</em> here</p>"), 2), "the <em>word</em> here") > 0, "NOR IS MIXED CONTENT")
+
+    Print("ALL ASSERTIONS PASSED")
+
+Rem True when no entry appears twice. Quadratic, and the id list of a
+Rem page is short.
+Def NoDuplicates(xs As List Of String) As Boolean
+    If IsEmpty(xs) Then
+        True
+    Else
+        If Contains(Rest(xs), First(xs)) Then
+            False
+        Else
+            NoDuplicates(Rest(xs))

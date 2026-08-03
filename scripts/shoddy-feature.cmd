@@ -60,7 +60,10 @@ echo.
 echo Will merge these !N! commit^(s^) from !BR! into main, then delete the branch:
 git log --oneline origin/main..HEAD
 set "ANS=n"
+rem Both spellings: the .sh twin documents -y, and RELEASING.md promises the
+rem twins behave identically.
 if /i "%~2"=="/y" set "ANS=y"
+if /i "%~2"=="-y" set "ANS=y"
 if /i not "!ANS!"=="y" set /p ANS=Proceed? (y/N)
 if /i not "!ANS!"=="y" (echo aborted, nothing done. & exit /b 0)
 echo ^> git push -u origin !BR!

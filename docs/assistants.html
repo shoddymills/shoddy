@@ -1,0 +1,508 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="How to ground GitHub Copilot or Claude in Shoddy — a standing instructions file, what to attach, and the questions worth asking.">
+<title>Grounding an Assistant | Shoddy</title>
+<link rel="stylesheet" href="style.css">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="alternate icon" href="favicon.ico" sizes="48x48">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+</head>
+<body>
+<div class="topbar"><div class="inner">
+  <div class="row">
+    <a class="phase" href="index.html"><img class="mark" src="media/brand/shoddy-icon.svg" alt="" width="23" height="23">Shoddy · Documentation</a>
+    <span class="spacer"></span>
+    <nav class="docnav meta" aria-label="About"><a href="heritage.html">Heritage</a><a href="authorship.html">Authorship</a></nav>
+  </div>
+  <nav class="docnav main" aria-label="Documentation"><a href="tutorials/index.html">Tutorials</a><a href="guide.html">Guide</a><a href="quickref.html">Reference</a><a href="machines/index.html">Machines</a><a href="mills/index.html">Mills</a><a href="stack.html">Stack</a><a href="spec.html">Spec</a><a href="setup.html">Setup</a><a href="vscode.html">VS Code</a><span class="here">AI</span><a href="build.html">Toolchain</a><a href="errors.html">Errors</a></nav>
+</div></div>
+<div class="wrap">
+<header class="mast">
+<p class="eyebrow">Working with Shoddy</p>
+<h1>Grounding an Assistant</h1>
+<p class="kicker">What to tell Copilot or Claude before you ask it for Shoddy — and the questions worth asking</p>
+</header>
+
+<p>Shoddy is new and small, and an assistant has never read a line of it. What
+it has read is a great deal of code that <em>looks</em> like it, and none of
+that code behaves the way Shoddy does. Left to itself it will answer from the
+resemblance: confident, tidy, well-indented, and not this language. Nothing
+about the answer looks wrong, which is exactly the problem — the failure is
+fluent.</p>
+
+<p>Grounding is the fix, and it is about five minutes of work done once. Give
+the assistant the handful of rules that make Shoddy what it is, tell it where
+the real answers live, and it stops guessing. This page is that setup,
+followed by a run of worked examples: things you might actually ask it to do,
+and the answers you should expect back.</p>
+
+<blockquote><b>On this page:</b>
+<a href="#file">1. The instructions file</a> &nbsp;|&nbsp;
+<a href="#attach">2. What else to hand it</a> &nbsp;|&nbsp;
+<a href="#questions">3. What to ask, and what comes back</a> &nbsp;|&nbsp;
+<a href="#drift">4. When the answer is wrong</a> &nbsp;|&nbsp;
+<a href="#check">5. Let the toolchain be the judge</a></blockquote>
+
+<h2 id="file">1. The instructions file</h2>
+
+<p>Every assistant worth using will read a file of standing instructions from
+your project and attach it to each request, so you write the grounding once
+instead of pasting it into every conversation. The file goes at the root of
+the folder you work in — the same folder as your <code>.shoddy</code> files —
+and the name depends on the tool:</p>
+
+<table>
+<tr><th>Tool</th><th>File</th><th>When it loads</th></tr>
+<tr><td>GitHub Copilot (VS Code)</td><td><code>.github/copilot-instructions.md</code></td><td>Attached to every Copilot Chat request in the workspace.</td></tr>
+<tr><td>Claude Code</td><td><code>CLAUDE.md</code></td><td>Read at the start of every session in the folder.</td></tr>
+<tr><td>Cursor</td><td><code>.cursor/rules/shoddy.mdc</code></td><td>Attached per request.</td></tr>
+<tr><td>Others</td><td><code>AGENTS.md</code></td><td>A convention several tools now read; harmless if yours doesn't.</td></tr>
+</table>
+
+<p class="note"><span class="lab">Tip</span> If you are unsure, write the
+same content to more than one of these. They are small, and an unread file
+costs nothing. If your tool reads none of them, paste the block below as the
+first message of each session — it is short enough.</p>
+
+<p>Here is the file. It says what Shoddy is, how to behave, and the facts a
+confident guess gets wrong. Copy it whole:</p>
+
+<pre><code># Shoddy — how to help in this project
+
+Shoddy is a small, purely functional BASIC that compiles to .NET. It looks
+like BASIC and does not behave like it. You have not seen this language
+before, so do not pattern-match to VB.NET, VBA or QBasic.
+
+## How to answer
+- If you are unsure of a word or its arguments, say so and ask, or check
+  the sources listed at the bottom. Do not invent a plausible name.
+- Prefer the shortest idiomatic form over a clever one.
+- Every answer must be code that compiles. When you are done, say how to
+  run it: `mill run FILE.shoddy`.
+
+## The rules that are not BASIC
+- Nothing mutates. `Let` binds a name once. There is no assignment, no
+  `Dim x = 0` variable, no `x = x + 1`, no `goto`.
+- There is NO `For`, `While`, `Do`, `Next` or `Wend`. Iteration is
+  `Map` / `Filter` / `Fold` / `Each` / `Times` over a list, or recursion.
+  `Fold` is the workhorse: it threads a value through a sequence.
+- "Updating" a record returns a new one: `With(r, Field = v)`.
+- Indentation is the structure. There is no `End If`, `End Function`,
+  `Next`, `Wend`, brace or semicolon anywhere in the language.
+- A Def's last expression is its result. There is no `Return`.
+- Booleans are not numbers. `If n Then` is an error; write `If n <> 0 Then`.
+- Operators are infix: `a Mod b`, never `Mod(a, b)`. The call form silently
+  builds a function value, and the program fails somewhere else entirely.
+  Same for a unary minus before brackets: write `0 - x * x`.
+- Names are case-insensitive: `total`, `Total` and `TOTAL` are one word.
+- `Type T` declares a record and creates one accessor function per field.
+  Fields are POSITIONAL — inserting one mid-record shifts every later
+  constructor argument silently. Records compare structurally with `=`.
+- Never name a local, parameter or Def after a field the program reads by
+  accessor: the accessor loses every naming contest.
+- Sequences are 1-based and ranges include both ends.
+- A bare name in argument position is passed as a function, not called:
+  `Map(xs, Double)`.
+- A line continues onto the next only inside open brackets.
+
+## Facts that decide a design
+- `Number` is an IEEE double and the ONLY numeric type. There are no integers
+  and NO BITWISE OPERATORS. A design that wants them is the wrong design here.
+- Arrays are fixed-length with O(1) `Nth`; lists are cons cells built for
+  recursion. Index into arrays, recurse over lists. `SetNth` returns a copy.
+- Self-tail-recursion compiles to a loop, so a recursive word that calls
+  itself last runs in constant stack. MUTUAL recursion does not — it consumes
+  stack like any other call.
+- There are no exceptions. `Error(msg)` aborts the program with a line number.
+  Anything a caller should be able to handle must come back as a value.
+
+## The library
+- The standard library is a set of "machines". `Include "seq.shoddy"` at the top
+  of a file; no path, no configuration, works from any folder.
+- Common ones: str (text), seq (lists), file (whole-file I/O), math,
+  random, clock, dict, turtle and scribbler (graphics), vt100 (terminal).
+- Do not invent library words. If you need one, name the machine you think
+  it is in and ask me to confirm.
+
+## How this project is built
+- Split every program: a pure core (`NAME-core.shoddy`) that computes and
+  can be tested with no screen, and a thin shell (`NAME.shoddy`) that does
+  the input and output.
+- Tests are a program: `test.shoddy` full of `Assert(cond, "MESSAGE")`,
+  run like anything else. A run that reaches the end passed.
+- You write the tests, and you write them BEFORE the implementation, from what
+  I said must be true. Never edit a test to make code pass: if something
+  fails, either the code is wrong or I asked for the wrong thing, and I want
+  to know which.
+- The compiler lints every build and warns about stack-effect mistakes,
+  shadowed accessors and operator sections. A clean build prints nothing.
+
+## Sources — read these instead of guessing
+
+Three trees. All of it is fair game and none of it needs summarising back
+to me; go and look rather than reconstructing an answer from memory.
+
+- `docs/*` — the documentation. `quickref.html` is the whole language on one
+  page and is where to start; `spec.html` is the grammar and the semantics;
+  `errors.html` is every message the toolchain can raise with its cause and
+  its fix; `guide.html` teaches it chapter by chapter; `machines/*.html` is a
+  word reference per machine; `stack.html` is the concatenative core beneath
+  the typed surface.
+- `machines/*` — the standard library, written in readable Shoddy. This is
+  the definitive answer on any library word's name, arguments and types, and
+  the best example of house style there is. Prefer reading the machine over
+  asking me what a word does.
+- `mills/*` — complete programs, each built the way this one should be: a
+  pure core, a thin shell, a headless test, build scripts. Read the one
+  closest in shape to what you are writing.</code></pre>
+
+<p class="note"><span class="lab">Note</span> The paths at the bottom assume
+you are working inside a copy of the Shoddy repository. If you are not, point
+them at the published docs instead — <code>shoddymills.github.io/shoddy/</code>
+— and an assistant that can browse will fetch them.</p>
+
+<h2 id="attach">2. What else to hand it</h2>
+
+<p>The instructions file covers the language. For a particular task, attach
+the particular source — an assistant reasons far better from twenty lines of
+real code than from a description of them.</p>
+
+<ul>
+<li><b>The machine you are using.</b> <code>machines/turtle.shoddy</code> is
+short enough to read in a sitting and tells it every word, argument and type,
+comments included. This is the single
+highest-value attachment there is, and it is why the library ships as
+readable source rather than a binary.</li>
+<li><b>A finished program of the same shape.</b> Writing a game? Hand over
+<code>mills/invaders/</code>. A data tool? <code>mills/demographics/</code>.
+The <a href="mills/index.html">mills</a> are worked examples of the whole shape.</li>
+<li><b>The quick reference.</b> <a href="quickref.html">quickref.html</a> is
+the entire language in one page — small enough to paste whole.</li>
+<li><b>Your own test file.</b> Attaching <code>test.shoddy</code> tells it
+what "working" means far more precisely than a paragraph can.</li>
+</ul>
+
+<p>In Copilot Chat, type <code>#file:</code> and the name to attach one, or
+drag the file into the chat. In Claude Code, name the path and it reads it.
+Either way, prefer naming a file over describing what is in it.</p>
+
+<div class="takeaway"><b>The one-line version:</b> if a word matters to the
+answer, put the file that defines it in front of the assistant. Everything
+else on this page is a way of doing that in advance.</div>
+
+<h2 id="questions">3. What to ask, and what comes back</h2>
+
+<p>The rest of this page is worked examples. One small program, a series of
+things you might want it to do next, the prompt you would type for each, and the
+answer a grounded assistant hands back. Read them to learn what a good answer
+looks like — and since every answer is correct Shoddy, they work just as well
+as a cheat sheet on the days you are doing the typing yourself.</p>
+
+<p>It all builds on one file. Assume you already have this much:</p>
+
+<pre><code>Rem readings.shoddy
+Let x = { 12, 7, 30, 4, 18 }</code></pre>
+
+<p class="note"><span class="lab">Watch</span> Every answer below was compiled
+and run before it went on this page. <em>Might</em> is doing real work in
+&ldquo;what you might get&rdquo;, though: an assistant picks its own names and
+spacing, and two runs of the same prompt rarely match to the character. What
+should not vary is the <em>shape</em>. If what you get differs from these in
+kind rather than in wording, look twice before you keep it.</p>
+
+<div class="err">
+<h3 id="q1">1. Print every value</h3>
+<p class="ask"><span class="lab">You ask</span> Print out all the values in
+x.</p>
+<p class="step">What you might get</p>
+<pre><code>Def Main()
+    Each(x, Fn(v) =&gt; Print(Str(v)))</code></pre>
+<p>Read it as &ldquo;for each item in <code>x</code>, call this little
+function&rdquo;. <code>Each</code> is for doing something to every item;
+<code>Fn(v) =&gt; …</code> is a function written where it is used, with
+<code>v</code> standing for whatever item it is up to. There is no counter and
+no index — nothing to get wrong by one. <code>Str</code> is there because
+<code>Print</code> takes text and the values are numbers.</p>
+</div>
+
+<div class="err">
+<h3 id="q2">2. Add them up</h3>
+<p class="ask"><span class="lab">You ask</span> Add up everything in x and
+print the total.</p>
+<p class="step">What you might get</p>
+<pre><code>Def Total(xs As List Of Number) As Number
+    Fold(xs, 0, +)
+
+Def Main()
+    Print(Str(Total(x)))</code></pre>
+<p><code>Fold</code> is the one to learn. It starts at <code>0</code> and
+applies <code>+</code> to what it has so far and the next item, all the way
+along. It answers every question of the form &ldquo;boil this list down to
+one value&rdquo; — a total, a maximum, the longest word, a picture built up
+shape by shape.</p>
+<p>Notice there is no <code>total</code> variable being added to. Nothing in
+Shoddy changes after it is set, so the running value is passed along rather
+than kept anywhere. If an answer ever shows you a name being reassigned, it
+will not compile.</p>
+</div>
+
+<div class="err">
+<h3 id="q3">3. Only the ones over ten</h3>
+<p class="ask"><span class="lab">You ask</span> Now just the readings above
+ten, and their total.</p>
+<p class="step">What you might get</p>
+<pre><code>Def Above(xs As List Of Number, limit As Number) As List Of Number
+    Filter(xs, Fn(v) =&gt; v &gt; limit)
+
+Def Main()
+    Print(Str(Total(Above(x, 10))))</code></pre>
+<p><code>Filter</code> keeps the items the little function says
+<code>True</code> to, and hands back a new list — <code>x</code> itself is
+untouched, and still has all five readings in it. That is why these stack so
+readily: <code>Total(Above(x, 10))</code> is just one answer fed into the
+next.</p>
+<p class="emsg">Worth knowing: the first version of this used the name
+<code>Over</code>, and the mill refused it —
+<code>OVER is a builtin - a Def of that name would shadow it everywhere;
+rename it</code>. A generic name like <code>Sum</code>, <code>Count</code> or
+<code>Over</code> may already be taken, and the toolchain says so on the spot
+rather than letting the collision through.</p>
+</div>
+
+<div class="err">
+<h3 id="q4">4. Label each one</h3>
+<p class="ask"><span class="lab">You ask</span> Print each reading with LOW,
+OK or HIGH beside it — over twenty is high, over ten is ok.</p>
+<p class="step">What you might get</p>
+<pre><code>Def Band(v As Number) As String
+    Select Case v
+        Case Is &gt; 20
+            "HIGH"
+        Case Is &gt; 10
+            "OK"
+        Case Else
+            "LOW"
+
+Def Main()
+    Each(x, Fn(v) =&gt; Print(Str(v) &amp; " " &amp; Band(v)))</code></pre>
+<p><code>Select Case</code> takes the first branch that matches, so the order
+is the logic: <code>Is &gt; 10</code> would swallow the high ones too if it
+came first. <code>Case Else</code> is what catches everything left over —
+without it, a value that matches nothing stops the program when it eventually
+turns up.</p>
+<p>The whole <code>Select Case</code> is the answer <code>Band</code> gives
+back. Nothing is stored in a variable and returned; the last thing a Def works
+out is what it hands over.</p>
+</div>
+
+<div class="err">
+<h3 id="q5">5. Names as well as numbers</h3>
+<p class="ask"><span class="lab">You ask</span> Each reading should have a
+name too — MILL, SHED, YARD. Print the name, the value and the band.</p>
+<p class="step">What you might get</p>
+<pre><code>Type Reading
+    Name  As String
+    Value As Number
+
+Def Readings() As List Of Reading
+    { Reading("MILL", 12), Reading("SHED", 7), Reading("YARD", 30) }
+
+Def Describe(r As Reading) As String
+    Name(r) &amp; " " &amp; Str(Value(r)) &amp; " " &amp; Band(Value(r))
+
+Def Main()
+    Each(Map(Readings(), Describe), Print)</code></pre>
+<p>Those four lines of <code>Type</code> do two jobs: they make
+<code>Reading(…)</code> for building one, and they make <code>Name</code> and
+<code>Value</code> for reading the parts back out. There is no dot — you call
+the field's name like any other word: <code>Name(r)</code>.</p>
+<p><code>Map</code> is <code>Each</code>'s twin: same idea, but it collects
+what comes back instead of throwing it away. And <code>Describe</code> is
+passed by name with no brackets after it, which is how you hand a function to
+something rather than calling it.</p>
+<p class="emsg">Two things to check in any answer that declares a
+<code>Type</code>: the constructor takes its fields <b>in the order they are
+declared</b>, with nothing to catch a swap between two fields of the same
+kind; and no local or parameter should be named after a field, because the
+local wins and the accessor quietly disappears.</p>
+</div>
+
+<div class="err">
+<h3 id="q6">6. Correct one of them</h3>
+<p class="ask"><span class="lab">You ask</span> The MILL reading was wrong —
+it should be 99.</p>
+<p class="step">What you might get</p>
+<pre><code>Def Corrected(r As Reading, v As Number) As Reading
+    With(r, Value = v)</code></pre>
+<p><code>With</code> makes a copy that differs in the one field named,
+carrying everything else across. The original record is still there,
+unchanged, for anyone else holding it — which is the answer to &ldquo;where
+did my edit go?&rdquo;: nowhere. It came back as the result, and it exists
+only if the caller keeps it.</p>
+</div>
+
+<div class="err">
+<h3 id="q7">7. Load them from a file</h3>
+<p class="ask"><span class="lab">You ask</span> Read the numbers from
+readings.txt instead of having them in the code. Skip anything that isn't a
+number.</p>
+<p class="step">What you might get</p>
+<pre><code>Include "file.shoddy"
+
+Def NumbersIn(path As String) As List Of Number
+    Map(Filter(ReadLines(path), IsNumeric), Val)</code></pre>
+<p>One line, read right to left: every line of the file, keep the ones that
+are numbers, turn each into a number. <code>IsNumeric</code> and
+<code>Val</code> are handed over by name, the same way <code>Describe</code>
+was.</p>
+<p>The guard is not decoration. <code>Val</code> stops the program on anything
+that isn't a number, which is right when a bad file should halt everything and
+wrong when a person is typing. Ask for the forgiving version and you get
+<code>ValOr(s, 0)</code>, which hands back the fallback instead.</p>
+<p>The <code>Include</code> is the other thing to watch. The library is
+a shed of <b>machines</b>, and the one you want has to be named at the top of
+the file. No path, no setup — but if an answer uses <code>ReadLines</code>
+without <code>Include "file.shoddy"</code>, it will not build.</p>
+</div>
+
+<div class="err">
+<h3 id="q8">8. A report you can read</h3>
+<p class="ask"><span class="lab">You ask</span> Print a table — names in a
+column on the left, values lined up on the right with two decimal places.</p>
+<p class="step">What you might get</p>
+<pre><code>Include "str.shoddy"
+
+Def Line(r As Reading) As String
+    PadRight(Name(r), 10) &amp; PadLeft(ToFixed(Value(r), 2), 8)
+
+Def Main()
+    Each(Map(Readings(), Line), Print)</code></pre>
+<pre><code>MILL         12.00
+SHED          7.00
+YARD         30.00</code></pre>
+<p>There is no format string and no picture clause to get wrong — just words
+that each do one thing, joined with <code>&amp;</code>.
+<code>PadRight</code> and <code>PadLeft</code> square a column off at a width,
+<code>ToFixed</code> fixes the decimal places, and <code>Commas(x, 2)</code>
+is there when the numbers get big enough to want separators.</p>
+</div>
+
+<div class="err">
+<h3 id="q9">9. Keep asking until they stop</h3>
+<p class="ask"><span class="lab">You ask</span> Let me type readings in one at
+a time, and stop when I type DONE.</p>
+<p class="step">What you might get</p>
+<pre><code>Def Collect(so As List Of Number) As List Of Number
+    Let line = Input("reading (or DONE): ")
+    If Upper(Trim(line)) = "DONE" Then
+        so
+    Else
+        Collect(Append(so, ValOr(line, 0)))
+
+Def Main()
+    Let got = Collect({ })
+    Print("total " &amp; Str(Total(got)))</code></pre>
+<p>This is the shape to recognise, because every &ldquo;keep going until
+something happens&rdquo; job in Shoddy looks like it: <b>do one turn, then
+call yourself with what you now know</b>. The list gathered so far travels in
+as <code>so</code> and comes back out grown by one. The stopping case is the
+branch that returns it instead of calling again.</p>
+<p>It costs nothing to do it this way. A call in the last position becomes a
+jump, so this can run all night without piling up. If you want the same shape
+in a window — waiting on keys instead of typed lines — the first tutorial
+builds one in
+<a href="tutorials/first-mill.html#keys">&sect;12</a>.</p>
+</div>
+
+<div class="err">
+<h3 id="q10">10. Prove it works</h3>
+<p class="ask"><span class="lab">You ask</span> Before you change anything
+else: write me the tests. Total of a plain list, the empty list, and Above
+keeping only what clears the limit.</p>
+<p class="step">What you might get</p>
+<pre><code>Rem test.shoddy
+Include "readings-core.shoddy"
+
+Def Main()
+    Assert(Total({ 1, 2, 3, 4 }) = 10, "IT ADDS")
+    Assert(Total({ }) = 0, "AN EMPTY LIST IS ZERO")
+    Assert(Length(Above({ 4, 18 }, 10)) = 1, "IT KEEPS THE BIG ONE")
+    Print("ALL CHECKS PASSED")</code></pre>
+<p>A test is a program: <code>mill run test.shoddy</code>, nothing to install.
+Reaching the final <code>Print</code> is the pass; a failed
+<code>Assert</code> stops the run and names the message, which is why the
+messages read like statements of what should be true.</p>
+<p>Notice the order. Ask for the tests <em>first</em>, from what you said must
+be true, and only then for the code — an assistant that has already written
+the implementation writes tests that agree with it, which proves nothing. Get
+them in that order and the assertions are a statement of the requirement
+rather than a description of the answer.</p>
+<p>Then ask the follow-up, which is the whole of your job here:
+<em>what should this handle that the tests don't?</em> Out come the empty
+list, the negative reading, the file that isn't there — and each one goes
+back as a sentence, not as code you write.</p>
+</div>
+
+<h2 id="drift">4. When the answer is wrong</h2>
+
+<p>Sooner or later it will be — most often deep in a long conversation, or
+right after you have pasted in a lot of something else. The instructions file
+is a nudge, not a lock. Three things work:</p>
+
+<ul>
+<li><b>Paste the error, not an argument.</b> <code>unknown word: FOR</code>
+is unambiguous and ends the discussion in one exchange. Explaining why the
+language is the way it is does not.</li>
+<li><b>Restate the one rule, not all of them.</b> "There is no For in this
+language — walk a list with Each, Map or Fold" re-anchors it. Re-pasting the
+whole instructions file mid-conversation rarely helps as much.</li>
+<li><b>Start a fresh conversation for a fresh task.</b> A context full of an
+earlier problem is what makes it drift. New task, new session — the
+instructions file loads again by itself.</li>
+</ul>
+
+<p class="note"><span class="lab">Watch</span> The tell is <em>fluency about
+a word you have never seen</em>. If the answer uses
+<code>PadCenter</code> or <code>Sum</code> or <code>ForEach</code>, don't
+reason about whether it exists — search
+<a href="quickref.html">the quick reference</a>, or just compile it. The
+weave names an unknown word on the line that used it.</p>
+
+<h2 id="check">5. Let the toolchain be the judge</h2>
+
+<p>The reason this works at all is that Shoddy tells you the truth cheaply
+and immediately. You never have to decide whether generated code is right by
+reading it:</p>
+
+<ul>
+<li><b>The weave catches what is not the language.</b> Every invented word,
+every stray <code>End If</code>. It runs in under a second.</li>
+<li><b>The linter catches what is legal but wrong</b> — a shadowed accessor,
+an operator section where a value was meant, a stack-effect mismatch. It
+never blocks a build; it just tells you. A clean build prints nothing at
+all.</li>
+<li><b>Your tests catch what is correct but not what you asked for.</b>
+Which is why the acceptance criteria should be assertions <em>you</em>
+wrote, before the code existed.</li>
+</ul>
+
+<p>So the rule is simple, and it is the only one on this page that really
+matters: <b>never accept code you have not run.</b> Not because an assistant
+is untrustworthy in particular, but because running it takes four seconds and
+settles the question completely.</p>
+
+<div class="takeaway"><b>Next:</b>
+<a href="tutorials/with-ai.html">Building with an AI</a> takes this further —
+the method for a whole project, from a written brief through a plan you
+approve to code you can ship, with copyable templates for each step. This
+page grounds the assistant; that one puts it to work.</div>
+
+<footer>Named for the shoddy mills of the West Riding: Useless Things Made
+Useful Through Skill (<a href="heritage.html">the heritage of the name</a>).<br>
+&copy; 2026 Stephen Vincent Foster</footer>
+</div>
+</body>
+</html>

@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Reversible Obfuscation — machines/shaker.shoddy">
+<title>shaker — Reversible Obfuscation | Shoddy Machines</title>
+<link rel="stylesheet" href="../style.css">
+<link rel="icon" href="../favicon.svg" type="image/svg+xml">
+<link rel="alternate icon" href="../favicon.ico" sizes="48x48">
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+</head>
+<body>
+<div class="topbar"><div class="inner">
+  <div class="row">
+    <a class="phase" href="index.html"><img class="mark" src="../media/brand/shoddy-icon.svg" alt="" width="23" height="23">Shoddy · The Machines</a>
+    <span class="spacer"></span>
+    <nav class="docnav meta" aria-label="About"><a href="../heritage.html">Heritage</a><a href="../authorship.html">Authorship</a></nav>
+  </div>
+  <nav class="docnav main" aria-label="Documentation"><a href="../tutorials/index.html">Tutorials</a><a href="../guide.html">Guide</a><a href="../quickref.html">Reference</a><span class="here">Machines</span><a href="../mills/index.html">Mills</a><a href="../stack.html">Stack</a><a href="../spec.html">Spec</a><a href="../setup.html">Setup</a><a href="../vscode.html">VS Code</a><a href="../assistants.html">AI</a><a href="../build.html">Toolchain</a><a href="../errors.html">Errors</a></nav>
+</div></div>
+<div class="wrap">
+
+
+<header class="mast has-icon"><div><p class="eyebrow"><a href="index.html#data-storage">The Machines &middot; Data &amp; storage</a></p><h1>shaker</h1><p class="kicker">Reversible Obfuscation — machines/shaker.shoddy</p></div><img class="micon" src="../media/icons/shaker.svg" alt="the shaker machine&#39;s icon"></header>
+<nav class="pagertop" aria-label="Machines, in catalog order"><a href="dict.html">&larr; dict</a><a href="index.html">All machines</a><a href="json.html">json &rarr;</a></nav>
+
+<h2 id="summary">Summary</h2>
+<p><code>shaker</code> scrambles a list of numbers so that it cannot be read
+or edited by eye, and unscrambles it again given the same key. It also
+appends a checksum, so if anyone changes the scrambled data you find out
+rather than quietly decoding rubbish.</p>
+<p>It is a <strong>four-round Feistel network</strong> — the classic
+construction for building a reversible scrambler out of an ordinary,
+non-reversible mixing function. Numbers go in and numbers come out: no
+strings, no bytes, no bitwise operators, which is just as well because
+Shoddy has none of the last.</p>
+<p class="tag" style="border-left:3px solid var(--accent); padding-left:.75rem">
+<strong>Read this before you use it.</strong> This is an obfuscation layer,
+<strong>not</strong> a cryptosystem, and the distinction is not a formality.
+Four rounds is far too few, the key schedule is a bare rotation through your
+key list, the mixing function is cheap arithmetic rather than a studied
+design, and the checksum detects accidents rather than forgeries. Anyone who
+wants to read your data will read it. Use it to stop a save file being edited
+in Notepad — not to keep a secret.</p>
+
+<h2 id="why">Why It's Useful</h2>
+<p>There is a large gap between "secret" and "not lying there in plain
+sight," and most programs only ever need the second. A high-score table that
+players shouldn't casually edit. A saved game you'd rather people finished
+than rewrote. A settings file where changing one number by hand would put the
+program into a state it was never tested in. A record you want to be able to
+prove hasn't been altered since you wrote it.</p>
+<p>For all of those, what you want is exactly this: the data goes out
+unreadable, comes back identical, and announces itself if it has been
+meddled with. Reach for <code>shaker</code> when the cost of someone editing
+a file is annoyance rather than harm. When the cost is actual harm, you need
+a real cryptographic library and a real key-management story, and neither of
+those is going to be four hundred lines of BASIC.</p>
+
+<h2 id="name">Where the Name Comes From</h2>
+<p>The shaker was the first machine in a shoddy mill. Before the rags could
+be pulled apart they had to be beaten, so they went into a rotating drum with
+slats or spikes in it and were tumbled until the dust, grit and loose dirt
+fell out through the grating. It did not change what the rags were. It
+rearranged them, shook out what should not be there, and handed the same
+material on to the next machine in the line.</p>
+<p>Which is exactly the claim this machine makes, and exactly the claim it
+does not. It is deliberately not called <code>crypto</code>: a name with
+<em>crypt</em> in it promises secrecy, and the paragraph above is at pains to
+withdraw that promise. A shaker is honest work on the way to somewhere else.
+(<a href="../heritage.html">The heritage of the name</a> has the rest of the
+mill.)</p>
+
+<h2 id="history">A Brief History of the Feistel Network</h2>
+<p>In 1971, working at IBM, Horst Feistel published a way out of a problem
+that had bothered cipher designers for a long time. To scramble data
+reversibly you normally need every step to be reversible, which is a
+punishing constraint — your mixing function has to be a bijection, and you
+have to implement it twice, forwards and backwards, and any asymmetry between
+the two implementations is a bug that silently destroys data.</p>
+<p>Feistel's construction sidesteps all of it. Split the data into two
+halves, <em>L</em> and <em>R</em>. Now do this: the new left half is simply
+<em>R</em>, and the new right half is <em>L</em> combined with
+<em>F(R)</em>, where <em>F</em> is any function you like. To undo it you run
+the same trick in reverse — and because the half that <em>F</em> was applied
+to is carried through untouched, you can recompute <em>F</em> of it on the
+way back and subtract what you added. <strong><em>F</em> never has to be
+reversible.</strong> It can be as messy and one-way as you can make it, which
+is precisely what you want from a mixing function, and you only ever write it
+once.</p>
+<p>That idea went straight into Lucifer, IBM's cipher of the early 1970s, and
+from there into the <strong>Data Encryption Standard</strong> adopted by the
+US government in 1977 — sixteen Feistel rounds on 64-bit blocks, the most
+widely deployed cipher of its era. DES eventually fell to its 56-bit key
+rather than to any weakness in the structure, and the structure long outlived
+it: Blowfish, Twofish, RC5 and GOST are all Feistel networks. When AES was
+chosen in 2001 the winner happened to use a different construction, but
+Feistel's insight remains one of the neatest ideas in the field — a way of
+getting a reversible transformation for free out of an irreversible one.</p>
+<p>What makes it a good fit here is that neatness. The whole reversible half
+of this machine is two functions of one line each, and they are visibly
+mirror images. Everything difficult is pushed into the mixing function, where
+being difficult is a virtue.</p>
+
+<h2 id="guide">User's Guide</h2>
+<p>Values are <strong>field elements</strong>: whole numbers from 0 up to
+<code>ShakeModulus() - 1</code>. Anything else — a fraction, a negative, a
+number too large — is refused by name rather than quietly mangled. The key is
+a list of field elements too, and it may be any length you like.</p>
+<pre><code>Include "shaker.shoddy"
+
+Def Main()
+    Let key = { 4021, 55117, 903, 31337, 12289 }
+
+    Let sealed = ShakeEncrypt({ 11, 22, 33, 44 }, key)
+    Print(sealed)                                ' scrambled, plus a tag on the end
+    Print(ShakeDecrypt(sealed, key))             ' { 11, 22, 33, 44 }
+
+    ' the total half, for data you did not write yourself
+    Print(ShakeVerify(sealed))                   ' True
+    Print(ShakeDecryptOr(sealed, key, { }))      ' the message, or { } if it was altered</code></pre>
+<p>Text is not this machine's business, but it is one <code>Map</code> away —
+each code unit is a number well inside the field:</p>
+<pre><code>Let codes  = Map(Range(1, Len(s)), Fn(k) => Asc(Mid(s, k, 1)))
+Let sealed = ShakeEncrypt(codes, key)
+Let back   = Fold(ShakeDecrypt(sealed, key), "", Fn(a, c) => a &amp; Chr(c))</code></pre>
+<p>A few things worth remembering:</p>
+<ul>
+<li><strong>The ciphertext is one value longer than the message.</strong> The
+extra value on the end is the checksum, and <code>ShakeDecrypt</code> checks
+it before doing anything else.</li>
+<li><strong>The tag catches tampering, not the wrong key.</strong> The
+checksum is computed over the <em>scrambled</em> data, so it knows nothing
+about your key. Decrypt with the wrong key and the tag still passes — you get
+a list of plausible-looking nonsense. If you need to know that the key was
+right, put something recognisable in the message and check for it after.</li>
+<li><strong>Two ways to decrypt, and you want both.</strong>
+<code>ShakeDecrypt</code> stops the program when the checksum doesn't match;
+<code>ShakeDecryptOr</code> hands back your default. Same guard pairing as
+<code>Val</code>/<code>ValOr</code> and <code>JsonParse</code>/<code>JsonRead</code>
+— the strict one for data you wrote, the total one for data that arrived.</li>
+<li><strong>A short key just repeats.</strong> The key list is walked round
+and round for as long as the message lasts, which is exactly as weak as it
+sounds. A longer key is a better key.</li>
+<li><strong>Same input, same output, always.</strong> There is no random
+salt, so identical messages encrypt identically under the same key — which
+means an observer can tell that two files are the same file.</li>
+</ul>
+
+<h2 id="hood">Under the Hood</h2>
+<p>You don't need any of this to use the machine — it's here for the curious.</p>
+<p><strong>The two rounds.</strong> The whole reversible core is this pair,
+and they are worth reading against one another:</p>
+<pre><code>Def ShakeRoundFwd(a, b, part) As Pair
+    Pair(b, ShakeWrap(a + ShakeMix(b, part)))
+
+Def ShakeRoundBack(a, b, part) As Pair
+    Pair(ShakeWrap(b - ShakeMix(a, part)), a)</code></pre>
+<p>The halves come back in the other order, and on the way back
+<code>ShakeMix</code> is fed the half that <em>survived</em> the round rather
+than the one that changed — that is the whole of Feistel's trick. Four rounds
+make a block, and decryption spends the same four key values in the opposite
+order.</p>
+<p><strong>Why the modulus is 67108859.</strong> This is the part that bit the
+first version of this machine, and it is worth stating plainly. Shoddy's only
+numeric type is the IEEE double, which represents integers exactly only up to
+2<sup>53</sup>. The mixing function squares its argument, so the modulus has
+to sit below 2<sup>26</sup> for that square to stay exact; 67108859 is the
+largest prime that does, and its square is 4.5&times;10<sup>15</sup> against
+the limit of 9.0&times;10<sup>15</sup>.</p>
+<p>Reaching for a 2<sup>32</sup>-sized modulus, which is the natural instinct,
+overflows into a region where doubles have no fractional part left — and the
+original mixing function ended by taking a fractional part. So it returned 0.
+Every time. Which meant every round degenerated to a bare swap of the two
+halves, four swaps composed to the identity, and <strong>the machine returned
+its input unchanged while appearing to work perfectly</strong>: it
+round-tripped, it produced a checksum, and any key at all "decrypted" it. A
+round-trip test cannot catch that, which is why
+<a href="../../tst/shakertest.shoddy">the test program</a> insists that the
+ciphertext differ from the message and that the wrong key fail.</p>
+<p><strong>The odd value out.</strong> A message of odd length has one value
+with no partner to be Feistelled against. Passing it through untouched would
+leave a plaintext number sitting in the middle of the ciphertext, so it is
+shifted by a pad derived from the key and its position — deterministic, and
+its own inverse under subtraction.</p>
+<p><strong>The tag</strong> is Fletcher-style: a running sum and a running sum
+of those sums, both reduced into the field. Keeping the second sum is what
+lets it notice a value that has moved position, which a plain total would
+not.</p>
+<p><strong>What it costs.</strong> Everything is linear in the length of the
+message, and everything that walks it — the two block loops, the checksum,
+and the helper that strips the tag — is self-tail-recursive, so it compiles
+to a loop and a long message costs no stack. Note that <code>ShakeBody</code>
+exists rather than calling <a href="seq.html">seq</a>'s <code>Taken</code>:
+<code>Taken</code> builds its result on the way out of the recursion, one
+stack frame per element, and overflows on a message of twenty thousand.</p>
+
+<h2 id="words">Word Reference</h2>
+<p class="tag">Sealing, opening, and checking</p>
+
+<h3>The main pair</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>ShakeEncrypt(xs, keys)</td><td>The scrambled message, with the
+checksum appended — so the result is always one value longer than
+<code>xs</code>. Stops the program if the key is empty or if any value, in
+the message or the key, is not a whole number inside the field.</td></tr>
+<tr><td>ShakeDecrypt(xs, keys)</td><td>The original message. Stops the
+program if the checksum doesn't match, so a caller who ignores the
+possibility cannot carry on with rubbish.</td></tr>
+<tr><td>ShakeDecryptOr(xs, keys, dflt)</td><td>Total. Hands back
+<code>dflt</code> if the checksum doesn't match, the key is empty, or the key
+is out of the field. The one to use on data that arrived from somewhere you
+don't control.</td></tr>
+</table>
+
+<h3>Checking</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>ShakeVerify(xs)</td><td>True or False: is the tag on the end still
+the one that belongs to the rest? False for anything too short to carry a
+tag. Remember it says nothing about whether your key is right.</td></tr>
+<tr><td>ShakeChecksum(xs)</td><td>The tag on its own, for a list with no tag
+attached. Order-sensitive.</td></tr>
+<tr><td>ShakeIsField(x)</td><td>Is <code>x</code> a whole number in
+<code>0 .. ShakeModulus() - 1</code>?</td></tr>
+<tr><td>ShakeAllField(xs)</td><td>Is every value? True for the empty
+list.</td></tr>
+</table>
+
+<h3>The field</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>ShakeModulus()</td><td>67108859, the largest prime below
+2<sup>26</sup>. Values run from 0 to one less than this.</td></tr>
+<tr><td>ShakeRounds()</td><td>4 — how many Feistel rounds make one
+block.</td></tr>
+<tr><td>ShakeWrap(x)</td><td><code>x</code> brought into the field. Floored,
+so a negative comes back positive and subtraction is as safe as
+addition.</td></tr>
+</table>
+
+<h3>The works</h3>
+<p>Exposed because the test program leans on them and because the machine is
+meant to be read, not because a caller normally wants them:
+<code>ShakeMix</code> (the mixing function), <code>ShakeRoundFwd</code> and
+<code>ShakeRoundBack</code> (one Feistel round each way),
+<code>ShakeBlockEnc</code> and <code>ShakeBlockDec</code> (four rounds),
+<code>ShakeKeyAt</code> (the rotating key schedule), <code>ShakePad</code>
+(the shift applied to an unpaired value), <code>ShakeBody</code> (everything
+but the tag), and the loops <code>ShakeEncList</code>,
+<code>ShakeDecList</code>, <code>ShakeSumLoop</code> and
+<code>ShakeTakeN</code>.</p>
+
+
+<h2 id="usedby">Who Uses It</h2>
+<p>Nothing in the tree — <code>shaker</code> stands on its own, and is here
+for programs that want a save file, a score table or a settings record to
+survive a curious text editor.</p>
+
+<h2 id="uses">The Machines It Uses</h2>
+<table>
+<tr><th></th><th>Machine</th><th>Why</th></tr>
+<tr><td class="uicon"><a href="seq.html"><img src="../media/icons/seq.svg" alt=""></a></td><td><a href="seq.html">seq</a></td><td><code>Pair</code>
+carries the two halves of a Feistel block, <code>All</code> checks every
+value is in the field, and <code>Last</code> reads the tag.</td></tr>
+</table>
+
+<nav class="pager" aria-label="Machines, in catalog order">
+  <a href="dict.html"><span class="dir">&larr; Previous machine</span><span class="ttl">dict</span></a>
+  <a class="next" href="json.html"><span class="dir">Next machine &rarr;</span><span class="ttl">json</span></a>
+</nav>
+<footer>Named for the shoddy mills of the West Riding: Useless Things Made
+Useful Through Skill (<a href="../heritage.html">the heritage of the name</a>).<br>
+&copy; 2026 Stephen Vincent Foster</footer>
+</div>
+</body>
+</html>

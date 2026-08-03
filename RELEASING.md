@@ -78,8 +78,21 @@ The first is read-only too, and rebuilds its ground truth from the tree on
 every run: each
 machine page's **"Who Uses It"** (machines that `Include` it, mills that call
 its words) and **"The Machines It Uses"** (its own `Include`s) must match the
-sources exactly, both directions. `ALL PAGES MATCH GROUND TRUTH` is the pass;
-any drift prints page-vs-truth and exits non-zero.
+sources exactly, both directions. It then makes three structural checks that
+catch the things a growing tree quietly breaks: every machine and mill has a
+page and is listed in its catalog, the docs home and the README (and no page
+is an orphan); every docs page carries the same nav bar, so a page added
+without updating the others is named; and the .NET version quoted anywhere in
+the docs matches the framework the mill actually targets.
+`ALL PAGES MATCH GROUND TRUTH` is the pass; any drift prints page-vs-truth and
+exits non-zero.
+
+**Don't write counts into prose.** "Twenty-two machines", "eight mills",
+"fifteen words" and the like are true on the day they are typed and wrong the
+next time the tree grows — and the same number is usually repeated across a
+dozen pages. Write "every machine", "the mills", "every word" instead. The
+catalog checks above make the *listings* self-maintaining; a number in a
+sentence can only be maintained by hand, so don't create the obligation.
 
 The script covers what a machine can check. The judgment half — do the mill
 pages' uses tables still tell the truth, does the quickref know every new
@@ -114,6 +127,20 @@ git push origin main
 ```
 
 `--no-ff` keeps the feature visible as a bubble in history.
+
+### Shut the build servers down first
+
+`build.* all` begins by deleting `bin/`, and a `dotnet` build server left running
+from earlier work holds `bin/mill.exe` open. The release then dies at the clean step
+with `Access to the path 'mill.exe' is denied` — after it has already cut the release
+branch, so you are left mid-flight on `release/VX.Y.Z` with nothing pushed.
+
+```sh
+dotnet build-server shutdown
+```
+
+Cheap, safe, and worth doing every time. If it happens anyway, the script tells you
+the undo: `git checkout main && git branch -D release/VX.Y.Z`.
 
 ## 2 — Cut the release
 

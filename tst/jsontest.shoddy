@@ -1,0 +1,307 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem jsontest.shoddy — test program for machines/json.shoddy
+Rem
+Rem Assert-driven, in the isamtest.shoddy / randomtest.shoddy pattern:
+Rem it prints what it is doing and stops the run at the first assertion
+Rem that fails, ending with ALL ASSERTIONS PASSED when it does not.
+Rem
+Rem The centrepiece is the last section. tst/json/forecast.json is a
+Rem real 13 KB application/geo+json response from api.weather.gov, and
+Rem JsonPretty(JsonParse(it), 4) reproduces it BYTE FOR BYTE — which
+Rem checks the reader and the writer at once, against a third-party
+Rem producer, on escaping, number formatting, member order and layout
+Rem together. Nothing hand-written proves as much.
+Rem
+Rem What cannot be tested here: the aborting half of each guard pair.
+Rem JsonParse, JGet, JNth, JCount and JsonText-on-a-non-finite all call
+Rem Error, which would kill this whole run — the same limitation
+Rem isamtest documents. The total halves are exercised hard instead,
+Rem which is the point of their existing.
+Rem
+Rem Build (once): build.cmd build
+Rem Run:          bin\mill run tst\jsontest.shoddy        (from the repo root)
+Rem ==================================================================
+
+Include "../machines/json.shoddy"
+
+Rem ---- helpers ---------------------------------------------------------
+
+Rem A quoted JSON string literal, built without fighting escapes.
+Def Quo(s As String) As String
+    JQt() & s & JQt()
+
+Rem The offset a bad document failed at; 0 if it parsed after all, which
+Rem is never a legal offset, so Assert(ErrAt(x) = n) proves both that it
+Rem failed and where.
+Def ErrAt(s As String) As Number
+    Select Case JsonRead(s)
+        Case JErr(w, at)
+            at
+        Case Else
+            0
+
+Def Parsed(s As String) As Boolean
+    Select Case JsonRead(s)
+        Case JOk(v)
+            True
+        Case Else
+            False
+
+Rem The parsed value, or JNull if it failed — for the positive cases.
+Def Doc(s As String) As Json
+    Select Case JsonRead(s)
+        Case JOk(v)
+            v
+        Case Else
+            JNull()
+
+Rem Round trip: text out, read back, deep-compare. Note JEqual and not
+Rem =: a List is a quotation and compares by identity, so = is only
+Rem structural down to the first array or object.
+Def Trips(j As Json) As Boolean
+    JEqual(Doc(JsonText(j)), j)
+
+Def Rep(s As String, n As Number, acc As String) As String
+    If n <= 0 Then
+        acc
+    Else
+        Rep(s, n - 1, acc & s)
+
+Def Main()
+    Print("--- scalars ---")
+    Print(JsonText(Doc("null")))                        Rem null
+    Print(JsonText(Doc("true")))                        Rem true
+    Print(JsonText(Doc("false")))                       Rem false
+    Print(JsonText(Doc("0")))                           Rem 0
+    Print(JsonText(Doc("-0")))                          Rem -0
+    Print(JsonText(Doc("42")))                          Rem 42
+    Print(JsonText(Doc("-42")))                         Rem -42
+    Print(JsonText(Doc("3.25")))                        Rem 3.25
+    Print(JsonText(Doc("-0.5")))                        Rem -0.5
+    Print(JsonText(Doc(Quo(""))))                       Rem ""
+    Assert(IsJNull(Doc("null")), "NULL IS NULL")
+    Assert(Not IsJNull(Doc("0")), "ZERO IS NOT NULL")
+    Assert(JBoolOr(Doc("true"), False), "TRUE READS TRUE")
+    Assert(Not JBoolOr(Doc("false"), True), "FALSE READS FALSE")
+    Assert(JNumOr(Doc("-42"), 0) = 0 - 42, "NEGATIVES")
+    Assert(JNumOr(Doc("3.25"), 0) = 3.25, "FRACTIONS")
+    Assert(JStrOr(Doc(Quo("")), "x") = "", "THE EMPTY STRING")
+
+    Print("--- exponents, all four spellings ---")
+    Assert(JNumOr(Doc("1e5"), 0) = 100000, "1e5")
+    Assert(JNumOr(Doc("1E5"), 0) = 100000, "1E5")
+    Assert(JNumOr(Doc("1e+5"), 0) = 100000, "1e+5")
+    Assert(JNumOr(Doc("1e-5"), 0) = 0.00001, "1e-5")
+    Assert(JNumOr(Doc("-1.5E+3"), 0) = 0 - 1500, "A SIGNED MANTISSA AND EXPONENT")
+    Assert(JNumOr(Doc("0.5"), 0) = 0.5, "A LEADING ZERO IS LEGAL BEFORE A POINT")
+    Print(JsonText(Doc("1e5")))                         Rem 100000
+
+    Print("--- escapes ---")
+    Let esc = Quo(JBs() & JQt() & JBs() & JBs() & JBs() & "/" & JBs() & "b" & JBs() & "f" & JBs() & "n" & JBs() & "r" & JBs() & "t")
+    Let escd = JStrOr(Doc(esc), "")
+    Assert(Len(escd) = 8, "EIGHT ESCAPES BECOME EIGHT CHARACTERS")
+    Assert(Mid(escd, 1, 1) = JQt(), "ESCAPED QUOTE")
+    Assert(Mid(escd, 2, 1) = JBs(), "ESCAPED BACKSLASH")
+    Assert(Mid(escd, 3, 1) = "/", "ESCAPED SOLIDUS")
+    Assert(Asc(Mid(escd, 4, 1)) = 8, "BACKSPACE")
+    Assert(Asc(Mid(escd, 5, 1)) = 12, "FORM FEED")
+    Assert(Asc(Mid(escd, 6, 1)) = 10, "LINE FEED")
+    Assert(Asc(Mid(escd, 7, 1)) = 13, "CARRIAGE RETURN")
+    Assert(Asc(Mid(escd, 8, 1)) = 9, "TAB")
+    Rem \uXXXX in both hex cases, and the solidus going back out bare.
+    Assert(JStrOr(Doc(Quo(JBs() & "u004a")), "") = "J", "LOWERCASE HEX QUAD")
+    Assert(JStrOr(Doc(Quo(JBs() & "u004A")), "") = "J", "UPPERCASE HEX QUAD")
+    Assert(JStrOr(Doc(Quo(JBs() & "u0041" & JBs() & "u0042")), "") = "AB", "TWO QUADS RUNNING")
+    Print(JsonEscape("a/b"))                            Rem a/b — solidus is NOT escaped
+    Print(JsonEscape(JQt() & JBs()))                    Rem \"\\
+    Print(JsonEscape(Chr(1) & Chr(31)))                 Rem 
+    Print(JsonEscape(Chr(8) & Chr(12) & Chr(9)))        Rem \b\f\t
+    Assert(JsonEscape("a/b") = "a/b", "SOLIDUS GOES OUT BARE")
+    Assert(JsonEscape("plain") = "plain", "AN UNREMARKABLE STRING IS UNTOUCHED")
+    Rem Non-ASCII is emitted raw, not escaped.
+    Assert(JsonEscape(Chr(233)) = Chr(233), "NON-ASCII IS NOT ESCAPED")
+
+    Print("--- surrogates ---")
+    Rem A high surrogate followed by a low one is one astral character:
+    Rem Shoddy strings are .NET strings, so the two code units ARE the
+    Rem character and no arithmetic is wanted.
+    Let pairDoc = JStrOr(Doc(Quo(JBs() & "uD83D" & JBs() & "uDE00")), "")
+    Assert(Len(pairDoc) = 2, "A SURROGATE PAIR IS TWO CODE UNITS")
+    Assert(Asc(pairDoc) = 55357, "THE HIGH SURROGATE SURVIVES")
+    Assert(Asc(Mid(pairDoc, 2, 1)) = 56832, "THE LOW SURROGATE SURVIVES")
+    Rem A lone high surrogate is preserved, not rejected — rejecting it
+    Rem would make some real documents impossible to round-trip.
+    Let lone = JStrOr(Doc(Quo(JBs() & "uD83D")), "")
+    Assert(Len(lone) = 1, "A LONE HIGH SURROGATE IS KEPT")
+    Assert(Asc(lone) = 55357, "AND KEPT INTACT")
+    Assert(Trips(JStr(pairDoc)), "AN ASTRAL CHARACTER ROUND-TRIPS")
+    Assert(Trips(JStr(lone)), "A LONE SURROGATE ROUND-TRIPS")
+
+    Print("--- empties and nesting ---")
+    Print(JsonText(Doc("[]")))                          Rem []
+    Print(JsonText(Doc("{}")))                          Rem {}
+    Assert(JCount(Doc("[]")) = 0, "THE EMPTY ARRAY")
+    Assert(JCount(Doc("{}")) = 0, "THE EMPTY OBJECT")
+    Let deepDoc = Doc("[{" & Quo("a") & ":[1,{" & Quo("b") & ":[]}]}]")
+    Print(JsonText(deepDoc))                            Rem [{"a":[1,{"b":[]}]}]
+    Assert(JCount(deepDoc) = 1, "ARRAYS OF OBJECTS OF ARRAYS")
+    Assert(JCount(JPath(JNth(deepDoc, 1), { "a" })) = 2, "AND DOWN THE INSIDE OF THEM")
+
+    Print("--- whitespace ---")
+    Let ws = " " & Chr(9) & JNl() & Chr(13)
+    Let spaced = ws & "{" & ws & Quo("a") & ws & ":" & ws & "[" & ws & "1" & ws & "," & ws & "2" & ws & "]" & ws & "}" & ws
+    Assert(Parsed(spaced), "WHITESPACE IS LEGAL IN EVERY POSITION")
+    Assert(JsonText(Doc(spaced)) = "{" & Quo("a") & ":[1,2]}", "AND CARRIES NO MEANING")
+    Rem Exactly four characters are whitespace. These two are not.
+    Assert(ErrAt(Chr(12) & "1") = 1, "FORM FEED IS NOT WHITESPACE")
+    Assert(ErrAt(Chr(11) & "1") = 1, "VERTICAL TAB IS NOT WHITESPACE")
+
+    Print("--- duplicate keys: last wins ---")
+    Let dup = Doc("{" & Quo("a") & ":1," & Quo("b") & ":2," & Quo("a") & ":3}")
+    Print(JsonText(dup))                                Rem {"a":3,"b":2}
+    Assert(JCount(dup) = 2, "A REPEATED KEY IS COLLAPSED")
+    Assert(JNumOr(JGetOr(dup, "a", JNull()), 0) = 3, "THE LAST VALUE WINS")
+    Assert(Join(JKeys(dup), ",") = "a,b", "AT THE FIRST OCCURRENCE'S POSITION")
+
+    Print("--- round trip ---")
+    Rem Numbers chosen to survive Str's ten significant digits, so this
+    Rem tests the parser rather than Format.Num.
+    Let fixture = JObj({ Pair("n", JNum(0 - 42.5)), Pair("z", JNum(0)), Pair("big", JNum(1234567890)), Pair("s", JStr("a" & JQt() & "b" & JBs() & "c" & Chr(9))), Pair("t", JBool(True)), Pair("f", JBool(False)), Pair("nil", JNull()), Pair("arr", JArr({ JNum(1), JStr("two"), JNull(), JArr({ }), JObj({ }) })), Pair("obj", JObj({ Pair("in", JArr({ JNum(1.5) })) })) })
+    Assert(Trips(fixture), "THE FIXTURE ROUND-TRIPS STRUCTURALLY")
+    Assert(JsonText(Doc(JsonText(fixture))) = JsonText(fixture), "AND ITS TEXT IS STABLE")
+    Assert(JEqual(Doc(JsonPretty(fixture, 3)), fixture), "PRETTY OUTPUT PARSES BACK THE SAME")
+    Assert(Not JEqual(fixture, JPut(fixture, "n", JNum(1))), "JEQUAL NOTICES A CHANGED VALUE")
+    Rem The thing JEqual exists for: = cannot see inside a list.
+    Assert((JArr({ JNum(1) }) = JArr({ JNum(1) })) = False, "= COMPARES LISTS BY IDENTITY")
+    Assert(JEqual(JArr({ JNum(1) }), JArr({ JNum(1) })), "JEQUAL COMPARES THEM STRUCTURALLY")
+    Rem Objects are unordered, as JSON says; arrays are not.
+    Assert(JEqual(Doc("{" & Quo("a") & ":1," & Quo("b") & ":2}"), Doc("{" & Quo("b") & ":2," & Quo("a") & ":1}")), "MEMBER ORDER DOES NOT CHANGE EQUALITY")
+    Assert(Not JEqual(Doc("[1,2]"), Doc("[2,1]")), "ITEM ORDER DOES")
+
+    Print("--- navigation ---")
+    Let nav = Doc("{" & Quo("a") & ":{" & Quo("b") & ":[10,20,30]}," & Quo("s") & ":" & Quo("hi") & "}")
+    Assert(JHas(nav, "a"), "JHAS FINDS A KEY")
+    Assert(Not JHas(nav, "zz"), "JHAS MISSES A MISSING ONE")
+    Assert(Not JHas(Doc("[1]"), "a"), "JHAS ON A NON-OBJECT IS FALSE, NOT AN ERROR")
+    Assert(JNumOr(JNth(JPath(nav, { "a", "b" }), 2), 0) = 20, "JPATH THEN JNTH")
+    Assert(JStrOr(JGetOr(nav, "s", JNull()), "") = "hi", "JGETOR PRESENT")
+    Assert(IsJNull(JGetOr(nav, "nope", JNull())), "JGETOR ABSENT")
+    Assert(JStrOr(JPathOr(nav, { "a", "nope" }, JStr("dflt")), "") = "dflt", "JPATHOR STOPS AT A MISSING KEY")
+    Assert(JStrOr(JPathOr(nav, { }, JStr("x")), "") <> "x", "AN EMPTY PATH IS THE DOCUMENT ITSELF")
+    Assert(Join(JKeys(nav), ",") = "a,s", "JKEYS IS DOCUMENT ORDER")
+    Assert(JCount(nav) = 2, "JCOUNT OF AN OBJECT")
+    Assert(JCount(JPath(nav, { "a", "b" })) = 3, "JCOUNT OF AN ARRAY")
+    Rem The total coercions fall back rather than abort.
+    Assert(JStrOr(JNull(), "d") = "d", "JSTROR FALLS BACK")
+    Assert(JNumOr(JStr("7"), 5) = 5, "JNUMOR DOES NOT COERCE A STRING")
+    Assert(JBoolOr(JNum(1), False) = False, "JBOOLOR DOES NOT COERCE A NUMBER")
+
+    Print("--- building and updating ---")
+    Let built = JPut(JPut(JObj({ }), "x", JNum(1)), "y", JStrList({ "p", "q" }))
+    Assert(JCount(built) = 2, "JPUT ADDS")
+    Assert(JNumOr(JGetOr(built, "x", JNull()), 0) = 1, "AND THE VALUE IS THERE")
+    Assert(JCount(JDel(built, "x")) = 1, "JDEL REMOVES")
+    Assert(JCount(JDel(built, "absent")) = 2, "JDEL OF A MISSING KEY IS HARMLESS")
+    Assert(JsonText(JNumList({ 1, 2, 3 })) = "[1,2,3]", "JNUMLIST")
+    Assert(JsonText(JStrList({ "a", "b" })) = "[" & Quo("a") & "," & Quo("b") & "]", "JSTRLIST")
+    Rem JPut has DictPut semantics, so re-putting a key MOVES it to the front.
+    Assert(Join(JKeys(JPut(built, "x", JNum(9))), ",") = "x,y", "RE-PUTTING A KEY MOVES IT")
+
+    Print("--- canonical ---")
+    Let unsorted = Doc("{" & Quo("c") & ":1," & Quo("a") & ":{" & Quo("z") & ":1," & Quo("m") & ":2}," & Quo("b") & ":[{" & Quo("q") & ":1," & Quo("p") & ":2}]}")
+    Let canon = JsonCanonical(unsorted)
+    Print(JsonText(canon))                              Rem {"a":{"m":2,"z":1},"b":[{"p":2,"q":1}],"c":1}
+    Assert(Join(JKeys(canon), ",") = "a,b,c", "MEMBERS SORT BY KEY")
+    Assert(Join(JKeys(JGetOr(canon, "a", JNull())), ",") = "m,z", "RECURSIVELY")
+    Assert(Join(JKeys(JNth(JGetOr(canon, "b", JNull()), 1)), ",") = "p,q", "AND THROUGH ARRAYS")
+    Assert(JsonText(JsonCanonical(unsorted)) = JsonText(canon), "CANONICAL IS STABLE")
+    Assert(JEqual(canon, unsorted), "AND CHANGES NOTHING BUT THE ORDER")
+
+    Print("--- IsFinite ---")
+    Rem JsonText Errors on a non-finite number, which would end this run,
+    Rem so the predicate under that guard is what gets tested here.
+    Assert(IsFinite(0), "ZERO IS FINITE")
+    Assert(IsFinite(0 - 1.797e308), "SO IS THE LARGEST NEGATIVE DOUBLE")
+    Assert(Not IsFinite(1e308 * 10), "INFINITY IS NOT")
+    Assert(Not IsFinite(0 - 1e308 * 10), "NOR IS NEGATIVE INFINITY")
+
+    Print("--- bad documents: every one a JErr, none an abort ---")
+    Assert(ErrAt("+1") = 1, "+1")
+    Assert(ErrAt(".5") = 1, ".5")
+    Assert(ErrAt("5.") = 3, "5.")
+    Assert(ErrAt("01") = 1, "01")
+    Assert(ErrAt("1e") = 3, "1e")
+    Assert(ErrAt("1e+") = 4, "1e+")
+    Assert(ErrAt("--1") = 1, "--1")
+    Assert(ErrAt("0x10") = 2, "0x10")
+    Assert(ErrAt("NaN") = 1, "NaN")
+    Assert(ErrAt("Infinity") = 1, "Infinity")
+    Assert(ErrAt("'single'") = 1, "SINGLE QUOTES")
+    Assert(ErrAt("{a:1}") = 2, "AN UNQUOTED KEY")
+    Assert(ErrAt("{" & Quo("a") & ":1,}") = 8, "A TRAILING COMMA IN AN OBJECT")
+    Assert(ErrAt("[1,]") = 4, "A TRAILING COMMA IN AN ARRAY")
+    Assert(ErrAt("[1 2]") = 4, "A MISSING COMMA")
+    Assert(ErrAt("{" & Quo("a") & "}") = 5, "A KEY WITH NO COLON")
+    Assert(ErrAt("{" & Quo("a") & ":}") = 6, "A KEY WITH NO VALUE")
+    Assert(ErrAt(JQt() & "abc") = 5, "AN UNTERMINATED STRING")
+    Assert(ErrAt("[1,2") = 5, "AN UNTERMINATED ARRAY")
+    Assert(ErrAt("{" & Quo("a") & ":1") = 7, "AN UNTERMINATED OBJECT")
+    Assert(ErrAt(Quo("a" & Chr(9) & "b")) = 3, "A RAW CONTROL CHARACTER IN A STRING")
+    Assert(ErrAt(Quo("a" & JBs() & "x")) = 3, "AN UNKNOWN ESCAPE")
+    Assert(ErrAt(Quo(JBs() & "u12")) = 2, "A SHORT HEX QUAD")
+    Assert(ErrAt(Quo(JBs() & "uZZZZ")) = 2, "A HEX QUAD THAT IS NOT HEX")
+    Assert(ErrAt("{} x") = 4, "TRAILING GARBAGE")
+    Assert(ErrAt("") = 1, "THE EMPTY INPUT")
+    Assert(ErrAt("   ") = 4, "WHITESPACE ALONE")
+    Assert(ErrAt("tru") = 1, "A TRUNCATED LITERAL")
+    Assert(ErrAt("[1,2]]") = 6, "ONE BRACKET TOO MANY")
+
+    Print("--- NUL cannot be carried ---")
+    Rem Chr(0) is the empty string in Shoddy, so a \u0000 escape is
+    Rem rejected by name rather than silently dropped — which would hand
+    Rem back a string shorter than the document said it was.
+    Assert(ErrAt(Quo(JBs() & "u0000")) = 2, "A NUL ESCAPE IS REFUSED")
+    Assert(Len(Chr(0)) = 0, "BECAUSE CHR(0) IS THE EMPTY STRING")
+    Assert(JStrOr(Doc(Quo(JBs() & "u0001")), "") = Chr(1), "BUT U+0001 IS FINE")
+
+    Print("--- depth ---")
+    Let deepStr = Rep("[", 300, "") & Rep("]", 300, "")
+    Assert(ErrAt(deepStr) = 201, "300 LEVELS EXCEEDS THE DEFAULT LIMIT OF 200")
+    Select Case JsonReadDepth(deepStr, 400)
+        Case JOk(v)
+            Assert(JCount(v) = 1, "AND PARSES WITH THE LIMIT RAISED")
+        Case JErr(w, at)
+            Assert(False, "JSONREADDEPTH(400) SHOULD HAVE SUCCEEDED: " & w)
+    Assert(JsonMaxDepth() = 200, "THE DEFAULT LIMIT IS 200")
+
+    Print("--- the sample fixture, pretty-printed byte for byte ---")
+    Let sample = JsonParse(ReadFile("tst/json/sample.json"))
+    Let wantPretty = ReadFile("tst/json/sample-pretty.json")
+    Assert(JsonPretty(sample, 2) = wantPretty, "JSONPRETTY MATCHES THE FIXTURE")
+    Assert(JsonText(sample) = JsonText(JsonParse(wantPretty)), "COMPACT AND PRETTY CARRY THE SAME DOCUMENT")
+    Assert(JsonPretty(sample, 0) = JsonText(sample), "INDENT 0 IS COMPACT")
+    Assert(JStrOr(JGetOr(sample, "escaped", JNull()), "") = "quote" & JQt() & " back" & JBs() & " slash/ tab" & Chr(9) & " nl" & JNl(), "THE ESCAPED MEMBER DECODES")
+    Assert(JNumOr(JGetOr(sample, "exp", JNull()), 0) = 1500, "1.5e3 IS 1500")
+    Assert(JCount(JGetOr(JGetOr(sample, "nested", JNull()), "empty", JNull())) = 0, "AN EMPTY ARRAY NESTED INSIDE")
+
+    Print("--- the real weather document ---")
+    Let raw = ReadFile("tst/json/forecast.json")
+    Print("bytes: " & Str(Len(raw)))
+    Let doc = JsonParse(raw)
+    Assert(Join(JKeys(doc), ",") = "@context,type,geometry,properties", "THE TOP-LEVEL KEYS, IN DOCUMENT ORDER")
+    Let periods = JPath(doc, { "properties", "periods" })
+    Assert(JCount(periods) = 14, "PROPERTIES THEN PERIODS REACHES ALL FOURTEEN")
+    Let p1 = JNth(periods, 1)
+    Print("period 1: " & JStrOr(JGetOr(p1, "name", JNull()), "?") & " / " & Str(JNumOr(JGetOr(p1, "temperature", JNull()), 0)) & JStrOr(JGetOr(p1, "temperatureUnit", JNull()), "?"))
+    Assert(JNumOr(JGetOr(p1, "number", JNull()), 0) = 1, "AND A PERIOD INDEXES")
+    Assert(JStrOr(JPath(doc, { "geometry", "type" }), "") = "Polygon", "THE GEOMETRY IS A POLYGON")
+    Assert(JBoolOr(JGetOr(p1, "isDaytime", JNull()), True) = False, "TONIGHT IS NOT DAYTIME")
+    Rem The whole point of the exercise: read a real third-party document
+    Rem and write it back exactly as it arrived.
+    Assert(JsonPretty(doc, 4) = raw, "JSONPRETTY REPRODUCES THE RESPONSE BYTE FOR BYTE")
+    Assert(JEqual(JsonParse(JsonText(doc)), doc), "AND IT ROUND-TRIPS THROUGH COMPACT TEXT")
+
+    Print("ALL ASSERTIONS PASSED")

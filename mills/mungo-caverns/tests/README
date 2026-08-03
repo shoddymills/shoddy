@@ -1,6 +1,6 @@
 = Testing Mungo Caverns =
 
-Five suites and a harness, then the transcripts:
+Five suites and a harness:
 
   ../test.shoddy        the generator, the table sizes, the parser, and
                         the output channel.  The fast one.
@@ -28,108 +28,55 @@ Five suites and a harness, then the transcripts:
   harness.shoddy        the game, plus the twelve lines of turn loop the
                         suites above need.  They include this and
                         nothing else.
-  run.sh                the C original's recorded transcripts, replayed.
-                        The port's actual specification.
 
-    ./build.sh test     runs everything but run.sh   (~20 seconds)
-    ./build.sh smoke    16 recorded transcripts      (~3 minutes)
-    ./build.sh check    all 107                      (~18 minutes)
+    ./build.sh test     runs all five               (~20 seconds)
 
-Everything but run.sh is a baseline: it cannot tell you the port is
-faithful to the original, only that it still does what it did yesterday
-and that the cave is internally coherent.  The transcripts are the
-oracle, and where the two disagree the transcripts win.  Keep both.
+194 assertions in 29 check groups, and the count understates them: most
+of test-tables.shoddy asserts through All(Range(...)) sweeps, so its four
+travel-row assertions are four predicates across all 878 rows, and the
+rest sweep the 185 locations, the 70 objects, the 213 messages and the
+vocabulary the same way.  What runs is on the order of ten thousand
+predicate evaluations.
 
 Two notes on running them.  The suites are run with their input closed,
 because dying asks whether you want to be resurrected and that is a
 read; with no input the answer is no, which is why a fuzz run reports
-how far it got.  And test-turn.shoddy writes and re-reads one save file,
+how far it got -- on the run we ship, one leg is killed by a curmudgeon's
+knife after 43 of its 150 commands, and says so rather than hiding it.
+And test-turn.shoddy writes and re-reads one save file,
 tests/roundtrip.adv, which is how the save format's round trip is
 checked; it is the only thing here that touches the disk, and it is
 gitignored.
 
 
-= The transcript harness =
+= On the recorded transcripts =
 
-mungo-caverns is a port, so its specification is not a description of what
-the game should do -- it is a recording of what the original does.
-There are ~107 of those recordings, each a .log of commands paired with
-the .chk of exact output they produce.  They live in transcripts/ beside
-this file, and run.sh replays them against mungo-caverns.
+Open Adventure, the C this was ported from, ships about 107 recorded
+transcripts: a .log of commands paired with the .chk of exact output it
+produces.  Ninety-two of them open with an in-band "seed" command that
+pins the linear congruential generator, which makes them a far stronger
+oracle than golden files snapshotted from the current build -- a change
+that draws one extra random number, or skips one draw, diverges every
+seeded game from that point on, and a golden file taken from today's
+mungo-caverns would happily bless the divergence.
 
-Ninety-two of the transcripts open with an in-band "seed" command that
-pins the linear congruential generator.  That is what makes them worth
-more than golden files snapshotted from the current build: a change that
-draws one extra random number, or skips one draw, diverges every seeded
-game from that point onward and is caught here.  A golden file taken
-from today's mungo-caverns would happily bless the divergence.
+The port was developed against them and reached byte-for-byte agreement
+on all 107.  That is why the tables are as faithful as they are, and it
+is why the draw order is treated as load-bearing throughout the source.
 
-== Running ==
+They are not shipped here and there is nothing to run.  They belong to
+Open Adventure, and everything they graded has since been embodied in
+the five suites above, which are the specification now.  Replaying them
+also needed three adjustments a reader should know were made rather than
+assumed away: the curmudgeons' upstream name was substituted in both
+directions, the game's own rename was mapped forward onto the expected
+text, and both sides were reflowed paragraph-by-paragraph, because
+"curmudgeon" is a longer word than the one it replaced and stored
+message text therefore wraps at different columns.
 
-    ./run.sh                 all transcripts        (~18 minutes)
-    ./run.sh --smoke         16 transcripts         (~3 minutes)
-    ./run.sh axebear pirate_carry
-    ./run.sh --keep ...      keep the work directory
-
-With transcripts/ empty, run.sh says so and stops; the five suites above
-do not depend on it.
-
-Or, from the mill directory, "build.cmd check" / "./build.sh check" for
-the full sweep and "build.cmd smoke" / "./build.sh smoke" for the
-subset.  Runtime is dominated by mill startup, about ten seconds per
-transcript, so the subset is the one to use between edits and the full
-sweep the one to use before calling a change finished.
-
-== The three adjustments ==
-
-mungo-caverns renamed the cave's knife-throwing folk to
-curmudgeons.  The rename is total -- the upstream noun, its plural and
-its adjective map onto curmudgeon, curmudgeons and curmudgeonish, and
-nothing else moved -- so run.sh substitutes in both directions.  It has
-to be both: the output names them, but so does the input, because
-several transcripts type commands at them by name and the port's own
-vocabulary no longer holds that word.  The two sed filters in run.sh
-(to_curmudgeon and to_upstream) are the only place the old spelling
-survives here; they run longest-form-first, or the plural comes back
-mangled.
-
-The game itself was also renamed to Mungo Caverns, and the old names
-appear in recorded output: the welcome line, the cave the game says is
-nearby, the suspend and resume messages, the version line.  Two old
-names collapse into the one new one, so this rename cannot be undone
-from the output side; run.sh maps it forward onto the expected text
-instead (to_mungo), shielding "Adventurer" and "Adventuredom", which
-are role words rather than the name.  Typed commands never contain the
-name, so the input side needs nothing.
-
-Because "curmudgeon" is five characters longer than the word it
-replaced, and the new game name is longer than either old one, stored
-message text wraps at different columns than the C's recorded output.
-Both sides are therefore reflowed paragraph-by-paragraph before the diff
--- see reflow.awk, which also states what that costs.
-
-== What the harness sets up ==
-
-Transcripts run in a scratch directory rather than in place, because the
-save tests write .adv files and the reference tree should not collect
-them.  Two details of the C's layout are reproduced there:
-
-  - badmagic feeds the game "../main.o" and expects to open a real file
-    that is not a save, so a junk file sits one level above.
-  - four transcripts resume from a save with one field forced to an
-    impossible value.  The C writes those with a second binary, cheat;
-    mungo-caverns has the same generator behind -cheat, so run.sh writes the
-    fixtures itself in mungo-caverns's save format.  The two formats are not
-    byte-compatible and were never intended to be.
-
-Command-line options travel with the transcript that needs them, in a
-"#options:" line the C's own Makefile reads the same way.  Three
-transcripts use one: -o for the 4.30-style interface, -r to resume at
-startup, -l to tee the session to a file.
-
-== Order ==
-
-Transcripts run in alphabetical order, as they do upstream, because
-saveresume.1 through saveresume.4 are a sequence: the first suspends a
-game to a file that the later ones resume.  Naming is the only thing
-sequencing them.
+One consequence worth keeping in mind.  The suites are a baseline: they
+tell you the cave is internally coherent and that the port still does
+what it did yesterday.  They cannot tell you it still matches Crowther
+and Woods.  Nothing in the tree can, now, so a change to the random
+stream or to stored message text is the kind that has to be reasoned
+about rather than run.

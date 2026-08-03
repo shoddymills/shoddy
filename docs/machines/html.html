@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="HTML Reading and Writing — machines/html.shoddy">
+<title>html — HTML Reading and Writing | Shoddy Machines</title>
+<link rel="stylesheet" href="../style.css">
+<link rel="icon" href="../favicon.svg" type="image/svg+xml">
+<link rel="alternate icon" href="../favicon.ico" sizes="48x48">
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+</head>
+<body>
+<div class="topbar"><div class="inner">
+  <div class="row">
+    <a class="phase" href="index.html"><img class="mark" src="../media/brand/shoddy-icon.svg" alt="" width="23" height="23">Shoddy · The Machines</a>
+    <span class="spacer"></span>
+    <nav class="docnav meta" aria-label="About"><a href="../heritage.html">Heritage</a><a href="../authorship.html">Authorship</a></nav>
+  </div>
+  <nav class="docnav main" aria-label="Documentation"><a href="../tutorials/index.html">Tutorials</a><a href="../guide.html">Guide</a><a href="../quickref.html">Reference</a><span class="here">Machines</span><a href="../mills/index.html">Mills</a><a href="../stack.html">Stack</a><a href="../spec.html">Spec</a><a href="../setup.html">Setup</a><a href="../vscode.html">VS Code</a><a href="../assistants.html">AI</a><a href="../build.html">Toolchain</a><a href="../errors.html">Errors</a></nav>
+</div></div>
+<div class="wrap">
+
+
+<header class="mast has-icon"><div><p class="eyebrow"><a href="index.html#markup">The Machines &middot; Markup &amp; data formats</a></p><h1>html</h1><p class="kicker">HTML Reading and Writing — machines/html.shoddy</p></div><img class="micon" src="../media/icons/html.svg" alt="the html machine&#39;s icon"></header>
+<nav class="pagertop" aria-label="Machines, in catalog order"><a href="xml.html">&larr; xml</a><a href="index.html">All machines</a><a href="seq.html">seq &rarr;</a></nav>
+
+<h2 id="summary">Summary</h2>
+<p><code>html</code> reads a web page into a tree you can walk, and writes a
+tree back out as HTML. It tolerates what real pages are actually like —
+missing end tags, unquoted attributes, uppercase names, a stray
+<code>&lt;</code> in the prose, a <code>&lt;script&gt;</code> full of
+characters that would otherwise be markup — and it does not give up on a page
+because one thing in it is wrong.</p>
+<p>A parsed page <em>is</em> an <a href="xml.html">xml</a> tree. Everything
+that machine can do — <code>XFind</code>, <code>XPath</code>,
+<code>XTextOf</code>, <code>XAttrOr</code>, <code>XEqual</code> — works here
+unchanged, and <code>html</code> adds only what is specifically about
+HTML.</p>
+
+<h2 id="why">Why It's Useful</h2>
+<p>HTML is the most widely produced structured text in the world, and almost
+all of it is written by hand or emitted by something in a hurry. If you want
+to know what is on a page — the links, the headings, the table of numbers,
+the text without the navigation — you need something that will read what is
+there rather than what ought to be there.</p>
+<p>The demonstration that comes with this machine is a real one:
+<code>tst/html-demo.shoddy</code> reads every page in this repository's own
+documentation and reports dead links, anchors pointing at ids that do not
+exist, ids used twice on a page, and images with no <code>alt</code> text. It
+runs in a few seconds and it has already earned its keep. The machines
+catalog wires twenty-six pages into a previous/next chain by hand, and a
+chain like that fails silently: a page can be in the catalog, on the home
+page and in the sitemap and still be unreachable by paging, because two of
+its neighbours agree with each other and not with it. That had happened. A
+person did not notice; a program noticed immediately.</p>
+<pre><code>Include "html.shoddy"
+
+Def Main()
+    Let page = HtmlLoad("docs/index.html")
+    Print(HTitle(page))
+    Print(Str(Length(HLinks(page))) &amp; " links")
+    Print(HtmlTextOf(page))          ' the readable text, without the script</code></pre>
+
+<h2 id="history">A Brief History of HTML</h2>
+<p>Tim Berners-Lee wrote the first version at CERN in 1990 as a short list of
+tags borrowed from an in-house SGML dialect. There was no specification for
+several years — there was a browser, and whatever it accepted was the
+language.</p>
+<p>That accident set the character of everything since. Pages were written by
+people, not compilers, and they were full of mistakes; and because a browser
+that refused a page simply lost to a browser that rendered it anyway, every
+browser rendered it anyway. Error recovery became the language's central
+feature, and it was completely undocumented. Two browsers guessed differently
+about the same broken page, so pages were written to work in one browser and
+not the other, which is most of what the 1990s were about.</p>
+<p>XHTML, around 2000, tried to fix this by declaring HTML to be XML: one
+mistake, and the page does not render. Authors did not want that and neither,
+in the end, did anyone else, and the effort collapsed.</p>
+<p>What replaced it was the opposite idea and the better one. HTML5, from
+around 2004 and a Recommendation in 2014, specified the <em>error recovery
+itself</em> — a tree-construction algorithm precise enough that every browser
+now builds the same tree from the same broken page. It is a remarkable
+document, and it is roughly the size of this entire repository.</p>
+<p>Which is why this machine is honest about being something smaller. It
+implements the forgiving parts a hand-written page actually relies on, and it
+says plainly which of the clever parts it does not.</p>
+
+<h2 id="guide">User's Guide</h2>
+<h3>The tree is xml's</h3>
+<p>There is no <code>Html</code> type. <code>HtmlParse</code> returns an
+<code>XDocument</code> holding <code>XElem</code>, <code>XText</code>,
+<code>XComment</code> and <code>XDoctype</code> nodes — the same tree
+<a href="xml.html">xml</a> builds, so the same words walk it:</p>
+<pre><code>Let page = HtmlLoad("index.html")
+Print(XTextOf(XFind(page, "h1")))                 ' xml's XFind
+Print(XAttrOr(HById(page, "main"), "class", ""))  ' xml's XAttrOr</code></pre>
+<p>That is the whole design, and it is the same debt <a href="json.html">json</a>
+owes <a href="dict.html">dict</a>: when the data structure is already
+right, use it rather than writing a second one that is nearly the same.</p>
+
+<h3>The four questions that are about HTML</h3>
+<table>
+<tr><th>You want</th><th>Word</th></tr>
+<tr><td>an element by id</td><td><code>HById(page, "main")</code></td></tr>
+<tr><td>elements by class</td><td><code>HByClass(page, "mast")</code></td></tr>
+<tr><td>elements by tag</td><td><code>HByTag(page, "td")</code></td></tr>
+<tr><td>every link, image or id</td><td><code>HLinks</code>, <code>HImages</code>, <code>HIds</code></td></tr>
+<tr><td>the title</td><td><code>HTitleOr(page, "")</code></td></tr>
+<tr><td>the readable text</td><td><code>HtmlTextOf(page)</code></td></tr>
+</table>
+<p><code>HByClass</code> searches the class attribute by <em>membership</em>,
+not by equality: an element with <code>class="mast has-icon"</code> is found
+by either name. <code>HtmlTextOf</code> is the text a reader would see, which
+means the <code>&lt;script&gt;</code> and the <code>&lt;style&gt;</code> are
+left out — <code>XTextOf</code> is still there when you want everything.</p>
+
+<h2 id="hood">Under the Hood</h2>
+<h3>What "forgiving" means, exactly</h3>
+<p>Rather than describe it, the test suite pins it down:
+<code>tst/html/soup.html</code> is written badly on purpose, once for every
+rule, and <code>tst/html/soup-clean.html</code> is what the writer makes of
+it, compared byte for byte. What is handled:</p>
+<ul>
+<li><strong>Case folding.</strong> <code>&lt;DIV&gt;</code> and
+<code>&lt;div&gt;</code> are one tag; <code>HREF</code> and
+<code>href</code> are one attribute.</li>
+<li><strong>Void elements.</strong> The fourteen that take no content, closed
+or not, and written back bare — <code>&lt;br&gt;</code>, never
+<code>&lt;br/&gt;</code>.</li>
+<li><strong>Raw text.</strong> Inside <code>&lt;script&gt;</code> and
+<code>&lt;style&gt;</code> a <code>&lt;</code> is not markup, which is the
+only way a page can carry <code>if (a &lt; b)</code>.</li>
+<li><strong>Three attribute spellings.</strong> Quoted with either quote,
+unquoted, or bare — a name with no value, which HTML gives the empty
+string. A repeated attribute keeps the <em>first</em>, which is the
+opposite of what a JSON object does with a repeated key.</li>
+<li><strong>Implied end tags.</strong> A <code>&lt;li&gt;</code> closes the
+one before it; a <code>&lt;p&gt;</code> closes when a block element opens;
+a table cell closes when the next cell <em>or the next row</em> begins.</li>
+<li><strong>Stray markup.</strong> A <code>&lt;</code> that begins nothing is
+text, and an end tag matching nothing that is open is dropped.</li>
+</ul>
+
+<h3>The open-element stack</h3>
+<p>That last rule needs more than it looks. When an end tag arrives that does
+not match the innermost open element, there are two possibilities and they
+want opposite treatment: it may belong to an <em>ancestor</em>, in which case
+everything down to that ancestor should close; or it may belong to
+<em>nothing</em>, in which case it should be discarded and parsing carry on
+where it was.</p>
+<p>Without knowing which elements are open you cannot tell those apart, and
+guessing wrong is not a small error. A stray <code>&lt;/p&gt;</code> — left
+over from a paragraph some other rule had already closed — would close the
+<code>&lt;body&gt;</code> and the <code>&lt;html&gt;</code> around it, and
+every element after that point would be torn off the tree and left dangling
+at the top level. So the list of open tags is threaded down through the
+reader, and the two cases are told apart by asking it.</p>
+
+<h3>The entity table, and why it holds bytes</h3>
+<p>HTML5 names 2231 character references. This table holds about eighty,
+chosen by counting what hand-written pages actually use — the arrows, dashes,
+quotes and symbols — plus numeric references in either base. An unknown name
+is left standing as its own text, never an error: refusing to render a page
+over one bad ampersand is precisely the behaviour HTML spent thirty years
+getting rid of.</p>
+<p>The values are UTF-8 <em>bytes</em>, not code points, and
+<a href="xml.html#hood">xml explains at length why</a>: <code>ReadFile</code>
+is one byte to one character, so <code>&amp;mdash;</code> has to decode to
+the same three bytes that a literal em dash already is in the file. Decoding
+it to <code>Chr(8212)</code> would make the entity and the literal two
+different strings, and <code>WriteFile</code> would turn one of them into a
+question mark.</p>
+
+<h3>The writer is not xml's</h3>
+<p>HTML is not XML and serialising it as though it were produces pages that
+break. A void element goes out bare. A raw-text element's content goes out
+unescaped, because escaping a <code>&lt;</code> inside a script would change
+the program. And an empty non-void element goes out as a
+<em>pair</em> — <code>&lt;div&gt;&lt;/div&gt;</code>, never
+<code>&lt;div/&gt;</code>, which a browser reads as an open div that then
+swallows the rest of the page.</p>
+
+<h3>WHAT THIS IS NOT</h3>
+<p>This is a forgiving tag-soup reader, <strong>not an HTML5 parser</strong>,
+and the difference is not a formality. HTML5's tree-construction algorithm —
+the list of active formatting elements, the adoption agency, foster
+parenting, the twenty-odd insertion modes — exists to make every browser
+agree on what a broken page means. None of that is here.</p>
+<p>Concretely: misnested formatting is not repaired, so
+<code>&lt;b&gt;&lt;i&gt;x&lt;/b&gt;&lt;/i&gt;</code> does not come back as
+the two overlapping runs a browser would build. A <code>&lt;tbody&gt;</code>
+a browser would invent is not invented. Content that HTML5 would move out of
+a table and place before it is left where it was written. Such a page will
+parse — this reader does not abort easily — but the tree will be the one the
+bytes describe, not the one the browser shows.</p>
+
+<h2 id="words">Word Reference</h2>
+<h3>Reading and writing</h3>
+<table>
+<tr><th>Word</th><th>What it does</th></tr>
+<tr><td><code>HtmlParse(s)</code></td><td>Parse a page; aborts only on the depth budget.</td></tr>
+<tr><td><code>HtmlRead(s)</code></td><td>Total: <code>XOk(doc)</code> or <code>XErr(why, at)</code>.</td></tr>
+<tr><td><code>HtmlReadDepth(s, n)</code></td><td>As above with your own nesting budget.</td></tr>
+<tr><td><code>HtmlLoad(path)</code></td><td><code>HtmlParse(ReadFile(path))</code>.</td></tr>
+<tr><td><code>HtmlText(x)</code></td><td>Compact HTML, with HTML's serialisation rules.</td></tr>
+<tr><td><code>HtmlPretty(x, n)</code></td><td>Indented, leaving mixed content and scripts alone.</td></tr>
+<tr><td><code>HtmlSave(path, x)</code></td><td>Compact, to a file.</td></tr>
+</table>
+<h3>Escaping</h3>
+<table>
+<tr><th>Word</th><th>What it does</th></tr>
+<tr><td><code>HtmlEscape(s)</code>, <code>HtmlEscapeAttr(s)</code></td><td>Text and attribute values, safely.</td></tr>
+<tr><td><code>HtmlUnescape(s)</code></td><td>References to text; an unknown name stays as it is.</td></tr>
+<tr><td><code>HtmlEntity(name)</code></td><td>What a name stands for, or <code>""</code>.</td></tr>
+</table>
+<h3>Finding things</h3>
+<table>
+<tr><th>Word</th><th>What it does</th></tr>
+<tr><td><code>HById(x, id)</code> / <code>HByIdOr</code> / <code>HAllById</code></td><td>By id; the third finds the duplicates.</td></tr>
+<tr><td><code>HByClass(x, c)</code></td><td>By class, searching the list by member.</td></tr>
+<tr><td><code>HByTag(x, t)</code></td><td>By tag name, anywhere below.</td></tr>
+<tr><td><code>HLinks(x)</code>, <code>HImages(x)</code>, <code>HIds(x)</code></td><td>Every href, src and id, in document order.</td></tr>
+<tr><td><code>HTitle(x)</code> / <code>HTitleOr(x, d)</code></td><td>The document title.</td></tr>
+<tr><td><code>HtmlTextOf(x)</code></td><td>The readable text, without script or style.</td></tr>
+</table>
+<h3>Asking about tags</h3>
+<table>
+<tr><th>Word</th><th>What it does</th></tr>
+<tr><td><code>HIsVoid(t)</code></td><td>Does this tag take no content?</td></tr>
+<tr><td><code>HIsRawText(t)</code></td><td>Is its content text rather than markup?</td></tr>
+<tr><td><code>HVoids()</code>, <code>HRawText()</code>, <code>HEntities()</code></td><td>The tables themselves, should you want to read them.</td></tr>
+</table>
+
+<h2 id="usedby">Who Uses It</h2>
+<p>Nothing in the tree — <code>html</code> is the top of its own stack, and is
+here for programs that need to read a page rather than render one.</p>
+
+<h2 id="uses">The Machines It Uses</h2>
+<table>
+<tr><th></th><th>Machine</th><th>Why</th></tr>
+<tr><td class="uicon"><a href="xml.html"><img src="../media/icons/xml.svg" alt=""></a></td><td><a href="xml.html">xml</a></td><td>The whole tree, and
+every word that walks it. <code>html</code> adds a reader, a writer and an
+entity table, and redefines nothing.</td></tr>
+</table>
+
+<nav class="pager" aria-label="Machines, in catalog order">
+  <a href="xml.html"><span class="dir">&larr; Previous machine</span><span class="ttl">xml</span></a>
+  <a class="next" href="seq.html"><span class="dir">Next machine &rarr;</span><span class="ttl">seq</span></a>
+</nav>
+<footer>Named for the shoddy mills of the West Riding: Useless Things Made
+Useful Through Skill (<a href="../heritage.html">the heritage of the name</a>).<br>
+&copy; 2026 Stephen Vincent Foster</footer>
+</div>
+</body>
+</html>

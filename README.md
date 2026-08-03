@@ -168,7 +168,10 @@ write-up on each one, or start at
       <a href="https://shoddymills.github.io/shoddy/mills/rag-and-bone.html"><img src="docs/media/icons/https.svg" alt="rag-and-bone: a padlock over a request and its reply" width="100%"></a><br>
       <b>rag-and-bone</b><br><sub>a web server, in Shoddy</sub>
     </td>
-    <td width="25%"></td>
+    <td width="25%" align="center" valign="top">
+      <a href="https://shoddymills.github.io/shoddy/mills/weather-glass.html"><img src="docs/media/weather-glass.svg" alt="weather-glass: a barometer dial beside forecast rows" width="100%"></a><br>
+      <b>weather-glass</b><br><sub>a forecast, in VT100</sub>
+    </td>
     <td width="25%"></td>
     <td width="25%"></td>
   </tr>

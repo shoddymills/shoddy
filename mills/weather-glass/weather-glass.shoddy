@@ -1,0 +1,91 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem weather-glass.shoddy — the shell: four fetches and a Print.
+Rem
+Rem     mill run --allow-net mills/weather-glass/weather-glass.shoddy 63011
+Rem     build.cmd run 63011
+Rem
+Rem A weather-glass is what a barometer used to be called: the instrument
+Rem you tapped in the hall to read the coming weather. This one reads it
+Rem off the National Weather Service and draws a 72-hour table in VT100.
+Rem
+Rem ---- the pipeline ------------------------------------------------
+Rem
+Rem   1  api.zippopotam.us  /us/{zip}            ZIP -> place, lat, lon
+Rem   2  api.weather.gov    /points/{lat},{lon}  -> the two forecast URLs
+Rem   3  api.weather.gov    {forecast}           daily: the marker rows
+Rem   4  api.weather.gov    {forecastHourly}     hourly: the table rows
+Rem
+Rem Every hop is status-gated. There are no catchable errors in this
+Rem language, so a clean abort naming the hop IS the error handling.
+Rem
+Rem Both hosts get a User-Agent: api.weather.gov answers 403 without one,
+Rem and zippopotam gets one out of courtesy.
+Rem
+Rem Coordinates are trimmed to four decimals before hop 2. The API
+Rem tolerates full precision today and has historically redirected long
+Rem coordinates instead, and this client follows no redirects — the trim
+Rem costs nothing and removes the failure mode.
+Rem
+Rem ---- what is NOT here --------------------------------------------
+Rem
+Rem Everything that decides anything. Parsing, formatting, the sun, the
+Rem calendar and the whole layout are in weather-glass-core.shoddy and
+Rem weather-glass-sun.shoddy, both pure, both graded offline by
+Rem test.shoddy against the captured fixtures in files/ with no network
+Rem at all. This file is fetch, gate, and Print.
+Rem ==================================================================
+
+Include "weather-glass-core.shoddy"
+Include "../../machines/https.shoddy"
+
+Def Agent() As String
+    "shoddy-weather-glass/1.0 (https://github.com/shoddymills/shoddy)"
+
+Def Headers() As List Of Pair
+    { Pair("User-Agent", Agent()), Pair("Accept", "application/geo+json") }
+
+Rem One hop: fetch, gate, hand back the body. The message names the hop,
+Rem because "it failed" is not a bug report.
+Def Fetch(host As String, path As String) As String
+    Let reply = HttpsGet(host, path, Headers())
+    If HttpStatus(reply) <> 200 Then
+        Error("WEATHER-GLASS: " & host & path & " -> " & Str(HttpStatus(reply)) & " " & HttpReason(reply))
+    Else
+        HttpBody(reply)
+
+Rem The points response gives absolute URLs; the client wants the path.
+Rem "https://api.weather.gov/gridpoints/LSX/82,73/forecast" -> the part
+Rem from the third slash on.
+Def PathOf(url As String) As String
+    Let afterScheme = Mid(url, 9, Len(url))
+    Let cut = Instr(afterScheme, "/")
+    If cut = 0 Then
+        url
+    Else
+        Mid(afterScheme, cut, Len(afterScheme))
+
+Def Main()
+    Let args = Args()
+    If Length(args) <> 1 Then
+        Error("USAGE: weather-glass ZIP     (e.g. 63011)")
+    Else
+        Report(First(args))
+
+Def Report(zip As String)
+    If Len(zip) <> 5 Or Not IsNumeric(zip) Then
+        Error("USAGE: weather-glass ZIP — a five-digit US ZIP, got '" & zip & "'")
+    Else
+        Draw(zip, Fetch("api.zippopotam.us", "/us/" & zip))
+
+Def Draw(zip As String, zipBody As String)
+    Let place = ReadPlace(zipBody, zip)
+    Rem Four decimals is plenty for a forecast grid and keeps the path
+    Rem short enough that the API never wants to redirect it.
+    Let coords = ToFixed(Lat(place), 4) & "," & ToFixed(Lon(place), 4)
+    Let props = JGet(JsonParse(Fetch("api.weather.gov", "/points/" & coords)), "properties")
+    Let daily = Fetch("api.weather.gov", PathOf(JStrOr(JGet(props, "forecast"), "")))
+    Let hourly = Fetch("api.weather.gov", PathOf(JStrOr(JGet(props, "forecastHourly"), "")))
+    Each(Render(place, ReadHours(hourly), ReadDays(daily)), Print)

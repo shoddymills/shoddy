@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="A 72-hour VT100 forecast for any US ZIP — mills/weather-glass">
+<title>weather-glass — A Forecast in VT100 | Shoddy Mills</title>
+<link rel="stylesheet" href="../style.css">
+<link rel="icon" href="../favicon.svg" type="image/svg+xml">
+<link rel="alternate icon" href="../favicon.ico" sizes="48x48">
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+</head>
+<body>
+<div class="topbar"><div class="inner">
+  <div class="row">
+    <a class="phase" href="index.html"><img class="mark" src="../media/brand/shoddy-icon.svg" alt="" width="23" height="23">Shoddy · The Mills</a>
+    <span class="spacer"></span>
+    <nav class="docnav meta" aria-label="About"><a href="../heritage.html">Heritage</a><a href="../authorship.html">Authorship</a></nav>
+  </div>
+  <nav class="docnav main" aria-label="Documentation"><a href="../tutorials/index.html">Tutorials</a><a href="../guide.html">Guide</a><a href="../quickref.html">Reference</a><a href="../machines/index.html">Machines</a><span class="here">Mills</span><a href="../stack.html">Stack</a><a href="../spec.html">Spec</a><a href="../setup.html">Setup</a><a href="../vscode.html">VS Code</a><a href="../assistants.html">AI</a><a href="../build.html">Toolchain</a><a href="../errors.html">Errors</a></nav>
+</div></div>
+<div class="wrap">
+
+<header class="mast has-icon"><div><p class="eyebrow"><a href="index.html#demos">The Mills &middot; Demos</a></p><h1>weather-glass</h1><p class="kicker">A 72-hour forecast in VT100 — mills/weather-glass</p></div><img class="micon" src="../media/weather-glass.svg" alt="A barometer dial beside a column of forecast rows"></header>
+<nav class="pagertop" aria-label="Mills, in catalog order"><a href="rag-and-bone.html">&larr; rag-and-bone</a><a href="index.html">All mills</a><a href="demographics.html">demographics &rarr;</a></nav>
+
+<h2 id="summary">Summary</h2>
+<p>Give it a US ZIP code and it draws the next 72 hours off the National
+Weather Service — temperature, what it feels like, conditions, precipitation,
+humidity and wind — banded light and dark for day and night, with a bold
+marker at each sunrise and sunset.</p>
+<pre><code>cd mills/weather-glass
+./build.sh run 63011     # the network is needed for this one
+./build.sh test          # and never for this one</code></pre>
+<pre><code>63011 Ballwin, Missouri
+Mon Aug 3, 2026 - NWS (api.weather.gov)
+
+Date  Hr  Temp (FL)  Conditions    Prcp  Cld  Hmd  Dir Spd
+Mo 3  15    85 (88)  Mstly Sunny     0%  25%  55%   NE   1
+Mo 3  16    85 (87)  Mstly Sunny     0%  25%  53%   NE   2
+Mo 3  17    84 (86)  Sunny           0%   5%  55%    E   2
+v Sunset 8:12 PM -- Lo 66, Mstly Clear, winds to 3 mph
+Mo 3  18    83 (85)  Mstly Clear     0%  25%  57%    E   2</code></pre>
+<p>A weather-glass is what a barometer used to be called: the instrument in the
+hall you tapped to read the coming weather.</p>
+
+<h2 id="pipeline">Four hops</h2>
+<table>
+<tr><th>#</th><th>Host</th><th>What it gives</th></tr>
+<tr><td>1</td><td><code>api.zippopotam.us</code></td><td>The ZIP becomes a place name and coordinates.</td></tr>
+<tr><td>2</td><td><code>api.weather.gov/points</code></td><td>The coordinates become two forecast URLs.</td></tr>
+<tr><td>3</td><td>the daily forecast</td><td>The highs, lows and wind for the marker rows.</td></tr>
+<tr><td>4</td><td>the hourly forecast</td><td>The rows themselves.</td></tr>
+</table>
+<p>Every hop is status-gated. Shoddy has no catchable errors, so a clean abort
+naming the hop <em>is</em> the error handling — an unknown ZIP stops at hop one
+saying so, and a non-200 anywhere names the host, the path and the status.</p>
+<p>Both hosts get a <code>User-Agent</code>: the weather service answers
+<code>403</code> without one, and zippopotam gets one out of courtesy.
+Coordinates are trimmed to four decimals before hop two, because the API has
+historically redirected long ones and this client follows no redirects.</p>
+
+<h2 id="seam">The seam</h2>
+<p>The shell does four fetches and a <code>Print</code>. Everything else —
+parsing, the calendar, the sun, the feels-like formulas, the abbreviation
+table, the banding and all 58 columns of layout — is pure, in
+<code>weather-glass-core.shoddy</code> and <code>weather-glass-sun.shoddy</code>:</p>
+<pre><code>Def Render(p As Place, hours As List Of Hour, days As List Of DayInfo) As List Of String</code></pre>
+<p>Records in, every line of the report out. So <code>test.shoddy</code> feeds
+it the captured API responses in <code>files/</code> and compares the result
+against <code>files/expected.out</code> line by line, with
+<strong>no network and no <code>--allow-net</code></strong>. Escape sequences
+are bytes like any others; the golden file simply contains them.</p>
+<p>It is the same split <a href="mungo-caverns.html">mungo-caverns</a> draws by
+making a turn a function and <a href="rag-and-bone.html">rag-and-bone</a> draws
+by making a request one. Put the I/O at the edge and the middle becomes
+gradeable.</p>
+
+<h2 id="hood">Under the Hood</h2>
+
+<h3>The sun is computed, not fetched</h3>
+<p>There is no fifth hop for sunrise and sunset.
+<code>weather-glass-sun.shoddy</code> carries the NOAA solar-position algorithm
+— fractional year, equation of time, solar declination, hour angle at a zenith
+of 90.833° — in about forty lines of arithmetic over
+<a href="../machines/math.html">math</a>'s <code>Rad</code> and <code>Deg</code>
+and the trig builtins. It is graded against published values to within two
+minutes, and the reference rendering this mill mirrors is itself one of those
+values: it puts sunset on 2 May 2026 at 7:56 PM, and the algorithm computes
+7:54.</p>
+<p>Above the Arctic circle in June the sun does neither, and the cosine falls
+outside the domain <code>Acos</code> accepts — so that is checked before it is
+called, and such a day reports <code>-1</code> rather than aborting.</p>
+<p>The weekday comes from Sakamoto's congruence: five lines and a twelve-entry
+table, no date type anywhere in the language or in the mill.</p>
+
+<h3>The cloud column is an estimate</h3>
+<div class="note"><strong>Say it plainly.</strong> The hourly feed carries no
+sky cover — that lives only in the raw gridpoint endpoint, a fifth fetch of
+some 212&nbsp;KB in UTC intervals — so the <code>Cld</code> column is
+<em>inferred from the words in the forecast</em>: "Mostly Sunny" becomes 25%,
+"Cloudy" 95%, anything raining 75%. A condition the table does not recognise
+renders as a <strong>blank cell</strong> rather than a guess. Every other
+number in the table came from the API.</div>
+
+<h3>What it feels like</h3>
+<p>The hourly feed gives temperature, humidity and wind, which are exactly the
+inputs of the two standard NOAA formulas: wind chill below 50 °F with a wind
+over 3 mph, and the Rothfusz heat-index regression above 80 °F with its two
+humidity adjustments. Both are transcribed rather than improvised, and both are
+checked against the published tables — 35 °F at 10 mph reads 27, and 90 °F at
+70% humidity reads within a degree of the chart's 105. Between the two ranges,
+what it is is what it feels like.</p>
+
+<h3>The layout is 58 columns with uneven gaps</h3>
+<p>The reference rendering puts one space between some fields and two between
+others. That is reproduced exactly rather than tidied into a uniform grid,
+because a report that is <em>nearly</em> the reference is a report somebody has
+to check by eye forever. A test asserts the header is byte-identical and that
+every row is the same width.</p>
+
+<h3>The fixture has one deliberate lie in it</h3>
+<p>The captured responses are the live ones, with a single edit: one hour's
+<code>probabilityOfPrecipitation</code> is set to <code>null</code>. That day's
+capture happened to contain none, but the API does return null there, and a
+mill that aborts at three in the morning because precipitation was null has not
+used the total accessors <a href="../machines/json.html">json</a> provides. The
+edit <em>is</em> the test.</p>
+
+<h2 id="uses">The Machines It Uses</h2>
+<table>
+<tr><th></th><th>Machine</th><th>Why</th></tr>
+<tr><td class="uicon"><a href="../machines/https.html"><img src="../media/icons/https.svg" alt=""></a></td><td><a href="../machines/https.html">https</a></td><td>All four hops, over
+TLS, with the status and headers read back by its pure half.</td></tr>
+<tr><td class="uicon"><a href="../machines/json.html"><img src="../media/icons/json.svg" alt=""></a></td><td><a href="../machines/json.html">json</a></td><td>Every response.
+Object keys with spaces in them, coordinates that arrive as strings, and a
+<code>null</code> that has to read as zero.</td></tr>
+<tr><td class="uicon"><a href="../machines/vt100.html"><img src="../media/icons/vt100.svg" alt=""></a></td><td><a href="../machines/vt100.html">vt100</a></td><td>The banding: day
+rows plain, night rows dim, markers bold, header reversed.</td></tr>
+<tr><td class="uicon"><a href="../machines/math.html"><img src="../media/icons/math.svg" alt=""></a></td><td><a href="../machines/math.html">math</a></td><td><code>Rad</code> and
+<code>Deg</code> for the solar algorithm.</td></tr>
+<tr><td class="uicon"><a href="../machines/net.html"><img src="../media/icons/net.svg" alt=""></a></td><td><a href="../machines/net.html">net</a></td><td>Underneath
+<code>https</code>; the mill never touches a socket itself.</td></tr>
+<tr><td class="uicon"><a href="../machines/str.html"><img src="../media/icons/str.svg" alt=""></a></td><td><a href="../machines/str.html">str</a></td><td><code>PadLeft</code>,
+<code>PadRight</code>, <code>PadZero</code> and <code>ToFixed</code> lay out the
+columns.</td></tr>
+<tr><td class="uicon"><a href="../machines/seq.html"><img src="../media/icons/seq.svg" alt=""></a></td><td><a href="../machines/seq.html">seq</a></td><td><code>Taken</code> cuts the
+feed to 72 hours; the render accumulates with <code>Prepend</code>.</td></tr>
+<tr><td class="uicon"><a href="../machines/file.html"><img src="../media/icons/file.svg" alt=""></a></td><td><a href="../machines/file.html">file</a></td><td>The offline test reads
+the fixtures and the golden render.</td></tr>
+</table>
+
+<nav class="pager" aria-label="Mills, in catalog order">
+  <a href="rag-and-bone.html"><span class="dir">&larr; Previous mill</span><span class="ttl">rag-and-bone</span></a>
+  <a class="next" href="demographics.html"><span class="dir">Next mill &rarr;</span><span class="ttl">demographics</span></a>
+</nav>
+<footer>Named for the shoddy mills of the West Riding: Useless Things Made
+Useful Through Skill (<a href="../heritage.html">the heritage of the name</a>).<br>
+&copy; 2026 Stephen Vincent Foster</footer>
+</div>
+</body>
+</html>

@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="XML Reading and Writing — machines/xml.shoddy">
+<title>xml — XML Reading and Writing | Shoddy Machines</title>
+<link rel="stylesheet" href="../style.css">
+<link rel="icon" href="../favicon.svg" type="image/svg+xml">
+<link rel="alternate icon" href="../favicon.ico" sizes="48x48">
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+</head>
+<body>
+<div class="topbar"><div class="inner">
+  <div class="row">
+    <a class="phase" href="index.html"><img class="mark" src="../media/brand/shoddy-icon.svg" alt="" width="23" height="23">Shoddy · The Machines</a>
+    <span class="spacer"></span>
+    <nav class="docnav meta" aria-label="About"><a href="../heritage.html">Heritage</a><a href="../authorship.html">Authorship</a></nav>
+  </div>
+  <nav class="docnav main" aria-label="Documentation"><a href="../tutorials/index.html">Tutorials</a><a href="../guide.html">Guide</a><a href="../quickref.html">Reference</a><span class="here">Machines</span><a href="../mills/index.html">Mills</a><a href="../stack.html">Stack</a><a href="../spec.html">Spec</a><a href="../setup.html">Setup</a><a href="../vscode.html">VS Code</a><a href="../assistants.html">AI</a><a href="../build.html">Toolchain</a><a href="../errors.html">Errors</a></nav>
+</div></div>
+<div class="wrap">
+
+
+<header class="mast has-icon"><div><p class="eyebrow"><a href="index.html#markup">The Machines &middot; Markup &amp; data formats</a></p><h1>xml</h1><p class="kicker">XML Reading and Writing — machines/xml.shoddy</p></div><img class="micon" src="../media/icons/xml.svg" alt="the xml machine&#39;s icon"></header>
+<nav class="pagertop" aria-label="Machines, in catalog order"><a href="json.html">&larr; json</a><a href="index.html">All machines</a><a href="html.html">html &rarr;</a></nav>
+
+<h2 id="summary">Summary</h2>
+<p><code>xml</code> reads an XML document into a tree you can walk, and
+writes a tree back out as XML. It handles elements, attributes, text,
+comments, processing instructions, CDATA sections and the doctype, and it
+keeps all of them — so a document that goes in comes back out, not a
+paraphrase of it.</p>
+<p>It is a well-formedness parser, not a validating one, and it says so
+loudly. What it will not do is guess: a document that is malformed comes
+back as an error with a reason and an offset, never as a tree that quietly
+lost something.</p>
+
+<h2 id="why">Why It's Useful</h2>
+<p>XML is what a great deal of the world still speaks. RSS and Atom feeds,
+SVG images, Office documents, configuration files, SOAP services, sitemaps,
+Android layouts, patent filings, half of publishing — all of it is XML, and
+most of it will outlive whatever is fashionable this decade.</p>
+<p>This machine exists so that reading any of that is nine lines of Shoddy
+rather than a fortnight of string surgery. The thing string surgery gets
+wrong is not the happy case; it is the comment containing a <code>&lt;</code>,
+the CDATA section containing a <code>&amp;</code>, the attribute quoted with
+an apostrophe because its value contains a quotation mark. A parser gets
+those right once, on purpose, and then stops being interesting.</p>
+<pre><code>Include "xml.shoddy"
+
+Def Main()
+    Let doc = XmlLoad("feed.xml")
+    Let items = XFindAll(doc, "item")
+    Print(Str(Length(items)) &amp; " items")
+    Print(XTextOf(XFind(XNth(items, 1), "title")))</code></pre>
+
+<h2 id="history">A Brief History of XML</h2>
+<p>XML's ancestor is SGML, which IBM built in the 1970s so that a document
+could carry its own structure rather than its own typesetting codes. SGML was
+enormously capable and enormously difficult; the specification ran to five
+hundred pages and almost nobody implemented all of it.</p>
+<p>In 1996 a working group under Jon Bosak set out to cut SGML down to
+something a programmer could implement in a weekend. XML 1.0 became a
+Recommendation in February 1998, and for about a decade afterwards it was
+simply what data interchange meant. It was also, briefly, what everything
+meant: configuration, remote procedure calls, user interfaces, spreadsheets,
+build scripts. Some of that was a mistake and has been undone.</p>
+<p>What survived the correction is the part XML is genuinely good at:
+documents. Text with markup in it, where the order of things matters, where
+an element can hold a mix of words and other elements, where a comment is
+worth keeping. JSON is better at records; XML is better at prose that has
+structure. Both machines are here because both jobs are real.</p>
+<p>The one piece of XML this machine deliberately declines is the document
+type definition. DTDs can declare entities, which means a DTD can make a
+document expand to a thousand times its own size — the "billion laughs"
+attack — and can make a parser fetch a file from the network or the local
+disk. Refusing to read the internal subset is not a shortcut here. It is the
+only responsible default for a parser pointed at a document you did not
+write.</p>
+
+<h2 id="guide">User's Guide</h2>
+<h3>The tree</h3>
+<p>A node is an <code>Xml</code>, and there are seven kinds:</p>
+<pre><code>Type Xml = XDocument(XNodes As List Of Xml)
+         | XElem(XTag As String, XAttrs As List Of Pair, XKids As List Of Xml)
+         | XText(XChars As String)
+         | XComment(XBody As String)
+         | XPI(XTarget As String, XData As String)
+         | XCData(XRaw As String)
+         | XDoctype(XDtd As String)</code></pre>
+<p>Reading gives you an <code>XDocument</code>, not the root element, because
+the XML declaration, the comments around the root and the doctype are part of
+the document and throwing them away would make a round trip impossible.
+<code>XRoot</code> reaches the root element, which is what most programs
+actually want. It is idempotent — <code>XRoot</code> of an element is that
+element — so a function taking "a document or an element" can just call
+it.</p>
+
+<h3>Reading, strictly or totally</h3>
+<p>Shoddy has no catchable errors. A parser that could only abort would be
+untestable on malformed input and unusable on input you did not write, so
+there are two:</p>
+<pre><code>Let doc = XmlParse(src)             ' aborts, with a reason and an offset
+Select Case XmlRead(src)            ' total: XOk or XErr
+    Case XOk(doc)
+        UseIt(doc)
+    Case XErr(why, at)
+        Print("line noise at " &amp; Str(at) &amp; ": " &amp; why)</code></pre>
+<p>That pairing runs through the whole machine. <code>XAttr</code> aborts and
+<code>XAttrOr</code> hands back your default; so do <code>XChild</code>,
+<code>XFind</code>, <code>XPath</code> and <code>XRoot</code>. Reach for the
+strict one when the document is yours and the total one the moment it is
+not.</p>
+
+<h3>Finding things</h3>
+<table>
+<tr><th>You want</th><th>Word</th></tr>
+<tr><td>the root element</td><td><code>XRoot(doc)</code></td></tr>
+<tr><td>a named child</td><td><code>XChild(e, "title")</code></td></tr>
+<tr><td>every named child</td><td><code>XChildren(e, "item")</code></td></tr>
+<tr><td>a descendant anywhere</td><td><code>XFind(doc, "title")</code></td></tr>
+<tr><td>every one of them</td><td><code>XFindAll(doc, "item")</code></td></tr>
+<tr><td>down a path of names</td><td><code>XPath(e, { "channel", "title" })</code></td></tr>
+<tr><td>an attribute</td><td><code>XAttrOr(e, "href", "")</code></td></tr>
+<tr><td>the text under a node</td><td><code>XTextOf(e)</code></td></tr>
+</table>
+<p><code>XPath</code> is a path of child names and nothing more — not the W3C
+language of the same name. Predicates, axes and functions are not here, and
+a machine that pretended otherwise would be lying about a thousand pages of
+specification.</p>
+
+<h3>Attributes are a dictionary</h3>
+<p>An element's attributes are a <code>List Of Pair</code>, which is exactly
+<a href="dict.html">dict</a>'s association list. So <code>XAttr</code> and
+<code>XPutAttr</code> are <code>DictGet</code> and <code>DictPut</code>
+wearing a hat, and anything else <code>dict</code> can do to an association
+list works on them unchanged.</p>
+
+<h3>Writing</h3>
+<p><code>XmlText</code> writes compactly. <code>XmlPretty(doc, 2)</code>
+re-indents, and <code>XmlCanonical</code> sorts every element's attributes by
+name, recursively, when you need two documents to be comparable rather than
+merely equivalent.</p>
+
+<h2 id="hood">Under the Hood</h2>
+<h3>What a round trip guarantees</h3>
+<p>Text is decoded on the way in, so a round trip is <strong>canonical, not
+literal</strong>. <code>&amp;#65;</code> comes back as <code>A</code>; an
+attribute quoted with apostrophes comes back quoted with quotation marks.
+What the writer does guarantee is that it is a <strong>fixed point</strong>:
+from the first write onwards, writing again changes nothing. And
+<code>XmlText(XmlParse(x)) = x</code> exactly when <code>x</code> is already
+in that canonical form — which this repository's own
+<code>docs/sitemap.xml</code> is, and which the test suite checks byte for
+byte against all 154 of its elements.</p>
+
+<h3>Why the pretty printer refuses some elements</h3>
+<p>Indentation in XML is not free: whitespace inside an element is text, and
+text is content. So <code>XmlPretty</code> re-indents an element only when
+<em>none</em> of its children is text or CDATA. The moment words and markup
+are siblings — <code>the &lt;em&gt;emphasis&lt;/em&gt; and the rest</code> —
+a line break inserted between them would add a space the author did not
+write, so that element goes out exactly as <code>XmlText</code> would write
+it. An element holding a <code>CDATA</code> section is left alone for the
+same reason and more forcefully: carrying characters exactly is the entire
+purpose of CDATA, and two spaces of indentation would end up inside the
+program it was carrying.</p>
+
+<h3>Entities become bytes, not code points</h3>
+<p>This is the load-bearing decision in the machine, and it comes from the
+runtime rather than from XML. <code>ReadFile</code> is Latin-1: one byte in
+the file becomes one character in the string, which is what lets the same
+words read a PNG. So an em dash sitting literally in a UTF-8 document arrives
+as the three characters 226, 128, 148.</p>
+<p>If <code>&amp;#8212;</code> decoded to <code>Chr(8212)</code> instead, the
+same character written two ways would give two different strings,
+<code>XEqual</code> would say they differ, and <code>WriteFile</code> would
+turn the second into a question mark — a character above 255 has no byte to
+be written as. So a numeric reference is encoded to its <strong>UTF-8
+bytes</strong>, the entity and the literal agree, and what comes out is a
+valid UTF-8 file again.</p>
+
+<h3>The depth budget</h3>
+<p>Elements nest, so the reader is genuinely recursive and consumes stack in
+proportion to nesting depth — small for real documents and unbounded on
+hostile ones. A budget of 200 levels is spent one level at a time, and
+running out is an error like any other. The loops that scan a long name, a
+wide element or a run of text call only themselves in tail position, so they
+compile to loops and cost no stack at all.</p>
+
+<h3>What is not here</h3>
+<ul>
+<li><strong>Namespaces are not resolved.</strong> A prefixed name is carried
+literally, prefix and all, and <code>xmlns</code> is an ordinary attribute.
+<code>XPrefix</code> and <code>XLocal</code> split a name when you need the
+halves; mapping a prefix to a URI is the caller's business.</li>
+<li><strong>The doctype is opaque</strong> and its internal subset is never
+read, so a document declaring its own entities is refused rather than
+silently emptied.</li>
+<li><strong>The encoding declaration is advisory.</strong>
+<code>ReadFile</code> decided the bytes long before this machine saw
+them.</li>
+<li><strong>NUL cannot be carried.</strong> <code>Chr(0)</code> is the empty
+string in Shoddy, so <code>&amp;#0;</code> is rejected by name rather than
+silently shortening the text.</li>
+</ul>
+
+<h2 id="words">Word Reference</h2>
+<h3>Reading</h3>
+<table>
+<tr><th>Word</th><th>What it does</th></tr>
+<tr><td><code>XmlParse(s)</code></td><td>Parse, or abort with the reason and offset.</td></tr>
+<tr><td><code>XmlRead(s)</code></td><td>Total: <code>XOk(doc)</code> or <code>XErr(why, at)</code>.</td></tr>
+<tr><td><code>XmlReadDepth(s, n)</code></td><td>As above with your own nesting budget.</td></tr>
+<tr><td><code>XmlLoad(path)</code></td><td><code>XmlParse(ReadFile(path))</code>.</td></tr>
+</table>
+<h3>Writing</h3>
+<table>
+<tr><th>Word</th><th>What it does</th></tr>
+<tr><td><code>XmlText(x)</code></td><td>Compact XML.</td></tr>
+<tr><td><code>XmlPretty(x, n)</code></td><td>Indented by <code>n</code>, leaving mixed content alone.</td></tr>
+<tr><td><code>XmlSave(path, x)</code></td><td>Compact, to a file.</td></tr>
+<tr><td><code>XmlCanonical(x)</code></td><td>Attributes sorted by name, recursively.</td></tr>
+<tr><td><code>XmlEscape(s)</code></td><td><code>&amp;</code>, <code>&lt;</code> and <code>&gt;</code> to references.</td></tr>
+<tr><td><code>XmlEscapeAttr(s)</code></td><td>Those, plus the quote and the control characters.</td></tr>
+<tr><td><code>XmlUnescape(s)</code></td><td>References back to text.</td></tr>
+<tr><td><code>XUtf8(n)</code></td><td>A code point as its UTF-8 bytes.</td></tr>
+</table>
+<h3>Navigating</h3>
+<table>
+<tr><th>Word</th><th>What it does</th></tr>
+<tr><td><code>XRoot(x)</code> / <code>XRootOr(x, d)</code></td><td>The root element.</td></tr>
+<tr><td><code>XTag(e)</code>, <code>XAttrs(e)</code>, <code>XKids(e)</code>, <code>XChars(t)</code></td><td>The record accessors; they abort on the wrong kind of node.</td></tr>
+<tr><td><code>XAttr(e, n)</code> / <code>XAttrOr(e, n, d)</code></td><td>One attribute.</td></tr>
+<tr><td><code>XHasAttr(e, n)</code>, <code>XAttrNames(e)</code></td><td>Ask first, or list them all.</td></tr>
+<tr><td><code>XAttrNumOr</code>, <code>XAttrBoolOr</code></td><td>An attribute read as a number or a flag.</td></tr>
+<tr><td><code>XElems(e)</code>, <code>XCount(e)</code></td><td>The element children; the number of all children.</td></tr>
+<tr><td><code>XChild(e, t)</code> / <code>XChildOr</code> / <code>XHasChild</code> / <code>XChildren</code></td><td>By name, one level down.</td></tr>
+<tr><td><code>XFind(x, t)</code> / <code>XFindOr</code> / <code>XFindAll</code></td><td>By name, anywhere below.</td></tr>
+<tr><td><code>XPath(x, ns)</code> / <code>XPathOr</code></td><td>Down a path of child names.</td></tr>
+<tr><td><code>XDescend(x, acc)</code></td><td>Every element in document order.</td></tr>
+<tr><td><code>XTextOf(x)</code>, <code>XTextNumOr(x, d)</code></td><td>The character data underneath.</td></tr>
+<tr><td><code>XPrefix(n)</code>, <code>XLocal(n)</code></td><td>The two halves of a prefixed name.</td></tr>
+<tr><td><code>IsXElem</code>, <code>IsXText</code>, <code>IsXCData</code></td><td>Which kind of node this is.</td></tr>
+</table>
+<h3>Building and comparing</h3>
+<table>
+<tr><th>Word</th><th>What it does</th></tr>
+<tr><td><code>XLeaf(t, s)</code>, <code>XNode(t, ks)</code></td><td>An element with text; an element with children.</td></tr>
+<tr><td><code>XPutAttr</code>, <code>XDelAttr</code></td><td>Functional update of one attribute.</td></tr>
+<tr><td><code>XAddKid</code>, <code>XSetKids</code>, <code>XSetText</code></td><td>Functional update of the children.</td></tr>
+<tr><td><code>XEqual(a, b)</code></td><td>Deep comparison. Use this, never <code>=</code>.</td></tr>
+<tr><td><code>XIsBlank(s)</code>, <code>XTrimWs(s)</code></td><td>Whitespace including tabs and newlines, which <code>Trim</code> ignores.</td></tr>
+</table>
+
+<h2 id="usedby">Who Uses It</h2>
+<table>
+<tr><th></th><th>User</th><th>How</th></tr>
+<tr><td class="uicon"><a href="html.html"><img src="../media/icons/html.svg" alt=""></a></td><td><a href="html.html">html</a></td><td>A parsed page
+<em>is</em> an <code>Xml</code> tree, so every word above works on HTML and
+<code>html</code> never redefines one of them.</td></tr>
+</table>
+
+<h2 id="uses">The Machines It Uses</h2>
+<table>
+<tr><th></th><th>Machine</th><th>Why</th></tr>
+<tr><td class="uicon"><a href="dict.html"><img src="../media/icons/dict.svg" alt=""></a></td><td><a href="dict.html">dict</a></td><td>An element's
+attributes <em>are</em> an association list, so <code>XAttr</code> and
+<code>XPutAttr</code> are <code>DictGet</code> and <code>DictPut</code>
+wearing a hat.</td></tr>
+<tr><td class="uicon"><a href="str.html"><img src="../media/icons/str.svg" alt=""></a></td><td><a href="str.html">str</a></td><td><code>Join</code>
+assembles the writer's fragments in one pass at the end, and
+<code>StrRep</code> makes the pretty printer's indentation.</td></tr>
+</table>
+
+<nav class="pager" aria-label="Machines, in catalog order">
+  <a href="json.html"><span class="dir">&larr; Previous machine</span><span class="ttl">json</span></a>
+  <a class="next" href="html.html"><span class="dir">Next machine &rarr;</span><span class="ttl">html</span></a>
+</nav>
+<footer>Named for the shoddy mills of the West Riding: Useless Things Made
+Useful Through Skill (<a href="../heritage.html">the heritage of the name</a>).<br>
+&copy; 2026 Stephen Vincent Foster</footer>
+</div>
+</body>
+</html>

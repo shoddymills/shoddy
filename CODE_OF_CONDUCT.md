@@ -51,7 +51,7 @@ an individual is officially representing the community in public spaces.
 
 Instances of abusive, harassing, or otherwise unacceptable behavior may be
 reported to the community leaders responsible for enforcement at
-**stephen@shoddymills.com**. All complaints will be reviewed and investigated
+**stephen@shoddymills.dev**. All complaints will be reviewed and investigated
 promptly and fairly.
 
 Upon acceptance into the .NET Foundation, reports may additionally be directed

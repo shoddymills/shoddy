@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="JSON Reading and Writing — machines/json.shoddy">
+<title>json — JSON Reading and Writing | Shoddy Machines</title>
+<link rel="stylesheet" href="../style.css">
+<link rel="icon" href="../favicon.svg" type="image/svg+xml">
+<link rel="alternate icon" href="../favicon.ico" sizes="48x48">
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+</head>
+<body>
+<div class="topbar"><div class="inner">
+  <div class="row">
+    <a class="phase" href="index.html"><img class="mark" src="../media/brand/shoddy-icon.svg" alt="" width="23" height="23">Shoddy · The Machines</a>
+    <span class="spacer"></span>
+    <nav class="docnav meta" aria-label="About"><a href="../heritage.html">Heritage</a><a href="../authorship.html">Authorship</a></nav>
+  </div>
+  <nav class="docnav main" aria-label="Documentation"><a href="../tutorials/index.html">Tutorials</a><a href="../guide.html">Guide</a><a href="../quickref.html">Reference</a><span class="here">Machines</span><a href="../mills/index.html">Mills</a><a href="../stack.html">Stack</a><a href="../spec.html">Spec</a><a href="../setup.html">Setup</a><a href="../vscode.html">VS Code</a><a href="../assistants.html">AI</a><a href="../build.html">Toolchain</a><a href="../errors.html">Errors</a></nav>
+</div></div>
+<div class="wrap">
+
+
+<header class="mast has-icon"><div><p class="eyebrow"><a href="index.html#markup">The Machines &middot; Markup &amp; data formats</a></p><h1>json</h1><p class="kicker">JSON Reading and Writing — machines/json.shoddy</p></div><img class="micon" src="../media/icons/json.svg" alt="the json machine&#39;s icon"></header>
+<nav class="pagertop" aria-label="Machines, in catalog order"><a href="shaker.html">&larr; shaker</a><a href="index.html">All machines</a><a href="xml.html">xml &rarr;</a></nav>
+
+<h2 id="summary">Summary</h2>
+<p><code>json</code> reads and writes JSON — the format nearly every web
+service, configuration file and data export speaks. Hand it a stretch of
+text and it hands you back a value you can walk into: look up a key, index
+an element, follow a path down through the nesting. Hand it a value and it
+hands you back text, either packed tight for a machine or laid out with
+indentation for a person. It goes both ways, and what comes out of one end
+goes back into the other unchanged.</p>
+<p>It follows the standard exactly — <strong>RFC 8259</strong>, the whole
+grammar and nothing but: every escape including <code>\uXXXX</code>, numbers
+in all their spellings, nesting to any depth. The relaxations you may have
+seen elsewhere — comments, trailing commas, unquoted keys, single quotes,
+<code>NaN</code> — are not JSON and are refused here.</p>
+<p>Because the text you parse is so often <em>someone else's</em>, reading
+comes in two forms. <code>JsonParse</code> is the strict one: it gives you
+the document or stops the program. <code>JsonRead</code> is the total one:
+it always returns a value, either the document or a note saying what went
+wrong and at which character. Shoddy has no exceptions to catch, so the
+second form is how a program survives input it did not write.</p>
+
+<h2 id="why">Why It's Useful</h2>
+<p>Sooner or later a program has to talk to something that isn't it. A
+weather service, a price feed, a configuration file someone edits by hand, a
+data set a colleague exported, the saved state of your own program from last
+Tuesday. Overwhelmingly, the thing on the other side speaks JSON. Without a
+reader you are reduced to hunting through the text with <code>Instr</code>
+and <code>Mid</code>, which works right up until a value contains a comma,
+or a quote, or a newline, and then quietly stops working in a way you won't
+notice for a month.</p>
+<p>Reach for <code>json</code> whenever data crosses the boundary of your
+program. Reading: a response you fetched, a file of records, a settings file,
+a fixture for a test. Writing: results another program will read, a document
+you'll diff against tomorrow's, a saved structure you mean to load back.
+It is also the least surprising way to store something structured on disk —
+you can open the file and read it, which is more than can be said for most
+binary formats, and <a href="isam.html">isam</a> is there for when you need
+keyed lookup instead of a whole document at once.</p>
+
+<h2 id="history">A Brief History of JSON</h2>
+<p>JSON is a small idea that got very large. In the early 2000s Douglas
+Crockford wanted a way for a browser and a server to pass structured data
+back and forth without inventing a format for each application. He noticed
+that JavaScript already had a perfectly good notation for writing values
+down — objects in braces, arrays in brackets, strings in quotes — and that
+this notation was easy for a person to read and trivial for a machine to
+parse. So he did not invent anything. He wrote down the subset that was
+already there, called it JavaScript Object Notation, and put it on a
+one-page website.</p>
+<p>That restraint is why it won. The competition at the time was XML: angle
+brackets, namespaces, schemas, entities, a specification you could not hold
+in your head and a parser you would not write yourself. JSON had six kinds
+of value — object, array, string, number, <code>true</code>,
+<code>false</code>, <code>null</code> — and a grammar that fits on a
+postcard. Anyone could implement it in an afternoon, in any language, and
+thousands of people did. By the end of the decade it had displaced XML for
+almost everything that talks over a network.</p>
+<p>It was standardised twice over, which tells you something about how
+widely it had spread: as ECMA-404 in 2013 and as RFC 7159, then RFC 8259, at
+the IETF. The specifications are famously short. They are also famously
+strict about things people assume are allowed: a JSON document may not
+contain a comment, may not have a trailing comma after the last element, may
+not quote its keys with apostrophes, may not write <code>NaN</code> or
+<code>Infinity</code>, and may not leave a key unquoted. Every one of those
+is something a hand-written parser tends to accept by accident. This machine
+refuses all of them, deliberately, and has a test for each.</p>
+<p>The looser dialects do exist — JSON5 and its relatives add back the
+comments and the trailing commas — but they are a different format wearing
+the same name, and mixing them silently is how two programs come to disagree
+about what a file says. If you want them, you want a different machine.</p>
+
+<h2 id="guide">User's Guide</h2>
+<p>A document is a <code>Json</code> value: one of <code>JNull</code>,
+<code>JBool</code>, <code>JNum</code>, <code>JStr</code>, <code>JArr</code>
+or <code>JObj</code>. You get one by parsing text, and you take it apart
+with the navigation words.</p>
+<pre><code>Include "json.shoddy"
+
+Def Main()
+    Let doc = JsonParse(ReadFile("forecast.json"))
+
+    ' walk down through the nesting by naming the keys
+    Let periods = JPath(doc, { "properties", "periods" })
+    Print(JCount(periods))                       ' 14
+
+    ' index an element, then read fields out of it
+    Let today = JNth(periods, 1)
+    Print(JStrOr(JGet(today, "name"), "?"))      ' Tonight
+    Print(JNumOr(JGet(today, "temperature"), 0)) ' 63
+
+    ' build a document and write it back out
+    Let out = JPut(JPut(JObj({ }), "when", JStr("tonight")), "temp", JNum(63))
+    Print(JsonText(out))                         ' {"temp":63,"when":"tonight"}
+    Print(JsonPretty(out, 2))                    ' the same, laid out over lines</code></pre>
+<p>A few things worth remembering:</p>
+<ul>
+<li><strong>Two ways to read, and you want both.</strong>
+<code>JsonParse</code> stops the program if the text is malformed, which is
+what you want for a file you wrote yourself. <code>JsonRead</code> hands back
+<code>JOk(doc)</code> or <code>JErr(why, where)</code> and never stops
+anything, which is what you want for text that arrived from somewhere else.
+The same pairing runs through the whole machine: <code>JGet</code> and
+<code>JGetOr</code>, <code>JPath</code> and <code>JPathOr</code>,
+<code>JText</code> and <code>JStrOr</code>.</li>
+<li><strong>The <code>Or</code> words never fail.</strong>
+<code>JStrOr(v, "?")</code> gives you the string if <code>v</code> is one and
+your default if it is anything else — including if it's a number, and
+including if it's <code>null</code>. They do not convert: asking
+<code>JNumOr</code> for the number in <code>"7"</code> gives you the default,
+because a JSON string is not a JSON number and pretending otherwise is how
+data gets quietly corrupted.</li>
+<li><strong>Compare with <code>JEqual</code>, not <code>=</code>.</strong>
+Two documents that say the same thing are not <code>=</code> each other,
+because arrays and objects are built on lists and a list compares by
+identity rather than contents. <code>JEqual</code> is the deep comparison,
+and it treats objects as unordered, the way JSON says they are.</li>
+<li><strong>Everything is pure.</strong> <code>JPut</code> and
+<code>JDel</code> hand you back a new document with the change made; the one
+you passed in is untouched.</li>
+<li><strong>Member order is the document's order</strong>, because an object
+here is a list of pairs rather than a set. Putting a key that is already
+there moves it to the front — a consequence of how <code>DictPut</code>
+works. If you need a stable order for comparing files,
+<code>JsonCanonical</code> sorts every object's members by key, all the way
+down.</li>
+</ul>
+
+<h2 id="hood">Under the Hood</h2>
+<p>You don't need any of this to use the machine — it's here for the curious.</p>
+<p><strong>The representation.</strong> <code>Json</code> is a sum type with
+six variants, and an object's members are a <code>List Of Pair</code>: the
+key in <code>Fst</code>, the value in <code>Snd</code>. That is not a
+coincidence — it is exactly the association list
+<a href="dict.html">dict</a> is built on, which means
+<code>DictGet</code>, <code>DictPut</code>, <code>DictDel</code> and
+<code>DictHas</code> work on an object's members with no adapter at all.
+<code>JGet</code>, <code>JPut</code>, <code>JDel</code> and
+<code>JKeys</code> are thin wrappers over dict rather than a second
+implementation of the same idea. Every field name is prefixed with
+<code>J</code> for a duller reason: accessor words share one flat namespace
+with the builtins, and a builtin quietly outranks an accessor, so a field
+called <code>Str</code> or <code>Len</code> would never be reached.</p>
+<p><strong>The reader</strong> is recursive descent over the string and a
+1-based index, and it never slices the input — taking the tail of a 13 KB
+document at every character would turn a linear parser into a quadratic one.
+Each step returns both what it read and where it stopped, so positions
+thread through the whole descent and an error can say exactly which
+character defeated it.</p>
+<p>The split that matters is between the two kinds of recursion. The
+character scanners — skipping whitespace, running through digits, reading a
+string body — call only themselves, in tail position, which the mill
+compiles to a loop; they cost no stack however long the input. Values,
+arrays and objects genuinely call one another, which does cost stack, but
+only in proportion to how deeply the document nests. That is small for real
+data and unbounded for hostile data: <code>[[[[[</code> repeated is two bytes
+per stack frame, and a .NET stack overflow cannot be caught, so the program
+would die with no message at all. Hence a depth limit of 200 by default,
+spent one level at a time and reported as an ordinary error, with
+<code>JsonReadDepth</code> to raise it when a document genuinely needs it.</p>
+<p><strong>Numbers</strong> are scanned by hand before <code>Val</code> ever
+sees them. <code>Val</code> is C's <code>strtod</code>, which is far more
+permissive than JSON — it will happily take <code>+1</code>, <code>.5</code>,
+<code>5.</code> and hexadecimal — so the grammar
+<code>-?&nbsp;(&nbsp;0&nbsp;|&nbsp;[1-9][0-9]*&nbsp;)&nbsp;(&nbsp;"."&nbsp;[0-9]+&nbsp;)?&nbsp;(&nbsp;[eE]&nbsp;[+-]?&nbsp;[0-9]+&nbsp;)?</code>
+is validated first and <code>Val</code> is called only on a slice already
+known to match it.</p>
+<p><strong>The writer</strong> never builds its output by concatenating onto
+a growing string, which is quadratic in the size of the result and exactly
+the wrong shape for a serializer. Every writer word prepends fragments onto
+an accumulator — constant time each — and the join happens once, at the top.
+The escaper goes further and tracks runs: an ordinary string with nothing to
+escape produces a single fragment rather than one per character.</p>
+<p><strong>What it costs.</strong> Reading is linear in the length of the
+text and writing is linear in the size of the output. Looking a key up
+inside an object is a linear scan of that object's members, inherited
+straight from dict — fine for the tens of members real documents have, and
+the same honest trade dict makes. Collapsing duplicate keys at parse time
+costs a scan per member, for the same reason and with the same caveat.</p>
+<p><strong>Where it stops.</strong> Numbers are written with
+<code>Str</code>, which gives ten significant digits, so a document full of
+arbitrary doubles does not survive a round trip bit-for-bit — that is the
+language's number formatting rather than anything this machine chooses, and
+values that fit in ten digits come back exactly. And a string cannot carry
+NUL, because <code>Chr(0)</code> is the empty string in Shoddy; a
+<code>\u0000</code> escape is therefore refused by name rather than dropped
+silently, which would hand you a string shorter than the document said it
+was.</p>
+
+<h2 id="words">Word Reference</h2>
+<p class="tag">Reading, writing, walking and building</p>
+
+<h3>Reading</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>JsonParse(s)</td><td>The document in <code>s</code>. Stops the
+program with the reason and the character offset if the text is not valid
+JSON. The one to reach for when the text is yours.</td></tr>
+<tr><td>JsonRead(s)</td><td>Total. Hands back <code>JOk(doc)</code> or
+<code>JErr(why, at)</code>, where <code>at</code> is the 1-based character
+the parse gave up on. Nothing it is given can stop the program, which is
+what makes it safe for input you did not write.</td></tr>
+<tr><td>JsonReadDepth(s, maxDepth)</td><td>As <code>JsonRead</code>, with the
+nesting limit given explicitly. <code>JsonRead</code> is this with the
+default of 200.</td></tr>
+<tr><td>JsonLoad(path)</td><td>Reads the file and parses it, strictly.</td></tr>
+</table>
+
+<h3>Writing</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>JsonText(j)</td><td>Compact text — no whitespace anywhere outside
+strings. Stops the program if the document holds a number that is not
+finite, since neither <code>nan</code> nor <code>inf</code> is JSON.</td></tr>
+<tr><td>JsonPretty(j, indent)</td><td>Laid out over lines, <code>indent</code>
+spaces per level, following the same convention as
+<code>python -m json.tool</code> so the output diffs against other tools.
+<code>indent</code> of 0 means compact.</td></tr>
+<tr><td>JsonSave(path, j)</td><td>Writes the compact text to a file.</td></tr>
+<tr><td>JsonEscape(s)</td><td>The inside of a JSON string — the escaping
+without the surrounding quotes. Useful on its own.</td></tr>
+<tr><td>JsonCanonical(j)</td><td>The same document with every object's
+members sorted by key, recursively. For output you mean to compare
+byte-for-byte against yesterday's.</td></tr>
+</table>
+
+<h3>Walking a document</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>JGet(j, k)</td><td>The value filed under key <code>k</code>. Stops
+the program if <code>j</code> isn't an object or the key isn't there.</td></tr>
+<tr><td>JGetOr(j, k, dflt)</td><td>Same, but hands back <code>dflt</code>
+instead of stopping.</td></tr>
+<tr><td>JHas(j, k)</td><td>True or False. False for a non-object rather than
+an error, so you can ask without checking first.</td></tr>
+<tr><td>JNth(j, n)</td><td>The <code>n</code>th element of an array, counting
+from 1 like everything else in the language.</td></tr>
+<tr><td>JPath(j, path)</td><td>Follows a list of keys down through the
+nesting: <code>JPath(doc, { "properties", "forecast" })</code>.</td></tr>
+<tr><td>JPathOr(j, path, dflt)</td><td>Same, giving back <code>dflt</code> the
+moment a key along the way is missing.</td></tr>
+<tr><td>JKeys(j)</td><td>Every key of an object, in document order.</td></tr>
+<tr><td>JCount(j)</td><td>How many members an object has, or how many items
+an array has.</td></tr>
+<tr><td>JEqual(a, b)</td><td>Deep comparison — the one to use, since
+<code>=</code> cannot see inside a list. Objects compare as unordered,
+arrays as ordered.</td></tr>
+</table>
+
+<h3>Reading values out</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>IsJNull(j)</td><td>Is this the JSON <code>null</code>?</td></tr>
+<tr><td>JStrOr(j, dflt)</td><td>The string inside, or your default if it
+isn't a string. Never converts.</td></tr>
+<tr><td>JNumOr(j, dflt)</td><td>The number inside, or your default.</td></tr>
+<tr><td>JBoolOr(j, dflt)</td><td>The boolean inside, or your default.</td></tr>
+<tr><td>JText / JNumber / JFlag / JItems / JMembers</td><td>The strict
+halves, straight off the type: the value inside, or the program stops
+because it was the wrong kind. These are what the <code>Or</code> words
+guard.</td></tr>
+</table>
+
+<h3>Building</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>JPut(j, k, v)</td><td>A new object with <code>v</code> filed under
+<code>k</code>. Replaces the key if it was already there — and moves it to
+the front, as <code>DictPut</code> does.</td></tr>
+<tr><td>JDel(j, k)</td><td>A new object without that key. Harmless if it
+wasn't there.</td></tr>
+<tr><td>JNumList(xs)</td><td>A list of numbers as a JSON array.</td></tr>
+<tr><td>JStrList(xs)</td><td>A list of strings as a JSON array.</td></tr>
+<tr><td>IsFinite(x)</td><td>True unless <code>x</code> is an infinity or not
+a number. The guard the writer uses, since there is no such builtin and
+<code>Abs(x) &gt; 1e308</code> would reject perfectly good numbers.</td></tr>
+</table>
+
+
+<h2 id="usedby">Who Uses It</h2>
+<p>Nothing in the tree yet — <code>json</code> is new, and it is here for the
+programs that come next: anything that reads a response from a network
+service, a configuration file, or a data set someone else exported.</p>
+
+<h2 id="uses">The Machines It Uses</h2>
+<table>
+<tr><th></th><th>Machine</th><th>Why</th></tr>
+<tr><td class="uicon"><a href="dict.html"><img src="../media/icons/dict.svg" alt=""></a></td><td><a href="dict.html">dict</a></td><td>An object's
+members <em>are</em> a dict — the same <code>List Of Pair</code> — so
+<code>DictGet</code>, <code>DictPut</code> and <code>DictDel</code> do the
+key work unchanged.</td></tr>
+<tr><td class="uicon"><a href="str.html"><img src="../media/icons/str.svg" alt=""></a></td><td><a href="str.html">str</a></td><td><code>Join</code>
+puts the writer's fragments together at the end, and <code>StrRep</code>
+makes the pretty printer's indentation.</td></tr>
+</table>
+
+<nav class="pager" aria-label="Machines, in catalog order">
+  <a href="shaker.html"><span class="dir">&larr; Previous machine</span><span class="ttl">shaker</span></a>
+  <a class="next" href="xml.html"><span class="dir">Next machine &rarr;</span><span class="ttl">xml</span></a>
+</nav>
+<footer>Named for the shoddy mills of the West Riding: Useless Things Made
+Useful Through Skill (<a href="../heritage.html">the heritage of the name</a>).<br>
+&copy; 2026 Stephen Vincent Foster</footer>
+</div>
+</body>
+</html>

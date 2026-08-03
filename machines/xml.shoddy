@@ -1,0 +1,1110 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem xml.shoddy — Shoddy standard library: XML 1.0, well-formed
+Rem
+Rem A reader and a writer, pure Shoddy. A node is an Xml:
+Rem
+Rem     XDocument | XElem | XText | XComment | XPI | XCData | XDoctype
+Rem
+Rem An element's attributes are a List Of Pair — name in Fst, value in
+Rem Snd — which is precisely dict.shoddy's association list, so DictGet,
+Rem DictPut and friends work on them unchanged and XAttr/XPutAttr are
+Rem thin wrappers rather than a second implementation.
+Rem
+Rem     Let doc  = XmlParse(ReadFile("feed.xml"))
+Rem     Let ttl  = XFind(XRoot(doc), "title")
+Rem     Print(XTextOf(ttl))
+Rem     Print(XAttrOr(XRoot(doc), "version", "1.0"))
+Rem     Print(XmlPretty(doc, 2))
+Rem
+Rem The reader returns a WHOLE DOCUMENT, not the root element: the XML
+Rem declaration, any comments and processing instructions around the
+Rem root, the doctype and the whitespace between them are all kept, so
+Rem what went in can come back out. XRoot reaches the root element,
+Rem which is what most programs actually want.
+Rem
+Rem The guard-pair convention, the same shape as json's and as str's
+Rem Bool/BoolOr: the strict word is the one you reach for first, and the
+Rem total word is there the moment the input stops being yours.
+Rem
+Rem     XmlParse / XmlRead        XAttr / XAttrOr    XChild / XChildOr
+Rem     XFind / XFindOr           XPath / XPathOr    XRoot / XRootOr
+Rem
+Rem Shoddy has no catchable errors, so a parser that could only abort
+Rem would be untestable on malformed input and unusable on untrusted
+Rem input. XmlRead is therefore total: it returns XOk or XErr, and XErr
+Rem carries the reason and the 1-based offset where the parse gave up.
+Rem
+Rem ---- known limits ------------------------------------------------
+Rem
+Rem Well-formed XML only. This is not a validating parser: a DOCTYPE is
+Rem carried through as one opaque node and its internal subset is never
+Rem read, so a document that declares its own entities is rejected with
+Rem UNKNOWN ENTITY rather than silently losing them.
+Rem
+Rem The five predefined entities and numeric character references, and
+Rem nothing else. &amp; &lt; &gt; &quot; &apos; &#NN; and &#xNN;. NUL
+Rem cannot be carried — Chr(0) is the empty string in Shoddy — so &#0;
+Rem is rejected rather than silently dropped, which would hand back a
+Rem string shorter than the document said it was.
+Rem
+Rem Text is decoded, so a round trip is CANONICAL rather than literal.
+Rem &#65; comes back as A and a single-quoted attribute comes back
+Rem double-quoted. What the writer guarantees is that it is a fixed
+Rem point: parse-write-parse-write agrees byte for byte from the first
+Rem write on, and XmlText(XmlParse(x)) = x exactly when x is already in
+Rem that canonical form. XmlCanonical goes further and sorts attributes
+Rem by name, recursively, for anyone who needs a stable ordering.
+Rem
+Rem Namespaces are not resolved. A prefixed name is carried literally,
+Rem prefix and all, and xmlns attributes are ordinary attributes.
+Rem XPrefix and XLocal split a name when you need the halves; mapping a
+Rem prefix to a URI is the caller's business.
+Rem
+Rem The encoding declaration is advisory. ReadFile decides how the bytes
+Rem became a string long before this machine sees them, so a document
+Rem that says UTF-16 and arrives as UTF-8 is read as it arrived.
+Rem
+Rem Whitespace is preserved exactly, including between elements, because
+Rem in XML it may be significant and nothing here can tell when it is.
+Rem XmlPretty re-indents an element only when none of its children is
+Rem text or CDATA. Mixed content and anything holding a CDATA section go
+Rem out exactly as XmlText would write them, because a line break added
+Rem inside either one changes what the document says.
+Rem
+Rem Compare with XEqual, not with =. A List is a quotation and compares
+Rem by identity, so two structurally identical elements are not = each
+Rem other. XEqual is the deep comparison.
+Rem ==================================================================
+
+Include "dict.shoddy"
+Include "str.shoddy"
+
+Type Xml = XDocument(XNodes As List Of Xml) | XElem(XTag As String, XAttrs As List Of Pair, XKids As List Of Xml) | XText(XChars As String) | XComment(XBody As String) | XPI(XTarget As String, XData As String) | XCData(XRaw As String) | XDoctype(XDtd As String)
+
+Rem The public result of a total parse.
+Type XRead = XOk(XTree As Xml) | XErr(XWhy As String, XAt As Number)
+
+Rem The internal one, threaded through the whole recursive descent: every
+Rem step returns its node AND the 1-based index of the next unconsumed
+Rem character, or why and where it gave up.
+Type XTake = XTook(XTVal As Xml, XTNext As Number) | XTBad(XTWhy As String, XTAt As Number)
+
+Rem ---- constants -------------------------------------------------------
+Rem Machines cannot carry a top-level Let, so the constants are zero-arg
+Rem Defs, as vt100's Esc() is.
+
+Def XQt() As String
+    Chr(34)
+
+Def XAp() As String
+    Chr(39)
+
+Def XNl() As String
+    Chr(10)
+
+Rem Deep enough for any document a person wrote, shallow enough that a
+Rem hostile one cannot exhaust the stack. Same budget json uses.
+Def XmlMaxDepth() As Number
+    200
+
+Rem The longest entity name worth looking for. &quot; is the longest of
+Rem the five; a numeric reference to the top of the plane is &#1114111;.
+Def XEntMax() As Number
+    12
+
+Rem ======================================================================
+Rem THE READER
+Rem ======================================================================
+
+Rem The five characters XML calls whitespace.
+Def XIsWs(c As String) As Boolean
+    c = " " Or c = Chr(9) Or c = XNl() Or c = Chr(13)
+
+Def XSkipWs(s As String, i As Number) As Number
+    If i > Len(s) Then
+        i
+    Else
+        If XIsWs(Mid(s, i, 1)) Then
+            XSkipWs(s, i + 1)
+        Else
+            i
+
+Def XIsDigit(c As String) As Boolean
+    c >= "0" And c <= "9"
+
+Rem str's Trim takes spaces off the ends and NOTHING ELSE — not tabs, not
+Rem newlines, not carriage returns. Markup is mostly made of those three,
+Rem so the two questions this machine actually asks about whitespace get
+Rem their own words rather than a Trim that would quietly answer no.
+Def XIsBlank(s As String) As Boolean
+    XSkipWs(s, 1) > Len(s)
+
+Def XTrimWs(s As String) As String
+    If Len(s) = 0 Then
+        s
+    Else
+        If XIsWs(Left(s, 1)) Then
+            XTrimWs(Mid(s, 2, Len(s)))
+        Else
+            If XIsWs(Right(s, 1)) Then
+                XTrimWs(Left(s, Len(s) - 1))
+            Else
+                s
+
+Rem A name may start with a letter, an underscore or a colon. Everything
+Rem at or above 128 is admitted rather than spelling out the several
+Rem thousand code points XML actually permits — the effect is that a
+Rem name with an accent in it is accepted, which is the right answer for
+Rem every document that has one.
+Def XIsNameStart(c As String) As Boolean
+    If Len(c) <> 1 Then
+        False
+    Else
+        (Asc(c) >= 65 And Asc(c) <= 90) Or (Asc(c) >= 97 And Asc(c) <= 122) Or c = "_" Or c = ":" Or Asc(c) >= 128
+
+Def XIsNameChar(c As String) As Boolean
+    If Len(c) <> 1 Then
+        False
+    Else
+        XIsNameStart(c) Or XIsDigit(c) Or c = "-" Or c = "."
+
+Rem The index just past the name at i. Self-tail-recursive, so it
+Rem compiles to a loop and a long name costs no stack.
+Def XNameEnd(s As String, i As Number) As Number
+    If XIsNameChar(Mid(s, i, 1)) Then
+        XNameEnd(s, i + 1)
+    Else
+        i
+
+Rem ---- entities --------------------------------------------------------
+Rem The five XML predefines, plus numeric references in either base.
+Rem Anything else is an error here: resolving it would need the internal
+Rem subset this machine deliberately does not read.
+
+Rem The index of the semicolon closing the reference at i, or 0.
+Def XSemiFrom(s As String, i As Number, last As Number) As Number
+    If i > last Or i > Len(s) Then
+        0
+    Else
+        If Mid(s, i, 1) = ";" Then
+            i
+        Else
+            XSemiFrom(s, i + 1, last)
+
+Def XEntEnd(s As String, i As Number) As Number
+    XSemiFrom(s, i + 1, i + XEntMax())
+
+Rem The name between & and ;, without either.
+Def XEntName(s As String, i As Number) As String
+    Let e = XEntEnd(s, i)
+    If e = 0 Then
+        ""
+    Else
+        Mid(s, i + 1, e - i - 1)
+
+Rem The text one of the five stands for, or "" if it is not one of them.
+Def XEntNamed(name As String) As String
+    Select Case name
+        Case "amp"
+            "&"
+        Case "lt"
+            "<"
+        Case "gt"
+            ">"
+        Case "quot"
+            XQt()
+        Case "apos"
+            XAp()
+        Case Else
+            ""
+
+Def XIsDigits(t As String) As Boolean
+    If Len(t) = 0 Then
+        False
+    Else
+        All(Map(Range(1, Len(t)), Fn(k) => Mid(t, k, 1)), XIsDigit)
+
+Def XHexVal(c As String) As Number
+    If XIsDigit(c) Then
+        Asc(c) - 48
+    Else
+        If c >= "a" And c <= "f" Then
+            Asc(c) - 87
+        Else
+            If c >= "A" And c <= "F" Then
+                Asc(c) - 55
+            Else
+                0 - 1
+
+Def XIsHexes(t As String) As Boolean
+    If Len(t) = 0 Then
+        False
+    Else
+        All(Map(Range(1, Len(t)), Fn(k) => XHexVal(Mid(t, k, 1))), Fn(v) => v >= 0)
+
+Def XHexOf(t As String) As Number
+    Fold(Map(Range(1, Len(t)), Fn(k) => XHexVal(Mid(t, k, 1))), 0, Fn(acc, v) => acc * 16 + v)
+
+Rem The code point a numeric reference names, or -1 if the name is not a
+Rem well-formed numeric reference at all.
+Def XEntCode(name As String) As Number
+    If Left(name, 2) = "#x" Or Left(name, 2) = "#X" Then
+        If XIsHexes(Mid(name, 3, Len(name) - 2)) Then
+            XHexOf(Mid(name, 3, Len(name) - 2))
+        Else
+            0 - 1
+    Else
+        If Left(name, 1) = "#" Then
+            If XIsDigits(Mid(name, 2, Len(name) - 1)) Then
+                Val(Mid(name, 2, Len(name) - 1))
+            Else
+                0 - 1
+        Else
+            0 - 1
+
+Rem How many characters the reference at i occupies, or 0 if what is
+Rem there is not a reference this machine can resolve. i points AT the &.
+Def XEntLen(s As String, i As Number) As Number
+    Let e = XEntEnd(s, i)
+    If e = 0 Then
+        0
+    Else
+        Let name = XEntName(s, i)
+        If XEntNamed(name) <> "" Or XEntCode(name) > 0 Then
+            e - i + 1
+        Else
+            0
+
+Rem A code point as its UTF-8 BYTES, one per character.
+Rem
+Rem This is the load-bearing decision in the whole machine, and it comes
+Rem from the runtime rather than from XML. ReadFile is Latin-1: one byte
+Rem in the file is one character in the string, which is what lets the
+Rem same words read a PNG. So an em dash sitting literally in a UTF-8
+Rem document arrives as the three characters 226 128 148 — and if this
+Rem decoded &#8212; to Chr(8212) instead, the same character written two
+Rem ways would give two different strings, XEqual would say they differ,
+Rem and WriteFile would turn the second into a question mark, because a
+Rem character above 255 has no byte to be written as.
+Rem
+Rem Encoding to UTF-8 here means the entity and the literal agree, and
+Rem what comes out is a valid UTF-8 file again.
+Def XUtf8(n As Number) As String
+    If n < 128 Then
+        Chr(n)
+    Else
+        If n < 2048 Then
+            Chr(192 + Fix(n / 64)) & Chr(128 + (n Mod 64))
+        Else
+            If n < 65536 Then
+                Chr(224 + Fix(n / 4096)) & Chr(128 + (Fix(n / 64) Mod 64)) & Chr(128 + (n Mod 64))
+            Else
+                Chr(240 + Fix(n / 262144)) & Chr(128 + (Fix(n / 4096) Mod 64)) & Chr(128 + (Fix(n / 64) Mod 64)) & Chr(128 + (n Mod 64))
+
+Rem The text the reference at i stands for. Only ever called when
+Rem XEntLen said there was one.
+Def XEntText(s As String, i As Number) As String
+    Let name = XEntName(s, i)
+    If XEntNamed(name) <> "" Then
+        XEntNamed(name)
+    Else
+        XUtf8(XEntCode(name))
+
+Rem Why the reference at i is not one we can resolve. Only ever called
+Rem when XEntLen said it was not.
+Def XEntWhy(s As String, i As Number) As String
+    Let e = XEntEnd(s, i)
+    If e = 0 Then
+        "UNTERMINATED ENTITY REFERENCE — NO ; WITHIN " & Str(XEntMax()) & " CHARACTERS"
+    Else
+        Let name = XEntName(s, i)
+        If XEntCode(name) = 0 Then
+            "&#0; IS NOT REPRESENTABLE — A SHODDY STRING CANNOT CARRY NUL"
+        Else
+            If Left(name, 1) = "#" Then
+                "MALFORMED NUMERIC CHARACTER REFERENCE &" & name & ";"
+            Else
+                "UNKNOWN ENTITY &" & name & "; — ONLY amp lt gt quot apos AND NUMERIC REFERENCES ARE RESOLVED"
+
+Rem ---- text runs -------------------------------------------------------
+Rem The scanner tracks the start of the current undecoded RUN so ordinary
+Rem text — the overwhelming case — costs one fragment rather than one per
+Rem character. Flush the run [run, i) onto the fragment list if non-empty.
+
+Def XRun(s As String, run As Number, i As Number, acc As List Of String) As List Of String
+    If i > run Then
+        Prepend(Mid(s, run, i - run), acc)
+    Else
+        acc
+
+Rem Character data up to the next < or the end of the document. Returns
+Rem the decoded text and where it stopped. Never called with i past the
+Rem end, and never returns an empty run.
+Def XTextAt(s As String, i As Number) As XTake
+    XTextBody(s, i, i, { })
+
+Def XTextBody(s As String, i As Number, run As Number, acc As List Of String) As XTake
+    If i > Len(s) Then
+        XTook(XText(Join(Reverse(XRun(s, run, i, acc)), "")), i)
+    Else
+        Let c = Mid(s, i, 1)
+        If c = "<" Then
+            XTook(XText(Join(Reverse(XRun(s, run, i, acc)), "")), i)
+        Else
+            If c = "&" Then
+                If XEntLen(s, i) = 0 Then
+                    XTBad(XEntWhy(s, i), i)
+                Else
+                    XTextBody(s, i + XEntLen(s, i), i + XEntLen(s, i), Prepend(XEntText(s, i), XRun(s, run, i, acc)))
+            Else
+                XTextBody(s, i + 1, run, acc)
+
+Rem ---- comments, PIs, CDATA, doctype -----------------------------------
+Rem Each of these is a hunt for a fixed closing delimiter.
+
+Rem Instr always searches from the beginning, so searching from i means
+Rem searching the tail and adding the offset back. The tail is copied,
+Rem which is why this is used for the four fixed delimiters below and
+Rem never inside a per-character loop.
+Def XInstrFrom(s As String, i As Number, sub As String) As Number
+    If i > Len(s) Then
+        0
+    Else
+        Let p = Instr(Mid(s, i, Len(s) - i + 1), sub)
+        If p = 0 Then
+            0
+        Else
+            i + p - 1
+
+Def XCommentAt(s As String, i As Number) As XTake
+    Let e = XInstrFrom(s, i + 4, "-->")
+    If e = 0 Then
+        XTBad("UNTERMINATED COMMENT", i)
+    Else
+        XTook(XComment(Mid(s, i + 4, e - i - 4)), e + 3)
+
+Def XCDataAt(s As String, i As Number) As XTake
+    Let e = XInstrFrom(s, i + 9, "]]>")
+    If e = 0 Then
+        XTBad("UNTERMINATED CDATA SECTION", i)
+    Else
+        XTook(XCData(Mid(s, i + 9, e - i - 9)), e + 3)
+
+Rem <?target data?>, with the data allowed to be empty. The target is a
+Rem name; everything to ?> after one space is the data, verbatim.
+Def XPIAt(s As String, i As Number) As XTake
+    Let n = XNameEnd(s, i + 2)
+    If n = i + 2 Then
+        XTBad("EXPECTED A NAME AFTER <?", i)
+    Else
+        Let e = XInstrFrom(s, n, "?>")
+        If e = 0 Then
+            XTBad("UNTERMINATED PROCESSING INSTRUCTION", i)
+        Else
+            XTook(XPI(Mid(s, i + 2, n - i - 2), XTrimWs(Mid(s, n, e - n))), e + 2)
+
+Rem The doctype is carried whole and never read. An internal subset in
+Rem square brackets may itself contain a >, so the scan steps over a
+Rem bracketed section before looking for the closing angle.
+Def XDoctypeAt(s As String, i As Number) As XTake
+    Let b = XInstrFrom(s, i + 9, "[")
+    Let e = XInstrFrom(s, i + 9, ">")
+    If e = 0 Then
+        XTBad("UNTERMINATED DOCTYPE", i)
+    Else
+        If b > 0 And b < e Then
+            Let c = XInstrFrom(s, b, "]")
+            If c = 0 Then
+                XTBad("UNTERMINATED DOCTYPE INTERNAL SUBSET", i)
+            Else
+                Let f = XInstrFrom(s, c, ">")
+                If f = 0 Then
+                    XTBad("UNTERMINATED DOCTYPE", i)
+                Else
+                    XTook(XDoctype(Mid(s, i + 9, f - i - 9)), f + 1)
+        Else
+            XTook(XDoctype(Mid(s, i + 9, e - i - 9)), e + 1)
+
+Rem ---- attributes ------------------------------------------------------
+
+Rem An attribute value, from its opening quote, decoded. Either quote
+Rem character may delimit it; the other is then ordinary text.
+Def XAttrValue(s As String, i As Number) As XTake
+    XAttrBody(s, i + 1, i + 1, Mid(s, i, 1), { })
+
+Def XAttrBody(s As String, i As Number, run As Number, q As String, acc As List Of String) As XTake
+    If i > Len(s) Then
+        XTBad("UNTERMINATED ATTRIBUTE VALUE", i)
+    Else
+        Let c = Mid(s, i, 1)
+        If c = q Then
+            XTook(XText(Join(Reverse(XRun(s, run, i, acc)), "")), i + 1)
+        Else
+            If c = "<" Then
+                XTBad("A RAW < IS NOT ALLOWED IN AN ATTRIBUTE VALUE", i)
+            Else
+                If c = "&" Then
+                    If XEntLen(s, i) = 0 Then
+                        XTBad(XEntWhy(s, i), i)
+                    Else
+                        XAttrBody(s, i + XEntLen(s, i), i + XEntLen(s, i), q, Prepend(XEntText(s, i), XRun(s, run, i, acc)))
+                Else
+                    XAttrBody(s, i + 1, run, q, acc)
+
+Rem The attribute list of a start tag, gathered until > or />. Returns
+Rem the attributes as an element with no children and no name, which is
+Rem the only way to hand a List Of Pair back through an XTake.
+Def XAttrsAt(s As String, i As Number, acc As List Of Pair) As XTake
+    Let k = XSkipWs(s, i)
+    If k > Len(s) Then
+        XTBad("UNTERMINATED START TAG", k)
+    Else
+        Let c = Mid(s, k, 1)
+        If c = ">" Or Mid(s, k, 2) = "/>" Then
+            XTook(XElem("", Reverse(acc), { }), k)
+        Else
+            If Not XIsNameStart(c) Then
+                XTBad("EXPECTED AN ATTRIBUTE NAME, > OR /> IN A START TAG", k)
+            Else
+                Let n = XNameEnd(s, k)
+                Let name = Mid(s, k, n - k)
+                Let eq = XSkipWs(s, n)
+                If Mid(s, eq, 1) <> "=" Then
+                    XTBad("EXPECTED = AFTER THE ATTRIBUTE " & name, eq)
+                Else
+                    Let v = XSkipWs(s, eq + 1)
+                    If Mid(s, v, 1) <> XQt() And Mid(s, v, 1) <> XAp() Then
+                        XTBad("AN ATTRIBUTE VALUE MUST BE QUOTED", v)
+                    Else
+                        If DictHas(acc, name) Then
+                            XTBad("DUPLICATE ATTRIBUTE " & name, k)
+                        Else
+                            Select Case XAttrValue(s, v)
+                                Case XTBad(why, at)
+                                    XTBad(why, at)
+                                Case XTook(XText(val), n2)
+                                    XAttrsAt(s, n2, Prepend(Pair(name, val), acc))
+                                Case Else
+                                    XTBad("EXPECTED AN ATTRIBUTE VALUE", v)
+
+Rem ---- elements --------------------------------------------------------
+Rem Elements and their children are genuinely mutually recursive and so
+Rem consume stack in proportion to NESTING DEPTH, which is small for real
+Rem documents and unbounded on adversarial input — hence the depth budget
+Rem d, spent one level at a time. The child loop, by contrast, calls only
+Rem itself in tail position, so a wide element costs no stack at all.
+
+Def XElemAt(s As String, i As Number, d As Number) As XTake
+    If d <= 0 Then
+        XTBad("NESTING TOO DEEP", i)
+    Else
+        Let n = XNameEnd(s, i + 1)
+        If n = i + 1 Then
+            XTBad("EXPECTED AN ELEMENT NAME AFTER <", i)
+        Else
+            Let tag = Mid(s, i + 1, n - i - 1)
+            Select Case XAttrsAt(s, n, { })
+                Case XTBad(why, at)
+                    XTBad(why, at)
+                Case XTook(XElem(ignored, attrs, kids0), k)
+                    If Mid(s, k, 2) = "/>" Then
+                        XTook(XElem(tag, attrs, { }), k + 2)
+                    Else
+                        XKidsAt(s, k + 1, d, tag, attrs, { })
+                Case Else
+                    XTBad("EXPECTED A START TAG", i)
+
+Rem The children of an open element, up to and including its end tag.
+Def XKidsAt(s As String, i As Number, d As Number, tag As String, attrs As List Of Pair, acc As List Of Xml) As XTake
+    If i > Len(s) Then
+        XTBad("UNTERMINATED ELEMENT <" & tag & ">", i)
+    Else
+        If Mid(s, i, 2) = "</" Then
+            Let n = XNameEnd(s, i + 2)
+            Let close = Mid(s, i + 2, n - i - 2)
+            If close <> tag Then
+                XTBad("</" & close & "> CLOSES <" & tag & ">", i)
+            Else
+                Let e = XSkipWs(s, n)
+                If Mid(s, e, 1) <> ">" Then
+                    XTBad("EXPECTED > TO CLOSE </" & tag, e)
+                Else
+                    XTook(XElem(tag, attrs, Reverse(acc)), e + 1)
+        Else
+            Select Case XNodeAt(s, i, d - 1)
+                Case XTBad(why, at)
+                    XTBad(why, at)
+                Case XTook(v, n)
+                    XKidsAt(s, n, d, tag, attrs, Prepend(v, acc))
+                Case Else
+                    XTBad("EXPECTED CONTENT OR AN END TAG IN <" & tag & ">", i)
+
+Rem One node: an element, a comment, a PI, a CDATA section, or a run of
+Rem character data. Not an end tag — the child loop deals with those.
+Def XNodeAt(s As String, i As Number, d As Number) As XTake
+    If Mid(s, i, 1) <> "<" Then
+        XTextAt(s, i)
+    Else
+        If Mid(s, i, 4) = "<!--" Then
+            XCommentAt(s, i)
+        Else
+            If Mid(s, i, 9) = "<![CDATA[" Then
+                XCDataAt(s, i)
+            Else
+                If Mid(s, i, 9) = "<!DOCTYPE" Then
+                    XDoctypeAt(s, i)
+                Else
+                    If Mid(s, i, 2) = "<?" Then
+                        XPIAt(s, i)
+                    Else
+                        If Mid(s, i, 2) = "</" Then
+                            XTBad("UNEXPECTED END TAG", i)
+                        Else
+                            XElemAt(s, i, d)
+
+Rem ---- the document ----------------------------------------------------
+Rem Top level: any number of comments, PIs, doctypes and runs of
+Rem whitespace, with exactly one element among them.
+
+Def XDocNodes(s As String, i As Number, d As Number, roots As Number, acc As List Of Xml) As XRead
+    If i > Len(s) Then
+        If roots = 1 Then
+            XOk(XDocument(Reverse(acc)))
+        Else
+            If roots = 0 Then
+                XErr("A DOCUMENT MUST HAVE A ROOT ELEMENT", i)
+            Else
+                XErr("A DOCUMENT MUST HAVE EXACTLY ONE ROOT ELEMENT", i)
+    Else
+        Select Case XNodeAt(s, i, d)
+            Case XTBad(why, at)
+                XErr(why, at)
+            Case XTook(XText(t), n)
+                If Not XIsBlank(t) Then
+                    XErr("TEXT IS NOT ALLOWED OUTSIDE THE ROOT ELEMENT", i)
+                Else
+                    XDocNodes(s, n, d, roots, Prepend(XText(t), acc))
+            Case XTook(XElem(tag, attrs, kids), n)
+                If roots > 0 Then
+                    XErr("A DOCUMENT MUST HAVE EXACTLY ONE ROOT ELEMENT", i)
+                Else
+                    XDocNodes(s, n, d, roots + 1, Prepend(XElem(tag, attrs, kids), acc))
+            Case XTook(v, n)
+                XDocNodes(s, n, d, roots, Prepend(v, acc))
+            Case Else
+                XErr("UNEXPECTED END OF INPUT", i)
+
+Rem ---- the public reader -----------------------------------------------
+
+Def XmlReadDepth(s As String, maxDepth As Number) As XRead
+    If XIsBlank(s) Then
+        XErr("THE DOCUMENT IS EMPTY", 1)
+    Else
+        XDocNodes(s, 1, maxDepth, 0, { })
+
+Def XmlRead(s As String) As XRead
+    XmlReadDepth(s, XmlMaxDepth())
+
+Def XmlParse(s As String) As Xml
+    Select Case XmlRead(s)
+        Case XOk(v)
+            v
+        Case XErr(why, at)
+            Error("XMLPARSE: " & why & " AT " & Str(at))
+        Case Else
+            Error("XMLPARSE: UNREACHABLE")
+
+Def XmlLoad(path As String) As Xml
+    XmlParse(ReadFile(path))
+
+Rem ======================================================================
+Rem THE WRITER
+Rem ======================================================================
+Rem Never build a string with & in a left fold — that is quadratic in the
+Rem output, which is exactly the shape of a serializer. Every writer word
+Rem prepends FRAGMENTS onto an accumulator (so the list is built
+Rem backwards, in constant time per fragment) and the join happens once,
+Rem at the top, in XmlText and XmlPretty.
+
+Def XmlText(x As Xml) As String
+    Join(Reverse(XFrags(x, { })), "")
+
+Def XFrags(x As Xml, acc As List Of String) As List Of String
+    Select Case x
+        Case XDocument(ns)
+            XFragList(ns, acc)
+        Case XText(t)
+            Prepend(XmlEscape(t), acc)
+        Case XComment(b)
+            Prepend("-->", Prepend(b, Prepend("<!--", acc)))
+        Case XCData(r)
+            Prepend("]]>", Prepend(r, Prepend("<![CDATA[", acc)))
+        Case XDoctype(dtd)
+            Prepend(">", Prepend(dtd, Prepend("<!DOCTYPE", acc)))
+        Case XPI(t, dat)
+            If dat = "" Then
+                Prepend("?>", Prepend(t, Prepend("<?", acc)))
+            Else
+                Prepend("?>", Prepend(dat, Prepend(" ", Prepend(t, Prepend("<?", acc)))))
+        Case XElem(tag, attrs, kids)
+            If IsEmpty(kids) Then
+                Prepend("/>", XFragAttrs(attrs, Prepend(tag, Prepend("<", acc))))
+            Else
+                XFragClose(tag, XFragList(kids, XFragOpen(tag, attrs, acc)))
+
+Rem The two halves of a tag pair, so the nesting stays legible. Written
+Rem as separate words rather than one long Prepend chain because that
+Rem chain runs eight deep and a miscounted bracket in it is invisible.
+Def XFragOpen(tag As String, attrs As List Of Pair, acc As List Of String) As List Of String
+    Prepend(">", XFragAttrs(attrs, Prepend(tag, Prepend("<", acc))))
+
+Def XFragClose(tag As String, acc As List Of String) As List Of String
+    Prepend(">", Prepend(tag, Prepend("</", acc)))
+
+Rem Note the If rather than Ifte throughout the writer. Ifte CALLS the
+Rem branch it chooses, and a List is a quotation — so Ifte(done, acc, ...)
+Rem would RUN the accumulator instead of returning it, scattering its
+Rem fragments over the stack.
+Def XFragList(xs As List Of Xml, acc As List Of String) As List Of String
+    If IsEmpty(xs) Then
+        acc
+    Else
+        XFragList(Rest(xs), XFrags(First(xs), acc))
+
+Def XFragAttrs(attrs As List Of Pair, acc As List Of String) As List Of String
+    If IsEmpty(attrs) Then
+        acc
+    Else
+        XFragAttrs(Rest(attrs), Prepend(XQt(), Prepend(XmlEscapeAttr(Snd(First(attrs))), Prepend("=" & XQt(), Prepend(Fst(First(attrs)), Prepend(" ", acc))))))
+
+Def XmlSave(path As String, x As Xml)
+    WriteFile(path, XmlText(x))
+
+Rem ---- escaping --------------------------------------------------------
+Rem & and < always, because they start markup. > as well: it is legal
+Rem raw, but escaping it is what every other producer does, and it means
+Rem a stray ]]> in text cannot be mistaken for the end of a section.
+
+Def XmlEscape(s As String) As String
+    Join(Reverse(XEscFrags(s, 1, 1, { }, False)), "")
+
+Rem An attribute value additionally cannot carry the quote it is
+Rem delimited by, and this writer always delimits with the double.
+Def XmlEscapeAttr(s As String) As String
+    Join(Reverse(XEscFrags(s, 1, 1, { }, True)), "")
+
+Def XEscFrags(s As String, i As Number, run As Number, acc As List Of String, attr As Boolean) As List Of String
+    If i > Len(s) Then
+        XRun(s, run, i, acc)
+    Else
+        If XNeedsEsc(Mid(s, i, 1), attr) Then
+            XEscFrags(s, i + 1, i + 1, Prepend(XEscOne(Mid(s, i, 1)), XRun(s, run, i, acc)), attr)
+        Else
+            XEscFrags(s, i + 1, run, acc, attr)
+
+Def XNeedsEsc(c As String, attr As Boolean) As Boolean
+    If c = "&" Or c = "<" Or c = ">" Then
+        True
+    Else
+        attr And (c = XQt() Or c = Chr(9) Or c = XNl() Or c = Chr(13))
+
+Def XEscOne(c As String) As String
+    Select Case c
+        Case "&"
+            "&amp;"
+        Case "<"
+            "&lt;"
+        Case ">"
+            "&gt;"
+        Case Else
+            If c = XQt() Then
+                "&quot;"
+            Else
+                "&#" & Str(Asc(c)) & ";"
+
+Rem Turn the references in a string back into the text they stand for.
+Rem The reader does this for you; this is here for text that arrived by
+Rem another road.
+Def XmlUnescape(s As String) As String
+    Join(Reverse(XUnFrags(s, 1, 1, { })), "")
+
+Def XUnFrags(s As String, i As Number, run As Number, acc As List Of String) As List Of String
+    If i > Len(s) Then
+        XRun(s, run, i, acc)
+    Else
+        If Mid(s, i, 1) = "&" And XEntLen(s, i) > 0 Then
+            XUnFrags(s, i + XEntLen(s, i), i + XEntLen(s, i), Prepend(XEntText(s, i), XRun(s, run, i, acc)))
+        Else
+            XUnFrags(s, i + 1, run, acc)
+
+Rem ---- pretty ----------------------------------------------------------
+Rem Only elements whose children are ALL elements are re-indented. The
+Rem moment text and elements are siblings the content is mixed, and a
+Rem line break inserted into mixed content changes what the document
+Rem says — so mixed content goes out exactly as XmlText would write it.
+
+Rem A pretty-printed DOCUMENT ends with a newline, because it is a file
+Rem and files end with one. A pretty-printed element does not, because it
+Rem is a value and you decide where it goes.
+Def XmlPretty(x As Xml, indent As Number) As String
+    If indent <= 0 Then
+        XmlText(x)
+    Else
+        Select Case x
+            Case XDocument(ns)
+                Join(Reverse(XPFrags(x, indent, 0, { })), "") & XNl()
+            Case Else
+                Join(Reverse(XPFrags(x, indent, 0, { })), "")
+
+Rem Content is mixed when text and markup are siblings, and that is the
+Rem case a pretty printer must not touch: a line break inserted between
+Rem <b>bold</b> and the word after it adds a space that was not there.
+Rem Whitespace-only text between elements is NOT mixed content — it is
+Rem the source's own indentation, and replacing it is the whole job.
+Rem CDATA counts as text here whatever it holds. Its whole purpose is to
+Rem carry characters that must survive exactly, so an element with a
+Rem CDATA child is never re-indented — putting a newline and two spaces
+Rem inside <recipe> would add them to the recipe.
+Def XMixed(xs As List Of Xml) As Boolean
+    Any(xs, Fn(k) => IsXCData(k) Or (IsXText(k) And Not XIsBlank(XChars(k))))
+
+Def IsXCData(x As Xml) As Boolean
+    Select Case x
+        Case XCData(r)
+            True
+        Case Else
+            False
+
+Def XIsLayout(x As Xml) As Boolean
+    IsXText(x) And XIsBlank(XChars(x))
+
+Def XPFrags(x As Xml, indent As Number, level As Number, acc As List Of String) As List Of String
+    Select Case x
+        Case XDocument(ns)
+            XPDoc(ns, indent, acc, True)
+        Case XElem(tag, attrs, kids)
+            If IsEmpty(kids) Or XMixed(kids) Then
+                XFrags(x, acc)
+            Else
+                XFragClose(tag, Prepend(XPad(indent, level), Prepend(XNl(), XPKids(Filter(kids, Fn(k) => Not XIsLayout(k)), indent, level + 1, XFragOpen(tag, attrs, acc)))))
+        Case Else
+            XFrags(x, acc)
+
+Rem At the top level the whitespace between nodes is replaced with one
+Rem newline apiece, which is what makes a pretty-printed document look
+Rem like one rather than like its source.
+Def XPDoc(ns As List Of Xml, indent As Number, acc As List Of String, lead As Boolean) As List Of String
+    If IsEmpty(ns) Then
+        acc
+    Else
+        Select Case First(ns)
+            Case XText(t)
+                XPDoc(Rest(ns), indent, acc, lead)
+            Case Else
+                If lead Then
+                    XPDoc(Rest(ns), indent, XPFrags(First(ns), indent, 0, acc), False)
+                Else
+                    XPDoc(Rest(ns), indent, XPFrags(First(ns), indent, 0, Prepend(XNl(), acc)), False)
+
+Def XPKids(xs As List Of Xml, indent As Number, level As Number, acc As List Of String) As List Of String
+    If IsEmpty(xs) Then
+        acc
+    Else
+        XPKids(Rest(xs), indent, level, XPFrags(First(xs), indent, level, Prepend(XPad(indent, level), Prepend(XNl(), acc))))
+
+Def XPad(indent As Number, level As Number) As String
+    StrRep(" ", indent * level)
+
+Rem ---- canonical -------------------------------------------------------
+Rem Sort is documented as ascending over all-numbers or all-strings, so
+Rem it will not sort a List Of Pair by name. Sort the NAMES — a List Of
+Rem String — and map them back through the attribute list to rebuild.
+
+Def XmlCanonical(x As Xml) As Xml
+    Select Case x
+        Case XDocument(ns)
+            XDocument(Map(ns, XmlCanonical))
+        Case XElem(tag, attrs, kids)
+            XElem(tag, Map(Sort(DictKeys(attrs)), Fn(k) => Pair(k, DictGet(attrs, k))), Map(kids, XmlCanonical))
+        Case Else
+            x
+
+Rem ======================================================================
+Rem NAVIGATION AND CONSTRUCTION
+Rem ======================================================================
+Rem XAttr, XHasAttr, XPutAttr, XDelAttr and XAttrNames delegate to
+Rem dict.shoddy rather than reimplementing it: an element's attributes
+Rem ARE an association list. The raw accessors XTag, XAttrs, XKids,
+Rem XChars and the rest come free from the Type and abort on the wrong
+Rem variant — they are the strict half of each guard pair, so they are
+Rem not wrapped.
+
+Def IsXElem(x As Xml) As Boolean
+    Select Case x
+        Case XElem(tag, attrs, kids)
+            True
+        Case Else
+            False
+
+Def IsXText(x As Xml) As Boolean
+    Select Case x
+        Case XText(t)
+            True
+        Case Else
+            False
+
+Rem The root element of a document, or the node itself if it is already
+Rem an element — so XRoot(XRoot(d)) is XRoot(d) and a function that takes
+Rem "a document or an element" can just call it.
+Def XRoot(x As Xml) As Xml
+    Select Case x
+        Case XElem(tag, attrs, kids)
+            x
+        Case XDocument(ns)
+            If IsEmpty(Filter(ns, IsXElem)) Then
+                Error("XROOT: THE DOCUMENT HAS NO ROOT ELEMENT")
+            Else
+                First(Filter(ns, IsXElem))
+        Case Else
+            Error("XROOT: NOT A DOCUMENT OR AN ELEMENT")
+
+Def XRootOr(x As Xml, dflt As Xml) As Xml
+    Select Case x
+        Case XElem(tag, attrs, kids)
+            x
+        Case XDocument(ns)
+            If IsEmpty(Filter(ns, IsXElem)) Then
+                dflt
+            Else
+                First(Filter(ns, IsXElem))
+        Case Else
+            dflt
+
+Rem ---- attributes ------------------------------------------------------
+
+Def XHasAttr(x As Xml, name As String) As Boolean
+    Select Case x
+        Case XElem(tag, attrs, kids)
+            DictHas(attrs, name)
+        Case Else
+            False
+
+Def XAttr(x As Xml, name As String) As String
+    If XHasAttr(x, name) Then
+        DictGet(XAttrs(x), name)
+    Else
+        Error("XATTR: NO ATTRIBUTE '" & name & "' ON <" & XTag(x) & ">")
+
+Def XAttrOr(x As Xml, name As String, dflt As String) As String
+    If XHasAttr(x, name) Then
+        DictGet(XAttrs(x), name)
+    Else
+        dflt
+
+Def XAttrNames(x As Xml) As List Of String
+    DictKeys(XAttrs(x))
+
+Rem An attribute read as a number, or the default if it is absent or is
+Rem not one. Val is lax, so the text is checked before it is trusted.
+Def XAttrNumOr(x As Xml, name As String, dflt As Number) As Number
+    Let t = XTrimWs(XAttrOr(x, name, ""))
+    If t = "" Or Not XLooksNumeric(t) Then
+        dflt
+    Else
+        Val(t)
+
+Def XLooksNumeric(t As String) As Boolean
+    Let body = Ifte(Left(t, 1) = "-" Or Left(t, 1) = "+", Mid(t, 2, Len(t) - 1), t)
+    If Len(body) = 0 Then
+        False
+    Else
+        All(Map(Range(1, Len(body)), Fn(k) => Mid(body, k, 1)), Fn(c) => XIsDigit(c) Or c = ".")
+
+Def XAttrBoolOr(x As Xml, name As String, dflt As Boolean) As Boolean
+    BoolOr(XAttrOr(x, name, ""), dflt)
+
+Rem ---- children and descendants ----------------------------------------
+
+Rem Every child that is an element, in document order. The text, comments
+Rem and CDATA are still there in XKids when you want them.
+Def XElems(x As Xml) As List Of Xml
+    Filter(XKids(x), IsXElem)
+
+Def XCount(x As Xml) As Number
+    Length(XKids(x))
+
+Def XHasChild(x As Xml, tag As String) As Boolean
+    Any(XElems(x), Fn(k) => XTag(k) = tag)
+
+Def XChild(x As Xml, tag As String) As Xml
+    If XHasChild(x, tag) Then
+        First(Filter(XElems(x), Fn(k) => XTag(k) = tag))
+    Else
+        Error("XCHILD: <" & XTag(x) & "> HAS NO CHILD <" & tag & ">")
+
+Def XChildOr(x As Xml, tag As String, dflt As Xml) As Xml
+    If XHasChild(x, tag) Then
+        First(Filter(XElems(x), Fn(k) => XTag(k) = tag))
+    Else
+        dflt
+
+Def XChildren(x As Xml, tag As String) As List Of Xml
+    Filter(XElems(x), Fn(k) => XTag(k) = tag)
+
+Rem Every descendant element with this name, in document order, the
+Rem element itself included if it matches.
+Def XFindAll(x As Xml, tag As String) As List Of Xml
+    Filter(XDescend(x, { }), Fn(k) => XTag(k) = tag)
+
+Rem Every element in the tree, in document order. Built backwards and
+Rem reversed once, as the writers are.
+Def XDescend(x As Xml, acc As List Of Xml) As List Of Xml
+    Reverse(XDescendR(x, acc))
+
+Def XDescendR(x As Xml, acc As List Of Xml) As List Of Xml
+    Select Case x
+        Case XElem(tag, attrs, kids)
+            XDescendList(kids, Prepend(x, acc))
+        Case XDocument(ns)
+            XDescendList(ns, acc)
+        Case Else
+            acc
+
+Def XDescendList(xs As List Of Xml, acc As List Of Xml) As List Of Xml
+    If IsEmpty(xs) Then
+        acc
+    Else
+        XDescendList(Rest(xs), XDescendR(First(xs), acc))
+
+Def XFind(x As Xml, tag As String) As Xml
+    If IsEmpty(XFindAll(x, tag)) Then
+        Error("XFIND: NO <" & tag & "> ANYWHERE IN THE TREE")
+    Else
+        First(XFindAll(x, tag))
+
+Def XFindOr(x As Xml, tag As String, dflt As Xml) As Xml
+    If IsEmpty(XFindAll(x, tag)) Then
+        dflt
+    Else
+        First(XFindAll(x, tag))
+
+Rem A path of child names, walked one step at a time. Not XPath the W3C
+Rem language — child steps and nothing else.
+Def XPath(x As Xml, path As List Of String) As Xml
+    If IsEmpty(path) Then
+        x
+    Else
+        XPath(XChild(x, First(path)), Rest(path))
+
+Def XPathOr(x As Xml, path As List Of String, dflt As Xml) As Xml
+    If IsEmpty(path) Then
+        x
+    Else
+        If XHasChild(x, First(path)) Then
+            XPathOr(XChild(x, First(path)), Rest(path), dflt)
+        Else
+            dflt
+
+Rem ---- text ------------------------------------------------------------
+
+Rem All the character data under a node, concatenated, with comments and
+Rem processing instructions left out. CDATA counts as text, because that
+Rem is what it is.
+Def XTextOf(x As Xml) As String
+    Join(Reverse(XTextFrags(x, { })), "")
+
+Def XTextFrags(x As Xml, acc As List Of String) As List Of String
+    Select Case x
+        Case XText(t)
+            Prepend(t, acc)
+        Case XCData(r)
+            Prepend(r, acc)
+        Case XElem(tag, attrs, kids)
+            XTextFragList(kids, acc)
+        Case XDocument(ns)
+            XTextFragList(ns, acc)
+        Case Else
+            acc
+
+Def XTextFragList(xs As List Of Xml, acc As List Of String) As List Of String
+    If IsEmpty(xs) Then
+        acc
+    Else
+        XTextFragList(Rest(xs), XTextFrags(First(xs), acc))
+
+Def XTextNumOr(x As Xml, dflt As Number) As Number
+    Let t = XTrimWs(XTextOf(x))
+    If t = "" Or Not XLooksNumeric(t) Then
+        dflt
+    Else
+        Val(t)
+
+Rem ---- names -----------------------------------------------------------
+Rem Namespaces are not resolved, so these two are how you look at a
+Rem prefixed name without pretending to understand it.
+
+Def XPrefix(name As String) As String
+    If Instr(name, ":") = 0 Then
+        ""
+    Else
+        Left(name, Instr(name, ":") - 1)
+
+Def XLocal(name As String) As String
+    If Instr(name, ":") = 0 Then
+        name
+    Else
+        Mid(name, Instr(name, ":") + 1, Len(name))
+
+Rem ---- functional update -----------------------------------------------
+
+Def XPutAttr(x As Xml, name As String, val As String) As Xml
+    XElem(XTag(x), DictPut(XAttrs(x), name, val), XKids(x))
+
+Def XDelAttr(x As Xml, name As String) As Xml
+    XElem(XTag(x), DictDel(XAttrs(x), name), XKids(x))
+
+Def XSetKids(x As Xml, kids As List Of Xml) As Xml
+    XElem(XTag(x), XAttrs(x), kids)
+
+Def XAddKid(x As Xml, kid As Xml) As Xml
+    XElem(XTag(x), XAttrs(x), Append(XKids(x), kid))
+
+Rem The element with one text child, which is the shape of most leaves.
+Def XSetText(x As Xml, t As String) As Xml
+    XElem(XTag(x), XAttrs(x), { XText(t) })
+
+Rem A leaf with no text is an EMPTY element, not one holding an empty
+Rem text node — the two write differently (<b/> against <b></b>) and the
+Rem first is what anyone building a tree by hand means.
+Def XLeaf(tag As String, t As String) As Xml
+    If t = "" Then
+        XElem(tag, { }, { })
+    Else
+        XElem(tag, { }, { XText(t) })
+
+Def XNode(tag As String, kids As List Of Xml) As Xml
+    XElem(tag, { }, kids)
+
+Rem ---- deep equality ---------------------------------------------------
+Rem A List is a quotation and compares by identity, so = is only
+Rem structural down to the first element. This is the comparison you want
+Rem for a round trip. Attributes are unordered, as XML says they are;
+Rem children are ordered, as XML says they are.
+
+Def XEqual(a As Xml, b As Xml) As Boolean
+    Select Case Pair(a, b)
+        Case Pair(XElem(t1, a1, k1), XElem(t2, a2, k2))
+            t1 = t2 And XAttrsEqual(a1, a2) And XKidsEqual(k1, k2)
+        Case Pair(XDocument(n1), XDocument(n2))
+            XKidsEqual(n1, n2)
+        Case Else
+            a = b
+
+Def XAttrsEqual(a As List Of Pair, b As List Of Pair) As Boolean
+    Length(a) = Length(b) And All(a, Fn(p) => DictHas(b, Fst(p)) And DictGet(b, Fst(p)) = Snd(p))
+
+Def XKidsEqual(a As List Of Xml, b As List Of Xml) As Boolean
+    Length(a) = Length(b) And All(Zip(a, b), Fn(p) => XEqual(Fst(p), Snd(p)))

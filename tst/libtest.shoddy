@@ -14,6 +14,9 @@ Include "../machines/recio.shoddy"
 Include "../machines/dict.shoddy"
 Include "../machines/stats.shoddy"
 Include "../machines/isam.shoddy"
+Include "../machines/json.shoddy"
+Include "../machines/xml.shoddy"
+Include "../machines/html.shoddy"
 
 Rem ---- top-level constants -------------------------------------------
 
@@ -385,4 +388,60 @@ Def Main()
     IsamClose(db7)
     DeleteFile("_isam.tmp")
     DeleteFile("_isam.tmp.idx")
+    Print("--- JSON ---")
+    Rem The full exercise is tst/jsontest.shoddy, which reads the real
+    Rem api.weather.gov fixture; this is the smoke test that json arrived
+    Rem through the machine references like everything else here.
+    Let jq = Chr(34)
+    Let jsrc = "{" & jq & "name" & jq & ":" & jq & "shoddy" & jq & "," & jq & "n" & jq & ":[1,2.5,-3]," & jq & "ok" & jq & ":true," & jq & "nil" & jq & ":null}"
+    Let jdoc = JsonParse(jsrc)
+    Print(JKeys(jdoc))                                  Rem [ "name" "n" "ok" "nil" ]
+    Print(JCount(jdoc))                                 Rem 4
+    Print(JStrOr(JGet(jdoc, "name"), "?"))              Rem shoddy
+    Print(JNumOr(JNth(JGet(jdoc, "n"), 2), 0))          Rem 2.5
+    Print(JBoolOr(JGet(jdoc, "ok"), False))             Rem True
+    Print(IsJNull(JGet(jdoc, "nil")))                   Rem True
+    Print(JsonText(jdoc) = jsrc)                        Rem True (compact text is byte-stable)
+    Print(JNumOr(JPathOr(jdoc, { "nope" }, JNum(7)), 0))   Rem 7
+    Print(JsonText(JsonCanonical(jdoc)))                Rem {"n":[1,2.5,-3],"name":"shoddy","nil":null,"ok":true}
+    Print(JsonEscape(jq & Chr(9)))                      Rem \"\t
+    Print(JsonPretty(JNumList({ 1, 2 }), 2))            Rem [\n  1,\n  2\n]
+    Assert(JEqual(JsonParse(JsonText(jdoc)), jdoc), "JSON ROUND TRIP")
+    Assert(JsonText(JPut(JObj({ }), "k", JStr("v"))) = "{" & jq & "k" & jq & ":" & jq & "v" & jq & "}", "JPUT THEN WRITE")
+    Assert(ErrAtOr(jq & "unterminated", 0) = 14, "A BAD DOCUMENT IS A VALUE, NOT AN ABORT")
+    Print("--- XML ---")
+    Rem The full exercise is tst/xmltest.shoddy, which reads the frozen
+    Rem sitemap; this is the smoke test that xml arrived through the
+    Rem machine references like everything else here.
+    Let xsrc = "<feed n=" & jq & "2" & jq & "><item>one &amp; two</item><item/></feed>"
+    Let xdoc = XmlParse(xsrc)
+    Print(XTag(XRoot(xdoc)))                            Rem feed
+    Print(XAttr(XRoot(xdoc), "n"))                      Rem 2
+    Print(Length(XChildren(XRoot(xdoc), "item")))       Rem 2
+    Print(XTextOf(XFind(xdoc, "item")))                 Rem one & two
+    Print(XmlText(xdoc) = xsrc)                         Rem True - already canonical
+    Print(XmlEscape("a < b & c"))                       Rem a &lt; b &amp; c
+    Assert(XEqual(XmlParse(XmlText(xdoc)), xdoc), "XML ROUND TRIP")
+    Assert(XmlPretty(XRoot(xdoc), 2) <> "", "XMLPRETTY PRODUCES SOMETHING")
+    Print("--- HTML ---")
+    Rem The full exercise is tst/htmltest.shoddy. html's tree IS xml's,
+    Rem which is what the XFind below is really testing.
+    Let hdoc = HtmlParse("<html><body><p>one<p>two<ul><li>a<li>b</ul><a href=" & jq & "/x" & jq & ">go</a></body></html>")
+    Print(Length(HByTag(hdoc, "p")))                    Rem 2 - implied end tags
+    Print(Length(HByTag(hdoc, "li")))                   Rem 2
+    Print(Join(HLinks(hdoc), ","))                      Rem /x
+    Print(XTextOf(XFind(hdoc, "a")))                    Rem go
+    Print(HtmlEntity("amp"))                            Rem &
+    Assert(HIsVoid("br"), "BR IS A VOID ELEMENT")
+    Assert(Instr(HtmlText(hdoc), "<br/>") = 0, "AND HTML NEVER SELF-CLOSES ONE")
     Print("ALL ASSERTIONS PASSED")
+
+Rem The offset a bad document gave up at, or dflt if it parsed. JsonRead
+Rem is total, so a malformed document can be tested without Error ending
+Rem the run — which is the whole reason it returns a JRead.
+Def ErrAtOr(s As String, dflt As Number) As Number
+    Select Case JsonRead(s)
+        Case JErr(w, at)
+            at
+        Case Else
+            dflt

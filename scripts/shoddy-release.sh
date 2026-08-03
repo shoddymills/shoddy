@@ -31,7 +31,11 @@ VSIX="vscode-shoddy/vscode-shoddy-$VER.vsix"
 
 # --- preconditions: right place, clean state ---
 git rev-parse --is-inside-work-tree >/dev/null 2>&1 || fail "not inside a git repository."
-[ "$(git rev-parse --show-toplevel)" = "$(pwd -P)" ] || fail "run from the repo root: $(git rev-parse --show-toplevel)"
+# --show-prefix is empty exactly at the repo root, and it is the only form of
+# this check that survives Git for Windows: --show-toplevel answers
+# C:/github/shoddy while pwd -P answers /c/github/shoddy, so comparing the two
+# can never match under Git Bash however right the directory is.
+[ -z "$(git rev-parse --show-prefix)" ] || fail "run from the repo root: $(git rev-parse --show-toplevel)"
 { [ -f build.sh ] && [ -f vscode-shoddy/package.json ]; } || fail "this doesn't look like the shoddy repo root."
 git diff --quiet || fail "unstaged changes present - commit or stash first (see git status)."
 git diff --cached --quiet || fail "staged-but-uncommitted changes present - commit or unstage first."

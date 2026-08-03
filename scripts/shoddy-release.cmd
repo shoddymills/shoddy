@@ -74,7 +74,10 @@ if exist "release-notes\%TAG%.md" (
     echo                    write them, commit, then re-run. See release-notes\README.md.
 )
 set "ANS=n"
+rem Both spellings: the .sh twin documents -y, and RELEASING.md promises the
+rem twins behave identically.
 if /i "%~2"=="/y" set "ANS=y"
+if /i "%~2"=="-y" set "ANS=y"
 if /i not "!ANS!"=="y" set /p ANS=Proceed? (y/N)
 if /i not "!ANS!"=="y" (echo aborted, nothing done. & exit /b 0)
 
@@ -87,7 +90,11 @@ rem --- clear stale packages so the version check below can't pass on an old fil
 if exist vscode-shoddy\*.vsix del /q vscode-shoddy\*.vsix
 
 rem --- build + test + package; nothing has been pushed yet ---
-call build.cmd all %VER%
+rem The leading .\ is required: with NoDefaultCurrentDirectoryInExePath set,
+rem which is the case on a hardened Windows install, cmd.exe will not resolve
+rem a batch file from the current directory and the bare name fails with
+rem "is not recognized as an internal or external command".
+call .\build.cmd all %VER%
 if errorlevel 1 (
     echo BUILD/TEST FAILED - nothing was pushed.
     echo inspect, then undo with: git checkout main ^&^& git branch -D %BR%

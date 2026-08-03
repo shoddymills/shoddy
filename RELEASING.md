@@ -123,6 +123,20 @@ git push origin main
 
 `--no-ff` keeps the feature visible as a bubble in history.
 
+### Shut the build servers down first
+
+`build.* all` begins by deleting `bin/`, and a `dotnet` build server left running
+from earlier work holds `bin/mill.exe` open. The release then dies at the clean step
+with `Access to the path 'mill.exe' is denied` — after it has already cut the release
+branch, so you are left mid-flight on `release/VX.Y.Z` with nothing pushed.
+
+```sh
+dotnet build-server shutdown
+```
+
+Cheap, safe, and worth doing every time. If it happens anyway, the script tells you
+the undo: `git checkout main && git branch -D release/VX.Y.Z`.
+
 ## 2 — Cut the release
 
 ```sh

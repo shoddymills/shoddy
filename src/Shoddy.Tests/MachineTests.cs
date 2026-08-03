@@ -9,7 +9,7 @@ using Shoddy.Runtime;
 namespace Shoddy.Tests;
 
 /// <summary>
-/// The machines-as-DLLs path: build all ten standard machines in
+/// The machines-as-DLLs path: build all twelve standard machines in
 /// dependency order in an isolated workspace, weave libtest against them
 /// (no source splicing for the library), and demand the same golden
 /// bytes. libtest never includes seq.shoddy directly — its surface must
@@ -22,12 +22,14 @@ public class MachineTests
     static readonly string Root = RepoRoot.Dir;
 
     // seq and str first; the rest reference them (stats also needs dict).
-    // json goes after dict, whose association list is an object's member
-    // list, and after str, whose Join it serializes with. crypto and neural
-    // are built last for compile coverage only — libtest includes neither,
-    // so neither joins the resolved-machine count below.
+    // json and xml both go after dict, whose association list is an
+    // object's member list and an element's attribute list alike, and
+    // after str, whose Join they serialize with. html goes after xml,
+    // whose tree it reuses outright. crypto and neural are built last for
+    // compile coverage only — libtest includes neither, so neither joins
+    // the resolved-machine count below.
     static readonly string[] BuildOrder =
-        { "seq", "str", "matrix", "money", "file", "recio", "dict", "stats", "isam", "json", "crypto", "neural" };
+        { "seq", "str", "matrix", "money", "file", "recio", "dict", "stats", "isam", "json", "xml", "html", "crypto", "neural" };
 
     [Fact]
     public void LibTestWovenAgainstMachines()
@@ -47,10 +49,12 @@ public class MachineTests
         }
 
         var (main, set) = ParseWithMachines(Path.Combine(ws, "tst", "libtest.shoddy"));
-        Assert.Equal(10, set.Machines.Count);       // all ten resolved, incl. transitive seq
+        Assert.Equal(12, set.Machines.Count);       // all twelve resolved, incl. transitive seq
         Assert.True(main.ExternalDefs.ContainsKey("SUM"));   // stats arrived via references
         Assert.True(main.ExternalDefs.ContainsKey("ANY"));   // seq arrived transitively
         Assert.True(main.ExternalDefs.ContainsKey("JSONTEXT"));   // json arrived too
+        Assert.True(main.ExternalDefs.ContainsKey("XMLTEXT"));    // and xml
+        Assert.True(main.ExternalDefs.ContainsKey("HTMLTEXT"));   // and html on top of it
 
         string dll = Path.Combine(ws, "out", "libtest.dll");
         Directory.CreateDirectory(Path.Combine(ws, "out"));

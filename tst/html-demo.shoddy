@@ -1,0 +1,244 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem html-demo.shoddy — check this repository's own documentation.
+Rem
+Rem     bin\mill run tst\html-demo.shoddy          (from the repo root)
+Rem
+Rem Reads every page under docs/, parses it with machines/html.shoddy,
+Rem and reports four things that no amount of proofreading catches:
+Rem
+Rem   - a link to a page that is not there
+Rem   - a link to an #anchor that no element on the target page carries
+Rem   - an id used twice on the same page, which makes every one of
+Rem     those links ambiguous
+Rem   - an <img> whose file is missing, and one with no alt text
+Rem
+Rem This is the demo BECAUSE it is not a toy. The machines catalog has
+Rem twenty-six pages wired into a previous/next chain by hand, and a
+Rem chain like that goes wrong silently: a page can be listed in the
+Rem catalog, linked from the home page, present in the sitemap, and
+Rem still be unreachable by paging, because two of its neighbours agree
+Rem with each other and not with it. That is a real defect this
+Rem repository has had, and it is the kind of thing a program finds in
+Rem four seconds and a person does not find at all.
+Rem
+Rem Exit is by report, not by Error: it prints what it found and how
+Rem many, so it can be read rather than merely obeyed.
+Rem ==================================================================
+
+Include "../machines/html.shoddy"
+Include "../machines/file.shoddy"
+Include "../machines/seq.shoddy"
+
+Rem ---- the pages -------------------------------------------------------
+Rem Listed rather than discovered: Shoddy has no directory walk, and a
+Rem list is honest about what was checked. The three directories are
+Rem docs/, docs/machines/ and docs/mills/, plus docs/tutorials/.
+
+Def DocRoot() As String
+    "docs/"
+
+Rem Every .html under docs/, as paths relative to the repository root.
+Rem Built from the sitemap, which is itself the thing that would go
+Rem stale — so a page missing from the sitemap is a page unchecked, and
+Rem that is worth knowing too.
+Def PagesFromSitemap() As List Of String
+    Let doc = XmlLoad("docs/sitemap.xml")
+    Map(Filter(Map(XFindAll(doc, "loc"), XTextOf), Fn(u) => EndsWith(u, ".html")), UrlToPath)
+
+Rem https://shoddymills.github.io/shoddy/machines/json.html -> docs/machines/json.html
+Def UrlToPath(url As String) As String
+    Let parts = Split(url, "/shoddy/")
+    If Length(parts) < 2 Then
+        DocRoot() & "index.html"
+    Else
+        DocRoot() & Last(parts)
+
+Rem ---- the checks ------------------------------------------------------
+
+Rem The directory a page lives in, so a relative href can be resolved
+Rem against it. "docs/machines/json.html" -> "docs/machines/"
+Def DirOf(path As String) As String
+    If Instr(path, "/") = 0 Then
+        ""
+    Else
+        Left(path, LastSlash(path, Len(path)))
+
+Def LastSlash(s As String, i As Number) As Number
+    If i <= 0 Then
+        0
+    Else
+        If Mid(s, i, 1) = "/" Then
+            i
+        Else
+            LastSlash(s, i - 1)
+
+Rem An href with its #fragment taken off.
+Def PathPart(href As String) As String
+    If Instr(href, "#") = 0 Then
+        href
+    Else
+        Left(href, Instr(href, "#") - 1)
+
+Def FragPart(href As String) As String
+    If Instr(href, "#") = 0 Then
+        ""
+    Else
+        Mid(href, Instr(href, "#") + 1, Len(href))
+
+Rem Off-site, a mailto, or anything else this program has no business
+Rem checking.
+Def IsExternal(href As String) As Boolean
+    StartsWith(href, "http://") Or StartsWith(href, "https://") Or StartsWith(href, "mailto:") Or StartsWith(href, "//")
+
+Rem Resolve a relative href against the directory of the page it is on,
+Rem collapsing one level of ../ which is all the docs tree ever uses.
+Def Resolve(dir As String, href As String) As String
+    If StartsWith(href, "../") Then
+        Parent(dir) & Mid(href, 4, Len(href))
+    Else
+        dir & href
+
+Def Parent(dir As String) As String
+    Let cut = LastSlash(Left(dir, Len(dir) - 1), Len(dir) - 1)
+    If cut = 0 Then
+        ""
+    Else
+        Left(dir, cut)
+
+Rem ---- reporting -------------------------------------------------------
+
+Def Report(kind As String, page As String, detail As String)
+    Print("  " & kind & "  " & page & "   " & detail)
+
+Rem Every check for one page, returning how many faults it found.
+Def CheckPage(path As String) As Number
+    If Not FileExists(path) Then
+        SayMissingPage(path)
+    Else
+        Let doc = HtmlParse(ReadFile(path))
+        Let dir = DirOf(path)
+        CheckLinks(doc, path, dir) + CheckIds(doc, path) + CheckImages(doc, path, dir)
+
+Def SayMissingPage(path As String) As Number
+    Report("NO PAGE   ", path, "listed in the sitemap, not on disk")
+    1
+
+Rem A link is a fault when its file is missing, or when it names an
+Rem anchor the target page does not carry.
+Def CheckLinks(doc As Xml, path As String, dir As String) As Number
+    Fold(Map(Filter(HLinks(doc), Fn(h) => Not IsExternal(h)), Fn(h) => CheckOneLink(h, path, dir)), 0, Fn(a, b) => a + b)
+
+Def CheckOneLink(href As String, path As String, dir As String) As Number
+    If href = "" Then
+        SayFault("EMPTY HREF", path, "an <a> with href=" & XQt() & XQt())
+    Else
+        Let target = Ifte(PathPart(href) = "", path, Resolve(dir, PathPart(href)))
+        If Not FileExists(target) Then
+            SayFault("DEAD LINK", path, href & "  ->  " & target)
+        Else
+            If FragPart(href) = "" Then
+                0
+            Else
+                If HasAnchor(target, FragPart(href)) Then
+                    0
+                Else
+                    SayFault("DEAD ANCHOR", path, href)
+
+Def SayFault(kind As String, path As String, detail As String) As Number
+    Report(kind, path, detail)
+    1
+
+Rem Does the target page carry this id? Every page is re-read for every
+Rem anchor pointing at it, which is wasteful and entirely fast enough:
+Rem the whole sweep is a few seconds.
+Def HasAnchor(target As String, frag As String) As Boolean
+    Contains(HIds(HtmlParse(ReadFile(target))), frag)
+
+Def CheckIds(doc As Xml, path As String) As Number
+    Fold(Map(Dupes(HIds(doc), { }), Fn(d) => SayFault("DUPLICATE ID", path, d)), 0, Fn(a, b) => a + b)
+
+Rem The entries that appear more than once, each named once.
+Def Dupes(xs As List Of String, seen As List Of String) As List Of String
+    If IsEmpty(xs) Then
+        { }
+    Else
+        If Contains(Rest(xs), First(xs)) And Not Contains(seen, First(xs)) Then
+            Prepend(First(xs), Dupes(Rest(xs), Prepend(First(xs), seen)))
+        Else
+            Dupes(Rest(xs), seen)
+
+Def CheckImages(doc As Xml, path As String, dir As String) As Number
+    Fold(Map(HByTag(doc, "img"), Fn(im) => CheckOneImage(im, path, dir)), 0, Fn(a, b) => a + b)
+
+Def CheckOneImage(im As Xml, path As String, dir As String) As Number
+    Let src = XAttrOr(im, "src", "")
+    Let missing = Ifte(src <> "" And Not IsExternal(src) And Not FileExists(Resolve(dir, src)), 1, 0)
+    If missing = 1 Then
+        SayFault("DEAD IMAGE", path, src)
+    Else
+        If XHasAttr(im, "alt") Then
+            0
+        Else
+            SayFault("NO ALT TEXT", path, src)
+
+Rem ---- the pager chain -------------------------------------------------
+Rem The specific defect described at the top of this file. Walk the
+Rem machines catalog's next-links from the first page and count how many
+Rem of the pages the catalog lists are actually reachable.
+
+Rem The machine pages the catalog links to. A page in this directory and
+Rem no other: the catalog also carries the site nav, and ../guide.html is
+Rem not a machine that ought to be in the chain.
+Def CatalogPages() As List Of String
+    Let cat = HtmlLoad("docs/machines/index.html")
+    Filter(Map(Filter(HLinks(cat), Fn(h) => EndsWith(h, ".html") And Not IsExternal(h)), PathPart), Fn(p) => Instr(p, "/") = 0)
+
+Rem The href in the "next" half of a page's top pager, or "" at the end.
+Def NextOf(page As String) As String
+    Let doc = HtmlLoad("docs/machines/" & page)
+    Let arrows = Filter(HByTag(doc, "a"), Fn(a) => EndsWith(XTextOf(a), " " & Rarr()))
+    If IsEmpty(arrows) Then
+        ""
+    Else
+        PathPart(XAttrOr(First(arrows), "href", ""))
+
+Def Rarr() As String
+    XUtf8(8594)
+
+Def WalkChain(page As String, seen As List Of String) As List Of String
+    If page = "" Or page = "index.html" Or Contains(seen, page) Then
+        Reverse(seen)
+    Else
+        WalkChain(NextOf(page), Prepend(page, seen))
+
+Def CheckChain() As Number
+    Print("--- the machines pager chain ---")
+    Let listed = Distinct(Filter(CatalogPages(), Fn(p) => p <> "index.html"), { })
+    Let walked = WalkChain("isam.html", { })
+    Print("  catalog lists " & Str(Length(listed)) & " machines; the chain reaches " & Str(Length(walked)))
+    Let orphans = Filter(listed, Fn(p) => Not Contains(walked, p))
+    Fold(Map(orphans, Fn(p) => SayFault("UNREACHABLE", "docs/machines/index.html", p & " is listed but the next-links never arrive at it")), 0, Fn(a, b) => a + b)
+
+Def Distinct(xs As List Of String, seen As List Of String) As List Of String
+    If IsEmpty(xs) Then
+        Reverse(seen)
+    Else
+        If Contains(seen, First(xs)) Then
+            Distinct(Rest(xs), seen)
+        Else
+            Distinct(Rest(xs), Prepend(First(xs), seen))
+
+Def Main()
+    Let pages = PagesFromSitemap()
+    Print("Checking " & Str(Length(pages)) & " pages from docs/sitemap.xml")
+    Print("--- links, anchors, ids and images ---")
+    Let faults = Fold(Map(pages, CheckPage), 0, Fn(a, b) => a + b)
+    Let chain = CheckChain()
+    Print("")
+    If faults + chain = 0 Then
+        Print("CLEAN: " & Str(Length(pages)) & " pages, no dead links, anchors, ids or images.")
+    Else
+        Print("FOUND " & Str(faults + chain) & " FAULTS across " & Str(Length(pages)) & " pages.")

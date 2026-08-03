@@ -1,0 +1,710 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem html.shoddy — Shoddy standard library: HTML, forgivingly
+Rem
+Rem A reader and a writer for HTML, built on xml.shoddy. A parsed page
+Rem IS an Xml tree — the same XElem, XText, XComment and XDoctype — so
+Rem every word xml already has works on it unchanged:
+Rem
+Rem     Let page = HtmlLoad("index.html")
+Rem     Print(XTextOf(XFind(page, "title")))
+Rem     Print(Length(HLinks(page)))
+Rem     Print(XAttrOr(HById(page, "main"), "class", ""))
+Rem
+Rem That is the whole design. html adds a reader that tolerates what
+Rem real pages do, a writer that knows HTML is not XML, an entity table
+Rem and a few conveniences. Navigation, construction and equality are
+Rem xml's and are not written twice.
+Rem
+Rem     HtmlParse / HtmlRead      HById / HByIdOr
+Rem     HtmlText / HtmlPretty     HTitle / HTitleOr
+Rem
+Rem ---- WHAT THIS IS NOT --------------------------------------------
+Rem
+Rem This is a FORGIVING TAG-SOUP READER, not an HTML5 parser, and the
+Rem difference is not a formality. HTML5 specifies a tree-construction
+Rem algorithm — the stack of open elements, the list of active
+Rem formatting elements, the adoption agency, foster parenting, the
+Rem twenty-odd insertion modes — that exists to make every browser agree
+Rem on what a broken page means. None of that is here.
+Rem
+Rem What that costs you, concretely. Misnested formatting is not
+Rem repaired: <b><i>x</b></i> does not come back as the two overlapping
+Rem runs a browser would build. A <tbody> a browser would invent around
+Rem your rows is not invented. Content that HTML5 would move out of a
+Rem table and place before it is left where it was written. A page that
+Rem relies on any of that will parse — this reader does not abort easily
+Rem — but the tree will be the one the bytes describe, not the one the
+Rem browser shows.
+Rem
+Rem What IS handled, because real hand-written pages are full of it:
+Rem tag and attribute names folded to lower case; the fifteen void
+Rem elements, closed or not; raw-text elements, so a < inside <script>
+Rem or <style> is not markup; unquoted, single-quoted and valueless
+Rem attributes; comments and the doctype; end tags implied by a sibling
+Rem or a closing parent, for the elements that customarily omit them;
+Rem and an end tag that closes something other than the innermost open
+Rem element, which closes everything up to it rather than failing.
+Rem
+Rem ---- entities ----------------------------------------------------
+Rem
+Rem HTML5 names 2231 character references. This table holds the ones
+Rem that appear in hand-written pages — the arrows, dashes, quotes and
+Rem symbols — plus numeric references in either base. An unknown name is
+Rem left standing as its own text, exactly as a browser leaves it, and
+Rem is never an error: refusing to render a page over one bad ampersand
+Rem is the behaviour HTML spent thirty years getting rid of.
+Rem
+Rem &#0; is the exception, and it is xml's exception too: Chr(0) is the
+Rem empty string in Shoddy, so it is left standing rather than silently
+Rem shortening the text.
+Rem
+Rem ---- other limits ------------------------------------------------
+Rem
+Rem The bytes are someone else's problem. ReadFile decides how the file
+Rem became a string; a <meta charset> is read as an ordinary element and
+Rem changes nothing.
+Rem
+Rem Text is decoded, so a round trip is CANONICAL rather than literal,
+Rem as it is in xml: &mdash; comes back as the character itself, an
+Rem unquoted attribute comes back quoted, and a void element comes back
+Rem in the bare form. HtmlText is a fixed point from the first write on.
+Rem
+Rem Compare with XEqual, not with =, for the same reason xml says so.
+Rem ==================================================================
+
+Include "xml.shoddy"
+
+Rem ---- constants -------------------------------------------------------
+Rem Machines cannot carry a top-level Let, so the tables are zero-arg
+Rem Defs, as vt100's Esc() is.
+
+Rem The void elements: they have no content and no end tag. Written
+Rem bare — <br>, not <br/> — because that is what HTML5 serialises and
+Rem what every page in the wild contains.
+Def HVoids() As List Of String
+    { "area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr" }
+
+Rem Inside these, < does not start a tag. Everything up to the matching
+Rem end tag is text, which is the only way a page can carry JavaScript
+Rem containing a < without escaping it.
+Def HRawText() As List Of String
+    { "script", "style" }
+
+Rem What closes an open element when it starts. The list is the
+Rem customary one; it is what makes a page written without </li> parse
+Rem into the list the author meant. Note that a cell is closed by the
+Rem next ROW as well as by the next cell — without that, a table written
+Rem without a single end tag nests one row inside the last cell of the
+Rem one before it, which is the shape of a great many hand-written pages.
+Def HClosedBySibling() As List Of Pair
+    { Pair("li", { "li" }), Pair("dt", { "dt", "dd" }), Pair("dd", { "dd", "dt" }),
+      Pair("option", { "option" }), Pair("tr", { "tr" }),
+      Pair("td", { "td", "th", "tr" }), Pair("th", { "th", "td", "tr" }),
+      Pair("thead", { "tbody", "tfoot" }), Pair("tbody", { "tbody", "tfoot" }), Pair("tfoot", { "tbody" }) }
+
+Rem A <p> also closes when any of these opens, because none of them can
+Rem be inside a paragraph.
+Def HClosesP() As List Of String
+    { "address", "article", "aside", "blockquote", "div", "dl", "fieldset", "footer", "form", "h1", "h2", "h3", "h4", "h5", "h6", "header", "hr", "main", "nav", "ol", "p", "pre", "section", "table", "ul" }
+
+Rem The named character references worth carrying. Chosen by counting
+Rem what hand-written pages actually use rather than by transcribing the
+Rem HTML5 table: the five XML predefines, the spaces and dashes, the
+Rem quotes, the arrows, and the handful of symbols and letters that turn
+Rem up in ordinary prose. Anything else is left as its own text.
+Rem
+Rem The values are XUtf8, not Chr, and xml.shoddy explains at length why:
+Rem ReadFile is one byte to one character, so &mdash; has to decode to
+Rem the same three bytes a literal em dash in the file already is.
+Def HEntities() As List Of Pair
+    { Pair("amp", "&"), Pair("lt", "<"), Pair("gt", ">"), Pair("quot", XUtf8(34)), Pair("apos", XUtf8(39)),
+      Pair("nbsp", XUtf8(160)), Pair("ensp", XUtf8(8194)), Pair("emsp", XUtf8(8195)), Pair("thinsp", XUtf8(8201)),
+      Pair("shy", XUtf8(173)), Pair("ndash", XUtf8(8211)), Pair("mdash", XUtf8(8212)), Pair("minus", XUtf8(8722)),
+      Pair("lsquo", XUtf8(8216)), Pair("rsquo", XUtf8(8217)), Pair("ldquo", XUtf8(8220)), Pair("rdquo", XUtf8(8221)),
+      Pair("laquo", XUtf8(171)), Pair("raquo", XUtf8(187)), Pair("hellip", XUtf8(8230)), Pair("middot", XUtf8(183)),
+      Pair("bull", XUtf8(8226)), Pair("dagger", XUtf8(8224)), Pair("Dagger", XUtf8(8225)), Pair("prime", XUtf8(8242)),
+      Pair("larr", XUtf8(8592)), Pair("uarr", XUtf8(8593)), Pair("rarr", XUtf8(8594)), Pair("darr", XUtf8(8595)),
+      Pair("harr", XUtf8(8596)), Pair("lArr", XUtf8(8656)), Pair("rArr", XUtf8(8658)), Pair("hArr", XUtf8(8660)),
+      Pair("copy", XUtf8(169)), Pair("reg", XUtf8(174)), Pair("trade", XUtf8(8482)), Pair("deg", XUtf8(176)),
+      Pair("times", XUtf8(215)), Pair("divide", XUtf8(247)), Pair("plusmn", XUtf8(177)), Pair("frac12", XUtf8(189)),
+      Pair("frac14", XUtf8(188)), Pair("frac34", XUtf8(190)), Pair("sup1", XUtf8(185)), Pair("sup2", XUtf8(178)),
+      Pair("sup3", XUtf8(179)), Pair("micro", XUtf8(181)), Pair("para", XUtf8(182)), Pair("sect", XUtf8(167)),
+      Pair("pound", XUtf8(163)), Pair("euro", XUtf8(8364)), Pair("yen", XUtf8(165)), Pair("cent", XUtf8(162)),
+      Pair("dollar", "$"), Pair("permil", XUtf8(8240)), Pair("infin", XUtf8(8734)), Pair("ne", XUtf8(8800)),
+      Pair("le", XUtf8(8804)), Pair("ge", XUtf8(8805)), Pair("asymp", XUtf8(8776)), Pair("equiv", XUtf8(8801)),
+      Pair("alpha", XUtf8(945)), Pair("beta", XUtf8(946)), Pair("gamma", XUtf8(947)), Pair("delta", XUtf8(948)),
+      Pair("pi", XUtf8(960)), Pair("sigma", XUtf8(963)), Pair("mu", XUtf8(956)), Pair("lambda", XUtf8(955)),
+      Pair("Omega", XUtf8(937)), Pair("agrave", XUtf8(224)), Pair("aacute", XUtf8(225)), Pair("eacute", XUtf8(233)),
+      Pair("egrave", XUtf8(232)), Pair("iacute", XUtf8(237)), Pair("oacute", XUtf8(243)), Pair("uacute", XUtf8(250)),
+      Pair("ouml", XUtf8(246)), Pair("auml", XUtf8(228)), Pair("uuml", XUtf8(252)), Pair("ccedil", XUtf8(231)),
+      Pair("ntilde", XUtf8(241)), Pair("szlig", XUtf8(223)), Pair("oslash", XUtf8(248)), Pair("aring", XUtf8(229)) }
+
+Def HIsVoid(tag As String) As Boolean
+    Contains(HVoids(), Lower(tag))
+
+Def HIsRawText(tag As String) As Boolean
+    Contains(HRawText(), Lower(tag))
+
+Rem ======================================================================
+Rem THE READER
+Rem ======================================================================
+Rem The shape is xml's — every step returns the node it built and the
+Rem index of the next unconsumed character, or why and where it gave up —
+Rem but the rules are HTML's, and the interesting difference is that an
+Rem end tag which does not match can CLOSE the open element rather than
+Rem fail. That is what the pending flag threads through the child loop:
+Rem when a step stops because it met an end tag belonging to an ancestor,
+Rem it leaves the index pointing AT that end tag for the ancestor to
+Rem deal with.
+
+Rem ---- entities --------------------------------------------------------
+Rem HTML's rules are laxer than XML's: an ampersand that does not begin a
+Rem reference we know is simply an ampersand.
+
+Def HEntLen(s As String, i As Number) As Number
+    Let e = XEntEnd(s, i)
+    If e = 0 Then
+        0
+    Else
+        Let name = Mid(s, i + 1, e - i - 1)
+        If HEntText(name) = "" Then
+            0
+        Else
+            e - i + 1
+
+Rem The text a name stands for, or "" if this table does not know it.
+Rem The numeric forms are xml's, so &#0; is refused here too.
+Def HEntText(name As String) As String
+    If DictHas(HEntities(), name) Then
+        DictGet(HEntities(), name)
+    Else
+        If XEntCode(name) > 0 Then
+            XUtf8(XEntCode(name))
+        Else
+            ""
+
+Rem The public spelling: the text a reference stands for, with the
+Rem ampersand and semicolon included, or "" if it is not one we know.
+Def HtmlEntity(name As String) As String
+    HEntText(name)
+
+Rem ---- text ------------------------------------------------------------
+
+Def HTextAt(s As String, i As Number) As XTake
+    HTextBody(s, i, i, { })
+
+Def HTextBody(s As String, i As Number, run As Number, acc As List Of String) As XTake
+    If i > Len(s) Then
+        XTook(XText(Join(Reverse(XRun(s, run, i, acc)), "")), i)
+    Else
+        Let c = Mid(s, i, 1)
+        If c = "<" Then
+            XTook(XText(Join(Reverse(XRun(s, run, i, acc)), "")), i)
+        Else
+            If c = "&" And HEntLen(s, i) > 0 Then
+                HTextBody(s, i + HEntLen(s, i), i + HEntLen(s, i), Prepend(HEntText(Mid(s, i + 1, HEntLen(s, i) - 2)), XRun(s, run, i, acc)))
+            Else
+                HTextBody(s, i + 1, run, acc)
+
+Rem Everything up to the matching end tag, verbatim. No entity is
+Rem decoded and no < is markup, which is what <script> requires.
+Def HRawAt(s As String, i As Number, tag As String) As XTake
+    Let e = HFindClose(s, i, tag)
+    If e = 0 Then
+        XTook(XText(Mid(s, i, Len(s) - i + 1)), Len(s) + 1)
+    Else
+        XTook(XText(Mid(s, i, e - i)), e)
+
+Rem The index of </tag, case-insensitively, at or after i. Lower-cases
+Rem only the tail it is searching, which is bounded by the document.
+Def HFindClose(s As String, i As Number, tag As String) As Number
+    If i > Len(s) Then
+        0
+    Else
+        Let p = Instr(Lower(Mid(s, i, Len(s) - i + 1)), "</" & Lower(tag))
+        If p = 0 Then
+            0
+        Else
+            i + p - 1
+
+Rem ---- attributes ------------------------------------------------------
+Rem Three spellings are allowed where XML allows one: quoted with either
+Rem quote, unquoted up to the next whitespace or >, and bare — a name
+Rem with no value at all, which HTML gives the empty string.
+
+Def HIsAttrNameChar(c As String) As Boolean
+    If Len(c) <> 1 Then
+        False
+    Else
+        Not (XIsWs(c) Or c = "=" Or c = ">" Or c = "/" Or c = XQt() Or c = XAp())
+
+Def HAttrNameEnd(s As String, i As Number) As Number
+    If HIsAttrNameChar(Mid(s, i, 1)) Then
+        HAttrNameEnd(s, i + 1)
+    Else
+        i
+
+Def HUnquotedEnd(s As String, i As Number) As Number
+    Let c = Mid(s, i, 1)
+    If Len(c) = 0 Or XIsWs(c) Or c = ">" Then
+        i
+    Else
+        HUnquotedEnd(s, i + 1)
+
+Rem A quoted value, decoded with HTML's entity rules.
+Def HQuotedValue(s As String, i As Number) As XTake
+    HQuotedBody(s, i + 1, i + 1, Mid(s, i, 1), { })
+
+Def HQuotedBody(s As String, i As Number, run As Number, q As String, acc As List Of String) As XTake
+    If i > Len(s) Then
+        XTook(XText(Join(Reverse(XRun(s, run, i, acc)), "")), i)
+    Else
+        Let c = Mid(s, i, 1)
+        If c = q Then
+            XTook(XText(Join(Reverse(XRun(s, run, i, acc)), "")), i + 1)
+        Else
+            If c = "&" And HEntLen(s, i) > 0 Then
+                HQuotedBody(s, i + HEntLen(s, i), i + HEntLen(s, i), q, Prepend(HEntText(Mid(s, i + 1, HEntLen(s, i) - 2)), XRun(s, run, i, acc)))
+            Else
+                HQuotedBody(s, i + 1, run, q, acc)
+
+Rem The attributes of a start tag, gathered until > or />. Handed back
+Rem inside a nameless XElem, which is the only way to return a
+Rem List Of Pair through an XTake — the same trick xml uses.
+Def HAttrsAt(s As String, i As Number, acc As List Of Pair) As XTake
+    Let k = XSkipWs(s, i)
+    If k > Len(s) Then
+        XTook(XElem("", Reverse(acc), { }), k)
+    Else
+        Let c = Mid(s, k, 1)
+        If c = ">" Or Mid(s, k, 2) = "/>" Then
+            XTook(XElem("", Reverse(acc), { }), k)
+        Else
+            If c = "/" Or Not HIsAttrNameChar(c) Then
+                HAttrsAt(s, k + 1, acc)
+            Else
+                Let n = HAttrNameEnd(s, k)
+                Let name = Lower(Mid(s, k, n - k))
+                Let eq = XSkipWs(s, n)
+                If Mid(s, eq, 1) <> "=" Then
+                    HAttrsAt(s, n, HPutFirst(acc, name, ""))
+                Else
+                    Let v = XSkipWs(s, eq + 1)
+                    Let vc = Mid(s, v, 1)
+                    If vc = XQt() Or vc = XAp() Then
+                        Select Case HQuotedValue(s, v)
+                            Case XTook(XText(val), n2)
+                                HAttrsAt(s, n2, HPutFirst(acc, name, val))
+                            Case Else
+                                HAttrsAt(s, v + 1, acc)
+                    Else
+                        Let ue = HUnquotedEnd(s, v)
+                        HAttrsAt(s, ue, HPutFirst(acc, name, HtmlUnescape(Mid(s, v, ue - v))))
+
+Rem HTML keeps the FIRST of a repeated attribute and ignores the rest,
+Rem which is the opposite of what an object literal does in json. The
+Rem accumulator is reversed at the end, so "already present" is the test.
+Def HPutFirst(acc As List Of Pair, name As String, val As String) As List Of Pair
+    If DictHas(acc, name) Then
+        acc
+    Else
+        Prepend(Pair(name, val), acc)
+
+Rem ---- elements --------------------------------------------------------
+
+Rem Does an open <cur> end because <starting> is starting?
+Def HImpliedBySibling(cur As String, starting As String) As Boolean
+    If cur = "p" Then
+        Contains(HClosesP(), starting)
+    Else
+        If DictHas(HClosedBySibling(), cur) Then
+            Contains(DictGet(HClosedBySibling(), cur), starting)
+        Else
+            False
+
+Rem The element at i, and everything under it. Returns the index just
+Rem past its end tag, or — when it ended because an ancestor's end tag
+Rem or an implying sibling arrived — the index AT whatever ended it, for
+Rem the caller to look at again.
+Def HElemAt(s As String, i As Number, d As Number, stack As List Of String) As XTake
+    If d <= 0 Then
+        XTBad("NESTING TOO DEEP", i)
+    Else
+        Let n = HAttrNameEnd(s, i + 1)
+        If n = i + 1 Then
+            XTook(XText("<"), i + 1)
+        Else
+            Let tag = Lower(Mid(s, i + 1, n - i - 1))
+            Select Case HAttrsAt(s, n, { })
+                Case XTook(XElem(ignored, attrs, unused), k)
+                    HElemBody(s, HTagEnd(s, k), d, tag, attrs, Mid(s, k, 2) = "/>", stack)
+                Case Else
+                    XTBad("EXPECTED A START TAG", i)
+
+Rem The index just past the > that ends a start tag.
+Def HTagEnd(s As String, k As Number) As Number
+    If Mid(s, k, 2) = "/>" Then
+        k + 2
+    Else
+        If Mid(s, k, 1) = ">" Then
+            k + 1
+        Else
+            k
+
+Def HElemBody(s As String, i As Number, d As Number, tag As String, attrs As List Of Pair, selfClosed As Boolean, stack As List Of String) As XTake
+    If HIsVoid(tag) Or selfClosed Then
+        XTook(XElem(tag, attrs, { }), i)
+    Else
+        If HIsRawText(tag) Then
+            Select Case HRawAt(s, i, tag)
+                Case XTook(XText(raw), e)
+                    XTook(XElem(tag, attrs, HRawKids(raw)), HSkipEndTag(s, e, tag))
+                Case Else
+                    XTook(XElem(tag, attrs, { }), i)
+        Else
+            HKidsAt(s, i, d, tag, attrs, { }, Prepend(tag, stack))
+
+Rem An empty raw-text element has no text child rather than an empty one.
+Def HRawKids(raw As String) As List Of Xml
+    If raw = "" Then
+        { }
+    Else
+        { XText(raw) }
+
+Rem Step over </tag ... > if it is there.
+Def HSkipEndTag(s As String, i As Number, tag As String) As Number
+    If Mid(s, i, 2) <> "</" Then
+        i
+    Else
+        Let g = XInstrFrom(s, i, ">")
+        If g = 0 Then
+            Len(s) + 1
+        Else
+            g + 1
+
+Rem The stack is the elements open around and including this one, which
+Rem is what makes the difference between an end tag that belongs to an
+Rem ancestor and one that belongs to nobody. The first closes everything
+Rem down to its owner; the second is DROPPED. Without the stack the two
+Rem are indistinguishable, and a stray </p> left over from a paragraph
+Rem that some other rule already closed tears the rest of the page off
+Rem the tree.
+Def HKidsAt(s As String, i As Number, d As Number, tag As String, attrs As List Of Pair, acc As List Of Xml, stack As List Of String) As XTake
+    If i > Len(s) Then
+        XTook(XElem(tag, attrs, Reverse(acc)), i)
+    Else
+        If Mid(s, i, 2) = "</" Then
+            Let n = HAttrNameEnd(s, i + 2)
+            Let close = Lower(Mid(s, i + 2, n - i - 2))
+            If close = tag Then
+                XTook(XElem(tag, attrs, Reverse(acc)), HSkipEndTag(s, i, tag))
+            Else
+                If Contains(stack, close) Then
+                    Rem An ancestor's. Close here and leave the index AT
+                    Rem it, for the ancestor to find.
+                    XTook(XElem(tag, attrs, Reverse(acc)), i)
+                Else
+                    Rem Nobody's. Step over it and carry on.
+                    HKidsAt(s, HSkipEndTag(s, i, close), d, tag, attrs, acc, stack)
+        Else
+            If HStartsElem(s, i) And HImpliedBySibling(tag, HTagAt(s, i)) Then
+                XTook(XElem(tag, attrs, Reverse(acc)), i)
+            Else
+                Select Case HNodeAt(s, i, d - 1, stack)
+                    Case XTBad(why, at)
+                        XTBad(why, at)
+                    Case XTook(v, n)
+                        If n <= i Then
+                            XTook(XElem(tag, attrs, Reverse(acc)), Len(s) + 1)
+                        Else
+                            HKidsAt(s, n, d, tag, attrs, Prepend(v, acc), stack)
+                    Case Else
+                        XTook(XElem(tag, attrs, Reverse(acc)), i)
+
+Rem Is there a start tag at i, rather than a stray < or a comment?
+Def HStartsElem(s As String, i As Number) As Boolean
+    Mid(s, i, 1) = "<" And XIsNameStart(Mid(s, i + 1, 1))
+
+Def HTagAt(s As String, i As Number) As String
+    Lower(Mid(s, i + 1, HAttrNameEnd(s, i + 1) - i - 1))
+
+Rem One node. A stray < that begins nothing is text, which is the single
+Rem most common thing wrong with a hand-written page.
+Def HNodeAt(s As String, i As Number, d As Number, stack As List Of String) As XTake
+    If Mid(s, i, 1) <> "<" Then
+        HTextAt(s, i)
+    Else
+        If Mid(s, i, 4) = "<!--" Then
+            XCommentAt(s, i)
+        Else
+            If Mid(s, i, 9) = "<![CDATA[" Then
+                XCDataAt(s, i)
+            Else
+                If Lower(Mid(s, i, 9)) = "<!doctype" Then
+                    HDoctypeAt(s, i)
+                Else
+                    If Mid(s, i, 2) = "<?" Then
+                        XPIAt(s, i)
+                    Else
+                        If HStartsElem(s, i) Then
+                            HElemAt(s, i, d, stack)
+                        Else
+                            XTook(XText("<"), i + 1)
+
+Rem The doctype, whole and unread, as xml does it — but HTML spells the
+Rem keyword in any case, so the slice is taken by length rather than by
+Rem matching.
+Def HDoctypeAt(s As String, i As Number) As XTake
+    Let e = XInstrFrom(s, i + 9, ">")
+    If e = 0 Then
+        XTook(XDoctype(Mid(s, i + 9, Len(s) - i - 8)), Len(s) + 1)
+    Else
+        XTook(XDoctype(Mid(s, i + 9, e - i - 9)), e + 1)
+
+Rem ---- the document ----------------------------------------------------
+Rem Anything may appear at the top level and a page may have more than
+Rem one root, so unlike xml this loop counts nothing and refuses nothing.
+Rem A stray end tag with no open element is dropped, exactly as a browser
+Rem drops it.
+
+Def HDocNodes(s As String, i As Number, d As Number, acc As List Of Xml) As XRead
+    If i > Len(s) Then
+        XOk(XDocument(Reverse(acc)))
+    Else
+        If Mid(s, i, 2) = "</" Then
+            Let g = XInstrFrom(s, i, ">")
+            If g = 0 Then
+                XOk(XDocument(Reverse(acc)))
+            Else
+                HDocNodes(s, g + 1, d, acc)
+        Else
+            Select Case HNodeAt(s, i, d, { })
+                Case XTBad(why, at)
+                    XErr(why, at)
+                Case XTook(v, n)
+                    If n <= i Then
+                        XOk(XDocument(Reverse(acc)))
+                    Else
+                        HDocNodes(s, n, d, Prepend(v, acc))
+                Case Else
+                    XOk(XDocument(Reverse(acc)))
+
+Rem ---- the public reader -----------------------------------------------
+Rem HtmlRead is total for the same reason XmlRead is, but it has far less
+Rem to say: the only thing that stops it is the depth budget.
+
+Def HtmlReadDepth(s As String, maxDepth As Number) As XRead
+    HDocNodes(s, 1, maxDepth, { })
+
+Def HtmlRead(s As String) As XRead
+    HtmlReadDepth(s, XmlMaxDepth())
+
+Def HtmlParse(s As String) As Xml
+    Select Case HtmlRead(s)
+        Case XOk(v)
+            v
+        Case XErr(why, at)
+            Error("HTMLPARSE: " & why & " AT " & Str(at))
+        Case Else
+            Error("HTMLPARSE: UNREACHABLE")
+
+Def HtmlLoad(path As String) As Xml
+    HtmlParse(ReadFile(path))
+
+Rem ======================================================================
+Rem THE WRITER
+Rem ======================================================================
+Rem Not xml's writer. A void element goes out bare, a raw-text element's
+Rem content goes out unescaped, and an empty non-void element goes out as
+Rem a pair — <div></div>, never <div/>, which browsers read as an open
+Rem div and would swallow the rest of the page.
+
+Def HtmlText(x As Xml) As String
+    Join(Reverse(HFrags(x, { })), "")
+
+Def HFrags(x As Xml, acc As List Of String) As List Of String
+    Select Case x
+        Case XDocument(ns)
+            HFragList(ns, acc)
+        Case XText(t)
+            Prepend(HtmlEscape(t), acc)
+        Case XComment(b)
+            Prepend("-->", Prepend(b, Prepend("<!--", acc)))
+        Case XCData(r)
+            Prepend("]]>", Prepend(r, Prepend("<![CDATA[", acc)))
+        Case XDoctype(dtd)
+            Prepend(">", Prepend(dtd, Prepend("<!DOCTYPE", acc)))
+        Case XPI(t, dat)
+            Prepend("?>", Prepend(dat, Prepend(" ", Prepend(t, Prepend("<?", acc)))))
+        Case XElem(tag, attrs, kids)
+            If HIsVoid(tag) Then
+                Prepend(">", XFragAttrs(attrs, Prepend(tag, Prepend("<", acc))))
+            Else
+                If HIsRawText(tag) Then
+                    XFragClose(tag, Prepend(XTextOf(x), XFragOpen(tag, attrs, acc)))
+                Else
+                    XFragClose(tag, HFragList(kids, XFragOpen(tag, attrs, acc)))
+
+Def HFragList(xs As List Of Xml, acc As List Of String) As List Of String
+    If IsEmpty(xs) Then
+        acc
+    Else
+        HFragList(Rest(xs), HFrags(First(xs), acc))
+
+Def HtmlSave(path As String, x As Xml)
+    WriteFile(path, HtmlText(x))
+
+Rem ---- escaping --------------------------------------------------------
+Rem & and < always. > as well, for the same reason xml escapes it. NOT
+Rem the non-ASCII characters the entity table can name: a page that
+Rem arrived as UTF-8 should leave as UTF-8, and turning an em dash back
+Rem into &mdash; would make the writer's output depend on a table whose
+Rem whole point is that it is incomplete.
+
+Def HtmlEscape(s As String) As String
+    XmlEscape(s)
+
+Def HtmlEscapeAttr(s As String) As String
+    XmlEscapeAttr(s)
+
+Rem Turn the references in a string into the text they stand for, by
+Rem HTML's rules — an unknown name stays as it is.
+Def HtmlUnescape(s As String) As String
+    Join(Reverse(HUnFrags(s, 1, 1, { })), "")
+
+Def HUnFrags(s As String, i As Number, run As Number, acc As List Of String) As List Of String
+    If i > Len(s) Then
+        XRun(s, run, i, acc)
+    Else
+        If Mid(s, i, 1) = "&" And HEntLen(s, i) > 0 Then
+            HUnFrags(s, i + HEntLen(s, i), i + HEntLen(s, i), Prepend(HEntText(Mid(s, i + 1, HEntLen(s, i) - 2)), XRun(s, run, i, acc)))
+        Else
+            HUnFrags(s, i + 1, run, acc)
+
+Rem ---- pretty ----------------------------------------------------------
+Rem xml's rule, with one addition: a raw-text element is never
+Rem re-indented, because its content is a program.
+
+Def HtmlPretty(x As Xml, indent As Number) As String
+    If indent <= 0 Then
+        HtmlText(x)
+    Else
+        Select Case x
+            Case XDocument(ns)
+                Join(Reverse(HPFrags(x, indent, 0, { })), "") & XNl()
+            Case Else
+                Join(Reverse(HPFrags(x, indent, 0, { })), "")
+
+Def HPFrags(x As Xml, indent As Number, level As Number, acc As List Of String) As List Of String
+    Select Case x
+        Case XDocument(ns)
+            HPDoc(ns, indent, acc, True)
+        Case XElem(tag, attrs, kids)
+            If IsEmpty(kids) Or XMixed(kids) Or HIsRawText(tag) Then
+                HFrags(x, acc)
+            Else
+                XFragClose(tag, Prepend(XPad(indent, level), Prepend(XNl(), HPKids(Filter(kids, Fn(k) => Not XIsLayout(k)), indent, level + 1, XFragOpen(tag, attrs, acc)))))
+        Case Else
+            HFrags(x, acc)
+
+Def HPDoc(ns As List Of Xml, indent As Number, acc As List Of String, lead As Boolean) As List Of String
+    If IsEmpty(ns) Then
+        acc
+    Else
+        If XIsLayout(First(ns)) Then
+            HPDoc(Rest(ns), indent, acc, lead)
+        Else
+            If lead Then
+                HPDoc(Rest(ns), indent, HPFrags(First(ns), indent, 0, acc), False)
+            Else
+                HPDoc(Rest(ns), indent, HPFrags(First(ns), indent, 0, Prepend(XNl(), acc)), False)
+
+Def HPKids(xs As List Of Xml, indent As Number, level As Number, acc As List Of String) As List Of String
+    If IsEmpty(xs) Then
+        acc
+    Else
+        HPKids(Rest(xs), indent, level, HPFrags(First(xs), indent, level, Prepend(XPad(indent, level), Prepend(XNl(), acc))))
+
+Rem ======================================================================
+Rem FINDING THINGS
+Rem ======================================================================
+Rem Everything xml can do — XFind, XFindAll, XPath, XTextOf, XAttrOr,
+Rem XEqual — works on a parsed page unchanged. These are the four
+Rem questions that are specifically about HTML.
+
+Rem Every element carrying this id, which should be one and is worth
+Rem checking when it is not.
+Def HAllById(x As Xml, id As String) As List Of Xml
+    Filter(XDescend(x, { }), Fn(k) => XAttrOr(k, "id", "") = id)
+
+Def HById(x As Xml, id As String) As Xml
+    If IsEmpty(HAllById(x, id)) Then
+        Error("HBYID: NO ELEMENT WITH id='" & id & "'")
+    Else
+        First(HAllById(x, id))
+
+Def HByIdOr(x As Xml, id As String, dflt As Xml) As Xml
+    If IsEmpty(HAllById(x, id)) Then
+        dflt
+    Else
+        First(HAllById(x, id))
+
+Rem The class attribute is a space-separated list, so this is membership
+Rem rather than equality: class="mast has-icon" is found by either name.
+Def HByClass(x As Xml, cls As String) As List Of Xml
+    Filter(XDescend(x, { }), Fn(k) => Contains(Split(XAttrOr(k, "class", ""), " "), cls))
+
+Def HByTag(x As Xml, tag As String) As List Of Xml
+    XFindAll(x, Lower(tag))
+
+Rem Every href an <a> carries, in document order, including the empty
+Rem ones — a bare <a href=""> is worth seeing, not worth hiding.
+Def HLinks(x As Xml) As List Of String
+    Map(Filter(HByTag(x, "a"), Fn(k) => XHasAttr(k, "href")), Fn(k) => XAttr(k, "href"))
+
+Rem Every src an <img> carries.
+Def HImages(x As Xml) As List Of String
+    Map(Filter(HByTag(x, "img"), Fn(k) => XHasAttr(k, "src")), Fn(k) => XAttr(k, "src"))
+
+Rem Every id in the document, in document order. Duplicates are left in,
+Rem because finding them is the reason to ask.
+Def HIds(x As Xml) As List Of String
+    Map(Filter(XDescend(x, { }), Fn(k) => XHasAttr(k, "id")), Fn(k) => XAttr(k, "id"))
+
+Def HTitle(x As Xml) As String
+    XTextOf(XFind(x, "title"))
+
+Def HTitleOr(x As Xml, dflt As String) As String
+    XTextOf(XFindOr(x, "title", XLeaf("title", dflt)))
+
+Rem The visible text: what is left after the script and the style are
+Rem taken out. Not what a browser would lay out — no collapsing of
+Rem whitespace, no line boxes — but the text that is actually readable
+Rem rather than the text that happens to be in the file.
+Def HtmlTextOf(x As Xml) As String
+    Join(Reverse(HVisFrags(x, { })), "")
+
+Def HVisFrags(x As Xml, acc As List Of String) As List Of String
+    Select Case x
+        Case XText(t)
+            Prepend(t, acc)
+        Case XCData(r)
+            Prepend(r, acc)
+        Case XElem(tag, attrs, kids)
+            If HIsRawText(tag) Then
+                acc
+            Else
+                HVisList(kids, acc)
+        Case XDocument(ns)
+            HVisList(ns, acc)
+        Case Else
+            acc
+
+Def HVisList(xs As List Of Xml, acc As List Of String) As List Of String
+    If IsEmpty(xs) Then
+        acc
+    Else
+        HVisList(Rest(xs), HVisFrags(First(xs), acc))

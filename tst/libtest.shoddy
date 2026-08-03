@@ -15,6 +15,8 @@ Include "../machines/dict.shoddy"
 Include "../machines/stats.shoddy"
 Include "../machines/isam.shoddy"
 Include "../machines/json.shoddy"
+Include "../machines/xml.shoddy"
+Include "../machines/html.shoddy"
 
 Rem ---- top-level constants -------------------------------------------
 
@@ -407,6 +409,31 @@ Def Main()
     Assert(JEqual(JsonParse(JsonText(jdoc)), jdoc), "JSON ROUND TRIP")
     Assert(JsonText(JPut(JObj({ }), "k", JStr("v"))) = "{" & jq & "k" & jq & ":" & jq & "v" & jq & "}", "JPUT THEN WRITE")
     Assert(ErrAtOr(jq & "unterminated", 0) = 14, "A BAD DOCUMENT IS A VALUE, NOT AN ABORT")
+    Print("--- XML ---")
+    Rem The full exercise is tst/xmltest.shoddy, which reads the frozen
+    Rem sitemap; this is the smoke test that xml arrived through the
+    Rem machine references like everything else here.
+    Let xsrc = "<feed n=" & jq & "2" & jq & "><item>one &amp; two</item><item/></feed>"
+    Let xdoc = XmlParse(xsrc)
+    Print(XTag(XRoot(xdoc)))                            Rem feed
+    Print(XAttr(XRoot(xdoc), "n"))                      Rem 2
+    Print(Length(XChildren(XRoot(xdoc), "item")))       Rem 2
+    Print(XTextOf(XFind(xdoc, "item")))                 Rem one & two
+    Print(XmlText(xdoc) = xsrc)                         Rem True - already canonical
+    Print(XmlEscape("a < b & c"))                       Rem a &lt; b &amp; c
+    Assert(XEqual(XmlParse(XmlText(xdoc)), xdoc), "XML ROUND TRIP")
+    Assert(XmlPretty(XRoot(xdoc), 2) <> "", "XMLPRETTY PRODUCES SOMETHING")
+    Print("--- HTML ---")
+    Rem The full exercise is tst/htmltest.shoddy. html's tree IS xml's,
+    Rem which is what the XFind below is really testing.
+    Let hdoc = HtmlParse("<html><body><p>one<p>two<ul><li>a<li>b</ul><a href=" & jq & "/x" & jq & ">go</a></body></html>")
+    Print(Length(HByTag(hdoc, "p")))                    Rem 2 - implied end tags
+    Print(Length(HByTag(hdoc, "li")))                   Rem 2
+    Print(Join(HLinks(hdoc), ","))                      Rem /x
+    Print(XTextOf(XFind(hdoc, "a")))                    Rem go
+    Print(HtmlEntity("amp"))                            Rem &
+    Assert(HIsVoid("br"), "BR IS A VOID ELEMENT")
+    Assert(Instr(HtmlText(hdoc), "<br/>") = 0, "AND HTML NEVER SELF-CLOSES ONE")
     Print("ALL ASSERTIONS PASSED")
 
 Rem The offset a bad document gave up at, or dflt if it parsed. JsonRead

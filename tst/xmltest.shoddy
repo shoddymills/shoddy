@@ -1,0 +1,236 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem xmltest.shoddy — test program for machines/xml.shoddy
+Rem
+Rem Assert-driven, in the isamtest.shoddy / jsontest.shoddy pattern: it
+Rem prints what it is doing and stops the run at the first assertion
+Rem that fails, ending with ALL ASSERTIONS PASSED when it does not.
+Rem
+Rem Two fixtures carry the weight of this file.
+Rem
+Rem tst/xml/note.xml is hand-written and deliberately NOT canonical: a
+Rem single-quoted attribute, &#65; and &#x42;, a doctype-free prolog with
+Rem a processing instruction, mixed content, a CDATA section and a
+Rem trailing comment. XmlText reproduces tst/xml/note-canonical.xml from
+Rem it byte for byte, and XmlPretty at four reproduces
+Rem tst/xml/note-pretty.xml, which is what proves the writer normalises
+Rem exactly as documented rather than approximately.
+Rem
+Rem tst/xml/sitemap.xml is real: the repository's own published sitemap,
+Rem 154 elements of it, frozen here so the test does not move when the
+Rem site does. It is already canonical, so XmlText(XmlParse(it)) has to
+Rem give the bytes back UNCHANGED — a reader-and-writer test against a
+Rem document neither was written for.
+Rem
+Rem What cannot be tested here: the aborting half of each guard pair.
+Rem XmlParse, XAttr, XChild, XFind, XPath, XRoot and XTag on the wrong
+Rem variant all call Error, which would kill this whole run — the same
+Rem limitation isamtest documents. The total halves are exercised hard
+Rem instead, which is the point of their existing.
+Rem
+Rem Build (once): build.cmd build
+Rem Run:          bin\mill run tst\xmltest.shoddy       (from the repo root)
+Rem ==================================================================
+
+Include "../machines/xml.shoddy"
+
+Rem ---- helpers ---------------------------------------------------------
+
+Rem A quoted attribute value, built without fighting escapes.
+Def Quo(s As String) As String
+    XQt() & s & XQt()
+
+Rem The offset a bad document failed at; 0 if it parsed after all, which
+Rem is never a legal offset, so Assert(ErrAt(x) = n) proves both that it
+Rem failed and where.
+Def ErrAt(s As String) As Number
+    Select Case XmlRead(s)
+        Case XErr(why, at)
+            at
+        Case Else
+            0
+
+Rem The reason a bad document failed, or "" if it parsed.
+Def ErrWhy(s As String) As String
+    Select Case XmlRead(s)
+        Case XErr(why, at)
+            why
+        Case Else
+            ""
+
+Def Parses(s As String) As Boolean
+    Select Case XmlRead(s)
+        Case XOk(v)
+            True
+        Case Else
+            False
+
+Rem The root element of a source string, for the one-liners below.
+Def RootOf(s As String) As Xml
+    XRoot(XmlParse(s))
+
+Def Main()
+    Print("--- reading ---")
+    Let simple = "<a><b>one</b><b>two</b></a>"
+    Let doc = XmlParse(simple)
+    Print(XTag(XRoot(doc)))                              Rem a
+    Print(Length(XChildren(XRoot(doc), "b")))            Rem 2
+    Print(XTextOf(XRoot(doc)))                           Rem onetwo
+    Assert(Parses("<a/>"), "AN EMPTY ROOT IS A DOCUMENT")
+    Assert(Parses("<a></a>"), "SO IS AN EMPTY PAIR")
+    Assert(XEqual(XmlParse("<a/>"), XmlParse("<a></a>")), "AND THE TWO ARE THE SAME TREE")
+
+    Print("--- attributes ---")
+    Rem The ampersand has to be written &amp; even inside an attribute —
+    Rem a bare one starts a reference wherever it appears.
+    Let tag = "<box w=" & Quo("3") & " h=" & Quo("4") & " label=" & Quo("a &amp; b") & "/>"
+    Let box = RootOf(tag)
+    Print(XAttr(box, "w"))                               Rem 3
+    Print(XAttrOr(box, "d", "none"))                     Rem none
+    Print(XAttrNumOr(box, "h", 0))                       Rem 4
+    Print(XAttrNumOr(box, "label", 0))                   Rem 0 — not a number
+    Print(XAttrNumOr(box, "missing", 99))                Rem 99
+    Print(XAttr(box, "label"))                           Rem a & b
+    Print(Join(XAttrNames(box), ","))                    Rem w,h,label
+    Assert(XHasAttr(box, "w") And Not XHasAttr(box, "z"), "XHASATTR ANSWERS BOTH WAYS")
+    Assert(XAttrOr(XPutAttr(box, "z", "9"), "z", "") = "9", "XPUTATTR ADDS")
+    Assert(Not XHasAttr(XDelAttr(box, "w"), "w"), "XDELATTR REMOVES")
+
+    Rem Either quote may delimit a value, and the other is then ordinary
+    Rem text inside it. Both come back the same way: double-quoted.
+    Let apos = "<q said=" & XAp() & "he said " & XQt() & "no" & XQt() & XAp() & "/>"
+    Print(XAttr(RootOf(apos), "said"))                   Rem he said "no"
+    Assert(Instr(XmlText(RootOf(apos)), "&quot;") > 0, "A QUOTE IN A VALUE IS ESCAPED ON THE WAY OUT")
+
+    Print("--- entities ---")
+    Print(XTextOf(RootOf("<t>&amp;&lt;&gt;&quot;&apos;</t>")))     Rem &<>"'
+    Print(XTextOf(RootOf("<t>&#72;&#105;&#x21;</t>")))             Rem Hi!
+    Print(XmlEscape("a & b < c > d"))                    Rem a &amp; b &lt; c &gt; d
+    Print(XmlUnescape("a &amp; b &lt; c"))               Rem a & b < c
+    Assert(XmlUnescape(XmlEscape("<&>")) = "<&>", "ESCAPE THEN UNESCAPE IS THE IDENTITY")
+    Assert(ErrWhy("<t>&nbsp;</t>") <> "", "AN HTML ENTITY IS NOT AN XML ONE")
+    Assert(Instr(ErrWhy("<t>&#0;</t>"), "NUL") > 0, "&#0; IS REFUSED BY NAME")
+    Assert(Instr(ErrWhy("<t>&unclosed</t>"), "UNTERMINATED") > 0, "SO IS A REFERENCE WITH NO SEMICOLON")
+
+    Print("--- structure ---")
+    Let nest = "<lib><shelf n=" & Quo("1") & "><book><title>Mungo</title></book></shelf><shelf n=" & Quo("2") & "/></lib>"
+    Let lib = RootOf(nest)
+    Print(Length(XFindAll(lib, "shelf")))                Rem 2
+    Print(XTextOf(XFind(lib, "title")))                  Rem Mungo
+    Print(XTag(XPath(lib, { "shelf", "book", "title" }))) Rem title
+    Print(XTextOf(XPathOr(lib, { "shelf", "missing" }, XLeaf("z", "fallback"))))  Rem fallback
+    Print(XCount(lib))                                   Rem 2
+    Assert(XHasChild(lib, "shelf"), "XHASCHILD SEES A CHILD")
+    Assert(Not XHasChild(lib, "title"), "AND DOES NOT SEE A GRANDCHILD")
+    Assert(Length(XFindAll(lib, "title")) = 1, "XFINDALL DOES SEE THE GRANDCHILD")
+    Assert(XTag(XFindOr(lib, "nope", XLeaf("d", ""))) = "d", "XFINDOR FALLS BACK")
+
+    Print("--- names ---")
+    Print(XPrefix("m:grade"))                            Rem m
+    Print(XLocal("m:grade"))                             Rem grade
+    Print(XLocal("plain"))                               Rem plain
+    Assert(XPrefix("plain") = "", "AN UNPREFIXED NAME HAS NO PREFIX")
+
+    Print("--- building ---")
+    Let built = XNode("mill", { XLeaf("name", "Batley"), XPutAttr(XLeaf("built", ""), "year", "1854") })
+    Print(XmlText(built))
+    Assert(XTextOf(XSetText(XLeaf("n", "old"), "new")) = "new", "XSETTEXT REPLACES")
+    Assert(XCount(XAddKid(built, XLeaf("note", "x"))) = 3, "XADDKID APPENDS")
+
+    Print("--- malformed documents are values, not aborts ---")
+    Assert(ErrAt("") = 1, "AN EMPTY STRING IS AN ERROR AT 1")
+    Assert(ErrWhy("<a><b></a>") <> "", "A MISMATCHED END TAG IS AN ERROR")
+    Assert(Instr(ErrWhy("<a><b></a>"), "</a> CLOSES <b>") > 0, "AND IT SAYS WHICH")
+    Assert(ErrWhy("<a>") <> "", "SO IS AN UNCLOSED ELEMENT")
+    Assert(ErrWhy("<a/><b/>") <> "", "SO IS A SECOND ROOT")
+    Assert(ErrWhy("hello") <> "", "SO IS TEXT WITH NO ELEMENT AT ALL")
+    Assert(ErrWhy("<a>text</a>trailing") <> "", "SO IS TEXT AFTER THE ROOT")
+    Assert(ErrWhy("<a b=unquoted/>") <> "", "SO IS AN UNQUOTED ATTRIBUTE VALUE")
+    Assert(ErrWhy("<a b=" & Quo("1") & " b=" & Quo("2") & "/>") <> "", "SO IS A DUPLICATE ATTRIBUTE")
+    Assert(ErrWhy("<!-- unterminated") <> "", "SO IS AN UNTERMINATED COMMENT")
+    Assert(ErrWhy("<a>" & XmlEscape("<") & "/a>") <> "", "AN ESCAPED TAG IS TEXT, SO THE ELEMENT IS UNCLOSED")
+    Assert(Parses("<a>1 &lt; 2</a>"), "BUT AN ESCAPED < IN TEXT IS FINE")
+
+    Print("--- the depth budget ---")
+    Assert(Parses(Deep(20)), "TWENTY DEEP IS FINE")
+    Select Case XmlReadDepth(Deep(20), 5)
+        Case XErr(why, at)
+            Print(why)                                   Rem NESTING TOO DEEP
+        Case Else
+            Error("A DEPTH OF 5 SHOULD NOT HAVE SWALLOWED TWENTY LEVELS")
+
+    Print("--- the hand-written fixture ---")
+    Let note = XmlLoad("tst/xml/note.xml")
+    Assert(XTag(XRoot(note)) = "catalogue", "THE ROOT IS THE CATALOGUE")
+    Assert(Length(XFindAll(note, "mill")) = 3, "THREE MILLS")
+    Assert(XAttr(XRoot(note), "open") = "yes", "A SINGLE-QUOTED ATTRIBUTE READS THE SAME")
+    Assert(XTextOf(XFind(note, "name")) = "Batley", "THE FIRST NAME IS BATLEY")
+    Assert(Instr(XTextOf(XNth(XFindAll(note, "note"), 2)), "A A and a B") > 0, "&#65; AND &#x42; DECODE")
+    Assert(Instr(XTextOf(XFind(note, "recipe")), "a < b && c > d") > 0, "CDATA COMES BACK RAW")
+    Assert(XAttrNumOr(XFind(note, "built"), "year", 0) = 1854, "AND A YEAR READS AS A NUMBER")
+
+    Rem The two byte-for-byte comparisons. A canonical rewrite of a
+    Rem deliberately non-canonical source, and a pretty print at four.
+    Assert(XmlText(note) = ReadFile("tst/xml/note-canonical.xml"), "CANONICAL TEXT IS BYTE-EXACT")
+    Assert(XmlPretty(note, 4) = ReadFile("tst/xml/note-pretty.xml"), "PRETTY AT FOUR IS BYTE-EXACT")
+
+    Rem Mixed content must survive the pretty printer untouched, and the
+    Rem CDATA with it: both are text, and re-indenting text changes it.
+    Assert(Instr(XmlPretty(note, 4), "the <em>emphasis</em> and") > 0, "MIXED CONTENT IS NOT RE-INDENTED")
+    Assert(Instr(XmlPretty(note, 4), "<recipe><![CDATA[") > 0, "NOR IS AN ELEMENT HOLDING CDATA")
+
+    Print("--- the real fixture ---")
+    Let sm = ReadFile("tst/xml/sitemap.xml")
+    Let smd = XmlParse(sm)
+    Print(XTag(XRoot(smd)))                              Rem urlset
+    Print(Length(XFindAll(smd, "url")))                  Rem 51
+    Assert(XmlText(smd) = sm, "A CANONICAL DOCUMENT COMES BACK BYTE FOR BYTE")
+    Assert(XEqual(XmlParse(XmlText(smd)), smd), "AND PARSES TO THE SAME TREE")
+    Assert(Instr(XTextOf(XFind(smd, "loc")), "shoddy") > 0, "ITS FIRST LOC NAMES THE SITE")
+
+    Rem The property the header promises: whatever went in, the SECOND
+    Rem write agrees with the first. Canonical or not, one pass through
+    Rem the machine reaches the fixed point.
+    Assert(FixedPoint(ReadFile("tst/xml/note.xml")), "NOTE.XML REACHES A FIXED POINT")
+    Assert(FixedPoint(sm), "SO DOES THE SITEMAP")
+    Assert(FixedPoint("<a b=" & XAp() & "1" & XAp() & ">&#65;</a>"), "AND SO DOES A DELIBERATELY ODD ONE")
+
+    Print("--- canonical ordering ---")
+    Let unsorted = "<e z=" & Quo("1") & " a=" & Quo("2") & " m=" & Quo("3") & "/>"
+    Print(Join(XAttrNames(RootOf(unsorted)), ","))                    Rem z,a,m — document order
+    Print(Join(XAttrNames(XmlCanonical(RootOf(unsorted))), ","))      Rem a,m,z — sorted
+    Assert(XEqual(XmlCanonical(RootOf(unsorted)), RootOf(unsorted)), "SORTING ATTRIBUTES DOES NOT CHANGE THE TREE")
+
+    Print("--- equality is deep ---")
+    Rem Through a Def, because Not (a = b) written inline reads the
+    Rem bracketed group as a QUOTATION and hands Assert that instead.
+    Assert(Not ShallowSame(XmlParse("<a><b/></a>"), XmlParse("<a><b/></a>")), "= COMPARES LISTS BY IDENTITY, SO IT SAYS NO")
+    Assert(XEqual(XmlParse("<a><b/></a>"), XmlParse("<a><b/></a>")), "XEQUAL IS THE ONE THAT ANSWERS")
+    Assert(Not XEqual(XmlParse("<a><b/></a>"), XmlParse("<a><c/></a>")), "AND IT CAN STILL SAY NO")
+    Let attrs1 = "<e a=" & Quo("1") & " b=" & Quo("2") & "/>"
+    Let attrs2 = "<e b=" & Quo("2") & " a=" & Quo("1") & "/>"
+    Assert(XEqual(RootOf(attrs1), RootOf(attrs2)), "ATTRIBUTES ARE UNORDERED")
+    Assert(Not XEqual(XmlParse("<a><b/><c/></a>"), XmlParse("<a><c/><b/></a>")), "CHILDREN ARE NOT")
+
+    Print("ALL ASSERTIONS PASSED")
+
+Rem n nested elements, for the depth budget.
+Def Deep(n As Number) As String
+    Join(Map(Range(1, n), Fn(k) => "<d>"), "") & "x" & Join(Map(Range(1, n), Fn(k) => "</d>"), "")
+
+Rem Whatever the source, writing twice agrees with writing once.
+Def FixedPoint(s As String) As Boolean
+    Let once = XmlText(XmlParse(s))
+    once = XmlText(XmlParse(once))
+
+Rem 1-based, like every other index in the language. Not Nth — that is a
+Rem builtin, and a Def of a builtin's name is refused.
+Def XNth(xs As List Of Xml, n As Number) As Xml
+    Nth(xs, n)
+
+Rem What = says about two structurally identical trees, which is False:
+Rem the moment a record holds a List, = is identity.
+Def ShallowSame(a As Xml, b As Xml) As Boolean
+    a = b

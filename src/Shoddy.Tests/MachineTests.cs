@@ -25,11 +25,11 @@ public class MachineTests
     // json and xml both go after dict, whose association list is an
     // object's member list and an element's attribute list alike, and
     // after str, whose Join they serialize with. html goes after xml,
-    // whose tree it reuses outright. crypto and neural are built last for
+    // whose tree it reuses outright. shaker and neural are built last for
     // compile coverage only — libtest includes neither, so neither joins
     // the resolved-machine count below.
     static readonly string[] BuildOrder =
-        { "seq", "str", "matrix", "money", "file", "recio", "dict", "stats", "isam", "json", "xml", "html", "crypto", "neural" };
+        { "seq", "str", "matrix", "money", "file", "recio", "dict", "stats", "isam", "json", "xml", "html", "shaker", "neural" };
 
     [Fact]
     public void LibTestWovenAgainstMachines()

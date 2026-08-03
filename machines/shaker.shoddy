@@ -2,7 +2,13 @@ Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
 Rem Licensed under the MIT License. See the LICENSE file in the project root.
 
 Rem ==================================================================
-Rem crypto.shoddy — Shoddy standard library: reversible obfuscation
+Rem shaker.shoddy — Shoddy standard library: reversible obfuscation
+Rem
+Rem Named for the machine that came first in a shoddy mill: the shaker
+Rem tumbled the incoming rags to beat the dust and grit out of them
+Rem before anything else was done. It rearranged what it was given and
+Rem handed the same material on. That is this machine's whole ambition,
+Rem and the name is deliberately not "crypto" — see WHAT THIS IS NOT.
 Rem
 Rem A four-round Feistel network over a list of Numbers, keyed by
 Rem another list of Numbers, with a checksum appended so tampering is
@@ -11,18 +17,18 @@ Rem bitwise operators — Shoddy has none of the last, and this machine
 Rem wants none.
 Rem
 Rem     Let key    = { 91, 3355, 17, 40213 }
-Rem     Let cipher = CryptEncrypt({ 11, 22, 33, 44 }, key)
-Rem     CryptDecrypt(cipher, key)          ' { 11, 22, 33, 44 }
-Rem     CryptDecryptOr(cipher, wrongKey, { })
+Rem     Let cipher = ShakeEncrypt({ 11, 22, 33, 44 }, key)
+Rem     ShakeDecrypt(cipher, key)          ' { 11, 22, 33, 44 }
+Rem     ShakeDecryptOr(cipher, wrongKey, { })
 Rem
-Rem Values are FIELD ELEMENTS: whole numbers in 0 .. CryptModulus() - 1.
+Rem Values are FIELD ELEMENTS: whole numbers in 0 .. ShakeModulus() - 1.
 Rem Anything else is refused by name rather than quietly mangled. Text
 Rem is not this machine's business, but it is one Map away — Asc each
 Rem code unit in, Chr each one out.
 Rem
 Rem The guard-pair convention, as everywhere else in the library:
-Rem CryptDecrypt aborts when the checksum does not match, CryptDecryptOr
-Rem hands back your default, and CryptVerify asks the question on its
+Rem ShakeDecrypt aborts when the checksum does not match, ShakeDecryptOr
+Rem hands back your default, and ShakeVerify asks the question on its
 Rem own.
 Rem
 Rem The tag catches TAMPERING, not the wrong key. It is computed over
@@ -62,27 +68,27 @@ Rem Defs, as vt100's Esc() is.
 
 Rem The largest prime below 2^26. Its square is 4.5e15, comfortably
 Rem inside the double's exact-integer range of 2^53 = 9.0e15.
-Def CryptModulus() As Number
+Def ShakeModulus() As Number
     67108859
 
-Def CryptRounds() As Number
+Def ShakeRounds() As Number
     4
 
 Rem x reduced into 0 .. modulus - 1. Floored, so negatives come back
 Rem positive and subtraction is as safe as addition.
-Def CryptWrap(x As Number) As Number
-    Let m = CryptModulus()
+Def ShakeWrap(x As Number) As Number
+    Let m = ShakeModulus()
     Let r = x - Floor(x / m) * m
     If r < 0 Then
         r + m
     Else
         r
 
-Def CryptIsField(x As Number) As Boolean
-    x >= 0 And x < CryptModulus() And x = Floor(x)
+Def ShakeIsField(x As Number) As Boolean
+    x >= 0 And x < ShakeModulus() And x = Floor(x)
 
-Def CryptAllField(xs As List Of Number) As Boolean
-    All(xs, CryptIsField)
+Def ShakeAllField(xs As List Of Number) As Boolean
+    All(xs, ShakeIsField)
 
 Rem ---- the round function ------------------------------------------
 Rem Not a bijection, and it does not need to be: a Feistel network is
@@ -92,14 +98,14 @@ Rem charm of the construction. Every intermediate is kept under 2^52.
 Rem The key list is walked round and round, so a key shorter than the
 Rem message simply repeats — which is exactly as weak as it sounds, and
 Rem is why the header says what it says.
-Def CryptKeyAt(keys As List Of Number, at As Number) As Number
+Def ShakeKeyAt(keys As List Of Number, at As Number) As Number
     If IsEmpty(keys) Then
-        Error("CRYPTKEYAT: THE KEY IS EMPTY")
+        Error("SHAKEKEYAT: THE KEY IS EMPTY")
     Else
-        Nth(keys, 1 + CryptWrapTo(at - 1, Length(keys)))
+        Nth(keys, 1 + ShakeWrapTo(at - 1, Length(keys)))
 
 Rem n reduced into 0 .. width - 1, for indexing rather than arithmetic.
-Def CryptWrapTo(n As Number, width As Number) As Number
+Def ShakeWrapTo(n As Number, width As Number) As Number
     Let r = n - Floor(n / width) * width
     If r < 0 Then
         r + width
@@ -113,66 +119,66 @@ Rem The offset matters: without it a small value and a small key give a
 Rem small x, whose square is also small, so a message of zeros would come
 Rem out barely disturbed. Shifting into the middle of the field first
 Rem means even 0 with key 0 squares to something spread across it.
-Def CryptMix(v As Number, part As Number) As Number
-    Let x = CryptWrap(v + part + 33554393)
-    Let y = CryptWrap(x * x)
-    CryptWrap(y * 31 + x * 17 + 11)
+Def ShakeMix(v As Number, part As Number) As Number
+    Let x = ShakeWrap(v + part + 33554393)
+    Let y = ShakeWrap(x * x)
+    ShakeWrap(y * 31 + x * 17 + 11)
 
 Rem Encrypting round: (a, b) becomes (b, a + F(b)).
-Def CryptRoundFwd(a As Number, b As Number, part As Number) As Pair
-    Pair(b, CryptWrap(a + CryptMix(b, part)))
+Def ShakeRoundFwd(a As Number, b As Number, part As Number) As Pair
+    Pair(b, ShakeWrap(a + ShakeMix(b, part)))
 
 Rem Its exact inverse: (a, b) becomes (b - F(a), a). Read it against the
 Rem line above — the halves come back in the other order, and F is fed
 Rem the half that survived the round rather than the one that changed.
 Rem Getting this backwards still round-trips single blocks by accident
 Rem when F is degenerate, which is how a broken cipher passes a test.
-Def CryptRoundBack(a As Number, b As Number, part As Number) As Pair
-    Pair(CryptWrap(b - CryptMix(a, part)), a)
+Def ShakeRoundBack(a As Number, b As Number, part As Number) As Pair
+    Pair(ShakeWrap(b - ShakeMix(a, part)), a)
 
-Def CryptBlockEnc(a As Number, b As Number, keys As List Of Number, at As Number) As Pair
-    Let p1 = CryptRoundFwd(a, b, CryptKeyAt(keys, at))
-    Let p2 = CryptRoundFwd(Fst(p1), Snd(p1), CryptKeyAt(keys, at + 1))
-    Let p3 = CryptRoundFwd(Fst(p2), Snd(p2), CryptKeyAt(keys, at + 2))
-    CryptRoundFwd(Fst(p3), Snd(p3), CryptKeyAt(keys, at + 3))
+Def ShakeBlockEnc(a As Number, b As Number, keys As List Of Number, at As Number) As Pair
+    Let p1 = ShakeRoundFwd(a, b, ShakeKeyAt(keys, at))
+    Let p2 = ShakeRoundFwd(Fst(p1), Snd(p1), ShakeKeyAt(keys, at + 1))
+    Let p3 = ShakeRoundFwd(Fst(p2), Snd(p2), ShakeKeyAt(keys, at + 2))
+    ShakeRoundFwd(Fst(p3), Snd(p3), ShakeKeyAt(keys, at + 3))
 
 Rem The same four keys, spent in the opposite order.
-Def CryptBlockDec(a As Number, b As Number, keys As List Of Number, at As Number) As Pair
-    Let p1 = CryptRoundBack(a, b, CryptKeyAt(keys, at + 3))
-    Let p2 = CryptRoundBack(Fst(p1), Snd(p1), CryptKeyAt(keys, at + 2))
-    Let p3 = CryptRoundBack(Fst(p2), Snd(p2), CryptKeyAt(keys, at + 1))
-    CryptRoundBack(Fst(p3), Snd(p3), CryptKeyAt(keys, at))
+Def ShakeBlockDec(a As Number, b As Number, keys As List Of Number, at As Number) As Pair
+    Let p1 = ShakeRoundBack(a, b, ShakeKeyAt(keys, at + 3))
+    Let p2 = ShakeRoundBack(Fst(p1), Snd(p1), ShakeKeyAt(keys, at + 2))
+    Let p3 = ShakeRoundBack(Fst(p2), Snd(p2), ShakeKeyAt(keys, at + 1))
+    ShakeRoundBack(Fst(p3), Snd(p3), ShakeKeyAt(keys, at))
 
 Rem A message of odd length has one value with no partner. Passing it
 Rem through untouched would leave a plaintext number sitting in the
 Rem ciphertext, so it is shifted by a pad derived from the key and the
 Rem position — deterministic, and its own inverse under subtraction.
-Def CryptPad(keys As List Of Number, at As Number) As Number
-    CryptMix(CryptKeyAt(keys, at), at)
+Def ShakePad(keys As List Of Number, at As Number) As Number
+    ShakeMix(ShakeKeyAt(keys, at), at)
 
 Rem ---- walking the message -----------------------------------------
 Rem Accumulate with Prepend and Reverse once at the end. Append is
 Rem Concat(xs, { x }) — O(n) per element, O(n^2) over a message.
 
-Def CryptEncList(xs As List Of Number, keys As List Of Number, at As Number, acc As List Of Number) As List Of Number
+Def ShakeEncList(xs As List Of Number, keys As List Of Number, at As Number, acc As List Of Number) As List Of Number
     If IsEmpty(xs) Then
         Reverse(acc)
     Else
         If IsEmpty(Rest(xs)) Then
-            Reverse(Prepend(CryptWrap(First(xs) + CryptPad(keys, at)), acc))
+            Reverse(Prepend(ShakeWrap(First(xs) + ShakePad(keys, at)), acc))
         Else
-            Let p = CryptBlockEnc(First(xs), First(Rest(xs)), keys, at)
-            CryptEncList(Rest(Rest(xs)), keys, at + CryptRounds(), Prepend(Snd(p), Prepend(Fst(p), acc)))
+            Let p = ShakeBlockEnc(First(xs), First(Rest(xs)), keys, at)
+            ShakeEncList(Rest(Rest(xs)), keys, at + ShakeRounds(), Prepend(Snd(p), Prepend(Fst(p), acc)))
 
-Def CryptDecList(xs As List Of Number, keys As List Of Number, at As Number, acc As List Of Number) As List Of Number
+Def ShakeDecList(xs As List Of Number, keys As List Of Number, at As Number, acc As List Of Number) As List Of Number
     If IsEmpty(xs) Then
         Reverse(acc)
     Else
         If IsEmpty(Rest(xs)) Then
-            Reverse(Prepend(CryptWrap(First(xs) - CryptPad(keys, at)), acc))
+            Reverse(Prepend(ShakeWrap(First(xs) - ShakePad(keys, at)), acc))
         Else
-            Let p = CryptBlockDec(First(xs), First(Rest(xs)), keys, at)
-            CryptDecList(Rest(Rest(xs)), keys, at + CryptRounds(), Prepend(Snd(p), Prepend(Fst(p), acc)))
+            Let p = ShakeBlockDec(First(xs), First(Rest(xs)), keys, at)
+            ShakeDecList(Rest(Rest(xs)), keys, at + ShakeRounds(), Prepend(Snd(p), Prepend(Fst(p), acc)))
 
 Rem ---- the tag -----------------------------------------------------
 Rem Fletcher-style: a running sum and a running sum of sums, so a value
@@ -183,68 +189,68 @@ Rem Everything but the tag on the end. Self-tail-recursive with an
 Rem accumulator, so it compiles to a loop: seq's Taken builds its result
 Rem with Prepend on the way OUT of the recursion, which costs a stack
 Rem frame per element and overflows on a long message.
-Def CryptBody(xs As List Of Number) As List Of Number
-    CryptTakeN(xs, Length(xs) - 1, { })
+Def ShakeBody(xs As List Of Number) As List Of Number
+    ShakeTakeN(xs, Length(xs) - 1, { })
 
-Def CryptTakeN(xs As List Of Number, n As Number, acc As List Of Number) As List Of Number
+Def ShakeTakeN(xs As List Of Number, n As Number, acc As List Of Number) As List Of Number
     If n <= 0 Or IsEmpty(xs) Then
         Reverse(acc)
     Else
-        CryptTakeN(Rest(xs), n - 1, Prepend(First(xs), acc))
+        ShakeTakeN(Rest(xs), n - 1, Prepend(First(xs), acc))
 
-Def CryptChecksum(xs As List Of Number) As Number
-    CryptSumLoop(xs, 0, 0)
+Def ShakeChecksum(xs As List Of Number) As Number
+    ShakeSumLoop(xs, 0, 0)
 
-Def CryptSumLoop(xs As List Of Number, s1 As Number, s2 As Number) As Number
+Def ShakeSumLoop(xs As List Of Number, s1 As Number, s2 As Number) As Number
     If IsEmpty(xs) Then
-        CryptWrap(s2 * 65536 + s1)
+        ShakeWrap(s2 * 65536 + s1)
     Else
-        Let n1 = CryptWrap(s1 + First(xs))
-        CryptSumLoop(Rest(xs), n1, CryptWrap(s2 + n1))
+        Let n1 = ShakeWrap(s1 + First(xs))
+        ShakeSumLoop(Rest(xs), n1, ShakeWrap(s2 + n1))
 
 Rem ---- the public words --------------------------------------------
 
 Rem The ciphertext, one value per input value, with the checksum last —
 Rem so the result is always one longer than the message.
-Def CryptEncrypt(xs As List Of Number, keys As List Of Number) As List Of Number
+Def ShakeEncrypt(xs As List Of Number, keys As List Of Number) As List Of Number
     If IsEmpty(keys) Then
-        Error("CRYPTENCRYPT: THE KEY IS EMPTY")
+        Error("SHAKEENCRYPT: THE KEY IS EMPTY")
     Else
-        If Not CryptAllField(keys) Then
-            Error("CRYPTENCRYPT: EVERY KEY VALUE MUST BE A WHOLE NUMBER IN 0 .. " & Str(CryptModulus() - 1))
+        If Not ShakeAllField(keys) Then
+            Error("SHAKEENCRYPT: EVERY KEY VALUE MUST BE A WHOLE NUMBER IN 0 .. " & Str(ShakeModulus() - 1))
         Else
-            If Not CryptAllField(xs) Then
-                Error("CRYPTENCRYPT: EVERY MESSAGE VALUE MUST BE A WHOLE NUMBER IN 0 .. " & Str(CryptModulus() - 1))
+            If Not ShakeAllField(xs) Then
+                Error("SHAKEENCRYPT: EVERY MESSAGE VALUE MUST BE A WHOLE NUMBER IN 0 .. " & Str(ShakeModulus() - 1))
             Else
-                Let body = CryptEncList(xs, keys, 1, { })
-                Concat(body, { CryptChecksum(body) })
+                Let body = ShakeEncList(xs, keys, 1, { })
+                Concat(body, { ShakeChecksum(body) })
 
 Rem Is the checksum on the end still the one that belongs to the body?
 Rem False for anything too short to carry a tag.
-Def CryptVerify(xs As List Of Number) As Boolean
+Def ShakeVerify(xs As List Of Number) As Boolean
     If IsEmpty(xs) Then
         False
     Else
-        Last(xs) = CryptChecksum(CryptBody(xs))
+        Last(xs) = ShakeChecksum(ShakeBody(xs))
 
 Rem Strict: aborts if the message was altered, so a caller that ignores
 Rem the possibility cannot proceed on rubbish.
-Def CryptDecrypt(xs As List Of Number, keys As List Of Number) As List Of Number
+Def ShakeDecrypt(xs As List Of Number, keys As List Of Number) As List Of Number
     If IsEmpty(keys) Then
-        Error("CRYPTDECRYPT: THE KEY IS EMPTY")
+        Error("SHAKEDECRYPT: THE KEY IS EMPTY")
     Else
-        If Not CryptVerify(xs) Then
-            Error("CRYPTDECRYPT: CHECKSUM MISMATCH — THE MESSAGE WAS ALTERED OR IS NOT A CIPHERTEXT")
+        If Not ShakeVerify(xs) Then
+            Error("SHAKEDECRYPT: CHECKSUM MISMATCH — THE MESSAGE WAS ALTERED OR IS NOT A CIPHERTEXT")
         Else
-            CryptDecList(CryptBody(xs), keys, 1, { })
+            ShakeDecList(ShakeBody(xs), keys, 1, { })
 
 Rem Total: the other half of the guard pair, for a ciphertext that
 Rem arrived from somewhere you do not control.
-Def CryptDecryptOr(xs As List Of Number, keys As List Of Number, dflt As List Of Number) As List Of Number
-    If IsEmpty(keys) Or Not CryptAllField(keys) Then
+Def ShakeDecryptOr(xs As List Of Number, keys As List Of Number, dflt As List Of Number) As List Of Number
+    If IsEmpty(keys) Or Not ShakeAllField(keys) Then
         dflt
     Else
-        If Not CryptVerify(xs) Then
+        If Not ShakeVerify(xs) Then
             dflt
         Else
-            CryptDecList(CryptBody(xs), keys, 1, { })
+            ShakeDecList(ShakeBody(xs), keys, 1, { })

@@ -72,8 +72,9 @@ The port is **modified** from upstream: the game itself is called Mungo
 Caverns, and the cave's knife-throwing folk are called curmudgeons
 rather than by their upstream name, which renames one vocabulary word, the
 symbols built from it, and the messages and room descriptions that mention
-them. Both renames are mechanical, and the mill's transcript harness maps them
-back so that upstream's recorded games still grade the port. It plays
+them. Both renames are mechanical, and the harness the port was graded with
+mapped them back so that upstream's recorded games could grade it byte for
+byte. **Those recorded games are not redistributed here either.** It plays
 identically otherwise.
 
 ### Pac-Man homage (`mills/pac-vt100/`)

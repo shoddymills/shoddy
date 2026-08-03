@@ -1,0 +1,62 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem https-demo.shoddy — the secured sibling of net-demo.shoddy.
+Rem
+Rem     mill run --allow-net tst/https-demo.shoddy
+Rem
+Rem THIS ONE TOUCHES THE REAL INTERNET, which is why it is not in CI and
+Rem is run by hand. It fetches a live page over TLS and prints the status
+Rem line, a few headers and the first of the body. Nothing here is
+Rem asserted: a demo that fails because a website changed is noise, not a
+Rem test. The graded tests are tst/nettest.shoddy for the pure half and
+Rem NetTests for the transport, and neither goes near the network.
+Rem
+Rem It is also the one place the whole stack is exercised end to end:
+Rem TCPConnect, the TLS handshake against a certificate this machine did
+Rem not mint, a blocking read to end of input, and the pure words taking
+Rem the reply apart.
+Rem
+Rem Without --allow-net the first socket word aborts, which is the gate
+Rem working rather than a fault.
+Rem ==================================================================
+
+Include "../machines/https.shoddy"
+
+Rem A courteous User-Agent. Some hosts — api.weather.gov among them —
+Rem answer 403 to a request that sends none, so this is not decoration.
+Def Agent() As String
+    "shoddy-mill/1.0 (https://github.com/shoddymills/shoddy)"
+
+Def Fetch(host As String, path As String)
+    Print("")
+    Print("==> https://" & host & path)
+    Let reply = HttpsGet(host, path,
+        { Pair("User-Agent", Agent()), Pair("Accept", "*/*") })
+    Print("    status:  " & Str(HttpStatus(reply)) & " " & HttpReason(reply))
+    Print("    type:    " & HttpHeader(reply, "content-type", "(none)"))
+    Print("    server:  " & HttpHeader(reply, "server", "(none)"))
+    Print("    headers: " & Str(Length(HttpHeaders(reply))))
+    Print("    bytes:   " & Str(Len(HttpBody(reply))))
+    Rem A redirect is reported, not chased — following one is the caller's
+    Rem policy, and this demo's policy is to show you where it points.
+    If HttpStatus(reply) >= 300 And HttpStatus(reply) < 400 Then
+        Print("    -> " & HttpHeader(reply, "location", "(no location)"))
+    Print("    first line of body:")
+    Print("      " & FirstLine(HttpBody(reply)))
+
+Def FirstLine(body As String) As String
+    Let cut = Instr(body, Chr(10))
+    Let one = Ifte(cut = 0, body, Left(body, cut - 1))
+    Ifte(Len(one) > 100, Left(one, 100) & " ...", one)
+
+Def Main()
+    Print("Shoddy https demo — real hosts, over TLS")
+    Rem example.com is the stable one: it exists to be fetched.
+    Fetch("example.com", "/")
+    Rem And the host that shaped the design: HTTPS only, and it wants a
+    Rem User-Agent before it will speak to you at all.
+    Fetch("api.weather.gov", "/points/41.88,-87.63")
+    Print("")
+    Print("done")

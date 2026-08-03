@@ -1,0 +1,177 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem test.shoddy — the weather glass, graded with the network switched off.
+Rem
+Rem     bin/mill run mills/weather-glass/test.shoddy    (from the repo root)
+Rem     ./build.sh test                                 (from here)
+Rem
+Rem NO NETWORK AND NO --allow-net. Everything between a raw response and a
+Rem finished row is pure, so the captured responses in files/ are fed
+Rem through the core and the result compared line by line against
+Rem files/expected.out. What is left untested here is the four fetches,
+Rem which are twenty lines of Fetch-and-gate in the shell.
+Rem
+Rem The fixtures are the live responses, captured 2026-08-03 for 63011,
+Rem with ONE deliberate edit: hour 10 of hourly.json has its
+Rem probabilityOfPrecipitation.value set to null. That day's live capture
+Rem happened to contain none, but the API does return null there, and a
+Rem mill that aborts at 3am because PoP was null has not used the total
+Rem accessors the json machine provides. The edit is the test.
+Rem
+Rem The known-answer suites are the arithmetic that has published right
+Rem answers: NOAA's wind chill and heat index tables, sunrise and sunset
+Rem to within two minutes, and Sakamoto's weekday against dates whose day
+Rem anyone can check.
+Rem ==================================================================
+
+Include "weather-glass-core.shoddy"
+Include "../../machines/file.shoddy"
+
+Rem ---- helpers ---------------------------------------------------------
+
+Def FixtureDir() As String
+    "mills/weather-glass/files/"
+
+Def Fixture(name As String) As String
+    ReadFile(FixtureDir() & name)
+
+Rem The first line where two lists differ, or 0 when they agree.
+Def FirstDiff(got As List Of String, want As List Of String, i As Number) As Number
+    If i > Length(got) Or i > Length(want) Then
+        Ifte(Length(got) = Length(want), 0, i)
+    Else
+        If Nth(got, i) <> Nth(want, i) Then
+            i
+        Else
+            FirstDiff(got, want, i + 1)
+
+Rem Escape sequences made visible, so a failure can be read.
+Def Show(s As String) As String
+    Replace(s, Chr(27), "<ESC>")
+
+Def Main()
+    Print("--- the fixtures load ---")
+    Let place = ReadPlace(Fixture("zip-63011.json"), "63011")
+    Let hours = ReadHours(Fixture("hourly.json"))
+    Let days = ReadDays(Fixture("daily.json"))
+    Print(City(place) & ", " & Region(place))
+    Print(Str(Length(hours)) & " hours, " & Str(Length(days)) & " daily periods")
+    Assert(City(place) = "Ballwin", "THE PLACE NAME COMES OUT OF A KEY WITH A SPACE IN IT")
+    Assert(Region(place) = "Missouri", "AND THE STATE")
+    Assert(ZipCode(place) = "63011", "AND THE ZIP IS THE ONE WE ASKED FOR")
+    Rem Latitude and longitude arrive as STRINGS in that feed, not numbers.
+    Assert(Round(Lat(place) * 10000) = 386091, "LATITUDE PARSED FROM A STRING")
+    Assert(Round(Lon(place) * 10000) = 0 - 905598, "AND LONGITUDE, INCLUDING ITS SIGN")
+    Assert(Length(hours) = 80, "EIGHTY HOURLY PERIODS IN THE FIXTURE")
+    Assert(Length(days) > 0, "AND SOME DAILY ONES")
+
+    Print("--- null probabilityOfPrecipitation does not abort ---")
+    Rem Hour 10 was edited to carry null. It must read as 0, not crash.
+    Print("hour 10 prcp: " & Str(Prcp(Nth(hours, 10))))
+    Assert(Prcp(Nth(hours, 10)) = 0, "A NULL POP READS AS ZERO")
+    Assert(All(hours, Fn(h) => Prcp(h) >= 0), "AND EVERY HOUR HAS A NUMBER IN IT")
+
+    Print("--- wind speeds, including ranges ---")
+    Print(Str(WindMph("9 mph")) & " " & Str(WindMph("1 to 8 mph")) & " " & Str(WindMph("")))
+    Assert(WindMph("9 mph") = 9, "A PLAIN SPEED READS")
+    Assert(WindMph("1 to 8 mph") = 8, "A RANGE TAKES THE LAST NUMBER, WHICH IS THE GUST END")
+    Assert(WindMph("") = 0, "AND NOTHING AT ALL IS ZERO, NOT AN ABORT")
+
+    Print("--- condition abbreviation ---")
+    Print(Abbrev("Slight Chance Rain Showers") & " | " & Abbrev("Chance Showers And Thunderstorms"))
+    Assert(Abbrev("Mostly Sunny") = "Mstly Sunny", "MOSTLY SHORTENS")
+    Assert(Abbrev("Partly Sunny") = "Ptly Sunny", "AND PARTLY")
+    Rem Order matters: Slight Chance has to fire before Chance, or the
+    Rem longer phrase never matches at all.
+    Assert(Abbrev("Slight Chance Rain Showers") = "Slgt Rain", "SLIGHT CHANCE BEATS CHANCE TO IT")
+    Assert(Abbrev("Chance Showers And Thunderstorms") = "Chc T-Storm", "AND CHANCE STILL WORKS ALONE")
+    Assert(Abbrev("Showers And Thunderstorms Likely") = "T-Storm Lkly", "SO DOES LIKELY")
+    Rem A compound forecast keeps the first half: the row is one hour.
+    Assert(Abbrev("Mostly Clear then Patchy Fog") = "Mstly Clear", "A COMPOUND KEEPS WHAT COMES BEFORE ' then '")
+    Assert(Len(Abbrev("Slight Chance Showers And Thunderstorms Likely")) <= 13, "AND NOTHING EXCEEDS THE COLUMN")
+
+    Print("--- cloud cover is an estimate, and says so by blanking ---")
+    Print(Str(CloudPct("Sunny")) & " " & Str(CloudPct("Mostly Cloudy")) & " " & Str(CloudPct("Chance Rain Showers")) & " " & Str(CloudPct("Blood Rain")))
+    Assert(CloudPct("Sunny") = 5, "SUNNY IS ALMOST NO CLOUD")
+    Assert(CloudPct("Mostly Sunny") = 25, "MOSTLY SUNNY A QUARTER")
+    Rem Longest phrases first, or "Mostly Cloudy" is caught by "Cloudy".
+    Assert(CloudPct("Mostly Cloudy") = 75, "AND MOSTLY CLOUDY IS NOT JUST CLOUDY")
+    Assert(CloudPct("Cloudy") = 95, "WHICH IS ITSELF NEARLY ALL")
+    Assert(CloudPct("Chance Rain Showers") = 75, "ANYTHING FALLING MEANS COVERED")
+    Assert(CloudPct("Blood Rain") = 75, "EVEN SOMETHING THE TABLE HAS NEVER HEARD OF, IF IT RAINS")
+    Assert(CloudPct("Volcanic Ash") = 0 - 1, "AND A CONDITION IT CANNOT PLACE IS -1, WHICH RENDERS BLANK")
+
+    Print("--- feels like, against the NOAA tables ---")
+    Print(Str(FeelsLike(35, 50, 10)) & " " & Str(FeelsLike(90, 70, 5)) & " " & Str(FeelsLike(70, 50, 5)))
+    Rem Wind chill: 35F with a 10 mph wind is 27F in NOAA's table.
+    Assert(FeelsLike(35, 50, 10) = 27, "WIND CHILL AT 35F AND 10MPH IS 27")
+    Rem Heat index: NOAA's published chart reads 105 at 90F and 70% RH.
+    Rem The Rothfusz regression it is computed from gives 105.92, which
+    Rem rounds to 106 — the chart's own rounding, not a transcription
+    Rem error, so the check allows the one degree between them.
+    Assert(Abs(FeelsLike(90, 70, 5) - 105) <= 1, "HEAT INDEX AT 90F AND 70% IS THE CHART'S 105, TO A DEGREE")
+    Rem Between the two ranges, what it is is what it feels like.
+    Assert(FeelsLike(70, 50, 5) = 70, "AND IN BETWEEN, NEITHER FORMULA APPLIES")
+    Assert(FeelsLike(45, 50, 1) = 45, "A CALM DAY IS NOT WIND CHILLED")
+
+    Print("--- the calendar ---")
+    Print(DayAbbrev(2026, 5, 2) & " " & DayLong(2026, 8, 3) & " " & MonthName(8))
+    Assert(DayAbbrev(2026, 5, 2) = "Sa", "2 MAY 2026 IS A SATURDAY")
+    Assert(DayLong(2026, 8, 3) = "Mon", "3 AUGUST 2026 IS A MONDAY")
+    Assert(DayAbbrev(2000, 2, 29) = "Tu", "AND THE LEAP DAY OF 2000 WAS A TUESDAY")
+    Assert(DayAbbrev(2024, 2, 29) = "Th", "AS 2024'S WAS A THURSDAY")
+    Assert(DayOfYear(2026, 8, 3) = 215, "3 AUGUST IS THE 215TH DAY OF A COMMON YEAR")
+    Assert(DayOfYear(2024, 3, 1) = 61, "AND 1 MARCH THE 61ST OF A LEAP ONE")
+    Assert(IsLeap(2000) And Not IsLeap(1900), "2000 WAS A LEAP YEAR AND 1900 WAS NOT")
+
+    Print("--- the sun, to within two minutes ---")
+    Rem Ballwin, Missouri on 2 May 2026. The reference rendering this mill
+    Rem mirrors puts sunset at 7:56 PM; the NOAA algorithm computes 7:54.
+    Let setMay = SunsetMin(2026, 5, 2, 38.6091, 0 - 90.5598, 0 - 300)
+    Print("2 May 2026 sunset: " & ClockText(setMay))
+    Assert(Abs(Round(setMay) - (19 * 60 + 56)) <= 2, "SUNSET AGREES WITH THE REFERENCE TO TWO MINUTES")
+    Let riseAug = SunriseMin(2026, 8, 3, 38.6091, 0 - 90.5598, 0 - 300)
+    Print("3 Aug 2026 sunrise: " & ClockText(riseAug))
+    Assert(riseAug > 5 * 60 And riseAug < 7 * 60, "AN AUGUST SUNRISE IS BETWEEN FIVE AND SEVEN")
+    Assert(SunsetMin(2026, 8, 3, 38.6091, 0 - 90.5598, 0 - 300) > riseAug, "AND THE SUN SETS AFTER IT RISES")
+    Rem Above the Arctic circle in June it does neither, and Acos would
+    Rem abort on a cosine outside its domain if that were not checked.
+    Assert(SunriseMin(2026, 6, 21, 78.2, 15.6, 60) = 0 - 1, "THE MIDNIGHT SUN REPORTS -1 RATHER THAN ABORTING")
+    Print(ClockText(0) & " " & ClockText(12 * 60) & " " & ClockText(13 * 60 + 5))
+    Assert(ClockText(0) = "12:00 AM", "MIDNIGHT READS AS TWELVE")
+    Assert(ClockText(12 * 60) = "12:00 PM", "AND SO DOES NOON")
+    Assert(ClockText(13 * 60 + 5) = "1:05 PM", "AND THE MINUTES ARE ZERO PADDED")
+
+    Print("--- time surgery on the API's own stamps ---")
+    Let ts = "2026-08-03T15:00:00-05:00"
+    Assert(TsYear(ts) = 2026 And TsMonth(ts) = 8 And TsDay(ts) = 3, "THE DATE SLICES OUT")
+    Assert(TsHour(ts) = 15, "AND THE HOUR")
+    Assert(TsOffsetMin(ts) = 0 - 300, "AND THE OFFSET, WITH ITS SIGN")
+    Assert(TsOffsetMin("2026-08-03T15:00:00+05:30") = 330, "INCLUDING A POSITIVE HALF-HOUR ONE")
+    Assert(TsYmd(ts) = "20260803", "AND THE DATE KEY")
+
+    Print("--- the row layout is 58 columns, gaps and all ---")
+    Assert(Len(HeaderText()) = 58, "THE HEADER IS 58 COLUMNS")
+    Assert(HeaderText() = "Date  Hr  Temp (FL)  Conditions    Prcp  Cld  Hmd  Dir Spd",
+           "AND IS BYTE-IDENTICAL TO THE REFERENCE RENDERING")
+    Assert(All(Taken(hours, 72), Fn(h) => Len(RowText(h)) = 58), "EVERY ROW IS THE SAME WIDTH")
+
+    Print("--- the golden render ---")
+    Let got = Render(place, hours, days)
+    Let want = ReadLines(FixtureDir() & "expected.out")
+    Print(Str(Length(got)) & " lines rendered, " & Str(Length(want)) & " expected")
+    Let d = FirstDiff(got, want, 1)
+    If d > 0 Then
+        Print("first difference at line " & Str(d))
+        Print("  got:  " & Show(Nth(got, d)))
+        Print("  want: " & Show(Nth(want, d)))
+    Assert(d = 0, "THE RENDER MATCHES files/expected.out LINE FOR LINE")
+    Rem 72 rows, one header, one blank, two title lines, and one marker per
+    Rem day/night crossing.
+    Assert(Length(got) > 72, "AND CARRIES MORE THAN THE ROWS: TITLES, HEADER AND MARKERS")
+    Assert(CountIf(got, Fn(l) => Instr(l, "Sunset") > 0) > 0, "THERE IS AT LEAST ONE SUNSET MARKER")
+    Assert(CountIf(got, Fn(l) => Instr(l, "Sunrise") > 0) > 0, "AND AT LEAST ONE SUNRISE")
+
+    Print("ALL ASSERTIONS PASSED")

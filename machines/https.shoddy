@@ -1,0 +1,195 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem https.shoddy — Shoddy standard library: an HTTP client over TLS
+Rem
+Rem Built on net.shoddy, which supplies the sockets and the TLS upgrade.
+Rem This machine is the HTTP part: building a request, and taking a
+Rem reply apart.
+Rem
+Rem     Let reply = HttpsGet("api.weather.gov", "/points/41.88,-87.63",
+Rem         { Pair("User-Agent", "my-mill (me@example.com)"),
+Rem           Pair("Accept", "application/geo+json") })
+Rem     If HttpStatus(reply) = 200 Then
+Rem         Print(HttpBody(reply))
+Rem
+Rem PURE WHERE IT CAN BE, and that is the design rule. Building a request
+Rem and parsing a reply are functions on Strings: HttpRequestText,
+Rem HttpStatus, HttpHeaders and HttpBody touch no socket, need no
+Rem --allow-net, and are tested offline against fixture text. Only
+Rem HttpsGet and HttpsRequest reach the network.
+Rem
+Rem Headers are a List Of Pair — dict.shoddy's association list — so
+Rem DictGetOr works on a parsed reply without any help from here:
+Rem
+Rem     Let hs = HttpHeaders(reply)
+Rem     Print(DictGetOr(hs, "content-type", "unknown"))
+Rem
+Rem Names are LOWERCASED on the way in. HTTP header names are
+Rem case-insensitive, and normalising at the boundary is what lets that
+Rem DictGetOr just work rather than having to guess whether this
+Rem particular server wrote Content-Type or content-type.
+Rem
+Rem ---- known limits ------------------------------------------------
+Rem
+Rem HTTP/1.0, deliberately. It is what makes "the peer closes when it has
+Rem finished" the correct end-of-body rule, so there is no chunked
+Rem decoder here and none is needed: a server answering HTTP/1.0 does not
+Rem send Transfer-Encoding: chunked. Speaking 1.1 would buy keep-alive
+Rem and cost a chunk decoder, a Content-Length reader and a connection
+Rem cache — a fair trade one day, and not this machine.
+Rem
+Rem No redirects are followed. A 301 or 302 is reported, not chased:
+Rem chasing one means deciding about loops, cross-host hops and method
+Rem rewriting, and those are the caller's policy rather than a library's.
+Rem HttpStatus and the location header are right there.
+Rem
+Rem No compression. Nothing here sends Accept-Encoding, so nothing
+Rem arrives gzipped. Do not add the header without adding a decoder.
+Rem
+Rem The body is BYTES, one per character, exactly as ReadFile hands them
+Rem over. A UTF-8 page therefore arrives as its bytes: writing it back
+Rem out with WriteFile reproduces the file exactly, and turning it into
+Rem characters is a separate concern this machine does not have.
+Rem
+Rem Certificate validation is the platform's, and a failure aborts the
+Rem program — see net.shoddy and the errors page.
+Rem ==================================================================
+
+Include "net.shoddy"
+Include "dict.shoddy"
+Include "str.shoddy"
+
+Rem ---- constants -------------------------------------------------------
+Rem Machines cannot carry a top-level Let, so the constants are zero-arg
+Rem Defs, as vt100's Esc() is.
+
+Def HttpsPort() As Number
+    443
+
+Rem CR LF, and the blank line that ends a header block. Written out of
+Rem Chr rather than as escapes so the bytes are unmistakable.
+Def HttpEol() As String
+    Chr(13) & Chr(10)
+
+Def HttpGap() As String
+    HttpEol() & HttpEol()
+
+Rem ---- building a request ----------------------------------------------
+
+Rem The request text, exactly as it goes on the wire. Pure.
+Rem
+Rem Host is emitted first and always, because HTTP/1.0 servers behind a
+Rem name-based vhost need it and it costs nothing to be sure. Anything
+Rem else is yours: a User-Agent is worth sending on principle and is
+Rem required in practice by more hosts than you would expect — some
+Rem answer 403 to a request without one.
+Def HttpRequestText(method As String, path As String, host As String, headers As List Of Pair) As String
+    Join(Append(Prepend(Upper(method) & " " & path & " HTTP/1.0",
+                        Prepend("Host: " & host,
+                                Map(headers, Fn(h) => Fst(h) & ": " & Snd(h)))),
+                HttpEol()),
+         HttpEol())
+
+Rem ---- reading a reply -------------------------------------------------
+
+Rem The status line's number, or 0 if this does not look like a reply at
+Rem all. Pure. Val is lax, so the slice is checked before it is trusted:
+Rem "HTTP/1.1 200 OK" -> 200.
+Def HttpStatus(reply As String) As Number
+    Let line = HttpStatusLine(reply)
+    Let parts = Filter(Split(line, " "), Fn(p) => p <> "")
+    If Length(parts) < 2 Or Not StartsWith(Upper(line), "HTTP/") Then
+        0
+    Else
+        If IsNumeric(Nth(parts, 2)) Then
+            Val(Nth(parts, 2))
+        Else
+            0
+
+Def HttpStatusLine(reply As String) As String
+    First(Split(HttpHead(reply), Chr(10)))
+
+Rem The reason phrase — "OK", "Not Found" — or "" if there is none.
+Def HttpReason(reply As String) As String
+    Let line = HttpTrimCr(HttpStatusLine(reply))
+    Let sp1 = Instr(line, " ")
+    If sp1 = 0 Then
+        ""
+    Else
+        Let rest = Mid(line, sp1 + 1, Len(line))
+        Let sp2 = Instr(rest, " ")
+        If sp2 = 0 Then
+            ""
+        Else
+            Mid(rest, sp2 + 1, Len(rest))
+
+Rem Every header, names lowercased and values trimmed, in the order the
+Rem server sent them. Pure. The status line is dropped; a line with no
+Rem colon is skipped rather than guessed at.
+Def HttpHeaders(reply As String) As List Of Pair
+    Map(Filter(Rest(Split(HttpHead(reply), Chr(10))), HttpIsHeaderLine),
+        HttpHeaderPair)
+
+Def HttpIsHeaderLine(line As String) As Boolean
+    Instr(line, ":") > 0
+
+Def HttpHeaderPair(line As String) As Pair
+    Let c = Instr(line, ":")
+    Pair(Lower(HttpTrimCr(Left(line, c - 1))),
+         HttpTrimCr(Trim(Mid(line, c + 1, Len(line)))))
+
+Rem One header by name, or your default. The name you ask with is
+Rem lowercased for you, so HttpHeader(r, "Content-Type") works.
+Def HttpHeader(reply As String, name As String, dflt As String) As String
+    DictGetOr(HttpHeaders(reply), Lower(name), dflt)
+
+Rem Everything after the first blank line. Pure. A bare LF gap is
+Rem tolerated, because not every server is careful; "" when there is no
+Rem gap at all, which is what a truncated reply looks like.
+Def HttpBody(reply As String) As String
+    Let g = Instr(reply, HttpGap())
+    If g > 0 Then
+        Mid(reply, g + 4, Len(reply))
+    Else
+        Let g2 = Instr(reply, Chr(10) & Chr(10))
+        If g2 > 0 Then
+            Mid(reply, g2 + 2, Len(reply))
+        Else
+            ""
+
+Rem The header block, without the body: everything before the first
+Rem blank line, or the whole thing if there is no blank line.
+Def HttpHead(reply As String) As String
+    Let g = Instr(reply, HttpGap())
+    If g > 0 Then
+        Left(reply, g - 1)
+    Else
+        Let g2 = Instr(reply, Chr(10) & Chr(10))
+        If g2 > 0 Then
+            Left(reply, g2 - 1)
+        Else
+            reply
+
+Rem str's Trim takes spaces only, so a line split on LF keeps its CR.
+Def HttpTrimCr(s As String) As String
+    If Len(s) > 0 And Right(s, 1) = Chr(13) Then
+        Left(s, Len(s) - 1)
+    Else
+        s
+
+Rem ---- fetching --------------------------------------------------------
+Rem The only effectful words here. Everything above is pure.
+
+Rem One GET over TLS, returning the whole raw reply — status line,
+Rem headers and body — for the words above to take apart.
+Def HttpsGet(host As String, path As String, headers As List Of Pair) As String
+    HttpsRequest("GET", host, path, headers)
+
+Rem Any method, same shape. The body of a POST goes in headers-then-text
+Rem territory that HTTP/1.0 makes awkward, so this sends none: it is the
+Rem general form of a request without one.
+Def HttpsRequest(method As String, host As String, path As String, headers As List Of Pair) As String
+    RequestTls(host, HttpsPort(),
+        HttpRequestText(method, path, host, headers))

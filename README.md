@@ -163,6 +163,18 @@ write-up on each one, or start at
       <b>simplex-from-mps</b><br><sub>83-var LP, solved from MPS</sub>
     </td>
   </tr>
+  <tr>
+    <td width="25%" align="center" valign="top">
+      <a href="https://shoddymills.github.io/shoddy/mills/rag-and-bone.html"><img src="docs/media/icons/https.svg" alt="rag-and-bone: a padlock over a request and its reply" width="100%"></a><br>
+      <b>rag-and-bone</b><br><sub>a web server, in Shoddy</sub>
+    </td>
+    <td width="25%" align="center" valign="top">
+      <a href="https://shoddymills.github.io/shoddy/mills/weather-glass.html"><img src="docs/media/weather-glass.svg" alt="weather-glass: a barometer dial beside forecast rows" width="100%"></a><br>
+      <b>weather-glass</b><br><sub>a forecast, in VT100</sub>
+    </td>
+    <td width="25%"></td>
+    <td width="25%"></td>
+  </tr>
 </table>
 
 ## The machines — the whole shed
@@ -199,20 +211,20 @@ batteries included. Full word references in
   </tr>
   <tr>
     <td width="25%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/net.html"><img src="docs/media/icons/net.svg" alt="net" width="100%"></a><br><b>net</b><br><sub>TCP/IP, non-blocking</sub></td>
+    <td width="25%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/https.html"><img src="docs/media/icons/https.svg" alt="https" width="100%"></a><br><b>https</b><br><sub>HTTP over TLS</sub></td>
     <td width="25%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/simplex.html"><img src="docs/media/icons/simplex.svg" alt="simplex" width="100%"></a><br><b>simplex</b><br><sub>linear programming</sub></td>
     <td width="25%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/mps.html"><img src="docs/media/icons/mps.svg" alt="mps" width="100%"></a><br><b>mps</b><br><sub>the LP file format</sub></td>
-    <td width="25%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/clock.html"><img src="docs/media/icons/clock.svg" alt="clock" width="100%"></a><br><b>clock</b><br><sub>timing and timestamps</sub></td>
   </tr>
   <tr>
+    <td width="25%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/clock.html"><img src="docs/media/icons/clock.svg" alt="clock" width="100%"></a><br><b>clock</b><br><sub>timing and timestamps</sub></td>
     <td width="25%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/vt100.html"><img src="docs/media/icons/vt100.svg" alt="vt100" width="100%"></a><br><b>vt100</b><br><sub>terminal control codes</sub></td>
     <td width="25%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/keys.html"><img src="docs/media/icons/keys.svg" alt="keys" width="100%"></a><br><b>keys</b><br><sub>key codes to GameKeys</sub></td>
     <td width="25%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/scribbler.html"><img src="docs/media/icons/scribbler.svg" alt="scribbler" width="100%"></a><br><b>scribbler</b><br><sub>pixels in a window</sub></td>
-    <td width="25%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/turtle.html"><img src="docs/media/icons/turtle.svg" alt="turtle" width="100%"></a><br><b>turtle</b><br><sub>purely functional turtles</sub></td>
   </tr>
   <tr>
+    <td width="25%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/turtle.html"><img src="docs/media/icons/turtle.svg" alt="turtle" width="100%"></a><br><b>turtle</b><br><sub>purely functional turtles</sub></td>
     <td width="25%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/plotter.html"><img src="docs/media/icons/plotter.svg" alt="plotter" width="100%"></a><br><b>plotter</b><br><sub>statistical charts</sub></td>
     <td width="25%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/buzzer.html"><img src="docs/media/icons/buzzer.svg" alt="buzzer" width="100%"></a><br><b>buzzer</b><br><sub>notes, MML tunes, three waves</sub></td>
-    <td width="25%"></td>
     <td width="25%"></td>
   </tr>
 </table>

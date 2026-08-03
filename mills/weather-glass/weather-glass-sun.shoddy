@@ -1,0 +1,163 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem weather-glass-sun.shoddy — where the sun is, and what day it is.
+Rem
+Rem Pure arithmetic, no fetching. Two independent pieces:
+Rem
+Rem   SunriseMin / SunsetMin   the NOAA solar-position algorithm — the one
+Rem                            behind the NOAA sunrise/sunset spreadsheet —
+Rem                            giving local minutes past midnight.
+Rem   Weekday                  Sakamoto's congruence, five lines of integer
+Rem                            arithmetic and a twelve-entry table.
+Rem
+Rem Neither needs a date type, because there isn't one and none is wanted.
+Rem The API already speaks local time and tells us its own UTC offset, so
+Rem the offset arrives as a parameter and daylight saving is somebody
+Rem else's problem — already baked into what the feed reported.
+Rem
+Rem This file is the best advertisement in the tree for the trig builtins
+Rem composing with math.shoddy into something real. It is graded against
+Rem published values to within two minutes.
+Rem ==================================================================
+
+Include "../../machines/math.shoddy"
+
+Rem ---- the calendar ----------------------------------------------------
+
+Rem Sakamoto's method. The table is the standard one: the offset of each
+Rem month's first day from the start of the year, modulo 7. January and
+Rem February are treated as belonging to the previous year, which is what
+Rem the y = y - 1 does, so a leap February needs no special case.
+Def SakamotoT() As Array Of Number
+    ToArray({ 0, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4 })
+
+Rem 0 = Sunday .. 6 = Saturday.
+Def Weekday(y As Number, m As Number, d As Number) As Number
+    Let yy = Ifte(m < 3, y - 1, y)
+    Let t = Nth(SakamotoT(), m)
+    (yy + Fix(yy / 4) - Fix(yy / 100) + Fix(yy / 400) + t + d) Mod 7
+
+Def DayNames() As Array Of String
+    ToArray({ "Su", "Mo", "Tu", "We", "Th", "Fr", "Sa" })
+
+Def DayLongNames() As Array Of String
+    ToArray({ "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat" })
+
+Def MonthNames() As Array Of String
+    ToArray({ "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+              "Jul", "Aug", "Sep", "Oct", "Nov", "Dec" })
+
+Rem "Sa" — the two-letter form the table column uses.
+Def DayAbbrev(y As Number, m As Number, d As Number) As String
+    Nth(DayNames(), Weekday(y, m, d) + 1)
+
+Rem "Sat" — the three-letter form the header line uses.
+Def DayLong(y As Number, m As Number, d As Number) As String
+    Nth(DayLongNames(), Weekday(y, m, d) + 1)
+
+Def MonthName(m As Number) As String
+    Nth(MonthNames(), m)
+
+Rem Days since 1 January of the same year, 1-based: 1 January is 1.
+Def DayOfYear(y As Number, m As Number, d As Number) As Number
+    Fold(Map(Range(1, m - 1), Fn(k) => DaysInMonth(y, k)), d, Fn(a, b) => a + b)
+
+Def DaysInMonth(y As Number, m As Number) As Number
+    Select Case m
+        Case 2
+            Ifte(IsLeap(y), 29, 28)
+        Case 4, 6, 9, 11
+            30
+        Case Else
+            31
+
+Def IsLeap(y As Number) As Boolean
+    (y Mod 4 = 0 And y Mod 100 <> 0) Or y Mod 400 = 0
+
+Rem ---- the sun ---------------------------------------------------------
+Rem The NOAA algorithm, in the order the spreadsheet computes it. Angles
+Rem are degrees on the outside and radians on the inside; math.shoddy's
+Rem Rad and Deg do the converting, and the trig builtins do the rest.
+
+Rem Official sunrise is the moment the sun's centre is 50 arcminutes below
+Rem the horizon: half the disc's diameter plus the average refraction.
+Def Zenith() As Number
+    90.833
+
+Rem The fractional year, in radians. gamma in the NOAA text.
+Def SunGamma(y As Number, doy As Number, hh As Number) As Number
+    (Tau() / DaysInYear(y)) * (doy - 1 + (hh - 12) / 24)
+
+Def DaysInYear(y As Number) As Number
+    Ifte(IsLeap(y), 366, 365)
+
+Rem The equation of time, in minutes: how far ahead or behind the real sun
+Rem runs against a clock. This is the wobble that makes the earliest sunset
+Rem and the shortest day fall on different dates.
+Def EqTime(g As Number) As Number
+    229.18 * (0.000075 + 0.001868 * Cos(g) - 0.032077 * Sin(g) - 0.014615 * Cos(2 * g) - 0.040849 * Sin(2 * g))
+
+Rem Solar declination, in radians: how far north or south of the equator
+Rem the sun is standing.
+Rem One expression on one line. Broken across lines a leading + or -
+Rem does NOT continue the expression: it takes a stray value off the
+Rem stack, and the Def quietly yields the wrong thing. The linter says so
+Rem - "leaves 4 values on the stack" - which is how this was caught.
+Def SunDecl(g As Number) As Number
+    0.006918 - 0.399912 * Cos(g) + 0.070257 * Sin(g) - 0.006758 * Cos(2 * g) + 0.000907 * Sin(2 * g) - 0.002697 * Cos(3 * g) + 0.00148 * Sin(3 * g)
+
+Rem The hour angle at the horizon, in degrees, or -1 when the sun neither
+Rem rises nor sets that day. Above the Arctic circle in June the cosine
+Rem falls outside -1..1 and Acos would abort, so it is checked first.
+Def HourAngle(lat As Number, decl As Number) As Number
+    Let c = (Cos(Rad(Zenith())) / (Cos(Rad(lat)) * Cos(decl))) - Tan(Rad(lat)) * Tan(decl)
+    If c < 0 - 1 Or c > 1 Then
+        0 - 1
+    Else
+        Deg(Acos(c))
+
+Rem Sunrise as local minutes past midnight, or -1 for a day with none.
+Rem offsetMin is the feed's own UTC offset in minutes (-300 for CDT).
+Def SunriseMin(y As Number, m As Number, d As Number, lat As Number, lon As Number, offsetMin As Number) As Number
+    SunEventMin(y, m, d, lat, lon, offsetMin, True)
+
+Def SunsetMin(y As Number, m As Number, d As Number, lat As Number, lon As Number, offsetMin As Number) As Number
+    SunEventMin(y, m, d, lat, lon, offsetMin, False)
+
+Rem Both events are the same computation with the hour angle's sign
+Rem flipped, so they are one word. The first pass uses noon for gamma,
+Rem which is the approximation the NOAA spreadsheet makes and is worth
+Rem well under a minute at these latitudes.
+Def SunEventMin(y As Number, m As Number, d As Number, lat As Number, lon As Number, offsetMin As Number, rising As Boolean) As Number
+    Let g = SunGamma(y, DayOfYear(y, m, d), 12)
+    Let ha = HourAngle(lat, SunDecl(g))
+    If ha < 0 Then
+        0 - 1
+    Else
+        Rem UTC minutes past midnight, then shifted into local time.
+        Let utc = 720 - 4 * (lon + Ifte(rising, ha, 0 - ha)) - EqTime(g)
+        WrapDay(utc + offsetMin)
+
+Rem Keep the answer inside one day. A longitude far from its zone's
+Rem meridian can push either event over a boundary.
+Def WrapDay(t As Number) As Number
+    If t < 0 Then
+        WrapDay(t + 1440)
+    Else
+        If t >= 1440 Then
+            WrapDay(t - 1440)
+        Else
+            t
+
+Rem ---- formatting ------------------------------------------------------
+
+Rem Minutes past midnight as "7:56 AM". Twelve-hour, no leading zero on
+Rem the hour, which is what the report shows.
+Def ClockText(mins As Number) As String
+    Let t = Round(mins)
+    Let h24 = Fix(t / 60)
+    Let mm = t - h24 * 60
+    Let h12 = Ifte(h24 Mod 12 = 0, 12, h24 Mod 12)
+    Str(h12) & ":" & PadZero(mm, 2) & " " & Ifte(h24 < 12, "AM", "PM")

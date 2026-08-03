@@ -1,0 +1,321 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem weather-glass-core.shoddy — everything between the JSON and the rows.
+Rem
+Rem PURE. No fetching, no printing, no clock. Raw response Strings come in,
+Rem a List Of String of finished report lines goes out:
+Rem
+Rem     Render(place, hours, days) As List Of String
+Rem
+Rem That signature is what makes the golden test possible: test.shoddy
+Rem feeds it the captured fixtures in files/ and compares every line
+Rem against files/expected.out, with no network and no --allow-net. The
+Rem shell beside it does the four fetches and prints what comes back.
+Rem
+Rem ---- the Cld column is an ESTIMATE -------------------------------
+Rem
+Rem Say it plainly, because it is the one number on screen that nobody
+Rem measured. The hourly feed carries no sky cover — that lives only in
+Rem the raw gridpoint endpoint, a fifth fetch of ~212 KB in UTC intervals
+Rem — so this mill infers a percentage from the words in shortForecast:
+Rem "Mostly Sunny" becomes 25%, "Cloudy" 95%, and so on. A condition the
+Rem table does not recognise renders as a blank cell rather than a
+Rem guess. Everything else in the table came from the API.
+Rem
+Rem ---- layout ------------------------------------------------------
+Rem
+Rem 58 columns, and the gaps between fields are NOT uniform: one space in
+Rem some places and two in others. That is not a mistake, it is what the
+Rem reference rendering does, and it is reproduced exactly rather than
+Rem tidied — a report that is nearly the reference is a report that has
+Rem to be checked by eye forever.
+Rem ==================================================================
+
+Include "../../machines/json.shoddy"
+Include "../../machines/vt100.shoddy"
+Include "weather-glass-sun.shoddy"
+
+Rem ---- the vocabulary --------------------------------------------------
+
+Type Place = APlace(ZipCode As String, City As String, Region As String, Lat As Number, Lon As Number)
+
+Rem One row of the table. Cld is -1 when the estimate table did not
+Rem recognise the condition, and renders as a blank cell.
+Type Hour = AnHour(Ymd As String, Day As String, Hh As Number, Temp As Number, Feels As Number, Cond As String, Prcp As Number, Cld As Number, Hmd As Number, Dir As String, Spd As Number, IsDay As Boolean, OffMin As Number)
+
+Rem One period of the daily forecast, which is where a marker row's words
+Rem come from.
+Type DayInfo = ADay(IsDay As Boolean, HiLo As Number, DCond As String, WindTo As Number)
+
+Rem ---- time surgery ----------------------------------------------------
+Rem startTime is "2026-08-03T15:00:00-05:00": fixed width, so Mid slices
+Rem it and Val reads the pieces. No date type exists and none is needed —
+Rem the feed already speaks local time and states its own offset.
+
+Def TsYear(t As String) As Number
+    Val(Mid(t, 1, 4))
+
+Def TsMonth(t As String) As Number
+    Val(Mid(t, 6, 2))
+
+Def TsDay(t As String) As Number
+    Val(Mid(t, 9, 2))
+
+Def TsHour(t As String) As Number
+    Val(Mid(t, 12, 2))
+
+Rem The trailing "-05:00" as minutes: negative west of Greenwich.
+Def TsOffsetMin(t As String) As Number
+    Let tail = Right(t, 6)
+    Let offh = Val(Mid(tail, 2, 2))
+    Let offm = Val(Mid(tail, 5, 2))
+    Ifte(Left(tail, 1) = "-", 0 - (offh * 60 + offm), offh * 60 + offm)
+
+Rem "20260803" — the key that says whether two hours are the same date.
+Def TsYmd(t As String) As String
+    Mid(t, 1, 4) & Mid(t, 6, 2) & Mid(t, 9, 2)
+
+Rem ---- condition abbreviation ------------------------------------------
+Rem An ORDERED rewrite table: "Slight Chance" has to fire before "Chance"
+Rem or it never fires at all. Fold walks it in order.
+
+Let CondRules = { Pair("Slight Chance", "Slgt"), Pair("Chance", "Chc"),
+                  Pair("Showers And Thunderstorms", "T-Storm"),
+                  Pair("Rain Showers", "Rain"), Pair("Snow Showers", "Snow"),
+                  Pair("Thunderstorms", "T-Storms"),
+                  Pair("Mostly", "Mstly"), Pair("Partly", "Ptly"),
+                  Pair("Likely", "Lkly"), Pair("Isolated", "Iso"),
+                  Pair("Scattered", "Sct"), Pair("Patchy", "Ptchy"),
+                  Pair("Freezing", "Frz") }
+
+Rem A compound forecast keeps only what comes before " then ": the table
+Rem has one line per hour and the first half is the one that hour is in.
+Def Abbrev(s As String) As String
+    Left(Fold(CondRules, First(Split(s, " then ")), Fn(a, r) => Replace(a, Fst(r), Snd(r))), 13)
+
+Rem ---- cloud cover, estimated ------------------------------------------
+Rem Matched against the RAW shortForecast, before abbreviation, longest
+Rem phrases first so "Mostly Cloudy" is not caught by "Cloudy".
+
+Let CloudRules = { Pair("Mostly Sunny", 25), Pair("Mostly Clear", 25),
+                   Pair("Partly Sunny", 50), Pair("Partly Cloudy", 50),
+                   Pair("Mostly Cloudy", 75), Pair("Sunny", 5), Pair("Clear", 5),
+                   Pair("Cloudy", 95), Pair("Overcast", 95), Pair("Fog", 95) }
+
+Def CloudPct(raw As String) As Number
+    If Wet(raw) Then
+        75
+    Else
+        CloudLookup(CloudRules, raw)
+
+Def CloudLookup(rules As List Of Pair, raw As String) As Number
+    If IsEmpty(rules) Then
+        0 - 1
+    Else
+        If Instr(raw, Fst(First(rules))) > 0 Then
+            Snd(First(rules))
+        Else
+            CloudLookup(Rest(rules), raw)
+
+Rem Anything falling out of the sky means most of the sky is covered.
+Def Wet(raw As String) As Boolean
+    Instr(raw, "Rain") > 0 Or Instr(raw, "Storm") > 0 Or Instr(raw, "Snow") > 0 Or Instr(raw, "Showers") > 0 Or Instr(raw, "Drizzle") > 0
+
+Rem ---- feels like ------------------------------------------------------
+Rem The two NOAA formulas, transcribed rather than improvised. Outside
+Rem both their ranges the temperature is what it feels like.
+
+Def FeelsLike(t As Number, rh As Number, v As Number) As Number
+    If t <= 50 And v >= 3 Then
+        Round(WindChill(t, v))
+    Else
+        If t >= 80 Then
+            Round(HeatIndex(t, rh))
+        Else
+            Round(t)
+
+Def WindChill(t As Number, v As Number) As Number
+    35.74 + 0.6215 * t - 35.75 * (v ^ 0.16) + 0.4275 * t * (v ^ 0.16)
+
+Rem The Rothfusz regression, with NOAA's two adjustments: one for dry air
+Rem in the eighties and nineties, one for very humid air in the eighties.
+Def HeatIndex(t As Number, rh As Number) As Number
+    Rothfusz(t, rh) - DryAdj(t, rh) + WetAdj(t, rh)
+
+Def Rothfusz(t As Number, r As Number) As Number
+    0 - 42.379 + 2.04901523 * t + 10.14333127 * r - 0.22475541 * t * r - 0.00683783 * t * t - 0.05481717 * r * r + 0.00122874 * t * t * r + 0.00085282 * t * r * r - 0.00000199 * t * t * r * r
+
+Def DryAdj(t As Number, r As Number) As Number
+    If r < 13 And t >= 80 And t <= 112 Then
+        ((13 - r) / 4) * Sqr((17 - Abs(t - 95)) / 17)
+    Else
+        0
+
+Def WetAdj(t As Number, r As Number) As Number
+    If r > 85 And t >= 80 And t <= 87 Then
+        ((r - 85) / 10) * ((87 - t) / 5)
+    Else
+        0
+
+Rem ---- wind ------------------------------------------------------------
+Rem windSpeed is "9 mph" or a range, "1 to 8 mph". The LAST number is the
+Rem one the report wants: the gust end of the range.
+
+Def WindMph(s As String) As Number
+    Let nums = Filter(Split(s, " "), IsNumeric)
+    If IsEmpty(nums) Then
+        0
+    Else
+        Val(Last(nums))
+
+Rem ---- JSON to records -------------------------------------------------
+Rem Every numeric field goes through a TOTAL accessor. PoP is null at real
+Rem hours in real responses, and a mill that aborts at 3am because of it
+Rem has not used the words the json machine provides.
+
+Def ReadPlace(zipJson As String, zip As String) As Place
+    Let p = JNth(JGet(JsonParse(zipJson), "places"), 1)
+    APlace(zip,
+        JStrOr(JGet(p, "place name"), "?"),
+        JStrOr(JGet(p, "state"), "?"),
+        Val(JStrOr(JGet(p, "latitude"), "0")),
+        Val(JStrOr(JGet(p, "longitude"), "0")))
+
+Def ReadHours(hourlyJson As String) As List Of Hour
+    Map(JItems(JPath(JsonParse(hourlyJson), { "properties", "periods" })), ToHour)
+
+Def ToHour(p As Json) As Hour
+    Let t = JStrOr(JGet(p, "startTime"), "")
+    Let raw = JStrOr(JGet(p, "shortForecast"), "")
+    Let degf = JNumOr(JGet(p, "temperature"), 0)
+    Let rh = JNumOr(JGetOr(JGet(p, "relativeHumidity"), "value", JNum(0)), 0)
+    Let mph = WindMph(JStrOr(JGet(p, "windSpeed"), ""))
+    AnHour(TsYmd(t),
+        DayAbbrev(TsYear(t), TsMonth(t), TsDay(t)) & " " & Str(TsDay(t)),
+        TsHour(t), degf, FeelsLike(degf, rh, mph), Abbrev(raw),
+        JNumOr(JGetOr(JGet(p, "probabilityOfPrecipitation"), "value", JNum(0)), 0),
+        CloudPct(raw), rh,
+        JStrOr(JGet(p, "windDirection"), ""), mph,
+        JBoolOr(JGet(p, "isDaytime"), True), TsOffsetMin(t))
+
+Def ReadDays(dailyJson As String) As List Of DayInfo
+    Map(JItems(JPath(JsonParse(dailyJson), { "properties", "periods" })), ToDay)
+
+Def ToDay(p As Json) As DayInfo
+    ADay(JBoolOr(JGet(p, "isDaytime"), True),
+         JNumOr(JGet(p, "temperature"), 0),
+         Abbrev(JStrOr(JGet(p, "shortForecast"), "")),
+         WindMph(JStrOr(JGet(p, "windSpeed"), "")))
+
+Rem ---- the row layout --------------------------------------------------
+Rem Fixed widths, uneven gaps, 58 columns. Measured off the reference
+Rem rendering rather than assumed: the gaps really are one space in some
+Rem places and two in others.
+Rem
+Rem   Date 5L . Hr 2Z .. Temp 9R .. Cond 13L . Prcp 4R . Cld 4R . Hmd 4R .. Dir 3R . Spd 3R
+
+Def RowText(h As Hour) As String
+    Join({ PadRight(Day(h), 5), " ", PadZero(Hh(h), 2), "  ",
+           PadLeft(Str(Temp(h)) & " (" & Str(Feels(h)) & ")", 9), "  ",
+           PadRight(Cond(h), 13), " ",
+           PadLeft(Str(Prcp(h)) & "%", 4), " ",
+           PadLeft(CldText(h), 4), " ",
+           PadLeft(Str(Hmd(h)) & "%", 4), "  ",
+           PadLeft(Dir(h), 3), " ",
+           PadLeft(Str(Spd(h)), 3) }, "")
+
+Rem The one cell that may be empty, because -1 means "not estimated".
+Def CldText(h As Hour) As String
+    Ifte(Cld(h) < 0, "", Str(Cld(h)) & "%")
+
+Def HeaderText() As String
+    Join({ PadRight("Date", 5), " ", "Hr", "  ",
+           PadLeft("Temp (FL)", 9), "  ",
+           PadRight("Conditions", 13), " ",
+           PadLeft("Prcp", 4), " ",
+           PadLeft("Cld", 4), " ",
+           PadLeft("Hmd", 4), "  ",
+           PadLeft("Dir", 3), " ",
+           PadLeft("Spd", 3) }, "")
+
+Rem ---- assembly --------------------------------------------------------
+Rem Day rows plain, night rows dim, and a bold marker row wherever the two
+Rem meet. The daily feed alternates day and night from now, so one index
+Rem threaded through the walk picks the right period for each marker; the
+Rem names are not matched on, because "Tonight" and "Monday Night" are the
+Rem same thing on different days.
+
+Def Render(p As Place, hours As List Of Hour, days As List Of DayInfo) As List Of String
+    Let shown = Taken(hours, 72)
+    Concat(Concat(TitleLines(p, shown), { ReverseVideo() & HeaderText() & AttrsOff() }),
+           Rows(p, shown, days, 1, { }))
+
+Def TitleLines(p As Place, hours As List Of Hour) As List Of String
+    If IsEmpty(hours) Then
+        { Bold() & ZipCode(p) & AttrsOff(), "No forecast periods.", "" }
+    Else
+        Let h = First(hours)
+        Let y = Val(Left(Ymd(h), 4))
+        Let m = Val(Mid(Ymd(h), 5, 2))
+        Let d = Val(Right(Ymd(h), 2))
+        { Bold() & ZipCode(p) & " " & City(p) & ", " & Region(p) & AttrsOff(),
+          DayLong(y, m, d) & " " & MonthName(m) & " " & Str(d) & ", " & Str(y)
+              & " - NWS (api.weather.gov)",
+          "" }
+
+Rem Self-tail-recursive over the hours, carrying the daily index and the
+Rem lines built so far. Fragments are prepended and reversed once, never
+Rem appended with & — a render is exactly the shape that punishes it.
+Def Rows(p As Place, hours As List Of Hour, days As List Of DayInfo, di As Number, acc As List Of String) As List Of String
+    If IsEmpty(hours) Then
+        Reverse(acc)
+    Else
+        Let h = First(hours)
+        Let crossed = Not IsEmpty(Rest(hours)) And IsDay(h) <> IsDay(Nth(hours, 2))
+        Let line = Ifte(IsDay(h), RowText(h), LowIntensity() & RowText(h) & AttrsOff())
+        If crossed Then
+            Rem The daily period wanted is the next one on the side we are
+            Rem crossing INTO: a sunset marker quotes the coming night's low,
+            Rem not the day just ending. Searching for it rather than
+            Rem counting also survives a feed that starts on a night period.
+            Let k = FindDay(days, di, IsDay(Nth(hours, 2)))
+            Rows(p, Rest(hours), days, k + 1,
+                 Prepend(MarkerLine(p, h, Nth(hours, 2), DayAt(days, k)), Prepend(line, acc)))
+        Else
+            Rows(p, Rest(hours), days, di, Prepend(line, acc))
+
+Rem The first period at or after i whose day/night side is wanted, or a
+Rem number past the end when the daily feed has run out.
+Def FindDay(days As List Of DayInfo, i As Number, wantDay As Boolean) As Number
+    If i > Length(days) Then
+        i
+    Else
+        If IsDay(Nth(days, i)) = wantDay Then
+            i
+        Else
+            FindDay(days, i + 1, wantDay)
+
+Rem The bold line between a day row and a night row, or the other way.
+Rem The sun time is computed rather than fetched — see weather-glass-sun.
+Rem Assembled with Join: a wrapped & chain takes stray values off the
+Rem stack instead of continuing the expression, and the linter says so.
+Def MarkerLine(p As Place, h As Hour, nxt As Hour, info As DayInfo) As String
+    Let y = Val(Left(Ymd(nxt), 4))
+    Let m = Val(Mid(Ymd(nxt), 5, 2))
+    Let d = Val(Right(Ymd(nxt), 2))
+    Let mark = Ifte(IsDay(h), "v Sunset ", "^ Sunrise ")
+    Let clock = Ifte(IsDay(h), ClockText(SunsetMin(y, m, d, Lat(p), Lon(p), OffMin(h))), ClockText(SunriseMin(y, m, d, Lat(p), Lon(p), OffMin(h))))
+    Let which = Ifte(IsDay(h), " -- Lo ", " -- Hi ")
+    Join({ Bold(), mark, clock, which, Str(HiLo(info)), ", ", DCond(info),
+           ", winds to ", Str(WindTo(info)), " mph", AttrsOff() }, "")
+
+Rem Past the end of the daily feed the markers still have to say
+Rem something, so an empty period stands in rather than aborting.
+Def DayAt(days As List Of DayInfo, i As Number) As DayInfo
+    If i < 1 Or i > Length(days) Then
+        ADay(True, 0, "", 0)
+    Else
+        Nth(days, i)
+

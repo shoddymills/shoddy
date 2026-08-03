@@ -3,7 +3,9 @@
 
 using System.Globalization;
 using System.Net;
+using System.Net.Security;
 using System.Net.Sockets;
+using System.Security.Cryptography.X509Certificates;
 using System.Text;
 
 namespace Shoddy.Runtime;
@@ -26,6 +28,33 @@ public sealed partial class Engine
     readonly bool netOK = Environment.GetEnvironmentVariable("SHODDY_ALLOW_NET") == "1";
     const int ConnectTimeoutMs = 10_000;          // TCPCONNECT: bounded handshake wait
     const int SendPollMicros = 5_000_000;         // TCPSEND: bounded wait for a full send buffer to drain
+
+    // ---- TLS ---------------------------------------------------------
+    // A secured handle keeps its Socket in socks and gains an SslStream
+    // here, at the same index. TCPSECURE is gated by the same RequireNet
+    // as the rest of the family: it is more network, not a new capability.
+    //
+    // SECURED MEANS BLOCKING, and that is a deliberate split rather than an
+    // oversight. SslStream cannot be driven off a non-blocking socket, and
+    // once TLS frames wrap the stream a TCP-level Poll stops telling the
+    // truth about plaintext: a partial record makes bytes look ready that
+    // decrypt to nothing yet, and a fully buffered record makes plaintext
+    // look absent when a Read would return it at once. So on a secured
+    // handle TCPRECV blocks until data, EOF or timeout, and TCPPOLL refuses
+    // outright rather than answer dishonestly.
+    //
+    // The two worlds genuinely differ. Nobody polls a TLS socket in a game
+    // loop: TLS exists here for request/response at the edges, while the
+    // polling contract exists for scribbler windows and game loops that go
+    // on using plain sockets on the loopback. Both keep their own truth.
+    readonly SslStream?[] tls = new SslStream?[16];
+    readonly bool[] tlsEof = new bool[16];        // a Read returned 0 — the peer closed
+    // Test hook, not a feature: accept any certificate. Read once at
+    // construction like netOK, has no mill flag, and NetTests is its only
+    // intended consumer.
+    readonly bool tlsInsecure = Environment.GetEnvironmentVariable("SHODDY_TLS_INSECURE") == "1";
+    const int TlsHandshakeTimeoutMs = 10_000;     // TCPSECURE: a handshake is a connect
+    const int TlsReadTimeoutMs = 30_000;          // TCPRECV secured: a slow API is normal, a hung one must still die
     Random rnd = new();   // reassigned by SEED for reproducible runs
     readonly TextWriter O;
     readonly TextReader In;
@@ -769,11 +798,63 @@ public sealed partial class Engine
                 PushNum(slot + 1);
                 return true;
             }
+            case "TCPSECURE":                   // ( h host -- )
+            {
+                // host drives BOTH the SNI extension and certificate name
+                // validation, so it is a parameter rather than something
+                // remembered from TCPCONNECT — which may have been given a
+                // bare IP, and an IP is not a name a certificate can match.
+                RequireNet(line, w);
+                string host = PopStr(line, w);
+                int k = (int)PopNum(line, w);
+                Socket sk = SockHandle(k, line, w);
+                if (tls[k - 1] != null) throw Die(line, "TCPSECURE: already secured");
+                if (!sk.Connected) throw Die(line, "TCPSECURE: handle is a listener");
+                SslStream? ss = null;
+                try
+                {
+                    sk.Blocking = true;         // SslStream cannot drive a non-blocking socket
+                    ss = new SslStream(new NetworkStream(sk, ownsSocket: false), false,
+                        (sender, cert, chain, errors) =>
+                            tlsInsecure || errors == SslPolicyErrors.None);
+                    if (!ss.AuthenticateAsClientAsync(host).Wait(TlsHandshakeTimeoutMs))
+                        throw new TimeoutException("handshake timed out");
+                    ss.ReadTimeout = TlsReadTimeoutMs;
+                }
+                catch (Exception e) when (e is not ShoddyError)
+                {
+                    // A connection whose handshake failed has no useful
+                    // half-open state to offer a language with no catchable
+                    // errors, so the handle dies with it.
+                    ss?.Dispose();
+                    sk.Dispose();
+                    socks[k - 1] = null;
+                    tls[k - 1] = null;
+                    tlsEof[k - 1] = false;
+                    Exception inner = e is AggregateException ag ? ag.GetBaseException() : e;
+                    throw Die(line, $"TCPSECURE: handshake with '{host}' failed — {inner.Message}");
+                }
+                tls[k - 1] = ss;
+                tlsEof[k - 1] = false;
+                return true;
+            }
             case "TCPSEND":                     // ( h s -- )
             {
                 RequireNet(line, w);
                 string s = PopStr(line, w);
-                Socket sk = SockHandle(PopNum(line, w), line, w);
+                int sh = (int)PopNum(line, w);
+                Socket sk = SockHandle(sh, line, w);
+                if (tls[sh - 1] is SslStream sec)
+                {
+                    // Blocking, and naturally bounded by TCP itself.
+                    byte[] enc = Bytes.GetBytes(s);
+                    try { sec.Write(enc, 0, enc.Length); sec.Flush(); }
+                    catch (Exception e) when (e is not ShoddyError)
+                    {
+                        throw Die(line, $"TCPSEND: {e.Message}");
+                    }
+                    return true;
+                }
                 byte[] data = Bytes.GetBytes(s);
                 int sent = 0;
                 try
@@ -804,8 +885,26 @@ public sealed partial class Engine
             {
                 RequireNet(line, w);
                 int max = (int)PopNum(line, w);
-                Socket sk = SockHandle(PopNum(line, w), line, w);
+                int rh = (int)PopNum(line, w);
+                Socket sk = SockHandle(rh, line, w);
                 if (max < 1) throw Die(line, "TCPRECV: byte count must be >= 1");
+                if (tls[rh - 1] is SslStream sec)
+                {
+                    // Blocks until data, EOF or the read timeout. "" means
+                    // EOF here and ONLY EOF — there is no "nothing yet"
+                    // answer to give once records are in the way.
+                    var sbuf = new byte[max];
+                    int sn;
+                    try { sn = sec.Read(sbuf, 0, max); }
+                    catch (IOException) { throw Die(line, "TCPRECV: secure read timed out"); }
+                    catch (Exception e) when (e is not ShoddyError)
+                    {
+                        throw Die(line, $"TCPRECV: {e.Message}");
+                    }
+                    if (sn == 0) tlsEof[rh - 1] = true;
+                    PushStr(Bytes.GetString(sbuf, 0, sn));
+                    return true;
+                }
                 var buf = new byte[max];
                 int n;
                 try
@@ -825,7 +924,15 @@ public sealed partial class Engine
             case "TCPEOF":                      // ( h -- bool ), has the peer closed?
             {
                 RequireNet(line, w);
-                Socket sk = SockHandle(PopNum(line, w), line, w);
+                int eh = (int)PopNum(line, w);
+                Socket sk = SockHandle(eh, line, w);
+                if (tls[eh - 1] != null)
+                {
+                    // Poll cannot see through the records, so the flag a
+                    // zero-length secure read left behind is the only truth.
+                    PushBool(tlsEof[eh - 1]);
+                    return true;
+                }
                 bool closed;
                 // Readable with nothing buffered is the standard closed signal.
                 try { closed = sk.Poll(0, SelectMode.SelectRead) && sk.Available == 0; }
@@ -836,7 +943,13 @@ public sealed partial class Engine
             case "TCPPOLL":                     // ( h -- bool ), would recv/accept find something now?
             {
                 RequireNet(line, w);
-                Socket sk = SockHandle(PopNum(line, w), line, w);
+                int ph = (int)PopNum(line, w);
+                Socket sk = SockHandle(ph, line, w);
+                // It cannot answer honestly on a secured handle, so it
+                // refuses rather than lies. Read the socket instead: a
+                // secured TCPRECV blocks until there is an answer.
+                if (tls[ph - 1] != null)
+                    throw Die(line, "TCPPOLL: not meaningful on a secured connection");
                 bool ready;
                 try { ready = sk.Poll(0, SelectMode.SelectRead); }
                 catch (SocketException) { ready = true; }
@@ -858,6 +971,14 @@ public sealed partial class Engine
                 RequireNet(line, w);
                 int k = (int)PopNum(line, w);
                 Socket sk = SockHandle(k, line, w);
+                // The stream first: disposing it sends the TLS close-notify
+                // the peer is entitled to before the socket goes away.
+                if (tls[k - 1] is SslStream sec)
+                {
+                    try { sec.Dispose(); } catch (Exception e) when (e is not ShoddyError) { }
+                    tls[k - 1] = null;
+                }
+                tlsEof[k - 1] = false;
                 try { sk.Shutdown(SocketShutdown.Both); } catch (SocketException) { }
                 sk.Dispose();
                 socks[k - 1] = null;
@@ -1486,7 +1607,7 @@ public sealed partial class Engine
         "DELETEFILE", "BOPEN", "BCLOSE", "SEEK", "BPOS", "BSIZE",
         "PUTNUM", "GETNUM", "PUTBOOL", "GETBOOL", "PUTSTR", "GETSTR",
         "TCPCONNECT", "TCPLISTEN", "TCPACCEPT", "TCPSEND", "TCPRECV",
-        "TCPEOF", "TCPPOLL", "TCPPEER", "TCPCLOSE",
+        "TCPEOF", "TCPPOLL", "TCPPEER", "TCPCLOSE", "TCPSECURE",
         "INPUT", "INPUTLINE", "INKEY", "ARGS",
         "CALL", "IFTE", "MAP", "FILTER", "FOLD", "EACH", "TIMES", "RANGE",
         "LENGTH", "REVERSE", "CONCAT", "SORT",

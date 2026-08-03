@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="An HTTP server written in Shoddy — mills/rag-and-bone">
+<title>rag-and-bone — An HTTP Server in Shoddy | Shoddy Mills</title>
+<link rel="stylesheet" href="../style.css">
+<link rel="icon" href="../favicon.svg" type="image/svg+xml">
+<link rel="alternate icon" href="../favicon.ico" sizes="48x48">
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+</head>
+<body>
+<div class="topbar"><div class="inner">
+  <div class="row">
+    <a class="phase" href="index.html"><img class="mark" src="../media/brand/shoddy-icon.svg" alt="" width="23" height="23">Shoddy · The Mills</a>
+    <span class="spacer"></span>
+    <nav class="docnav meta" aria-label="About"><a href="../heritage.html">Heritage</a><a href="../authorship.html">Authorship</a></nav>
+  </div>
+  <nav class="docnav main" aria-label="Documentation"><a href="../tutorials/index.html">Tutorials</a><a href="../guide.html">Guide</a><a href="../quickref.html">Reference</a><a href="../machines/index.html">Machines</a><span class="here">Mills</span><a href="../stack.html">Stack</a><a href="../spec.html">Spec</a><a href="../setup.html">Setup</a><a href="../vscode.html">VS Code</a><a href="../assistants.html">AI</a><a href="../build.html">Toolchain</a><a href="../errors.html">Errors</a></nav>
+</div></div>
+<div class="wrap">
+
+<header class="mast has-icon"><div><p class="eyebrow"><a href="index.html#demos">The Mills &middot; Demos</a></p><h1>rag-and-bone</h1><p class="kicker">An HTTP server written in Shoddy — mills/rag-and-bone</p></div><img class="micon" src="../media/icons/https.svg" alt="A padlock over a request going out and a reply coming back"></header>
+<nav class="pagertop" aria-label="Mills, in catalog order"><a href="devils-dust.html">&larr; devils-dust</a><a href="index.html">All mills</a><a href="weather-glass.html">weather-glass &rarr;</a></nav>
+
+<h2 id="summary">Summary</h2>
+<p><code>rag-and-bone</code> is a web server. Point a browser at
+<code>http://127.0.0.1:8080/</code> and it answers, in Shoddy, over a socket
+it opened itself.</p>
+<pre><code>cd mills/rag-and-bone
+./build.sh          # serve
+./build.sh test     # the routing tests — no network at all</code></pre>
+<p>Named for the rag-and-bone man, who went door to door taking what he was
+given and handing something back. So does this.</p>
+
+<h2 id="seam">The whole server is one pure function</h2>
+<p>This is the only interesting thing about the mill, and it is worth the
+whole page:</p>
+<pre><code>Def Respond(request As String) As String</code></pre>
+<p>Raw request text in, raw response text out. No socket, no clock, no state.
+Routing, page building and escaping all live behind that one signature, which
+means every route can be graded by <em>calling it with a string</em>:</p>
+<pre><code>Assert(HttpStatus(Respond(Get("/"))) = 200, "THE INDEX IS THERE")
+Assert(HttpStatus(Respond(Get("/nothing-here"))) = 404, "AND ANYTHING ELSE IS A 404")</code></pre>
+<p><code>test.shoddy</code> does exactly that, twenty-odd times, with
+<strong>no network, no <code>--allow-net</code> and no server running</strong>.
+What is left outside the function is accept, read, write, close — about twenty
+lines, in <code>rag-and-bone.shoddy</code>, with nothing in them to get
+wrong.</p>
+<p>It is the same seam <a href="mungo-caverns.html">mungo-caverns</a> draws
+when it makes a turn a function rather than a loop that prints. A cave
+adventure and a web server are the same shape of problem: something arrives,
+something goes back, and the interesting part is the middle. Put the socket at
+the edge and the middle becomes testable.</p>
+
+<h2 id="routes">What it serves</h2>
+<table>
+<tr><th>Route</th><th>What you get</th></tr>
+<tr><td><code>/</code></td><td>An index page, styled in the mill's own colours.</td></tr>
+<tr><td><code>/echo</code></td><td>The request you just sent, taken apart — method, path, every header, and the raw text.</td></tr>
+<tr><td><code>/plain</code></td><td><code>text/plain</code>, for <code>curl</code>.</td></tr>
+<tr><td>anything else</td><td>A 404, to prove it can.</td></tr>
+</table>
+<p>The <code>/echo</code> page is the one that earns its keep. It parses the
+incoming request with <code>HttpHeaders</code> from
+<a href="../machines/https.html">https</a> — a machine written to read a
+<em>reply</em>. A request has the same header block a reply does, so the words
+read one without knowing the difference, and the mill proves it every time you
+load the page.</p>
+
+<h2 id="hood">Under the Hood</h2>
+<h3>Escaping is not optional</h3>
+<p>The path is a stranger's text, and it goes on the page. A server that
+pastes it in raw has written its own cross-site scripting hole, so everything
+echoed back goes through <code>Esc</code> first — ampersand before angle
+brackets, or the escapes get escaped. There is a test that fetches
+<code>/&lt;script&gt;alert(1)&lt;/script&gt;</code> and asserts the tags do not
+survive into the body.</p>
+
+<h3>HTTP/1.0 and Connection: close</h3>
+<p>Every reply says <code>HTTP/1.0</code> and <code>Connection: close</code>.
+That is a promise: the server hangs up when it has finished, which is what
+makes <em>read to end of input</em> the correct rule for whoever is reading —
+including <a href="../machines/net.html">net</a>'s own
+<code>RecvAll</code>. The reply also carries a
+<code>Content-Length</code>, and one of the tests asserts that number is the
+actual length of the body it sent.</p>
+
+<h3>One at a time, on the loopback</h3>
+<p>One connection is accepted, answered and closed before the next is looked
+at. No keep-alive, no threads, no chunked encoding. <code>Accept</code> is
+non-blocking and returns <code>0</code> when nobody is at the door, so the
+idle path is a poll around <code>Sleep</code> rather than a spin.</p>
+<p>It binds <strong>127.0.0.1 only</strong> — reachable from this machine and
+nowhere else. <code>ListenOn</code> is there if you disagree, and the risk is
+then yours: this is a plaintext HTTP server written to demonstrate a seam, not
+to face the internet.</p>
+
+<h3>No HTTPS, and why not</h3>
+<p>Shoddy has a TLS <em>client</em> — <code>TcpSecure</code> upgrades a
+connected socket — and no TLS server. <code>Accept</code> always hands back a
+plain socket. Server-side TLS drags in certificate provisioning, which is a
+larger question than this mill wants to answer, so it speaks plaintext and
+stays on the loopback where that is nobody's problem.</p>
+
+<h3>Not named Loop</h3>
+<p>The accept loop is <code>ServeForever</code>. It was <code>Loop</code> for
+about four minutes, until the program failed with <em>unknown word: LOOP</em>
+at the call site — <code>Loop</code> is a reserved word, and a <code>Def</code>
+of it is simply not there when you come to call it. Worth knowing, because the
+error names the caller rather than the definition.</p>
+
+<h2 id="uses">The Machines It Uses</h2>
+<table>
+<tr><th></th><th>Machine</th><th>Why</th></tr>
+<tr><td class="uicon"><a href="../machines/https.html"><img src="../media/icons/https.svg" alt=""></a></td><td><a href="../machines/https.html">https</a></td><td><code>HttpHeaders</code>
+reads the incoming request, and pulls in <code>net</code> underneath.</td></tr>
+<tr><td class="uicon"><a href="../machines/net.html"><img src="../media/icons/net.svg" alt=""></a></td><td><a href="../machines/net.html">net</a></td><td><code>Listen</code>,
+<code>Accept</code>, <code>WaitRecvFor</code>, <code>Send</code>,
+<code>Close</code> — the whole socket half.</td></tr>
+<tr><td class="uicon"><a href="../machines/str.html"><img src="../media/icons/str.svg" alt=""></a></td><td><a href="../machines/str.html">str</a></td><td><code>Join</code> and
+<code>Replace</code> build every page and escape the parts a stranger
+wrote.</td></tr>
+<tr><td class="uicon"><a href="../machines/file.html"><img src="../media/icons/file.svg" alt=""></a></td><td><a href="../machines/file.html">file</a></td><td>Included for the
+serving-from-disk route that is not written yet.</td></tr>
+</table>
+
+<nav class="pager" aria-label="Mills, in catalog order">
+  <a href="devils-dust.html"><span class="dir">&larr; Previous mill</span><span class="ttl">devils-dust</span></a>
+  <a class="next" href="weather-glass.html"><span class="dir">Next mill &rarr;</span><span class="ttl">weather-glass</span></a>
+</nav>
+<footer>Named for the shoddy mills of the West Riding: Useless Things Made
+Useful Through Skill (<a href="../heritage.html">the heritage of the name</a>).<br>
+&copy; 2026 Stephen Vincent Foster</footer>
+</div>
+</body>
+</html>

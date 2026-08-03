@@ -434,11 +434,34 @@ public static class Lint
 
     static bool ScrutinyIsConstructors(ShoddyProgram prog, Quot q, int from, string hidden)
     {
-        // The Select's conds are flat siblings of nested Ifs, so shape-
-        // matching them is fragile. The hidden binder is unique to this
-        // Select: co-occurrence of the hidden with any nullary-constructor
-        // word anywhere in the rest of the subtree is the evidence.
+        // A constructor word is evidence ONLY where a pattern can appear.
+        // A constructor word in a result position is evidence of nothing.
+        //
+        // ParseSelect folds each clause as: the cond's items as flat
+        // siblings, then one If carrying the clause body in Q and the rest
+        // of the chain in ElseQ. So the conds are reachable without shape-
+        // matching them at all - walk the siblings, follow ElseQ, and never
+        // descend into Q. Q is the branch body, and a Def that classifies a
+        // Number INTO a sum type puts its constructors exactly there.
+        //
+        // Scanning bodies is what made Classify(t As Number) - Select on t,
+        // Cold() / Mild() / Warm() in the branches - look like a Def that
+        // matches its parameter against constructors, and warned at every
+        // literal call site that the call always falls to Case Else, which
+        // the program's own output refuted.
+        //
+        // Skipping Q also skips a destructuring clause's WHERE guard, which
+        // rides in the Q of its own If. That is the safe direction: a guard
+        // is not a pattern either.
+        //
+        // ElseQ needs the same care, because when the Select has a Case Else
+        // the fold seeds the chain with that clause's BODY - so following
+        // ElseQ to the end walks straight into it. Every cond begins with
+        // the hidden binder and nothing else does, so that is the test for
+        // "another clause follows" as against "this is the else body".
         bool sawHidden = false, sawCtor = false;
+        bool IsClause(Quot qq) =>
+            qq.Items.Count > 0 && qq.Items[0].T == NType.Word && qq.Items[0].Str == hidden;
         void Scan(Quot qq, int start)
         {
             for (int i = start; i < qq.Items.Count; i++)
@@ -453,9 +476,18 @@ public static class Lint
                         if (t != null && t.Fields.Count == 0) sawCtor = true;
                     }
                 }
+                // A Pat node is built only by the pattern parser, so it is
+                // sound evidence wherever it is found.
                 if (it.T == NType.Pat && sawHidden) sawCtor = true;
-                if (it.Q != null) Scan(it.Q, 0);
-                if (it.ElseQ != null) Scan(it.ElseQ, 0);
+                if (it.T == NType.If)
+                {
+                    if (it.ElseQ != null && IsClause(it.ElseQ)) Scan(it.ElseQ, 0);
+                }
+                else
+                {
+                    if (it.Q != null) Scan(it.Q, 0);
+                    if (it.ElseQ != null) Scan(it.ElseQ, 0);
+                }
             }
         }
         Scan(q, from);

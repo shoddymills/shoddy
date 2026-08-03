@@ -331,6 +331,92 @@ public class LintTests
         Assert.DoesNotContain(r.Warnings, w => w.Contains("falls to Case Else"));
     }
 
+    // A Def that turns a Number INTO a sum type is not a Def that matches
+    // its parameter against one. The warning used to fire on all three call
+    // sites below while the program printed Cold(), Mild(), Warm() - three
+    // different branches - so the claim "always falls to Case Else" was
+    // refuted by the program's own output. Found by the apprenticeship
+    // curriculum against its Phase 5 capstone.
+
+    [Fact]
+    public void ClassifierReturningNullaryVariantsDoesNotWarn()
+    {
+        Lint.Result r = LintSrc(J(
+            "Type Band = Cold | Mild | Warm",
+            "",
+            "Def Classify(t As Number) As Band",
+            "    Select Case t",
+            "        Case Is < 10",
+            "            Cold()",
+            "        Case 10 To 20",
+            "            Mild()",
+            "        Case Else",
+            "            Warm()",
+            "",
+            "Def Main()",
+            "    Print(Classify(5))",
+            "    Print(Classify(15))",
+            "    Print(Classify(30))"));
+        Assert.DoesNotContain(r.Warnings, w => w.Contains("falls to Case Else"));
+    }
+
+    [Fact]
+    public void ClassifierReturningStringsDoesNotWarn()
+    {
+        Lint.Result r = LintSrc(J(
+            "Type Band = Cold | Mild | Warm",
+            "",
+            "Def Pick(t As Number) As String",
+            "    Select Case t",
+            "        Case Is < 10",
+            "            \"COLD\"",
+            "        Case Else",
+            "            \"WARM\"",
+            "",
+            "Def Main()",
+            "    Print(Pick(5))"));
+        Assert.DoesNotContain(r.Warnings, w => w.Contains("falls to Case Else"));
+    }
+
+    [Fact]
+    public void ClassifierReturningNonNullaryVariantsDoesNotWarn()
+    {
+        Lint.Result r = LintSrc(J(
+            "Type Band = Cold(Deg As Number) | Warm(Deg As Number)",
+            "",
+            "Def Classify(t As Number) As Band",
+            "    Select Case t",
+            "        Case Is < 10",
+            "            Cold(t)",
+            "        Case Else",
+            "            Warm(t)",
+            "",
+            "Def Main()",
+            "    Print(Classify(5))"));
+        Assert.DoesNotContain(r.Warnings, w => w.Contains("falls to Case Else"));
+    }
+
+    // The other side of the fix: a constructor in a CASE PATTERN is still
+    // evidence, so the true positive above must keep firing. A change that
+    // silences this one has thrown the rule away rather than corrected it.
+    [Fact]
+    public void StringLiteralPassedToASumScrutinizingDefStillWarns()
+    {
+        Lint.Result r = LintSrc(J(
+            "Type Knob = AKnob | BKnob",
+            "",
+            "Def Rail(k As Knob) As Number",
+            "    Select Case k",
+            "        Case AKnob",
+            "            1",
+            "        Case Else",
+            "            2",
+            "",
+            "Def Main()",
+            "    Print(Rail(\"seven\"))"));
+        Assert.Contains(r.Warnings, w => w.Contains("falls to Case Else"));
+    }
+
     // ---- defect 10: top-level Let in a namespaced include ---------------
 
     [Fact]

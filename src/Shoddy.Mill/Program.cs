@@ -36,6 +36,17 @@ if (args.Contains("--allow-net"))
     args = args.Where(a => a != "--allow-net").ToArray();
 }
 
+// --no-window opens every scribbler hidden: the program draws, blits and
+// saves exactly as usual, but nothing appears on screen. For a run whose
+// output is a file — ScribblerSave in a script, a chart captured by a
+// build — a window that flashes up and vanishes is noise. Stripped from
+// args like --allow-net, and for the same reason.
+if (args.Contains("--no-window"))
+{
+    ScribblerWindows.Hidden = true;
+    args = args.Where(a => a != "--no-window").ToArray();
+}
+
 // The linter is on by default; --no-lint (or SHODDY_LINT=0) silences the
 // warnings. The unknown-word error is a correctness error — the program
 // would die at runtime anyway — and no flag silences it.
@@ -113,8 +124,15 @@ try
             // program returns while a window is open, the process stays
             // alive until the user closes it ("draw a picture, return" is
             // a complete program).
-            return ScribblerWindows.Run(() =>
-                Weaver.Execute(prog, machines.Machines, Console.Out, Console.In, progArgs));
+            // ...unless the windows are hidden. Lingering exists so a
+            // picture stays on screen until the user dismisses it, and
+            // under --no-window there is no screen and no user: a program
+            // that draws, saves and returns without calling ScribblerClose
+            // would otherwise wait forever on a window nobody can close.
+            // Same reasoning as the perch's linger: false.
+            return ScribblerWindows.Run(
+                () => Weaver.Execute(prog, machines.Machines, Console.Out, Console.In, progArgs),
+                linger: !ScribblerWindows.Hidden);
         }
     }
 }

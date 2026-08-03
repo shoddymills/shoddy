@@ -94,6 +94,7 @@ public static class Effects
         ["SCRIBBLERCLOSE"] = new(1, 1), ["SCRIBBLERTITLE"] = new(2, 1),
         ["SCRIBBLERPOLL"] = new(1, 1), ["SCRIBBLERWAIT"] = new(1, 1),
         ["SCRIBBLERSETINTERVAL"] = new(2, 1),
+        ["SCRIBBLERSAVE"] = new(2, 1), ["SCRIBBLERPLACE"] = new(3, 1),
         // sound
         ["SOUND"] = new(2, 0), ["NOTEON"] = new(2, 0), ["NOTEOFF"] = new(1, 0),
         ["SOUNDQUEUE"] = new(3, 0), ["SOUNDSTOP"] = new(1, 0),

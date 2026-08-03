@@ -77,6 +77,13 @@ public sealed class ScribblerWindow
 
         (GraphicsAPI api, string version) = ContextChoice();
         glsl = version;
+        // IsVisible is settled at creation and never toggled: a window
+        // created shown and hidden a moment later has already flashed on
+        // screen, which is exactly what --no-window exists to prevent. The
+        // GL context, the buffer and SCRIBBLERSAVE all work unchanged
+        // behind a hidden window — only the presenting stops. (A machine
+        // with no display at all is still a machine with no display: GLFW
+        // cannot initialize there, hidden or not.)
         WindowOptions opts = WindowOptions.Default with
         {
             Size = new Vector2D<int>(width, height),
@@ -85,6 +92,7 @@ public sealed class ScribblerWindow
             WindowBorder = WindowBorder.Fixed,
             VSync = false,
             ShouldSwapAutomatically = false,
+            IsVisible = !ScribblerWindows.Hidden,
         };
         window = Window.Create(opts);
         window.Initialize();
@@ -115,6 +123,13 @@ public sealed class ScribblerWindow
         // invokes OnClose — this is only "destroy the window, please".
         handle.OnClose = () => dispatcher.Post(Destroy);
         handle.OnSetTitle = t => dispatcher.Post(() => { if (!destroyed) window.Title = t; });
+        // A request, not a command: window managers on every platform are
+        // entitled to place a window where they like, and tiling ones
+        // routinely do. Nothing reads the position back to check.
+        handle.OnPlace = (x, y) => dispatcher.Post(() =>
+        {
+            if (!destroyed) window.Position = new Vector2D<int>(x, y);
+        });
         handle.OnSetInterval = ms => dispatcher.Post(() =>
         {
             intervalMs = ms;

@@ -159,7 +159,7 @@ public sealed class DapServer : IDebugSink
                     var machines = new MachineSet();
                     List<Line> lines = Lexer.ReadProgram(program, (p, q) =>
                     {
-                        if (!machines.TryResolve(p, q)) return false;
+                        if (!MachineResolve.Resolve(machines, p, q)) return false;
                         machineSources.Add(Path.GetFullPath(p));
                         return true;
                     });

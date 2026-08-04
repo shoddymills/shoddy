@@ -150,7 +150,7 @@ static (ShoddyProgram, MachineSet) ParseWithMachines(
     string file, bool lintOff = false, bool lintVerbose = false)
 {
     var machines = new MachineSet();
-    List<Line> lines = Lexer.ReadProgram(file, (p, q) => ResolveMachine(machines, p, q));
+    List<Line> lines = Lexer.ReadProgram(file, (p, q) => MachineResolve.Resolve(machines, p, q));
     var prog = new ShoddyProgram();
     machines.SeedInto(prog);
     ShoddyProgram parsed = Parser.Parse(lines, prog);
@@ -177,38 +177,3 @@ static (ShoddyProgram, MachineSet) ParseWithMachines(
     return (parsed, machines);
 }
 
-// A machine DLL that is older than its source (or than any machine DLL it
-// depends on) is rebuilt in place before it is loaded — the stale-DLL trap
-// cost two debugging rounds in one week, and the mill already knows how to
-// build a machine. Rebuild failures fall through to the normal error path.
-static bool ResolveMachine(MachineSet machines, string sbPath, string? qual)
-{
-    string dll = MachineSet.DllPathFor(sbPath);
-    if (File.Exists(dll) && IsStale(sbPath, dll))
-    {
-        Console.Error.WriteLine(
-            $"mill: machine {Path.GetFileName(sbPath)} is newer than its DLL — rebuilding");
-        (ShoddyProgram mprog, MachineSet msub) = ParseWithMachines(sbPath, lintOff: true);
-        Weaver.WeaveMachine(mprog, sbPath, msub.Machines);
-    }
-    return machines.TryResolve(sbPath, qual);
-}
-
-static bool IsStale(string sbPath, string dll)
-{
-    DateTime built = File.GetLastWriteTimeUtc(dll);
-    if (File.GetLastWriteTimeUtc(sbPath) > built) return true;
-    // A dependency rebuilt after this DLL also staled it: its calls bind
-    // against the dependency's surface. Includes are cheap to scan.
-    string dir = Path.GetDirectoryName(Path.GetFullPath(sbPath))!;
-    foreach (string line in File.ReadLines(sbPath))
-    {
-        System.Text.RegularExpressions.Match m =
-            System.Text.RegularExpressions.Regex.Match(
-                line, "^Include \"([A-Za-z0-9_.-]+\\.shoddy)\"");
-        if (!m.Success) continue;
-        string depDll = MachineSet.DllPathFor(Path.Combine(dir, m.Groups[1].Value));
-        if (File.Exists(depDll) && File.GetLastWriteTimeUtc(depDll) > built) return true;
-    }
-    return false;
-}

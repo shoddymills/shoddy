@@ -290,6 +290,47 @@ public class MachineSurfaceTests
         Assert.Contains("Add: Include \"deepg.shoddy\"", msg);
     }
 
+    /// <summary>The discriminator: a machine is a file in a machine
+    /// library, and everything else is a program's own source.
+    ///
+    /// It has to be a question about where the file lives rather than how
+    /// the Include spelled it, because a mill reaches a machine by
+    /// relative path — tally includes "../../machines/stats.shoddy" — and
+    /// lands in the same directory an unqualified include would find.
+    /// Its own siblings never do, which is what keeps a multi-file mill
+    /// splicing into one flat table.</summary>
+    [Fact]
+    public void AMachineIsAFileInAMachineLibrary()
+    {
+        string machines = Workspace();
+        File.WriteAllText(Path.Combine(machines, "sibling.shoddy"),
+            """
+            Def Sib() As Number
+                1
+            """);
+        Assert.False(Lexer.IsMachineLibrary(Path.Combine(machines, "sibling.shoddy")));
+
+        // The library is whatever SHODDYLIB names (or the machines/ beside
+        // the mill); point it at the repo's for the length of this test.
+        string? saved = Environment.GetEnvironmentVariable("SHODDYLIB");
+        Environment.SetEnvironmentVariable("SHODDYLIB", Path.Combine(Root, "machines"));
+        try
+        {
+            // A real machine, reached the way a mill reaches one.
+            Assert.True(Lexer.IsMachineLibrary(
+                Path.Combine(Root, "mills", "tally", "..", "..", "machines", "stats.shoddy")));
+            Assert.True(Lexer.IsMachineLibrary(Path.Combine(Root, "machines", "seq.shoddy")));
+
+            // And a mill's own file, however it is spelled.
+            Assert.False(Lexer.IsMachineLibrary(
+                Path.Combine(Root, "mills", "tally", "tally-spec.shoddy")));
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("SHODDYLIB", saved);
+        }
+    }
+
     /// <summary>The manifest of one built machine, read back from its DLL.</summary>
     static MachineInfo ManifestOf(string sbPath)
     {

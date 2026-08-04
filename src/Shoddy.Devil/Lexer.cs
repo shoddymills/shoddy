@@ -186,6 +186,30 @@ public static class Lexer
     /// extension finds the machines/ staged beside it — neither needs
     /// anything set. SHODDYLIB comes first so a checkout can still be
     /// pinned to its own machines.</summary>
+    /// <summary>Does this file live in a machine library — the directory
+    /// an unqualified <c>Include "seq.shoddy"</c> would find it in?
+    ///
+    /// This is how a machine is told from one of a program's own source
+    /// files, and it is a question about *where the file is*, not how it
+    /// was spelled: a mill reaching a machine by relative path
+    /// (<c>../../machines/stats.shoddy</c>) lands in the same directory
+    /// the library lives in and is recognised, while its own siblings
+    /// never do.</summary>
+    public static bool IsMachineLibrary(string path)
+    {
+        string dir = Path.GetDirectoryName(Path.GetFullPath(path)) ?? "";
+        foreach (string lib in LibDirs())
+        {
+            string full;
+            try { full = Path.GetFullPath(lib); } catch { continue; }
+            if (string.Equals(dir.TrimEnd(Path.DirectorySeparatorChar),
+                              full.TrimEnd(Path.DirectorySeparatorChar),
+                              StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+        return false;
+    }
+
     static IEnumerable<string> LibDirs()
     {
         string? env = Environment.GetEnvironmentVariable("SHODDYLIB");

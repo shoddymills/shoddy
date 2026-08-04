@@ -470,6 +470,19 @@ public sealed class CodeGen
         // The accessor word may be namespaced; the field it reads is not.
         if (prog.Accessors.TryGetValue(name, out string? fld) || prog.AnyTypeHasField(name))
             { W($"rt.Field({StrLit(fld ?? name)}, {n.Line});"); return; }
+        // A word a machine declares but does not export is neither a typo
+        // nor a name that might turn up at runtime — it is a missing
+        // Include, and we know which one. Refuse it here rather than
+        // deferring to rt.UnknownWord, because the linter only reports
+        // what it can model: an unknown word inside a quotation of unknown
+        // effect reaches this line unmentioned and dies mid-run instead.
+        if (prog.Unseeded.TryGetValue(name, out (string Declares, string? Via) a))
+        {
+            string via = a.Via == null ? "" : $", which {a.Via} includes but does not export";
+            throw new ShoddyError(n.Line, n.File,
+                $"unknown word: {name} — declared in {a.Declares}{via}. " +
+                $"Add: Include \"{a.Declares}\"");
+        }
         W($"rt.UnknownWord({StrLit(name)}, {n.Line});");
     }
 

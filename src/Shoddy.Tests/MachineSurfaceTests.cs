@@ -114,6 +114,47 @@ public class MachineSurfaceTests
         Weaver.Weave(prog, Path.Combine(ws, "consumer.dll"), set.Machines);   // links clean
     }
 
+    /// <summary>`Include ... As Q` must mean the same thing whether the
+    /// machine is resolved from a DLL or spliced from source. It did not:
+    /// spliced, the qualifier reached the dependency's dependencies, so a
+    /// program could compile under the runner and fail under the debugger,
+    /// which always splices.</summary>
+    [Theory]
+    [InlineData(true)]      // dependency compiled — resolved as a DLL
+    [InlineData(false)]     // dependency not compiled — spliced from source
+    public void NamespaceCoversOneLevelOnEitherPath(bool buildDepFirst)
+    {
+        string machines = Workspace();
+        // depd declares DepAvg; deepd, which depd includes bare, declares Deep.
+        File.WriteAllText(Path.Combine(machines, "deepd.shoddy"),
+            "Def Deep() As Number\n    7\n");
+        File.WriteAllText(Path.Combine(machines, "depd.shoddy"),
+            "Include \"deepd.shoddy\"\n\n" + DepSource);
+
+        if (buildDepFirst)
+        {
+            Build(Path.Combine(machines, "deepd.shoddy"));
+            Build(Path.Combine(machines, "depd.shoddy"));
+        }
+
+        string ws = Path.GetDirectoryName(machines)!;
+        string src = Path.Combine(ws, "user.shoddy");
+        File.WriteAllText(src,
+            "Include \"machines/depd.shoddy\" As St\n\nDef Main()\n    Print(1)\n");
+        var (prog, _) = ParseWithMachines(src);
+
+        // The named file's own surface is prefixed...
+        Assert.True(Reachable(prog, "STDEPAVG"));
+        // ...and what it includes is not, on either path.
+        Assert.False(Reachable(prog, "STDEEP"));
+        Assert.True(Reachable(prog, "DEEP"));
+    }
+
+    /// <summary>A name the program can call, wherever it came from: a
+    /// spliced include lands in Defs, a resolved machine in ExternalDefs.</summary>
+    static bool Reachable(ShoddyProgram prog, string name) =>
+        prog.Defs.ContainsKey(name) || prog.ExternalDefs.ContainsKey(name);
+
     /// <summary>The manifest of one built machine, read back from its DLL.</summary>
     static MachineInfo ManifestOf(string sbPath)
     {

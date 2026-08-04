@@ -68,8 +68,10 @@ public static class Lexer
 
     /// <summary><paramref name="qual"/> is the namespace this file was
     /// included under. Qualifiers do not compose through a chain of
-    /// includes: a file that carries its own AS wins for its whole subtree,
-    /// so a name never depends on who included the includer.</summary>
+    /// includes: an AS covers the surface of the file it names and nothing
+    /// further, so a name never depends on who included the includer, and
+    /// a file's spelling never depends on its dependencies' include
+    /// lists.</summary>
     static void ReadFile(string path, List<Line> lines, Dictionary<string, string?> included,
                          Func<string, bool>? externalInclude = null, string? qual = null,
                          Action<string, string>? onQualified = null)
@@ -120,8 +122,20 @@ public static class Lexer
                         "expected INCLUDE \"FILE\" or INCLUDE \"FILE\" AS NAMESPACE "
                         + "at left margin");
                 string name = toks[1].Text;
-                // Inner wins: a file's own AS governs its whole subtree.
-                string? sub = qualified ? toks[3].Text : qual;
+                // A namespace covers the surface of the file it names, and
+                // nothing further: an AS does not reach into what that file
+                // itself includes. Otherwise a namespace would rename words
+                // the including program never named, and a machine's
+                // spelling would depend on its dependencies' include lists
+                // — adding an include to str would change what `As Sock`
+                // spells in every consumer of net.
+                //
+                // This also makes the spliced path agree with the compiled
+                // one, which namespaces one machine's manifest and never
+                // its dependencies'. They used to disagree, so the same
+                // program meant different things to the runner and to the
+                // debugger (which always splices).
+                string? sub = qualified ? toks[3].Text : null;
                 if (qualified && !IsPlainWord(toks[3].Text))
                     throw new ShoddyError(start, path,
                         $"'{toks[3].Orig}' is not usable as a namespace — "

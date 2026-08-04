@@ -19,27 +19,10 @@ pattern matching — compiled onto a concatenative (Forth/Joy-style) stack
 core that remains a legal dialect. Python's layout, BASIC's keywords,
 Joy's soul.
 
-```basic
-Include "machines/stats.shoddy"
-
-Type Student
-    Name  As String
-    Score As Number
-
-Def Grade(s As Student) As String
-    Select Case Score(s)
-        Case >= 90
-            "A"
-        Case 70 To 89
-            "B-ISH"
-        Case Else
-            "F"
-
-Def Main()
-    Let class = { Student("ADA", 96), Student("LIN", 78) }
-    Each(class, Fn(s) => Print(Name(s) & ": " & Grade(s)))
-    Print(Average(Map(class, Score)))
-```
+<p align="center">
+  <img src="docs/media/shoddy-tour.gif" width="900"
+       alt="Six cards of Shoddy: Let binds once and never rebinds; sum types with Select Case destructuring them; JsonRead returning JOk or JErr instead of throwing; Map, Filter and Fold taking Fn lambdas; the same Def Square written as typed syntax and again as stack code with Dup *; and Include pulling in the json and https machines.">
+</p>
 
 Nothing mutates: `Let` binds once, updates return new values, iteration
 is recursion and `Map`/`Filter`/`Fold`. And the whole surface desugars to

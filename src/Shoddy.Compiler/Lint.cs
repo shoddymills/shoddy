@@ -65,7 +65,17 @@ public static class Lint
             l.Add(name);
         }
         foreach ((string n, string t) in prog.ExternalDefs) note(n, t);
-        foreach ((string n, ExternalType t) in prog.ExternalTypes) note(n, t.FieldRef);
+        foreach ((string n, ExternalType t) in prog.ExternalTypes)
+        {
+            note(n, t.FieldRef);
+            // A record's field accessors are words too, and often the only
+            // ones a caller writes: simplex-from-mps names matrix solely
+            // through Rows on a Matrix. Counting Defs and type names alone
+            // called that include unused and would have had it deleted.
+            string pre = n.EndsWith(t.Shape.Name, StringComparison.OrdinalIgnoreCase)
+                ? n[..^t.Shape.Name.Length] : "";
+            foreach (string f in t.Shape.Fields) note(pre + f.ToUpperInvariant(), t.FieldRef);
+        }
 
         HashSet<string> used = UsedWords(prog);
         foreach ((string cls, List<string> names) in byClass)

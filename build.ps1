@@ -103,6 +103,15 @@ function Invoke-Stage {
     New-Item -ItemType Directory -Path (Join-Path $StageLib 'bin') -Force | Out-Null
     Copy-Item machines/*.shoddy $StageLib
     Copy-Item machines/bin/*.dll (Join-Path $StageLib 'bin')
+    # One timestamp across every staged DLL, newer than every staged
+    # source, and identical between them. Copy stamps each file as it
+    # goes - alphabetically - and a machine counts as stale when a DLL
+    # it depends on is newer than its own, so csv (depending on dict,
+    # seq and str, all later in the alphabet) arrived looking stale and
+    # rebuilt itself on first use, inside the installed extension.
+    $stamp = Get-Date
+    Get-ChildItem (Join-Path $StageLib 'bin') -Filter *.dll |
+        ForEach-Object { $_.LastWriteTime = $stamp }
     # Roslyn, Silk.NET, GLFW and OpenAL Soft are redistributed in the
     # package, so their notices have to travel with it — LGPL-2.1 for
     # OpenAL Soft, attribution for the rest. The authorship statement and

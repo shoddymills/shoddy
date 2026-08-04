@@ -62,6 +62,26 @@ public sealed class Parser
         _ => 0,
     };
 
+    /// <summary>"malformed CASE" — and, when the pattern names a
+    /// constructor that a machine keeps to itself, which Include reaches
+    /// it. A Case on seq's Pair fails here rather than as an unknown word,
+    /// because a name the parser cannot resolve to a type is simply not a
+    /// pattern; without this the reader gets a syntax complaint about a
+    /// line whose syntax is fine.</summary>
+    string MalformedCase(Line c)
+    {
+        for (int k = 0; k < c.Toks.Count; k++)
+        {
+            if (c.Toks[k].IsStr) continue;
+            if (!prog.Unseeded.TryGetValue(c.Toks[k].Text,
+                                           out (string Declares, string? Via) a)) continue;
+            string via = a.Via == null ? "" : $", which {a.Via} includes but does not export";
+            return $"malformed CASE — {c.Toks[k].Orig} is declared in {a.Declares}{via}. " +
+                   $"Add: Include \"{a.Declares}\"";
+        }
+        return "malformed CASE";
+    }
+
     static ShoddyError Die(int line, string msg) => new(line, msg);
 
     static ShoddyError Die(Line l, string msg) => new(l.LineNo, l.File, msg);
@@ -716,7 +736,7 @@ public sealed class Parser
                         }
                     }
                 }
-                if (cp != c.Toks.Count) throw Die(cline, "malformed CASE");
+                if (cp != c.Toks.Count) throw Die(cline, MalformedCase(c));
             }
             i++;
             if (i >= lines.Count || lines[i].Indent <= caseIndent)

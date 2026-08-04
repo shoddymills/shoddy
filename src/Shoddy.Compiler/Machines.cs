@@ -64,6 +64,22 @@ public sealed class MachineSet
     public readonly List<MachineInfo> Machines = new();
     readonly HashSet<string> loaded = new();
 
+    /// <summary>The DLLs an Include named outright, as opposed to those
+    /// dragged in behind them. Every loaded machine is linked; only these
+    /// are <em>named</em>, because a machine's includes are its own
+    /// business and not part of its surface.
+    ///
+    /// Include stats and you used to get seq and dict too, bare, in the
+    /// same flat table — which made a machine's surface impossible to
+    /// reason about and turned adding a word to seq into a possible
+    /// collision anywhere in the tree.</summary>
+    readonly HashSet<string> direct = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Dependency assembly name -> the machine that referenced
+    /// it, so a refusal can say "seq.shoddy, which stats.shoddy includes"
+    /// rather than leaving the reader to work out where it came from.</summary>
+    readonly Dictionary<string, string> via = new();
+
     /// <summary>DLL path -> the namespace its INCLUDE carried. A machine is
     /// never read as source, so its surface cannot be qualified the way a
     /// spliced file's is; the Lexer reports the AS here instead.
@@ -73,11 +89,16 @@ public sealed class MachineSet
     /// export CLOSE) makes including both a hard error.</summary>
     readonly Dictionary<string, string> qualByDll = new(StringComparer.OrdinalIgnoreCase);
 
-    /// <summary>The Lexer's onQualified hook: this machine's include said
-    /// AS <paramref name="qual"/>. Only the directly-included machine is
-    /// qualified — the machines it pulls in as dependencies keep their own
-    /// names, since the including program never named them.</summary>
-    public void SetQualifier(string sbPath, string qual) =>
+    /// <summary>This machine's include said AS <paramref name="qual"/>.
+    /// Only the directly-included machine is qualified — the machines it
+    /// pulls in as dependencies keep their own names, since the including
+    /// program never named them.
+    ///
+    /// Called from <see cref="TryResolve"/> rather than by the caller, so
+    /// that resolving a machine and recording its namespace cannot come
+    /// apart. They were two separate hooks, and a caller that wired only
+    /// the first got the AS silently discarded.</summary>
+    void SetQualifier(string sbPath, string qual) =>
         qualByDll[DllPathFor(sbPath)] = qual;
 
     public static string ClassNameFor(string sbPath)
@@ -86,18 +107,30 @@ public sealed class MachineSet
         return char.ToUpperInvariant(stem[0]) + stem[1..].ToLowerInvariant();
     }
 
+    /// <summary>The .shoddy name a machine assembly came from — what a
+    /// user would write in an Include. Shoddy.Machines.Seq -> seq.shoddy.</summary>
+    static string SourceNameFor(MachineInfo m) => SourceNameFor(m.AssemblyName);
+
+    static string SourceNameFor(string assemblyName) =>
+        assemblyName.Replace("Shoddy.Machines.", "").ToLowerInvariant() + ".shoddy";
+
     public static string DllPathFor(string sbPath) =>
         Path.Combine(Path.GetDirectoryName(Path.GetFullPath(sbPath))!,
                      BinDir,
                      $"Shoddy.Machines.{ClassNameFor(sbPath)}.dll");
 
     /// <summary>The Lexer's externalInclude hook: true = a machine DLL
-    /// satisfies this include, don't splice the source.</summary>
-    public bool TryResolve(string sbPath)
+    /// satisfies this include, don't splice the source.
+    /// <paramref name="qual"/> is the namespace the include carried, or
+    /// null for a bare one; it is recorded here because the machine's
+    /// source is never read and this is the only place the AS survives.</summary>
+    public bool TryResolve(string sbPath, string? qual)
     {
         string dll = DllPathFor(sbPath);
         if (!File.Exists(dll)) return false;
         LoadRecursive(dll);
+        direct.Add(dll);
+        if (qual != null) SetQualifier(sbPath, qual);
         return true;
     }
 
@@ -118,6 +151,7 @@ public sealed class MachineSet
                 throw new ShoddyError(0,
                     $"machine {asm.GetName().Name} declares dependency " +
                     $"{dep.AssemblyName}, but {dpath} is missing");
+            via.TryAdd(dep.AssemblyName, SourceNameFor(asm.GetName().Name!));
             LoadRecursive(dpath);
         }
         foreach (AssemblyName rn in asm.GetReferencedAssemblies())
@@ -129,16 +163,35 @@ public sealed class MachineSet
             if (!File.Exists(dep))
                 throw new ShoddyError(0,
                     $"machine {asm.GetName().Name} references {rn.Name}, but {dep} is missing");
+            via.TryAdd(rn.Name, SourceNameFor(asm.GetName().Name!));
             LoadRecursive(dep);
         }
     }
 
-    /// <summary>Seed a program with every loaded machine's surface so the
-    /// parser and code generator resolve against precompiled code.</summary>
+    /// <summary>Seed a program with the surface of every machine it
+    /// included <em>by name</em>, so the parser and code generator resolve
+    /// against precompiled code.
+    ///
+    /// Machines pulled in behind those are loaded and linked but not
+    /// seeded: a machine exports what it declares, and what it includes is
+    /// its own business. Their names go to <see cref="Unseeded"/> instead,
+    /// which is what lets the refusal name the include to add.</summary>
     public void SeedInto(ShoddyProgram prog)
     {
         foreach (MachineInfo m in Machines)
         {
+            if (!direct.Contains(m.DllPath))
+            {
+                (string, string?) advice = (SourceNameFor(m), via.GetValueOrDefault(m.AssemblyName));
+                foreach (string bare in m.Defs.Keys) prog.Unseeded.TryAdd(bare, advice);
+                foreach ((string bare, (string _, TypeDef shape)) in m.Types)
+                {
+                    prog.Unseeded.TryAdd(bare, advice);
+                    foreach (string f in shape.Fields)
+                        prog.Unseeded.TryAdd(f.ToUpperInvariant(), advice);
+                }
+                continue;
+            }
             string? q = qualByDll.GetValueOrDefault(m.DllPath);
             foreach ((string bare, string method) in m.Defs)
             {

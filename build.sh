@@ -93,6 +93,19 @@ stage() {
     mkdir -p "$STAGE_LIB/bin"
     cp machines/*.shoddy "$STAGE_LIB"
     cp machines/bin/*.dll "$STAGE_LIB/bin"
+    # One timestamp across every staged DLL, newer than every staged
+    # source. cp stamps them in the order it copies — alphabetical — and
+    # a machine is stale when a DLL it depends on is newer than its own,
+    # so csv (depending on dict, seq and str, all later in the alphabet)
+    # arrived looking stale and rebuilt itself on first use, inside the
+    # installed extension. Levelling the stamps says what is true: these
+    # were all built together.
+    # One reference stamp, not `touch` per file: touch takes the time at
+    # each file, and those differ by a tick in the same alphabetical
+    # order, which is all the staleness test compares.
+    : > "$STAGE_LIB/bin/.stamp"
+    touch -r "$STAGE_LIB/bin/.stamp" "$STAGE_LIB"/bin/*.dll
+    rm -f "$STAGE_LIB/bin/.stamp"
     # Roslyn, Silk.NET, GLFW and OpenAL Soft are redistributed in the
     # package, so their notices have to travel with it — LGPL-2.1 for
     # OpenAL Soft, attribution for the rest. The authorship statement and

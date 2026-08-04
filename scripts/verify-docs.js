@@ -115,6 +115,30 @@ for (const m of Object.keys(includes).sort()) {
   if (sorted(us.machines) !== sorted(includes[m]))
     { console.log(m + " uses: page[" + sorted(us.machines) + "] truth[" + sorted(includes[m]) + "]"); bad++; }
 }
+// ---- spec.html's machine catalogue: its Includes trailers ----
+// Prose, and prose drifts. Every machine bullet in section 13 states what
+// that machine includes; nothing checked it, so the list went stale twice
+// over — silently, while this script reported green. It is ground truth
+// like any other now.
+{
+  const spec = fs.readFileSync(path.join(root, "docs", "spec.html"), "utf8");
+  for (const m of [...spec.matchAll(/<li><strong>([a-z0-9-]+)\.shoddy<\/strong>([\s\S]*?)<\/li>/g)]) {
+    const name = m[1];
+    if (!(name in includes)) continue;
+    // Only the run of <code> names directly after "Includes" — net's
+    // trailer carries prose after its list, and that is not a claim.
+    const run = m[2].match(/Includes((?:\s*<code>[a-z0-9-]+<\/code>|\s*,|\s*and)*)/);
+    const claimed = run
+      ? [...run[1].matchAll(/<code>([a-z0-9-]+)<\/code>/g)].map(x => x[1])
+      : [];
+    if (sorted(claimed) !== sorted(includes[name])) {
+      console.log("spec.html " + name + " Includes: page[" + sorted(claimed) +
+                  "] truth[" + sorted(includes[name]) + "]");
+      bad++;
+    }
+  }
+}
+
 // ---- catalogs: nothing added to the tree may go unlisted ----
 const machineNames = Object.keys(includes).sort();
 const read = f => fs.readFileSync(path.join(root, f), "utf8");

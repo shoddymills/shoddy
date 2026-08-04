@@ -161,6 +161,36 @@ public class NamespaceTests
     }
 
     [Fact]
+    public void ANamespaceDoesNotReachABareInnerInclude()
+    {
+        // A namespace covers the surface of the file it names and nothing
+        // further. mid is included AS Mid, so its own Only is MidOnly —
+        // but leaf, which mid includes bare, keeps its bare name.
+        //
+        // The qualifier used to propagate down the whole subtree, which
+        // made a file's spelling depend on its dependencies' include
+        // lists, and made the spliced path disagree with the compiled one.
+        Assert.Equal("leaf mid\n", RunFiles(
+            ("leaf.shoddy", "Def Only() As String\n    \"leaf\"\n"),
+            ("mid.shoddy", "Include \"leaf.shoddy\"\n\nDef Only() As String\n    \"mid\"\n"),
+            ("prog.shoddy",
+             "Include \"mid.shoddy\" As Mid\n\nDef Main()\n    Print(Only() & \" \" & MidOnly())\n")));
+    }
+
+    [Fact]
+    public void ANamespaceOnAnInnerIncludeIsNotReachedThrough()
+    {
+        // The same rule from the other side: prog names no namespace at
+        // all, and mid's AS Leaf governs leaf. Nothing prog writes gains a
+        // Mid prefix, because prog never asked for one.
+        Assert.Equal("leaf\n", RunFiles(
+            ("leaf.shoddy", "Def Only() As String\n    \"leaf\"\n"),
+            ("mid.shoddy", "Include \"leaf.shoddy\" As Leaf\n"),
+            ("prog.shoddy",
+             "Include \"mid.shoddy\"\n\nDef Main()\n    Print(LeafOnly())\n")));
+    }
+
+    [Fact]
     public void DuplicateDefNamesTheEarlierFile()
     {
         string err = RunFilesError(

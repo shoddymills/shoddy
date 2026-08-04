@@ -52,15 +52,44 @@ public sealed class CodeGen
     // only the instrumentation calls are added.
     readonly bool debug;
     readonly IReadOnlyList<MachineInfo>? deps;
+    // A machine's own source file, when weaving one. Only names declared
+    // *here* go in the manifest: what a machine includes is its own
+    // business, and a spliced dependency's words are not this machine's
+    // to export. Without this, whether a dependency happened to be
+    // compiled decided the exported surface — the same source producing
+    // two different public interfaces.
+    readonly string? ownFile;
     readonly Dictionary<string, int> fileIds = new();
     readonly List<string> fileList = new();
 
-    public CodeGen(ShoddyProgram prog, string? machineClass, bool debug, IReadOnlyList<MachineInfo>? deps = null)
+    /// <summary>Was this name declared in the machine's own source, rather
+    /// than in a file it included? Only those belong in the manifest.
+    ///
+    /// Unknown names answer true: every Def, Type and Let is recorded by
+    /// the parser, so a miss means a name this rule was never meant to
+    /// judge, and the safe direction is to keep exporting it.
+    ///
+    /// Note this treats *any* spliced include as a dependency. Machines in
+    /// the tree are single-file, so that is exact today; a machine later
+    /// split across sibling files would need its own files distinguished
+    /// from the machines it includes.</summary>
+    bool DeclaredHere(string name)
+    {
+        if (ownFile == null) return true;                     // not weaving a machine
+        if (!prog.Sites.TryGetValue(name, out DeclSite s)) return true;
+        if (s.File == null) return true;
+        return string.Equals(Path.GetFullPath(s.File), ownFile,
+                             StringComparison.OrdinalIgnoreCase);
+    }
+
+    public CodeGen(ShoddyProgram prog, string? machineClass, bool debug,
+                   IReadOnlyList<MachineInfo>? deps = null, string? ownFile = null)
     {
         this.prog = prog;
         this.machineClass = machineClass;
         this.debug = debug;
         this.deps = deps;
+        this.ownFile = ownFile == null ? null : Path.GetFullPath(ownFile);
         if (debug)
         {
             if (prog.InitQuot != null) CollectFiles(prog.InitQuot);
@@ -209,12 +238,18 @@ public sealed class CodeGen
             // machine calls depth-checked without reading the source.
             Dictionary<string, Lint.DefEffect> fx = Lint.DefEffects(prog);
             foreach ((string name, string id) in defIds)
+            {
+                if (!DeclaredHere(name)) continue;
                 W(fx.TryGetValue(name, out Lint.DefEffect e)
                     ? $"[assembly: ShoddyDef({StrLit(name)}, {StrLit(id)}, Pops = {e.Pops}, Pushes = {e.Pushes})]"
                     : $"[assembly: ShoddyDef({StrLit(name)}, {StrLit(id)})]");
+            }
             foreach (TypeDef t in prog.Types)
+            {
+                if (!DeclaredHere(t.Name)) continue;
                 W($"[assembly: ShoddyType({StrLit(t.Name)}, {StrLit(t.Disp ?? t.Name)}, " +
                   $"{StrLit(typeField[t.Name])}, {StrArr(t.Fields)}, {StrArr(t.FDisp)})]");
+            }
             W("");
             W("namespace Shoddy.Machines;");
             W("");
@@ -435,6 +470,19 @@ public sealed class CodeGen
         // The accessor word may be namespaced; the field it reads is not.
         if (prog.Accessors.TryGetValue(name, out string? fld) || prog.AnyTypeHasField(name))
             { W($"rt.Field({StrLit(fld ?? name)}, {n.Line});"); return; }
+        // A word a machine declares but does not export is neither a typo
+        // nor a name that might turn up at runtime — it is a missing
+        // Include, and we know which one. Refuse it here rather than
+        // deferring to rt.UnknownWord, because the linter only reports
+        // what it can model: an unknown word inside a quotation of unknown
+        // effect reaches this line unmentioned and dies mid-run instead.
+        if (prog.Unseeded.TryGetValue(name, out (string Declares, string? Via) a))
+        {
+            string via = a.Via == null ? "" : $", which {a.Via} includes but does not export";
+            throw new ShoddyError(n.Line, n.File,
+                $"unknown word: {name} — declared in {a.Declares}{via}. " +
+                $"Add: Include \"{a.Declares}\"");
+        }
         W($"rt.UnknownWord({StrLit(name)}, {n.Line});");
     }
 

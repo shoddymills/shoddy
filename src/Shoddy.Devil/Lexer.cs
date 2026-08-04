@@ -50,29 +50,33 @@ public static class Lexer
     /// <summary>Reads a program with Include splicing (include-once,
     /// resolved relative to the including file, then $SHODDYLIB).
     /// When <paramref name="externalInclude"/> is given, it is offered
-    /// each resolved include path first; returning true means the include
-    /// is satisfied externally (a precompiled machine) and is not
+    /// each resolved include path together with the namespace that
+    /// include carried (null for a bare one); returning true means the
+    /// include is satisfied externally (a precompiled machine) and is not
     /// spliced. The interpreter never passes it — it always splices.
     ///
-    /// <paramref name="onQualified"/> is told (path, qualifier) for every
-    /// include that carried an AS and was satisfied externally, so the
-    /// machine layer can qualify a DLL's surface it never sees as source.</summary>
-    public static List<Line> ReadProgram(string path, Func<string, bool>? externalInclude = null,
-                                         Action<string, string>? onQualified = null)
+    /// The qualifier travels with the path deliberately. A machine
+    /// satisfied by a DLL is never read as source, so this call is the
+    /// only trace that an AS was written at all — when resolving and
+    /// recording were two separate callbacks, wiring one without the
+    /// other silently discarded the namespace.</summary>
+    public static List<Line> ReadProgram(string path,
+                                         Func<string, string?, bool>? externalInclude = null)
     {
         var lines = new List<Line>();
         var included = new Dictionary<string, string?>();
-        ReadFile(path, lines, included, externalInclude, null, onQualified);
+        ReadFile(path, lines, included, externalInclude, null);
         return lines;
     }
 
     /// <summary><paramref name="qual"/> is the namespace this file was
     /// included under. Qualifiers do not compose through a chain of
-    /// includes: a file that carries its own AS wins for its whole subtree,
-    /// so a name never depends on who included the includer.</summary>
+    /// includes: an AS covers the surface of the file it names and nothing
+    /// further, so a name never depends on who included the includer, and
+    /// a file's spelling never depends on its dependencies' include
+    /// lists.</summary>
     static void ReadFile(string path, List<Line> lines, Dictionary<string, string?> included,
-                         Func<string, bool>? externalInclude = null, string? qual = null,
-                         Action<string, string>? onQualified = null)
+                         Func<string, string?, bool>? externalInclude = null, string? qual = null)
     {
         if (included.ContainsKey(path)) return;      // include-once semantics
         included[path] = qual;
@@ -120,8 +124,20 @@ public static class Lexer
                         "expected INCLUDE \"FILE\" or INCLUDE \"FILE\" AS NAMESPACE "
                         + "at left margin");
                 string name = toks[1].Text;
-                // Inner wins: a file's own AS governs its whole subtree.
-                string? sub = qualified ? toks[3].Text : qual;
+                // A namespace covers the surface of the file it names, and
+                // nothing further: an AS does not reach into what that file
+                // itself includes. Otherwise a namespace would rename words
+                // the including program never named, and a machine's
+                // spelling would depend on its dependencies' include lists
+                // — adding an include to str would change what `As Sock`
+                // spells in every consumer of net.
+                //
+                // This also makes the spliced path agree with the compiled
+                // one, which namespaces one machine's manifest and never
+                // its dependencies'. They used to disagree, so the same
+                // program meant different things to the runner and to the
+                // debugger (which always splices).
+                string? sub = qualified ? toks[3].Text : null;
                 if (qualified && !IsPlainWord(toks[3].Text))
                     throw new ShoddyError(start, path,
                         $"'{toks[3].Orig}' is not usable as a namespace — "
@@ -146,13 +162,12 @@ public static class Lexer
                         $"'{name}' is included twice under different namespaces "
                         + $"({Show(had)} and {Show(sub)})");
                 if (externalInclude != null && !included.ContainsKey(cand) &&
-                    externalInclude(cand))
+                    externalInclude(cand, sub))
                 {
                     included[cand] = sub;        // satisfied by a machine DLL
-                    if (qualified) onQualified?.Invoke(cand, sub!);
                     continue;
                 }
-                ReadFile(cand, lines, included, externalInclude, sub, onQualified);
+                ReadFile(cand, lines, included, externalInclude, sub);
                 continue;                        // the directive itself is consumed
             }
 
@@ -171,6 +186,30 @@ public static class Lexer
     /// extension finds the machines/ staged beside it — neither needs
     /// anything set. SHODDYLIB comes first so a checkout can still be
     /// pinned to its own machines.</summary>
+    /// <summary>Does this file live in a machine library — the directory
+    /// an unqualified <c>Include "seq.shoddy"</c> would find it in?
+    ///
+    /// This is how a machine is told from one of a program's own source
+    /// files, and it is a question about *where the file is*, not how it
+    /// was spelled: a mill reaching a machine by relative path
+    /// (<c>../../machines/stats.shoddy</c>) lands in the same directory
+    /// the library lives in and is recognised, while its own siblings
+    /// never do.</summary>
+    public static bool IsMachineLibrary(string path)
+    {
+        string dir = Path.GetDirectoryName(Path.GetFullPath(path)) ?? "";
+        foreach (string lib in LibDirs())
+        {
+            string full;
+            try { full = Path.GetFullPath(lib); } catch { continue; }
+            if (string.Equals(dir.TrimEnd(Path.DirectorySeparatorChar),
+                              full.TrimEnd(Path.DirectorySeparatorChar),
+                              StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+        return false;
+    }
+
     static IEnumerable<string> LibDirs()
     {
         string? env = Environment.GetEnvironmentVariable("SHODDYLIB");

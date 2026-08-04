@@ -25,9 +25,89 @@ public static class Lint
 
     // ================= the entry point =================
 
+    /// <summary>"unknown word: X" — and, when X is only unknown because a
+    /// machine keeps it to itself, which Include would reach it.
+    ///
+    /// A machine exports what it declares, so including stats does not
+    /// hand you seq's words. Without this the scoping rule reads as an
+    /// arbitrary refusal, and the reader has to go and learn the include
+    /// graph to find out that seq is where ZipWith lives.</summary>
+    static string Unknown(ShoddyProgram prog, string name, string written)
+    {
+        if (!prog.Unseeded.TryGetValue(name, out (string Declares, string? Via) a))
+            return $"unknown word: {written}";
+        string via = a.Via == null ? "" : $", which {a.Via} includes but does not export";
+        return $"unknown word: {written} — declared in {a.Declares}{via}. " +
+               $"Add: Include \"{a.Declares}\"";
+    }
+
+    /// <summary>An Include whose machine contributes no name the program
+    /// uses. Now that a machine's includes are its own business, an
+    /// include is a declared interface rather than an incidental splice,
+    /// so one that earns nothing is simply noise — and the four
+    /// re-export includes this warning would have caught had it existed
+    /// (stats→dict, net→seq, buzzer→seq, scribbler→clock) are exactly the
+    /// habit the scoping rule ends.
+    ///
+    /// Warning only. An unused include is untidy, never wrong, and a
+    /// build should not fail over tidiness.</summary>
+    static void UnusedMachineIncludes(ShoddyProgram prog, IReadOnlyList<Line>? lines, Result r)
+    {
+        if (lines == null) return;
+        // Machine class -> the names it contributed to this program.
+        var byClass = new Dictionary<string, List<string>>();
+        void note(string name, string target)
+        {
+            int cut = target.LastIndexOf('.');
+            if (cut < 0) return;
+            string cls = target[..cut];
+            if (!byClass.TryGetValue(cls, out List<string>? l)) byClass[cls] = l = new();
+            l.Add(name);
+        }
+        foreach ((string n, string t) in prog.ExternalDefs) note(n, t);
+        foreach ((string n, ExternalType t) in prog.ExternalTypes)
+        {
+            note(n, t.FieldRef);
+            // A record's field accessors are words too, and often the only
+            // ones a caller writes: simplex-from-mps names matrix solely
+            // through Rows on a Matrix. Counting Defs and type names alone
+            // called that include unused and would have had it deleted.
+            string pre = n.EndsWith(t.Shape.Name, StringComparison.OrdinalIgnoreCase)
+                ? n[..^t.Shape.Name.Length] : "";
+            foreach (string f in t.Shape.Fields) note(pre + f.ToUpperInvariant(), t.FieldRef);
+        }
+
+        HashSet<string> used = UsedWords(prog);
+        foreach ((string cls, List<string> names) in byClass)
+        {
+            if (names.Any(used.Contains)) continue;
+            string src = cls[(cls.LastIndexOf('.') + 1)..].ToLowerInvariant() + ".shoddy";
+            r.Warnings.Add($"warning: Include \"{src}\" — no word or type from it is used");
+        }
+    }
+
+    /// <summary>Every word named anywhere in the program's bodies.</summary>
+    static HashSet<string> UsedWords(ShoddyProgram prog)
+    {
+        var used = new HashSet<string>();
+        void walk(Quot? q)
+        {
+            if (q == null) return;
+            foreach (Node n in q.Items)
+            {
+                if (n.T == NType.Word && n.Str != null) used.Add(n.Str);
+                walk(n.Q); walk(n.ElseQ);
+            }
+        }
+        walk(prog.InitQuot);
+        foreach (Quot b in prog.Defs.Values) walk(b);
+        return used;
+    }
+
     public static Result Run(ShoddyProgram prog, IReadOnlyList<Line>? lines)
     {
         var r = new Result();
+        UnusedMachineIncludes(prog, lines, r);
         r.Warnings.AddRange(ShadowedAccessors(prog));
         WordAccessorCollisions(prog, r);
         NamespacedTopLevelLets(prog, r);
@@ -669,7 +749,7 @@ public static class Lint
                         else
                         {
                             r?.UnknownWords.Add((
-                                $"unknown word: {written}", n.File, n.Line));
+                                Unknown(prog, name, written), n.File, n.Line));
                             return null;
                         }
                         break;
@@ -725,7 +805,15 @@ public static class Lint
                     prog.FindType(name) != null ||
                     Engine.BuiltinWords.Contains(name) || prog.Accessors.ContainsKey(name) ||
                     prog.AnyTypeHasField(name) || locals.Contains(name);
-                if (!resolves)
+                if (resolves) continue;
+                // A name a machine declares but keeps to itself is not a
+                // typo, and must not be softened into one: auto-quoting
+                // would turn a missing Include into a warning and defer
+                // the failure to runtime, at whatever line happened to
+                // reach it. Refuse it with the advice instead.
+                if (prog.Unseeded.ContainsKey(name))
+                    r.UnknownWords.Add((Unknown(prog, name, w), it.File, it.Line));
+                else
                     r.Warnings.Add($"{it.File ?? "?"}:{it.Line}: warning: bare name " +
                         $"'{w}' was passed as a function value, but nothing defines " +
                         "it — a typo is auto-quoted silently in argument position");

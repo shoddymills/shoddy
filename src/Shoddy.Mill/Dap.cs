@@ -42,6 +42,12 @@ public sealed class DapServer : IDebugSink
     bool stopOnEntry;
     bool disconnected;
 
+    /// <summary>Machine sources this launch resolved to a compiled DLL.
+    /// A machine is a runtime, precompiled like any other, so there are no
+    /// lines of it in the debug build to stop on — a breakpoint in one of
+    /// these files is reported unverified rather than silently ignored.</summary>
+    readonly HashSet<string> machineSources = new(StringComparer.OrdinalIgnoreCase);
+
     public static int Serve() => new DapServer().Run();
 
     int Run()
@@ -144,8 +150,33 @@ public sealed class DapServer : IDebugSink
                 stopOnEntry = args.TryGetProperty("stopOnEntry", out JsonElement se) && se.GetBoolean();
                 try
                 {
-                    var prog = Parser.Parse(Lexer.ReadProgram(program));
-                    entry = Weaver.LoadDebug(prog);
+                    // Resolve machines exactly as `mill run` does. A machine
+                    // is precompiled — that its source ships alongside is a
+                    // convenience, not an invitation to splice it — so the
+                    // debugger compiles the same program the runner does,
+                    // scoping and all. Before this it spliced everything,
+                    // and would happily launch a program the runner refused.
+                    var machines = new MachineSet();
+                    List<Line> lines = Lexer.ReadProgram(program, (p, q) =>
+                    {
+                        if (!MachineResolve.Resolve(machines, p, q)) return false;
+                        machineSources.Add(Path.GetFullPath(p));
+                        return true;
+                    });
+                    var prog = new ShoddyProgram();
+                    machines.SeedInto(prog);
+                    ShoddyProgram parsed = Parser.Parse(lines, prog);
+                    // And lint it, for the unknown words the weave would
+                    // otherwise turn into a runtime failure at whatever line
+                    // happened to reach them — a debugger that launches a
+                    // program the runner rejects is the wrong way round.
+                    Lint.Result lint = Lint.Run(parsed, lines);
+                    if (lint.UnknownWords.Count > 0)
+                    {
+                        (string msg, string? f, int ln) = lint.UnknownWords[0];
+                        throw new ShoddyError(ln, f, msg);
+                    }
+                    entry = Weaver.LoadDebug(parsed, machines.Machines);
                     Respond(req);
                 }
                 catch (ShoddyError e)
@@ -166,6 +197,16 @@ public sealed class DapServer : IDebugSink
                     foreach (JsonElement b in arr.EnumerateArray())
                     {
                         int ln = b.GetProperty("line").GetInt32();
+                        // A breakpoint in a machine cannot bind: the machine
+                        // is compiled code by the time the program runs, with
+                        // no instrumented lines to stop on. Say so, rather
+                        // than showing a bound breakpoint that never hits.
+                        if (machineSources.Contains(path))
+                        {
+                            verified.Add(new { verified = false, line = ln,
+                                message = "machines are precompiled — no line to stop on" });
+                            continue;
+                        }
                         lines.Add(ln);
                         verified.Add(new { verified = true, line = ln });
                     }

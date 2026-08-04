@@ -12,9 +12,12 @@ namespace Shoddy.Tests;
 /// The machines-as-DLLs path: build all twelve standard machines in
 /// dependency order in an isolated workspace, weave libtest against them
 /// (no source splicing for the library), and demand the same golden
-/// bytes. libtest never includes seq.shoddy directly — its surface must
-/// arrive transitively through the matrix/dict/stats/isam machine
-/// references.
+/// bytes.
+///
+/// libtest includes seq.shoddy itself. It used to reach seq's surface
+/// transitively through matrix/dict/stats/isam, which is exactly what a
+/// machine's surface being scoped to its own declarations ended: a
+/// consumer names what it uses.
 /// </summary>
 [Collection("golden")]
 public class MachineTests
@@ -51,7 +54,7 @@ public class MachineTests
         var (main, set) = ParseWithMachines(Path.Combine(ws, "tst", "libtest.shoddy"));
         Assert.Equal(12, set.Machines.Count);       // all twelve resolved, incl. transitive seq
         Assert.True(main.ExternalDefs.ContainsKey("SUM"));   // stats arrived via references
-        Assert.True(main.ExternalDefs.ContainsKey("ANY"));   // seq arrived transitively
+        Assert.True(main.ExternalDefs.ContainsKey("ANY"));   // seq, included by name
         Assert.True(main.ExternalDefs.ContainsKey("JSONTEXT"));   // json arrived too
         Assert.True(main.ExternalDefs.ContainsKey("XMLTEXT"));    // and xml
         Assert.True(main.ExternalDefs.ContainsKey("HTMLTEXT"));   // and html on top of it

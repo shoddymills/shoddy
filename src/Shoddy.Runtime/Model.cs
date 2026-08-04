@@ -159,6 +159,14 @@ public sealed class ShoddyProgram
     /// one is the ambiguity that forces an explicit IN.</summary>
     public readonly Dictionary<string, List<string>> ByBare = new();
 
+    /// <summary>A name that exists in a machine the program did not
+    /// include, mapped to the advice for reaching it: the source file that
+    /// declares it, and the machine that dragged it in. A machine exports
+    /// what it declares, so its own includes are not nameable by whoever
+    /// includes it — this is what lets the refusal say which Include to
+    /// add instead of only that the word is unknown.</summary>
+    public readonly Dictionary<string, (string Declares, string? Via)> Unseeded = new();
+
     /// <summary>Accessor word -> the field it reads. A type declared in a
     /// file included AS Q is read with QSHORT, not SHORT, so field names
     /// stop being words the whole program can see.

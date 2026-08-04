@@ -25,6 +25,22 @@ public static class Lint
 
     // ================= the entry point =================
 
+    /// <summary>"unknown word: X" — and, when X is only unknown because a
+    /// machine keeps it to itself, which Include would reach it.
+    ///
+    /// A machine exports what it declares, so including stats does not
+    /// hand you seq's words. Without this the scoping rule reads as an
+    /// arbitrary refusal, and the reader has to go and learn the include
+    /// graph to find out that seq is where ZipWith lives.</summary>
+    static string Unknown(ShoddyProgram prog, string name, string written)
+    {
+        if (!prog.Unseeded.TryGetValue(name, out (string Declares, string? Via) a))
+            return $"unknown word: {written}";
+        string via = a.Via == null ? "" : $", which {a.Via} includes but does not export";
+        return $"unknown word: {written} — declared in {a.Declares}{via}. " +
+               $"Add: Include \"{a.Declares}\"";
+    }
+
     public static Result Run(ShoddyProgram prog, IReadOnlyList<Line>? lines)
     {
         var r = new Result();
@@ -669,7 +685,7 @@ public static class Lint
                         else
                         {
                             r?.UnknownWords.Add((
-                                $"unknown word: {written}", n.File, n.Line));
+                                Unknown(prog, name, written), n.File, n.Line));
                             return null;
                         }
                         break;

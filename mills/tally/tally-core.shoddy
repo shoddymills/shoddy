@@ -1,0 +1,403 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem tally-core.shoddy — everything between a file on disk and a picture.
+Rem
+Rem Pure. Nothing here reads a file, opens a window or prints: the shell
+Rem in tally.shoddy does all three, and this half takes text and gives
+Rem back a sheet or a list of lines. That is the whole reason for the
+Rem split — a program that draws cannot otherwise be tested, and
+Rem test.shoddy grades this file headless against files/expected.out.
+Rem
+Rem The pipeline, in order, each stage a sheet in and a sheet out:
+Rem
+Rem     text --TallySheetOf--> sheet --TallyDeriveAll--> sheet
+Rem          --TallyFilterAll--> sheet --TallyReport--> lines
+Rem
+Rem ---- verbs, not expressions --------------------------------------
+Rem
+Rem A derive line names a VERB and its columns:
+Rem
+Rem     derive.Z    = zscores SCORE
+Rem     derive.RES  = residuals HOURS SCORE
+Rem     derive.TOTL = add MIDTERM FINAL
+Rem
+Rem and not an arithmetic expression. That is the load-bearing decision
+Rem in this mill. An expression language needs a tokenizer, a precedence
+Rem table, a parser and its own error messages, and everything it buys
+Rem can be had by naming one more verb — which is two lines here and
+Rem cannot be got syntactically wrong by whoever writes the spec. When a
+Rem verb is genuinely missing, add a Case; do not add a grammar.
+Rem
+Rem Every verb below is a thin wrapper over a word stats.shoddy already
+Rem exports and already tests. This file does dispatch and formatting;
+Rem it does no statistics of its own.
+Rem
+Rem ---- columns are numbers ------------------------------------------
+Rem
+Rem A column named to a derive, filter or report verb must be numeric in
+Rem every row that reaches it. Cells are read with Val, which aborts on a
+Rem non-number, so a text column named where a number was wanted is an
+Rem error at the point of use and says which column. filter.* runs
+Rem BEFORE report.*, deliberately: dropping the rows you do not want is
+Rem how you keep a stray blank out of the arithmetic.
+Rem ==================================================================
+
+Include "../../machines/csv.shoddy"
+Include "../../machines/stats.shoddy"
+Include "tally-spec.shoddy"
+
+Rem ======================================================================
+Rem LOADING
+Rem ======================================================================
+
+Rem The CSV dialect the spec asks for. data.sep is a single character
+Rem (default comma), data.comment a prefix to skip (default none), and
+Rem data.trim drops spaces around unquoted cells.
+Def TallyDialect(sp As List Of Pair) As CsvDialect
+    Let sep = SpecGetOr(sp, "data.sep", ",")
+    Let d0 = Ifte(Len(sep) = 1, CsvSepBy(sep), CsvComma())
+    Let d1 = Ifte(SpecFlag(sp, "data.trim", True), CsvTrimming(d0), d0)
+    Ifte(Len(SpecGetOr(sp, "data.comment", "")) > 0, CsvCommented(d1, SpecGetOr(sp, "data.comment", "")), d1)
+
+Rem The file's text as a sheet. data.header = no means the file has no
+Rem header line, in which case the columns are named C1, C2, C3 ... so
+Rem every later stage can go on talking about columns by name.
+Def TallySheetOf(sp As List Of Pair, text As String) As CsvSheet
+    Let rows = CsvDropBlanks(CsvParseAs(text, TallyDialect(sp)))
+    If SpecFlag(sp, "data.header", True) Then
+        CsvSheetOf(rows)
+    Else
+        CsvSheet(TallyNumbered(CsvWidth(rows)), rows)
+
+Def TallyNumbered(n As Number) As List Of String
+    Map(Range(1, n), Fn(k) => "C" & Str(k))
+
+Rem ---- columns ---------------------------------------------------------
+
+Def TallyHas(sh As CsvSheet, head As String) As Boolean
+    CsvHas(sh, head)
+
+Rem A column as numbers. The error names the column, because "VAL: not a
+Rem number" twelve frames down names nothing.
+Def TallyCol(sh As CsvSheet, head As String) As List Of Number
+    If Not CsvHas(sh, head) Then
+        Error("TALLY: NO COLUMN '" & head & "' — THE FILE HAS " & Join(CsvHeads(sh), ", "))
+    Else
+        Map(CsvBody(sh), Fn(r) => TallyCell(sh, r, head))
+
+Def TallyCell(sh As CsvSheet, row As List Of String, head As String) As Number
+    Let t = Trim(CsvGetOr(sh, row, head, ""))
+    If IsNumeric(t) Then
+        Val(t)
+    Else
+        Error("TALLY: COLUMN '" & head & "' HOLDS '" & t & "', WHICH IS NOT A NUMBER")
+
+Rem The column as strings — for freq, and for the bar and pie labels.
+Def TallyText(sh As CsvSheet, head As String) As List Of String
+    If Not CsvHas(sh, head) Then
+        Error("TALLY: NO COLUMN '" & head & "' — THE FILE HAS " & Join(CsvHeads(sh), ", "))
+    Else
+        CsvColumn(sh, head)
+
+Rem A verb's n-th column argument, with the verb named in the complaint.
+Def TallyArg(verb As String, args As List Of String, n As Number) As String
+    If Length(args) < n Then
+        Error("TALLY: " & Upper(verb) & " NEEDS " & Str(n) & " ARGUMENT(S), GOT " & Str(Length(args)))
+    Else
+        Nth(args, n)
+
+Rem ======================================================================
+Rem DERIVE — a new column from the ones already there
+Rem ======================================================================
+
+Rem Append a column of numbers under a name. Sheets are immutable; this
+Rem builds a new one.
+Def TallyWith(sh As CsvSheet, name As String, vs As List Of Number) As CsvSheet
+    CsvSheet(Append(CsvHeads(sh), name), ZipWith(CsvBody(sh), vs, Fn(r, v) => Append(r, Str(v))))
+
+Rem y - (slope x + intercept): what the straight line failed to explain.
+Def TallyResiduals(sh As CsvSheet, xh As String, yh As String) As List Of Number
+    Let xs = TallyCol(sh, xh)
+    Let ys = TallyCol(sh, yh)
+    Let f = LinFit(xs, ys)
+    ZipWith(xs, ys, Fn(x, y) => y - (Slope(f) * x + Intercept(f)))
+
+Def TallyPairwise(sh As CsvSheet, verb As String, args As List Of String, f As [ Number Number -- Number ]) As List Of Number
+    ZipWith(TallyCol(sh, TallyArg(verb, args, 1)), TallyCol(sh, TallyArg(verb, args, 2)), f)
+
+Def TallyDerive(sh As CsvSheet, name As String, recipe As String) As CsvSheet
+    Let ws = SpecWordsOf(recipe)
+    If IsEmpty(ws) Then
+        Error("TALLY: derive." & name & " IS EMPTY")
+    Else
+        Let verb = Lower(First(ws))
+        Let args = Rest(ws)
+        TallyWith(sh, name, TallyDerived(sh, verb, args))
+
+Def TallyDerived(sh As CsvSheet, verb As String, args As List Of String) As List Of Number
+    Select Case verb
+        Case "zscores"
+            ZScores(TallyCol(sh, TallyArg(verb, args, 1)))
+        Case "ranks"
+            Ranks(TallyCol(sh, TallyArg(verb, args, 1)))
+        Case "log"
+            Map(TallyCol(sh, TallyArg(verb, args, 1)), Log)
+        Case "abs"
+            Map(TallyCol(sh, TallyArg(verb, args, 1)), Abs)
+        Case "pct"
+            TallyPct(TallyCol(sh, TallyArg(verb, args, 1)))
+        Case "residuals"
+            TallyResiduals(sh, TallyArg(verb, args, 1), TallyArg(verb, args, 2))
+        Case "add"
+            TallyPairwise(sh, verb, args, +)
+        Case "sub"
+            TallyPairwise(sh, verb, args, -)
+        Case "mul"
+            TallyPairwise(sh, verb, args, *)
+        Case "div"
+            TallyPairwise(sh, verb, args, /)
+        Case Else
+            Error("TALLY: UNKNOWN DERIVE VERB '" & verb & "' — TRY zscores ranks log abs pct residuals add sub mul div")
+
+Def TallyPct(xs As List Of Number) As List Of Number
+    Let total = Sum(xs)
+    Map(xs, Fn(x) => 100 * x / total)
+
+Rem Every derive.* in the spec, in the order the file gave them — so a
+Rem later derive can name an earlier one's column.
+Def TallyDeriveAll(sh As CsvSheet, sp As List Of Pair) As CsvSheet
+    Fold(SpecSuffixed(sp, "derive."), sh, Fn(s, p) => TallyDerive(s, Fst(p), Snd(p)))
+
+Rem ======================================================================
+Rem FILTER — fewer rows, same columns
+Rem ======================================================================
+
+Def TallyKeep(sh As CsvSheet, p As [ List Of String -- Boolean ]) As CsvSheet
+    CsvSheet(CsvHeads(sh), Filter(CsvBody(sh), p))
+
+Def TallyFilter(sh As CsvSheet, recipe As String) As CsvSheet
+    Let ws = SpecWordsOf(recipe)
+    If IsEmpty(ws) Then
+        sh
+    Else
+        Let verb = Lower(First(ws))
+        Let args = Rest(ws)
+        Let head = TallyArg(verb, args, 1)
+        Select Case verb
+            Case "inliers"
+                TallyFences(sh, head, True)
+            Case "outliers"
+                TallyFences(sh, head, False)
+            Case "above"
+                TallyKeep(sh, Fn(r) => TallyCell(sh, r, head) > Val(TallyArg(verb, args, 2)))
+            Case "below"
+                TallyKeep(sh, Fn(r) => TallyCell(sh, r, head) < Val(TallyArg(verb, args, 2)))
+            Case "equals"
+                TallyKeep(sh, Fn(r) => CsvGetOr(sh, r, head, "") = TallyArg(verb, args, 2))
+            Case Else
+                Error("TALLY: UNKNOWN FILTER VERB '" & verb & "' — TRY inliers outliers above below equals")
+
+Rem The 1.5 x IQR fences, the same rule stats.shoddy's Outliers and the
+Rem box plot's whiskers use. inside = True keeps the ordinary rows;
+Rem False keeps only the strange ones.
+Def TallyFences(sh As CsvSheet, head As String, inside As Boolean) As CsvSheet
+    Let xs = TallyCol(sh, head)
+    Let q1 = Quantile(xs, 0.25)
+    Let q3 = Quantile(xs, 0.75)
+    Let lo = q1 - 1.5 * (q3 - q1)
+    Let hi = q3 + 1.5 * (q3 - q1)
+    If inside Then
+        TallyKeep(sh, Fn(r) => TallyCell(sh, r, head) >= lo And TallyCell(sh, r, head) <= hi)
+    Else
+        TallyKeep(sh, Fn(r) => TallyCell(sh, r, head) < lo Or TallyCell(sh, r, head) > hi)
+
+Def TallyFilterAll(sh As CsvSheet, sp As List Of Pair) As CsvSheet
+    Fold(SpecSuffixed(sp, "filter."), sh, Fn(s, p) => TallyFilter(s, Snd(p)))
+
+Rem ======================================================================
+Rem REPORT — the sheet as lines of text
+Rem ======================================================================
+Rem Fixed-width columns, so a monospace terminal lines them up and a diff
+Rem against files/expected.out is meaningful.
+
+Def TallyW() As Number
+    11
+
+Def TallyNum(x As Number) As String
+    PadLeft(ToFixed(x, 3), TallyW())
+
+Def TallyLabel(s As String) As String
+    PadRight(s, 14)
+
+Def TallyRule() As String
+    StrRep("-", 14 + 8 * TallyW())
+
+Def TallyHeadings() As String
+    TallyLabel("COLUMN") & PadLeft("N", TallyW()) & PadLeft("MEAN", TallyW()) & PadLeft("SD", TallyW()) & PadLeft("MIN", TallyW()) & PadLeft("Q1", TallyW()) & PadLeft("MEDIAN", TallyW()) & PadLeft("Q3", TallyW()) & PadLeft("MAX", TallyW())
+
+Def TallyDescribeRow(sh As CsvSheet, head As String) As String
+    Let xs = TallyCol(sh, head)
+    TallyLabel(head) & PadLeft(Str(Length(xs)), TallyW()) & TallyNum(Mean(xs)) & TallyNum(StdDev(xs)) & TallyNum(Minimum(xs)) & TallyNum(Quantile(xs, 0.25)) & TallyNum(Median(xs)) & TallyNum(Quantile(xs, 0.75)) & TallyNum(Maximum(xs))
+
+Def TallyDescribe(sh As CsvSheet, heads As List Of String) As List Of String
+    Concat({ TallyHeadings(), TallyRule() }, Map(heads, Fn(h) => TallyDescribeRow(sh, h)))
+
+Rem p-values print to four places and stop: past that the number says
+Rem more than the arithmetic knows.
+Def TallyP(p As Number) As String
+    If p < 0.0001 Then
+        "< 0.0001"
+    Else
+        ToFixed(p, 4)
+
+Def TallyCorrel(sh As CsvSheet, xh As String, yh As String) As List Of String
+    Let xs = TallyCol(sh, xh)
+    Let ys = TallyCol(sh, yh)
+    { "CORRELATION OF " & xh & " AND " & yh,
+      TallyLabel("  PEARSON") & TallyNum(Correl(xs, ys)),
+      TallyLabel("  SPEARMAN") & TallyNum(Spearman(xs, ys)) }
+
+Def TallyFit(sh As CsvSheet, xh As String, yh As String) As List Of String
+    Let f = LinFit(TallyCol(sh, xh), TallyCol(sh, yh))
+    { "LEAST SQUARES FIT OF " & yh & " ON " & xh,
+      TallyLabel("  SLOPE") & TallyNum(Slope(f)),
+      TallyLabel("  INTERCEPT") & TallyNum(Intercept(f)),
+      TallyLabel("  R2") & TallyNum(R2(f)) }
+
+Def TallyFreq(sh As CsvSheet, head As String) As List Of String
+    Let f = Freq(TallyText(sh, head))
+    Let n = Length(CsvBody(sh))
+    Prepend("FREQUENCY OF " & head,
+            Map(f, Fn(p) => TallyLabel("  " & Fst(p)) & PadLeft(Str(Snd(p)), TallyW()) & TallyNum(100 * Snd(p) / n)))
+
+Def TallyTTest2(sh As CsvSheet, ah As String, bh As String) As List Of String
+    Let t = TTest2(TallyCol(sh, ah), TallyCol(sh, bh))
+    { "TWO-SAMPLE T-TEST, " & ah & " AGAINST " & bh,
+      TallyLabel("  T") & TallyNum(Stat(t)),
+      TallyLabel("  DF") & PadLeft(Str(Df(t)), TallyW()),
+      TallyLabel("  P") & PadLeft(TallyP(PVal(t)), TallyW()) }
+
+Def TallyAnova(sh As CsvSheet, heads As List Of String) As List Of String
+    Let a = Anova(Map(heads, Fn(h) => TallyCol(sh, h)))
+    { "ONE-WAY ANOVA OVER " & Join(heads, ", "),
+      TallyLabel("  F") & TallyNum(Stat(a)),
+      TallyLabel("  DF") & PadLeft(Str(Df(a)), TallyW()),
+      TallyLabel("  P") & PadLeft(TallyP(PVal(a)), TallyW()) }
+
+Def TallyOutliers(sh As CsvSheet, head As String) As List Of String
+    Let xs = Outliers(TallyCol(sh, head))
+    If IsEmpty(xs) Then
+        { "OUTLIERS IN " & head & ": NONE BEYOND THE 1.5 IQR FENCES" }
+    Else
+        { "OUTLIERS IN " & head & " (1.5 IQR): " & Join(Map(xs, Str), ", ") }
+
+Def TallyReportOne(sh As CsvSheet, recipe As String) As List Of String
+    Let ws = SpecWordsOf(recipe)
+    If IsEmpty(ws) Then
+        { }
+    Else
+        Let verb = Lower(First(ws))
+        Let args = Rest(ws)
+        Select Case verb
+            Case "count"
+                { "ROWS: " & Str(Length(CsvBody(sh))) & "   COLUMNS: " & Join(CsvHeads(sh), ", ") }
+            Case "describe"
+                TallyDescribe(sh, Ifte(IsEmpty(args), CsvHeads(sh), args))
+            Case "correl"
+                TallyCorrel(sh, TallyArg(verb, args, 1), TallyArg(verb, args, 2))
+            Case "fit"
+                TallyFit(sh, TallyArg(verb, args, 1), TallyArg(verb, args, 2))
+            Case "freq"
+                TallyFreq(sh, TallyArg(verb, args, 1))
+            Case "ttest2"
+                TallyTTest2(sh, TallyArg(verb, args, 1), TallyArg(verb, args, 2))
+            Case "anova"
+                TallyAnova(sh, args)
+            Case "outliers"
+                TallyOutliers(sh, TallyArg(verb, args, 1))
+            Case Else
+                Error("TALLY: UNKNOWN REPORT VERB '" & verb & "' — TRY count describe correl fit freq ttest2 anova outliers")
+
+Rem Every report.* in file order, one blank line between them.
+Def TallyReport(sh As CsvSheet, sp As List Of Pair) As List Of String
+    Flatten(Map(SpecSuffixed(sp, "report."), Fn(p) => Append(TallyReportOne(sh, Snd(p)), "")))
+
+Rem ======================================================================
+Rem THE WHOLE PIPELINE
+Rem ======================================================================
+Rem Derive before filter before report: a filter may name a derived
+Rem column, and a report should see only the rows that survived.
+
+Def TallyPipeline(sp As List Of Pair, text As String) As CsvSheet
+    TallyFilterAll(TallyDeriveAll(TallySheetOf(sp, text), sp), sp)
+
+Rem ======================================================================
+Rem WHAT THE CHART NEEDS
+Rem ======================================================================
+Rem The shell draws; this decides what gets drawn. Kept here so that a
+Rem test can check the numbers a chart would have been given without a
+Rem window ever existing.
+
+Def TallyChartType(sp As List Of Pair) As String
+    Lower(SpecGetOr(sp, "chart.type", "none"))
+
+Def TallyXs(sh As CsvSheet, sp As List Of Pair) As List Of Number
+    TallyCol(sh, SpecGet(sp, "chart.x"))
+
+Def TallyYs(sh As CsvSheet, sp As List Of Pair) As List Of Number
+    TallyCol(sh, SpecGet(sp, "chart.y"))
+
+Rem Bar and pie want a label per slice; the labels column defaults to the
+Rem first column in the file, which is what it usually is.
+Def TallyLabels(sh As CsvSheet, sp As List Of Pair) As List Of String
+    TallyText(sh, SpecGetOr(sp, "chart.labels", First(CsvHeads(sh))))
+
+Def TallyTitle(sp As List Of Pair) As String
+    SpecGetOr(sp, "chart.title", "")
+
+Rem Every chart type this mill can draw, for the usage message and for
+Rem the check that runs before a window is opened.
+Def TallyCharts() As List Of String
+    { "histogram", "bar", "pie", "box", "scatter", "none" }
+
+Rem Everything that can be wrong with a spec BEFORE anything is drawn:
+Rem the empty string when it is all right, a complaint when it is not.
+Rem The shell calls this first, so a bad spec is a message and an exit
+Rem rather than a window that opens and then dies.
+Def TallyCheck(sh As CsvSheet, sp As List Of Pair) As String
+    Let kind = TallyChartType(sp)
+    If Not Contains(TallyCharts(), kind) Then
+        "UNKNOWN chart.type '" & kind & "' — TRY " & Join(TallyCharts(), ", ")
+    Else
+        If IsEmpty(CsvBody(sh)) Then
+            "NO ROWS LEFT AFTER filter.* — NOTHING TO DRAW"
+        Else
+            TallyCheckCols(sh, kind, sp)
+
+Def TallyCheckCols(sh As CsvSheet, kind As String, sp As List Of Pair) As String
+    Let needs = TallyNeeds(kind)
+    Let missing = Filter(needs, Fn(k) => Not SpecHas(sp, k))
+    If Not IsEmpty(missing) Then
+        "chart.type " & kind & " NEEDS " & Join(missing, " AND ")
+    Else
+        Let named = Filter(Map(needs, Fn(k) => SpecGet(sp, k)), Fn(h) => Not CsvHas(sh, h))
+        If IsEmpty(named) Then
+            ""
+        Else
+            "NO COLUMN " & Join(named, " OR ") & " — THE FILE HAS " & Join(CsvHeads(sh), ", ")
+
+Rem Which spec keys a chart type cannot do without. Bar and pie take
+Rem their labels from chart.labels or the first column, so neither is
+Rem required; scatter is the only one that needs two axes.
+Def TallyNeeds(kind As String) As List Of String
+    Select Case kind
+        Case "scatter"
+            { "chart.x", "chart.y" }
+        Case "histogram", "box"
+            { "chart.x" }
+        Case "bar", "pie"
+            { "chart.y" }
+        Case Else
+            { }

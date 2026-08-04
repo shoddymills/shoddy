@@ -20,6 +20,13 @@ public static class ScribblerWindows
     static readonly List<ScribblerWindow> windows = new();   // main thread only
     static Glfw? glfw;      // for WaitEventsTimeout/PostEmptyEvent; set with the first window
 
+    /// <summary>--no-window: every window this run creates is created
+    /// hidden. Set once by the mill before Run and never afterwards, so
+    /// ScribblerWindow can read it without a lock. Drawing, blitting,
+    /// events and SCRIBBLERSAVE all behave exactly as they would on
+    /// screen — this is a capture run, not a headless runtime.</summary>
+    public static bool Hidden;
+
     public static void Register(ScribblerWindow w) => windows.Add(w);
     public static void Unregister(ScribblerWindow w) => windows.Remove(w);
 

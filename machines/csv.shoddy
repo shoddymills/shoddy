@@ -1,0 +1,706 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem csv.shoddy — Shoddy standard library: CSV, RFC 4180
+Rem
+Rem A complete reader and writer, pure Shoddy. A document is the plain
+Rem thing it looks like — a List Of List Of String, rows of cells — so
+Rem seq.shoddy's Map, Filter and Fold work on it with nothing learned.
+Rem
+Rem     Let rows = CsvLoad("grades.csv")
+Rem     Each(rows, Fn(r) => Print(Join(r, " | ")))
+Rem     CsvSave("out.csv", Map(rows, Reverse))
+Rem
+Rem THREE LAYERS, each one word away from the next. Take the one that
+Rem fits the file in front of you.
+Rem
+Rem   1. ROWS. CsvParse / CsvLoad in, CsvText / CsvSave out. Cells are
+Rem      strings; what they mean is your business.
+Rem
+Rem   2. A SHEET. CsvSheetRead treats the first record as a header and
+Rem      gives you a CsvSheet, after which columns have NAMES:
+Rem
+Rem          Let sh = CsvSheetLoad("people.csv")
+Rem          Each(CsvBody(sh), Fn(r) => Print(CsvGet(sh, r, "NAME")))
+Rem          Print(Str(Sum(CsvColumnNums(sh, "SCORE"))))
+Rem
+Rem      A row can also be handed over as an association list —
+Rem      CsvPairs — which is precisely dict.shoddy's dictionary, so
+Rem      DictGet and friends work on it unchanged, exactly as json's
+Rem      objects do.
+Rem
+Rem   3. A TYPE. Give CsvRecs a function from cells to your record and
+Rem      it hands back a List Of your record; give CsvFromRecs the
+Rem      inverse and it hands back the file. The type is yours, this
+Rem      machine never sees it:
+Rem
+Rem          Type Student
+Rem              Name  As String
+Rem              Score As Number
+Rem
+Rem          Def StudentOf(cells As List Of String) As Student
+Rem              Student(Nth(cells, 1), Val(Nth(cells, 2)))
+Rem
+Rem          Def StudentCells(s As Student) As List Of String
+Rem              { Name(s), Str(Score(s)) }
+Rem
+Rem          Let class = CsvLoadRecs("class.csv", StudentOf)
+Rem          CsvSaveRecs("class.csv", class, StudentCells)
+Rem
+Rem      With a header, name the columns instead of counting them:
+Rem
+Rem          Let sh = CsvSheetLoad("class.csv")
+Rem          Let class = CsvSheetRecs(sh, Fn(r) =>
+Rem              Student(CsvGet(sh, r, "NAME"), CsvNum(sh, r, "SCORE")))
+Rem
+Rem The guard-pair convention, as in json.shoddy and str.shoddy: the
+Rem strict word is the one you reach for first, and the total word is
+Rem there the moment the input stops being yours.
+Rem
+Rem     CsvParse / CsvRead        CsvGet / CsvGetOr    CsvNum / CsvNumOr
+Rem
+Rem Shoddy has no catchable errors, so a parser that could only abort
+Rem would be untestable on malformed input and unusable on untrusted
+Rem input. CsvRead is therefore total: it returns CsvOk or CsvErr, and
+Rem CsvErr carries the reason and the 1-based offset where the parse
+Rem gave up. CsvParse is the aborting wrapper over it.
+Rem
+Rem ---- dialects ------------------------------------------------------
+Rem
+Rem Every reader and writer word comes in two spellings — CsvParse and
+Rem CsvParseAs, CsvText and CsvTextAs — the plain one being the -As one
+Rem applied to CsvComma(). A CsvDialect carries the separator, the quote
+Rem character, the line ending written out, whether spaces around an
+Rem unquoted cell are dropped, and a comment prefix:
+Rem
+Rem     CsvComma()   ,  quote  LF     the default
+Rem     CsvRfc()     ,  quote  CRLF   RFC 4180 to the letter
+Rem     CsvTabs()    tab             TSV
+Rem     CsvSemis()   ;               the European spreadsheet spelling
+Rem     CsvSepBy(c)  any single character
+Rem
+Rem and two combinators, which take a dialect and return a new one:
+Rem
+Rem     CsvTrimming(d)      drop spaces around UNQUOTED cells
+Rem     CsvCommented(d, p)  skip whole records that begin with p
+Rem
+Rem So the repo's own numeric .dat files — comma separated, # comments —
+Rem read with CsvParseAs(text, CsvCommented(CsvTrimming(CsvComma()), "#")).
+Rem
+Rem ---- what is quoted, and what is not -------------------------------
+Rem
+Rem Reading, a cell is quoted or it is not, and inside quotes a doubled
+Rem quote ("") is one literal quote — that is the whole of RFC 4180's
+Rem escaping and there is no backslash anywhere in it. A quoted cell may
+Rem contain separators and line breaks. A bare quote in the middle of an
+Rem UNQUOTED cell is taken literally (ab"c is four characters), which is
+Rem what every spreadsheet does; a quote that opens a cell must close it.
+Rem
+Rem Writing, a cell is quoted only when it has to be: it holds the
+Rem separator, a quote, a CR or an LF, or it has a leading or trailing
+Rem space. That last one is not RFC 4180's rule — it is here so a round
+Rem trip is exact under CsvTrimming as well, since otherwise the trimmer
+Rem would eat spaces the writer meant.
+Rem
+Rem ---- known limits --------------------------------------------------
+Rem
+Rem Line endings. LF, CRLF and lone CR all end a record on the way in,
+Rem including inside a quoted cell, where they are normalized to LF so
+Rem that a parse-write-parse round trip is stable. Going out, the
+Rem dialect's ending is written after EVERY record, the last included —
+Rem the same convention as file.shoddy's WriteLines.
+Rem
+Rem A blank line is a record of one empty cell, as RFC 4180 says it is.
+Rem A single line ending at the very end of the input is the terminator
+Rem of the last record and does NOT start an empty one. If you want
+Rem blank lines gone, CsvDropBlanks is one word.
+Rem
+Rem Ragged rows are not an error. Files in the wild are ragged, and a
+Rem reader that aborted on them would be useless for the job you have.
+Rem CsvIsRect asks, CsvWidth measures, CsvRect pads to the widest row.
+Rem
+Rem A byte-order mark is stripped, both the UTF-8 spelling (three chars,
+Rem since file i/o is one byte per char) and a bare U+FEFF.
+Rem
+Rem NUL cannot be carried. Chr(0) is the empty string in Shoddy, so a
+Rem NUL in the file would silently shorten a cell — but nothing here can
+Rem produce one, and a CSV file containing one is not text.
+Rem
+Rem Numbers are Str and Val, so a cell written from a Number carries ten
+Rem significant digits (see json.shoddy on the same point). Values that
+Rem survive ten digits round-trip exactly.
+Rem ==================================================================
+
+Include "dict.shoddy"
+Include "str.shoddy"
+
+Rem The document a total read produces.
+Type CsvDoc = CsvOk(CsvRows As List Of List Of String) | CsvErr(CsvWhy As String, CsvAt As Number)
+
+Rem The separator, the quote character, the line ending the writer puts
+Rem between records, whether an unquoted cell is trimmed, and a comment
+Rem prefix ("" for none). Build one with CsvComma and friends below
+Rem rather than by hand — record fields are positional, so a dialect
+Rem written out longhand is a thing that breaks quietly if a field is
+Rem ever inserted.
+Type CsvDialect
+    CsvSep   As String
+    CsvQuote As String
+    CsvEol   As String
+    CsvTrims As Boolean
+    CsvSkip  As String
+
+Rem A document read as a header and the records under it.
+Type CsvSheet
+    CsvHeads As List Of String
+    CsvBody  As List Of List Of String
+
+Rem The internal cell result, threaded through the scanner: the cell's
+Rem text AND the 1-based index of the first character after it, or why
+Rem and where the scan gave up.
+Type CTake = CTook(CTVal As String, CTNext As Number) | CTBad(CTWhy As String, CTAt As Number)
+
+Rem The same, one level up, for a whole record.
+Type CRTake = CRTook(CRVal As List Of String, CRNext As Number) | CRBad(CRWhy As String, CRAt As Number)
+
+Rem ---- constants -------------------------------------------------------
+Rem Machines cannot carry a top-level Let, so the constants are zero-arg
+Rem Defs, as json's JQt() and vt100's Esc() are.
+
+Def CsvQt() As String
+    Chr(34)
+
+Def CsvNl() As String
+    Chr(10)
+
+Def CsvCr() As String
+    Chr(13)
+
+Def CsvTab() As String
+    Chr(9)
+
+Rem ---- dialects --------------------------------------------------------
+
+Def CsvComma() As CsvDialect
+    CsvDialect(",", CsvQt(), CsvNl(), False, "")
+
+Rem RFC 4180 says CRLF between records. Everything else in this library
+Rem writes LF, so that is the default and this is the opt-in.
+Def CsvRfc() As CsvDialect
+    CsvDialect(",", CsvQt(), CsvCr() & CsvNl(), False, "")
+
+Def CsvTabs() As CsvDialect
+    CsvDialect(CsvTab(), CsvQt(), CsvNl(), False, "")
+
+Def CsvSemis() As CsvDialect
+    CsvDialect(";", CsvQt(), CsvNl(), False, "")
+
+Rem A separator is one character, and not one the grammar already spends
+Rem — that is a programmer's mistake rather than a reader's, so it
+Rem aborts here instead of turning into a strange parse later.
+Def CsvSepBy(c As String) As CsvDialect
+    If Len(c) <> 1 Then
+        Error("CSVSEPBY: A SEPARATOR IS EXACTLY ONE CHARACTER")
+    Else
+        If c = CsvQt() Or c = CsvCr() Or c = CsvNl() Then
+            Error("CSVSEPBY: A QUOTE, CR OR LF CANNOT BE THE SEPARATOR")
+        Else
+            CsvDialect(c, CsvQt(), CsvNl(), False, "")
+
+Rem Spaces around an UNQUOTED cell are dropped. Quoted cells are left
+Rem exactly as written — quoting is how a file says "these spaces are
+Rem mine".
+Def CsvTrimming(d As CsvDialect) As CsvDialect
+    CsvDialect(CsvSep(d), CsvQuote(d), CsvEol(d), True, CsvSkip(d))
+
+Rem Records beginning with the prefix are skipped whole. Not part of
+Rem CSV; part of every hand-kept data file there has ever been.
+Def CsvCommented(d As CsvDialect, prefix As String) As CsvDialect
+    CsvDialect(CsvSep(d), CsvQuote(d), CsvEol(d), CsvTrims(d), prefix)
+
+Rem ======================================================================
+Rem THE READER
+Rem ======================================================================
+
+Rem The slice [run, i), or "" — Mid is never asked for zero characters.
+Def CSlice(s As String, run As Number, i As Number) As String
+    If i > run Then
+        Mid(s, run, i - run)
+    Else
+        ""
+
+Rem Flush the run [run, i) onto the fragment list, if it is not empty.
+Def CRun(s As String, run As Number, i As Number, acc As List Of String) As List Of String
+    If i > run Then
+        Prepend(Mid(s, run, i - run), acc)
+    Else
+        acc
+
+Rem True where a cell ends: the separator, either line ending character,
+Rem or the end of the input.
+Def CEnds(c As String, d As CsvDialect) As Boolean
+    Len(c) = 0 Or c = CsvSep(d) Or c = CsvNl() Or c = CsvCr()
+
+Rem The index just past the end-of-record at i, or 0 if there is not one
+Rem there. CRLF counts once.
+Def CEol(s As String, i As Number) As Number
+    Let c = Mid(s, i, 1)
+    If c = CsvCr() Then
+        Ifte(Mid(s, i + 1, 1) = CsvNl(), i + 2, i + 1)
+    Else
+        Ifte(c = CsvNl(), i + 1, 0)
+
+Rem The index just past the line containing i — for comment records,
+Rem which are not parsed at all. Self-tail-recursive, so a long comment
+Rem costs no stack.
+Def CToEol(s As String, i As Number) As Number
+    If i > Len(s) Then
+        i
+    Else
+        If CEol(s, i) > 0 Then
+            CEol(s, i)
+        Else
+            CToEol(s, i + 1)
+
+Def CComment(s As String, i As Number, d As CsvDialect) As Boolean
+    Len(CsvSkip(d)) > 0 And Mid(s, i, Len(CsvSkip(d))) = CsvSkip(d)
+
+Rem ---- cells -----------------------------------------------------------
+
+Def CTrimmed(t As String, d As CsvDialect) As String
+    If CsvTrims(d) Then
+        Trim(t)
+    Else
+        t
+
+Rem A CR or CRLF inside a quoted cell becomes an LF, so that reading a
+Rem file written on the other kind of machine and writing it back gives
+Rem the same document rather than a longer one.
+Def CNorm(t As String) As String
+    Replace(Replace(t, CsvCr() & CsvNl(), CsvNl()), CsvCr(), CsvNl())
+
+Rem An unquoted cell: everything up to the next separator or line
+Rem ending. A quote in here is an ordinary character.
+Def CBare(s As String, i As Number, run As Number, d As CsvDialect) As CTake
+    If CEnds(Mid(s, i, 1), d) Then
+        CTook(CTrimmed(CSlice(s, run, i), d), i)
+    Else
+        CBare(s, i + 1, run, d)
+
+Rem A quoted cell, from the character after its opening quote. As in
+Rem json's string scanner, the start of the current unescaped RUN is
+Rem tracked so an ordinary cell costs one fragment rather than one per
+Rem character. A doubled quote is one literal quote; any other quote
+Rem closes the cell.
+Def CQuoted(s As String, i As Number, run As Number, acc As List Of String, d As CsvDialect) As CTake
+    If i > Len(s) Then
+        CTBad("UNTERMINATED QUOTED CELL", i)
+    Else
+        Let c = Mid(s, i, 1)
+        If c <> CsvQuote(d) Then
+            CQuoted(s, i + 1, run, acc, d)
+        Else
+            If Mid(s, i + 1, 1) = CsvQuote(d) Then
+                CQuoted(s, i + 2, i + 2, Prepend(CsvQuote(d), CRun(s, run, i, acc)), d)
+            Else
+                CClose(s, i + 1, Join(Reverse(CRun(s, run, i, acc)), ""), d)
+
+Rem After the closing quote nothing may follow but a separator or the
+Rem end of the record. "AB"C is the one shape this reader refuses, and
+Rem it refuses it because there is no reading of it that is not a guess.
+Def CClose(s As String, i As Number, body As String, d As CsvDialect) As CTake
+    If CEnds(Mid(s, i, 1), d) Then
+        CTook(CNorm(body), i)
+    Else
+        CTBad("EXPECTED A SEPARATOR OR AN END OF RECORD AFTER A CLOSING QUOTE", i)
+
+Def CCell(s As String, i As Number, d As CsvDialect) As CTake
+    If Mid(s, i, 1) = CsvQuote(d) Then
+        CQuoted(s, i + 1, i + 1, { }, d)
+    Else
+        CBare(s, i, i, d)
+
+Rem ---- records ---------------------------------------------------------
+Rem One Def, not two, so the cell loop is a SELF tail call and a wide
+Rem record costs no stack.
+
+Def CRecord(s As String, i As Number, acc As List Of String, d As CsvDialect) As CRTake
+    Select Case CCell(s, i, d)
+        Case CTBad(why, at)
+            CRBad(why, at)
+        Case CTook(v, n)
+            If Mid(s, n, 1) = CsvSep(d) Then
+                CRecord(s, n + 1, Prepend(v, acc), d)
+            Else
+                CRTook(Reverse(Prepend(v, acc)), n)
+        Case Else
+            CRBad("UNEXPECTED END OF INPUT", i)
+
+Rem The record loop. Also a self tail call, so a file of a hundred
+Rem thousand rows costs no more stack than a file of one — the reader
+Rem has no recursion in it that grows with the input.
+Def CRecords(s As String, i As Number, acc As List Of List Of String, d As CsvDialect) As CsvDoc
+    If i > Len(s) Then
+        CsvOk(Reverse(acc))
+    Else
+        If CComment(s, i, d) Then
+            CRecords(s, CToEol(s, i), acc, d)
+        Else
+            Select Case CRecord(s, i, { }, d)
+                Case CRBad(why, at)
+                    CsvErr(why, at)
+                Case CRTook(row, n)
+                    Let k = CEol(s, n)
+                    If n > Len(s) Then
+                        CsvOk(Reverse(Prepend(row, acc)))
+                    Else
+                        If k = 0 Then
+                            CsvErr("EXPECTED A SEPARATOR OR AN END OF RECORD", n)
+                        Else
+                            CRecords(s, k, Prepend(row, acc), d)
+                Case Else
+                    CsvErr("UNEXPECTED END OF INPUT", i)
+
+Rem ---- the public reader -----------------------------------------------
+
+Rem Excel writes one; nothing downstream wants it in the first header.
+Def CsvNoBom(s As String) As String
+    If StartsWith(s, Chr(239) & Chr(187) & Chr(191)) Then
+        Mid(s, 4, Len(s))
+    Else
+        If StartsWith(s, Chr(65279)) Then
+            Mid(s, 2, Len(s))
+        Else
+            s
+
+Def CsvReadAs(s As String, d As CsvDialect) As CsvDoc
+    CRecords(CsvNoBom(s), 1, { }, d)
+
+Def CsvRead(s As String) As CsvDoc
+    CsvReadAs(s, CsvComma())
+
+Def CsvParseAs(s As String, d As CsvDialect) As List Of List Of String
+    Select Case CsvReadAs(s, d)
+        Case CsvOk(rows)
+            rows
+        Case CsvErr(why, at)
+            Error("CSVPARSE: " & why & " AT " & Str(at))
+        Case Else
+            Error("CSVPARSE: UNREACHABLE")
+
+Def CsvParse(s As String) As List Of List Of String
+    CsvParseAs(s, CsvComma())
+
+Def CsvLoadAs(path As String, d As CsvDialect) As List Of List Of String
+    CsvParseAs(ReadFile(path), d)
+
+Def CsvLoad(path As String) As List Of List Of String
+    CsvParse(ReadFile(path))
+
+Rem ======================================================================
+Rem THE WRITER
+Rem ======================================================================
+Rem Never build a string with & in a left fold — that is quadratic in the
+Rem output, which is exactly the shape of a serializer. Every writer word
+Rem prepends FRAGMENTS onto an accumulator and the join happens once, at
+Rem the top, in CsvTextAs.
+
+Rem One line and not three: a wrapped Or outside brackets takes its left
+Rem operand off the stack rather than from the line above it.
+Def CsvNeedsQuote(t As String, d As CsvDialect) As Boolean
+    Instr(t, CsvSep(d)) > 0 Or Instr(t, CsvQuote(d)) > 0 Or Instr(t, CsvNl()) > 0 Or Instr(t, CsvCr()) > 0 Or t <> Trim(t)
+
+Rem Wrapped in quotes with every inner quote doubled. RFC 4180's escape
+Rem is the whole of RFC 4180's escaping.
+Def CsvQuoteCell(t As String, d As CsvDialect) As String
+    CsvQuote(d) & Replace(t, CsvQuote(d), CsvQuote(d) & CsvQuote(d)) & CsvQuote(d)
+
+Def CsvCellAs(t As String, d As CsvDialect) As String
+    If CsvNeedsQuote(t, d) Then
+        CsvQuoteCell(t, d)
+    Else
+        t
+
+Def CsvCellOf(t As String) As String
+    CsvCellAs(t, CsvComma())
+
+Rem One record, without its line ending — for appending to an open file,
+Rem or printing.
+Def CsvLineAs(cells As List Of String, d As CsvDialect) As String
+    Join(Reverse(CFragCells(cells, d, { }, True)), "")
+
+Def CsvLine(cells As List Of String) As String
+    CsvLineAs(cells, CsvComma())
+
+Rem The flag is named lead, not first: words are case-folded and a local
+Rem outranks a builtin, so a parameter named first would shadow First
+Rem everywhere in the Def.
+Def CFragCells(cells As List Of String, d As CsvDialect, acc As List Of String, lead As Boolean) As List Of String
+    If IsEmpty(cells) Then
+        acc
+    Else
+        If lead Then
+            CFragCells(Rest(cells), d, Prepend(CsvCellAs(First(cells), d), acc), False)
+        Else
+            CFragCells(Rest(cells), d, Prepend(CsvCellAs(First(cells), d), Prepend(CsvSep(d), acc)), False)
+
+Def CFragRows(rows As List Of List Of String, d As CsvDialect, acc As List Of String) As List Of String
+    If IsEmpty(rows) Then
+        acc
+    Else
+        CFragRows(Rest(rows), d, Prepend(CsvEol(d), CFragCells(First(rows), d, acc, True)))
+
+Def CsvTextAs(rows As List Of List Of String, d As CsvDialect) As String
+    Join(Reverse(CFragRows(rows, d, { })), "")
+
+Def CsvText(rows As List Of List Of String) As String
+    CsvTextAs(rows, CsvComma())
+
+Def CsvSaveAs(path As String, rows As List Of List Of String, d As CsvDialect)
+    WriteFile(path, CsvTextAs(rows, d))
+
+Def CsvSave(path As String, rows As List Of List Of String)
+    WriteFile(path, CsvText(rows))
+
+Def CsvAppendAs(path As String, rows As List Of List Of String, d As CsvDialect)
+    AppendFile(path, CsvTextAs(rows, d))
+
+Def CsvAppend(path As String, rows As List Of List Of String)
+    AppendFile(path, CsvText(rows))
+
+Rem ======================================================================
+Rem SHAPE
+Rem ======================================================================
+Rem Ragged is normal. These are the words for finding out, and for
+Rem deciding what to do about it.
+
+Def CsvWidth(rows As List Of List Of String) As Number
+    Fold(rows, 0, Fn(a, r) => Max(a, Length(r)))
+
+Rem The width is measured ONCE and carried in. Fn(r) => Length(r) =
+Rem CsvWidth(rows) would re-measure the whole document for every row it
+Rem checked, which is a quadratic scan hiding inside a one-line word.
+Def CsvIsRect(rows As List Of List Of String) As Boolean
+    Let w = CsvWidth(rows)
+    All(rows, Fn(r) => Length(r) = w)
+
+Def CsvPadRow(row As List Of String, n As Number) As List Of String
+    If Length(row) >= n Then
+        row
+    Else
+        CsvPadRow(Append(row, ""), n)
+
+Rem Every row padded with empty cells to the width of the widest.
+Def CsvRect(rows As List Of List Of String) As List Of List Of String
+    Let w = CsvWidth(rows)
+    Map(rows, Fn(r) => CsvPadRow(r, w))
+
+Rem A blank line reads as a record of one empty cell. This drops those,
+Rem and any other row with nothing in it.
+Def CsvDropBlanks(rows As List Of List Of String) As List Of List Of String
+    Filter(rows, Fn(r) => Not All(r, Fn(t) => Len(Trim(t)) = 0))
+
+Rem A List is a quotation and compares by identity, so = on two rows is
+Rem always False however identical they are. This is the comparison you
+Rem want after a round trip — the same office JEqual does in json.
+Def CsvRowEqual(a As List Of String, b As List Of String) As Boolean
+    Length(a) = Length(b) And All(Zip(a, b), Fn(p) => Fst(p) = Snd(p))
+
+Def CsvEqual(a As List Of List Of String, b As List Of List Of String) As Boolean
+    Length(a) = Length(b) And All(Zip(a, b), Fn(p) => CsvRowEqual(Fst(p), Snd(p)))
+
+Rem The transpose — columns become rows. Useful for a file that is
+Rem written the other way round, and for column-wise arithmetic.
+Def CsvFlip(rows As List Of List Of String) As List Of List Of String
+    Let w = CsvWidth(rows)
+    Let sq = CsvRect(rows)
+    Map(Range(1, w), Fn(k) => Map(sq, Fn(r) => Nth(r, k)))
+
+Rem ======================================================================
+Rem SHEETS — A HEADER AND THE RECORDS UNDER IT
+Rem ======================================================================
+
+Def CsvSheetOf(rows As List Of List Of String) As CsvSheet
+    If IsEmpty(rows) Then
+        CsvSheet({ }, { })
+    Else
+        CsvSheet(First(rows), Rest(rows))
+
+Def CsvSheetReadAs(s As String, d As CsvDialect) As CsvSheet
+    CsvSheetOf(CsvParseAs(s, d))
+
+Def CsvSheetRead(s As String) As CsvSheet
+    CsvSheetOf(CsvParse(s))
+
+Def CsvSheetLoadAs(path As String, d As CsvDialect) As CsvSheet
+    CsvSheetOf(CsvLoadAs(path, d))
+
+Def CsvSheetLoad(path As String) As CsvSheet
+    CsvSheetOf(CsvLoad(path))
+
+Rem Back to rows, header first — the inverse of CsvSheetOf.
+Def CsvSheetRows(sh As CsvSheet) As List Of List Of String
+    Prepend(CsvHeads(sh), CsvBody(sh))
+
+Def CsvSheetTextAs(sh As CsvSheet, d As CsvDialect) As String
+    CsvTextAs(CsvSheetRows(sh), d)
+
+Def CsvSheetText(sh As CsvSheet) As String
+    CsvText(CsvSheetRows(sh))
+
+Def CsvSheetSaveAs(path As String, sh As CsvSheet, d As CsvDialect)
+    WriteFile(path, CsvSheetTextAs(sh, d))
+
+Def CsvSheetSave(path As String, sh As CsvSheet)
+    WriteFile(path, CsvSheetText(sh))
+
+Rem ---- columns by name -------------------------------------------------
+Rem The parameter is head, not name: a record field called Name is
+Rem common enough that shadowing its accessor inside this Def would be a
+Rem trap laid for somebody else's program.
+
+Def CsvIndexOf(sh As CsvSheet, head As String) As Number
+    IndexOf(CsvHeads(sh), head)
+
+Def CsvHas(sh As CsvSheet, head As String) As Boolean
+    CsvIndexOf(sh, head) > 0
+
+Def CsvCount(sh As CsvSheet) As Number
+    Length(CsvBody(sh))
+
+Rem The strict half of the guard pair: no such column, or a row too
+Rem short to reach it, is an error and not an empty string. A file whose
+Rem header says SCORE and whose rows do not have one is a file you want
+Rem to hear about.
+Def CsvGet(sh As CsvSheet, row As List Of String, head As String) As String
+    Let k = CsvIndexOf(sh, head)
+    If k = 0 Then
+        Error("CSVGET: NO COLUMN '" & head & "'")
+    Else
+        If k > Length(row) Then
+            Error("CSVGET: ROW STOPS SHORT OF COLUMN '" & head & "'")
+        Else
+            Nth(row, k)
+
+Def CsvGetOr(sh As CsvSheet, row As List Of String, head As String, dflt As String) As String
+    Let k = CsvIndexOf(sh, head)
+    If k = 0 Or k > Length(row) Then
+        dflt
+    Else
+        Nth(row, k)
+
+Def CsvNum(sh As CsvSheet, row As List Of String, head As String) As Number
+    Val(Trim(CsvGet(sh, row, head)))
+
+Def CsvNumOr(sh As CsvSheet, row As List Of String, head As String, dflt As Number) As Number
+    ValOr(Trim(CsvGetOr(sh, row, head, "")), dflt)
+
+Def CsvBool(sh As CsvSheet, row As List Of String, head As String) As Boolean
+    Bool(CsvGet(sh, row, head))
+
+Def CsvBoolOr(sh As CsvSheet, row As List Of String, head As String, dflt As Boolean) As Boolean
+    BoolOr(CsvGetOr(sh, row, head, ""), dflt)
+
+Rem One column, top to bottom.
+Def CsvColumn(sh As CsvSheet, head As String) As List Of String
+    Map(CsvBody(sh), Fn(r) => CsvGet(sh, r, head))
+
+Def CsvColumnNums(sh As CsvSheet, head As String) As List Of Number
+    Map(CsvBody(sh), Fn(r) => CsvNum(sh, r, head))
+
+Rem The rows for which a column holds v — the WHERE clause, near enough.
+Def CsvWhere(sh As CsvSheet, head As String, v As String) As List Of List Of String
+    Filter(CsvBody(sh), Fn(r) => CsvGetOr(sh, r, head, "") = v)
+
+Rem ---- rows as dictionaries --------------------------------------------
+Rem A header and a row zipped is an association list — key in Fst, value
+Rem in Snd — which is precisely dict.shoddy's dictionary, so DictGet,
+Rem DictHas and DictPut work on it unchanged, exactly as json's object
+Rem members do. Zip stops at the shorter of the two, so a ragged row
+Rem simply has fewer keys.
+
+Def CsvPairs(sh As CsvSheet, row As List Of String) As List Of Pair
+    Zip(CsvHeads(sh), row)
+
+Def CsvDicts(sh As CsvSheet) As List Of List Of Pair
+    Map(CsvBody(sh), Fn(r) => CsvPairs(sh, r))
+
+Rem And back: a dictionary laid out under a header, missing keys empty.
+Def CsvRowOfDict(heads As List Of String, d As List Of Pair) As List Of String
+    Map(heads, Fn(h) => DictGetOr(d, h, ""))
+
+Def CsvSheetOfDicts(heads As List Of String, ds As List Of List Of Pair) As CsvSheet
+    CsvSheet(heads, Map(ds, Fn(d) => CsvRowOfDict(heads, d)))
+
+Rem ======================================================================
+Rem TYPES — A FILE OF RECORDS, AND RECORDS BACK TO A FILE
+Rem ======================================================================
+Rem This machine never learns your type. You pass the two functions that
+Rem know it — cells to a record, and a record to cells — and everything
+Rem here is Map over one of them. That is the whole trick, and it is why
+Rem there is nothing to configure: a Type with four fields and a Type
+Rem with forty go through the same four words.
+Rem
+Rem The parameter is rowOf, not of: Of is a keyword.
+
+Def CsvRecsAs(s As String, d As CsvDialect, rowOf As [ List Of String -- t ]) As List Of t
+    Map(CsvParseAs(s, d), rowOf)
+
+Def CsvRecs(s As String, rowOf As [ List Of String -- t ]) As List Of t
+    Map(CsvParse(s), rowOf)
+
+Def CsvLoadRecsAs(path As String, d As CsvDialect, rowOf As [ List Of String -- t ]) As List Of t
+    Map(CsvLoadAs(path, d), rowOf)
+
+Def CsvLoadRecs(path As String, rowOf As [ List Of String -- t ]) As List Of t
+    Map(CsvLoad(path), rowOf)
+
+Rem The header is dropped and each remaining row becomes a record. Pass
+Rem a closure over the sheet to name columns instead of counting them:
+Rem
+Rem     CsvSheetRecs(sh, Fn(r) => Student(CsvGet(sh, r, "NAME"),
+Rem                                       CsvNum(sh, r, "SCORE")))
+Def CsvSheetRecs(sh As CsvSheet, rowOf As [ List Of String -- t ]) As List Of t
+    Map(CsvBody(sh), rowOf)
+
+Def CsvFromRecsAs(xs As List Of t, d As CsvDialect, cellsOf As [ t -- List Of String ]) As String
+    CsvTextAs(Map(xs, cellsOf), d)
+
+Def CsvFromRecs(xs As List Of t, cellsOf As [ t -- List Of String ]) As String
+    CsvText(Map(xs, cellsOf))
+
+Def CsvSaveRecsAs(path As String, xs As List Of t, d As CsvDialect, cellsOf As [ t -- List Of String ])
+    WriteFile(path, CsvFromRecsAs(xs, d, cellsOf))
+
+Def CsvSaveRecs(path As String, xs As List Of t, cellsOf As [ t -- List Of String ])
+    WriteFile(path, CsvFromRecs(xs, cellsOf))
+
+Rem With a header line in front — the spelling you want for a file
+Rem anything else is going to read.
+Def CsvSheetOfRecs(heads As List Of String, xs As List Of t, cellsOf As [ t -- List Of String ]) As CsvSheet
+    CsvSheet(heads, Map(xs, cellsOf))
+
+Def CsvSaveSheetRecs(path As String, heads As List Of String, xs As List Of t, cellsOf As [ t -- List Of String ])
+    CsvSheetSave(path, CsvSheetOfRecs(heads, xs, cellsOf))
+
+Rem ======================================================================
+Rem NUMBERS
+Rem ======================================================================
+Rem The column-picking numeric loader every mill was growing for itself:
+Rem a file of numbers, comma separated, # for a comment, spaces ignored.
+
+Def CsvNumeric() As CsvDialect
+    CsvCommented(CsvTrimming(CsvComma()), "#")
+
+Def CsvNums(rows As List Of List Of String) As List Of List Of Number
+    Map(rows, Fn(r) => Map(r, Fn(t) => Val(Trim(t))))
+
+Def CsvLoadNums(path As String) As List Of List Of Number
+    CsvNums(CsvDropBlanks(CsvLoadAs(path, CsvNumeric())))
+
+Def CsvFromNums(rows As List Of List Of Number) As String
+    CsvText(Map(rows, Fn(r) => Map(r, Str)))
+
+Def CsvSaveNums(path As String, rows As List Of List Of Number)
+    WriteFile(path, CsvFromNums(rows))

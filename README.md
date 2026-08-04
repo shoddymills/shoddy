@@ -19,27 +19,10 @@ pattern matching — compiled onto a concatenative (Forth/Joy-style) stack
 core that remains a legal dialect. Python's layout, BASIC's keywords,
 Joy's soul.
 
-```basic
-Include "machines/stats.shoddy"
-
-Type Student
-    Name  As String
-    Score As Number
-
-Def Grade(s As Student) As String
-    Select Case Score(s)
-        Case >= 90
-            "A"
-        Case 70 To 89
-            "B-ISH"
-        Case Else
-            "F"
-
-Def Main()
-    Let class = { Student("ADA", 96), Student("LIN", 78) }
-    Each(class, Fn(s) => Print(Name(s) & ": " & Grade(s)))
-    Print(Average(Map(class, Score)))
-```
+<p align="center">
+  <img src="docs/media/shoddy-tour.gif" width="900"
+       alt="Six cards of Shoddy: Let binds once and never rebinds; sum types with Select Case destructuring them; JsonRead returning JOk or JErr instead of throwing; Map, Filter and Fold taking Fn lambdas; the same Def Square written as typed syntax and again as stack code with Dup *; and Include pulling in the json and https machines.">
+</p>
 
 Nothing mutates: `Let` binds once, updates return new values, iteration
 is recursion and `Map`/`Filter`/`Fold`. And the whole surface desugars to
@@ -172,7 +155,10 @@ write-up on each one, or start at
       <a href="https://shoddymills.github.io/shoddy/mills/weather-glass.html"><img src="docs/media/weather-glass.svg" alt="weather-glass: a barometer dial beside forecast rows" width="100%"></a><br>
       <b>weather-glass</b><br><sub>a forecast, in VT100</sub>
     </td>
-    <td width="25%"></td>
+    <td width="25%" align="center" valign="top">
+      <a href="https://shoddymills.github.io/shoddy/mills/tally.html"><img src="docs/media/tally.svg" alt="tally: a spec file and the scatter plot it produces" width="100%"></a><br>
+      <b>tally</b><br><sub>statistics from a spec file</sub>
+    </td>
     <td width="25%"></td>
   </tr>
 </table>
@@ -207,6 +193,7 @@ batteries included. Full word references in
     <td width="25%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/json.html"><img src="docs/media/icons/json.svg" alt="json" width="100%"></a><br><b>json</b><br><sub>JSON, both directions</sub></td>
     <td width="25%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/xml.html"><img src="docs/media/icons/xml.svg" alt="xml" width="100%"></a><br><b>xml</b><br><sub>XML, both directions</sub></td>
     <td width="25%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/html.html"><img src="docs/media/icons/html.svg" alt="html" width="100%"></a><br><b>html</b><br><sub>web pages, forgivingly</sub></td>
+    <td width="25%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/csv.html"><img src="docs/media/icons/csv.svg" alt="csv" width="100%"></a><br><b>csv</b><br><sub>tables, quoted properly</sub></td>
     <td width="25%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/shaker.html"><img src="docs/media/icons/shaker.svg" alt="shaker" width="100%"></a><br><b>shaker</b><br><sub>reversible obfuscation</sub></td>
   </tr>
   <tr>

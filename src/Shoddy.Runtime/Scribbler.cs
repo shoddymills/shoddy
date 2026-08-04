@@ -30,6 +30,13 @@ public sealed class ScribblerHandle
     public int Width, Height;
     public string Title = "";
 
+    // Where SCRIBBLERPLACE last asked the window to sit, in desktop pixels.
+    // Recorded here as well as posted to the window so that a headless
+    // handle still answers the question, and so a placement made before the
+    // window exists is not lost. Both -1 until asked; a window manager is
+    // free to ignore the request and nothing reads these back from it.
+    public int PlaceX = -1, PlaceY = -1;
+
     public readonly ConcurrentQueue<ScribblerEvent> Events = new();
     // Released by the window whenever it enqueues, and once on teardown.
     // SCRIBBLERWAIT blocks on this; nothing else may.
@@ -41,6 +48,7 @@ public sealed class ScribblerHandle
     public Action? OnClose;
     public Action<string>? OnSetTitle;
     public Action<int>? OnSetInterval;            // (milliseconds, 0 = off)
+    public Action<int, int>? OnPlace;             // (desktop x, desktop y)
 
     int closed;
 

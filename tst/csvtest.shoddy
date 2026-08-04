@@ -1,0 +1,309 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem csvtest.shoddy — test program for machines/csv.shoddy
+Rem
+Rem Assert-driven, in the jsontest.shoddy / isamtest.shoddy pattern: it
+Rem prints what it is doing and stops the run at the first assertion
+Rem that fails, ending with ALL ASSERTIONS PASSED when it does not.
+Rem
+Rem The centrepiece is the last section but one. tst/csv/people.csv
+Rem holds every hard case a comma-separated file has — a comma inside a
+Rem quoted cell, doubled quotes inside a quoted cell, a line break
+Rem inside a quoted cell, an empty cell, and a cell whose spaces matter
+Rem — and CsvText(CsvParse(it)) reproduces it BYTE FOR BYTE, which
+Rem checks the reader and the writer against each other on all five at
+Rem once. Then the same file goes round again through a Type, which is
+Rem what the machine is actually for.
+Rem
+Rem What cannot be tested here: the aborting half of each guard pair.
+Rem CsvParse, CsvGet, CsvNum and CsvSepBy-on-a-bad-separator all call
+Rem Error, which would kill this whole run — the same limitation
+Rem jsontest documents. The total halves are exercised hard instead,
+Rem which is the point of their existing.
+Rem
+Rem Build (once): build.cmd build
+Rem Run:          bin\mill run tst\csvtest.shoddy      (from the repo root)
+Rem ==================================================================
+
+Include "../machines/csv.shoddy"
+
+Rem ---- the type the last two sections read and write -------------------
+
+Type Person
+    Who   As String
+    Role  As String
+    Motto As String
+    Rank  As Number
+
+Def PersonOf(cells As List Of String) As Person
+    Person(Nth(cells, 1), Nth(cells, 2), Nth(cells, 3), Val(Nth(cells, 4)))
+
+Def PersonCells(p As Person) As List Of String
+    { Who(p), Role(p), Motto(p), Str(Rank(p)) }
+
+Rem ---- helpers ---------------------------------------------------------
+
+Rem A quoted CSV cell, built without fighting the lexer's escapes.
+Def Q(s As String) As String
+    CsvQt() & s & CsvQt()
+
+Rem The rows of a document that parsed, or none if it did not.
+Def Doc(s As String) As List Of List Of String
+    Select Case CsvRead(s)
+        Case CsvOk(rs)
+            rs
+        Case Else
+            { }
+
+Def DocAs(s As String, d As CsvDialect) As List Of List Of String
+    Select Case CsvReadAs(s, d)
+        Case CsvOk(rs)
+            rs
+        Case Else
+            { }
+
+Rem The offset a bad document failed at; 0 if it parsed after all, which
+Rem is never a legal offset, so Assert(ErrAt(x) = n) proves both that it
+Rem failed and where.
+Def ErrAt(s As String) As Number
+    Select Case CsvRead(s)
+        Case CsvErr(w, at)
+            at
+        Case Else
+            0
+
+Def Why(s As String) As String
+    Select Case CsvRead(s)
+        Case CsvErr(w, at)
+            w
+        Case Else
+            ""
+
+Def Cell(s As String, r As Number, c As Number) As String
+    Nth(Nth(Doc(s), r), c)
+
+Rem "rows x widest row" — the shape of a parse, in one printable word.
+Def Shape(s As String) As String
+    Str(Length(Doc(s))) & "x" & Str(CsvWidth(Doc(s)))
+
+Rem Write it, read it back, deep-compare. Note CsvEqual and not =: a
+Rem List is a quotation and compares by identity.
+Def Trips(rows As List Of List Of String) As Boolean
+    CsvEqual(Doc(CsvText(rows)), rows)
+
+Def SamePerson(a As Person, b As Person) As Boolean
+    Who(a) = Who(b) And Role(a) = Role(b) And Motto(a) = Motto(b) And Rank(a) = Rank(b)
+
+Def Main()
+    Print("--- cells, bare and quoted ---")
+    Print(Join(First(Doc("A,B,C")), "|"))                      Rem A|B|C
+    Print(Join(First(Doc("A,,C")), "|"))                       Rem A||C
+    Print(Join(First(Doc(",,")), "|"))                         Rem ||
+    Assert(Cell("A,B,C", 1, 2) = "B", "THREE BARE CELLS")
+    Assert(Cell("A,,C", 1, 2) = "", "AN EMPTY CELL IN THE MIDDLE")
+    Assert(Length(First(Doc(",,"))) = 3, "THREE EMPTY CELLS")
+    Assert(Cell("A" & CsvNl(), 1, 1) = "A", "ONE CELL, ONE RECORD")
+    Assert(Cell(Q("A"), 1, 1) = "A", "A QUOTED CELL LOSES ITS QUOTES")
+    Assert(Cell(Q(""), 1, 1) = "", "AN EMPTY QUOTED CELL")
+
+    Print("--- the separator and the quote, inside a quoted cell ---")
+    Assert(Cell("X," & Q("Y,Z"), 1, 2) = "Y,Z", "A COMMA INSIDE QUOTES IS NOT A SEPARATOR")
+    Assert(Length(First(Doc("X," & Q("Y,Z")))) = 2, "AND SO THE RECORD IS TWO CELLS WIDE")
+    Assert(Cell(Q("A" & CsvQt() & CsvQt() & "B"), 1, 1) = "A" & CsvQt() & "B", "A DOUBLED QUOTE IS ONE QUOTE")
+    Assert(Cell(Q(CsvQt() & CsvQt()), 1, 1) = CsvQt(), "A CELL THAT IS NOTHING BUT A QUOTE")
+    Assert(Cell(Q(CsvQt() & CsvQt() & CsvQt() & CsvQt()), 1, 1) = CsvQt() & CsvQt(), "TWO QUOTES RUNNING")
+    Rem A bare quote in an UNQUOTED cell is an ordinary character.
+    Assert(Cell("AB" & CsvQt() & "C", 1, 1) = "AB" & CsvQt() & "C", "A QUOTE MID-CELL IS LITERAL")
+
+    Print("--- a line break inside a quoted cell ---")
+    Let wrapped = "A," & Q("ONE" & CsvNl() & "TWO") & ",B"
+    Assert(Length(Doc(wrapped)) = 1, "A QUOTED NEWLINE DOES NOT END THE RECORD")
+    Assert(Cell(wrapped, 1, 2) = "ONE" & CsvNl() & "TWO", "AND IT SURVIVES INTO THE CELL")
+    Rem CRLF and a lone CR inside quotes are both normalized to LF, so a
+    Rem file written on the other kind of machine round-trips unchanged.
+    Assert(Cell("A," & Q("ONE" & CsvCr() & CsvNl() & "TWO"), 1, 2) = "ONE" & CsvNl() & "TWO", "CRLF IN QUOTES BECOMES LF")
+    Assert(Cell("A," & Q("ONE" & CsvCr() & "TWO"), 1, 2) = "ONE" & CsvNl() & "TWO", "A LONE CR IN QUOTES BECOMES LF")
+
+    Print("--- records, and the endings between them ---")
+    Print(Shape("A,B" & CsvNl() & "C,D"))                       Rem 2x2
+    Assert(Length(Doc("A,B" & CsvNl() & "C,D")) = 2, "LF ENDS A RECORD")
+    Assert(Length(Doc("A,B" & CsvCr() & CsvNl() & "C,D")) = 2, "SO DOES CRLF")
+    Assert(Length(Doc("A,B" & CsvCr() & "C,D")) = 2, "SO DOES A LONE CR")
+    Assert(Cell("A,B" & CsvCr() & CsvNl() & "C,D", 2, 1) = "C", "AND CRLF COUNTS ONCE, NOT TWICE")
+    Rem The one trailing ending is the last record's terminator.
+    Assert(Length(Doc("A,B" & CsvNl())) = 1, "A TRAILING LF DOES NOT MAKE AN EMPTY RECORD")
+    Assert(Length(Doc("A,B" & CsvCr() & CsvNl())) = 1, "NOR DOES A TRAILING CRLF")
+    Rem A second one does, because a blank line IS a record — RFC 4180.
+    Assert(Length(Doc("A,B" & CsvNl() & CsvNl())) = 2, "A BLANK LINE IS A RECORD OF ONE EMPTY CELL")
+    Assert(Length(Doc("")) = 0, "THE EMPTY DOCUMENT HAS NO RECORDS")
+
+    Print("--- ragged rows are not an error ---")
+    Let ragged = { { "A", "B", "C" }, { "D" }, { "E", "F" } }
+    Assert(CsvWidth(ragged) = 3, "WIDTH IS THE WIDEST ROW")
+    Assert(Not CsvIsRect(ragged), "RAGGED IS NOT RECTANGULAR")
+    Assert(CsvIsRect(CsvRect(ragged)), "AND CSVRECT MAKES IT SO")
+    Assert(Length(Nth(CsvRect(ragged), 2)) = 3, "THE SHORT ROW IS PADDED")
+    Assert(Nth(Nth(CsvRect(ragged), 2), 3) = "", "PADDED WITH EMPTY CELLS")
+    Assert(Length(CsvDropBlanks({ { "A" }, { "" }, { "", "" }, { "B" } })) = 2, "CSVDROPBLANKS DROPS THE EMPTY ROWS")
+    Rem Transpose, and transpose back.
+    Let sq = { { "A", "B" }, { "C", "D" }, { "E", "F" } }
+    Assert(CsvEqual(CsvFlip(CsvFlip(sq)), sq), "FLIPPED TWICE IS WHERE IT STARTED")
+    Assert(CsvRowEqual(First(CsvFlip(sq)), { "A", "C", "E" }), "AND ONCE IS THE FIRST COLUMN")
+
+    Print("--- what the writer quotes, and what it leaves alone ---")
+    Print(CsvCellOf("PLAIN"))                                   Rem PLAIN
+    Print(CsvCellOf("A,B"))                                     Rem "A,B"
+    Print(CsvCellOf("A" & CsvQt() & "B"))                       Rem "A""B"
+    Print(CsvCellOf(" PADDED "))                                Rem " PADDED "
+    Assert(CsvCellOf("PLAIN") = "PLAIN", "NOTHING TO QUOTE, SO NO QUOTES")
+    Assert(CsvCellOf("A B") = "A B", "AN INNER SPACE IS NOT A REASON")
+    Assert(CsvCellOf("A,B") = Q("A,B"), "THE SEPARATOR IS")
+    Assert(CsvCellOf("A" & CsvQt() & "B") = Q("A" & CsvQt() & CsvQt() & "B"), "A QUOTE IS, AND IT DOUBLES")
+    Assert(CsvCellOf("A" & CsvNl() & "B") = Q("A" & CsvNl() & "B"), "A LINE BREAK IS")
+    Assert(CsvCellOf(" A") = Q(" A"), "A LEADING SPACE IS")
+    Assert(CsvCellOf("A ") = Q("A "), "AND A TRAILING ONE")
+    Assert(CsvCellOf("") = "", "AN EMPTY CELL WRITES AS NOTHING")
+    Print(CsvLine({ "A", "B,C", "" }))                          Rem A,"B,C",
+    Assert(CsvText({ { "A", "B" } }) = "A,B" & CsvNl(), "EVERY RECORD ENDS WITH THE LINE ENDING")
+
+    Print("--- round trips ---")
+    Assert(Trips({ { "A", "B" }, { "C", "D" } }), "PLAIN CELLS")
+    Assert(Trips({ { "A,B", "C" & CsvQt() & "D", "E" & CsvNl() & "F" } }), "SEPARATOR, QUOTE AND NEWLINE")
+    Assert(Trips({ { "", "", "" } }), "EMPTY CELLS")
+    Assert(Trips({ { " LEADING", "TRAILING " } }), "SPACES THAT MATTER")
+    Assert(Trips({ { CsvQt() } }), "A CELL THAT IS ONE QUOTE")
+    Assert(Trips({ }), "THE EMPTY DOCUMENT")
+
+    Print("--- malformed input, and where it gave up ---")
+    Print(Why("A," & CsvQt() & "B"))                            Rem UNTERMINATED QUOTED CELL
+    Print(Why(Q("A") & "B"))                                    Rem EXPECTED A SEPARATOR ...
+    Assert(ErrAt("A," & CsvQt() & "B") = 5, "AN UNTERMINATED CELL FAILS AT THE END OF INPUT")
+    Assert(ErrAt(Q("AB") & "C") = 5, "JUNK AFTER A CLOSING QUOTE FAILS AT THE JUNK")
+    Assert(ErrAt(Q("A") & " X") = 4, "AND SO DOES A SPACE, WHICH IS NOT NOTHING")
+    Rem But NOT this one: "A""B" is the legal encoding of A"B, not two
+    Rem quoted cells run together, and reading it any other way would be
+    Rem a guess about a document that is not ambiguous.
+    Assert(Cell(Q("A") & Q("B"), 1, 1) = "A" & CsvQt() & "B", "TWO QUOTED CELLS RUN TOGETHER ARE ONE CELL WITH A QUOTE IN IT")
+    Assert(ErrAt("A,B") = 0, "AND A GOOD DOCUMENT DOES NOT FAIL AT ALL")
+    Rem The total reader survives all of it; the strict one would abort.
+    Assert(Length(Doc("A," & CsvQt() & "B")) = 0, "A FAILED READ YIELDS NOTHING, NOT A GUESS")
+
+    Print("--- dialects ---")
+    Assert(Cell2Tab("A" & CsvTab() & "B") = "B", "TABS")
+    Assert(Length(DocAs("A;B;C", CsvSemis())) = 1, "SEMICOLONS PARSE AS ONE RECORD")
+    Assert(Length(First(DocAs("A;B;C", CsvSemis()))) = 3, "AND AS THREE CELLS")
+    Assert(Length(First(DocAs("A;B;C", CsvComma()))) = 1, "WHICH THE COMMA DIALECT DOES NOT SEE")
+    Assert(Length(First(DocAs("A|B|C", CsvSepBy("|")))) = 3, "ANY SINGLE CHARACTER WILL DO")
+    Assert(CsvTextAs({ { "A", "B" } }, CsvRfc()) = "A,B" & CsvCr() & CsvNl(), "CSVRFC WRITES CRLF")
+    Assert(CsvTextAs({ { "A", "B" } }, CsvTabs()) = "A" & CsvTab() & "B" & CsvNl(), "CSVTABS WRITES TABS")
+    Rem A cell holding the dialect's separator is quoted whatever it is.
+    Assert(CsvCellAs("A" & CsvTab() & "B", CsvTabs()) = Q("A" & CsvTab() & "B"), "AND QUOTES ITS OWN SEPARATOR")
+    Assert(CsvCellAs("A" & CsvTab() & "B", CsvComma()) = "A" & CsvTab() & "B", "WHICH THE COMMA DIALECT LEAVES BARE")
+
+    Print("--- trimming, and what it does not touch ---")
+    Let pad = "  A  ,  B  ," & Q("  C  ")
+    Assert(Cell(pad, 1, 1) = "  A  ", "BY DEFAULT SPACES ARE THE CELL'S")
+    Assert(Nth(First(DocAs(pad, CsvTrimming(CsvComma()))), 1) = "A", "CSVTRIMMING DROPS THEM")
+    Assert(Nth(First(DocAs(pad, CsvTrimming(CsvComma()))), 3) = "  C  ", "BUT NEVER INSIDE QUOTES")
+
+    Print("--- comment records ---")
+    Let hashed = "# A NOTE" & CsvNl() & "A,B" & CsvNl() & "# ANOTHER" & CsvNl() & "C,D" & CsvNl()
+    Let noted = CsvCommented(CsvComma(), "#")
+    Assert(Length(DocAs(hashed, noted)) = 2, "COMMENT RECORDS ARE SKIPPED WHOLE")
+    Assert(Nth(First(DocAs(hashed, noted)), 1) = "A", "AND THE DATA IS UNTOUCHED")
+    Assert(Length(DocAs(hashed, CsvComma())) = 4, "WITHOUT THE DIALECT THEY ARE JUST DATA")
+    Assert(Length(DocAs("# ONLY A COMMENT", noted)) = 0, "A FILE OF NOTHING BUT COMMENTS IS EMPTY")
+
+    Print("--- a byte-order mark ---")
+    Let bom = CsvSheetLoad("tst/csv/bom.csv")
+    Assert(Nth(CsvHeads(bom), 1) = "CITY", "THE BOM IS STRIPPED, SO THE FIRST HEADER IS CLEAN")
+    Assert(CsvNumOr(bom, First(CsvBody(bom)), "POP", 0) = 536280, "AND THE FILE READS NORMALLY")
+
+    Print("--- sheets: columns with names ---")
+    Let sh = CsvSheetLoad("tst/csv/people.csv")
+    Print(Join(CsvHeads(sh), "|"))                              Rem NAME|ROLE|QUOTE|SCORE
+    Assert(Length(CsvHeads(sh)) = 4, "FOUR COLUMNS")
+    Assert(CsvCount(sh) = 4, "AND FOUR RECORDS UNDER THE HEADER")
+    Assert(CsvHas(sh, "SCORE"), "CSVHAS FINDS A COLUMN")
+    Assert(Not CsvHas(sh, "SALARY"), "AND DOES NOT FIND ONE THAT IS NOT THERE")
+    Assert(CsvIndexOf(sh, "QUOTE") = 3, "CSVINDEXOF IS 1-BASED, LIKE EVERY INDEX IN THE LANGUAGE")
+    Let ada = First(CsvBody(sh))
+    Assert(CsvGet(sh, ada, "NAME") = "ADA, COUNTESS OF LOVELACE", "A COMMA CAME THROUGH THE HEADER LOOKUP INTACT")
+    Assert(CsvNum(sh, ada, "SCORE") = 96, "CSVNUM READS A CELL AS A NUMBER")
+    Assert(CsvGetOr(sh, ada, "SALARY", "?") = "?", "CSVGETOR FALLS BACK ON A MISSING COLUMN")
+    Assert(CsvNumOr(sh, ada, "SALARY", 0 - 1) = 0 - 1, "AND SO DOES CSVNUMOR")
+    Assert(CsvNumOr(sh, ada, "NAME", 0 - 1) = 0 - 1, "INCLUDING WHEN THE CELL IS NOT A NUMBER")
+    Assert(CsvBoolOr(sh, ada, "SALARY", True), "AND CSVBOOLOR")
+    Let grace = Nth(CsvBody(sh), 2)
+    Assert(Instr(CsvGet(sh, grace, "QUOTE"), CsvNl()) > 0, "THE WRAPPED CELL KEPT ITS LINE BREAK")
+    Assert(CsvGet(sh, Nth(CsvBody(sh), 3), "QUOTE") = "", "AN EMPTY CELL READS EMPTY")
+    Assert(CsvGet(sh, Nth(CsvBody(sh), 4), "NAME") = "  PADDED  ", "AND A QUOTED CELL KEEPS ITS SPACES")
+    Print(Join(CsvColumn(sh, "ROLE"), "|"))                     Rem ANALYST|ADMIRAL|LOGICIAN|UNKNOWN
+    Assert(Length(CsvColumn(sh, "ROLE")) = 4, "CSVCOLUMN IS THE WHOLE COLUMN")
+    Assert(Fold(CsvColumnNums(sh, "SCORE"), 0, +) = 283, "AND CSVCOLUMNNUMS IS IT AS NUMBERS")
+    Assert(Length(CsvWhere(sh, "ROLE", "ADMIRAL")) = 1, "CSVWHERE SELECTS ROWS")
+    Assert(Length(CsvWhere(sh, "ROLE", "NOBODY")) = 0, "AND SELECTS NONE WHEN THERE ARE NONE")
+
+    Print("--- a row is a dictionary ---")
+    Let d = CsvPairs(sh, ada)
+    Assert(DictHas(d, "ROLE"), "THE HEADER SUPPLIES THE KEYS")
+    Assert(DictGet(d, "ROLE") = "ANALYST", "AND DICTGET WORKS ON IT UNCHANGED")
+    Assert(Length(CsvDicts(sh)) = 4, "ONE DICTIONARY PER RECORD")
+    Rem And back out again, through the same header.
+    Assert(CsvRowEqual(CsvRowOfDict(CsvHeads(sh), d), ada), "A DICTIONARY LAYS BACK OUT UNDER ITS HEADER")
+    Let rebuilt = CsvSheetOfDicts(CsvHeads(sh), CsvDicts(sh))
+    Assert(CsvEqual(CsvBody(rebuilt), CsvBody(sh)), "AND SO DOES THE WHOLE SHEET")
+
+    Print("--- the fixture, byte for byte ---")
+    Rem Every hard case a comma-separated file has, in one small file,
+    Rem checked against a producer that is not this one: the reader and
+    Rem the writer have to agree on quoting, on doubling, on line breaks
+    Rem inside cells and on the trailing ending, all at the same time.
+    Let raw = ReadFile("tst/csv/people.csv")
+    Assert(CsvText(CsvParse(raw)) = raw, "PARSE THEN WRITE REPRODUCES THE FILE EXACTLY")
+    Assert(CsvSheetText(sh) = raw, "AND SO DOES THE SHEET IT WAS READ INTO")
+    Assert(CsvEqual(CsvParse(CsvText(CsvParse(raw))), CsvParse(raw)), "AND THE SECOND TRIP CHANGES NOTHING")
+
+    Print("--- a file of numbers ---")
+    Let nums = CsvLoadNums("tst/csv/nums.dat")
+    Print(Str(Length(nums)) & " ROWS OF " & Str(Length(First(nums))))
+    Assert(Length(nums) = 4, "COMMENTS AND BLANK LINES ARE GONE")
+    Assert(Length(First(nums)) = 5, "AND EVERY ROW IS FIVE NUMBERS WIDE")
+    Assert(Nth(First(nums), 1) = 5.1, "READ AS NUMBERS, NOT STRINGS")
+    Assert(Nth(First(nums), 5) = 1, "SPACES AFTER THE COMMA ARE GONE TOO")
+    Assert(CsvFromNums({ { 1, 2 }, { 3, 4 } }) = "1,2" & CsvNl() & "3,4" & CsvNl(), "AND THEY WRITE BACK OUT AS NUMBERS")
+
+    Print("--- a file of a Type ---")
+    Rem The point of the machine: cells in, records out, records in,
+    Rem cells out, and the type is the caller's throughout.
+    Let folk = CsvSheetRecs(sh, PersonOf)
+    Assert(Length(folk) = 4, "FOUR PEOPLE")
+    Assert(Who(First(folk)) = "ADA, COUNTESS OF LOVELACE", "WITH THEIR COMMAS")
+    Assert(Rank(First(folk)) = 96, "AND THEIR NUMBERS")
+    Assert(Instr(Motto(Nth(folk, 2)), CsvNl()) > 0, "AND THEIR LINE BREAKS")
+    Rem Out to text and back in, and the records must be the same people.
+    Let again = CsvRecs(CsvFromRecs(folk, PersonCells), PersonOf)
+    Assert(Length(again) = 4, "THE SAME FOUR CAME BACK")
+    Assert(All(Zip(folk, again), Fn(p) => SamePerson(Fst(p), Snd(p))), "AND THEY CAME BACK IDENTICAL")
+    Rem With the header in front, the file is the file we started with.
+    Assert(CsvSheetText(CsvSheetOfRecs(CsvHeads(sh), folk, PersonCells)) = raw, "AND WITH ITS HEADER IT IS THE FIXTURE AGAIN")
+
+    Print("--- files on disk ---")
+    Let tmp = "tst/csv/roundtrip.tmp.csv"
+    CsvSaveRecs(tmp, folk, PersonCells)
+    Assert(FileExists(tmp), "CSVSAVERECS WROTE A FILE")
+    Assert(Length(CsvLoadRecs(tmp, PersonOf)) = 4, "AND CSVLOADRECS READ IT BACK")
+    CsvAppend(tmp, { { "NEW", "PERSON", "", "1" } })
+    Assert(Length(CsvLoad(tmp)) = 5, "AND CSVAPPEND ADDED A RECORD TO THE END")
+    DeleteFile(tmp)
+    Assert(Not FileExists(tmp), "TIDIED UP")
+
+    Print("")
+    Print("ALL ASSERTIONS PASSED")
+
+Rem Tabs, in a helper rather than inline, because the whole point of the
+Rem dialect is that the caller says the separator once.
+Def Cell2Tab(s As String) As String
+    Nth(First(DocAs(s, CsvTabs())), 2)

@@ -1,0 +1,190 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem tally.shoddy — the shell: arguments, files, a window, a picture.
+Rem
+Rem     bin/mill run mills/tally/tally.shoddy SPECFILE
+Rem     ./build.sh run files/grades.spec          (from this directory)
+Rem
+Rem Everything that touches the outside world is here and nothing else
+Rem is: reading the spec and the data, printing the report, opening the
+Rem scribbler, placing it, saving the PNG, waiting for the window to be
+Rem dismissed. All the arithmetic and every decision about what to draw
+Rem lives in tally-core.shoddy, which is pure and which test.shoddy
+Rem grades without a window ever existing.
+Rem
+Rem ---- the order of operations, which is the point -----------------
+Rem
+Rem The spec is read, the data is read, the pipeline runs, the report
+Rem prints, TallyCheck passes — and ONLY THEN is a window opened. A bad
+Rem spec is a message and an exit code, never a window that appears and
+Rem then dies. That matters more than it sounds: `Error` under `mill run`
+Rem is caught by the program itself, so a window already on screen would
+Rem be left standing with nothing behind it.
+Rem
+Rem ---- paths -------------------------------------------------------
+Rem
+Rem data.file and window.capture are resolved against the CURRENT
+Rem DIRECTORY, not against the spec file. A spec is a small thing you
+Rem run from where the data is, and a path that means different things
+Rem depending on which directory the spec happens to live in is a path
+Rem nobody can read.
+Rem
+Rem ---- showing and not showing -------------------------------------
+Rem
+Rem     window.show = no      draw, save, exit — do not wait
+Rem     mill run --no-window  never put anything on screen at all
+Rem
+Rem Two knobs because they answer two questions. window.show is the
+Rem PROGRAM's: does it wait for a person to dismiss the picture, or is
+Rem the file the whole output? --no-window is the RUN's: may this
+Rem invocation put pixels on a display? A scripted capture wants both —
+Rem the first so it does not block, the second so nothing flashes up.
+Rem Setting only --no-window on a spec that shows would leave the mill
+Rem waiting on a window nobody can see, which is why the flag also
+Rem stops windows outliving the program.
+Rem ==================================================================
+
+Include "tally-core.shoddy"
+Include "../../machines/plotter.shoddy"
+
+Rem ---- drawing ---------------------------------------------------------
+
+Rem The least-squares line across the plot, drawn in the palette's red
+Rem over the dots. Both endpoints are scaled the same way ScatterPlot
+Rem scales its points, so the line lands on the data rather than beside
+Rem it; a fitted end outside the y range simply runs off the plot, since
+Rem out-of-bounds pixels are dropped rather than wrapped.
+Def TallyFitLine(sc As Scribbler, xs As List Of Number, ys As List Of Number) As Scribbler
+    Let f = LinFit(xs, ys)
+    Let xLo = Minimum(xs)
+    Let xHi = Maximum(xs)
+    Let yLo = Minimum(ys)
+    Let yHi = Maximum(ys)
+    Let c = PlotColor(4)
+    DrawLine(sc, ScaleTo(xLo, xLo, xHi, PlotX0(), PlotX1(sc)),
+                 ScaleTo(Slope(f) * xLo + Intercept(f), yLo, yHi, PlotY1(sc), PlotY0()),
+                 ScaleTo(xHi, xLo, xHi, PlotX0(), PlotX1(sc)),
+                 ScaleTo(Slope(f) * xHi + Intercept(f), yLo, yHi, PlotY1(sc), PlotY0()),
+                 R(c), G(c), B(c))
+
+Def TallyScattered(sc As Scribbler, xs As List Of Number, ys As List Of Number, fit As Boolean) As Scribbler
+    If fit Then
+        TallyFitLine(ScatterPlot(sc, xs, ys), xs, ys)
+    Else
+        ScatterPlot(sc, xs, ys)
+
+Def TallyDrawn(sc As Scribbler, sh As CsvSheet, sp As List Of Pair) As Scribbler
+    Select Case TallyChartType(sp)
+        Case "histogram"
+            Histogram(sc, TallyXs(sh, sp), SpecNumOr(sp, "chart.bins", 10))
+        Case "bar"
+            BarChart(sc, TallyLabels(sh, sp), TallyYs(sh, sp))
+        Case "pie"
+            PieChart(sc, TallyLabels(sh, sp), TallyYs(sh, sp))
+        Case "box"
+            BoxPlot(sc, TallyXs(sh, sp))
+        Case "scatter"
+            TallyScattered(sc, TallyXs(sh, sp), TallyYs(sh, sp), SpecFlag(sp, "chart.fit", False))
+        Case Else
+            sc
+
+Def TallyTitled(sc As Scribbler, sp As List Of Pair) As Scribbler
+    If Len(TallyTitle(sp)) = 0 Then
+        sc
+    Else
+        PlotTitle(sc, TallyTitle(sp))
+
+Def TallyPlaced(sc As Scribbler, sp As List Of Pair) As Scribbler
+    If SpecHas(sp, "window.at") Then
+        ScribblerPlace(sc, SpecNthNum(sp, "window.at", 1, 0), SpecNthNum(sp, "window.at", 2, 0))
+    Else
+        sc
+
+Def TallyCaptured(sc As Scribbler, sp As List Of Pair) As Scribbler
+    If Len(SpecGetOr(sp, "window.capture", "")) = 0 Then
+        sc
+    Else
+        TallySaved(sc, SpecGetOr(sp, "window.capture", ""))
+
+Def TallySaved(sc As Scribbler, path As String) As Scribbler
+    Let s = ScribblerSave(sc, path)
+    Print("CAPTURED " & path)
+    s
+
+Rem ---- the window ------------------------------------------------------
+
+Rem Sit at zero CPU until the picture is dismissed — the close button or
+Rem Escape, whichever comes first. A self tail call, so an afternoon of
+Rem mouse movement costs no stack.
+Def TallyWatch(sc As Scribbler)
+    Select Case NextEvent(sc)
+        Case ScribblerQuit
+            TallyDone(sc)
+        Case ScribblerKeyDown(k, mods, at) Where k = 27
+            TallyDone(sc)
+        Case Else
+            TallyWatch(sc)
+
+Def TallyDone(sc As Scribbler)
+    Let s = ScribblerClose(sc)
+    Print("CLOSED")
+
+Def TallyShow(sp As List Of Pair, sh As CsvSheet)
+    Let sc = NewPlot(SpecNthNum(sp, "window.size", 1, 640), SpecNthNum(sp, "window.size", 2, 480))
+    Let s1 = ScribblerTitle(sc, Ifte(Len(TallyTitle(sp)) > 0, TallyTitle(sp), "TALLY"))
+    Let s2 = TallyPlaced(s1, sp)
+    Let s3 = TallyTitled(TallyDrawn(s2, sh, sp), sp)
+    Let s4 = TallyCaptured(s3, sp)
+    If SpecFlag(sp, "window.show", True) Then
+        TallyWatch(ScribblerBlit(s4))
+    Else
+        TallyDone(s4)
+
+Rem ---- the run ---------------------------------------------------------
+
+Def TallyChart(sp As List Of Pair, sh As CsvSheet)
+    If TallyChartType(sp) = "none" Then
+        Print("NO CHART REQUESTED (chart.type = none)")
+    Else
+        TallyShow(sp, sh)
+
+Rem The report first, then the check, then the window. A spec that names
+Rem a column the file does not have still prints everything it managed
+Rem before it says so.
+Def TallyRun(sp As List Of Pair, sh As CsvSheet)
+    Each(TallyReport(sh, sp), Print)
+    If Len(TallyCheck(sh, sp)) > 0 Then
+        Error("TALLY: " & TallyCheck(sh, sp))
+    Else
+        TallyChart(sp, sh)
+
+Def TallyData(sp As List Of Pair)
+    Let src = SpecGet(sp, "data.file")
+    If Not FileExists(src) Then
+        Error("TALLY: NO SUCH DATA FILE '" & src & "' (PATHS ARE RELATIVE TO THE CURRENT DIRECTORY)")
+    Else
+        TallyRun(sp, TallyPipeline(sp, ReadFile(src)))
+
+Def TallySpec(path As String)
+    Select Case SpecLoadFile(path)
+        Case SpecBad(why, at)
+            Error("TALLY: " & path & " LINE " & Str(at) & ": " & why)
+        Case SpecOk(sp)
+            TallyData(sp)
+        Case Else
+            Error("TALLY: UNREACHABLE")
+
+Def Main()
+    Let a = Args()
+    If Length(a) <> 1 Then
+        Error("USAGE: tally SPECFILE     (e.g. files/grades.spec)")
+    Else
+        TallyStart(First(a))
+
+Def TallyStart(path As String)
+    If Not FileExists(path) Then
+        Error("TALLY: NO SUCH SPEC FILE '" & path & "'")
+    Else
+        TallySpec(path)

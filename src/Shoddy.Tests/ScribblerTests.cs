@@ -1,6 +1,9 @@
 // Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
 // Licensed under the MIT License. See the LICENSE file in the project root.
 
+using System.Buffers.Binary;
+using System.IO.Compression;
+using System.Text;
 using Shoddy.Compiler;
 using Shoddy.Devil;
 using Shoddy.Runtime;
@@ -371,7 +374,131 @@ public class ScribblerTests
             MachineSet.DllPathFor(Path.Combine(ws, "machines", "clock.shoddy"))));
     }
 
+    // ---- ScribblerSave and ScribblerPlace -------------------------------
+
+    [Fact]
+    public void ScribblerSaveWritesAPngThatDecodesBackToTheBuffer()
+    {
+        string png = Path.Combine(Path.GetTempPath(), "shoddy-scribbler",
+                                  Guid.NewGuid().ToString("N") + ".png");
+        Directory.CreateDirectory(Path.GetDirectoryName(png)!);
+
+        RunHeadless(string.Join('\n',
+            "Def Main()",
+            "    Let sc = ScribblerFill(ScribblerOpen(4, 3), 10, 20, 30)",
+            "    Let s2 = ScribblerPixel(sc, 1, 2, 200, 100, 50)",
+            "    Let s3 = ScribblerSave(s2, \"" + Literal(png) + "\")",
+            "    Print(ScribblerWidth(s3))"));
+
+        byte[] file = File.ReadAllBytes(png);
+        Assert.Equal(new byte[] { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A }, file[..8]);
+
+        // Every valid PNG ends with an empty IEND chunk whose CRC is this
+        // constant. It is an oracle for the CRC-32 code rather than a
+        // restatement of it: get the polynomial, the reflection or the
+        // seed wrong and these four bytes come out different.
+        Assert.Equal(new byte[] { 0, 0, 0, 0, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82 },
+                     file[^12..]);
+
+        Dictionary<string, byte[]> chunks = PngChunks(file);
+        byte[] ihdr = chunks["IHDR"];
+        Assert.Equal(4, BinaryPrimitives.ReadInt32BigEndian(ihdr.AsSpan(0, 4)));
+        Assert.Equal(3, BinaryPrimitives.ReadInt32BigEndian(ihdr.AsSpan(4, 4)));
+        Assert.Equal(8, (int)ihdr[8]);      // bit depth
+        Assert.Equal(2, (int)ihdr[9]);      // colour type: truecolour, no alpha
+        Assert.Equal(0, (int)ihdr[12]);     // not interlaced
+
+        // The scanlines, inflated: one filter byte then width RGB triples.
+        byte[] raw = Inflate(chunks["IDAT"]);
+        const int stride = 1 + 4 * 3;
+        Assert.Equal(3 * stride, raw.Length);
+        Assert.Equal(0, (int)raw[0]);       // filter None
+        Assert.Equal(new byte[] { 10, 20, 30, 10, 20, 30 }, raw[1..7]);
+        // Row 2, pixel x = 1 — the one pixel set by hand, alpha dropped.
+        int px = 2 * stride + 1 + 3;
+        Assert.Equal(new byte[] { 200, 100, 50 }, raw[px..(px + 3)]);
+    }
+
+    [Fact]
+    public void ScribblerSaveOnAnUnwritablePathIsAShoddyError()
+    {
+        // A directory that was never created: the FileStream throws, and the
+        // builtin has to turn that into a Shoddy error rather than a .NET one.
+        string bad = Path.Combine(Path.GetTempPath(), "shoddy-scribbler",
+                                  Guid.NewGuid().ToString("N"), "absent", "x.png");
+        string err = RunHeadlessError(string.Join('\n',
+            "Def Main()",
+            "    Let sc = ScribblerOpen(2, 2)",
+            "    Let s2 = ScribblerSave(sc, \"" + Literal(bad) + "\")",
+            "    Print(ScribblerWidth(s2))"));
+        Assert.Contains("ScribblerSave: cannot write", err);
+    }
+
+    [Fact]
+    public void ScribblerPlaceRecordsThePositionAndPostsItToTheWindow()
+    {
+        (int X, int Y)? posted = null;
+        ScribblerHandle? handle = null;
+        var (exit, output, err) = Execute(WriteProgram(string.Join('\n',
+                "Def Main()",
+                "    Let sc = ScribblerOpen(8, 8)",
+                "    Let s2 = ScribblerPlace(sc, 120, 45)",
+                "    Print(ScribblerHeight(s2))")),
+            backend: true, input: null,
+            preloaded: h => { handle = h; h.OnPlace = (x, y) => posted = (x, y); });
+
+        Assert.True(exit == 0, err);
+        Assert.Equal("8", output.Trim());
+        Assert.Equal((120, 45), posted);
+        // Recorded on the handle as well, so a headless scribbler — and one
+        // placed before its window exists — still answers for where it went.
+        Assert.Equal(120, handle!.PlaceX);
+        Assert.Equal(45, handle.PlaceY);
+    }
+
+    [Fact]
+    public void AnUnplacedScribblerHasNoPosition()
+    {
+        ScribblerHandle? handle = null;
+        var (exit, _, err) = Execute(WriteProgram(string.Join('\n',
+                "Def Main()",
+                "    Let sc = ScribblerOpen(8, 8)",
+                "    Print(ScribblerWidth(sc))")),
+            backend: true, input: null, preloaded: h => handle = h);
+
+        Assert.True(exit == 0, err);
+        Assert.Equal(-1, handle!.PlaceX);
+        Assert.Equal(-1, handle.PlaceY);
+    }
+
     // ---- helpers --------------------------------------------------------
+
+    /// <summary>A path as a Shoddy string literal: the lexer knows \\ and
+    /// \", so a Windows path needs its separators doubled.</summary>
+    static string Literal(string path) => path.Replace("\\", "\\\\");
+
+    /// <summary>Every chunk in a PNG, by type — length, type, data, CRC,
+    /// from byte 8 to the end.</summary>
+    static Dictionary<string, byte[]> PngChunks(byte[] file)
+    {
+        var found = new Dictionary<string, byte[]>();
+        int i = 8;
+        while (i + 12 <= file.Length)
+        {
+            int len = BinaryPrimitives.ReadInt32BigEndian(file.AsSpan(i, 4));
+            found[Encoding.ASCII.GetString(file, i + 4, 4)] = file[(i + 8)..(i + 8 + len)];
+            i += 12 + len;
+        }
+        return found;
+    }
+
+    static byte[] Inflate(byte[] zlib)
+    {
+        using var z = new ZLibStream(new MemoryStream(zlib), CompressionMode.Decompress);
+        using var raw = new MemoryStream();
+        z.CopyTo(raw);
+        return raw.ToArray();
+    }
 
     /// <summary>A workspace with a copy of machines/*.shoddy, so Include
     /// resolution works without touching the repo tree.</summary>

@@ -1427,6 +1427,42 @@ public sealed partial class Engine
                 Push(v);
                 return true;
             }
+            case "SCRIBBLERSAVE":               // ( scribbler path -- scribbler )
+            {
+                // The picture as it stands, straight from the pixel buffer —
+                // no window is consulted, so this works headless and under
+                // --no-window, which is the point of it. Nothing blits first:
+                // saving and showing are separate requests, and a program
+                // that wants both says both.
+                string path = PopStr(line, w);
+                Value v = PopScrib(line, w);
+                ScribblerHandle h = v.Scribbler!;
+                try
+                {
+                    Png.Write(path, h.Pixels, h.Width, h.Height);
+                }
+                catch (Exception e) when (e is not ShoddyError)
+                {
+                    throw Die(line, $"ScribblerSave: cannot write '{path}'");
+                }
+                Push(v);
+                return true;
+            }
+            case "SCRIBBLERPLACE":              // ( scribbler x y -- scribbler )
+            {
+                // Desktop pixels of the window's top-left corner. Recorded on
+                // the handle as well as posted, so a headless handle answers
+                // for where it was asked to go — and a window that has not
+                // been created yet is not a special case for the caller.
+                // A window manager is free to ignore it; nothing here checks.
+                int py = (int)PopNum(line, w), px = (int)PopNum(line, w);
+                Value v = PopScrib(line, w);
+                v.Scribbler!.PlaceX = px;
+                v.Scribbler.PlaceY = py;
+                v.Scribbler.OnPlace?.Invoke(px, py);
+                Push(v);
+                return true;
+            }
             case "SCRIBBLERPOLL":               // ( scribbler -- arr ) kind 0 = queue empty
             {
                 ScribblerHandle h = PopScrib(line, w).Scribbler!;
@@ -1617,7 +1653,7 @@ public sealed partial class Engine
         "SCRIBBLEROPEN", "SCRIBBLERPIXEL", "SCRIBBLERFILL", "SCRIBBLERTEXT",
         "SCRIBBLERGETPIXEL", "SCRIBBLERWIDTH", "SCRIBBLERHEIGHT",
         "SCRIBBLERBLIT", "SCRIBBLERCLOSE", "SCRIBBLERTITLE", "SCRIBBLERPOLL",
-        "SCRIBBLERWAIT", "SCRIBBLERSETINTERVAL",
+        "SCRIBBLERWAIT", "SCRIBBLERSETINTERVAL", "SCRIBBLERSAVE", "SCRIBBLERPLACE",
         "SOUND", "NOTEON", "NOTEOFF", "SOUNDQUEUE", "SOUNDSTOP", "SOUNDGAIN",
         "SOUNDWAVE",
     };

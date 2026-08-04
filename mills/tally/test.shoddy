@@ -1,0 +1,202 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem test.shoddy — tally, graded with no window and no display.
+Rem
+Rem     bin/mill run mills/tally/test.shoddy       (from the repo root)
+Rem     ./build.sh test                            (from here)
+Rem
+Rem NO SCRIBBLER IS OPENED. This file Includes tally-core.shoddy and not
+Rem tally.shoddy, so nothing here can draw even by accident: everything
+Rem between a file's text and a finished report is pure, and that is the
+Rem whole reason for the core/shell split. What is left untested is the
+Rem forty lines of window handling in the shell — opening, placing,
+Rem blitting, waiting — and the five plotter calls, which plotter's own
+Rem suite already grades pixel by pixel.
+Rem
+Rem The centrepiece is the last section. files/grades.spec is run through
+Rem the whole pipeline and the report compared LINE BY LINE against
+Rem files/expected.out, so a change to any verb, any format string or any
+Rem statistic shows up as a diff rather than as a number nobody checked.
+Rem
+Rem What cannot be tested here: the aborting half of every guard. Error
+Rem is not catchable in Shoddy, so TallyCol on a text column, an unknown
+Rem verb, a missing spec key and SpecGet on an absent key would all kill
+Rem the run. TallyCheck exists partly so that the shell can ask "is this
+Rem spec drawable?" and get a STRING back instead of a corpse — and that
+Rem word is tested hard below, because it is the one the user meets.
+Rem ==================================================================
+
+Include "tally-core.shoddy"
+
+Rem ---- helpers ---------------------------------------------------------
+
+Def Spec(s As String) As List Of Pair
+    SpecParse(s)
+
+Rem The offset a bad spec failed at; 0 if it parsed after all, which is
+Rem never a legal line number.
+Def BadLine(s As String) As Number
+    Select Case SpecRead(s)
+        Case SpecBad(why, at)
+            at
+        Case Else
+            0
+
+Rem Fixtures are named from the REPO ROOT, because that is where this
+Rem file is run from: `bin/mill run mills/tally/test.shoddy`. The shell
+Rem resolves data.file against the current directory, which is right for
+Rem a spec somebody runs where their data is; a test that has to work
+Rem from one known place says the whole path instead.
+Def FixtureDir() As String
+    "mills/tally/files/"
+
+Def Fixture(name As String) As String
+    ReadFile(FixtureDir() & name)
+
+Def Rounded(x As Number, p As Number) As Number
+    Round(x * 10 ^ p) / 10 ^ p
+
+Def SameNums(got As List Of Number, want As List Of Number) As Boolean
+    Length(got) = Length(want) And All(Zip(got, want), Fn(p) => Fst(p) = Snd(p))
+
+Def SameText(got As List Of String, want As List Of String) As Boolean
+    Length(got) = Length(want) And All(Zip(got, want), Fn(p) => Fst(p) = Snd(p))
+
+Rem The first line at which two reports disagree, or 0 when they do not —
+Rem so a failure names the line instead of dumping both documents.
+Def FirstDiff(got As List Of String, want As List Of String) As Number
+    FirstDiffAt(got, want, 1)
+
+Def FirstDiffAt(got As List Of String, want As List Of String, n As Number) As Number
+    If IsEmpty(got) Or IsEmpty(want) Then
+        Ifte(IsEmpty(got) And IsEmpty(want), 0, n)
+    Else
+        If First(got) <> First(want) Then
+            n
+        Else
+            FirstDiffAt(Rest(got), Rest(want), n + 1)
+
+Rem A tiny sheet built in the file, so the verb tests do not depend on
+Rem the fixture and the fixture does not have to hold a special case for
+Rem every verb.
+Def Toy() As CsvSheet
+    TallySheetOf({ }, "K,V,W\nA,1,10\nB,2,20\nC,3,30\nD,4,40\nE,100,50\n")
+
+Def ColOf(sh As CsvSheet, head As String) As List Of Number
+    TallyCol(sh, head)
+
+Def Main()
+    Print("--- the spec file ---")
+    Let sp = Spec("# a note\n\ndata.file = files/g.csv\ndata.comment = #\nCHART.Type = scatter\nchart.title = A = B\nwindow.size = 640  480\nchart.fit = yes\n")
+    Assert(SpecGet(sp, "data.file") = "files/g.csv", "A DOTTED KEY")
+    Assert(SpecGet(sp, "chart.type") = "scatter", "KEYS FOLD CASE")
+    Assert(SpecGet(sp, "CHART.TYPE") = "scatter", "IN BOTH DIRECTIONS")
+    Rem The rule that pays for itself: # only starts a comment at the
+    Rem start of a line, so this file's own comment character survives.
+    Assert(SpecGet(sp, "data.comment") = "#", "A # IN A VALUE IS NOT A COMMENT")
+    Assert(SpecGet(sp, "chart.title") = "A = B", "ONLY THE FIRST = SPLITS THE LINE")
+    Assert(Not SpecHas(sp, "chart.bins"), "AN ABSENT KEY IS ABSENT")
+    Assert(SpecGetOr(sp, "chart.bins", "?") = "?", "AND FALLS BACK")
+    Assert(SpecNumOr(sp, "chart.bins", 10) = 10, "SO DOES THE NUMERIC FORM")
+    Assert(SpecFlag(sp, "chart.fit", False), "yes READS TRUE")
+    Assert(SpecFlag(sp, "chart.grid", True), "AND A MISSING FLAG TAKES ITS DEFAULT")
+    Assert(SpecNthNum(sp, "window.size", 1, 0) = 640, "A TWO-NUMBER VALUE, FIRST")
+    Assert(SpecNthNum(sp, "window.size", 2, 0) = 480, "AND SECOND, ANY AMOUNT OF SPACING")
+    Assert(SpecNthNum(sp, "window.size", 3, 7) = 7, "A THIRD THAT IS NOT THERE")
+
+    Print("--- last assignment wins, and order is kept ---")
+    Let sp2 = Spec("a.x = 1\nb.y = 2\na.x = 3\nc.z = 4\n")
+    Assert(SpecGet(sp2, "a.x") = "3", "A REPEATED KEY IS LAST-WINS")
+    Rem Newest-first storage is what makes that work with no dedupe pass;
+    Rem SpecUnder reverses, so families come back in document order.
+    Assert(SameText(Map(SpecUnder(sp2, ""), Fst), { "A.X", "B.Y", "A.X", "C.Z" }), "SPECUNDER IS DOCUMENT ORDER")
+    Let der = Spec("derive.Z = zscores S\nfilter.k = inliers S\nderive.R = ranks S\n")
+    Assert(SameText(Map(SpecSuffixed(der, "derive."), Fst), { "Z", "R" }), "SPECSUFFIXED CUTS THE PREFIX")
+    Assert(SameText(Map(SpecSuffixed(der, "derive."), Snd), { "zscores S", "ranks S" }), "AND KEEPS THE RECIPES IN ORDER")
+    Assert(Length(SpecSuffixed(der, "filter.")) = 1, "AND ONLY ITS OWN FAMILY")
+
+    Print("--- a spec that is wrong says which line ---")
+    Assert(BadLine("ok = 1\nthis has no equals\n") = 2, "A LINE WITH NO = FAILS AT THAT LINE")
+    Assert(BadLine("ok = 1\n\n# fine\n= 3\n") = 4, "AND SO DOES A LINE THAT STARTS WITH =")
+    Assert(BadLine("a = 1\nb = 2\n") = 0, "A GOOD SPEC FAILS NOWHERE")
+    Assert(BadLine("") = 0, "AND SO DOES AN EMPTY ONE")
+
+    Print("--- loading ---")
+    Let toy = Toy()
+    Assert(SameText(CsvHeads(toy), { "K", "V", "W" }), "THE FIRST RECORD IS THE HEADER")
+    Assert(Length(CsvBody(toy)) = 5, "AND THE REST ARE ROWS")
+    Rem data.header = no: the columns are numbered instead of named, so
+    Rem every later stage can go on talking about columns by name.
+    Let head0 = TallySheetOf(Spec("data.header = no\n"), "1,2\n3,4\n")
+    Assert(SameText(CsvHeads(head0), { "C1", "C2" }), "WITHOUT A HEADER THE COLUMNS ARE C1, C2")
+    Assert(Length(CsvBody(head0)) = 2, "AND NO ROW IS EATEN BY IT")
+    Let noted = TallySheetOf(Spec("data.comment = #\n"), "# note\nA,1\n\nB,2\n")
+    Assert(Length(CsvBody(noted)) = 1, "COMMENTS AND BLANK LINES ARE GONE BEFORE THE HEADER COUNT")
+    Let semi = TallySheetOf(Spec("data.sep = ;\n"), "K;V\nA;1\n")
+    Assert(SameText(CsvHeads(semi), { "K", "V" }), "data.sep TAKES ANY SINGLE CHARACTER")
+
+    Print("--- derive ---")
+    Assert(SameNums(ColOf(TallyDerive(toy, "R", "ranks V"), "R"), { 1, 2, 3, 4, 5 }), "ranks")
+    Assert(SameNums(ColOf(TallyDerive(toy, "S", "add V W"), "S"), { 11, 22, 33, 44, 150 }), "add")
+    Assert(SameNums(ColOf(TallyDerive(toy, "S", "sub W V"), "S"), { 9, 18, 27, 36, -50 }), "sub")
+    Assert(SameNums(ColOf(TallyDerive(toy, "S", "mul V W"), "S"), { 10, 40, 90, 160, 5000 }), "mul")
+    Assert(SameNums(ColOf(TallyDerive(toy, "S", "div W V"), "S"), { 10, 10, 10, 10, 0.5 }), "div")
+    Let absd = TallyDeriveAll(toy, Spec("derive.S = sub V W\nderive.T = abs S\n"))
+    Assert(SameNums(ColOf(absd, "T"), { 9, 18, 27, 36, 50 }), "abs, OVER A COLUMN A PREVIOUS DERIVE MADE NEGATIVE")
+    Rem pct is the share of the total, so it sums to a hundred.
+    Assert(Rounded(Sum(ColOf(TallyDerive(toy, "P", "pct W"), "P")), 6) = 100, "pct SUMS TO 100")
+    Rem z-scores are centred and have sample SD one, by construction.
+    Let zed = ColOf(TallyDerive(toy, "Z", "zscores V"), "Z")
+    Assert(Rounded(Sum(zed), 9) = 0, "zscores SUM TO ZERO")
+    Assert(Rounded(StdDev(zed), 9) = 1, "AND HAVE SAMPLE SD ONE")
+    Rem A perfect straight line leaves nothing behind.
+    Let line = TallySheetOf({ }, "X,Y\n1,3\n2,5\n3,7\n4,9\n")
+    Assert(Rounded(Sum(Map(ColOf(TallyDerive(line, "E", "residuals X Y"), "E"), Abs)), 9) = 0, "residuals OF AN EXACT FIT ARE ZERO")
+    Rem Derives run in file order, so a later one can name an earlier's column.
+    Let chained = TallyDeriveAll(toy, Spec("derive.S = add V W\nderive.T = mul S V\n"))
+    Assert(SameNums(ColOf(chained, "T"), { 11, 44, 99, 176, 15000 }), "A DERIVE CAN NAME AN EARLIER DERIVE")
+
+    Print("--- filter ---")
+    Assert(Length(CsvBody(TallyFilter(toy, "above V 2"))) = 3, "above")
+    Assert(Length(CsvBody(TallyFilter(toy, "below V 3"))) = 2, "below")
+    Assert(Length(CsvBody(TallyFilter(toy, "equals K C"))) = 1, "equals MATCHES TEXT, NOT NUMBERS")
+    Rem V is 1,2,3,4,100 — the hundred is the only thing past the fences.
+    Assert(Length(CsvBody(TallyFilter(toy, "inliers V"))) = 4, "inliers DROPS THE STRAY")
+    Assert(Length(CsvBody(TallyFilter(toy, "outliers V"))) = 1, "AND outliers KEEPS ONLY IT")
+    Assert(SameNums(ColOf(TallyFilter(toy, "outliers V"), "V"), { 100 }), "AND IT IS THE RIGHT ONE")
+    Rem Filters compose, in file order.
+    Let twice = TallyFilterAll(toy, Spec("filter.a = above V 1\nfilter.b = below V 100\n"))
+    Assert(SameNums(ColOf(twice, "V"), { 2, 3, 4 }), "TWO FILTERS BOTH APPLY")
+
+    Print("--- what TallyCheck refuses, and why ---")
+    Let sh = TallySheetOf({ }, "A,B\n1,2\n3,4\n")
+    Assert(TallyCheck(sh, Spec("chart.type = scatter\nchart.x = A\nchart.y = B\n")) = "", "A GOOD SPEC PASSES")
+    Assert(TallyCheck(sh, Spec("chart.type = none\n")) = "", "AND SO DOES NO CHART AT ALL")
+    Assert(Instr(TallyCheck(sh, Spec("chart.type = piechart\n")), "UNKNOWN chart.type") > 0, "AN UNKNOWN TYPE IS NAMED")
+    Assert(Instr(TallyCheck(sh, Spec("chart.type = scatter\nchart.x = A\n")), "NEEDS") > 0, "A MISSING KEY IS NAMED")
+    Assert(Instr(TallyCheck(sh, Spec("chart.type = scatter\nchart.x = A\nchart.y = ZZZ\n")), "NO COLUMN ZZZ") > 0, "A MISSING COLUMN IS NAMED")
+    Assert(TallyCheck(sh, Spec("chart.type = histogram\nchart.x = A\n")) = "", "A HISTOGRAM NEEDS ONLY chart.x")
+    Rem The one that matters most: a filter that removes everything is
+    Rem caught before a window opens onto an empty canvas.
+    Let none = TallyFilterAll(sh, Spec("filter.k = above A 99\n"))
+    Assert(Instr(TallyCheck(none, Spec("chart.type = box\nchart.x = A\n")), "NO ROWS LEFT") > 0, "AN EMPTY RESULT IS REFUSED")
+
+    Print("--- the fixture, line by line ---")
+    Rem files/grades.spec through the whole pipeline, against a report
+    Rem captured when every number in it had been checked by hand.
+    Let gspec = SpecParse(Fixture("grades.spec"))
+    Let gsheet = TallyPipeline(gspec, Fixture("grades.csv"))
+    Let got = TallyReport(gsheet, gspec)
+    Let want = ReadLines(FixtureDir() & "expected.out")
+    Assert(FirstDiff(got, want) = 0, "THE REPORT MATCHES files/expected.out AT LINE " & Str(FirstDiff(got, want)))
+    Assert(Length(got) = Length(want), "AND IS THE SAME LENGTH")
+    Rem And the chart the spec asks for is drawable, which is what the
+    Rem shell checks before it opens anything.
+    Assert(TallyCheck(gsheet, gspec) = "", "AND THE FIXTURE'S CHART IS DRAWABLE")
+    Assert(Length(TallyXs(gsheet, gspec)) = 10, "WITH TEN POINTS ON THE X AXIS")
+    Assert(Length(TallyYs(gsheet, gspec)) = 10, "AND TEN ON THE Y")
+
+    Print("")
+    Print("ALL ASSERTIONS PASSED")

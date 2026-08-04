@@ -77,6 +77,137 @@ first <code>#</code> onwards would eat it. Trailing comments would need
 quoting, quoting needs escaping, and a config file that needs an escaping rule
 has stopped being a config file.</p>
 
+<h2 id="walkthrough">What That Spec Actually Does</h2>
+<p>The data is ten students, in
+<code>mills/tally/files/grades.csv</code>:</p>
+<pre><code>STUDENT,GROUP,HOURS,MIDTERM,FINAL
+ADA,A,14,88,96
+LIN,A,9,71,78
+GRACE,B,17,92,99
+ALAN,B,11,74,81
+EDSGER,A,6,58,61
+BARBARA,B,15,85,91
+KATHERINE,A,19,94,97
+DONALD,B,4,49,52
+MARGARET,A,12,79,84
+JEAN,B,21,97,98</code></pre>
+<p>Five stages run over it, in this order and no other: <strong>read,
+derive, filter, report, draw</strong>.</p>
+
+<h3>1. <code>data.*</code> — read it</h3>
+<p><code>data.file</code> names the CSV; <code>data.trim</code> drops spaces
+around unquoted cells. The first record becomes the header, so from here on
+every other line talks about columns by name. (<code>data.sep</code>,
+<code>data.comment</code> and <code>data.header</code> are there for files that
+are not plain comma-separated with a header row.) The result is a sheet: five
+named columns, ten rows.</p>
+
+<h3>2. <code>derive.*</code> — add columns</h3>
+<p>Each <code>derive</code> line <strong>appends one new column</strong> to
+every row. The key after the dot is the column's name; the value is a verb and
+the columns it works on. The sample adds two, and the sheet grows from five
+columns to seven:</p>
+<pre><code>derive.Z       = zscores FINAL
+derive.RES     = residuals HOURS FINAL</code></pre>
+<table>
+<tr><th>STUDENT</th><th>HOURS</th><th>FINAL</th><th>Z</th><th>RES</th></tr>
+<tr><td>ADA</td><td>14</td><td>96</td><td>0.756</td><td>8.967</td></tr>
+<tr><td>LIN</td><td>9</td><td>78</td><td>-0.351</td><td>4.855</td></tr>
+<tr><td>GRACE</td><td>17</td><td>99</td><td>0.941</td><td>3.634</td></tr>
+<tr><td>ALAN</td><td>11</td><td>81</td><td>-0.166</td><td>2.300</td></tr>
+<tr><td>EDSGER</td><td>6</td><td>61</td><td>-1.396</td><td>-3.812</td></tr>
+<tr><td>BARBARA</td><td>15</td><td>91</td><td>0.449</td><td>1.189</td></tr>
+<tr><td>KATHERINE</td><td>19</td><td>97</td><td>0.818</td><td>-3.921</td></tr>
+<tr><td>DONALD</td><td>4</td><td>52</td><td>-1.949</td><td>-7.257</td></tr>
+<tr><td>MARGARET</td><td>12</td><td>84</td><td>0.018</td><td>2.522</td></tr>
+<tr><td>JEAN</td><td>21</td><td>98</td><td>0.879</td><td>-8.476</td></tr>
+</table>
+<p class="tag">Shown to three places; the columns themselves carry whatever
+<code>Str</code> gives.</p>
+<p><strong><code>zscores FINAL</code></strong> restates every mark in standard
+deviations from the class mean. The mean is 83.7 and the sample SD is 16.262,
+so ADA's 96 becomes (96 − 83.7) / 16.262 = 0.756 — three quarters of a standard
+deviation above average — and DONALD's 52 becomes −1.949. The point of the
+column is that it is <em>comparable</em>: a Z of 0.8 means the same thing in
+this class as in any other, where a mark of 96 does not.</p>
+<p><strong><code>residuals HOURS FINAL</code></strong> is the interesting one.
+It fits the least-squares line of FINAL on HOURS — the same line
+<code>report.line</code> prints, <code>FINAL = 2.778 × HOURS + 48.147</code> —
+then subtracts, per row, what that line <em>predicted</em> from what actually
+happened. So it is the column of <strong>what the straight line failed to
+explain</strong>. ADA studied 14 hours, the line expected 87.0, she got 96, and
+her residual is +8.97: she did nine marks better than her hours alone account
+for.</p>
+<p>Read the bottom of that column and the data answers back. JEAN has the
+largest miss at −8.48, and not because she did badly — she scored 98. She put
+in 21 hours, and the line, extrapolating happily, predicted 106.5. Marks stop
+at 100. KATHERINE is negative for the same reason. That ceiling is most of why
+<code>report.line</code> reports an R² of 0.880 rather than something higher,
+and it is exactly the sort of thing a scatter plot and a residual column show
+you and a correlation coefficient alone does not.</p>
+<p>Two rules about ordering are worth knowing:</p>
+<ul>
+<li><strong>Derives run in file order, so a later one can name an earlier
+one's column.</strong> That is how you compose without an expression language
+— <code>files/marks.spec</code> does
+<code>derive.TOTAL = add MIDTERM FINAL</code> and then
+<code>derive.SHARE = pct TOTAL</code>, the second working on a column that did
+not exist when the file was opened.</li>
+<li><strong>Every derive sees every row, because derive runs before
+filter.</strong> If you added <code>filter.keen = above HOURS 10</code> to this
+spec you would get nine rows, but Z would still be the <em>whole class's</em>
+z-scores — the ones printed above — not z-scores recomputed among the
+survivors. That is deliberate: "how does this student compare to the class" is
+usually the question, and standardizing against a subset you just carved out
+quietly changes what the number means. If you want the other behaviour, filter
+the file first and run tally on that.</li>
+</ul>
+
+<h3>3. <code>filter.*</code> — drop rows</h3>
+<p>The sample has none, so all ten rows go through. When there are several they
+apply in file order, each one narrowing what the last left. The verbs are
+<code>above</code> and <code>below</code> (numeric),
+<code>equals</code> (text), and <code>inliers</code> /
+<code>outliers</code>, which split on the 1.5 × IQR fences — the same rule the
+box plot draws its whiskers to. <code>files/share.spec</code> uses one:</p>
+<pre><code>filter.keen    = above HOURS 10</code></pre>
+
+<h3>4. <code>report.*</code> — print it</h3>
+<p>Six lines of spec, six blocks of output, in file order. Each is a verb and
+the columns it applies to, and each is a word
+<a href="../machines/stats.html">stats</a> already exports:</p>
+<table>
+<tr><th>Spec line</th><th>What it prints</th></tr>
+<tr><td><code>report.count = count</code></td><td>How many rows survived, and
+what the columns are now called — the quickest way to see that a derive landed
+or a filter bit.</td></tr>
+<tr><td><code>report.stats = describe HOURS MIDTERM FINAL</code></td><td>n,
+mean, SD, min, quartiles and max, one row per named column. Name no columns and
+it describes them all.</td></tr>
+<tr><td><code>report.corr = correl HOURS FINAL</code></td><td>Pearson (0.938)
+and Spearman (0.952) together. Spearman being the higher is the ceiling showing
+up again: the <em>ranking</em> of hours against marks is tidier than the
+straight-line relationship is.</td></tr>
+<tr><td><code>report.line = fit HOURS FINAL</code></td><td>Slope, intercept and
+R² — the very line <code>derive.RES</code> took its residuals from.</td></tr>
+<tr><td><code>report.groups = freq GROUP</code></td><td>Counts and percentages
+of a <em>text</em> column: five in group A, five in B.</td></tr>
+<tr><td><code>report.strays = outliers FINAL</code></td><td>Anything past the
+1.5 × IQR fences. Here: none.</td></tr>
+</table>
+<p>The whole report is what <code>files/expected.out</code> holds, and what the
+headless suite grades line by line.</p>
+
+<h3>5. <code>chart.*</code> and <code>window.*</code> — draw it</h3>
+<p><code>chart.type = scatter</code> with <code>chart.x</code> and
+<code>chart.y</code> puts a dot per row; <code>chart.fit = yes</code> lays the
+regression line over them, so the residuals you can read in the table are the
+vertical gaps you can see in the picture. <code>window.size</code> and
+<code>window.at</code> size and place the window,
+<code>window.capture</code> writes the PNG, and <code>window.show = no</code>
+says the file is the whole output — do not wait for anyone to dismiss
+anything.</p>
+
 <h2 id="verbs">Verbs, Not Expressions</h2>
 <p>A <code>derive</code> line names a verb and its columns —
 <code>zscores FINAL</code>, <code>residuals HOURS FINAL</code>,

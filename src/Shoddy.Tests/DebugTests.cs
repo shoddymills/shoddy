@@ -95,6 +95,15 @@ public class DebugTests
         RunGolden("gradebook.shoddy", "gradebook.out", "gradebook.in");
     }
 
+    /// <summary>The debug weave, byte-identical to the plain one.
+    ///
+    /// Machines are spliced here rather than resolved, which the debug
+    /// adapter itself no longer does. That is deliberate: MachineTests
+    /// builds its own machines into a temp workspace, and loading the
+    /// repo's Shoddy.Machines.* alongside them is an assembly-name
+    /// conflict in one test process. What this covers is the instrumented
+    /// weave; that the adapter's pipeline enforces machine scoping is
+    /// covered by MachineSurfaceTests.TheDebugPipelineEnforcesTheSameScoping.</summary>
     static void RunGolden(string program, string golden, string? stdinFile = null)
     {
         var entry = Weaver.LoadDebug(Parser.Parse(Lexer.ReadProgram(Path.Combine(Root, "tst", program))));

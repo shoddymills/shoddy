@@ -246,6 +246,50 @@ public class MachineSurfaceTests
         Assert.Contains("Add: Include \"deepf.shoddy\"", msg);
     }
 
+    /// <summary>The debugger builds the same program the runner does.
+    /// It used to splice every machine, which meant none of the scoping
+    /// applied under it: a program the runner refused would launch and
+    /// run. This drives the debug-adapter pipeline — resolve machines,
+    /// lint, weave — and demands the refusal.</summary>
+    [Fact]
+    public void TheDebugPipelineEnforcesTheSameScoping()
+    {
+        string machines = Workspace();
+        File.WriteAllText(Path.Combine(machines, "deepg.shoddy"),
+            """
+            Def DeepWord() As Number
+                7
+            """);
+        File.WriteAllText(Path.Combine(machines, "depg.shoddy"),
+            """
+            Include "deepg.shoddy"
+
+            Def DepUse() As Number
+                DeepWord()
+            """);
+        Build(Path.Combine(machines, "deepg.shoddy"));
+        Build(Path.Combine(machines, "depg.shoddy"));
+
+        string ws = Path.GetDirectoryName(machines)!;
+        string src = Path.Combine(ws, "user.shoddy");
+        File.WriteAllText(src,
+            """
+            Include "machines/depg.shoddy"
+
+            Def Main()
+                Print(DeepWord())
+            """);
+
+        var set = new MachineSet();
+        var lines = Lexer.ReadProgram(src, set.TryResolve);
+        var seeded = new ShoddyProgram();
+        set.SeedInto(seeded);
+        ShoddyProgram prog = Parser.Parse(lines, seeded);
+
+        string msg = Assert.Single(Lint.Run(prog, lines).UnknownWords).Item1;
+        Assert.Contains("Add: Include \"deepg.shoddy\"", msg);
+    }
+
     /// <summary>The manifest of one built machine, read back from its DLL.</summary>
     static MachineInfo ManifestOf(string sbPath)
     {

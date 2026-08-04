@@ -31,10 +31,12 @@ public static class Weaver
     /// return its Run entry point. Install the sink on
     /// <see cref="Engine.PendingSink"/> before invoking. The perch always
     /// splices sources (no machine DLLs) so every line is steppable.</summary>
-    public static Func<TextWriter, TextReader, int> LoadDebug(ShoddyProgram prog)
+    public static Func<TextWriter, TextReader, int> LoadDebug(
+        ShoddyProgram prog, IReadOnlyList<MachineInfo>? machines = null)
     {
         using var pe = new MemoryStream();
-        Compile(GenerateSource(prog, debug: true), pe, OutputKind.ConsoleApplication, null,
+        Compile(GenerateSource(prog, debug: true, deps: machines),
+                pe, OutputKind.ConsoleApplication, machines,
                 "perch-" + Guid.NewGuid().ToString("N"));
         pe.Position = 0;
         Assembly asm = System.Runtime.Loader.AssemblyLoadContext.Default.LoadFromStream(pe);

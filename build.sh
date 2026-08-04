@@ -133,6 +133,10 @@ case "${1:-help}" in
         dotnet test src/Shoddy.Tests
         ensure_mill
         "$MILL" run tst/libtest.shoddy
+        # fin's arithmetic is the kind that produces a plausible wrong
+        # answer rather than an error, so its known-answer suite runs in
+        # CI beside the golden files rather than by hand.
+        "$MILL" run tst/fin.shoddy
         # The net demo is the only end-to-end exercise of the socket words:
         # it stands up a server, connects a client to it and trades lines,
         # both ends in one process on loopback. --allow-net is required

@@ -129,6 +129,10 @@ function Invoke-Test {
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     Assert-Mill
     & $Mill run tst/libtest.shoddy
+    # fin's arithmetic is the kind that produces a plausible wrong answer
+    # rather than an error, so its known-answer suite runs in CI beside the
+    # golden files rather than by hand.
+    & $Mill run tst/fin.shoddy
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     # The net demo is the only end-to-end exercise of the socket words: it
     # stands up a server, connects a client to it and trades lines, both

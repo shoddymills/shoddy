@@ -185,6 +185,7 @@ batteries included. Full word references in
   </tr>
   <tr>
     <td width="25%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/file.html"><img src="docs/media/icons/file.svg" alt="file" width="100%"></a><br><b>file</b><br><sub>line-oriented text I/O</sub></td>
+    <td width="25%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/fin.html"><img src="docs/media/icons/fin.svg" alt="fin" width="100%"></a><br><b>fin</b><br><sub>money over time</sub></td>
     <td width="25%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/recio.html"><img src="docs/media/icons/recio.svg" alt="recio" width="100%"></a><br><b>recio</b><br><sub>fixed-size binary records</sub></td>
     <td width="25%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/dict.html"><img src="docs/media/icons/dict.svg" alt="dict" width="100%"></a><br><b>dict</b><br><sub>key/value over Pair lists</sub></td>
     <td width="25%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/isam.html"><img src="docs/media/icons/isam.svg" alt="isam" width="100%"></a><br><b>isam</b><br><sub>keyed files, B+tree index</sub></td>

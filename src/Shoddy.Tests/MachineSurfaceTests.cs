@@ -160,6 +160,92 @@ public class MachineSurfaceTests
     static bool Reachable(ShoddyProgram prog, string name) =>
         prog.Defs.ContainsKey(name) || prog.ExternalDefs.ContainsKey(name);
 
+    /// <summary>A machine's includes are its own business: a consumer
+    /// names what it included, and not what that machine included in
+    /// turn. Dependencies still load and link — only naming is scoped.</summary>
+    [Fact]
+    public void ADependencyOfAMachineIsNotNameable()
+    {
+        string machines = Workspace();
+        File.WriteAllText(Path.Combine(machines, "deepe.shoddy"),
+            """
+            Def Deep() As Number
+                7
+
+            Type DeepBox
+                Held As Number
+            """);
+        File.WriteAllText(Path.Combine(machines, "depe.shoddy"),
+            """
+            Include "deepe.shoddy"
+
+            Def DepUse() As Number
+                Deep()
+            """);
+        Build(Path.Combine(machines, "deepe.shoddy"));
+        Build(Path.Combine(machines, "depe.shoddy"));
+
+        string ws = Path.GetDirectoryName(machines)!;
+        string src = Path.Combine(ws, "user.shoddy");
+        File.WriteAllText(src,
+            """
+            Include "machines/depe.shoddy"
+
+            Def Main()
+                Print(DepUse())
+            """);
+        var (prog, _) = ParseWithMachines(src);
+
+        Assert.True(prog.ExternalDefs.ContainsKey("DEPUSE"));    // what it included
+        Assert.False(prog.ExternalDefs.ContainsKey("DEEP"));     // what that included
+        Assert.False(prog.ExternalTypes.ContainsKey("DEEPBOX"));
+
+        // Still linked, though: DepUse's body calls Deep.
+        Assert.Contains(prog.Unseeded, e => e.Key == "DEEP");
+    }
+
+    /// <summary>The refusal names the machine to add. Without this the
+    /// rule reads as an arbitrary rejection and every reader has to learn
+    /// the include graph by hand.</summary>
+    [Fact]
+    public void TheRefusalNamesTheIncludeToAdd()
+    {
+        string machines = Workspace();
+        File.WriteAllText(Path.Combine(machines, "deepf.shoddy"),
+            """
+            Def DeepWord() As Number
+                7
+            """);
+        File.WriteAllText(Path.Combine(machines, "depf.shoddy"),
+            """
+            Include "deepf.shoddy"
+
+            Def DepUse() As Number
+                DeepWord()
+            """);
+        Build(Path.Combine(machines, "deepf.shoddy"));
+        Build(Path.Combine(machines, "depf.shoddy"));
+
+        string ws = Path.GetDirectoryName(machines)!;
+        string src = Path.Combine(ws, "user.shoddy");
+        File.WriteAllText(src,
+            """
+            Include "machines/depf.shoddy"
+
+            Def Main()
+                Print(DeepWord())
+            """);
+        var (prog, _) = ParseWithMachines(src);
+        var lines = Lexer.ReadProgram(src, new MachineSet().TryResolve);
+        Lint.Result r = Lint.Run(prog, lines);
+
+        string msg = Assert.Single(r.UnknownWords).Item1;
+        Assert.Contains("DEEPWORD", msg);
+        Assert.Contains("declared in deepf.shoddy", msg);
+        Assert.Contains("depf.shoddy includes but does not export", msg);
+        Assert.Contains("Add: Include \"deepf.shoddy\"", msg);
+    }
+
     /// <summary>The manifest of one built machine, read back from its DLL.</summary>
     static MachineInfo ManifestOf(string sbPath)
     {

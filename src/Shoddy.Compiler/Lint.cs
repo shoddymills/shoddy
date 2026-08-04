@@ -41,9 +41,63 @@ public static class Lint
                $"Add: Include \"{a.Declares}\"";
     }
 
+    /// <summary>An Include whose machine contributes no name the program
+    /// uses. Now that a machine's includes are its own business, an
+    /// include is a declared interface rather than an incidental splice,
+    /// so one that earns nothing is simply noise — and the four
+    /// re-export includes this warning would have caught had it existed
+    /// (stats→dict, net→seq, buzzer→seq, scribbler→clock) are exactly the
+    /// habit the scoping rule ends.
+    ///
+    /// Warning only. An unused include is untidy, never wrong, and a
+    /// build should not fail over tidiness.</summary>
+    static void UnusedMachineIncludes(ShoddyProgram prog, IReadOnlyList<Line>? lines, Result r)
+    {
+        if (lines == null) return;
+        // Machine class -> the names it contributed to this program.
+        var byClass = new Dictionary<string, List<string>>();
+        void note(string name, string target)
+        {
+            int cut = target.LastIndexOf('.');
+            if (cut < 0) return;
+            string cls = target[..cut];
+            if (!byClass.TryGetValue(cls, out List<string>? l)) byClass[cls] = l = new();
+            l.Add(name);
+        }
+        foreach ((string n, string t) in prog.ExternalDefs) note(n, t);
+        foreach ((string n, ExternalType t) in prog.ExternalTypes) note(n, t.FieldRef);
+
+        HashSet<string> used = UsedWords(prog);
+        foreach ((string cls, List<string> names) in byClass)
+        {
+            if (names.Any(used.Contains)) continue;
+            string src = cls[(cls.LastIndexOf('.') + 1)..].ToLowerInvariant() + ".shoddy";
+            r.Warnings.Add($"warning: Include \"{src}\" — no word or type from it is used");
+        }
+    }
+
+    /// <summary>Every word named anywhere in the program's bodies.</summary>
+    static HashSet<string> UsedWords(ShoddyProgram prog)
+    {
+        var used = new HashSet<string>();
+        void walk(Quot? q)
+        {
+            if (q == null) return;
+            foreach (Node n in q.Items)
+            {
+                if (n.T == NType.Word && n.Str != null) used.Add(n.Str);
+                walk(n.Q); walk(n.ElseQ);
+            }
+        }
+        walk(prog.InitQuot);
+        foreach (Quot b in prog.Defs.Values) walk(b);
+        return used;
+    }
+
     public static Result Run(ShoddyProgram prog, IReadOnlyList<Line>? lines)
     {
         var r = new Result();
+        UnusedMachineIncludes(prog, lines, r);
         r.Warnings.AddRange(ShadowedAccessors(prog));
         WordAccessorCollisions(prog, r);
         NamespacedTopLevelLets(prog, r);

@@ -185,7 +185,7 @@ public class MachineSurfaceTests
     static (ShoddyProgram, MachineSet) ParseWithMachines(string file)
     {
         var machines = new MachineSet();
-        var lines = Lexer.ReadProgram(file, machines.TryResolve, machines.SetQualifier);
+        var lines = Lexer.ReadProgram(file, machines.TryResolve);
         var prog = new ShoddyProgram();
         machines.SeedInto(prog);
         return (Parser.Parse(lines, prog), machines);

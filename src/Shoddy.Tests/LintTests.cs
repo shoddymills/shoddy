@@ -35,7 +35,7 @@ public class LintTests
     {
         var set = new MachineSet();
         List<Line> lines = machines
-            ? Lexer.ReadProgram(path, set.TryResolve, set.SetQualifier)
+            ? Lexer.ReadProgram(path, set.TryResolve)
             : Lexer.ReadProgram(path);
         var prog = new ShoddyProgram();
         set.SeedInto(prog);

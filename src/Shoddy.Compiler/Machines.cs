@@ -73,11 +73,16 @@ public sealed class MachineSet
     /// export CLOSE) makes including both a hard error.</summary>
     readonly Dictionary<string, string> qualByDll = new(StringComparer.OrdinalIgnoreCase);
 
-    /// <summary>The Lexer's onQualified hook: this machine's include said
-    /// AS <paramref name="qual"/>. Only the directly-included machine is
-    /// qualified — the machines it pulls in as dependencies keep their own
-    /// names, since the including program never named them.</summary>
-    public void SetQualifier(string sbPath, string qual) =>
+    /// <summary>This machine's include said AS <paramref name="qual"/>.
+    /// Only the directly-included machine is qualified — the machines it
+    /// pulls in as dependencies keep their own names, since the including
+    /// program never named them.
+    ///
+    /// Called from <see cref="TryResolve"/> rather than by the caller, so
+    /// that resolving a machine and recording its namespace cannot come
+    /// apart. They were two separate hooks, and a caller that wired only
+    /// the first got the AS silently discarded.</summary>
+    void SetQualifier(string sbPath, string qual) =>
         qualByDll[DllPathFor(sbPath)] = qual;
 
     public static string ClassNameFor(string sbPath)
@@ -92,12 +97,16 @@ public sealed class MachineSet
                      $"Shoddy.Machines.{ClassNameFor(sbPath)}.dll");
 
     /// <summary>The Lexer's externalInclude hook: true = a machine DLL
-    /// satisfies this include, don't splice the source.</summary>
-    public bool TryResolve(string sbPath)
+    /// satisfies this include, don't splice the source.
+    /// <paramref name="qual"/> is the namespace the include carried, or
+    /// null for a bare one; it is recorded here because the machine's
+    /// source is never read and this is the only place the AS survives.</summary>
+    public bool TryResolve(string sbPath, string? qual)
     {
         string dll = DllPathFor(sbPath);
         if (!File.Exists(dll)) return false;
         LoadRecursive(dll);
+        if (qual != null) SetQualifier(sbPath, qual);
         return true;
     }
 

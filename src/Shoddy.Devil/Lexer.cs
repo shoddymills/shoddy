@@ -50,19 +50,22 @@ public static class Lexer
     /// <summary>Reads a program with Include splicing (include-once,
     /// resolved relative to the including file, then $SHODDYLIB).
     /// When <paramref name="externalInclude"/> is given, it is offered
-    /// each resolved include path first; returning true means the include
-    /// is satisfied externally (a precompiled machine) and is not
+    /// each resolved include path together with the namespace that
+    /// include carried (null for a bare one); returning true means the
+    /// include is satisfied externally (a precompiled machine) and is not
     /// spliced. The interpreter never passes it — it always splices.
     ///
-    /// <paramref name="onQualified"/> is told (path, qualifier) for every
-    /// include that carried an AS and was satisfied externally, so the
-    /// machine layer can qualify a DLL's surface it never sees as source.</summary>
-    public static List<Line> ReadProgram(string path, Func<string, bool>? externalInclude = null,
-                                         Action<string, string>? onQualified = null)
+    /// The qualifier travels with the path deliberately. A machine
+    /// satisfied by a DLL is never read as source, so this call is the
+    /// only trace that an AS was written at all — when resolving and
+    /// recording were two separate callbacks, wiring one without the
+    /// other silently discarded the namespace.</summary>
+    public static List<Line> ReadProgram(string path,
+                                         Func<string, string?, bool>? externalInclude = null)
     {
         var lines = new List<Line>();
         var included = new Dictionary<string, string?>();
-        ReadFile(path, lines, included, externalInclude, null, onQualified);
+        ReadFile(path, lines, included, externalInclude, null);
         return lines;
     }
 
@@ -73,8 +76,7 @@ public static class Lexer
     /// a file's spelling never depends on its dependencies' include
     /// lists.</summary>
     static void ReadFile(string path, List<Line> lines, Dictionary<string, string?> included,
-                         Func<string, bool>? externalInclude = null, string? qual = null,
-                         Action<string, string>? onQualified = null)
+                         Func<string, string?, bool>? externalInclude = null, string? qual = null)
     {
         if (included.ContainsKey(path)) return;      // include-once semantics
         included[path] = qual;
@@ -160,13 +162,12 @@ public static class Lexer
                         $"'{name}' is included twice under different namespaces "
                         + $"({Show(had)} and {Show(sub)})");
                 if (externalInclude != null && !included.ContainsKey(cand) &&
-                    externalInclude(cand))
+                    externalInclude(cand, sub))
                 {
                     included[cand] = sub;        // satisfied by a machine DLL
-                    if (qualified) onQualified?.Invoke(cand, sub!);
                     continue;
                 }
-                ReadFile(cand, lines, included, externalInclude, sub, onQualified);
+                ReadFile(cand, lines, included, externalInclude, sub);
                 continue;                        // the directive itself is consumed
             }
 

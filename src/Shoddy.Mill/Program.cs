@@ -150,8 +150,7 @@ static (ShoddyProgram, MachineSet) ParseWithMachines(
     string file, bool lintOff = false, bool lintVerbose = false)
 {
     var machines = new MachineSet();
-    List<Line> lines = Lexer.ReadProgram(file, p => ResolveMachine(machines, p),
-                                         machines.SetQualifier);
+    List<Line> lines = Lexer.ReadProgram(file, (p, q) => ResolveMachine(machines, p, q));
     var prog = new ShoddyProgram();
     machines.SeedInto(prog);
     ShoddyProgram parsed = Parser.Parse(lines, prog);
@@ -182,7 +181,7 @@ static (ShoddyProgram, MachineSet) ParseWithMachines(
 // depends on) is rebuilt in place before it is loaded — the stale-DLL trap
 // cost two debugging rounds in one week, and the mill already knows how to
 // build a machine. Rebuild failures fall through to the normal error path.
-static bool ResolveMachine(MachineSet machines, string sbPath)
+static bool ResolveMachine(MachineSet machines, string sbPath, string? qual)
 {
     string dll = MachineSet.DllPathFor(sbPath);
     if (File.Exists(dll) && IsStale(sbPath, dll))
@@ -192,7 +191,7 @@ static bool ResolveMachine(MachineSet machines, string sbPath)
         (ShoddyProgram mprog, MachineSet msub) = ParseWithMachines(sbPath, lintOff: true);
         Weaver.WeaveMachine(mprog, sbPath, msub.Machines);
     }
-    return machines.TryResolve(sbPath);
+    return machines.TryResolve(sbPath, qual);
 }
 
 static bool IsStale(string sbPath, string dll)

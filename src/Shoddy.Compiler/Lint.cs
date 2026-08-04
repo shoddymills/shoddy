@@ -795,7 +795,15 @@ public static class Lint
                     prog.FindType(name) != null ||
                     Engine.BuiltinWords.Contains(name) || prog.Accessors.ContainsKey(name) ||
                     prog.AnyTypeHasField(name) || locals.Contains(name);
-                if (!resolves)
+                if (resolves) continue;
+                // A name a machine declares but keeps to itself is not a
+                // typo, and must not be softened into one: auto-quoting
+                // would turn a missing Include into a warning and defer
+                // the failure to runtime, at whatever line happened to
+                // reach it. Refuse it with the advice instead.
+                if (prog.Unseeded.ContainsKey(name))
+                    r.UnknownWords.Add((Unknown(prog, name, w), it.File, it.Line));
+                else
                     r.Warnings.Add($"{it.File ?? "?"}:{it.Line}: warning: bare name " +
                         $"'{w}' was passed as a function value, but nothing defines " +
                         "it — a typo is auto-quoted silently in argument position");

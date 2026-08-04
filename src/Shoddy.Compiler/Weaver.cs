@@ -23,8 +23,9 @@ public static class Weaver
 {
     public static string GenerateSource(ShoddyProgram prog, string? machineClass = null,
                                         bool debug = false,
-                                        IReadOnlyList<MachineInfo>? deps = null) =>
-        new CodeGen(prog, machineClass, debug, deps).Generate();
+                                        IReadOnlyList<MachineInfo>? deps = null,
+                                        string? ownFile = null) =>
+        new CodeGen(prog, machineClass, debug, deps, ownFile).Generate();
 
     /// <summary>Compile a debug-instrumented (perch) build to memory and
     /// return its Run entry point. Install the sink on
@@ -88,7 +89,7 @@ public static class Weaver
         string cls = MachineSet.ClassNameFor(sbPath);
         Directory.CreateDirectory(Path.GetDirectoryName(outDll)!);
         using var pe = File.Create(outDll);
-        Compile(GenerateSource(prog, cls, deps: machines), pe,
+        Compile(GenerateSource(prog, cls, deps: machines, ownFile: sbPath), pe,
                 OutputKind.DynamicallyLinkedLibrary,
                 machines, $"Shoddy.Machines.{cls}");
         return outDll;

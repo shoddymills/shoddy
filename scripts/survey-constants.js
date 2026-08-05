@@ -3,6 +3,7 @@
 //
 //   node scripts/survey-constants.js            the table
 //   node scripts/survey-constants.js --list      every convertible, by file
+//   node scripts/survey-constants.js --blocked   every one held back, and why
 //   node scripts/survey-constants.js --check     exit 1 if any remain
 //
 // A machine may carry a top-level Let that binds a constant, so a zero-arg
@@ -79,6 +80,24 @@ for (const f of files) {
 // them the array case could not be written at all.
 const folded = new Set(["ToArray", "Dim"]);
 
+// ---- files that must keep their Defs ----------------------------------
+//
+// A top-level Let in a file included `As Q` is declared under the
+// namespace, and a BARE reference to it from another file, in argument
+// position, is auto-quoted into a quotation rather than resolving to the
+// value. The value arrives as a function nobody called, nothing warns,
+// and the failure surfaces somewhere else entirely. Until that resolver
+// defect is fixed, a file anyone includes under a namespace cannot hold
+// a constant, so its zero-arg Defs are not convertible and are counted
+// separately rather than reported as work left undone.
+const namespaced = new Set();
+for (const f of files)
+  for (const m of fs.readFileSync(f, "utf8")
+                    .matchAll(/^\s*Include\s+"([^"]+)\.shoddy"\s+As\s+\w+/gm))
+    namespaced.add(path.basename(m[1]).toLowerCase());
+
+const heldBack = f => namespaced.has(path.basename(f, ".shoddy").toLowerCase());
+
 // ---- classifying one body --------------------------------------------
 
 const OPERATOR_WORDS = new Set(["Mod", "And", "Or", "Not", "True", "False"]);
@@ -127,6 +146,7 @@ const counts = {};
 for (const a of AREAS) counts[a] = Object.fromEntries(KINDS.map(k => [k, 0]));
 
 const convertible = [];
+const blocked = [];
 for (const f of files) {
   const area = areaOf(f);
   if (!area) continue;
@@ -137,13 +157,18 @@ for (const f of files) {
     // where identity and per-call allocation bite. D10: everywhere else
     // every constant does, because a mill's Let has always been legal.
     const composite = kind === "list literal" || kind === "constructor over constants";
-    if (area === "machines" ? composite : kind !== "calls a word")
-      convertible.push({ file: rel(f), line: d.line, name: d.name, kind });
+    if (!(area === "machines" ? composite : kind !== "calls a word")) continue;
+    (heldBack(f) ? blocked : convertible)
+      .push({ file: rel(f), line: d.line, name: d.name, kind });
   }
 }
 
 const argv = process.argv.slice(2);
-if (argv.includes("--list")) {
+if (argv.includes("--blocked")) {
+  for (const c of blocked)
+    console.log(`${c.file}:${c.line}  ${c.name}()  ${c.kind}`);
+  console.log(`${blocked.length} held back by the namespaced-Let defect`);
+} else if (argv.includes("--list")) {
   for (const c of convertible)
     console.log(`${c.file}:${c.line}  ${c.name}()  ${c.kind}`);
   console.log(`${convertible.length} convertible`);
@@ -161,6 +186,9 @@ if (argv.includes("--list")) {
   console.log(convertible.length === 0
     ? "NO CONVERTIBLES REMAIN"
     : `${convertible.length} CONVERTIBLE (--list to name them)`);
+  if (blocked.length)
+    console.log(`${blocked.length} held back by the namespaced-Let defect ` +
+                `(--blocked to name them)`);
 }
 
 if (argv.includes("--check")) process.exit(convertible.length === 0 ? 0 : 1);

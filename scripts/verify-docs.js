@@ -265,7 +265,7 @@ const MOJI = new RegExp(MOJI_LEAD + MOJI_NEXT);
 const MOJI_OPT_OUT = "verify-docs: mojibake is the subject here";
 
 const TEXT_EXT = new Set([".md", ".html", ".shoddy", ".js", ".json", ".xml",
-                          ".svg", ".cs", ".sh", ".cmd", ".ps1", ".txt", ".yml"]);
+                          ".svg", ".cs", ".sh", ".ps1", ".txt", ".yml"]);
 const SKIP_DIR = new Set([".git", "bin", "obj", "artifacts", "node_modules"]);
 
 function textFiles(dir, out = []) {

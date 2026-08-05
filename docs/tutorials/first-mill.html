@@ -655,36 +655,32 @@ esac</code></pre>
 <p>On Mac or Linux, make it runnable once: open the Terminal panel with
 <b>Ctrl+`</b> and type <code>chmod +x build.sh</code>.</p>
 
-<p>And <code>build.cmd</code> (Windows):</p>
+<p>And <code>build.ps1</code> (Windows):</p>
 
-<pre><code>@echo off
-setlocal
-rem   build.cmd          draw the spiral in a window
-rem   build.cmd test     run the headless checks
-cd /d "%~dp0"
+<pre><code>#   .\build.ps1          draw the spiral in a window
+#   .\build.ps1 test     run the headless checks (no window; works in CI)
+$ErrorActionPreference = 'Stop'
+Set-Location $PSScriptRoot
 
-if defined MILL goto have_mill
-set "MILL=..\..\bin\mill.exe"
-if exist "%MILL%" goto have_mill
-set "MILL=mill"
-where mill &gt;nul 2&gt;&amp;1 &amp;&amp; goto have_mill
-echo no mill found - set MILL=path\to\mill.exe, or use the extension &gt;&amp;2
-exit /b 1
+function Find-Mill {
+    if ($env:MILL) { return $env:MILL }
+    foreach ($candidate in '..\..\bin\mill.exe', '..\..\bin\mill') {
+        if (Test-Path $candidate) { return $candidate }
+    }
+    if (Get-Command mill -ErrorAction SilentlyContinue) { return 'mill' }
+    Write-Error 'no mill found - set $env:MILL, or use the extension'
+    exit 1
+}
 
-:have_mill
-if "%~1"=="" goto run
-if /i "%~1"=="run" goto run
-if /i "%~1"=="test" goto test
-echo usage: build.cmd [run^|test]
-exit /b 2
+$mill = Find-Mill
+$target = if ($args.Count -ge 1) { $args[0] } else { 'run' }
 
-:run
-"%MILL%" run spiro.shoddy
-exit /b %errorlevel%
-
-:test
-"%MILL%" run test.shoddy
-exit /b %errorlevel%</code></pre>
+switch ($target) {
+    'run'   { &amp; $mill run spiro.shoddy }
+    'test'  { &amp; $mill run test.shoddy }
+    default { Write-Error 'usage: .\build.ps1 [run|test]'; exit 2 }
+}
+exit $LASTEXITCODE</code></pre>
 
 <p>Both look for a mill three ways: the <code>MILL</code> environment
 variable if you set one, a checkout's own <code>bin/mill</code> if the
@@ -692,11 +688,11 @@ folder happens to sit inside one, then whatever <code>mill</code> is on the
 <code>PATH</code>. Copy them beside anything you write and they keep
 working.</p>
 
-<p class="note watch"><span class="lab">Windows</span> A <code>.cmd</code>
-file needs Windows line endings. If the status bar at the bottom right says
-<b>LF</b> while <code>build.cmd</code> is open, click it, choose <b>CRLF</b>
-and save — otherwise <code>cmd.exe</code> can fail on it in confusing
-ways.</p>
+<p class="note watch"><span class="lab">Windows</span> PowerShell refuses to
+run an unsigned script by default. If <code>.\build.ps1</code> reports that
+running scripts is disabled, bypass the policy for that one invocation
+instead of changing it system-wide: <code>powershell -ExecutionPolicy
+Bypass -File .\build.ps1</code>.</p>
 
 <h2 id="warnings">14. Three warnings you'll meet</h2>
 

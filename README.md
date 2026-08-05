@@ -276,7 +276,7 @@ dotnet test src/Shoddy.Tests                       # golden conformance suite
 ```
 
 Or use the build wrapper — `./build.sh <cmd>` on Linux/macOS/WSL,
-`build.cmd <cmd>` on Windows — which bundles the common tasks: `build`,
+`./build.ps1 <cmd>` on Windows — which bundles the common tasks: `build`,
 `test`, `run FILE`, `machines`, `stage`, `vsix`, `clean`.
 
 `vsix` packages a self-contained VS Code extension: it stages the mill and

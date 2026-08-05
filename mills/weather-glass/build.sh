@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Build / run the weather-glass mill (Unix: Linux / macOS / WSL).
-# Windows users: use build.cmd (same commands).
+# Windows users: run this via Git Bash or WSL (same commands).
 #
 #   ./build.sh run 63011   fetch and draw the report for a US ZIP
 #   ./build.sh test        the offline suite - no network, no --allow-net

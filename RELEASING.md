@@ -24,7 +24,7 @@ scripts/shoddy-feature.sh ship          # merge your feature into main
 scripts/shoddy-release.sh 1.0.0         # build, test, tag, push — CI publishes
 ```
 
-Both scripts have `.ps1` and `.cmd` twins with identical behaviour; run them from the
+Both scripts have `.ps1` twins with identical behaviour; run them from the
 repo root. Everything below is what those scripts do and why, for when something goes
 sideways.
 
@@ -298,4 +298,4 @@ git merge --no-ff release/V1.0.0 -m "Merge branch 'release/V1.0.0'"
 git push origin main
 ```
 
-Unix `./build.sh`, Windows `build.cmd` or `./build.ps1` — same commands.
+Unix `./build.sh`, Windows `./build.ps1` — same commands.

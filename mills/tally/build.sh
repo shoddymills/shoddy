@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Build / run the tally mill (Unix: Linux / macOS / WSL).
-# Windows users: use build.cmd (same commands).
+# Windows users: run this via Git Bash or WSL (same commands).
 #
 #   ./build.sh run [SPEC]       read the spec, print the report, show the chart
 #   ./build.sh capture [SPEC]   the same, with nothing on screen — the PNG is the output

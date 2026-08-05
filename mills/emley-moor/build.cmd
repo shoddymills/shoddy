@@ -1,6 +1,6 @@
 @echo off
 setlocal
-rem Build / run the rag-and-bone mill (Windows).
+rem Build / run the emley-moor mill (Windows).
 rem Unix users: use build.sh (same commands).
 rem
 rem   build.cmd            serve on http://127.0.0.1:8080/
@@ -40,7 +40,7 @@ exit /b 0
 
 :run
 call :ensure_mill || exit /b 1
-"%MILL%" run --allow-net rag-and-bone.shoddy
+"%MILL%" run --allow-net emley-moor.shoddy
 exit /b %errorlevel%
 
 :test
@@ -51,8 +51,8 @@ exit /b %errorlevel%
 :build
 call :ensure_mill || exit /b 1
 if not exist bin mkdir bin
-"%MILL%" weave rag-and-bone.shoddy -o bin\rag-and-bone.dll
-echo woven into bin\ - run with: dotnet bin\rag-and-bone.dll (needs SHODDY_ALLOW_NET=1)
+"%MILL%" weave emley-moor.shoddy -o bin\emley-moor.dll
+echo woven into bin\ - run with: dotnet bin\emley-moor.dll (needs SHODDY_ALLOW_NET=1)
 exit /b %errorlevel%
 
 :clean

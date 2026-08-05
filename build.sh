@@ -144,6 +144,13 @@ case "${1:-help}" in
         # whose parts are not unique.
         "$MILL" run tst/eng.shoddy
         "$MILL" run tst/lin.shoddy
+        # alg is the same case again and then some: a symbolic answer
+        # that is subtly wrong is still a well-formed expression. Its
+        # suite tests by property rather than by value — integrals
+        # differentiated back, factorisations expanded, partial fractions
+        # recombined — and it is also the only place the alg/eng bridge
+        # can be exercised, since neither machine includes the other.
+        "$MILL" run tst/alg.shoddy
         # The net demo is the only end-to-end exercise of the socket words:
         # it stands up a server, connects a client to it and trades lines,
         # both ends in one process on loopback. --allow-net is required

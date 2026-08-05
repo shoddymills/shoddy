@@ -142,6 +142,14 @@ function Invoke-Test {
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     & $Mill run tst/lin.shoddy
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    # alg is the same case again and then some: a symbolic answer that is
+    # subtly wrong is still a well-formed expression. Its suite tests by
+    # property rather than by value -- integrals differentiated back,
+    # factorisations expanded, partial fractions recombined -- and it is
+    # also the only place the alg/eng bridge can be exercised, since
+    # neither machine includes the other.
+    & $Mill run tst/alg.shoddy
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     # The net demo is the only end-to-end exercise of the socket words: it
     # stands up a server, connects a client to it and trades lines, both
     # ends in one process on loopback. --allow-net is required because the

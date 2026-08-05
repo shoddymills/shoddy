@@ -143,7 +143,7 @@ public sealed class CodeGen
         return final;
     }
 
-    static string StrLit(string s)
+    internal static string StrLit(string s)
     {
         var b = new StringBuilder("\"");
         foreach (char c in s)
@@ -192,6 +192,12 @@ public sealed class CodeGen
         }
     }
 
+    /// <summary>The C# expression that reaches a declared type — a field
+    /// of this class, of Prelude, or of the machine that declared it. Keyed
+    /// by name because that is what typeExpr is keyed by, and a name can
+    /// only mean one type in one weave.</summary>
+    string? TypeRefOf(TypeDef t) => typeExpr.GetValueOrDefault(t.Name);
+
     bool GlobalVisible(string name) =>
         globalIds.ContainsKey(name) && (!inInit || assignedGlobals.Contains(name));
 
@@ -202,8 +208,6 @@ public sealed class CodeGen
         bool machine = machineClass != null;
         if (!machine && prog.FindDef("MAIN") == null)
             throw new ShoddyError(0, "no DEF MAIN found");
-        if (machine && prog.InitQuot != null)
-            throw new ShoddyError(0, "machines cannot have top-level Let");
         if (machine) usedIds.Add(machineClass!);
 
         foreach (TypeDef t in prog.Types)
@@ -226,6 +230,20 @@ public sealed class CodeGen
                 if (n.T == NType.Take)
                     foreach (string name in n.Names)
                         globalIds[name] = Mangle("G_", name);
+
+        // A machine has no Run, so it has no init phase to assign a global
+        // in — which is what the refusal that used to stand here was really
+        // about. A CONSTANT needs no init phase: it is folded now and
+        // emitted as a static field initializer, beside the TypeDef fields
+        // that have always been built the same way. Anything that is not a
+        // constant is still refused, by MachineConstants.Fold, in a message
+        // that names the offending word rather than the feature.
+        //
+        // Folded here, after typeExpr, because a constant may be a record
+        // and the emission needs the C# expression that reaches its type.
+        List<MachineConstants.Constant> constants = new();
+        if (machine && prog.InitQuot != null)
+            constants = MachineConstants.Fold(prog, TypeRefOf);
 
         W("// woven by mill — generated C#; do not edit");
         W("#pragma warning disable CS0162, CS0164, CS0219, CS8321");
@@ -277,6 +295,30 @@ public sealed class CodeGen
         W("return t;");
         Close();
         W("");
+        if (constants.Count > 0)
+        {
+            // A constant list, built the way the runtime builds one: the
+            // items array is its own identity, so `=` on two reads of the
+            // same constant is true and a constant list is indistinguishable
+            // from one a program made. No Engine is touched, which is what
+            // lets it run in a static field initializer.
+            W("static Value CList(params Value[] vs)");
+            Open();
+            W("var items = new QItem[vs.Length];");
+            W("for (int k = 0; k < vs.Length; k++) items[k] = QItem.OfValue(vs[k]);");
+            W("return Value.OfCQuot(items, items);");
+            Close();
+            W("");
+        }
+        // TYPES BEFORE CONSTANTS, AND THIS IS A CONTRACT. A constant built
+        // from a type constructor emits Value.OfRec(T_POINT, …), which
+        // reads another static field of this same class, and C# runs static
+        // field initializers in declaration order: emitted the other way
+        // round, T_POINT is null at class load and the failure is a
+        // NullReferenceException with nothing pointing at the cause. A
+        // Prelude type or another machine's type is safe for a different
+        // reason — the CLR runs that class's initializer before the field
+        // is read — so only this same-class case needs the ordering.
         int emitted = 0;
         foreach (TypeDef t in prog.Types)
         {
@@ -286,8 +328,22 @@ public sealed class CodeGen
             emitted++;
         }
         if (emitted > 0) W("");
-        foreach (string g in globalIds.Values)
-            W($"static Value {g};");
+        if (machine)
+        {
+            // One value per process, shared and immutable — that sharing is
+            // the point, not a hazard tolerated: it is what makes identity
+            // stable, and re-minting per Engine would reopen the hole this
+            // exists to close. No `public`: a Let declares a value, not a
+            // word, so nothing crosses the manifest. A machine publishes a
+            // constant with a Def that returns it.  <-- constants after types
+            foreach (MachineConstants.Constant c in constants)
+                W($"static readonly Value {globalIds[c.Name]} = {c.Expr};");
+        }
+        else
+        {
+            foreach (string g in globalIds.Values)
+                W($"static Value {g};");
+        }
         if (globalIds.Count > 0) W("");
 
         foreach ((string name, Quot body) in prog.Defs)

@@ -113,6 +113,13 @@ future work.</p>
 Def Name ( t ... -- u ... )     &#39; concatenative body, effect signature
 Def Name                        &#39; concatenative body, undocumented effect</code></pre>
 <p>Applicative parameters perform an implicit <code>Take</code>; the body is a sequence of statements whose final value is the result. <code>Def Main()</code> is the entry point. A fourth top-level form, <code>Let NAME = expr</code> at the left margin, binds a program-wide constant: all top-level Lets are evaluated once, in textual order, before <code>Main</code>, each seeing earlier ones and any Def. They form the outermost lexical scope — visible in every body, closed over by quotations, immutable like every binding. (No separate Const keyword: a Let that can never rebind already is one.)</p>
+<p><strong>In a machine, a top-level <code>Let</code> must bind a constant.</strong> A machine has no <code>Main</code>, so it has no init phase to evaluate an initializer in; a constant needs none, because it is built once when the machine is loaded. The rule is a prohibition — <em>the initializer contains no word calls</em> — and what it admits is Number, String and Boolean literals, <code>{ … }</code> list literals and type constructors, nested to any depth; the arithmetic and concatenation operators <code>+ - * / ^ Mod &amp;</code> over constant operands, folded at compile time; <code>ToArray</code> and <code>Dim</code> applied to constants, likewise folded (there is no array literal in the language, so an array constant is spelled <code>ToArray({ … })</code>); and an earlier constant from the same file. Anything else is refused where it is written, naming the word that has to go. A quotation is refused by its own message: a quotation captures the environment it was made in, and a machine constant is one value shared by every program that loads the machine.</p>
+<p>A machine constant is <strong>private to its file</strong>. A <code>Let</code> declares a value, not a word, and an <code>Include</code> gives you the words a machine declares (§13.1) — so nothing crosses the manifest, and two machines may name the same constant without colliding. A machine <em>publishes</em> a constant with a <code>Def</code> that returns it, and that <code>Def</code> then returns the same value every call:</p>
+<pre class="basic"><code>Let unitNames = { &quot;m&quot;, &quot;kg&quot;, &quot;s&quot; }
+
+Def Units() As List Of String
+    unitNames                   &#39; Units() = Units() is True</code></pre>
+<p>That last line is the point, not a nicety. A <code>List</code> compares by identity, so a zero-arg <code>Def</code> that builds <code>{ &quot;m&quot;, &quot;kg&quot;, &quot;s&quot; }</code> hands back a different value every call and is never equal to itself. A program’s own top-level <code>Let</code> is unrestricted, as above: it may call any <code>Def</code>.</p>
 <h2 id="expressions-applicative-bodies">5. Expressions (applicative bodies)</h2>
 <ul>
 <li><p><strong>Calls</strong>: <code>f(a, b)</code> desugars to <code>a b f</code> — arguments load left to right, then the word runs.</p></li>
@@ -207,6 +214,7 @@ Nth(a, 3)                       &#39; 3, in o(1)
 SetNth(a, 3, 99)                &#39; Array(1, 2, 99, 4, 5) — original untouched
 Dim(3, 0)                       &#39; Array(0, 0, 0) — basic&#39;s keyword, reclaimed</code></pre>
 <p><code>Map Filter Fold Each Length IsEmpty First Nth SetNth Reverse Concat Sort</code> are polymorphic over both kinds and preserve the input’s kind (<code>Map</code> over an array yields an array). <code>ToArray</code>/<code>ToList</code> convert. <code>Rest</code>/<code>Prepend</code> stay list-only by design — on an array they’d hide an O(n) copy.</p>
+<p>The same rule decides which kind a constant should be (§4): a table consulted by index is an <code>Array</code>, a table consumed by structural recursion is a <code>List</code>. Both may be held by a machine’s top-level <code>Let</code> — an array constant is written <code>ToArray({ … })</code>, which is folded at compile time.</p>
 <h2 id="word-reference">10. Word reference</h2>
 <dl class="doors">
 <dt>Arithmetic</dt>

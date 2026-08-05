@@ -453,23 +453,55 @@ build.cmd machines      # Windows</code></pre></div>
 </div>
 
 <div class="err">
-<p class="emsg"><code>machines cannot have top-level Let</code>
-<code>no DEF MAIN found</code></p>
-<p>Two sides of one rule: a library built with <code>mill machine</code>
-holds only <code>Def</code>s and <code>Type</code>s (no program-wide state),
-and a program run with <code>mill run</code> must define <code>Main</code>.</p>
+<p class="emsg"><code>no DEF MAIN found</code></p>
+<p>A program run with <code>mill run</code> must define <code>Main</code>.
+A library built with <code>mill machine</code> must not — it is included,
+not run.</p>
 <div class="fixpair">
-<div class="bad"><b>Broken</b><pre><code>' compiled with: mill machine lib.shoddy
-Let limit = 10        ' state in a library
-
+<div class="bad"><b>Broken</b><pre><code>' mill run lib.shoddy
 Def Capped(n As Number) As Number
-    Min(n, limit)</code></pre></div>
-<div class="good"><b>Fixed</b><pre><code>' a machine keeps values in Defs
-Def Limit() As Number
-    10
+    Min(n, 10)</code></pre></div>
+<div class="good"><b>Fixed</b><pre><code>' either add an entry point...
+Def Main()
+    Print(Capped(99))
 
-Def Capped(n As Number) As Number
-    Min(n, Limit())</code></pre></div>
+' ...or build it as what it is:
+'   mill machine lib.shoddy</code></pre></div>
+</div>
+</div>
+
+<div class="err">
+<p class="emsg"><code>a machine's top-level Let must bind a constant; this one calls {word}</code>
+<code>a machine's top-level Let cannot hold a quotation; return it from a Def instead</code>
+<code>the constant '{name}' cannot be computed: {why}</code></p>
+<p>A machine has no <code>Main</code>, so it has no init phase to run an
+initializer in. A <em>constant</em> needs none: it is built once when the
+machine loads, which is why a machine may carry one and nothing else.
+Literals, <code>{ … }</code> list literals and type constructors are
+constants; so are <code>+ - * / ^ Mod &amp;</code> over them, and
+<code>ToArray</code>/<code>Dim</code> applied to them, all folded where they
+are written. Anything that calls a word is refused, and the message names
+the word rather than the feature.</p>
+<p>The third message is the fold reporting what it found: a constant
+division by zero is a compile-time refusal naming the binding, instead of
+an abort in the middle of somebody's run.</p>
+<p>A quotation gets its own message because it is not a matter of taste. A
+woven quotation body is a closure over the running Engine, and a value
+built when the machine loads has no Engine to close over — so a
+function-valued constant cannot be emitted at all. Keep it in a
+<code>Def</code>, which is per-Engine and correct.</p>
+<div class="fixpair">
+<div class="bad"><b>Broken</b><pre><code>' mill machine units.shoddy
+Let names = Map(Raw(), Upper)   ' calls MAP
+Let pick = Fn(x) =&gt; x + 1       ' a quotation
+Let half = 1 / 0                ' cannot be computed</code></pre></div>
+<div class="good"><b>Fixed</b><pre><code>Let names = { "m", "kg", "s" }  ' a constant...
+
+Def Names() As List Of String   ' ...published by a Def
+    names                       ' Names() = Names() is True
+
+Def Pick() As Quotation         ' computation stays in a Def
+    Fn(x) =&gt; x + 1</code></pre></div>
 </div>
 </div>
 
@@ -1468,10 +1500,12 @@ the queue is capped so a runaway score can't buffer unbounded audio.</p>
 
 <div class="err">
 <p class="emsg"><code>internal: cannot weave node {t}</code>
+<code>internal: cannot fold node {t}</code>
+<code>internal: cannot render constant {what}</code>
 <code>internal: generated C# failed to compile (source dumped to {path})</code></p>
 <p>Anything beginning <code>internal:</code> is a toolchain bug, not a
-program bug — the dump path in the second holds the evidence. Please report
-either one.</p>
+program bug — the dump path in the last holds the evidence. Please report
+any of them.</p>
 </div>
 
 <p>The three shapes and the golden-suite testing rule live on

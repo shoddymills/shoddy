@@ -3,7 +3,8 @@
 #
 #   ./build.ps1 all [bump]            everything: clean, test, then .vsix
 #   ./build.ps1 build                 build the mill into bin/
-#   ./build.ps1 test                  golden suite + libtest + net loopback check
+#   ./build.ps1 test                  everything: dotnet tests, the machine
+#                                     suites and every mill's own suite
 #   ./build.ps1 run FILE.shoddy       compile in memory and run a program
 #   ./build.ps1 weave FILE.shoddy     compile a program to an assembly
 #   ./build.ps1 machines              compile every machine to a machine DLL
@@ -163,6 +164,50 @@ function Invoke-Test {
     # longer compiles.
     & $Mill run tutorials/spiro/test.shoddy
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    # Everything else the tree can prove about itself: a suite for every
+    # machine that has one, and every mill's own suite. Both existed
+    # before and neither ran here, which meant a release could ship a
+    # broken machine or a broken mill through a green gate. Nothing is
+    # released that has not been through this.
+    Invoke-MachineSuites
+    Invoke-MillSuites
+}
+
+# The machine suites. Every machines/<name>.shoddy that has one is graded
+# here, by name rather than by glob: a suite that stops being listed is a
+# suite that stops running, and the whole point of this list is that nine
+# of them had stopped running without anyone noticing. isamdump runs after
+# isamtest and takes DELETE, because it reopens the file isamtest leaves
+# behind - the round trip across two processes is the thing being proved,
+# and DELETE clears up after it.
+function Invoke-MachineSuites {
+    Assert-Mill
+    foreach ($suite in 'csvtest', 'htmltest', 'jsontest', 'nettest', 'neuraltest',
+                       'randomtest', 'shakertest', 'xmltest') {
+        Write-Host "==> tst/$suite.shoddy"
+        & $Mill run "tst/$suite.shoddy"
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    }
+    Write-Host '==> tst/isamtest.shoddy'
+    & $Mill run tst/isamtest.shoddy
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    Write-Host '==> tst/isamdump.shoddy'
+    & $Mill run tst/isamdump.shoddy DELETE
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+}
+
+# Every mill's own test target, through the mill's own build.cmd, so there
+# is one statement of how a mill is tested and it lives with the mill.
+# Every directory under mills/ is visited: a mill with no test target
+# fails here with its usage message, which is the intended answer to
+# shipping one without a suite.
+function Invoke-MillSuites {
+    Assert-Mill
+    foreach ($m in Get-ChildItem mills -Directory | Sort-Object Name) {
+        Write-Host "==> mills/$($m.Name)/build.cmd test"
+        & cmd /c (Join-Path $m.FullName 'build.cmd') test
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    }
 }
 
 function Invoke-Vsix {
@@ -221,7 +266,7 @@ switch ($Command) {
     'vsix' { Invoke-Vsix $File }
     'clean' { Invoke-Clean }
     { $_ -in 'help', '-h', '--help' } {
-        Get-Content $PSCommandPath | Select-Object -Skip 1 -First 23 |
+        Get-Content $PSCommandPath | Select-Object -Skip 1 -First 24 |
             ForEach-Object { $_ -replace '^#\s?', '' }
     }
     default {

@@ -1,0 +1,136 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem test.shoddy — the iris classifier, graded without a prompt.
+Rem
+Rem     ./build.sh test        (from here)
+Rem     build.cmd test         (from here, Windows)
+Rem
+Rem Run from THIS directory: the model and data paths are relative, the
+Rem same way they are for the trainer and the predictor.
+Rem
+Rem NO TRAINING. Training takes seconds rather than minutes, but it also
+Rem REWRITES dat/iris-model.bin, and a test that rewrites the artefact
+Rem it is grading proves nothing about the artefact that shipped. So
+Rem this loads the model in the tree and scores it against the thirty
+Rem held-out rows in the tree — which is exactly the pair a reader is
+Rem invited to trust by iris.shoddy's banner.
+Rem
+Rem The numbers asserted here are the ones that banner and the trainer's
+Rem header publish: 27 of 30, all three errors virginica called
+Rem versicolor, and one of them announced at 0.999. A documented number
+Rem that nothing checks is a number that drifts.
+Rem
+Rem The loader is four lines and it is copied from iris-train.shoddy on
+Rem purpose. Including that file would collide on Def Main, and a test
+Rem that reached into the trainer for its parser would be graded against
+Rem the trainer's idea of the format rather than the file's.
+Rem ==================================================================
+
+Include "matrix.shoddy"
+Include "file.shoddy"
+Include "seq.shoddy"
+Include "str.shoddy"
+Include "neural.shoddy"
+Include "math.shoddy"
+
+Rem ---- the loader, as iris-train.shoddy reads it ----------------------
+
+Def DataLines(path As String) As List Of String
+    Filter(ReadLines(path), Fn(s) => Len(s) > 0 And Not StartsWith(s, "#"))
+
+Def ParseRow(line As String) As Array Of Number
+    ToArray(Map(Split(line, ","), Fn(t) => Val(Trim(t))))
+
+Def RowX(cells As Array Of Number) As Array Of Number
+    ToArray({ Nth(cells, 1), Nth(cells, 2), Nth(cells, 3), Nth(cells, 4) })
+
+Def RowY(cells As Array Of Number) As Number
+    Nth(cells, 5)
+
+Def SpeciesName(k As Number) As String
+    Select Case k
+        Case 1
+            "SETOSA"
+        Case 2
+            "VERSICOLOR"
+        Case Else
+            "VIRGINICA"
+
+Rem ---- scoring --------------------------------------------------------
+
+Def Correct(m As Model, rows As List Of Array Of Number) As Number
+    CountIf(rows, Fn(r) => ModelClassOf(m, RowX(r)) = RowY(r))
+
+Rem Every row the model called wrong, as "TRUE>PREDICTED", so a failure
+Rem names the confusion rather than only the count.
+Def Misses(m As Model, rows As List Of Array Of Number) As List Of String
+    Map(Filter(rows, Fn(r) => ModelClassOf(m, RowX(r)) <> RowY(r)),
+        Fn(r) => SpeciesName(RowY(r)) & ">" & SpeciesName(ModelClassOf(m, RowX(r))))
+
+Def Confidence(m As Model, r As Array Of Number) As Number
+    Let ps = ModelPredict(m, RowX(r))
+    Nth(ps, Argmax(ps))
+
+Def Main()
+    Print("--- the model and the held-out rows load ---")
+    Assert(FileExists("dat/iris-model.bin"), "THE TRAINED MODEL IS IN THE TREE")
+    Let m = ModelLoad("dat/iris-model.bin")
+    Let n = Weights(m)
+    Print("network: " & Str(Cols(W1(n))) & "-" & Str(Rows(W1(n))) & "-" & Str(Rows(W2(n))))
+    Assert(Cols(W1(n)) = 4, "FOUR MEASUREMENTS IN")
+    Assert(Rows(W1(n)) = 8, "EIGHT HIDDEN UNITS")
+    Assert(Rows(W2(n)) = 3, "AND ONE OUTPUT PER SPECIES")
+    Assert(Task(m) = Classify(), "THE HEAD IS A SOFTMAX, NOT A REGRESSION")
+
+    Let testRows = Map(DataLines("dat/iris-test.dat"), ParseRow)
+    Let trainRows = Map(DataLines("dat/iris-train.dat"), ParseRow)
+    Print(Str(Length(trainRows)) & " training rows, " & Str(Length(testRows)) & " held out")
+    Assert(Length(trainRows) = 120, "THE TRAINING SPLIT IS 120 ROWS")
+    Assert(Length(testRows) = 30, "AND THE HELD-OUT SPLIT IS 30")
+    Assert(All(testRows, Fn(r) => Length(r) = 5), "FIVE COLUMNS: FOUR MEASUREMENTS AND A SPECIES")
+    Assert(All(testRows, Fn(r) => RowY(r) >= 1 And RowY(r) <= 3), "AND THE SPECIES IS ONE OF THREE")
+
+    Print("--- the probabilities are probabilities ---")
+    Let ps = ModelPredict(m, RowX(First(testRows)))
+    Print(ps)
+    Assert(Length(ps) = 3, "ONE PROBABILITY PER SPECIES")
+    Assert(All(ToList(ps), Fn(p) => p >= 0 And p <= 1), "EACH BETWEEN ZERO AND ONE")
+    Assert(Abs(Fold(ToList(ps), 0, +) - 1) < 0.000001, "AND THEY SUM TO ONE, WHICH IS WHAT SOFTMAX IS FOR")
+
+    Print("--- the model file carries its own scaler ---")
+    Rem The measurements are raw centimetres. If the scaler had not made
+    Rem the round trip, the network would be fed inputs it was never
+    Rem fitted on — and would still return three plausible numbers.
+    Assert(Length(Center(Prep(m))) = 4 And Length(Spread(Prep(m))) = 4, "A CENTRE AND A SPREAD PER MEASUREMENT")
+    Assert(All(ToList(Spread(Prep(m))), Fn(s) => s > 0), "NO ZERO SPREAD, WHICH WOULD DIVIDE BY IT")
+    Let raw = RowX(First(testRows))
+    Assert(ModelPredict(m, raw) = NetPredict(Weights(m), Task(m), ScalerApply(Prep(m), raw)),
+           "AND MODELPREDICT IS SCALE-THEN-PREDICT, BIT FOR BIT")
+
+    Print("--- accuracy on the held-out rows ---")
+    Let right = Correct(m, testRows)
+    Print(Str(right) & "/30 correct, and the misses were:")
+    Print(Misses(m, testRows))
+    Assert(right = 27, "27 OF 30, THE NUMBER THE MILL'S BANNER PUBLISHES")
+    Assert(All(Misses(m, testRows), Fn(s) => s = "VIRGINICA>VERSICOLOR"),
+           "AND EVERY MISS IS A VIRGINICA CALLED VERSICOLOR, WHERE THE BOTANY SAYS THE OVERLAP IS")
+    Assert(Correct(m, trainRows) = 118, "118 OF 120 ON THE ROWS IT WAS FITTED TO")
+
+    Print("--- setosa is the separable one ---")
+    Let setosa = Filter(testRows, Fn(r) => RowY(r) = 1)
+    Assert(Length(setosa) > 0, "THERE ARE SETOSA ROWS HELD OUT")
+    Assert(All(setosa, Fn(r) => ModelClassOf(m, RowX(r)) = 1), "AND NOT ONE OF THEM IS MISSED")
+    Assert(All(setosa, Fn(r) => Confidence(m, r) > 0.9), "EACH CALLED WITH REAL CONFIDENCE")
+
+    Print("--- confidence is not correctness ---")
+    Rem The banner's sharpest caveat, and the one a reader is most likely
+    Rem to want proof of: the model announces one of its three errors at
+    Rem 0.999.
+    Let wrong = Filter(testRows, Fn(r) => ModelClassOf(m, RowX(r)) <> RowY(r))
+    Print(Map(wrong, Fn(r) => RoundTo(Confidence(m, r), 3)))
+    Assert(Any(wrong, Fn(r) => Confidence(m, r) > 0.99), "ONE ERROR IS ANNOUNCED AT BETTER THAN 0.99")
+    Assert(Any(wrong, Fn(r) => Confidence(m, r) < 0.6), "AND ANOTHER AT BARELY BETTER THAN A COIN")
+
+    Print("ALL IRIS CHECKS PASSED")

@@ -5,6 +5,7 @@
 #   ./build.sh            build the program into bin/
 #   ./build.sh build      same as above
 #   ./build.sh run FILE   build if needed, then run on an MPS FILE
+#   ./build.sh test       solve both fixtures and check the answers
 #   ./build.sh clean      remove built binaries from bin/
 #
 # The build weaves simplex-mps.shoddy to a self-contained assembly and
@@ -48,12 +49,16 @@ case "${1:-build}" in
         shift
         dotnet "$OUT" "$@"
         ;;
+    test)
+        ensure_mill
+        "$MILL" run test.shoddy
+        ;;
     clean)
         rm -f bin/*.dll bin/*.json
         echo "cleaned."
         ;;
     *)
-        echo "usage: ./build.sh [build|run FILE.mps|clean]" >&2
+        echo "usage: ./build.sh [build|run FILE.mps|test|clean]" >&2
         exit 2
         ;;
 esac

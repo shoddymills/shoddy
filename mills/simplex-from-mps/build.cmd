@@ -6,6 +6,7 @@ rem
 rem   build.cmd            build the program into bin\
 rem   build.cmd build      same as above
 rem   build.cmd run FILE   build if needed, then run on an MPS FILE
+rem   build.cmd test       solve both fixtures and check the answers
 rem   build.cmd clean      remove built binaries from bin\
 rem
 rem The build weaves simplex-mps.shoddy to a self-contained assembly and
@@ -25,8 +26,9 @@ set "OUT=bin\simplex-mps.dll"
 if "%~1"=="" goto build
 if /i "%~1"=="build" goto build
 if /i "%~1"=="run" goto run
+if /i "%~1"=="test" goto test
 if /i "%~1"=="clean" goto clean
-echo usage: build.cmd [build^|run FILE.mps^|clean]
+echo usage: build.cmd [build^|run FILE.mps^|test^|clean]
 exit /b 2
 
 :ensure_mill
@@ -61,6 +63,11 @@ shift
 goto collect
 :runit
 dotnet "%OUT%"!ARGS!
+exit /b %errorlevel%
+
+:test
+call :ensure_mill || exit /b 1
+"%MILL%" run test.shoddy
 exit /b %errorlevel%
 
 :clean

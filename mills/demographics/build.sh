@@ -7,6 +7,7 @@
 #   ./build.sh train      build if needed, then train the model
 #                         (writes dat/people-model.bin; ~9 minutes)
 #   ./build.sh run        build if needed, then predict interactively
+#   ./build.sh test       grade the shipped model against the data files
 #   ./build.sh clean      remove built binaries from bin/
 #
 # The build weaves demographics-train.shoddy (the trainer) and
@@ -58,12 +59,19 @@ case "${1:-build}" in
         [ -f "$RUNOUT" ] || build
         dotnet "$RUNOUT"
         ;;
+    test)
+        # Run from source, not from bin/: the point is to grade what is
+        # in the tree. No training — nine minutes, and it would rewrite
+        # the model being graded. test.shoddy says so at more length.
+        ensure_mill
+        "$MILL" run test.shoddy
+        ;;
     clean)
         rm -f bin/*.dll bin/*.json
         echo "cleaned."
         ;;
     *)
-        echo "usage: ./build.sh [build|train|run|clean]" >&2
+        echo "usage: ./build.sh [build|train|run|test|clean]" >&2
         exit 2
         ;;
 esac

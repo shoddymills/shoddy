@@ -1,0 +1,126 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem test.shoddy — the income model, graded without a prompt.
+Rem
+Rem     ./build.sh test        (from here)
+Rem     build.cmd test         (from here, Windows)
+Rem
+Rem Run from THIS directory: the model and data paths are relative, the
+Rem same way they are for the trainer and the predictor.
+Rem
+Rem NO TRAINING. The trainer takes about nine minutes and rewrites
+Rem dat/people-model.bin, and a test that rewrites the artefact it is
+Rem grading proves nothing about the artefact that shipped. This loads
+Rem the model in the tree and scores it against the rows in the tree.
+Rem
+Rem The check that earns its keep is the last one. demographics.shoddy's
+Rem banner says the trainer's RowX and the predictor's PersonX are two
+Rem copies of one decision about how a person becomes eight numbers,
+Rem "and nothing to notice if they ever stop agreeing" — the fault the
+Rem iris mill avoids by putting its scaler in the model file. So this
+Rem file builds PersonX's vector for a person, reads RowX's vector for
+Rem the data row describing the same person, and asserts they are the
+Rem same eight numbers. That is the noticing, made mechanical.
+Rem
+Rem Both copies are reproduced here rather than included, because the
+Rem two files that carry them each carry a Def Main.
+Rem ==================================================================
+
+Include "matrix.shoddy"
+Include "file.shoddy"
+Include "seq.shoddy"
+Include "str.shoddy"
+Include "neural.shoddy"
+Include "math.shoddy"
+
+Rem ---- the loader, as demographics-train.shoddy reads it --------------
+
+Def DataLines(path As String) As List Of String
+    Filter(ReadLines(path), Fn(s) => Len(s) > 0 And Not StartsWith(s, "#"))
+
+Def ParseRow(line As String) As Array Of Number
+    ToArray(Map(Split(line, ","), Fn(t) => Val(Trim(t))))
+
+Rem Nine columns: sex, age/100, state one-hot (3), income/100000 (the
+Rem target), politics one-hot (3). X is columns 1-5 and 7-9, in order.
+Def RowX(cells As Array Of Number) As Array Of Number
+    ToArray({ Nth(cells, 1), Nth(cells, 2), Nth(cells, 3), Nth(cells, 4), Nth(cells, 5), Nth(cells, 7), Nth(cells, 8), Nth(cells, 9) })
+
+Def RowY(cells As Array Of Number) As Number
+    Nth(cells, 6)
+
+Rem ---- the input vector, as demographics.shoddy builds it -------------
+
+Def OneHot(k As Number, n As Number) As List Of Number
+    Map(Range(1, n), Fn(i) => Kron(i, k))
+
+Def PersonX(sex As Number, age As Number, state As Number, pol As Number) As Array Of Number
+    ToArray(Concat(Concat({ sex, age / 100 }, OneHot(state, 3)), OneHot(pol, 3)))
+
+Rem ---- scoring ---------------------------------------------------------
+
+Rem Percent-close accuracy, the trainer's own measure: a prediction
+Rem counts as right when it lands within a tenth of the true income.
+Def Accuracy(net As Net, rows As List Of Array Of Number) As Number
+    NetAccuracy(net, Map(rows, RowX), Map(rows, RowY), 0.1)
+
+Def Main()
+    Print("--- the model and the data load ---")
+    Assert(FileExists("dat/people-model.bin"), "THE TRAINED MODEL IS IN THE TREE")
+    Let net = NetLoadBin("dat/people-model.bin")
+    Print("network: " & Str(Cols(W1(net))) & "-" & Str(Rows(W1(net))) & "-" & Str(Rows(W2(net))))
+    Assert(Cols(W1(net)) = 8, "EIGHT INPUTS: SEX, AGE, THREE STATES AND THREE LEANINGS")
+    Assert(Rows(W1(net)) = 100, "A HUNDRED HIDDEN UNITS")
+    Assert(Rows(W2(net)) = 1, "AND ONE OUTPUT, BECAUSE INCOME IS A NUMBER AND NOT A CATEGORY")
+
+    Let trainRows = Map(DataLines("dat/training-people.dat"), ParseRow)
+    Let testRows = Map(DataLines("dat/test-people.dat"), ParseRow)
+    Print(Str(Length(trainRows)) & " training rows, " & Str(Length(testRows)) & " held out")
+    Assert(Length(trainRows) = 200, "TWO HUNDRED TRAINING ROWS")
+    Assert(Length(testRows) = 40, "AND FORTY HELD OUT")
+    Assert(All(trainRows, Fn(r) => Length(r) = 9), "NINE COLUMNS APIECE")
+
+    Print("--- the one-hot columns really are one-hot ---")
+    Rem A row whose state columns sum to something other than one is a
+    Rem row the network was fitted on and nobody read.
+    Assert(All(trainRows, Fn(r) => Nth(r, 3) + Nth(r, 4) + Nth(r, 5) = 1), "EXACTLY ONE STATE PER PERSON")
+    Assert(All(trainRows, Fn(r) => Nth(r, 7) + Nth(r, 8) + Nth(r, 9) = 1), "AND EXACTLY ONE LEANING")
+    Assert(All(trainRows, Fn(r) => Nth(r, 1) = 0 Or Nth(r, 1) = 1), "SEX IS ZERO OR ONE")
+
+    Print("--- accuracy, the trainer's own percent-close measure ---")
+    Print("train " & Str(RoundTo(Accuracy(net, trainRows), 4))
+          & ", test " & Str(RoundTo(Accuracy(net, testRows), 4)))
+    Assert(Accuracy(net, trainRows) > 0.9, "MORE THAN NINE IN TEN TRAINING ROWS WITHIN A TENTH")
+    Assert(Accuracy(net, testRows) > 0.9, "AND THE SAME ON ROWS IT WAS NEVER SHOWN")
+
+    Print("--- the prediction the trainer signs off with ---")
+    Rem A male of 34 from Oklahoma, moderate: the C# demo's own example,
+    Rem and the line demographics-train.shoddy prints when it finishes.
+    Let x = PersonX(0, 34, 3, 2)
+    Let y = NetOut(net, x)
+    Print("predicted income: " & Str(RoundTo(y * 100000, 2)))
+    Rem The model file is binary doubles and NetLoadBin is bit-exact, so
+    Rem this is a known answer rather than a tolerance: the number moves
+    Rem only if the model, the loader or the arithmetic moves.
+    Assert(Abs(y * 100000 - 44406.45) < 0.5, "$44,406.45, THE FIGURE THE TRAINER SIGNS OFF WITH")
+
+    Print("--- income rises with age, which is the shape of the data ---")
+    Let young = NetOut(net, PersonX(0, 25, 3, 2))
+    Let old = NetOut(net, PersonX(0, 60, 3, 2))
+    Print(Str(RoundTo(young * 100000, 2)) & " at 25, " & Str(RoundTo(old * 100000, 2)) & " at 60")
+    Assert(old > young, "THE SIXTY YEAR OLD IS PREDICTED MORE THAN THE TWENTY-FIVE YEAR OLD")
+
+    Print("--- PersonX and RowX still agree ---")
+    Rem Row one of the training file is a female of 24 from Michigan,
+    Rem liberal. Two files build her eight numbers, and this is the only
+    Rem place they are ever put side by side.
+    Let she = First(trainRows)
+    Assert(RowX(she) = PersonX(1, 24, 1, 3), "THE PREDICTOR BUILDS THE VECTOR THE TRAINER FITTED")
+    Rem And a second person, so the agreement is not an accident of one
+    Rem row's zeroes: a male of 39 from Oklahoma, moderate.
+    Assert(RowX(Nth(trainRows, 2)) = PersonX(0, 39, 3, 2), "AND AGAIN FOR A DIFFERENT STATE AND LEANING")
+    Assert(RowY(she) = 0.295, "THE TARGET COLUMN IS INCOME, NOT ONE OF THE ONE-HOTS")
+
+    Print("ALL DEMOGRAPHICS CHECKS PASSED")

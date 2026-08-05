@@ -8,6 +8,7 @@ rem   build.cmd build      same as above
 rem   build.cmd train      build if needed, then train the model
 rem                        (writes dat\iris-model.bin; a few seconds)
 rem   build.cmd run        build if needed, then classify interactively
+rem   build.cmd test       grade the shipped model against the held-out rows
 rem   build.cmd clean      remove built binaries from bin\
 rem
 rem The build weaves iris-train.shoddy (the trainer) and iris.shoddy
@@ -40,8 +41,9 @@ if "%~1"=="" goto build
 if /i "%~1"=="build" goto build
 if /i "%~1"=="train" goto train
 if /i "%~1"=="run" goto run
+if /i "%~1"=="test" goto test
 if /i "%~1"=="clean" goto clean
-echo usage: build.cmd [build^|train^|run^|clean]
+echo usage: build.cmd [build^|train^|run^|test^|clean]
 exit /b 2
 
 :ensure_mill
@@ -72,6 +74,13 @@ exit /b %errorlevel%
 :run
 if not exist "%RUNOUT%" ( call :build || exit /b 1 )
 dotnet "%RUNOUT%"
+exit /b %errorlevel%
+
+:test
+rem Run from source, not from bin\: the point is to grade what is in the
+rem tree. No training - test.shoddy explains why.
+call :ensure_mill || exit /b 1
+"%MILL%" run test.shoddy
 exit /b %errorlevel%
 
 :clean

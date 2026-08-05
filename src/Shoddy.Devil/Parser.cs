@@ -33,6 +33,10 @@ public sealed class Parser
     public static ShoddyProgram Parse(List<Line> lines, ShoddyProgram? seeded = null)
     {
         var p = new Parser(lines, seeded ?? new ShoddyProgram());
+        // The language's own types come before the first line of source, so
+        // Some/None/Ok/Err resolve with no Include and a program that
+        // redeclares them collides in ClaimName rather than shadowing.
+        p.prog.Predeclare();
         p.ParseProgram();
         return p.prog;
     }

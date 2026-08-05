@@ -5,9 +5,10 @@ Rem ==================================================================
 Rem str.shoddy — Shoddy standard library: strings
 Rem Built on the Instr / Left / Right / Mid / Len builtins. Pure.
 Rem Three families: surgery (Split .. StrRep), boolean conversions
-Rem (IsBool / Bool / BoolOr — the string-to-number side lives in the
-Rem IsNumeric / ValOr builtins beside Val), and fixed-width formatting
-Rem (PadLeft / PadRight / PadZero / ToFixed / Commas).
+Rem (IsBool / ToBool / ToBoolOr over the primitive ToBoolOpt — the
+Rem string-to-number side lives in the IsNumeric / Val / ValOr builtins),
+Rem and fixed-width formatting (PadLeft / PadRight / PadZero / ToFixed /
+Rem Commas).
 Rem ==================================================================
 
 Def Split(s As String, sep As String) As List Of String
@@ -61,30 +62,49 @@ Def StrRep(s As String, n As Number) As String
         s & StrRep(s, n - 1)
 
 Rem ---- conversions -----------------------------------------------------
-Rem The boolean side of the guard family. Val crashes on a non-number by
-Rem design, and the IsNumeric / ValOr builtins guard it; these do the
-Rem same office for booleans. Bool is strict — TRUE or FALSE, any case,
-Rem outer space ignored — and BoolOr also accepts the prompt vocabulary:
-Rem TRUE/T/YES/Y/1 and FALSE/F/NO/N/0.
+Rem The boolean side of the guard family, named to match the number side
+Rem exactly: IsNumeric / Val / ValOr are builtins, and IsBool / ToBool /
+Rem ToBoolOr do the same three offices for booleans. ToBool is strict —
+Rem TRUE or FALSE, any case, outer space ignored — while ToBoolOr and
+Rem ToBoolOpt also accept the prompt vocabulary: TRUE/T/YES/Y/1 and
+Rem FALSE/F/NO/N/0.
+Rem
+Rem ToBoolOpt is the primitive and the other two are one-liners over it.
+Rem That is the whole point of Option: a strict word throws the answer
+Rem away on failure and a fallback word throws away the fact that there
+Rem WAS a failure, so neither can be built from the other — but both are
+Rem built from this. Option is the language's, not a machine's, so no
+Rem Include is needed to match on what this returns.
+Rem
+Rem These were Bool and BoolOr until v1.7.0. BoolOr in particular read as
+Rem a logic gate and was in fact a parser, and the Bool* prefix belonged
+Rem to bit and boolean work rather than to string conversion.
 
 Def IsBool(s As String) As Boolean
     Let u = Upper(Trim(s))
     u = "TRUE" Or u = "FALSE"
 
-Def Bool(s As String) As Boolean
+Def ToBoolOpt(s As String) As Option
+    Let u = Upper(Trim(s))
+    If u = "TRUE" Or u = "T" Or u = "YES" Or u = "Y" Or u = "1" Then
+        Some(True)
+    Else
+        If u = "FALSE" Or u = "F" Or u = "NO" Or u = "N" Or u = "0" Then
+            Some(False)
+        Else
+            None()
+
+Def ToBool(s As String) As Boolean
     If IsBool(s) Then
         Upper(Trim(s)) = "TRUE"
     Else
-        Error("BOOL: '" & s & "' is not TRUE or FALSE")
+        Error("TOBOOL: '" & s & "' is not TRUE or FALSE")
 
-Def BoolOr(s As String, fallback As Boolean) As Boolean
-    Let u = Upper(Trim(s))
-    If u = "TRUE" Or u = "T" Or u = "YES" Or u = "Y" Or u = "1" Then
-        True
-    Else
-        If u = "FALSE" Or u = "F" Or u = "NO" Or u = "N" Or u = "0" Then
-            False
-        Else
+Def ToBoolOr(s As String, fallback As Boolean) As Boolean
+    Select Case ToBoolOpt(s)
+        Case Some(b)
+            b
+        Case None
             fallback
 
 Rem ---- formatting ------------------------------------------------------

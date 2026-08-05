@@ -196,16 +196,27 @@ function Invoke-MachineSuites {
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 }
 
-# Every mill's own test target, through the mill's own build.cmd, so there
+# Every mill's own test target, through the mill's own build.sh, so there
 # is one statement of how a mill is tested and it lives with the mill.
 # Every directory under mills/ is visited: a mill with no test target
 # fails here with its usage message, which is the intended answer to
 # shipping one without a suite.
+#
+# No mill carries a native build.ps1 twin, so this runs each build.sh
+# through Git Bash — the same tool the docs point Windows users at for
+# working inside an individual mill. Forward-slash the path first: bash's
+# own `dirname "$0"`, which every build.sh uses to find itself, only
+# recognizes '/' as a separator.
 function Invoke-MillSuites {
     Assert-Mill
+    if (-not (Get-Command bash -ErrorAction SilentlyContinue)) {
+        Write-Error 'bash not found on PATH - install Git for Windows (Git Bash) or run under WSL to test the mills.'
+        exit 1
+    }
     foreach ($m in Get-ChildItem mills -Directory | Sort-Object Name) {
-        Write-Host "==> mills/$($m.Name)/build.cmd test"
-        & cmd /c (Join-Path $m.FullName 'build.cmd') test
+        Write-Host "==> mills/$($m.Name)/build.sh test"
+        $script = ($m.FullName -replace '\\', '/') + '/build.sh'
+        & bash $script test
         if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     }
 }

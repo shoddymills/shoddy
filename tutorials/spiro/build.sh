@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Run the spirograph (Unix: Linux / macOS / WSL).
-# Windows users: build.cmd, same commands.
+# Windows users: run this via Git Bash or WSL, same commands.
 #
 #   ./build.sh          draw the spiral in a window
 #   ./build.sh run      same as above

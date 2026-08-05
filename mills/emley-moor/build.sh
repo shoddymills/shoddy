@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Build / run the emley-moor mill (Unix: Linux / macOS / WSL).
-# Windows users: use build.cmd (same commands).
+# Windows users: run this via Git Bash or WSL (same commands).
 #
 #   ./build.sh            serve on http://127.0.0.1:8080/
 #   ./build.sh run        same as above

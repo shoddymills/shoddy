@@ -66,7 +66,7 @@ then in VS Code: Extensions view → `···` menu → **Install from VSIX…** 
 pick the file you downloaded.
 
 (To build one yourself instead: `./build.sh vsix` from the repo root, or
-`build.cmd vsix` on Windows — it lands in this folder.)
+`./build.ps1 vsix` on Windows — it lands in this folder.)
 
 The extension then appears in the Extensions view and can be updated
 or uninstalled from there like any other.
@@ -78,7 +78,7 @@ a fresh mill and freshly built machines into the package first. The
 optional bump is `patch`/`minor`/`major` or an exact semver:
 
 ```sh
-./build.sh vsix patch      # build.cmd vsix patch on Windows
+./build.sh vsix patch      # ./build.ps1 vsix patch on Windows
 ```
 
 Running `vsce package` by hand in this folder still works, but it packs

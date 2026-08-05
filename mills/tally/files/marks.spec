@@ -2,8 +2,8 @@
 #
 #     ./build.sh capture mills/tally/files/marks.spec
 #
-# Paths are relative to the directory the mill is run from; build.sh and
-# build.cmd both run from the repo root.
+# Paths are relative to the directory the mill is run from; build.sh
+# runs from the repo root.
 
 data.file      = mills/tally/files/grades.csv
 

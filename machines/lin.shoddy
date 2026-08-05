@@ -1,0 +1,627 @@
+﻿Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem lin.shoddy â€” Shoddy standard library: linear algebra
+Rem
+Rem Everything that asks a QUESTION of a matrix, or takes one apart:
+Rem determinants, inverses, linear systems, echelon forms and rank, the
+Rem LU, QR and Cholesky factorisations, characteristic polynomials and
+Rem eigenvalues, and the vector words that are geometry rather than
+Rem arithmetic. Pure throughout.
+Rem
+Rem THE TYPE LIVES IN matrix.shoddy, NOT HERE. Matrix, Mat, MatGet,
+Rem MatMul, Transp, Ident and the rest are that machine's, and this one
+Rem includes it and builds on it. A mill that uses lin will normally
+Rem include both, because it has to name Matrix to call anything here:
+Rem
+Rem     Include "matrix.shoddy"
+Rem     Include "lin.shoddy"
+Rem
+Rem That is the arrangement on purpose. matrix owns a data structure and
+Rem its arithmetic; lin owns the algorithms over it. Splitting them means
+Rem a program that only multiplies matrices does not carry an eigenvalue
+Rem solver, and an algorithm added here never disturbs the type.
+Rem
+Rem Conventions:
+Rem
+Rem   * INDICES ARE 1-BASED, as everywhere in Shoddy and as in matrix.
+Rem   * COEFFICIENT LISTS ARE HIGHEST POWER FIRST, matching eng.shoddy.
+Rem     LinCharPoly of a 3x3 returns four numbers beginning with 1.
+Rem   * EVERY FACTORISATION RETURNS ONE RECORD, not a tuple and not two
+Rem     words. LinLuOf gives LFactor, UFactor, Perm and PSign together
+Rem     because P A = L U is only true of all four at once.
+Rem   * SOLVERS REFUSE RATHER THAN MISLEAD, following eng. LinSolve
+Rem     checks the determinant before eliminating; a singular system has
+Rem     either no solution or infinitely many, and returning one number
+Rem     from either case is worse than stopping.
+Rem
+Rem The ceilings, each stated where it bites:
+Rem
+Rem   * n ~ 8. Every word here is written for clarity over speed and
+Rem     rebuilds a whole matrix per elimination step. LinEigVals and
+Rem     LinEigSym iterate, so they feel it first.
+Rem   * LinEigVals finds the REAL eigenvalues only, by bracketing sign
+Rem     changes of the characteristic polynomial. A complex pair has no
+Rem     sign change and neither does a repeated root of even
+Rem     multiplicity, so both are missed. Length(LinEigVals(m)) is
+Rem     therefore meaningful: short of Rows(m) means some were not found.
+Rem     LinEigSym is the complete answer for a symmetric matrix, which
+Rem     always has a full set of real eigenvalues.
+Rem   * Cancellation. LinCharPoly's coefficients span magnitudes that
+Rem     subtraction eats, and every word built on it inherits that.
+Rem
+Rem Not here: matrix construction, indexing, addition, multiplication and
+Rem display, which are matrix.shoddy; scalar and complex mathematics,
+Rem which is eng.shoddy and is included for its summation, polynomial and
+Rem root-finding words.
+Rem ==================================================================
+
+Include "matrix.shoddy"
+Include "eng.shoddy"
+Include "seq.shoddy"
+
+Rem ---- types -----------------------------------------------------------
+Rem Record fields are positional; if one of these grows, append.
+
+Rem LFactor/UFactor/Perm/PSign, not L/U/P/S: a one-letter accessor is shadowed
+Rem by any local of the same letter, and this machine is full of them.
+Rem PSign is the determinant of Perm, which is +1 or -1 and is exactly the
+Rem factor LinDet would otherwise lose to the row swaps.
+Type LinLu
+    LFactor As Matrix
+    UFactor As Matrix
+    Perm  As Matrix
+    PSign As Number
+
+Rem QFactor/RFactor for the same reason. Q and R are both single letters
+Rem that appear as loop variables three lines further down.
+Type LinQr
+    QFactor As Matrix
+    RFactor As Matrix
+
+Rem Vectors are the COLUMNS of the matrix, so the k-th eigenvalue in
+Rem Values pairs with MatCol(Vectors, k).
+Type LinEigen
+    Values  As List Of Number
+    Vectors As Matrix
+
+Rem The Jacobi sweep's accumulator: the matrix being driven to diagonal
+Rem form, and the product of the rotations that got it there.
+Type LinJac
+    Work  As Matrix
+    Basis As Matrix
+
+Rem ---- building and shuffling ------------------------------------------
+Rem Everything below is written in terms of LinBuild: give it dimensions
+Rem and a rule for one cell and it makes the matrix. Shoddy is pure, so
+Rem there is no elimination in place - each step is a new matrix, and that
+Rem is the cost stated in the banner.
+
+Def LinBuild(rows As Number, cols As Number, f As [ Number Number -- Number ]) As Matrix
+    Mat(rows, cols,
+        Map(Range(1, rows * cols),
+            Fn(k) => Call(f, Fix((k - 1) / cols) + 1, (k - 1) Mod cols + 1)))
+
+Def LinIsSquare(m As Matrix) As Boolean
+    Rows(m) = Cols(m)
+
+Def LinSwapRows(m As Matrix, i As Number, j As Number) As Matrix
+    LinBuild(Rows(m), Cols(m),
+             Fn(r, c) => MatGet(m, Ifte(r = i, j, Ifte(r = j, i, r)), c))
+
+Def LinScaleRow(m As Matrix, p As Number, k As Number) As Matrix
+    LinBuild(Rows(m), Cols(m),
+             Fn(r, c) => Ifte(r = p, MatGet(m, r, c) * k, MatGet(m, r, c)))
+
+Def LinScaleCol(m As Matrix, p As Number, k As Number) As Matrix
+    LinBuild(Rows(m), Cols(m),
+             Fn(r, c) => Ifte(c = p, MatGet(m, r, c) * k, MatGet(m, r, c)))
+
+Rem Columns lo through hi inclusive - the half of an augmented matrix that
+Rem carries the answer.
+Def LinCols(m As Matrix, lo As Number, hi As Number) As Matrix
+    LinBuild(Rows(m), hi - lo + 1, Fn(r, c) => MatGet(m, r, c + lo - 1))
+
+Rem Side by side. The Min and Max look redundant and are not: Ifte
+Rem evaluates BOTH arms, so both MatGets must be in range whichever one is
+Rem chosen.
+Def LinAug(a As Matrix, b As Matrix) As Matrix
+    If Rows(a) <> Rows(b) Then
+        Error("LINAUG: THE TWO MATRICES HAVE DIFFERENT ROW COUNTS")
+    Else
+        LinBuild(Rows(a), Cols(a) + Cols(b),
+                 Fn(r, c) => Ifte(c <= Cols(a),
+                                  MatGet(a, r, Min(c, Cols(a))),
+                                  MatGet(b, r, Max(1, c - Cols(a)))))
+
+Rem ---- measures --------------------------------------------------------
+
+Def LinTrace(m As Matrix) As Number
+    If Not LinIsSquare(m) Then
+        Error("LINTRACE: NEEDS A SQUARE MATRIX")
+    Else
+        EngSum(Map(Range(1, Rows(m)), Fn(i) => MatGet(m, i, i)))
+
+Def LinMaxAbs(m As Matrix) As Number
+    EngMaximum(Map(ToList(Cells(m)), Fn(v) => Abs(v)))
+
+Rem The Frobenius norm - the length of the matrix read as one long vector.
+Def LinNorm(m As Matrix) As Number
+    Sqr(EngSum(Map(ToList(Cells(m)), Fn(v) => v * v)))
+
+Rem Symmetry to a tolerance, never to the bit. A matrix assembled by
+Rem arithmetic is symmetric in intent and not in the last few digits.
+Def LinIsSym(m As Matrix, tol As Number) As Boolean
+    If Not LinIsSquare(m) Then
+        False
+    Else
+        LinMaxAbs(MatSub(m, Transp(m))) <= tol
+
+Def LinVNorm(v As Array Of Number) As Number
+    Sqr(Dot(v, v))
+
+Def LinVUnit(v As Array Of Number) As Array Of Number
+    Let n = LinVNorm(v)
+    If n = 0 Then
+        Error("LINVUNIT: THE ZERO VECTOR HAS NO DIRECTION")
+    Else
+        VScale(v, 1 / n)
+
+Rem The cross product is three-dimensional and nothing else. A version
+Rem that quietly padded to three would be answering a different question.
+Def LinCross(u As Array Of Number, v As Array Of Number) As Array Of Number
+    If Length(u) <> 3 Or Length(v) <> 3 Then
+        Error("LINCROSS: THE CROSS PRODUCT IS THREE-DIMENSIONAL")
+    Else
+        ToArray({ Nth(u, 2) * Nth(v, 3) - Nth(u, 3) * Nth(v, 2),
+                  Nth(u, 3) * Nth(v, 1) - Nth(u, 1) * Nth(v, 3),
+                  Nth(u, 1) * Nth(v, 2) - Nth(u, 2) * Nth(v, 1) })
+
+Rem ---- elimination -----------------------------------------------------
+Rem Partial pivoting throughout: the largest available entry in the column
+Rem becomes the pivot. Without it a perfectly ordinary matrix divides by a
+Rem number that is only small by accident and the answer is noise.
+
+Def LinPivotGo(m As Matrix, col As Number, k As Number, best As Number) As Number
+    If k > Rows(m) Then
+        best
+    Else
+        If Abs(MatGet(m, k, col)) > Abs(MatGet(m, best, col)) Then
+            LinPivotGo(m, col, k + 1, k)
+        Else
+            LinPivotGo(m, col, k + 1, best)
+
+Def LinPivot(m As Matrix, col As Number, from As Number) As Number
+    LinPivotGo(m, col, from + 1, from)
+
+Rem An If block, not an Ifte: Ifte evaluates both arms, and the arm not
+Rem taken here divides by the pivot.
+Def LinElimBelowCell(m As Matrix, p As Number, col As Number,
+                     r As Number, c As Number) As Number
+    If r <= p Then
+        MatGet(m, r, c)
+    Else
+        If MatGet(m, p, col) = 0 Then
+            MatGet(m, r, c)
+        Else
+            MatGet(m, r, c) - MatGet(m, r, col) / MatGet(m, p, col) * MatGet(m, p, c)
+
+Def LinElimBelow(m As Matrix, p As Number, col As Number) As Matrix
+    LinBuild(Rows(m), Cols(m), Fn(r, c) => LinElimBelowCell(m, p, col, r, c))
+
+Def LinElimAllCell(m As Matrix, p As Number, col As Number,
+                   r As Number, c As Number) As Number
+    If r = p Then
+        MatGet(m, r, c)
+    Else
+        If MatGet(m, p, col) = 0 Then
+            MatGet(m, r, c)
+        Else
+            MatGet(m, r, c) - MatGet(m, r, col) / MatGet(m, p, col) * MatGet(m, p, c)
+
+Def LinElimAll(m As Matrix, p As Number, col As Number) As Matrix
+    LinBuild(Rows(m), Cols(m), Fn(r, c) => LinElimAllCell(m, p, col, r, c))
+
+Rem Row echelon form: zeros below each pivot, pivots left to right, rows
+Rem of zeros at the bottom. Pivot columns are skipped rather than forced,
+Rem so this works on any shape and any rank.
+Def LinRefGo(m As Matrix, p As Number, col As Number) As Matrix
+    If p > Rows(m) Or col > Cols(m) Then
+        m
+    Else
+        Let piv = LinPivot(m, col, p)
+        If Abs(MatGet(m, piv, col)) <= 0.000000000001 Then
+            LinRefGo(m, p, col + 1)
+        Else
+            LinRefGo(LinElimBelow(LinSwapRows(m, p, piv), p, col), p + 1, col + 1)
+
+Def LinRef(m As Matrix) As Matrix
+    LinRefGo(m, 1, 1)
+
+Rem Reduced row echelon form: every pivot is 1 and is alone in its column.
+Rem This is the one that answers questions - rank, inverse and the
+Rem solution of a system all fall out of it.
+Def LinRrefGo(m As Matrix, p As Number, col As Number) As Matrix
+    If p > Rows(m) Or col > Cols(m) Then
+        m
+    Else
+        Let piv = LinPivot(m, col, p)
+        If Abs(MatGet(m, piv, col)) <= 0.000000000001 Then
+            LinRrefGo(m, p, col + 1)
+        Else
+            Let sw = LinSwapRows(m, p, piv)
+            Let one = LinScaleRow(sw, p, 1 / MatGet(sw, p, col))
+            LinRrefGo(LinElimAll(one, p, col), p + 1, col + 1)
+
+Def LinRref(m As Matrix) As Matrix
+    LinRrefGo(m, 1, 1)
+
+Def LinRowIsZero(m As Matrix, r As Number) As Boolean
+    EngMaximum(Map(Range(1, Cols(m)), Fn(c) => Abs(MatGet(m, r, c)))) <= 0.000000000001
+
+Def LinRank(m As Matrix) As Number
+    Let z = LinRref(m)
+    EngSum(Map(Range(1, Rows(z)), Fn(r) => Ifte(LinRowIsZero(z, r), 0, 1)))
+
+Rem ---- determinant, inverse, systems -----------------------------------
+
+Rem Elimination, not cofactor expansion. Cofactors are n! multiplications
+Rem and elimination is n^3; at n = 10 that is the difference between an
+Rem answer and a hung program.
+Def LinDetGo(m As Matrix, p As Number, sign As Number) As Number
+    If p > Rows(m) Then
+        sign * EngProdOf(Fn(i) => MatGet(m, i, i), 1, Rows(m))
+    Else
+        Let piv = LinPivot(m, p, p)
+        If Abs(MatGet(m, piv, p)) <= 0.000000000000001 Then
+            0
+        Else
+            If piv = p Then
+                LinDetGo(LinElimBelow(m, p, p), p + 1, sign)
+            Else
+                LinDetGo(LinElimBelow(LinSwapRows(m, p, piv), p, p), p + 1, 0 - sign)
+
+Def LinDet(m As Matrix) As Number
+    If Not LinIsSquare(m) Then
+        Error("LINDET: NEEDS A SQUARE MATRIX")
+    Else
+        LinDetGo(m, 1, 1)
+
+Def LinMinor(m As Matrix, i As Number, j As Number) As Matrix
+    If Rows(m) < 2 Or Cols(m) < 2 Then
+        Error("LINMINOR: NOTHING LEFT TO STRIKE OUT")
+    Else
+        LinBuild(Rows(m) - 1, Cols(m) - 1,
+                 Fn(r, c) => MatGet(m, Ifte(r < i, r, r + 1), Ifte(c < j, c, c + 1)))
+
+Def LinCofactor(m As Matrix, i As Number, j As Number) As Number
+    Ifte((i + j) Mod 2 = 0, 1, 0 - 1) * LinDet(LinMinor(m, i, j))
+
+Rem The adjugate is the TRANSPOSE of the cofactor matrix, which is why the
+Rem indices arrive the other way round here.
+Def LinAdj(m As Matrix) As Matrix
+    If Not LinIsSquare(m) Then
+        Error("LINADJ: NEEDS A SQUARE MATRIX")
+    Else
+        LinBuild(Rows(m), Cols(m), Fn(r, c) => LinCofactor(m, c, r))
+
+Rem Gauss-Jordan on [A | I]. The right half is the inverse once the left
+Rem half is the identity.
+Def LinInv(m As Matrix) As Matrix
+    If Not LinIsSquare(m) Then
+        Error("LININV: NEEDS A SQUARE MATRIX")
+    Else
+        If Abs(LinDet(m)) <= 0.000000000001 Then
+            Error("LININV: MATRIX IS SINGULAR - IT HAS NO INVERSE")
+        Else
+            LinCols(LinRref(LinAug(m, Ident(Rows(m)))), Rows(m) + 1, 2 * Rows(m))
+
+Rem Solves A x = b and returns x. The determinant is checked first: a
+Rem singular system has either no solution or infinitely many, and the
+Rem elimination would hand back one vector from either case without
+Rem saying which it was.
+Def LinSolve(a As Matrix, b As Array Of Number) As Array Of Number
+    If Not LinIsSquare(a) Then
+        Error("LINSOLVE: NEEDS A SQUARE MATRIX")
+    Else
+        If Length(b) <> Rows(a) Then
+            Error("LINSOLVE: THE RIGHT-HAND SIDE IS THE WRONG LENGTH")
+        Else
+            If Abs(LinDet(a)) <= 0.000000000001 Then
+                Error("LINSOLVE: MATRIX IS SINGULAR - NO UNIQUE SOLUTION")
+            Else
+                MatCol(LinCols(LinRref(LinAug(a, Mat(Rows(a), 1, ToList(b)))),
+                               Cols(a) + 1, Cols(a) + 1), 1)
+
+Rem Square-and-multiply, so a large exponent costs log n multiplications
+Rem rather than n. A negative exponent inverts first, which is the only
+Rem reading of a negative matrix power that means anything.
+Def LinPowGo(m As Matrix, n As Number, acc As Matrix) As Matrix
+    If n <= 0 Then
+        acc
+    Else
+        If n Mod 2 = 1 Then
+            LinPowGo(MatMul(m, m), Fix(n / 2), MatMul(acc, m))
+        Else
+            LinPowGo(MatMul(m, m), Fix(n / 2), acc)
+
+Def LinPow(m As Matrix, n As Number) As Matrix
+    If Not LinIsSquare(m) Then
+        Error("LINPOW: NEEDS A SQUARE MATRIX")
+    Else
+        If n < 0 Then
+            LinPowGo(LinInv(m), 0 - n, Ident(Rows(m)))
+        Else
+            LinPowGo(m, n, Ident(Rows(m)))
+
+Rem ---- factorisations --------------------------------------------------
+
+Rem The partial sum both LU and Cholesky are built from: the first `upto`
+Rem terms of row i of the left factor against column j of the right.
+Def LinDotPart(l As Matrix, u As Matrix, i As Number, j As Number,
+               upto As Number) As Number
+    If upto < 1 Then
+        0
+    Else
+        EngSum(Map(Range(1, upto), Fn(s) => MatGet(l, i, s) * MatGet(u, s, j)))
+
+Rem The permutation P such that P A can be factored without further row
+Rem swaps: the same pivot search LinDet does, applied to an identity.
+Def LinPermGo(m As Matrix, perm As Matrix, p As Number) As Matrix
+    If p > Rows(m) Then
+        perm
+    Else
+        Let piv = LinPivot(m, p, p)
+        LinPermGo(LinElimBelow(LinSwapRows(m, p, piv), p, p),
+                  LinSwapRows(perm, p, piv), p + 1)
+
+Def LinLuUpperCell(a As Matrix, acc As LinLu, k As Number,
+                   r As Number, c As Number) As Number
+    If r = k And c >= k Then
+        MatGet(a, k, c) - LinDotPart(LFactor(acc), UFactor(acc), k, c, k - 1)
+    Else
+        MatGet(UFactor(acc), r, c)
+
+Def LinLuLowerCell(a As Matrix, acc As LinLu, u As Matrix, k As Number,
+                   r As Number, c As Number) As Number
+    If c = k And r > k Then
+        (MatGet(a, r, k) - LinDotPart(LFactor(acc), u, r, k, k - 1)) / MatGet(u, k, k)
+    Else
+        MatGet(LFactor(acc), r, c)
+
+Rem Doolittle: L carries a unit diagonal and U carries the pivots. One
+Rem column of each per step, and the step never reads what it is writing.
+Def LinDooGo(a As Matrix, acc As LinLu, k As Number) As LinLu
+    If k > Rows(a) Then
+        acc
+    Else
+        Let n = Rows(a)
+        Let u = LinBuild(n, n, Fn(r, c) => LinLuUpperCell(a, acc, k, r, c))
+        If MatGet(u, k, k) = 0 Then
+            Error("LINLUOF: A ZERO PIVOT SURVIVED PIVOTING - THE MATRIX IS SINGULAR")
+        Else
+            Let l = LinBuild(n, n, Fn(r, c) => LinLuLowerCell(a, acc, u, k, r, c))
+            LinDooGo(a, LinLu(l, u, Perm(acc), PSign(acc)), k + 1)
+
+Rem P A = L U, with all four parts in one record because the identity is
+Rem only true of all four together. PSign is the determinant of P, and
+Rem LinDet(a) is PSign times the product of UFactor's diagonal.
+Def LinLuOf(a As Matrix) As LinLu
+    If Not LinIsSquare(a) Then
+        Error("LINLUOF: NEEDS A SQUARE MATRIX")
+    Else
+        If Abs(LinDet(a)) <= 0.000000000001 Then
+            Error("LINLUOF: MATRIX IS SINGULAR - IT HAS NO UNIT-DIAGONAL LU FACTORISATION")
+        Else
+            Rem pm, not perm: a local named perm would shadow the Perm
+            Rem field accessor and LinDooGo could not read it back out.
+            Let n = Rows(a)
+            Let pm = LinPermGo(a, Ident(n), 1)
+            LinDooGo(MatMul(pm, a),
+                     LinLu(Ident(n), MatFill(n, n, 0), pm, LinDet(pm)), 1)
+
+Def LinColDot(m1 As Matrix, j As Number, m2 As Matrix, k As Number) As Number
+    Dot(MatCol(m1, j), MatCol(m2, k))
+
+Rem Column k of A with its projections onto the first k-1 orthonormal
+Rem columns of Q taken out - Gram-Schmidt, one column at a time.
+Def LinGsCell(a As Matrix, q As Matrix, k As Number,
+              r As Number, c As Number) As Number
+    Rem One pair of brackets around the whole subtraction: a continuation
+    Rem line that begins with - outside brackets is a new statement.
+    If c = k Then
+        (MatGet(a, r, k)
+             - EngSum(Map(Range(1, k - 1),
+                          Fn(j) => LinColDot(q, j, a, k) * MatGet(q, r, j))))
+    Else
+        MatGet(q, r, c)
+
+Def LinQrGo(a As Matrix, q As Matrix, k As Number) As Matrix
+    If k > Cols(a) Then
+        q
+    Else
+        Let raw = LinBuild(Rows(a), Cols(a), Fn(r, c) => LinGsCell(a, q, k, r, c))
+        Let len = Sqr(LinColDot(raw, k, raw, k))
+        If len <= 0.000000000001 Then
+            Error("LINQROF: THE COLUMNS ARE LINEARLY DEPENDENT - NO QR FACTORISATION")
+        Else
+            LinQrGo(a, LinScaleCol(raw, k, 1 / len), k + 1)
+
+Rem A = Q R, with Q's columns orthonormal and R upper triangular. R is
+Rem recovered as Q'A rather than accumulated, which is one matrix multiply
+Rem against a page of index arithmetic.
+Def LinQrOf(a As Matrix) As LinQr
+    If Rows(a) < Cols(a) Then
+        Error("LINQROF: NEEDS AT LEAST AS MANY ROWS AS COLUMNS")
+    Else
+        Let q = LinQrGo(a, MatFill(Rows(a), Cols(a), 0), 1)
+        LinQr(q, MatMul(Transp(q), a))
+
+Def LinCholCell(a As Matrix, l As Matrix, j As Number, djj As Number,
+                r As Number, c As Number) As Number
+    If c = j And r = j Then
+        djj
+    Else
+        If c = j And r > j Then
+            (MatGet(a, r, j) - LinDotPart(l, Transp(l), r, j, j - 1)) / djj
+        Else
+            MatGet(l, r, c)
+
+Rem A = L L', for a symmetric positive definite A. The square root under a
+Rem negative is exactly where positive definiteness fails, so that is
+Rem where the refusal goes: it is a fact about the matrix, not a rounding
+Rem accident, and no other test is needed.
+Def LinCholGo(a As Matrix, l As Matrix, j As Number) As Matrix
+    If j > Rows(a) Then
+        l
+    Else
+        Let d = MatGet(a, j, j) - LinDotPart(l, Transp(l), j, j, j - 1)
+        If d <= 0 Then
+            Error("LINCHOL: MATRIX IS NOT POSITIVE DEFINITE")
+        Else
+            LinCholGo(a, LinBuild(Rows(a), Rows(a),
+                                  Fn(r, c) => LinCholCell(a, l, j, Sqr(d), r, c)),
+                      j + 1)
+
+Def LinChol(a As Matrix) As Matrix
+    If Not LinIsSym(a, 0.000000001) Then
+        Error("LINCHOL: NEEDS A SYMMETRIC MATRIX")
+    Else
+        LinCholGo(a, MatFill(Rows(a), Rows(a), 0), 1)
+
+Rem ---- characteristic polynomial and eigenvalues ------------------------
+
+Rem Faddeev-LeVerrier. It gets every coefficient from traces of matrix
+Rem products and never expands a determinant symbolically, which is what
+Rem makes a characteristic polynomial computable here at all.
+Def LinFlGo(a As Matrix, m As Matrix, cs As List Of Number, k As Number) As List Of Number
+    If k > Rows(a) Then
+        cs
+    Else
+        Let mk = MatAdd(MatMul(a, m), MatScale(Ident(Rows(a)), Nth(cs, Length(cs))))
+        LinFlGo(a, mk, Append(cs, 0 - LinTrace(MatMul(a, mk)) / k), k + 1)
+
+Rem Highest power first, so LinCharPoly of a 3x3 is four numbers starting
+Rem with 1 and feeds straight into EngPolyEval, EngPolyDeriv and
+Rem EngCubicReal without reversing anything.
+Def LinCharPoly(m As Matrix) As List Of Number
+    If Not LinIsSquare(m) Then
+        Error("LINCHARPOLY: NEEDS A SQUARE MATRIX")
+    Else
+        LinFlGo(m, MatFill(Rows(m), Rows(m), 0), { 1 }, 1)
+
+Rem Cauchy's bound: every root of the polynomial lies inside this radius.
+Rem It is generous, and generous is what a scan wants.
+Def LinRootBound(cs As List Of Number) As Number
+    1 + EngMaximum(Map(DropN(cs, 1), Fn(c) => Abs(c) / Abs(Nth(cs, 1))))
+
+Def LinScanGo(cs As List Of Number, lo As Number, step As Number,
+              k As Number, acc As List Of Number) As List Of Number
+    If k <= 0 Then
+        acc
+    Else
+        If EngPolyEval(cs, lo) = 0 Then
+            LinScanGo(cs, lo + step, step, k - 1, Append(acc, lo))
+        Else
+            If EngPolyEval(cs, lo) * EngPolyEval(cs, lo + step) < 0 Then
+                LinScanGo(cs, lo + step, step, k - 1,
+                          Append(acc, EngZeroOf(Fn(x) => EngPolyEval(cs, x),
+                                                lo, lo + step)))
+            Else
+                LinScanGo(cs, lo + step, step, k - 1, acc)
+
+Rem THE REAL EIGENVALUES, AND ONLY THOSE. The scan finds sign changes of
+Rem the characteristic polynomial; a complex pair produces none, and
+Rem neither does a repeated root of even multiplicity. So the LENGTH of
+Rem the answer carries information: fewer than Rows(m) values means some
+Rem eigenvalues are not real, or not simple, and were not found. For a
+Rem symmetric matrix the set is always complete - and LinEigSym is faster
+Rem and gives the vectors as well.
+Def LinEigVals(m As Matrix) As List Of Number
+    If Not LinIsSquare(m) Then
+        Error("LINEIGVALS: NEEDS A SQUARE MATRIX")
+    Else
+        Let cs = LinCharPoly(m)
+        Let r = LinRootBound(cs)
+        LinScanGo(cs, 0 - r, r / 1000, 2000, { })
+
+Rem ---- the symmetric eigenproblem --------------------------------------
+Rem Cyclic Jacobi: rotate one off-diagonal pair to zero at a time and let
+Rem the sweeps chase the rest down. It is slower than the alternatives and
+Rem it always converges for a symmetric matrix, which is the trade this
+Rem machine wants.
+
+Def LinRotCell(p As Number, q As Number, cs As Number, sn As Number,
+               r As Number, c As Number) As Number
+    If r = p And c = p Then
+        cs
+    Else
+        If r = q And c = q Then
+            cs
+        Else
+            If r = p And c = q Then
+                sn
+            Else
+                If r = q And c = p Then
+                    0 - sn
+                Else
+                    Ifte(r = c, 1, 0)
+
+Def LinRot(n As Number, p As Number, q As Number, cs As Number, sn As Number) As Matrix
+    LinBuild(n, n, Fn(r, c) => LinRotCell(p, q, cs, sn, r, c))
+
+Def LinJacobiAt(j As LinJac, p As Number, q As Number) As LinJac
+    If Abs(MatGet(Work(j), p, q)) <= 0.000000000000001 Then
+        j
+    Else
+        Rem tan(2 theta) = -2 a[p][q] / (a[p][p] - a[q][q]). The minus is
+        Rem the whole rotation: with the other sign the sweep turns the
+        Rem pair to its LARGEST value instead of to zero, and the diagonal
+        Rem it leaves behind is orthogonally similar to A - so the trace
+        Rem and the orthonormality still check out - but is not its
+        Rem eigenvalues. Only A v = lambda v catches it.
+        Let theta = 0.5 * EngAngleOf(MatGet(Work(j), p, p) - MatGet(Work(j), q, q),
+                                     0 - 2 * MatGet(Work(j), p, q))
+        Let rot = LinRot(Rows(Work(j)), p, q, Cos(theta), Sin(theta))
+        LinJac(MatMul(MatMul(Transp(rot), Work(j)), rot), MatMul(Basis(j), rot))
+
+Def LinJacobiRow(j As LinJac, p As Number, q As Number) As LinJac
+    If q > Rows(Work(j)) Then
+        j
+    Else
+        LinJacobiRow(LinJacobiAt(j, p, q), p, q + 1)
+
+Def LinJacobiSweep(j As LinJac, p As Number) As LinJac
+    If p >= Rows(Work(j)) Then
+        j
+    Else
+        LinJacobiSweep(LinJacobiRow(j, p, p + 1), p + 1)
+
+Def LinOffCell(m As Matrix, r As Number, c As Number) As Number
+    Ifte(r = c, 0, Abs(MatGet(m, r, c)))
+
+Def LinOffMass(m As Matrix) As Number
+    EngSum(Map(Range(1, Rows(m) * Cols(m)),
+               Fn(k) => LinOffCell(m, Fix((k - 1) / Cols(m)) + 1,
+                                   (k - 1) Mod Cols(m) + 1)))
+
+Def LinJacobiGo(j As LinJac, k As Number) As LinJac
+    If k <= 0 Then
+        j
+    Else
+        If LinOffMass(Work(j)) <= 0.0000000000001 Then
+            j
+        Else
+            LinJacobiGo(LinJacobiSweep(j, 1), k - 1)
+
+Rem Values and Vectors together, and paired by position: the k-th value
+Rem belongs to MatCol(Vectors, k). Two words returning them separately
+Rem would run the whole iteration twice and invite the caller to sort one
+Rem without the other.
+Def LinEigSym(m As Matrix) As LinEigen
+    If Not LinIsSym(m, 0.000000001) Then
+        Error("LINEIGSYM: NEEDS A SYMMETRIC MATRIX")
+    Else
+        Let j = LinJacobiGo(LinJac(m, Ident(Rows(m))), 60)
+        LinEigen(Map(Range(1, Rows(m)), Fn(i) => MatGet(Work(j), i, i)), Basis(j))

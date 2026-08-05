@@ -175,9 +175,11 @@ batteries included. Full word references in
     <td width="25%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/seq.html"><img src="docs/media/icons/seq.svg" alt="seq" width="100%"></a><br><b>seq</b><br><sub>Map, Filter, Fold and friends</sub></td>
     <td width="25%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/str.html"><img src="docs/media/icons/str.svg" alt="str" width="100%"></a><br><b>str</b><br><sub>string helpers</sub></td>
     <td width="25%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/math.html"><img src="docs/media/icons/math.svg" alt="math" width="100%"></a><br><b>math</b><br><sub>the derived math layer</sub></td>
+    <td width="25%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/eng.html"><img src="docs/media/icons/eng.svg" alt="eng" width="100%"></a><br><b>eng</b><br><sub>the engineer's calculator</sub></td>
     <td width="25%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/matrix.html"><img src="docs/media/icons/matrix.svg" alt="matrix" width="100%"></a><br><b>matrix</b><br><sub>flat row-major matrices</sub></td>
   </tr>
   <tr>
+    <td width="25%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/lin.html"><img src="docs/media/icons/lin.svg" alt="lin" width="100%"></a><br><b>lin</b><br><sub>solve, factor, eigenvalues</sub></td>
     <td width="25%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/stats.html"><img src="docs/media/icons/stats.svg" alt="stats" width="100%"></a><br><b>stats</b><br><sub>means to real p-values</sub></td>
     <td width="25%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/random.html"><img src="docs/media/icons/random.svg" alt="random" width="100%"></a><br><b>random</b><br><sub>shuffles, samples, ranges</sub></td>
     <td width="25%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/neural.html"><img src="docs/media/icons/neural.svg" alt="neural" width="100%"></a><br><b>neural</b><br><sub>feed-forward nets, two heads</sub></td>

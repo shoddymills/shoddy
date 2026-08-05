@@ -134,6 +134,14 @@ function Invoke-Test {
     # golden files rather than by hand.
     & $Mill run tst/fin.shoddy
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    # eng and lin are the same case: a numerics library that is subtly wrong
+    # still returns numbers. eng's suite is known answers, lin's is those plus
+    # residuals against the defining identities — P A - L U, A v - lambda v —
+    # which is the only way to test a factorisation whose parts are not unique.
+    & $Mill run tst/eng.shoddy
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    & $Mill run tst/lin.shoddy
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     # The net demo is the only end-to-end exercise of the socket words: it
     # stands up a server, connects a client to it and trades lines, both
     # ends in one process on loopback. --allow-net is required because the

@@ -1,0 +1,1344 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem eng.shoddy — Shoddy standard library: engineering
+Rem
+Rem Continuous mathematics over Number: the trigonometry the runtime does
+Rem not supply, hyperbolics, complex numbers, numeric calculus over
+Rem quotations, root-finding and polynomial arithmetic, number theory,
+Rem combinatorics and the discrete distributions, descriptive statistics,
+Rem sequences, unit conversion and physical constants. Pure throughout.
+Rem
+Rem Conventions, all of them load-bearing:
+Rem
+Rem   * ANGLES ARE RADIANS AT EVERY BOUNDARY. There is no degree mode. A
+Rem     mode is state, this machine has none, and a trig word whose answer
+Rem     depends on a setting made three screens ago is the worst thing
+Rem     about the calculators this surface was compiled from. EngRad,
+Rem     EngDeg, EngGradOf and EngFromGrad convert at the edges and are the
+Rem     only places 180 or 200 appears in an angle context.
+Rem
+Rem   * COEFFICIENTS ARE HIGHEST POWER FIRST in every polynomial word.
+Rem     {1, 0, -4} is x^2 - 4. This is the one convention a caller will
+Rem     get backwards, and backwards it evaluates without complaint to the
+Rem     wrong number.
+Rem
+Rem   * NEVER COMPARE COMPLEX NUMBERS WITH =. Structural equality reports
+Rem     EngComplex(0.1 + 0.2, 0) = EngComplex(0.3, 0) as False. EngCNear
+Rem     is the only comparison offered, and it is the one to use on any
+Rem     root, eigenvalue or transform output.
+Rem
+Rem   * SOLVERS REFUSE RATHER THAN MISLEAD. EngZeroOf checks its bracket
+Rem     before descending; a solver that returns a plausible number for a
+Rem     bracket with no root is the worst failure available here.
+Rem
+Rem   * THE SURFACE IS CLOSED. Every word is Eng*; no stats, math, str,
+Rem     seq or dict name appears in a signature or return type. Builtins
+Rem     are the language, not a machine, so Sin(x) at a call site is not a
+Rem     leak. The wrappers over stats are mandatory rather than polite:
+Rem     this machine includes stats, so a word named Mean would be a
+Rem     duplicate declaration and the machine would not load.
+Rem
+Rem Three ceilings, each of which produces a plausible wrong answer rather
+Rem than an error, so each is stated where it bites:
+Rem
+Rem   * 2^53 — the whole-number ceiling. EngFact(18) is the last exact
+Rem     factorial; EngModPow, EngFactorize and EngComb are bounded by it
+Rem     too, which is why EngComb multiplies and divides alternately
+Rem     rather than dividing one factorial by two others.
+Rem   * |x| > 710 — where EngSinh and EngCosh overflow, and where
+Rem     EngGamma does; EngGammaLn keeps going and is the word to use.
+Rem   * The numeric derivative's step. EngDeriv is accurate to about
+Rem     eight digits and EngDeriv2 to about four. Neither is exact and
+Rem     neither says so at the call site.
+Rem
+Rem Not here, deliberately, and each named so the gap reads as scoped
+Rem rather than missing: number bases, bit operations, masks and truth
+Rem tables are bool.shoddy; symbolic factoring, expansion and symbolic
+Rem calculus are alg.shoddy; linear algebra over matrix.shoddy's Matrix
+Rem is lin.shoddy; the hypothesis tests are stats.shoddy, which a caller
+Rem who wants Anova or TTest2 includes and says so; random numbers are
+Rem math.shoddy, and are left there because this machine is pure and
+Rem wrapping Rnd would make that untrue. Polynomial arithmetic over
+Rem coefficient lists is not symbolic algebra and ships here.
+Rem ==================================================================
+
+Include "stats.shoddy"
+Include "math.shoddy"
+Include "seq.shoddy"
+Include "str.shoddy"
+
+Rem ---- choices ---------------------------------------------------------
+Rem Shoddy has no enum type and a machine may not carry a top-level Let,
+Rem so every choice and every constant is a zero-arg Def.
+
+Def EngLinear() As Number
+    0
+
+Def EngLogModel() As Number
+    1
+
+Def EngExpModel() As Number
+    2
+
+Def EngPowerModel() As Number
+    3
+
+Rem ---- types -----------------------------------------------------------
+Rem Record fields are positional: inserting one mid-record silently shifts
+Rem every later constructor argument at every call site. If one of these
+Rem grows, append.
+
+Rem EngComplex is its own constructor rather than taking an EngComplexOf
+Rem builder. A complex number is built ten times more often than any other
+Rem record here, and EngComplexOf(3, 4) on every line would be intolerable.
+Type EngComplex
+    Re As Number
+    Im As Number
+
+Type EngPolar
+    Mag   As Number
+    Theta As Number
+
+Rem Degs, not Deg: EngDeg is the radians converter and a machine word
+Rem outranks a field accessor of the same name.
+Type EngDms
+    Degs As Number
+    Mins As Number
+    Secs As Number
+
+Rem Avg/Sd/Total, not Mean/StdDev/Sum. All three of those are stats'
+Rem words, this machine includes stats, and the word wins — the accessor
+Rem would simply be unreachable. neural.shoddy met this first and named
+Rem its scaler fields Center/Spread for the same reason.
+Type EngStat
+    Avg   As Number
+    Sd    As Number
+    Total As Number
+
+Rem Named fields rather than A/B/R: a one-letter accessor is shadowed by
+Rem any local or parameter of the same letter, and this machine is full of
+Rem Let r = ... and Let b = ...
+Type EngFit
+    Intercept As Number
+    Slope     As Number
+    RFit      As Number
+
+Type EngDivided
+    Quotient  As List Of Number
+    Remainder As List Of Number
+
+Type EngUnit
+    Name     As String
+    Quantity As String
+    Factor   As Number
+    Offset   As Number
+
+Type EngConst
+    CName As String
+    Value As Number
+    Units As String
+
+Rem ---- angles ----------------------------------------------------------
+
+Def EngRad(deg As Number) As Number
+    Rad(deg)
+
+Def EngDeg(rad As Number) As Number
+    Deg(rad)
+
+Def EngGradOf(rad As Number) As Number
+    rad * 200 / Pi()
+
+Def EngFromGrad(grad As Number) As Number
+    grad * Pi() / 200
+
+Rem Degrees, minutes and seconds from a decimal degree, and back. The
+Rem seconds carry the fraction, so a round trip is exact to the precision
+Rem of the input rather than to the nearest second.
+Def EngDmsOf(deg As Number) As EngDms
+    Let sign = Ifte(deg < 0, 0 - 1, 1)
+    Let a = Abs(deg)
+    Let d = Fix(a)
+    Let m = Fix((a - d) * 60)
+    EngDms(sign * d, m, ((a - d) * 60 - m) * 60)
+
+Def EngFromDms(d As EngDms) As Number
+    Let sign = Ifte(Degs(d) < 0, 0 - 1, 1)
+    sign * (Abs(Degs(d)) + Mins(d) / 60 + Secs(d) / 3600)
+
+Rem ---- trigonometry the runtime does not supply -------------------------
+Rem Sin, Cos, Tan, Asin, Acos, Atn and Atn2 are builtins; these are the
+Rem reciprocals and the inverses that are not.
+
+Def EngSec(x As Number) As Number
+    1 / Cos(x)
+
+Def EngCsc(x As Number) As Number
+    1 / Sin(x)
+
+Def EngCot(x As Number) As Number
+    1 / Tan(x)
+
+Def EngAsec(x As Number) As Number
+    If Abs(x) < 1 Then
+        Error("ENGASEC: NEEDS |X| >= 1")
+    Else
+        Acos(1 / x)
+
+Def EngAcsc(x As Number) As Number
+    If Abs(x) < 1 Then
+        Error("ENGACSC: NEEDS |X| >= 1")
+    Else
+        Asin(1 / x)
+
+Def EngAcot(x As Number) As Number
+    Pi() / 2 - Atn(x)
+
+Rem Vector direction and magnitude, from math.
+Def EngAngleOf(dx As Number, dy As Number) As Number
+    Angle(dx, dy)
+
+Def EngHypot(x As Number, y As Number) As Number
+    Hypot(x, y)
+
+Def EngDistOf(x0 As Number, y0 As Number, x1 As Number, y1 As Number) As Number
+    Dist(x0, y0, x1, y1)
+
+Rem Polar and rectangular. Two words out rather than one returning a pair,
+Rem because a caller wants one or the other at the point of use.
+Def EngRectX(mag As Number, theta As Number) As Number
+    mag * Cos(theta)
+
+Def EngRectY(mag As Number, theta As Number) As Number
+    mag * Sin(theta)
+
+Def EngPolarOf(x As Number, y As Number) As EngPolar
+    EngPolar(Hypot(x, y), Angle(x, y))
+
+Rem ---- hyperbolics -----------------------------------------------------
+Rem Tanh is a builtin; the rest are not. Sinh and Cosh overflow around
+Rem |x| > 710, which is the ceiling stated in the banner.
+
+Def EngSinh(x As Number) As Number
+    (Exp(x) - Exp(0 - x)) / 2
+
+Def EngCosh(x As Number) As Number
+    (Exp(x) + Exp(0 - x)) / 2
+
+Def EngTanh(x As Number) As Number
+    Tanh(x)
+
+Def EngSech(x As Number) As Number
+    1 / EngCosh(x)
+
+Def EngCsch(x As Number) As Number
+    1 / EngSinh(x)
+
+Def EngCoth(x As Number) As Number
+    1 / Tanh(x)
+
+Def EngAsinh(x As Number) As Number
+    Log(x + Sqr(x * x + 1))
+
+Def EngAcosh(x As Number) As Number
+    If x < 1 Then
+        Error("ENGACOSH: NEEDS X >= 1")
+    Else
+        Log(x + Sqr(x * x - 1))
+
+Def EngAtanh(x As Number) As Number
+    If Abs(x) >= 1 Then
+        Error("ENGATANH: NEEDS |X| < 1")
+    Else
+        Log((1 + x) / (1 - x)) / 2
+
+Def EngAsech(x As Number) As Number
+    If x <= 0 Or x > 1 Then
+        Error("ENGASECH: NEEDS 0 < X <= 1")
+    Else
+        EngAcosh(1 / x)
+
+Def EngAcsch(x As Number) As Number
+    EngAsinh(1 / x)
+
+Def EngAcoth(x As Number) As Number
+    If Abs(x) <= 1 Then
+        Error("ENGACOTH: NEEDS |X| > 1")
+    Else
+        EngAtanh(1 / x)
+
+Rem ---- logarithms, exponentials and roots ------------------------------
+
+Def EngLogBase(base As Number, x As Number) As Number
+    LogBase(base, x)
+
+Def EngLog2(x As Number) As Number
+    Log2(x)
+
+Rem Accurate near zero, where Log(1 + x) and Exp(x) - 1 lose most of their
+Rem significant digits to cancellation.
+Def EngLog1p(x As Number) As Number
+    Let u = 1 + x
+    If u = 1 Then
+        x
+    Else
+        Log(u) * x / (u - 1)
+
+Def EngExpm1(x As Number) As Number
+    Let u = Exp(x)
+    If u = 1 Then
+        x
+    Else
+        If Abs(x) > 0.5 Then
+            u - 1
+        Else
+            (u - 1) * x / Log(u)
+
+Rem The real nth root, including the odd-root-of-a-negative case that
+Rem x ^ (1/n) gets wrong.
+Def EngNthRoot(x As Number, n As Number) As Number
+    If x < 0 Then
+        If n Mod 2 = 0 Then
+            Error("ENGNTHROOT: NO REAL EVEN ROOT OF A NEGATIVE")
+        Else
+            0 - ((0 - x) ^ (1 / n))
+    Else
+        x ^ (1 / n)
+
+Rem ---- complex numbers -------------------------------------------------
+Rem Nothing in the tree had a complex type before this. Every word that
+Rem can return one does, rather than splitting into real and imaginary
+Rem halves the caller has to reassemble.
+
+Def EngCAdd(a As EngComplex, b As EngComplex) As EngComplex
+    EngComplex(Re(a) + Re(b), Im(a) + Im(b))
+
+Def EngCSub(a As EngComplex, b As EngComplex) As EngComplex
+    EngComplex(Re(a) - Re(b), Im(a) - Im(b))
+
+Def EngCMul(a As EngComplex, b As EngComplex) As EngComplex
+    EngComplex(Re(a) * Re(b) - Im(a) * Im(b), Re(a) * Im(b) + Im(a) * Re(b))
+
+Def EngCDiv(a As EngComplex, b As EngComplex) As EngComplex
+    Let d = Re(b) * Re(b) + Im(b) * Im(b)
+    If d = 0 Then
+        Error("ENGCDIV: DIVISION BY ZERO")
+    Else
+        EngComplex((Re(a) * Re(b) + Im(a) * Im(b)) / d,
+                   (Im(a) * Re(b) - Re(a) * Im(b)) / d)
+
+Def EngConj(a As EngComplex) As EngComplex
+    EngComplex(Re(a), 0 - Im(a))
+
+Def EngCAbs(a As EngComplex) As Number
+    Hypot(Re(a), Im(a))
+
+Def EngCArg(a As EngComplex) As Number
+    Angle(Re(a), Im(a))
+
+Def EngCFromPolar(mag As Number, theta As Number) As EngComplex
+    EngComplex(mag * Cos(theta), mag * Sin(theta))
+
+Def EngCToPolar(a As EngComplex) As EngPolar
+    EngPolar(EngCAbs(a), EngCArg(a))
+
+Def EngCExp(a As EngComplex) As EngComplex
+    EngCFromPolar(Exp(Re(a)), Im(a))
+
+Def EngCLog(a As EngComplex) As EngComplex
+    EngComplex(Log(EngCAbs(a)), EngCArg(a))
+
+Def EngCSqrt(a As EngComplex) As EngComplex
+    EngCFromPolar(Sqr(EngCAbs(a)), EngCArg(a) / 2)
+
+Def EngCPow(a As EngComplex, n As Number) As EngComplex
+    EngCFromPolar(EngCAbs(a) ^ n, EngCArg(a) * n)
+
+Rem The only comparison offered. Structural equality on a record of
+Rem doubles reports EngComplex(0.1 + 0.2, 0) = EngComplex(0.3, 0) as
+Rem False, which is true of the bits and useless to the caller.
+Def EngCNear(a As EngComplex, b As EngComplex, tol As Number) As Boolean
+    EngCAbs(EngCSub(a, b)) <= tol
+
+Rem Drops the zero part, and never prints a plus followed by a minus.
+Def EngCShow(a As EngComplex) As String
+    If Im(a) = 0 Then
+        Str(Re(a))
+    Else
+        If Re(a) = 0 Then
+            Str(Im(a)) & "i"
+        Else
+            If Im(a) < 0 Then
+                Str(Re(a)) & " - " & Str(0 - Im(a)) & "i"
+            Else
+                Str(Re(a)) & " + " & Str(Im(a)) & "i"
+
+Rem ---- statistics, wrapped ---------------------------------------------
+Rem A face over stats.shoddy. Mandatory rather than polite: this machine
+Rem includes stats, so these cannot be the bare names. The line is
+Rem descriptive versus inferential - the hypothesis tests are not here,
+Rem and a caller who wants Anova includes stats and says so.
+
+Def EngSum(xs As List Of Number) As Number
+    Sum(xs)
+
+Def EngMean(xs As List Of Number) As Number
+    Mean(xs)
+
+Rem Both forms, each named for which it is: the wrong one gives a
+Rem plausible wrong number and no error.
+Def EngStdDev(xs As List Of Number) As Number
+    StdDev(xs)
+
+Def EngStdDevP(xs As List Of Number) As Number
+    StdDevP(xs)
+
+Def EngVar(xs As List Of Number) As Number
+    Var(xs)
+
+Def EngVarP(xs As List Of Number) As Number
+    VarP(xs)
+
+Def EngMedian(xs As List Of Number) As Number
+    Median(xs)
+
+Rem Quantile takes 0..1. Percentile (0..100) is deliberately not wrapped,
+Rem so one fraction convention holds across the whole surface.
+Def EngQuantile(xs As List Of Number, p As Number) As Number
+    Quantile(xs, p)
+
+Def EngMinimum(xs As List Of Number) As Number
+    Minimum(xs)
+
+Def EngMaximum(xs As List Of Number) As Number
+    Maximum(xs)
+
+Def EngRangeOf(xs As List Of Number) As Number
+    RangeOf(xs)
+
+Def EngSkewness(xs As List Of Number) As Number
+    Skewness(xs)
+
+Def EngKurtosis(xs As List Of Number) As Number
+    Kurtosis(xs)
+
+Def EngWeightedMean(xs As List Of Number, ws As List Of Number) As Number
+    WeightedMean(xs, ws)
+
+Def EngGeoMean(xs As List Of Number) As Number
+    GeoMean(xs)
+
+Def EngCorrel(xs As List Of Number, ys As List Of Number) As Number
+    Correl(xs, ys)
+
+Def EngCov(xs As List Of Number, ys As List Of Number) As Number
+    Cov(xs, ys)
+
+Def EngSpearman(xs As List Of Number, ys As List Of Number) As Number
+    Spearman(xs, ys)
+
+Def EngStat1(xs As List Of Number) As EngStat
+    EngStat(Mean(xs), StdDev(xs), Sum(xs))
+
+Rem Takes a raw mean and standard deviation where stats.NormCdf takes a
+Rem z-score - the spec's shape, and one less conversion at the call site.
+Def EngNormPdf(x As Number, mean As Number, sd As Number) As Number
+    NormPdf(ZScore(x, mean, sd)) / sd
+
+Def EngNormCdf(x As Number, mean As Number, sd As Number) As Number
+    NormCdf(ZScore(x, mean, sd))
+
+Def EngNormInv(p As Number) As Number
+    NormInv(p)
+
+Def EngTCdf(t As Number, df As Number) As Number
+    TCdf(t, df)
+
+Def EngTInv(p As Number, df As Number) As Number
+    TInv(p, df)
+
+Def EngChi2Cdf(x As Number, df As Number) As Number
+    Chi2Cdf(x, df)
+
+Def EngFCdf(f As Number, d1 As Number, d2 As Number) As Number
+    FCdf(f, d1, d2)
+
+Rem Transform, then one linear fit, repackaged so stats' Fit never leaves
+Rem this machine. RFit is the correlation in the FITTED space, which is
+Rem what every spreadsheet reports and is not the correlation of the raw
+Rem data.
+Def EngFitOf(xs As List Of Number, ys As List Of Number, model As Number) As EngFit
+    If model = EngLinear() Then
+        Let f = LinFit(xs, ys)
+        EngFit(Intercept(f), Slope(f), Correl(xs, ys))
+    Else
+        If model = EngLogModel() Then
+            If Minimum(xs) <= 0 Then
+                Error("ENGFITOF: LOGARITHMIC MODEL NEEDS X > 0")
+            Else
+                Let lx = Map(xs, Log)
+                EngFit(Intercept(LinFit(lx, ys)), Slope(LinFit(lx, ys)), Correl(lx, ys))
+        Else
+            If model = EngExpModel() Then
+                If Minimum(ys) <= 0 Then
+                    Error("ENGFITOF: EXPONENTIAL MODEL NEEDS Y > 0")
+                Else
+                    Let ly = Map(ys, Log)
+                    EngFit(Exp(Intercept(LinFit(xs, ly))), Slope(LinFit(xs, ly)),
+                           Correl(xs, ly))
+            Else
+                If model = EngPowerModel() Then
+                    If Minimum(xs) <= 0 Or Minimum(ys) <= 0 Then
+                        Error("ENGFITOF: POWER MODEL NEEDS X > 0 AND Y > 0")
+                    Else
+                        Let lx = Map(xs, Log)
+                        Let ly = Map(ys, Log)
+                        EngFit(Exp(Intercept(LinFit(lx, ly))), Slope(LinFit(lx, ly)),
+                               Correl(lx, ly))
+                Else
+                    Error("ENGFITOF: UNKNOWN MODEL")
+
+Rem ---- number theory ---------------------------------------------------
+Rem Mod is infix in Shoddy: a Mod b, never Mod(a, b), which partially
+Rem applies into a quotation and fails a long way from the mistake.
+
+Def EngGcdGo(a As Number, b As Number) As Number
+    If b = 0 Then
+        a
+    Else
+        EngGcdGo(b, a Mod b)
+
+Def EngGcd(a As Number, b As Number) As Number
+    EngGcdGo(Abs(a), Abs(b))
+
+Def EngLcm(a As Number, b As Number) As Number
+    If a = 0 Or b = 0 Then
+        0
+    Else
+        Abs(a * b) / EngGcd(a, b)
+
+Def EngIQuot(a As Number, b As Number) As Number
+    Fix(a / b)
+
+Def EngIRem(a As Number, b As Number) As Number
+    a - b * Fix(a / b)
+
+Rem Square-and-multiply, so no intermediate leaves 2^53 even when the
+Rem exponent is large.
+Def EngModPowGo(base As Number, e As Number, m As Number, acc As Number) As Number
+    If e = 0 Then
+        acc
+    Else
+        If e Mod 2 = 1 Then
+            EngModPowGo((base * base) Mod m, Fix(e / 2), m, (acc * base) Mod m)
+        Else
+            EngModPowGo((base * base) Mod m, Fix(e / 2), m, acc)
+
+Def EngModPow(base As Number, e As Number, m As Number) As Number
+    EngModPowGo(base Mod m, e, m, 1)
+
+Rem Errors when there is no inverse: a caller handed a non-inverse back
+Rem will not check it.
+Def EngModInvGo(a As Number, m As Number, k As Number) As Number
+    If k >= m Then
+        Error("ENGMODINV: NO INVERSE - A AND M ARE NOT COPRIME")
+    Else
+        If (a * k) Mod m = 1 Then
+            k
+        Else
+            EngModInvGo(a, m, k + 1)
+
+Def EngModInv(a As Number, m As Number) As Number
+    If EngGcd(a, m) <> 1 Then
+        Error("ENGMODINV: NO INVERSE - A AND M ARE NOT COPRIME")
+    Else
+        EngModInvGo(a Mod m, m, 1)
+
+Def EngIsPrimeGo(n As Number, d As Number) As Boolean
+    If d * d > n Then
+        True
+    Else
+        If n Mod d = 0 Then
+            False
+        Else
+            EngIsPrimeGo(n, d + 2)
+
+Def EngIsPrime(n As Number) As Boolean
+    If n < 2 Then
+        False
+    Else
+        If n < 4 Then
+            True
+        Else
+            If n Mod 2 = 0 Then
+                False
+            Else
+                EngIsPrimeGo(n, 3)
+
+Def EngPrimes(n As Number) As List Of Number
+    Filter(Range(2, n), EngIsPrime)
+
+Def EngFactorGo(n As Number, d As Number, acc As List Of Number) As List Of Number
+    If n = 1 Then
+        acc
+    Else
+        If d * d > n Then
+            Append(acc, n)
+        Else
+            If n Mod d = 0 Then
+                EngFactorGo(n / d, d, Append(acc, d))
+            Else
+                EngFactorGo(n, d + 1, acc)
+
+Def EngFactorize(n As Number) As List Of Number
+    If n < 2 Then
+        Error("ENGFACTORIZE: NEEDS N >= 2")
+    Else
+        EngFactorGo(n, 2, { })
+
+Def EngDivisors(n As Number) As List Of Number
+    Filter(Range(1, n), Fn(d) => n Mod d = 0)
+
+Def EngTotient(n As Number) As Number
+    CountIf(Range(1, n), Fn(k) => EngGcd(k, n) = 1)
+
+Rem ---- combinatorics and the gamma family ------------------------------
+Rem EngFact(18) is the last exact factorial: 19! is 1.2e17, past 2^53, and
+Rem the result is quietly wrong rather than an error. EngComb multiplies
+Rem and divides alternately for that reason - it reaches n = 1000 with no
+Rem intermediate anywhere near a factorial.
+
+Def EngFactGo(n As Number, acc As Number) As Number
+    If n <= 1 Then
+        acc
+    Else
+        EngFactGo(n - 1, acc * n)
+
+Def EngFact(n As Number) As Number
+    If n < 0 Or n <> Fix(n) Then
+        Error("ENGFACT: NEEDS A WHOLE NUMBER >= 0")
+    Else
+        EngFactGo(n, 1)
+
+Def EngCombGo(n As Number, k As Number, i As Number, acc As Number) As Number
+    If i > k Then
+        acc
+    Else
+        EngCombGo(n, k, i + 1, acc * (n - k + i) / i)
+
+Def EngComb(n As Number, k As Number) As Number
+    If k < 0 Or k > n Then
+        0
+    Else
+        Round(EngCombGo(n, Min(k, n - k), 1, 1))
+
+Def EngPermGo(n As Number, k As Number, i As Number, acc As Number) As Number
+    If i >= k Then
+        acc
+    Else
+        EngPermGo(n, k, i + 1, acc * (n - i))
+
+Def EngPerm(n As Number, k As Number) As Number
+    If k < 0 Or k > n Then
+        0
+    Else
+        EngPermGo(n, k, 0, 1)
+
+Def EngFibGo(n As Number, a As Number, b As Number) As Number
+    If n <= 0 Then
+        a
+    Else
+        EngFibGo(n - 1, b, a + b)
+
+Def EngFib(n As Number) As Number
+    If n < 0 Then
+        Error("ENGFIB: NEEDS N >= 0")
+    Else
+        EngFibGo(n, 0, 1)
+
+Rem Lanczos, g = 7, nine terms. The series is wrapped in one pair of
+Rem brackets because a continuation line that begins with + or - outside
+Rem brackets is a new statement, not more of this one.
+Def EngLanczos(z As Number) As Number
+    (0.99999999999980993
+        + 676.5203681218851 / (z + 1)
+        - 1259.1392167224028 / (z + 2)
+        + 771.32342877765313 / (z + 3)
+        - 176.61502916214059 / (z + 4)
+        + 12.507343278686905 / (z + 5)
+        - 0.13857109526572012 / (z + 6)
+        + 0.0000099843695780195716 / (z + 7)
+        + 0.00000015056327351493116 / (z + 8))
+
+Rem The log of the gamma function, which is the one to reach for: it holds
+Rem for arguments where EngGamma itself overflows, and every distribution
+Rem below is built on it rather than on a ratio of factorials.
+Def EngGammaLn(x As Number) As Number
+    If x < 0.5 Then
+        Log(Pi() / Abs(Sin(Pi() * x))) - EngGammaLn(1 - x)
+    Else
+        Let z = x - 1
+        Let t = z + 7.5
+        (0.5 * Log(2 * Pi()) + (z + 0.5) * Log(t) - t + Log(EngLanczos(z)))
+
+Def EngGamma(x As Number) As Number
+    If x < 0.5 Then
+        Pi() / (Sin(Pi() * x) * EngGamma(1 - x))
+    Else
+        Exp(EngGammaLn(x))
+
+Def EngBeta(a As Number, b As Number) As Number
+    Exp(EngGammaLn(a) + EngGammaLn(b) - EngGammaLn(a + b))
+
+Rem ---- discrete distributions ------------------------------------------
+Rem Every Pdf takes the count first, because that is the quantity being
+Rem asked about; every Cdf is the same word summed from zero and inclusive
+Rem of k. stats.shoddy has the continuous side of this and is wrapped
+Rem above; nothing here duplicates it.
+
+Def EngBinomPdf(k As Number, n As Number, p As Number) As Number
+    If k < 0 Or k > n Then
+        0
+    Else
+        EngComb(n, k) * (p ^ k) * ((1 - p) ^ (n - k))
+
+Def EngBinomCdf(k As Number, n As Number, p As Number) As Number
+    If k < 0 Then
+        0
+    Else
+        Sum(Map(Range(0, Min(k, n)), Fn(i) => EngBinomPdf(i, n, p)))
+
+Def EngPoissonPdf(k As Number, lambda As Number) As Number
+    If k < 0 Then
+        0
+    Else
+        Exp(0 - lambda + k * Log(lambda) - EngGammaLn(k + 1))
+
+Def EngPoissonCdf(k As Number, lambda As Number) As Number
+    If k < 0 Then
+        0
+    Else
+        Sum(Map(Range(0, k), Fn(i) => EngPoissonPdf(i, lambda)))
+
+Rem k is the number of trials up to and including the first success, so k
+Rem starts at 1. The other convention (failures before the first success)
+Rem differs by one and gives an answer that looks reasonable either way.
+Def EngGeomPdf(k As Number, p As Number) As Number
+    If k < 1 Then
+        0
+    Else
+        p * ((1 - p) ^ (k - 1))
+
+Def EngGeomCdf(k As Number, p As Number) As Number
+    If k < 1 Then
+        0
+    Else
+        1 - ((1 - p) ^ k)
+
+Rem Drawing without replacement: k successes in draws taken from a
+Rem population of popn containing wins successes.
+Def EngHyperPdf(k As Number, draws As Number, wins As Number, popn As Number) As Number
+    If k < 0 Or k > draws Or k > wins Or draws - k > popn - wins Then
+        0
+    Else
+        EngComb(wins, k) * EngComb(popn - wins, draws - k) / EngComb(popn, draws)
+
+Def EngExpCdf(x As Number, rate As Number) As Number
+    If x < 0 Then
+        0
+    Else
+        1 - Exp(0 - rate * x)
+
+Rem ---- numeric calculus ------------------------------------------------
+Rem These take a quotation, [ Number -- Number ], and Call it. The step is
+Rem scaled to the size of x: a fixed h is either noise near zero or lost in
+Rem the rounding at 10^9.
+
+Def EngStep(x As Number, scale As Number) As Number
+    Max(Abs(x), 1) * scale
+
+Def EngDeriv(f As [ Number -- Number ], x As Number) As Number
+    Let h = EngStep(x, 0.0000001)
+    (Call(f, x + h) - Call(f, x - h)) / (2 * h)
+
+Rem A larger step than the first derivative wants. The second difference
+Rem subtracts three numbers that are nearly equal, so too small an h loses
+Rem every significant digit to cancellation.
+Def EngDeriv2(f As [ Number -- Number ], x As Number) As Number
+    Let h = EngStep(x, 0.0001)
+    (Call(f, x + h) - 2 * Call(f, x) + Call(f, x - h)) / (h * h)
+
+Rem Composite Simpson. n is the number of intervals and must be even; the
+Rem alternating 4/2 weighting is what makes it Simpson rather than a
+Rem trapezoid, and an odd n silently applies the wrong one.
+Def EngIntegrate(f As [ Number -- Number ], a As Number, b As Number, n As Number) As Number
+    If n < 2 Or n Mod 2 <> 0 Then
+        Error("ENGINTEGRATE: N MUST BE EVEN AND >= 2")
+    Else
+        Let h = (b - a) / n
+        Let s = Sum(Map(Range(1, n - 1),
+                        Fn(i) => Ifte(i Mod 2 = 1, 4, 2) * Call(f, a + h * i)))
+        h / 3 * (Call(f, a) + Call(f, b) + s)
+
+Def EngSumOf(f As [ Number -- Number ], lo As Number, hi As Number) As Number
+    Sum(Map(Range(lo, hi), f))
+
+Def EngProdOf(f As [ Number -- Number ], lo As Number, hi As Number) As Number
+    Product(Map(Range(lo, hi), f))
+
+Rem ---- root-finding and optimisation -----------------------------------
+Rem Fixed iteration counts rather than a tolerance loop, following
+Rem stats.NormInvGo: a bounded number of halvings always terminates, where
+Rem a tolerance test on doubles can chase a difference that never shrinks.
+
+Def EngZeroGo(f As [ Number -- Number ], lo As Number, hi As Number, k As Number) As Number
+    If k <= 0 Then
+        (lo + hi) / 2
+    Else
+        Let mid = (lo + hi) / 2
+        If Call(f, lo) * Call(f, mid) <= 0 Then
+            EngZeroGo(f, lo, mid, k - 1)
+        Else
+            EngZeroGo(f, mid, hi, k - 1)
+
+Rem Checks the bracket before descending. Bisection on a bracket with no
+Rem sign change converges perfectly happily on an endpoint and returns a
+Rem number that is not a root - the worst failure this machine could offer.
+Def EngZeroOf(f As [ Number -- Number ], lo As Number, hi As Number) As Number
+    If Call(f, lo) * Call(f, hi) > 0 Then
+        Error("ENGZEROOF: BRACKET DOES NOT CONTAIN A SIGN CHANGE")
+    Else
+        EngZeroGo(f, lo, hi, 100)
+
+Rem Golden-section search. Requires the function to be unimodal on the
+Rem bracket; given two minima it finds one of them and does not say which.
+Def EngMinGo(f As [ Number -- Number ], lo As Number, hi As Number, k As Number) As Number
+    If k <= 0 Then
+        (lo + hi) / 2
+    Else
+        Let a = hi - (hi - lo) * 0.6180339887498949
+        Let b = lo + (hi - lo) * 0.6180339887498949
+        If Call(f, a) < Call(f, b) Then
+            EngMinGo(f, lo, b, k - 1)
+        Else
+            EngMinGo(f, a, hi, k - 1)
+
+Def EngMinOf(f As [ Number -- Number ], lo As Number, hi As Number) As Number
+    EngMinGo(f, lo, hi, 200)
+
+Def EngMaxOf(f As [ Number -- Number ], lo As Number, hi As Number) As Number
+    EngMinGo(Fn(x) => 0 - Call(f, x), lo, hi, 200)
+
+Rem Newton's method with a numeric derivative, so the caller supplies one
+Rem quotation rather than two. Unbracketed and therefore unguarded: it
+Rem diverges on a bad start and EngZeroOf is the safer word.
+Def EngNewtonGo(f As [ Number -- Number ], x As Number, k As Number) As Number
+    If k <= 0 Then
+        x
+    Else
+        Let d = EngDeriv(f, x)
+        If d = 0 Then
+            Error("ENGNEWTONOF: DERIVATIVE WENT TO ZERO")
+        Else
+            EngNewtonGo(f, x - Call(f, x) / d, k - 1)
+
+Def EngNewtonOf(f As [ Number -- Number ], x0 As Number) As Number
+    EngNewtonGo(f, x0, 60)
+
+Rem ---- polynomials -----------------------------------------------------
+Rem COEFFICIENTS ARE HIGHEST POWER FIRST throughout. {1, 0, 0 - 4} is
+Rem x^2 - 4. Reversed, every word here still returns a number, and it is
+Rem the wrong number.
+
+Def EngNthOr0(xs As List Of Number, i As Number) As Number
+    Ifte(i < 1 Or i > Length(xs), 0, Nth(xs, Max(1, Min(i, Length(xs)))))
+
+Def EngPolyEval(cs As List Of Number, x As Number) As Number
+    Fold(cs, 0, Fn(a, c) => a * x + c)
+
+Def EngPolyOr0(cs As List Of Number) As List Of Number
+    If Length(cs) = 0 Then
+        { 0 }
+    Else
+        cs
+
+Def EngPolyTrim(cs As List Of Number) As List Of Number
+    If Length(cs) <= 1 Then
+        EngPolyOr0(cs)
+    Else
+        If Nth(cs, 1) = 0 Then
+            EngPolyTrim(DropN(cs, 1))
+        Else
+            cs
+
+Def EngPolyDegree(cs As List Of Number) As Number
+    Length(EngPolyTrim(cs)) - 1
+
+Def EngPolyAdd(a As List Of Number, b As List Of Number) As List Of Number
+    Let n = Max(Length(a), Length(b))
+    EngPolyTrim(Map(Range(1, n),
+                    Fn(i) => EngNthOr0(a, i - (n - Length(a)))
+                             + EngNthOr0(b, i - (n - Length(b)))))
+
+Def EngPolyNeg(cs As List Of Number) As List Of Number
+    Map(cs, Fn(c) => 0 - c)
+
+Def EngPolySub(a As List Of Number, b As List Of Number) As List Of Number
+    EngPolyAdd(a, EngPolyNeg(b))
+
+Def EngPolyScale(cs As List Of Number, k As Number) As List Of Number
+    Map(cs, Fn(c) => c * k)
+
+Def EngPolyMulTerm(a As List Of Number, b As List Of Number, k As Number) As Number
+    Sum(Map(Range(1, Length(a)), Fn(i) => Nth(a, i) * EngNthOr0(b, k - i + 1)))
+
+Def EngPolyMul(a As List Of Number, b As List Of Number) As List Of Number
+    If Length(a) = 0 Or Length(b) = 0 Then
+        { 0 }
+    Else
+        EngPolyTrim(Map(Range(1, Length(a) + Length(b) - 1),
+                        Fn(k) => EngPolyMulTerm(a, b, k)))
+
+Rem Long division, one leading term at a time. Returns both halves in one
+Rem record: a caller who wanted only the quotient has usually assumed the
+Rem remainder is zero, and this makes them look.
+Rem The accumulator is named left, not rem: Rem opens a comment, and a
+Rem parameter of that name takes the rest of the line with it.
+Def EngPolyDivGo(left As List Of Number, d As List Of Number,
+                 quo As List Of Number) As EngDivided
+    If Length(left) < Length(d) Then
+        EngDivided(EngPolyOr0(quo), EngPolyOr0(left))
+    Else
+        Let f = Nth(left, 1) / Nth(d, 1)
+        EngPolyDivGo(Map(Range(2, Length(left)),
+                         Fn(i) => Nth(left, i) - f * EngNthOr0(d, i)),
+                     d, Append(quo, f))
+
+Def EngPolyDiv(a As List Of Number, b As List Of Number) As EngDivided
+    Let d = EngPolyTrim(b)
+    If Nth(d, 1) = 0 Then
+        Error("ENGPOLYDIV: DIVISOR IS ZERO")
+    Else
+        EngPolyDivGo(EngPolyTrim(a), d, { })
+
+Def EngPolyDeriv(cs As List Of Number) As List Of Number
+    Let n = Length(cs) - 1
+    If n < 1 Then
+        { 0 }
+    Else
+        Map(Range(1, n), Fn(i) => Nth(cs, i) * (n - i + 1))
+
+Rem c0 is the constant of integration, and is required rather than assumed
+Rem to be zero: an indefinite integral without one is a particular
+Rem antiderivative pretending to be the general answer.
+Def EngPolyIntegral(cs As List Of Number, c0 As Number) As List Of Number
+    Let n = Length(cs)
+    Append(Map(Range(1, n), Fn(i) => Nth(cs, i) / (n - i + 1)), c0)
+
+Def EngPolyArea(cs As List Of Number, a As Number, b As Number) As Number
+    Let p = EngPolyIntegral(cs, 0)
+    EngPolyEval(p, b) - EngPolyEval(p, a)
+
+Rem Roots come back complex, always, even when they are real. A word that
+Rem returned reals when it could and complex otherwise would have two
+Rem return types and no caller could branch on it.
+Def EngQuadRoots(a As Number, b As Number, c As Number) As List Of EngComplex
+    If a = 0 Then
+        Error("ENGQUADROOTS: NOT QUADRATIC - A IS ZERO")
+    Else
+        Let disc = b * b - 4 * a * c
+        If disc >= 0 Then
+            { EngComplex((0 - b + Sqr(disc)) / (2 * a), 0),
+              EngComplex((0 - b - Sqr(disc)) / (2 * a), 0) }
+        Else
+            { EngComplex(0 - b / (2 * a), Sqr(0 - disc) / (2 * a)),
+              EngComplex(0 - b / (2 * a), 0 - Sqr(0 - disc) / (2 * a)) }
+
+Rem Cardano, by way of the trigonometric form for three real roots. The
+Rem depressed cubic t^3 + pt + q is reached by substituting x = t - b/3a.
+Def EngCubicReal(a As Number, b As Number, c As Number, d As Number) As List Of Number
+    If a = 0 Then
+        Error("ENGCUBICREAL: NOT CUBIC - A IS ZERO")
+    Else
+        Let shift = b / (3 * a)
+        Let p = (3 * a * c - b * b) / (3 * a * a)
+        Let q = (2 * b * b * b - 9 * a * b * c + 27 * a * a * d) / (27 * a * a * a)
+        Let disc = q * q / 4 + p * p * p / 27
+        If disc > 0 Then
+            Let u = EngNthRoot(0 - q / 2 + Sqr(disc), 3)
+            Let v = EngNthRoot(0 - q / 2 - Sqr(disc), 3)
+            { u + v - shift }
+        Else
+            Let r = 2 * Sqr(0 - p / 3)
+            Let phi = Acos(3 * q / (p * r)) / 3
+            { r * Cos(phi) - shift,
+              r * Cos(phi - 2 * Pi() / 3) - shift,
+              r * Cos(phi - 4 * Pi() / 3) - shift }
+
+Rem ---- numeric sequences -----------------------------------------------
+Rem Sampling and differencing, the shapes a plot or a numeric experiment
+Rem needs. seq.shoddy has the general list words and is included above;
+Rem these are the ones that are arithmetic rather than structural.
+
+Def EngLinSpace(lo As Number, hi As Number, n As Number) As List Of Number
+    If n < 2 Then
+        Error("ENGLINSPACE: NEEDS N >= 2")
+    Else
+        Map(Range(0, n - 1), Fn(i) => lo + (hi - lo) * i / (n - 1))
+
+Rem Geometric spacing needs both ends strictly positive and on the same
+Rem side of zero: there is no ratio that crosses it.
+Def EngGeomSpace(lo As Number, hi As Number, n As Number) As List Of Number
+    If n < 2 Then
+        Error("ENGGEOMSPACE: NEEDS N >= 2")
+    Else
+        If lo <= 0 Or hi <= 0 Then
+            Error("ENGGEOMSPACE: NEEDS BOTH ENDS > 0")
+        Else
+            Map(Range(0, n - 1), Fn(i) => lo * ((hi / lo) ^ (i / (n - 1))))
+
+Def EngCumSum(xs As List Of Number) As List Of Number
+    Map(Range(1, Length(xs)), Fn(i) => Sum(Taken(xs, i)))
+
+Rem One shorter than its input, which is the point: the k-th difference is
+Rem between the k-th and the k+1-th, and there is no difference before the
+Rem first element to pad with.
+Def EngDiff(xs As List Of Number) As List Of Number
+    If Length(xs) < 2 Then
+        { }
+    Else
+        Map(Range(2, Length(xs)), Fn(i) => Nth(xs, i) - Nth(xs, i - 1))
+
+Def EngMovAvg(xs As List Of Number, w As Number) As List Of Number
+    If w < 1 Or w > Length(xs) Then
+        Error("ENGMOVAVG: WINDOW MUST BE BETWEEN 1 AND THE LENGTH")
+    Else
+        Map(Range(1, Length(xs) - w + 1), Fn(i) => Mean(Taken(DropN(xs, i - 1), w)))
+
+Rem A flat list scales to zeros rather than dividing by zero. Every value
+Rem being the minimum is the honest reading of a constant input.
+Def EngNormalize(xs As List Of Number) As List Of Number
+    Let lo = Minimum(xs)
+    Let hi = Maximum(xs)
+    If hi = lo Then
+        Map(xs, Fn(x) => 0)
+    Else
+        Map(xs, Fn(x) => (x - lo) / (hi - lo))
+
+Def EngDotOf(xs As List Of Number, ys As List Of Number) As Number
+    If Length(xs) <> Length(ys) Then
+        Error("ENGDOTOF: LISTS ARE DIFFERENT LENGTHS")
+    Else
+        Sum(ZipWith(xs, ys, Fn(a, b) => a * b))
+
+Def EngMagOf(xs As List Of Number) As Number
+    Sqr(EngDotOf(xs, xs))
+
+Rem ---- units -----------------------------------------------------------
+Rem A unit is a record, not a string, so a conversion between quantities
+Rem is caught rather than performed. Factor and Offset take a value to the
+Rem quantity's base unit: base = x * Factor + Offset. Offset is zero for
+Rem everything except temperature, which is why it exists at all.
+
+Def EngToBase(x As Number, u As EngUnit) As Number
+    x * Factor(u) + Offset(u)
+
+Def EngFromBase(x As Number, u As EngUnit) As Number
+    (x - Offset(u)) / Factor(u)
+
+Def EngConvert(x As Number, src As EngUnit, dst As EngUnit) As Number
+    If Quantity(src) <> Quantity(dst) Then
+        Error("ENGCONVERT: " & Quantity(src) & " AND " & Quantity(dst)
+              & " ARE DIFFERENT QUANTITIES")
+    Else
+        EngFromBase(EngToBase(x, src), dst)
+
+Rem Length, base metre.
+Def EngMetre() As EngUnit
+    EngUnit("METRE", "LENGTH", 1, 0)
+
+Def EngKilometre() As EngUnit
+    EngUnit("KILOMETRE", "LENGTH", 1000, 0)
+
+Def EngCentimetre() As EngUnit
+    EngUnit("CENTIMETRE", "LENGTH", 0.01, 0)
+
+Def EngMillimetre() As EngUnit
+    EngUnit("MILLIMETRE", "LENGTH", 0.001, 0)
+
+Def EngInch() As EngUnit
+    EngUnit("INCH", "LENGTH", 0.0254, 0)
+
+Def EngFoot() As EngUnit
+    EngUnit("FOOT", "LENGTH", 0.3048, 0)
+
+Def EngYard() As EngUnit
+    EngUnit("YARD", "LENGTH", 0.9144, 0)
+
+Def EngMile() As EngUnit
+    EngUnit("MILE", "LENGTH", 1609.344, 0)
+
+Def EngNauticalMile() As EngUnit
+    EngUnit("NAUTICAL MILE", "LENGTH", 1852, 0)
+
+Rem Mass, base kilogram. Stone is here because this is a Yorkshire
+Rem library and fourteen pounds is a real unit in the mills' own records.
+Def EngKilogram() As EngUnit
+    EngUnit("KILOGRAM", "MASS", 1, 0)
+
+Def EngGram() As EngUnit
+    EngUnit("GRAM", "MASS", 0.001, 0)
+
+Def EngTonne() As EngUnit
+    EngUnit("TONNE", "MASS", 1000, 0)
+
+Def EngPound() As EngUnit
+    EngUnit("POUND", "MASS", 0.45359237, 0)
+
+Def EngOunce() As EngUnit
+    EngUnit("OUNCE", "MASS", 0.028349523125, 0)
+
+Def EngStone() As EngUnit
+    EngUnit("STONE", "MASS", 6.35029318, 0)
+
+Rem Time, base second.
+Def EngSecond() As EngUnit
+    EngUnit("SECOND", "TIME", 1, 0)
+
+Def EngMinute() As EngUnit
+    EngUnit("MINUTE", "TIME", 60, 0)
+
+Def EngHour() As EngUnit
+    EngUnit("HOUR", "TIME", 3600, 0)
+
+Def EngDay() As EngUnit
+    EngUnit("DAY", "TIME", 86400, 0)
+
+Rem Temperature, base kelvin - the only quantity here with an offset, and
+Rem the reason a bare multiplying factor is not enough. A temperature
+Rem DIFFERENCE converts by Factor alone and must not go through these.
+Def EngKelvin() As EngUnit
+    EngUnit("KELVIN", "TEMPERATURE", 1, 0)
+
+Def EngCelsius() As EngUnit
+    EngUnit("CELSIUS", "TEMPERATURE", 1, 273.15)
+
+Def EngFahrenheit() As EngUnit
+    EngUnit("FAHRENHEIT", "TEMPERATURE", 5 / 9, 273.15 - 32 * 5 / 9)
+
+Rem Pressure, base pascal.
+Def EngPascal() As EngUnit
+    EngUnit("PASCAL", "PRESSURE", 1, 0)
+
+Def EngKilopascal() As EngUnit
+    EngUnit("KILOPASCAL", "PRESSURE", 1000, 0)
+
+Def EngBar() As EngUnit
+    EngUnit("BAR", "PRESSURE", 100000, 0)
+
+Def EngPsi() As EngUnit
+    EngUnit("PSI", "PRESSURE", 6894.757293168361, 0)
+
+Def EngAtm() As EngUnit
+    EngUnit("ATMOSPHERE", "PRESSURE", 101325, 0)
+
+Rem Energy, base joule.
+Def EngJoule() As EngUnit
+    EngUnit("JOULE", "ENERGY", 1, 0)
+
+Def EngKilojoule() As EngUnit
+    EngUnit("KILOJOULE", "ENERGY", 1000, 0)
+
+Def EngCalorie() As EngUnit
+    EngUnit("CALORIE", "ENERGY", 4.184, 0)
+
+Def EngKwh() As EngUnit
+    EngUnit("KILOWATT HOUR", "ENERGY", 3600000, 0)
+
+Def EngBtu() As EngUnit
+    EngUnit("BTU", "ENERGY", 1055.05585262, 0)
+
+Rem Power, base watt.
+Def EngWatt() As EngUnit
+    EngUnit("WATT", "POWER", 1, 0)
+
+Def EngKilowatt() As EngUnit
+    EngUnit("KILOWATT", "POWER", 1000, 0)
+
+Rem Mechanical horsepower, 550 foot-pounds per second - the one James Watt
+Rem sold engines against, not the metric PS.
+Def EngHorsepower() As EngUnit
+    EngUnit("HORSEPOWER", "POWER", 745.6998715822702, 0)
+
+Rem Volume, base litre.
+Def EngLitre() As EngUnit
+    EngUnit("LITRE", "VOLUME", 1, 0)
+
+Def EngMillilitre() As EngUnit
+    EngUnit("MILLILITRE", "VOLUME", 0.001, 0)
+
+Def EngCubicMetre() As EngUnit
+    EngUnit("CUBIC METRE", "VOLUME", 1000, 0)
+
+Def EngGallonUk() As EngUnit
+    EngUnit("IMPERIAL GALLON", "VOLUME", 4.54609, 0)
+
+Def EngGallonUs() As EngUnit
+    EngUnit("US GALLON", "VOLUME", 3.785411784, 0)
+
+Rem Speed, base metres per second.
+Def EngMps() As EngUnit
+    EngUnit("METRES PER SECOND", "SPEED", 1, 0)
+
+Def EngKph() As EngUnit
+    EngUnit("KILOMETRES PER HOUR", "SPEED", 1 / 3.6, 0)
+
+Def EngMph() As EngUnit
+    EngUnit("MILES PER HOUR", "SPEED", 0.44704, 0)
+
+Def EngKnot() As EngUnit
+    EngUnit("KNOT", "SPEED", 1852 / 3600, 0)
+
+Rem ---- physical constants ----------------------------------------------
+Rem Each carries its own units in the record, because a bare number here
+Rem is the mistake these are meant to prevent. Value(EngLightSpeed()) is
+Rem the number; the record is what you pass around.
+Rem
+Rem Written as a mantissa times a power of ten rather than as one long
+Rem literal: 6.02214076 * (10 ^ 23) is exactly what the CODATA sheet says,
+Rem and a digit dropped from a run of twenty-four is invisible.
+
+Def EngLightSpeed() As EngConst
+    EngConst("SPEED OF LIGHT", 299792458, "M/S")
+
+Def EngPlanck() As EngConst
+    EngConst("PLANCK CONSTANT", 6.62607015 * (10 ^ (0 - 34)), "J S")
+
+Def EngGravitation() As EngConst
+    EngConst("GRAVITATIONAL CONSTANT", 6.67430 * (10 ^ (0 - 11)), "M^3/KG S^2")
+
+Def EngStdGravity() As EngConst
+    EngConst("STANDARD GRAVITY", 9.80665, "M/S^2")
+
+Def EngElectronCharge() As EngConst
+    EngConst("ELEMENTARY CHARGE", 1.602176634 * (10 ^ (0 - 19)), "C")
+
+Def EngElectronMass() As EngConst
+    EngConst("ELECTRON MASS", 9.1093837015 * (10 ^ (0 - 31)), "KG")
+
+Def EngProtonMass() As EngConst
+    EngConst("PROTON MASS", 1.67262192369 * (10 ^ (0 - 27)), "KG")
+
+Def EngAvogadro() As EngConst
+    EngConst("AVOGADRO CONSTANT", 6.02214076 * (10 ^ 23), "1/MOL")
+
+Def EngBoltzmann() As EngConst
+    EngConst("BOLTZMANN CONSTANT", 1.380649 * (10 ^ (0 - 23)), "J/K")
+
+Def EngGasConstant() As EngConst
+    EngConst("MOLAR GAS CONSTANT", 8.314462618, "J/MOL K")
+
+Def EngStefanBoltzmann() As EngConst
+    EngConst("STEFAN-BOLTZMANN CONSTANT", 5.670374419 * (10 ^ (0 - 8)), "W/M^2 K^4")
+
+Def EngFaraday() As EngConst
+    EngConst("FARADAY CONSTANT", 96485.33212, "C/MOL")
+
+Def EngVacuumPermittivity() As EngConst
+    EngConst("VACUUM PERMITTIVITY", 8.8541878128 * (10 ^ (0 - 12)), "F/M")
+
+Def EngVacuumPermeability() As EngConst
+    EngConst("VACUUM PERMEABILITY", 1.25663706212 * (10 ^ (0 - 6)), "N/A^2")
+
+Rem The two mathematical constants the runtime does not supply. Pi is a
+Rem builtin and needs no wrapper.
+Def EngE() As Number
+    E()
+
+Def EngTau() As Number
+    Tau()
+
+Rem ---- presentation ----------------------------------------------------
+Rem The last mile: rounding a result for a report, and printing it in the
+Rem notation an engineer reads. Every word here returns a Number unless its
+Rem name says otherwise, and the three that return String say so.
+
+Def EngRoundTo(x As Number, n As Number) As Number
+    RoundTo(x, n)
+
+Def EngFracOf(x As Number) As Number
+    Frac(x)
+
+Def EngClamp(x As Number, lo As Number, hi As Number) As Number
+    Clamp(x, lo, hi)
+
+Def EngLerp(a As Number, b As Number, t As Number) As Number
+    Lerp(a, b, t)
+
+Def EngInvLerp(a As Number, b As Number, x As Number) As Number
+    InvLerp(a, b, x)
+
+Def EngRemap(x As Number, inLo As Number, inHi As Number,
+             outLo As Number, outHi As Number) As Number
+    Remap(x, inLo, inHi, outLo, outHi)
+
+Def EngSmoothstep(edge0 As Number, edge1 As Number, x As Number) As Number
+    Smoothstep(edge0, edge1, x)
+
+Def EngSign(x As Number) As Number
+    If x > 0 Then
+        1
+    Else
+        If x < 0 Then
+            0 - 1
+        Else
+            0
+
+Rem The scalar counterpart of EngCNear, and the same warning applies: two
+Rem doubles that ought to be equal usually are not.
+Def EngNear(a As Number, b As Number, tol As Number) As Boolean
+    Abs(a - b) <= tol
+
+Rem Significant figures, not decimal places. EngSigFig(0.00123456, 3) is
+Rem 0.00123; EngRoundTo(0.00123456, 3) is 0.001.
+Def EngSigFig(x As Number, n As Number) As Number
+    If n < 1 Then
+        Error("ENGSIGFIG: NEEDS N >= 1")
+    Else
+        If x = 0 Then
+            0
+        Else
+            RoundTo(x, n - 1 - Floor(LogBase(10, Abs(x))))
+
+Rem Scientific notation: one digit before the point, p after it.
+Def EngSci(x As Number, p As Number) As String
+    If x = 0 Then
+        ToFixed(0, p) & "E+0"
+    Else
+        Let ex = Floor(LogBase(10, Abs(x)))
+        ToFixed(x / (10 ^ ex), p) & "E" & Ifte(ex < 0, "", "+") & Str(ex)
+
+Def EngPrefixes() As List Of String
+    { "y", "z", "a", "f", "p", "n", "u", "m", "",
+      "k", "M", "G", "T", "P", "E", "Z", "Y" }
+
+Def EngMetricPrefix(k As Number) As String
+    If k < 0 - 8 Or k > 8 Then
+        Error("ENGMETRICPREFIX: NO SI PREFIX OUTSIDE 10^-24 TO 10^24")
+    Else
+        Nth(EngPrefixes(), k + 9)
+
+Rem Engineering notation: the exponent moves in threes so the mantissa
+Rem lands between 1 and 1000 and carries an SI prefix. 47000 ohms prints
+Rem as 47k, which is what is written on the part.
+Def EngMetric(x As Number, p As Number) As String
+    If x = 0 Then
+        ToFixed(0, p)
+    Else
+        Let k = Clamp(Floor(Floor(LogBase(10, Abs(x))) / 3), 0 - 8, 8)
+        ToFixed(x / (1000 ^ k), p) & EngMetricPrefix(k)
+
+Def EngCommas(x As Number, p As Number) As String
+    Commas(x, p)

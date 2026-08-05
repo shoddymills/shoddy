@@ -137,6 +137,13 @@ case "${1:-help}" in
         # answer rather than an error, so its known-answer suite runs in
         # CI beside the golden files rather than by hand.
         "$MILL" run tst/fin.shoddy
+        # eng and lin are the same case: a numerics library that is subtly
+        # wrong still returns numbers. eng's suite is known answers, lin's
+        # is those plus residuals against the defining identities — P A - L
+        # U, A v - lambda v — which is the only way to test a factorisation
+        # whose parts are not unique.
+        "$MILL" run tst/eng.shoddy
+        "$MILL" run tst/lin.shoddy
         # The net demo is the only end-to-end exercise of the socket words:
         # it stands up a server, connects a client to it and trades lines,
         # both ends in one process on loopback. --allow-net is required

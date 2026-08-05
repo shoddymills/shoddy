@@ -1,0 +1,273 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Linear algebra â€” machines/lin.shoddy">
+<title>lin â€” Linear algebra | Shoddy Machines</title>
+<link rel="stylesheet" href="../style.css">
+<link rel="icon" href="../favicon.svg" type="image/svg+xml">
+<link rel="alternate icon" href="../favicon.ico" sizes="48x48">
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+</head>
+<body>
+<div class="topbar"><div class="inner">
+  <div class="row">
+    <a class="phase" href="index.html"><img class="mark" src="../media/brand/shoddy-icon.svg" alt="" width="23" height="23">Shoddy Â· The Machines</a>
+    <span class="spacer"></span>
+    <nav class="docnav meta" aria-label="About"><a href="../heritage.html">Heritage</a><a href="../authorship.html">Authorship</a></nav>
+  </div>
+  <nav class="docnav main" aria-label="Documentation"><a href="../tutorials/index.html">Tutorials</a><a href="../guide.html">Guide</a><a href="../quickref.html">Reference</a><span class="here">Machines</span><a href="../mills/index.html">Mills</a><a href="../stack.html">Stack</a><a href="../spec.html">Spec</a><a href="../setup.html">Setup</a><a href="../vscode.html">VS Code</a><a href="../assistants.html">AI</a><a href="../build.html">Toolchain</a><a href="../errors.html">Errors</a></nav>
+</div></div>
+<div class="wrap">
+
+
+<header class="mast has-icon"><div><p class="eyebrow"><a href="index.html#numbers-math">The Machines &middot; Numbers &amp; math</a></p><h1>lin</h1><p class="kicker">Linear algebra &mdash; machines/lin.shoddy</p></div><img class="micon" src="../media/icons/lin.svg" alt="the lin machine&#39;s icon"></header>
+<nav class="pagertop" aria-label="Machines, in catalog order"><a href="matrix.html">&larr; matrix</a><a href="index.html">All machines</a><a href="alg.html">alg &rarr;</a></nav>
+
+<h2 id="summary">Summary</h2>
+<p><code>lin</code> is everything that asks a <em>question</em> of a matrix, or
+takes one apart: determinants, inverses, linear systems, echelon forms and
+rank, the LU, QR and Cholesky factorisations, characteristic polynomials and
+eigenvalues, and the vector words that are geometry rather than arithmetic.
+Every word is <strong>pure</strong> and every word is prefixed
+<code>Lin</code>.</p>
+
+<p class="note"><strong>The type lives in <a href="matrix.html">matrix</a>, not
+here.</strong> <code>Matrix</code>, <code>Mat</code>, <code>MatGet</code>,
+<code>MatMul</code>, <code>Transp</code> and <code>Ident</code> are that
+machine's. A program that uses <code>lin</code> normally includes both, because
+it has to name <code>Matrix</code> to call anything on this page:</p>
+<pre class="basic"><code>Include "matrix.shoddy"
+Include "lin.shoddy"</code></pre>
+
+<h2 id="why">Why It's Useful</h2>
+<p><strong>Why it is a separate machine.</strong> <a href="matrix.html">matrix</a>
+owns a data structure and its arithmetic; <code>lin</code> owns the algorithms
+over it. Split that way, a program that only multiplies matrices does not carry
+an eigenvalue solver, and an algorithm added here never disturbs the type. It is
+the same line <a href="eng.html">eng</a> draws against
+<a href="stats.html">stats</a>, and the same one <a href="json.html">json</a>
+draws against <a href="dict.html">dict</a>.</p>
+
+<p><strong>Partial pivoting throughout.</strong> Every elimination here takes
+the largest available entry in the column as its pivot. Without that a
+perfectly ordinary matrix divides by a number that is only small by accident,
+and the answer is noise that still looks like an answer.</p>
+
+<p><strong>Every factorisation returns one record.</strong>
+<code>LinLuOf</code> hands back <code>LFactor</code>, <code>UFactor</code>,
+<code>Perm</code> and <code>PSign</code> together, because
+<code>P A = L U</code> is only true of all four at once. Two words returning two
+halves would invite a caller to keep one and drop the other.</p>
+
+<p><strong>Solvers refuse rather than mislead</strong> &mdash; the same rule
+<a href="eng.html">eng</a> follows. <code>LinSolve</code> checks the
+determinant before it starts eliminating. A singular system has either no
+solution or infinitely many, and handing back one vector from either case
+without saying which is worse than stopping.</p>
+
+<h2 id="guide">User's Guide</h2>
+
+<h3>Solving a system</h3>
+<pre class="basic"><code>Include "matrix.shoddy"
+Include "lin.shoddy"
+
+Def Main()
+    ' x + 2y = 5, 3x + 4y = 11
+    Let a = Mat(2, 2, { 1, 2, 3, 4 })
+    Let b = MatRow(Mat(1, 2, { 5, 11 }), 1)
+
+    Let x = LinSolve(a, b)
+    Print(Nth(x, 1))          ' 1
+    Print(Nth(x, 2))          ' 2
+
+    Print(LinDet(a))          ' -2
+    Print(MatGet(LinInv(a), 1, 1))   ' -2</code></pre>
+
+<p><code>LinSolve</code> is Gauss-Jordan on the augmented matrix, not
+<code>LinInv</code> followed by a multiply &mdash; inverting to solve is both
+slower and less accurate, and it is the habit this word exists to remove.
+<code>LinInv</code> is still here for when the inverse itself is the
+answer.</p>
+
+<h3>Rank and echelon forms</h3>
+<pre class="basic"><code>Let s = Mat(3, 3, { 1, 2, 3, 2, 4, 6, 1, 1, 1 })   ' row 2 is twice row 1
+Print(LinRank(s))                  ' 2
+Print(LinDet(s))                   ' 0
+Print(LinRank(Mat(2, 3, { 1, 2, 3, 2, 4, 6 })))    ' 1 â€” works on any shape</code></pre>
+
+<p><code>LinRef</code> gives row echelon form and <code>LinRref</code> the
+reduced form, where every pivot is 1 and alone in its column. Pivot columns are
+skipped rather than forced, so both work on any shape and any rank &mdash; and
+<code>LinRank</code>, <code>LinInv</code> and <code>LinSolve</code> are all
+<code>LinRref</code> underneath.</p>
+
+<h3>Factorisations</h3>
+<pre class="basic"><code>Let f = LinLuOf(a)
+' P A = L U, and the pivots times the sign are the determinant
+Print(MatGet(LFactor(f), 1, 1))    ' 1 â€” Doolittle puts the unit diagonal on L
+Print(PSign(f))                    ' -1 â€” a's pivot was in the second row
+
+Let q = LinQrOf(a)                 ' A = Q R, Q orthonormal, R upper triangular
+Let l = LinChol(b)                 ' A = L L', for symmetric positive definite</code></pre>
+
+<p>There is more than one valid <code>L</code> and <code>U</code>, but only one
+valid product, which is how a factorisation is testable at all: the suite
+checks <code>P A - L U</code>, <code>Q R - A</code> and <code>L L' - A</code>
+rather than any individual cell.</p>
+
+<p><code>LinChol</code> puts its refusal exactly where positive definiteness
+fails &mdash; the square root of a negative pivot. That is a fact about the
+matrix, not a rounding accident, and no other test is needed.</p>
+
+<h3>Eigenvalues</h3>
+<pre class="basic"><code>' The 2,-1 tridiagonal: eigenvalues 2-sqrt2, 2, 2+sqrt2
+Let t = Mat(3, 3, { 2, 0 - 1, 0, 0 - 1, 2, 0 - 1, 0, 0 - 1, 2 })
+
+Print(LinCharPoly(t))              ' { 1, -6, 10, -4 }
+Print(Nth(LinEigVals(t), 1))       ' 0.58578...
+
+Let e = LinEigSym(t)               ' values AND vectors, paired by position
+Print(Nth(Values(e), 1))
+Print(MatCol(Vectors(e), 1))       ' the eigenvector that goes with it</code></pre>
+
+<p><code>LinCharPoly</code> is Faddeev&ndash;LeVerrier: it gets every
+coefficient from traces of matrix products and never expands a determinant
+symbolically, which is what makes a characteristic polynomial computable here
+at all. Its coefficients come back highest power first, matching
+<a href="eng.html">eng</a>, so they feed straight into
+<code>EngPolyEval</code> or <code>EngCubicReal</code> without reversing
+anything.</p>
+
+<p><code>LinEigSym</code> is cyclic Jacobi and is the <strong>complete</strong>
+answer for a symmetric matrix: a full set of real eigenvalues, with orthonormal
+eigenvectors, paired by position. Prefer it whenever the matrix is
+symmetric.</p>
+
+<h2 id="ceilings">What It Will Not Do</h2>
+<ul>
+<li><strong><code>LinEigVals</code> finds the real eigenvalues only.</strong> It
+brackets sign changes of the characteristic polynomial, and a complex pair
+produces no sign change &mdash; nor does a repeated root of even multiplicity.
+So the <em>length</em> of the answer carries information:
+<code>Length(LinEigVals(m))</code> short of <code>Rows(m)</code> means some
+eigenvalues are not real, or not simple, and were not found. A 90&deg; rotation
+matrix returns an empty list, which is the honest answer: nothing it acts on
+keeps its direction.</li>
+<li><strong>n &asymp; 8.</strong> Every word here is written for clarity over
+speed, and Shoddy is pure, so each elimination step builds a whole new matrix.
+<code>LinEigVals</code> and <code>LinEigSym</code> iterate and feel it
+first.</li>
+<li><strong>Cancellation in <code>LinCharPoly</code>.</strong> A characteristic
+polynomial's coefficients span magnitudes that subtraction eats, and everything
+built on it inherits that.</li>
+<li><strong>No singular value decomposition, and no least squares.</strong>
+<code>LinQrOf</code> is the piece those would be built from, and it is
+here.</li>
+</ul>
+
+<h2 id="words">Word Reference</h2>
+<p class="tag">Every word, and the records they hand back</p>
+
+<h3>The records</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>LinLu</td><td><code>LFactor</code>, <code>UFactor</code>, <code>Perm</code>, <code>PSign</code> â€” the four parts of <code>P A = L U</code>. Spelled out rather than L/U/P/S because a one-letter accessor is shadowed by any local of the same letter.</td></tr>
+<tr><td>LinQr</td><td><code>QFactor</code>, <code>RFactor</code> â€” for the same reason.</td></tr>
+<tr><td>LinEigen</td><td><code>Values</code>, <code>Vectors</code>. The vectors are the <strong>columns</strong>, so the k-th value pairs with <code>MatCol(Vectors, k)</code>.</td></tr>
+<tr><td>LinJac</td><td><code>Work</code>, <code>Basis</code> â€” the Jacobi sweep's accumulator, exposed because the machine is one flat surface.</td></tr>
+</table>
+
+<h3>Shape and measure</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>LinIsSquare(m)</td><td>Rows equal columns.</td></tr>
+<tr><td>LinIsSym(m, tol)</td><td>Symmetric <strong>to a tolerance</strong>, never to the bit: a matrix assembled by arithmetic is symmetric in intent and not in the last few digits.</td></tr>
+<tr><td>LinTrace(m)</td><td>The diagonal sum.</td></tr>
+<tr><td>LinNorm(m)</td><td>The Frobenius norm â€” the length of the matrix read as one long vector.</td></tr>
+<tr><td>LinMaxAbs(m)</td><td>The largest magnitude in it.</td></tr>
+</table>
+
+<h3>Vectors</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>LinVNorm(v)</td><td>Euclidean length of an <code>Array Of Number</code>.</td></tr>
+<tr><td>LinVUnit(v)</td><td>The same direction, length 1. Errors on the zero vector, which has no direction.</td></tr>
+<tr><td>LinCross(u, v)</td><td>The cross product, <strong>three-dimensional and nothing else</strong>. A version that quietly padded to three would be answering a different question.</td></tr>
+</table>
+
+<h3>Building and shuffling</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>LinBuild(rows, cols, f)</td><td>Give it dimensions and a rule for one cell â€” <code>[ Number Number -- Number ]</code> â€” and it makes the matrix. Everything below is written in terms of it.</td></tr>
+<tr><td>LinSwapRows(m, i, j)</td><td>Exchange two rows.</td></tr>
+<tr><td>LinScaleRow(m, p, k) / LinScaleCol(m, p, k)</td><td>Multiply one row or column.</td></tr>
+<tr><td>LinAug(a, b)</td><td>Side by side. Errors when the row counts differ.</td></tr>
+<tr><td>LinCols(m, lo, hi)</td><td>Columns lo through hi â€” the half of an augmented matrix that carries the answer.</td></tr>
+</table>
+
+<h3>Elimination</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>LinRef(m)</td><td>Row echelon form: zeros below each pivot, pivots left to right, zero rows at the bottom.</td></tr>
+<tr><td>LinRref(m)</td><td>Reduced row echelon form: every pivot 1 and alone in its column. Rank, inverse and solution all fall out of this one.</td></tr>
+<tr><td>LinRank(m)</td><td>The number of non-zero rows in the reduced form. Works on any shape.</td></tr>
+<tr><td>LinPivot(m, col, from) / LinPivotGo(...)</td><td>The partial-pivot search: the row at or below <code>from</code> with the largest magnitude in that column.</td></tr>
+<tr><td>LinElimBelow(m, p, col) / LinElimAll(m, p, col)</td><td>One elimination step, below the pivot row or on every other row.</td></tr>
+</table>
+
+<h3>Determinant and inverse</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>LinDet(m)</td><td>By elimination, not cofactor expansion: cofactors are n! multiplications and elimination is n<sup>3</sup>, which at n = 10 is the difference between an answer and a hung program.</td></tr>
+<tr><td>LinInv(m)</td><td>Gauss-Jordan on <code>[A | I]</code>. Errors on a singular matrix rather than returning something.</td></tr>
+<tr><td>LinSolve(a, b)</td><td>Solves <code>A x = b</code> for an <code>Array Of Number</code> and returns one. Checks the determinant first.</td></tr>
+<tr><td>LinPow(m, n)</td><td>Square-and-multiply, so a large exponent costs log n multiplications. A negative exponent inverts first.</td></tr>
+<tr><td>LinMinor(m, i, j)</td><td>The matrix with row i and column j struck out.</td></tr>
+<tr><td>LinCofactor(m, i, j)</td><td>The signed minor determinant.</td></tr>
+<tr><td>LinAdj(m)</td><td>The adjugate â€” the <strong>transpose</strong> of the cofactor matrix. <code>A</code> times it is <code>LinDet(A)</code> times the identity.</td></tr>
+</table>
+
+<h3>Factorisations</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>LinLuOf(a)</td><td>Doolittle LU with partial pivoting â†’ <code>LinLu</code>. <code>P A = L U</code>, L carries the unit diagonal, U carries the pivots, and <code>PSign</code> is the determinant of <code>P</code> â€” exactly the factor a determinant would otherwise lose to the row swaps.</td></tr>
+<tr><td>LinQrOf(a)</td><td>Gram-Schmidt QR â†’ <code>LinQr</code>. <code>A = Q R</code> with Q's columns orthonormal. Needs at least as many rows as columns, and refuses on linearly dependent ones.</td></tr>
+<tr><td>LinChol(a)</td><td>Cholesky â†’ the lower triangular <code>L</code> with <code>A = L L'</code>. Needs a symmetric, positive definite matrix and says which condition failed.</td></tr>
+<tr><td>LinDotPart(l, u, i, j, upto)</td><td>The partial sum both LU and Cholesky are built from.</td></tr>
+</table>
+
+<h3>Eigenvalues</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>LinCharPoly(m)</td><td>Faddeev-LeVerrier. <strong>Highest power first</strong>, so a 3&times;3 gives four numbers beginning with 1 â€” the same convention <a href="eng.html">eng</a>'s polynomial words use.</td></tr>
+<tr><td>LinRootBound(cs)</td><td>Cauchy's bound: every root lies inside this radius. Generous, which is what a scan wants.</td></tr>
+<tr><td>LinEigVals(m)</td><td>The <strong>real</strong> eigenvalues, ascending, by bracketing sign changes. Complex pairs and repeated roots of even multiplicity are not found, so a short answer is itself information.</td></tr>
+<tr><td>LinEigSym(m)</td><td>Cyclic Jacobi â†’ <code>LinEigen</code>. The complete answer for a symmetric matrix: every eigenvalue, with orthonormal eigenvectors, paired by position. Errors on a matrix that is not symmetric.</td></tr>
+<tr><td>LinRot(n, p, q, cs, sn)</td><td>A Givens rotation, the step Jacobi is made of.</td></tr>
+<tr><td>LinOffMass(m)</td><td>The total off-diagonal magnitude â€” what the sweep drives to zero and how it knows it has finished.</td></tr>
+</table>
+
+<h2 id="usedby">Who Uses It</h2>
+<p>Nothing yet &mdash; <code>lin</code> is new. A mill that puts it to work
+will appear here.</p>
+
+<h2 id="uses">The Machines It Uses</h2>
+<table>
+<tr><th></th><th>Machine</th><th>Why</th></tr>
+<tr><td class="uicon"><a href="matrix.html"><img src="../media/icons/matrix.svg" alt=""></a></td><td><a href="matrix.html">matrix</a></td><td>The <code>Matrix</code> type itself, and all of its arithmetic â€” <code>Mat</code>, <code>MatGet</code>, <code>MatMul</code>, <code>Transp</code>, <code>Ident</code>, <code>Dot</code> and the vector words.</td></tr>
+<tr><td class="uicon"><a href="eng.html"><img src="../media/icons/eng.svg" alt=""></a></td><td><a href="eng.html">eng</a></td><td><code>EngSum</code> and <code>EngProdOf</code> for the reductions, <code>EngPolyEval</code> and <code>EngZeroOf</code> under <code>LinEigVals</code>, and <code>EngAngleOf</code> for the Jacobi rotation angle.</td></tr>
+<tr><td class="uicon"><a href="seq.html"><img src="../media/icons/seq.svg" alt=""></a></td><td><a href="seq.html">seq</a></td><td><code>Append</code> and <code>DropN</code> build the coefficient and eigenvalue lists.</td></tr>
+</table>
+
+<nav class="pager" aria-label="Machines, in catalog order">
+  <a href="matrix.html"><span class="dir">&larr; Previous machine</span><span class="ttl">matrix</span></a>
+  <a class="next" href="alg.html"><span class="dir">Next machine &rarr;</span><span class="ttl">alg</span></a>
+</nav>
+<footer>Named for the shoddy mills of the West Riding: Useless Things Made
+Useful Through Skill (<a href="../heritage.html">the heritage of the name</a>).<br>
+&copy; 2026 Stephen Vincent Foster</footer>
+</div>
+</body>
+</html>

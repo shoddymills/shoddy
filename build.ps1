@@ -129,6 +129,26 @@ function Invoke-Test {
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     Assert-Mill
     & $Mill run tst/libtest.shoddy
+    # fin's arithmetic is the kind that produces a plausible wrong answer
+    # rather than an error, so its known-answer suite runs in CI beside the
+    # golden files rather than by hand.
+    & $Mill run tst/fin.shoddy
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    # eng and lin are the same case: a numerics library that is subtly wrong
+    # still returns numbers. eng's suite is known answers, lin's is those plus
+    # residuals against the defining identities — P A - L U, A v - lambda v —
+    # which is the only way to test a factorisation whose parts are not unique.
+    & $Mill run tst/eng.shoddy
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    & $Mill run tst/lin.shoddy
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    # alg is the same case again and then some: a symbolic answer that is
+    # subtly wrong is still a well-formed expression. Its suite tests by
+    # property rather than by value -- integrals differentiated back,
+    # factorisations expanded, partial fractions recombined -- and it is
+    # also the only place the alg/eng bridge can be exercised, since
+    # neither machine includes the other.
+    & $Mill run tst/alg.shoddy
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     # The net demo is the only end-to-end exercise of the socket words: it
     # stands up a server, connects a client to it and trades lines, both

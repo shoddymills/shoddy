@@ -1,0 +1,252 @@
+﻿Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem lin.shoddy â€” test program for machines/lin.shoddy
+Rem
+Rem Assert-driven, in the csvtest.shoddy / fin.shoddy / eng.shoddy
+Rem pattern: it prints what it is doing, stops at the first failed
+Rem assertion, and ends with ALL ASSERTIONS PASSED when none fail.
+Rem
+Rem It includes BOTH matrix.shoddy and lin.shoddy, because that is what a
+Rem program using lin has to do: matrix owns the type and lin owns the
+Rem algorithms, and since v1.6.0 lin's own includes do not bleed through
+Rem to a consumer. Eng* words are not in scope here for the same reason,
+Rem so SumOf and Close below are this file's own.
+Rem
+Rem Two styles of check, and both are needed:
+Rem
+Rem   * KNOWN ANSWERS, worked by hand. LinDet of {{1,2},{3,4}} is -2.
+Rem     The eigenvalues of the 2,-1 tridiagonal are 2 - sqrt 2, 2 and
+Rem     2 + sqrt 2. These catch a word that is confidently wrong.
+Rem   * RESIDUALS against the defining identity - P A - L U, Q R - A,
+Rem     L L' - A, A x - b, A v - lambda v. These catch a word that is
+Rem     wrong in a way no single number would show, and they are why the
+Rem     factorisations are testable at all: there is more than one valid
+Rem     L and U, but only one valid product.
+Rem
+Rem What cannot be tested here: the aborting half of every guard. Shoddy
+Rem has no catchable errors, so LinDet's refusal on a non-square matrix,
+Rem LinInv's and LinSolve's on a singular one, LinChol's on a matrix that
+Rem is not positive definite, LinQrOf's on dependent columns and
+Rem LinCross's on anything but three dimensions are verified by hand and
+Rem named here instead.
+Rem ==================================================================
+
+Include "../machines/matrix.shoddy"
+Include "../machines/lin.shoddy"
+
+Def Close(a As Number, b As Number, tol As Number) As Boolean
+    Abs(a - b) <= tol
+
+Def SumOf(xs As List Of Number) As Number
+    Fold(xs, 0, Fn(s, x) => s + x)
+
+Rem The distance between two matrices, which is how every factorisation
+Rem below is checked: rebuild the original from its parts and measure how
+Rem far the rebuild lands from where it started.
+Def Apart(a As Matrix, b As Matrix) As Number
+    LinNorm(MatSub(a, b))
+
+Def Main()
+    Rem A is the smallest matrix with nothing special about it: not
+    Rem symmetric, not triangular, not singular, and its pivot is not on
+    Rem the diagonal, so partial pivoting has to do something.
+    Let a = Mat(2, 2, { 1, 2, 3, 4 })
+    Rem B is the 2,-1 tridiagonal - symmetric, positive definite, and with
+    Rem eigenvalues that are known in closed form.
+    Let b = Mat(3, 3, { 2, 0 - 1, 0, 0 - 1, 2, 0 - 1, 0, 0 - 1, 2 })
+    Rem S is singular: its second row is twice its first.
+    Let s = Mat(3, 3, { 1, 2, 3, 2, 4, 6, 1, 1, 1 })
+
+    Print("--- SHAPE AND MEASURE ---")
+    Assert(LinIsSquare(a), "A SQUARE MATRIX")
+    Assert(LinIsSquare(Mat(2, 3, { 1, 2, 3, 4, 5, 6 })) = False, "AND ONE THAT IS NOT")
+    Assert(Close(LinTrace(a), 5, 0.0000000001), "TRACE")
+    Assert(Close(LinTrace(b), 6, 0.0000000001), "TRACE OF THE TRIDIAGONAL")
+    Assert(Close(LinNorm(Ident(3)), 1.7320508076, 0.0000000001),
+           "THE FROBENIUS NORM OF AN IDENTITY IS ROOT N")
+    Assert(Close(LinMaxAbs(Mat(2, 2, { 1, 0 - 5, 3, 2 })), 5, 0.0000000001),
+           "LARGEST MAGNITUDE, SIGN IGNORED")
+    Assert(LinIsSym(b, 0.000000001), "THE TRIDIAGONAL IS SYMMETRIC")
+    Assert(LinIsSym(a, 0.000000001) = False, "AND A IS NOT")
+
+    Print("--- VECTORS ---")
+    Assert(Close(LinVNorm(MatRow(Mat(1, 3, { 3, 4, 0 }), 1)), 5, 0.0000000001),
+           "VECTOR LENGTH")
+    Assert(Close(LinVNorm(LinVUnit(MatRow(Mat(1, 3, { 3, 4, 0 }), 1))), 1,
+                 0.0000000001), "A UNIT VECTOR HAS LENGTH ONE")
+    Rem The columns of the identity are the basis vectors, and e1 x e2 = e3
+    Rem is the right-hand rule.
+    Assert(Close(LinVNorm(VSub(LinCross(MatCol(Ident(3), 1), MatCol(Ident(3), 2)),
+                               MatCol(Ident(3), 3))), 0, 0.0000000001),
+           "THE CROSS PRODUCT FOLLOWS THE RIGHT-HAND RULE")
+    Rem And it anticommutes: e2 x e1 is -e3.
+    Assert(Close(LinVNorm(VAdd(LinCross(MatCol(Ident(3), 2), MatCol(Ident(3), 1)),
+                               MatCol(Ident(3), 3))), 0, 0.0000000001),
+           "AND REVERSING THE ARGUMENTS REVERSES IT")
+    Assert(Close(Dot(LinCross(MatRow(Mat(1, 3, { 1, 2, 3 }), 1),
+                              MatRow(Mat(1, 3, { 4, 5, 6 }), 1)),
+                     MatRow(Mat(1, 3, { 1, 2, 3 }), 1)), 0, 0.0000000001),
+           "AND IS PERPENDICULAR TO WHAT MADE IT")
+
+    Print("--- ECHELON FORMS AND RANK ---")
+    Assert(Close(MatGet(LinRef(a), 2, 1), 0, 0.0000000001),
+           "ROW ECHELON FORM IS ZERO BELOW THE PIVOT")
+    Assert(Close(Apart(LinRref(a), Ident(2)), 0, 0.0000000001),
+           "AND A NONSINGULAR MATRIX REDUCES TO THE IDENTITY")
+    Assert(LinRank(Ident(3)) = 3, "AN IDENTITY HAS FULL RANK")
+    Rem S has a row that is twice another, so one of the three is free.
+    Assert(LinRank(s) = 2, "AND A DEPENDENT ROW COSTS A RANK")
+    Assert(LinRank(Mat(2, 3, { 1, 2, 3, 2, 4, 6 })) = 1,
+           "RANK WORKS ON A MATRIX THAT IS NOT SQUARE")
+    Assert(LinRank(MatFill(2, 2, 0)) = 0, "AND A ZERO MATRIX HAS NO RANK AT ALL")
+    Assert(Cols(LinAug(a, Ident(2))) = 4, "AUGMENTING WIDENS")
+    Assert(Rows(LinAug(a, Ident(2))) = 2, "AND DOES NOT LENGTHEN")
+
+    Print("--- DETERMINANT AND INVERSE ---")
+    Assert(Close(LinDet(a), 0 - 2, 0.0000000001), "DETERMINANT")
+    Assert(Close(LinDet(b), 4, 0.0000000001), "DETERMINANT OF THE TRIDIAGONAL")
+    Assert(Close(LinDet(Ident(4)), 1, 0.0000000001), "AN IDENTITY HAS DETERMINANT ONE")
+    Rem The row that is twice another makes this exactly zero, and the
+    Rem pivot search is what has to notice.
+    Assert(Close(LinDet(s), 0, 0.0000000001), "AND A SINGULAR MATRIX HAS NONE")
+    Rem Two rows swapped flips the sign, which is the property the sign
+    Rem tracking in the elimination exists to preserve.
+    Assert(Close(LinDet(LinSwapRows(a, 1, 2)), 2, 0.0000000001),
+           "A ROW SWAP FLIPS THE SIGN")
+    Assert(Close(MatGet(LinInv(a), 1, 1), 0 - 2, 0.0000000001), "INVERSE, BY HAND")
+    Assert(Close(MatGet(LinInv(a), 2, 1), 1.5, 0.0000000001), "AND THE REST OF IT")
+    Assert(Close(Apart(MatMul(a, LinInv(a)), Ident(2)), 0, 0.0000000001),
+           "AND A MATRIX TIMES ITS INVERSE IS THE IDENTITY")
+    Assert(Close(Apart(MatMul(b, LinInv(b)), Ident(3)), 0, 0.0000000001),
+           "AT THREE BY THREE TOO")
+    Assert(Close(LinCofactor(b, 1, 1), 3, 0.0000000001), "A COFACTOR")
+    Assert(Rows(LinMinor(b, 1, 1)) = 2, "A MINOR IS ONE SMALLER")
+    Rem A times its adjugate is the determinant times the identity - the
+    Rem identity that makes the adjugate worth having.
+    Assert(Close(Apart(MatMul(a, LinAdj(a)), MatScale(Ident(2), LinDet(a))), 0,
+                 0.0000000001), "AND A TIMES ITS ADJUGATE IS DET TIMES I")
+
+    Print("--- LINEAR SYSTEMS ---")
+    Rem x + 2y = 5, 3x + 4y = 11, so x = 1 and y = 2.
+    Assert(Close(Nth(LinSolve(a, MatRow(Mat(1, 2, { 5, 11 }), 1)), 1), 1,
+                 0.0000000001), "THE FIRST UNKNOWN")
+    Assert(Close(Nth(LinSolve(a, MatRow(Mat(1, 2, { 5, 11 }), 1)), 2), 2,
+                 0.0000000001), "AND THE SECOND")
+    Rem The residual, which needs no hand-worked answer and would catch a
+    Rem solution that satisfied only some of the equations.
+    Assert(Close(LinVNorm(VSub(MatVec(b, LinSolve(b, MatRow(Mat(1, 3, { 1, 0, 0 }), 1))),
+                               MatRow(Mat(1, 3, { 1, 0, 0 }), 1))), 0, 0.0000000001),
+           "AND THE RESIDUAL OF A THREE BY THREE SOLVE IS ZERO")
+
+    Print("--- MATRIX POWERS ---")
+    Assert(Close(Apart(LinPow(a, 0), Ident(2)), 0, 0.0000000001),
+           "THE ZEROTH POWER IS THE IDENTITY")
+    Assert(Close(Apart(LinPow(a, 1), a), 0, 0.0000000001), "THE FIRST IS ITSELF")
+    Rem A^3 = {{37, 54}, {81, 118}}, worked by hand from A^2 = {{7,10},{15,22}}.
+    Assert(Close(MatGet(LinPow(a, 3), 1, 1), 37, 0.0000000001), "THE CUBE")
+    Assert(Close(MatGet(LinPow(a, 3), 2, 2), 118, 0.0000000001), "AND ITS FAR CORNER")
+    Assert(Close(Apart(LinPow(a, 3), MatMul(MatMul(a, a), a)), 0, 0.0000000001),
+           "AND SQUARE-AND-MULTIPLY AGREES WITH THE LONG WAY")
+    Rem A negative power inverts first.
+    Assert(Close(Apart(LinPow(a, 0 - 1), LinInv(a)), 0, 0.0000000001),
+           "THE MINUS FIRST POWER IS THE INVERSE")
+
+    Print("--- LU FACTORISATION ---")
+    Rem P A = L U is the whole claim, and only the product is unique.
+    Assert(Close(Apart(MatMul(Perm(LinLuOf(a)), a),
+                       MatMul(LFactor(LinLuOf(a)), UFactor(LinLuOf(a)))), 0,
+                 0.0000000001), "P A IS L U")
+    Assert(Close(Apart(MatMul(Perm(LinLuOf(b)), b),
+                       MatMul(LFactor(LinLuOf(b)), UFactor(LinLuOf(b)))), 0,
+                 0.0000000001), "AT THREE BY THREE TOO")
+    Assert(Close(MatGet(LFactor(LinLuOf(a)), 1, 1), 1, 0.0000000001),
+           "DOOLITTLE PUTS THE UNIT DIAGONAL ON L")
+    Assert(Close(MatGet(LFactor(LinLuOf(a)), 2, 2), 1, 0.0000000001), "ALL OF IT")
+    Assert(Close(MatGet(LFactor(LinLuOf(a)), 1, 2), 0, 0.0000000001),
+           "AND L IS LOWER TRIANGULAR")
+    Assert(Close(MatGet(UFactor(LinLuOf(a)), 2, 1), 0, 0.0000000001),
+           "AND U IS UPPER TRIANGULAR")
+    Rem A's pivot is in the second row, so the permutation is a real swap
+    Rem and its sign is -1. This is the part a test on a tidy matrix misses.
+    Assert(Close(PSign(LinLuOf(a)), 0 - 1, 0.0000000001), "A SWAP COSTS A SIGN")
+    Rem And the sign is exactly what makes the determinant come back out.
+    Assert(Close(PSign(LinLuOf(a)) * MatGet(UFactor(LinLuOf(a)), 1, 1)
+                 * MatGet(UFactor(LinLuOf(a)), 2, 2), LinDet(a), 0.0000000001),
+           "AND THE PIVOTS TIMES THE SIGN ARE THE DETERMINANT")
+
+    Print("--- QR FACTORISATION ---")
+    Assert(Close(Apart(MatMul(QFactor(LinQrOf(a)), RFactor(LinQrOf(a))), a), 0,
+                 0.0000000001), "Q R IS A")
+    Assert(Close(Apart(MatMul(Transp(QFactor(LinQrOf(a))), QFactor(LinQrOf(a))),
+                       Ident(2)), 0, 0.0000000001), "AND Q IS ORTHONORMAL")
+    Assert(Close(MatGet(RFactor(LinQrOf(a)), 2, 1), 0, 0.0000000001),
+           "AND R IS UPPER TRIANGULAR")
+    Assert(Close(Apart(MatMul(QFactor(LinQrOf(b)), RFactor(LinQrOf(b))), b), 0,
+                 0.0000000001), "AT THREE BY THREE TOO")
+    Assert(Close(Apart(MatMul(Transp(QFactor(LinQrOf(b))), QFactor(LinQrOf(b))),
+                       Ident(3)), 0, 0.0000000001), "AND ORTHONORMAL THERE TOO")
+
+    Print("--- CHOLESKY ---")
+    Assert(Close(Apart(MatMul(LinChol(b), Transp(LinChol(b))), b), 0, 0.0000000001),
+           "L TIMES L TRANSPOSE IS A")
+    Assert(Close(MatGet(LinChol(b), 1, 1), 1.4142135624, 0.0000000001),
+           "AND THE FIRST PIVOT IS ROOT TWO")
+    Assert(Close(MatGet(LinChol(b), 1, 2), 0, 0.0000000001), "AND L IS LOWER TRIANGULAR")
+    Assert(Close(Apart(LinChol(Ident(3)), Ident(3)), 0, 0.0000000001),
+           "AND AN IDENTITY FACTORS TO ITSELF")
+
+    Print("--- CHARACTERISTIC POLYNOMIAL ---")
+    Rem A has char poly x^2 - 5x - 2: the trace with its sign flipped,
+    Rem then the determinant.
+    Assert(Length(LinCharPoly(a)) = 3, "A TWO BY TWO HAS THREE COEFFICIENTS")
+    Assert(Close(Nth(LinCharPoly(a), 1), 1, 0.0000000001), "MONIC, HIGHEST POWER FIRST")
+    Assert(Close(Nth(LinCharPoly(a), 2), 0 - 5, 0.0000000001),
+           "AND THE SECOND COEFFICIENT IS MINUS THE TRACE")
+    Assert(Close(Nth(LinCharPoly(a), 3), 0 - 2, 0.0000000001),
+           "AND THE LAST IS THE DETERMINANT")
+    Rem B has char poly x^3 - 6x^2 + 10x - 4.
+    Assert(Length(LinCharPoly(b)) = 4, "A THREE BY THREE HAS FOUR")
+    Assert(Close(Nth(LinCharPoly(b), 2), 0 - 6, 0.0000000001), "TRIDIAGONAL TRACE TERM")
+    Assert(Close(Nth(LinCharPoly(b), 3), 10, 0.0000000001), "MIDDLE TERM")
+    Assert(Close(Nth(LinCharPoly(b), 4), 0 - 4, 0.0000000001), "AND CONSTANT TERM")
+
+    Print("--- EIGENVALUES ---")
+    Rem The 2,-1 tridiagonal has eigenvalues 2 - sqrt 2, 2, 2 + sqrt 2.
+    Rem The scan runs upward, so they come back in order.
+    Assert(Length(LinEigVals(b)) = 3, "THREE REAL EIGENVALUES")
+    Assert(Close(Nth(LinEigVals(b), 1), 0.5857864376, 0.0000001), "THE SMALLEST")
+    Assert(Close(Nth(LinEigVals(b), 2), 2, 0.0000001), "THE MIDDLE ONE")
+    Assert(Close(Nth(LinEigVals(b), 3), 3.4142135624, 0.0000001), "AND THE LARGEST")
+    Assert(Close(SumOf(LinEigVals(b)), LinTrace(b), 0.0000001),
+           "AND THEY SUM TO THE TRACE")
+    Rem A rotation by 90 degrees has no real eigenvalue at all - nothing it
+    Rem acts on keeps its direction. The word finds none and says so by
+    Rem returning fewer than Rows(m), which is the documented signal.
+    Assert(Length(LinEigVals(Mat(2, 2, { 0, 0 - 1, 1, 0 }))) = 0,
+           "A ROTATION HAS NO REAL EIGENVALUE")
+
+    Print("--- THE SYMMETRIC EIGENPROBLEM ---")
+    Assert(Length(Values(LinEigSym(b))) = 3, "JACOBI RETURNS A FULL SET")
+    Assert(Close(SumOf(Values(LinEigSym(b))), 6, 0.0000001), "SUMMING TO THE TRACE")
+    Rem Orthonormal eigenvectors, which is what symmetry buys.
+    Assert(Close(Apart(MatMul(Transp(Vectors(LinEigSym(b))), Vectors(LinEigSym(b))),
+                       Ident(3)), 0, 0.0000001), "WITH ORTHONORMAL VECTORS")
+    Rem And the defining property, checked pairwise: A v = lambda v for the
+    Rem value and the column that share an index.
+    Assert(Close(LinVNorm(VSub(MatVec(b, MatCol(Vectors(LinEigSym(b)), 1)),
+                               VScale(MatCol(Vectors(LinEigSym(b)), 1),
+                                      Nth(Values(LinEigSym(b)), 1)))), 0, 0.0000001),
+           "A V IS LAMBDA V FOR THE FIRST PAIR")
+    Assert(Close(LinVNorm(VSub(MatVec(b, MatCol(Vectors(LinEigSym(b)), 3)),
+                               VScale(MatCol(Vectors(LinEigSym(b)), 3),
+                                      Nth(Values(LinEigSym(b)), 3)))), 0, 0.0000001),
+           "AND FOR THE THIRD")
+    Rem An identity is already diagonal, so the sweep must do nothing and
+    Rem must not divide by the zero it finds off the diagonal.
+    Assert(Close(SumOf(Values(LinEigSym(Ident(3)))), 3, 0.0000001),
+           "AND AN IDENTITY IS ALL ONES")
+
+    Print("")
+    Print("ALL ASSERTIONS PASSED")

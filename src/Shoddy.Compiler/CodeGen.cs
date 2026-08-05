@@ -75,6 +75,11 @@ public sealed class CodeGen
     /// from the machines it includes.</summary>
     bool DeclaredHere(string name)
     {
+        // The language's types belong to no machine. Exporting them would
+        // give a consumer two SOMEs — its own predeclared one and this
+        // machine's — which is the reference-identity failure Prelude
+        // exists to prevent.
+        if (Prelude.Declares(name)) return false;
         if (ownFile == null) return true;                     // not weaving a machine
         if (!prog.Sites.TryGetValue(name, out DeclSite s)) return true;
         if (s.File == null) return true;
@@ -203,6 +208,11 @@ public sealed class CodeGen
 
         foreach (TypeDef t in prog.Types)
         {
+            // The language's own types are reached, never minted. Record
+            // identity is by reference, so a local copy of SOME would not
+            // match a Some that crossed a machine boundary.
+            string? pre = Prelude.FieldRefFor(t.Name);
+            if (pre != null) { typeExpr[t.Name] = pre; continue; }
             string f = machine ? Mangle("", t.Name) : Mangle("T_", t.Name);
             typeField[t.Name] = f;
             typeExpr[t.Name] = f;
@@ -267,10 +277,15 @@ public sealed class CodeGen
         W("return t;");
         Close();
         W("");
+        int emitted = 0;
         foreach (TypeDef t in prog.Types)
+        {
+            if (Prelude.Declares(t.Name)) continue;      // reached, not minted
             W($"{(machine ? "public " : "")}static readonly TypeDef {typeField[t.Name]} = " +
               $"MT({StrLit(t.Name)}, {StrLit(t.Disp ?? t.Name)}, {StrArr(t.Fields)}, {StrArr(t.FDisp)});");
-        if (prog.Types.Count > 0) W("");
+            emitted++;
+        }
+        if (emitted > 0) W("");
         foreach (string g in globalIds.Values)
             W($"static Value {g};");
         if (globalIds.Count > 0) W("");

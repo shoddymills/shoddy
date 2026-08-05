@@ -1,0 +1,436 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Engineering mathematics — machines/eng.shoddy">
+<title>eng — Engineering mathematics | Shoddy Machines</title>
+<link rel="stylesheet" href="../style.css">
+<link rel="icon" href="../favicon.svg" type="image/svg+xml">
+<link rel="alternate icon" href="../favicon.ico" sizes="48x48">
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+</head>
+<body>
+<div class="topbar"><div class="inner">
+  <div class="row">
+    <a class="phase" href="index.html"><img class="mark" src="../media/brand/shoddy-icon.svg" alt="" width="23" height="23">Shoddy · The Machines</a>
+    <span class="spacer"></span>
+    <nav class="docnav meta" aria-label="About"><a href="../heritage.html">Heritage</a><a href="../authorship.html">Authorship</a></nav>
+  </div>
+  <nav class="docnav main" aria-label="Documentation"><a href="../tutorials/index.html">Tutorials</a><a href="../guide.html">Guide</a><a href="../quickref.html">Reference</a><span class="here">Machines</span><a href="../mills/index.html">Mills</a><a href="../stack.html">Stack</a><a href="../spec.html">Spec</a><a href="../setup.html">Setup</a><a href="../vscode.html">VS Code</a><a href="../assistants.html">AI</a><a href="../build.html">Toolchain</a><a href="../errors.html">Errors</a></nav>
+</div></div>
+<div class="wrap">
+
+
+<header class="mast has-icon"><div><p class="eyebrow"><a href="index.html#numbers-math">The Machines &middot; Numbers &amp; math</a></p><h1>eng</h1><p class="kicker">Engineering mathematics &mdash; machines/eng.shoddy</p></div><img class="micon" src="../media/icons/eng.svg" alt="the eng machine&#39;s icon"></header>
+<nav class="pagertop" aria-label="Machines, in catalog order"><a href="math.html">&larr; math</a><a href="index.html">All machines</a><a href="money.html">money &rarr;</a></nav>
+
+<h2 id="summary">Summary</h2>
+<p><code>eng</code> is the machine you reach for when the arithmetic stops being
+arithmetic. Trigonometry the runtime does not supply and all twelve
+hyperbolics; complex numbers with their own type; numeric differentiation,
+integration, root-finding and optimisation over quotations; polynomial
+arithmetic over coefficient lists; number theory; combinatorics, the gamma
+family and the discrete distributions; descriptive statistics wrapped so you
+never leave; numeric sequences; unit conversion with quantities that are
+checked; the CODATA physical constants; and the presentation words that turn a
+result into something an engineer reads. Every word is <strong>pure</strong>
+and every word is prefixed <code>Eng</code>.</p>
+
+<h2 id="why">Why It's Useful</h2>
+<p>This is the surface of a good scientific calculator, made into a library that
+does not lie to you. The formulas are mostly short and mostly famous, and
+almost every one has a way of producing a plausible wrong number instead of an
+error. That is what this machine is for.</p>
+
+<p><strong>Angles are radians at every boundary.</strong> There is no degree
+mode, because a mode is state and this machine has none. A trig word whose
+answer depends on a setting made three screens ago is the single worst thing
+about the calculators this surface was compiled from. <code>EngRad</code>,
+<code>EngDeg</code>, <code>EngGradOf</code> and <code>EngFromGrad</code> convert
+at the edges, and are the only places a 180 or a 200 appears in an angle
+context.</p>
+
+<p><strong>Coefficients are highest power first.</strong>
+<code>{ 1, 0, 0 - 4 }</code> is <code>x^2 - 4</code>. This is the one convention
+a caller will get backwards, and backwards it evaluates without complaint to
+the wrong number, so it is stated here, in the file's banner, and beside every
+polynomial word.</p>
+
+<p><strong>Never compare complex numbers with <code>=</code>.</strong>
+Structural equality reports <code>EngComplex(0.1 + 0.2, 0)</code> and
+<code>EngComplex(0.3, 0)</code> as different, which is true of the bits and
+useless to you. <code>EngCNear</code> is the only comparison offered, and it is
+the one to use on any root or transform output.</p>
+
+<p><strong>Solvers refuse rather than mislead.</strong> <code>EngZeroOf</code>
+checks that its bracket actually contains a sign change before it starts
+halving. Bisection on a bracket with no root converges perfectly happily on an
+endpoint and hands back a number that is not a root &mdash; the worst failure
+available here, and the reason the check is not optional.</p>
+
+<p><strong>The surface is closed.</strong> No <code>stats</code>,
+<code>math</code>, <code>str</code> or <code>seq</code> name appears in a
+signature or a return type, so you include one machine and get one vocabulary.
+The wrappers over <a href="stats.html">stats</a> are mandatory rather than
+polite: this machine includes stats, so a word named <code>Mean</code> here
+would be a duplicate declaration and the machine would not load.</p>
+
+<h2 id="guide">User's Guide</h2>
+
+<h3>Complex numbers</h3>
+<p>Nothing in the tree had a complex type before this one. Every word that can
+return a complex number does, rather than splitting into real and imaginary
+halves you have to reassemble:</p>
+<pre class="basic"><code>Include "eng.shoddy"
+
+Def Main()
+    Let z = EngComplex(3, 4)
+    Print(EngCAbs(z))                    ' 5
+    Print(EngCShow(EngConj(z)))          ' 3 - 4i
+
+    ' Euler, which is the test that the exponential is really complex
+    Print(EngCShow(EngCExp(EngComplex(0, Pi()))))    ' -1
+
+    ' And the comparison that actually works
+    Print(EngCNear(EngCMul(EngComplex(0, 1), EngComplex(0, 1)),
+                   EngComplex(0 - 1, 0), 0.0000000001))      ' True</code></pre>
+
+<p><code>EngCShow</code> drops a zero part and never prints a plus followed by
+a minus, so a complex number reads the way it is written on paper.</p>
+
+<h3>Calculus over a quotation</h3>
+<p>Differentiation, integration, summation and root-finding all take a
+quotation &mdash; <code>[ Number -- Number ]</code> &mdash; and call it:</p>
+<pre class="basic"><code>Print(EngDeriv(Fn(x) =&gt; x * x, 3))                    ' 6
+Print(EngIntegrate(Fn(x) =&gt; Sin(x), 0, Pi(), 100))    ' 2
+Print(EngSumOf(Fn(i) =&gt; i, 1, 100))                   ' 5050
+Print(EngZeroOf(Fn(x) =&gt; x * x - 2, 0, 2))            ' 1.41421356...
+Print(EngMinOf(Fn(x) =&gt; (x - 3) * (x - 3) + 1, 0, 10))    ' 3</code></pre>
+
+<p>The step in <code>EngDeriv</code> is scaled to the size of <code>x</code>,
+because a fixed step is either noise near zero or lost in the rounding at
+10<sup>9</sup>. <code>EngDeriv2</code> deliberately uses a much larger step: a
+second difference subtracts three nearly equal numbers, and too small a step
+loses every significant digit to cancellation. Expect about eight good digits
+from the first derivative and four from the second.</p>
+
+<p><code>EngIntegrate</code> is composite Simpson and wants an even number of
+intervals; it says so rather than quietly applying the wrong weights.
+<code>EngNewtonOf</code> is there when you have a good starting point, and is
+the unguarded one &mdash; it diverges on a bad start where
+<code>EngZeroOf</code> cannot.</p>
+
+<h3>Polynomials</h3>
+<p>A polynomial is a list of coefficients, highest power first. That is one
+convention for the whole machine and it matches <a href="lin.html">lin</a>'s
+characteristic polynomials, so the two compose:</p>
+<pre class="basic"><code>Let p = { 1, 0, 0 - 4 }                  ' x^2 - 4
+Print(EngPolyEval(p, 3))                 ' 5
+Print(EngPolyArea(p, 0, 2))              ' the definite integral
+
+Let d = EngPolyDiv(p, { 1, 0 - 2 })      ' divide by x - 2
+Print(EngPolyEval(Quotient(d), 1))       ' 3 — the quotient is x + 2
+Print(EngPolyEval(Remainder(d), 7))      ' 0 — it went exactly</code></pre>
+
+<p><code>EngPolyDiv</code> hands back both halves in one record, because a
+caller who wanted only the quotient has usually assumed the remainder is zero,
+and this makes them look. <code>EngQuadRoots</code> always returns complex
+numbers, even when the roots are real: a word that changed its return type
+depending on the discriminant could not be branched on.</p>
+
+<h3>Statistics, without leaving</h3>
+<p>The descriptive statistics are here, prefixed like everything else:</p>
+<pre class="basic"><code>Print(EngMean(xs))
+Print(EngStdDev(xs))     ' sample form (n-1), like a spreadsheet's STDEV
+Print(EngStdDevP(xs))    ' population form (n)
+Print(EngNormCdf(110, 100, 15))   ' raw mean and sd, not a z-score</code></pre>
+
+<p>Both standard-deviation forms are here and each is named for which it is,
+because picking the wrong one gives a plausible wrong number and no error. The
+line is drawn at the inferential half: if you want <code>Anova</code> or
+<code>TTest2</code> you have left engineering mathematics behind, and you
+include <a href="stats.html">stats</a> and say so.</p>
+
+<h3>Units that check themselves</h3>
+<p>A unit is a record, not a string, so a conversion between two different
+quantities is caught rather than performed:</p>
+<pre class="basic"><code>Print(EngConvert(1, EngMile(), EngKilometre()))        ' 1.609344
+Print(EngConvert(100, EngCelsius(), EngFahrenheit()))  ' 212
+Print(EngConvert(1, EngStone(), EngPound()))           ' 14
+' EngConvert(1, EngMetre(), EngSecond()) — aborts, naming both quantities</code></pre>
+
+<p>Temperature is the only quantity here with an offset, and it is why the
+record carries one at all. A temperature <em>difference</em> converts by the
+factor alone and must not go through <code>EngConvert</code>.</p>
+
+<h3>Printing a result</h3>
+<pre class="basic"><code>Print(EngSigFig(0.00123456, 3))     ' 0.00123 — significant figures
+Print(EngRoundTo(0.00123456, 3))    ' 0.001   — decimal places
+Print(EngMetric(47000, 0))          ' 47k     — what's written on the part
+Print(EngSci(12345, 2))             ' 1.23E+4
+Print(EngCommas(1234567, 0))        ' 1,234,567</code></pre>
+
+<h2 id="ceilings">Three Ceilings</h2>
+<p>Each of these produces a plausible wrong answer rather than an error, so
+each is worth knowing before it bites.</p>
+<ul>
+<li><strong>2<sup>53</sup></strong>, the whole-number ceiling.
+<code>EngFact(18)</code> is the last exact factorial. <code>EngModPow</code>,
+<code>EngFactorize</code> and <code>EngComb</code> are bounded by it too, which
+is why <code>EngComb</code> multiplies and divides alternately rather than
+dividing one factorial by two others &mdash; <code>EngComb(52, 5)</code> is
+2598960 <em>exactly</em>, which the factorial form cannot manage.</li>
+<li><strong>|x| &gt; 710</strong>, where <code>EngSinh</code> and
+<code>EngCosh</code> overflow, and where <code>EngGamma</code> does.
+<code>EngGammaLn</code> keeps going, and every distribution here is built on it
+rather than on a ratio of factorials for exactly that reason.</li>
+<li><strong>The numeric derivative's step.</strong> <code>EngDeriv</code> is
+accurate to about eight digits and <code>EngDeriv2</code> to about four.
+Neither is exact, and neither says so at the call site.</li>
+</ul>
+
+<h2 id="words">Word Reference</h2>
+<p class="tag">Every word, and the records they hand back</p>
+
+<h3>The records</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>EngComplex(re, im)</td><td><code>Re</code>, <code>Im</code> — a complex number, and its own constructor. Compare with <code>EngCNear</code>, never <code>=</code>.</td></tr>
+<tr><td>EngPolar</td><td><code>Mag</code>, <code>Theta</code> — magnitude and angle in radians.</td></tr>
+<tr><td>EngDms</td><td><code>Degs</code>, <code>Mins</code>, <code>Secs</code>. <code>Degs</code>, not <code>Deg</code>: <code>EngDeg</code> is the radians converter and a machine word outranks a field accessor of the same name.</td></tr>
+<tr><td>EngStat</td><td><code>Avg</code>, <code>Sd</code>, <code>Total</code> — a one-variable summary. Named so rather than Mean/StdDev/Sum because those are <a href="stats.html">stats</a>' words.</td></tr>
+<tr><td>EngFit</td><td><code>Intercept</code>, <code>Slope</code>, <code>RFit</code> — a fitted curve. <code>RFit</code> is the correlation in the <em>fitted</em> space, which is what a spreadsheet reports.</td></tr>
+<tr><td>EngDivided</td><td><code>Quotient</code>, <code>Remainder</code> — both halves of a polynomial division.</td></tr>
+<tr><td>EngUnit</td><td><code>Name</code>, <code>Quantity</code>, <code>Factor</code>, <code>Offset</code>. Factor and Offset take a value to the quantity's base unit.</td></tr>
+<tr><td>EngConst</td><td><code>CName</code>, <code>Value</code>, <code>Units</code> — a physical constant carrying its own units.</td></tr>
+</table>
+
+<h3>Angles</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>EngRad(deg) / EngDeg(rad)</td><td>Degrees and radians, both ways.</td></tr>
+<tr><td>EngGradOf(rad) / EngFromGrad(grad)</td><td>Gradians, both ways. 100 to the right angle.</td></tr>
+<tr><td>EngDmsOf(deg)</td><td>Decimal degrees to degrees/minutes/seconds → <code>EngDms</code>. The seconds carry the fraction, so a round trip is exact to the precision of the input.</td></tr>
+<tr><td>EngFromDms(d)</td><td>And back. The sign lives on the degrees.</td></tr>
+</table>
+
+<h3>Trigonometry</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>EngSec / EngCsc / EngCot</td><td>The three reciprocals the runtime does not supply.</td></tr>
+<tr><td>EngAsec / EngAcsc / EngAcot</td><td>And their inverses. The first two refuse below |x| = 1.</td></tr>
+<tr><td>EngHypot(x, y)</td><td>The hypotenuse, without squaring into an overflow.</td></tr>
+<tr><td>EngDistOf(x0, y0, x1, y1)</td><td>Distance between two points.</td></tr>
+<tr><td>EngAngleOf(dx, dy)</td><td>The direction of a vector, all four quadrants.</td></tr>
+<tr><td>EngRectX(mag, theta) / EngRectY(mag, theta)</td><td>Polar to rectangular. Two words rather than one returning a pair, because a caller wants one or the other at the point of use.</td></tr>
+<tr><td>EngPolarOf(x, y)</td><td>And rectangular to polar → <code>EngPolar</code>.</td></tr>
+</table>
+
+<h3>Hyperbolics</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>EngSinh / EngCosh / EngTanh</td><td>The three. Sinh and Cosh overflow around |x| &gt; 710.</td></tr>
+<tr><td>EngSech / EngCsch / EngCoth</td><td>Their reciprocals.</td></tr>
+<tr><td>EngAsinh / EngAcosh / EngAtanh</td><td>The inverses. Acosh refuses below 1, Atanh at or beyond 1.</td></tr>
+<tr><td>EngAsech / EngAcsch / EngAcoth</td><td>And the reciprocal inverses.</td></tr>
+</table>
+
+<h3>Logarithms, exponentials and roots</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>EngLogBase(base, x) / EngLog2(x)</td><td>Logarithms to an arbitrary base, and to 2.</td></tr>
+<tr><td>EngLog1p(x) / EngExpm1(x)</td><td><code>log(1+x)</code> and <code>e^x - 1</code>, accurate near zero where the naive forms lose most of their significant digits to cancellation.</td></tr>
+<tr><td>EngNthRoot(x, n)</td><td>The real nth root, <strong>including</strong> the odd root of a negative that <code>x ^ (1/n)</code> gets wrong. Refuses an even root of a negative.</td></tr>
+</table>
+
+<h3>Complex numbers</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>EngCAdd / EngCSub / EngCMul / EngCDiv</td><td>Arithmetic. Division refuses by zero.</td></tr>
+<tr><td>EngConj(z)</td><td>The conjugate.</td></tr>
+<tr><td>EngCAbs(z) / EngCArg(z)</td><td>Modulus and argument.</td></tr>
+<tr><td>EngCExp / EngCLog / EngCSqrt / EngCPow</td><td>The transcendentals, through the polar form.</td></tr>
+<tr><td>EngCFromPolar(mag, theta) / EngCToPolar(z)</td><td>Between the two representations.</td></tr>
+<tr><td>EngCNear(a, b, tol)</td><td><strong>The only comparison offered.</strong> <code>=</code> on two complex records answers about the bits, not the numbers.</td></tr>
+<tr><td>EngCShow(z)</td><td>A readable string. Drops the zero part; never prints a plus followed by a minus.</td></tr>
+</table>
+
+<h3>Statistics</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>EngSum / EngMean / EngMedian</td><td>The everyday three.</td></tr>
+<tr><td>EngStdDev / EngStdDevP</td><td>Standard deviation, sample (n-1) and population (n). Named for which they are, because the wrong one is invisible.</td></tr>
+<tr><td>EngVar / EngVarP</td><td>Variance, the same two ways.</td></tr>
+<tr><td>EngMinimum / EngMaximum / EngRangeOf</td><td>Extremes and their spread.</td></tr>
+<tr><td>EngQuantile(xs, p)</td><td>The value at fraction p — 0..1. The percentile form is deliberately not wrapped, so one fraction convention holds across the whole surface.</td></tr>
+<tr><td>EngSkewness / EngKurtosis</td><td>Distribution shape. Kurtosis is excess: a normal curve is 0.</td></tr>
+<tr><td>EngWeightedMean / EngGeoMean</td><td>Weighted and geometric averages.</td></tr>
+<tr><td>EngCorrel / EngCov / EngSpearman</td><td>How two series move together — linear, raw, and by rank.</td></tr>
+<tr><td>EngStat1(xs)</td><td>Mean, standard deviation and total in one <code>EngStat</code>.</td></tr>
+<tr><td>EngNormPdf(x, mean, sd) / EngNormCdf(x, mean, sd)</td><td>The normal distribution, taking a <strong>raw</strong> mean and standard deviation where stats takes a z-score.</td></tr>
+<tr><td>EngNormInv(p)</td><td>The standard normal quantile.</td></tr>
+<tr><td>EngTCdf / EngTInv / EngChi2Cdf / EngFCdf</td><td>Student's t, chi-squared and F.</td></tr>
+<tr><td>EngFitOf(xs, ys, model)</td><td>Fits linear, logarithmic, exponential or power → <code>EngFit</code>. Errors on non-positive inputs for the three log models rather than dropping points.</td></tr>
+<tr><td>EngLinear() / EngLogModel() / EngExpModel() / EngPowerModel()</td><td>Which curve <code>EngFitOf</code> fits.</td></tr>
+</table>
+
+<h3>Number theory</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>EngGcd(a, b) / EngLcm(a, b)</td><td>Sign is ignored; the answer is never negative.</td></tr>
+<tr><td>EngIQuot(a, b) / EngIRem(a, b)</td><td>Integer division, <strong>truncated</strong> toward zero — the remainder takes the sign of the dividend.</td></tr>
+<tr><td>EngModPow(base, e, m)</td><td>Square-and-multiply, so no intermediate leaves 2<sup>53</sup> even when the exponent is large.</td></tr>
+<tr><td>EngModInv(a, m)</td><td>The modular inverse. <strong>Errors</strong> when a and m are not coprime, because a caller handed a non-inverse back will not check it.</td></tr>
+<tr><td>EngIsPrime(n) / EngPrimes(n)</td><td>Primality, and every prime up to n.</td></tr>
+<tr><td>EngFactorize(n)</td><td>The prime factors, with multiplicity, in order.</td></tr>
+<tr><td>EngDivisors(n) / EngTotient(n)</td><td>Every divisor, and Euler's totient.</td></tr>
+</table>
+
+<h3>Combinatorics and the gamma family</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>EngFact(n)</td><td>Factorial. Exact to 18; past that a double no longer holds whole numbers exactly.</td></tr>
+<tr><td>EngComb(n, k)</td><td>Unordered selections, computed multiplicatively — <code>EngComb(52, 5)</code> is 2598960 <em>exactly</em>.</td></tr>
+<tr><td>EngPerm(n, k)</td><td>Ordered arrangements.</td></tr>
+<tr><td>EngFib(n)</td><td>Fibonacci, iteratively.</td></tr>
+<tr><td>EngGammaLn(x)</td><td>The log of the gamma function, by Lanczos. <strong>The one to reach for:</strong> it holds where <code>EngGamma</code> overflows, and every distribution here is built on it.</td></tr>
+<tr><td>EngGamma(x)</td><td>The gamma function itself, by reflection below a half.</td></tr>
+<tr><td>EngBeta(a, b)</td><td>The beta function.</td></tr>
+</table>
+
+<h3>Discrete distributions</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>EngBinomPdf(k, n, p) / EngBinomCdf(k, n, p)</td><td>Binomial. The Cdf is summed from zero and is inclusive of k.</td></tr>
+<tr><td>EngPoissonPdf(k, lambda) / EngPoissonCdf(k, lambda)</td><td>Poisson, through <code>EngGammaLn</code> rather than a factorial.</td></tr>
+<tr><td>EngGeomPdf(k, p) / EngGeomCdf(k, p)</td><td>Geometric. <strong>k counts trials up to and including the first success</strong>, so it starts at 1 — the other convention differs by one and looks reasonable either way.</td></tr>
+<tr><td>EngHyperPdf(k, draws, wins, popn)</td><td>Drawing without replacement.</td></tr>
+<tr><td>EngExpCdf(x, rate)</td><td>The exponential distribution.</td></tr>
+</table>
+
+<h3>Numeric calculus</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>EngDeriv(f, x)</td><td>Central difference, step scaled to x. About eight good digits.</td></tr>
+<tr><td>EngDeriv2(f, x)</td><td>The second derivative, on a deliberately larger step. About four.</td></tr>
+<tr><td>EngIntegrate(f, a, b, n)</td><td>Composite Simpson over n intervals. <strong>n must be even</strong>, and the word says so rather than applying the wrong weights.</td></tr>
+<tr><td>EngSumOf(f, lo, hi) / EngProdOf(f, lo, hi)</td><td>Summation and product over an integer range.</td></tr>
+</table>
+
+<h3>Roots and optimisation</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>EngZeroOf(f, lo, hi)</td><td>Bisection. <strong>Checks the bracket first</strong> and errors when there is no sign change in it.</td></tr>
+<tr><td>EngNewtonOf(f, x0)</td><td>Newton's method with a numeric derivative, so you supply one quotation rather than two. Unbracketed and therefore unguarded — it diverges on a bad start, and <code>EngZeroOf</code> is the safer word.</td></tr>
+<tr><td>EngMinOf(f, lo, hi) / EngMaxOf(f, lo, hi)</td><td>Golden-section search. Requires the function to be unimodal on the bracket; given two minima it finds one and does not say which.</td></tr>
+</table>
+
+<h3>Polynomials</h3>
+<p class="note"><strong>Coefficients are highest power first.</strong>
+<code>{ 1, 0, 0 - 4 }</code> is <code>x^2 - 4</code>. Reversed, every word here
+still returns a number, and it is the wrong number.</p>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>EngPolyEval(cs, x)</td><td>Horner's method.</td></tr>
+<tr><td>EngPolyDegree(cs)</td><td>Leading zeros do not count.</td></tr>
+<tr><td>EngPolyAdd / EngPolySub / EngPolyMul / EngPolyScale</td><td>Arithmetic, aligned on the lowest power and trimmed afterwards.</td></tr>
+<tr><td>EngPolyDiv(a, b)</td><td>Long division → <code>EngDivided</code>. Both halves, because a caller who wanted only the quotient has usually assumed the remainder is zero.</td></tr>
+<tr><td>EngPolyDeriv(cs)</td><td>Differentiation.</td></tr>
+<tr><td>EngPolyIntegral(cs, c0)</td><td>Integration. The constant is <strong>required</strong> rather than assumed to be zero.</td></tr>
+<tr><td>EngPolyArea(cs, a, b)</td><td>The definite integral between two points.</td></tr>
+<tr><td>EngPolyTrim(cs)</td><td>Drops leading zeros.</td></tr>
+<tr><td>EngQuadRoots(a, b, c)</td><td>Both roots, <strong>always as complex numbers</strong> even when they are real — a word with two return types could not be branched on.</td></tr>
+<tr><td>EngCubicReal(a, b, c, d)</td><td>The real roots of a cubic: three by the trigonometric form, one by Cardano's radicals. The length of the answer tells you which case you were in.</td></tr>
+</table>
+
+<h3>Numeric sequences</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>EngLinSpace(lo, hi, n)</td><td>n evenly spaced values, reaching the far end exactly.</td></tr>
+<tr><td>EngGeomSpace(lo, hi, n)</td><td>Geometrically spaced. Needs both ends strictly positive: no ratio crosses zero.</td></tr>
+<tr><td>EngCumSum(xs)</td><td>Running total.</td></tr>
+<tr><td>EngDiff(xs)</td><td>Successive differences — one shorter than its input, which is the point.</td></tr>
+<tr><td>EngMovAvg(xs, w)</td><td>Moving average over a window.</td></tr>
+<tr><td>EngNormalize(xs)</td><td>Scaled to 0..1. A flat list becomes zeros rather than dividing by a zero range.</td></tr>
+<tr><td>EngDotOf(xs, ys) / EngMagOf(xs)</td><td>Dot product and Euclidean length of a plain list.</td></tr>
+</table>
+
+<h3>Units</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>EngConvert(x, src, dst)</td><td>Converts, and <strong>errors when the two quantities differ</strong>, naming both.</td></tr>
+<tr><td>EngToBase(x, u) / EngFromBase(x, u)</td><td>To and from the quantity's base unit.</td></tr>
+<tr><td>Length</td><td><code>EngMetre EngKilometre EngCentimetre EngMillimetre EngInch EngFoot EngYard EngMile EngNauticalMile</code></td></tr>
+<tr><td>Mass</td><td><code>EngKilogram EngGram EngTonne EngPound EngOunce EngStone</code></td></tr>
+<tr><td>Time</td><td><code>EngSecond EngMinute EngHour EngDay</code></td></tr>
+<tr><td>Temperature</td><td><code>EngKelvin EngCelsius EngFahrenheit</code> — the only quantity with an offset, and the reason the record carries one.</td></tr>
+<tr><td>Pressure</td><td><code>EngPascal EngKilopascal EngBar EngPsi EngAtm</code></td></tr>
+<tr><td>Energy</td><td><code>EngJoule EngKilojoule EngCalorie EngKwh EngBtu</code></td></tr>
+<tr><td>Power</td><td><code>EngWatt EngKilowatt EngHorsepower</code> — mechanical horsepower, the one James Watt sold engines against.</td></tr>
+<tr><td>Volume</td><td><code>EngLitre EngMillilitre EngCubicMetre EngGallonUk EngGallonUs</code></td></tr>
+<tr><td>Speed</td><td><code>EngMps EngKph EngMph EngKnot</code></td></tr>
+</table>
+
+<h3>Physical constants</h3>
+<p>Each returns an <code>EngConst</code> carrying its own units, because a bare
+number is the mistake these exist to prevent.
+<code>Value(EngLightSpeed())</code> is the number.</p>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>EngLightSpeed / EngPlanck / EngGravitation / EngStdGravity</td><td>299792458 m/s exactly by definition, and the rest.</td></tr>
+<tr><td>EngElectronCharge / EngElectronMass / EngProtonMass</td><td>The particle constants.</td></tr>
+<tr><td>EngAvogadro / EngBoltzmann / EngGasConstant / EngStefanBoltzmann / EngFaraday</td><td>The thermodynamic and chemical ones.</td></tr>
+<tr><td>EngVacuumPermittivity / EngVacuumPermeability</td><td>The electromagnetic ones.</td></tr>
+<tr><td>EngE() / EngTau()</td><td>The two mathematical constants the runtime does not supply. <code>Pi</code> is a builtin and needs no wrapper.</td></tr>
+</table>
+
+<h3>Presentation</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>EngRoundTo(x, n)</td><td>Round to n decimal <em>places</em>.</td></tr>
+<tr><td>EngSigFig(x, n)</td><td>Round to n <em>significant figures</em>. Not the same thing: <code>EngSigFig(0.00123456, 3)</code> is 0.00123 and <code>EngRoundTo(0.00123456, 3)</code> is 0.001.</td></tr>
+<tr><td>EngSci(x, p)</td><td>Scientific notation — one digit before the point.</td></tr>
+<tr><td>EngMetric(x, p)</td><td>Engineering notation: the exponent moves in threes and the mantissa carries an SI prefix. 47000 ohms prints as <code>47k</code>, which is what is written on the part.</td></tr>
+<tr><td>EngMetricPrefix(k)</td><td>The SI prefix for a power-of-1000 exponent, y through Y.</td></tr>
+<tr><td>EngCommas(x, p)</td><td>Grouped thousands.</td></tr>
+<tr><td>EngFracOf / EngClamp / EngLerp / EngInvLerp / EngRemap / EngSmoothstep</td><td>The interpolation family.</td></tr>
+<tr><td>EngSign(x)</td><td>-1, 0 or 1.</td></tr>
+<tr><td>EngNear(a, b, tol)</td><td>The scalar counterpart of <code>EngCNear</code>, and the same warning applies.</td></tr>
+</table>
+
+<p class="note"><strong>What is deliberately elsewhere.</strong> Number bases,
+bit operations and truth tables are <code>bool</code>; symbolic factoring and
+symbolic calculus are <code>alg</code>; linear algebra over
+<a href="matrix.html">matrix</a>'s <code>Matrix</code> is
+<a href="lin.html">lin</a>; the hypothesis tests are
+<a href="stats.html">stats</a>; and random numbers stay in
+<a href="math.html">math</a>, because wrapping <code>Rnd</code> would make this
+machine's purity untrue. Polynomial arithmetic over coefficient lists is not
+symbolic algebra, and ships here.</p>
+
+<h2 id="usedby">Who Uses It</h2>
+<table>
+<tr><th></th><th>Machine</th><th>Why</th></tr>
+<tr><td class="uicon"><a href="lin.html"><img src="../media/icons/lin.svg" alt=""></a></td><td><a href="lin.html">lin</a></td><td>Summation, the polynomial words under <code>LinCharPoly</code>, and <code>EngZeroOf</code> under <code>LinEigVals</code>.</td></tr>
+</table>
+
+<h2 id="uses">The Machines It Uses</h2>
+<table>
+<tr><th></th><th>Machine</th><th>Why</th></tr>
+<tr><td class="uicon"><a href="math.html"><img src="../media/icons/math.svg" alt=""></a></td><td><a href="math.html">math</a></td><td><code>Rad</code>, <code>Deg</code>, <code>Angle</code>, <code>Hypot</code>, <code>LogBase</code> and the interpolation family under their <code>Eng</code> names.</td></tr>
+<tr><td class="uicon"><a href="seq.html"><img src="../media/icons/seq.svg" alt=""></a></td><td><a href="seq.html">seq</a></td><td><code>Append</code> builds the factor and quotient lists; <code>CountIf</code> is Euler's totient; <code>ZipWith</code> is the dot product.</td></tr>
+<tr><td class="uicon"><a href="stats.html"><img src="../media/icons/stats.svg" alt=""></a></td><td><a href="stats.html">stats</a></td><td>Every descriptive statistic and distribution this machine offers, and <code>LinFit</code> under the four regression models.</td></tr>
+<tr><td class="uicon"><a href="str.html"><img src="../media/icons/str.svg" alt=""></a></td><td><a href="str.html">str</a></td><td><code>ToFixed</code> and <code>Commas</code> build <code>EngSci</code>, <code>EngMetric</code> and <code>EngCommas</code>.</td></tr>
+</table>
+
+<nav class="pager" aria-label="Machines, in catalog order">
+  <a href="math.html"><span class="dir">&larr; Previous machine</span><span class="ttl">math</span></a>
+  <a class="next" href="money.html"><span class="dir">Next machine &rarr;</span><span class="ttl">money</span></a>
+</nav>
+<footer>Named for the shoddy mills of the West Riding: Useless Things Made
+Useful Through Skill (<a href="../heritage.html">the heritage of the name</a>).<br>
+&copy; 2026 Stephen Vincent Foster</footer>
+</div>
+</body>
+</html>

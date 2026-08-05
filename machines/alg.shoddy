@@ -1,0 +1,2448 @@
+﻿Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem alg.shoddy â€” Shoddy standard library: symbolic algebra
+Rem
+Rem Algebra over AlgEx, where the values are not numbers but the FORMULAE
+Rem that produce them. An expression type, a parser and a printer, exact
+Rem rational arithmetic, a canonical-form simplifier, differentiation,
+Rem expansion and factorisation, partial fractions, limits, a bounded
+Rem integrator, equation solving, first-order ODEs, Taylor series, and â€”
+Rem the word that justifies the machine â€” compilation of an expression to
+Rem a quotation, so a formula read from a file becomes a function value.
+Rem
+Rem     Let f = AlgToFn(AlgParse("x^3 - 2*x - 5"), "x")
+Rem     Print(EngZeroOf(f, 2, 3))            Rem 2.0945514815, via eng
+Rem
+Rem NEITHER MACHINE INCLUDES THE OTHER. The bridge is a quotation, which
+Rem is a builtin type, so eng and alg compose with no dependency in
+Rem either direction. eng.shoddy is continuous mathematics over Number;
+Rem bool.shoddy is discrete logic over bit patterns; this is algebra over
+Rem AlgEx. Each owns a type the others do not touch.
+Rem
+Rem Conventions, all of them load-bearing:
+Rem
+Rem   * THERE IS NO SUBTRACTION AND NO DIVISION. a - b is a sum with a
+Rem     term times -1; a / b is a product with a factor to the -1. Six
+Rem     variants instead of eight, and the simplifier never has to reason
+Rem     about a - b + b because there is no subtraction to reason about.
+Rem     AlgSubOf and AlgDivOf build the sugar, AlgShow reconstructs it on
+Rem     the way out, and a caller never sees the representation.
+Rem
+Rem   * NUMBERS ARE EXACT RATIONALS, always normalised by AlgRat: sign on
+Rem     the numerator, positive denominator, gcd 1. This is what separates
+Rem     a CAS from a calculator. The moment 1/3 + 1/6 is 0.5 rather than
+Rem     1/2, the simplifier cannot recognise zero, AlgFactor cannot find
+Rem     rational roots, and AlgPartFrac cannot solve for its coefficients.
+Rem
+Rem   * NEVER COMPARE TWO AlgEx WITH =. Structural equality reports x + y
+Rem     and y + x as different. AlgEqual â€” simplify both, then compare â€”
+Rem     is the only equality this machine offers, and the only one used
+Rem     inside it or its tests.
+Rem
+Rem     AlgEqual IS CANONICAL-FORM EQUALITY, NOT MATHEMATICAL EQUALITY,
+Rem     and the difference shows on rational functions. 1/(x*(x+1)) and
+Rem     1/(x^2+x) are the same function and are NOT AlgEqual, because the
+Rem     canonical form neither factors a denominator nor expands one - it
+Rem     has no basis on which to choose. Use AlgExpand or AlgTogether
+Rem     first when the two sides may disagree about that, or compare
+Rem     numerically at a few points. A False means "not the same
+Rem     canonical form", which is a weaker claim than "not equal".
+Rem
+Rem   * Err IS USUALLY AN ANSWER, NOT A FAULT. The partial words return
+Rem     the language's Result. Err("IRREDUCIBLE OVER THE RATIONALS", 0)
+Rem     from AlgFactor states a true fact about the polynomial; it is not
+Rem     reporting a breakage. At is 0 where there is no position and the
+Rem     1-based offset where there is, which is how one Result serves both
+Rem     the parser and the rule boundary.
+Rem
+Rem   * SUMS AND PRODUCTS HOLD TWO OR MORE TERMS, always. A one-element
+Rem     sum collapses to its element and an empty one to zero, enforced by
+Rem     the builders. An invariant that only holds sometimes is worse than
+Rem     none.
+Rem
+Rem   * EVERY WORD, TYPE, VARIANT AND FIELD IS PREFIXED Alg. The fields
+Rem     too, and not for tidiness: a machine's field accessors are
+Rem     exported, so an unprefixed Num or Base or Terms would become a
+Rem     bare word in every program that includes this one. Fn could not be
+Rem     a field name at all â€” the parser reads it as lambda syntax.
+Rem
+Rem The ceilings, each stated where it bites:
+Rem
+Rem   * 2^53, and rationals reach it faster than you expect. Ten additions
+Rem     of distinct small primes and the denominator is past 6e9; thirty
+Rem     and it is past 2^53, where arithmetic goes silently wrong.
+Rem     AlgRatAdd divides by the gcd of the denominators BEFORE cross-
+Rem     multiplying for exactly this reason.
+Rem   * Expansion is exponential. Comfortable to a total degree of about
+Rem     12 over three or four variables; AlgExpandPow refuses above its
+Rem     bound rather than attempting it.
+Rem   * AlgToFn walks the tree on every call. Fine for a solver making a
+Rem     hundred evaluations, not fine in a tight numeric loop. AlgSimplify
+Rem     first; past that, this machine is for symbolic work and eng is for
+Rem     numeric work.
+Rem
+Rem Not here, deliberately: multivariate factorisation and anything over
+Rem the reals or complexes; the Risch algorithm, integration by parts and
+Rem general substitution; series expansion of limits and one-sided limits;
+Rem second-order and systems ODEs; non-unary functions.
+Rem ==================================================================
+
+Include "seq.shoddy"
+Include "str.shoddy"
+
+Rem ---- the type --------------------------------------------------------
+Rem One line, because a sum type spread over several is "unexpected indent
+Rem at top level". Laid out for reading, it is:
+Rem
+Rem     AlgNum(AlgNumer, AlgDenom)     exact rational, always normalised
+Rem     AlgVar(AlgName)
+Rem     AlgSum(AlgTerms)               List Of AlgEx, two or more
+Rem     AlgProd(AlgFactors)            List Of AlgEx, two or more
+Rem     AlgPow(AlgBase, AlgExpo)
+Rem     AlgCall(AlgFn, AlgArg)         sin, cos, exp, log, ...
+Rem
+Rem Variant fields are positional: inserting one silently shifts every
+Rem pattern match on that variant. If a variant grows, append.
+
+Type AlgEx = AlgNum(AlgNumer As Number, AlgDenom As Number) | AlgVar(AlgName As String) | AlgSum(AlgTerms As List Of AlgEx) | AlgProd(AlgFactors As List Of AlgEx) | AlgPow(AlgBase As AlgEx, AlgExpo As AlgEx) | AlgCall(AlgFn As String, AlgArg As AlgEx)
+
+Rem ---- caps and constants ----------------------------------------------
+Rem A machine may not carry a top-level Let, so every constant is a
+Rem zero-arg Def.
+
+Def AlgMaxDepth() As Number
+    200
+
+Def AlgMaxPasses() As Number
+    100
+
+Def AlgMaxExpand() As Number
+    30
+
+Rem The tolerance AlgOf rationalises within. 1e-10 recovers 1/3 and 0.1
+Rem from their double forms without turning 0.3333333333333333 into
+Rem something with a nine-digit denominator.
+Def AlgTol() As Number
+    0.0000000001
+
+Rem ---- rationals -------------------------------------------------------
+
+Def AlgGcd(a As Number, b As Number) As Number
+    If b = 0 Then
+        Abs(a)
+    Else
+        AlgGcd(b, a Mod b)
+
+Rem THE ONLY CONSTRUCTOR OF A NUMBER. Sign on the numerator, denominator
+Rem positive, gcd divided out. An AlgNum built directly with an
+Rem unnormalised pair compares unequal to its own normal form and breaks
+Rem the total order silently, which is a bug that surfaces three words
+Rem away from its cause.
+Def AlgRat(n As Number, d As Number) As AlgEx
+    If d = 0 Then
+        Error("ALGRAT: ZERO DENOMINATOR")
+    Else
+        Let s = Ifte(d < 0, 0 - 1, 1)
+        Let g = AlgGcd(Abs(n), Abs(d))
+        If g = 0 Then
+            AlgNum(0, 1)
+        Else
+            AlgNum(s * n / g, Abs(d) / g)
+
+Def AlgZero() As AlgEx
+    AlgNum(0, 1)
+
+Def AlgOne() As AlgEx
+    AlgNum(1, 1)
+
+Def AlgMinusOne() As AlgEx
+    AlgNum(0 - 1, 1)
+
+Rem The SYMBOLS, not the values. sin(pi) simplifies to exactly 0 because
+Rem pi is a variable here; its numeric value appears only at the
+Rem evaluation boundary.
+Def AlgPiSym() As AlgEx
+    AlgVar("pi")
+
+Def AlgESym() As AlgEx
+    AlgVar("e")
+
+Def AlgIsNum(e As AlgEx) As Boolean
+    Select Case e
+        Case AlgNum(n, d)
+            True
+        Case Else
+            False
+
+Def AlgNumOf(e As AlgEx) As Number
+    Select Case e
+        Case AlgNum(n, d)
+            n
+        Case Else
+            Error("ALGNUMOF: NOT A NUMBER")
+
+Def AlgDenOf(e As AlgEx) As Number
+    Select Case e
+        Case AlgNum(n, d)
+            d
+        Case Else
+            Error("ALGDENOF: NOT A NUMBER")
+
+Def AlgIsZero(e As AlgEx) As Boolean
+    AlgIsNum(e) And AlgNumOf(e) = 0
+
+Def AlgIsOne(e As AlgEx) As Boolean
+    AlgIsNum(e) And AlgNumOf(e) = 1 And AlgDenOf(e) = 1
+
+Def AlgIsInt(e As AlgEx) As Boolean
+    AlgIsNum(e) And AlgDenOf(e) = 1
+
+Def AlgToNumber(e As AlgEx) As Number
+    AlgNumOf(e) / AlgDenOf(e)
+
+Rem Divide by the gcd of the denominators BEFORE cross-multiplying. The
+Rem naive (ad+cb)/(bd) is correct and overflows 2^53 after a surprisingly
+Rem small number of additions; a partial fraction over a degree-6
+Rem denominator is where it first shows up.
+Def AlgRatAdd(a As AlgEx, b As AlgEx) As AlgEx
+    Let bd = AlgDenOf(a)
+    Let dd = AlgDenOf(b)
+    Let g = AlgGcd(bd, dd)
+    AlgRat(AlgNumOf(a) * (dd / g) + AlgNumOf(b) * (bd / g), bd * (dd / g))
+
+Def AlgRatMul(a As AlgEx, b As AlgEx) As AlgEx
+    AlgRat(AlgNumOf(a) * AlgNumOf(b), AlgDenOf(a) * AlgDenOf(b))
+
+Def AlgRatNeg(a As AlgEx) As AlgEx
+    AlgRat(0 - AlgNumOf(a), AlgDenOf(a))
+
+Def AlgRatDiv(a As AlgEx, b As AlgEx) As AlgEx
+    If AlgIsZero(b) Then
+        Error("ALGRATDIV: DIVISION BY ZERO")
+    Else
+        AlgRat(AlgNumOf(a) * AlgDenOf(b), AlgDenOf(a) * AlgNumOf(b))
+
+Def AlgRatCmp(a As AlgEx, b As AlgEx) As Number
+    Let l = AlgNumOf(a) * AlgDenOf(b)
+    Let r = AlgNumOf(b) * AlgDenOf(a)
+    If l < r Then
+        0 - 1
+    Else
+        Ifte(l > r, 1, 0)
+
+Def AlgExact(n As Number, d As Number) As AlgEx
+    AlgRat(n, d)
+
+Rem A decimal becomes the SIMPLEST rational within AlgTol, by continued
+Rem fraction â€” not the double's exact binary value. AlgOf(0.1) is 1/10 and
+Rem not 3602879701896397/36028797018963968, which is technically faithful,
+Rem practically useless, and makes every subsequent gcd enormous.
+Rem The convergents of the continued fraction, by the standard recurrence
+Rem h(k) = a(k)h(k-1) + h(k-2) over both numerator and denominator. The
+Rem seeds are h(-1)/k(-1) = 1/0 and h(-2)/k(-2) = 0/1 â€” that 1/0 is not a
+Rem rational and is never returned, it is only ever the older term of the
+Rem recurrence. Stop when the remainder vanishes, which is what "the
+Rem simplest rational within tolerance" means.
+Def AlgCfGo(x As Number, n0 As Number, d0 As Number, n1 As Number,
+            d1 As Number, k As Number) As AlgEx
+    Let a = Floor(x)
+    Let n2 = a * n1 + n0
+    Let d2 = a * d1 + d0
+    If k <= 0 Or x - a < AlgTol() Then
+        AlgRat(n2, d2)
+    Else
+        AlgCfGo(1 / (x - a), n1, d1, n2, d2, k - 1)
+
+Def AlgOf(x As Number) As AlgEx
+    If x = Fix(x) Then
+        AlgRat(x, 1)
+    Else
+        Let s = Ifte(x < 0, 0 - 1, 1)
+        Let r = AlgCfGo(Abs(x), 0, 1, 1, 0, 25)
+        AlgRat(s * AlgNumOf(r), AlgDenOf(r))
+
+Rem ---- the total order -------------------------------------------------
+Rem AlgCompare must be antisymmetric, transitive, and never 0 for two
+Rem structurally different expressions. Without that the sort inside
+Rem AlgPass is unstable, the fixpoint oscillates, and the mill spins until
+Rem the cap fires â€” at which point the error blames the cap and not the
+Rem order. The tests check the order directly, and first.
+Rem
+Rem The order: numbers, variables, powers, products, sums, calls; within a
+Rem kind by value, then arity, then element-wise. Any total order would
+Rem do; this one is documented so the printed form is predictable, because
+Rem a user who sees 2 * x + 1 today and 1 + 2 * x tomorrow reports a bug.
+
+Def AlgRank(e As AlgEx) As Number
+    Select Case e
+        Case AlgNum(n, d)
+            1
+        Case AlgVar(v)
+            2
+        Case AlgPow(b, x)
+            3
+        Case AlgProd(fs)
+            4
+        Case AlgSum(ts)
+            5
+        Case AlgCall(f, a)
+            6
+        Case Else
+            7
+
+Def AlgCmpStr(a As String, b As String) As Number
+    If a < b Then
+        0 - 1
+    Else
+        Ifte(a > b, 1, 0)
+
+Def AlgCmpListGo(xs As List Of AlgEx, ys As List Of AlgEx, k As Number) As Number
+    If k > Length(xs) Then
+        0
+    Else
+        Let c = AlgCompare(Nth(xs, k), Nth(ys, k))
+        If c <> 0 Then
+            c
+        Else
+            AlgCmpListGo(xs, ys, k + 1)
+
+Def AlgCmpList(xs As List Of AlgEx, ys As List Of AlgEx) As Number
+    If Length(xs) < Length(ys) Then
+        0 - 1
+    Else
+        If Length(xs) > Length(ys) Then
+            1
+        Else
+            AlgCmpListGo(xs, ys, 1)
+
+Def AlgCompare(a As AlgEx, b As AlgEx) As Number
+    If AlgRank(a) <> AlgRank(b) Then
+        Ifte(AlgRank(a) < AlgRank(b), 0 - 1, 1)
+    Else
+        Select Case a
+            Case AlgNum(n, d)
+                AlgRatCmp(a, b)
+            Case AlgVar(v)
+                AlgCmpStr(v, AlgNameOfV(b))
+            Case AlgPow(bs, x)
+                Let c = AlgCompare(bs, AlgBaseOfP(b))
+                Ifte(c <> 0, c, AlgCompare(x, AlgExpoOfP(b)))
+            Case AlgProd(fs)
+                AlgCmpList(fs, AlgFactorsOfP(b))
+            Case AlgSum(ts)
+                AlgCmpList(ts, AlgTermsOfS(b))
+            Case AlgCall(f, x)
+                Let c = AlgCmpStr(f, AlgFnOfC(b))
+                Ifte(c <> 0, c, AlgCompare(x, AlgArgOfC(b)))
+            Case Else
+                0
+
+Rem Field readers used by AlgCompare. The accessors themselves would do,
+Rem but going through a word keeps every read of a variant inside a
+Rem Select Case, so a seventh variant is a compile-time conversation.
+Def AlgNameOfV(e As AlgEx) As String
+    Select Case e
+        Case AlgVar(v)
+            v
+        Case Else
+            Error("ALGNAMEOFV: NOT A VARIABLE")
+
+Def AlgBaseOfP(e As AlgEx) As AlgEx
+    Select Case e
+        Case AlgPow(b, x)
+            b
+        Case Else
+            Error("ALGBASEOFP: NOT A POWER")
+
+Def AlgExpoOfP(e As AlgEx) As AlgEx
+    Select Case e
+        Case AlgPow(b, x)
+            x
+        Case Else
+            Error("ALGEXPOOFP: NOT A POWER")
+
+Def AlgFactorsOfP(e As AlgEx) As List Of AlgEx
+    Select Case e
+        Case AlgProd(fs)
+            fs
+        Case Else
+            Error("ALGFACTORSOFP: NOT A PRODUCT")
+
+Def AlgTermsOfS(e As AlgEx) As List Of AlgEx
+    Select Case e
+        Case AlgSum(ts)
+            ts
+        Case Else
+            Error("ALGTERMSOFS: NOT A SUM")
+
+Def AlgFnOfC(e As AlgEx) As String
+    Select Case e
+        Case AlgCall(f, a)
+            f
+        Case Else
+            Error("ALGFNOFC: NOT A CALL")
+
+Def AlgArgOfC(e As AlgEx) As AlgEx
+    Select Case e
+        Case AlgCall(f, a)
+            a
+        Case Else
+            Error("ALGARGOFC: NOT A CALL")
+
+Rem ---- sorting ---------------------------------------------------------
+Rem Insertion sort by AlgCompare. The Sort builtin orders numbers and
+Rem strings; an expression needs the total order above, so this is the one
+Rem place the machine sorts by hand.
+
+Def AlgInsert(x As AlgEx, xs As List Of AlgEx) As List Of AlgEx
+    If IsEmpty(xs) Then
+        { x }
+    Else
+        If AlgCompare(x, First(xs)) <= 0 Then
+            Prepend(x, xs)
+        Else
+            Prepend(First(xs), AlgInsert(x, Rest(xs)))
+
+Def AlgSort(xs As List Of AlgEx) As List Of AlgEx
+    Fold(xs, { }, Fn(acc, x) => AlgInsert(x, acc))
+
+Rem ---- splitting a term ------------------------------------------------
+Rem Collecting like terms in a sum means recognising that 2*x and 3*x
+Rem share a part. AlgCoeffOf gives the rational, AlgRestOf everything
+Rem else Ã¢â‚¬â€ so 2*x is (2, x), x is (1, x) and 2 is (2, 1).
+
+Def AlgIsNumL(x As AlgEx) As Boolean
+    AlgIsNum(x)
+
+Def AlgCoeffOf(e As AlgEx) As AlgEx
+    Select Case e
+        Case AlgNum(n, d)
+            e
+        Case AlgProd(fs)
+            Fold(Filter(fs, AlgIsNumL), AlgOne(), AlgRatMul)
+        Case Else
+            AlgOne()
+
+Def AlgNotNumL(x As AlgEx) As Boolean
+    Not AlgIsNum(x)
+
+Def AlgRestOf(e As AlgEx) As AlgEx
+    Select Case e
+        Case AlgNum(n, d)
+            AlgOne()
+        Case AlgProd(fs)
+            AlgPlainProd(Filter(fs, AlgNotNumL))
+        Case Else
+            e
+
+Rem The same split for a product's factors: x^2 is (x, 2) and x is (x, 1),
+Rem so collecting like factors is summing exponents over identical bases.
+
+Def AlgBaseOf(e As AlgEx) As AlgEx
+    Select Case e
+        Case AlgPow(b, x)
+            b
+        Case Else
+            e
+
+Def AlgExpoOf(e As AlgEx) As AlgEx
+    Select Case e
+        Case AlgPow(b, x)
+            x
+        Case Else
+            AlgOne()
+
+Rem ---- plain assembly --------------------------------------------------
+Rem Build a sum or product from parts WITHOUT collecting, so the
+Rem collectors can use them without recursing into themselves. The two- or
+Rem more invariant is still enforced here.
+
+Def AlgPlainSum(xs As List Of AlgEx) As AlgEx
+    If IsEmpty(xs) Then
+        AlgZero()
+    Else
+        If Length(xs) = 1 Then
+            First(xs)
+        Else
+            AlgSum(AlgSort(xs))
+
+Def AlgPlainProd(xs As List Of AlgEx) As AlgEx
+    If IsEmpty(xs) Then
+        AlgOne()
+    Else
+        If Length(xs) = 1 Then
+            First(xs)
+        Else
+            AlgProd(AlgSort(xs))
+
+Rem coefficient times rest, flattening so a product never nests inside a
+Rem product.
+Def AlgTimesPlain(c As AlgEx, r As AlgEx) As AlgEx
+    If AlgIsZero(c) Then
+        AlgZero()
+    Else
+        If AlgIsOne(c) Then
+            r
+        Else
+            If AlgIsOne(r) Then
+                c
+            Else
+                AlgPlainProd(Prepend(c, AlgProdParts(r)))
+
+Rem base to the exponent, without the identities the builder applies Ã¢â‚¬â€
+Rem used when rebuilding a collected product.
+Def AlgPowPlain(b As AlgEx, x As AlgEx) As AlgEx
+    If AlgIsOne(x) Then
+        b
+    Else
+        If AlgIsZero(x) Then
+            AlgOne()
+        Else
+            AlgPow(b, x)
+
+Rem ---- flattening ------------------------------------------------------
+
+Def AlgSumParts(x As AlgEx) As List Of AlgEx
+    Select Case x
+        Case AlgSum(ts)
+            ts
+        Case Else
+            { x }
+
+Def AlgProdParts(x As AlgEx) As List Of AlgEx
+    Select Case x
+        Case AlgProd(fs)
+            fs
+        Case Else
+            { x }
+
+Def AlgFlatSum(xs As List Of AlgEx) As List Of AlgEx
+    Flatten(Map(xs, AlgSumParts))
+
+Def AlgFlatProd(xs As List Of AlgEx) As List Of AlgEx
+    Flatten(Map(xs, AlgProdParts))
+
+Rem ---- collecting ------------------------------------------------------
+Rem Merge a term into an accumulator of already-merged terms: if one of
+Rem them has the same non-numeric part, add the coefficients; otherwise
+Rem append. One Fold over a flat n-ary sum Ã¢â‚¬â€ which is the whole reason the
+Rem representation is flat and n-ary.
+
+Def AlgMergeTermGo(acc As List Of AlgEx, t As AlgEx, k As Number) As List Of AlgEx
+    If k > Length(acc) Then
+        Append(acc, t)
+    Else
+        If AlgCompare(AlgRestOf(Nth(acc, k)), AlgRestOf(t)) = 0 Then
+            SetNth(acc, k,
+                   AlgTimesPlain(AlgRatAdd(AlgCoeffOf(Nth(acc, k)), AlgCoeffOf(t)),
+                                 AlgRestOf(t)))
+        Else
+            AlgMergeTermGo(acc, t, k + 1)
+
+Def AlgMergeTerm(acc As List Of AlgEx, t As AlgEx) As List Of AlgEx
+    AlgMergeTermGo(acc, t, 1)
+
+Def AlgMergeFacGo(acc As List Of AlgEx, f As AlgEx, k As Number) As List Of AlgEx
+    If k > Length(acc) Then
+        Append(acc, f)
+    Else
+        If AlgCompare(AlgBaseOf(Nth(acc, k)), AlgBaseOf(f)) = 0 Then
+            SetNth(acc, k,
+                   AlgPowPlain(AlgBaseOf(f),
+                               AlgAddOf(AlgExpoOf(Nth(acc, k)), AlgExpoOf(f))))
+        Else
+            AlgMergeFacGo(acc, f, k + 1)
+
+Def AlgMergeFac(acc As List Of AlgEx, f As AlgEx) As List Of AlgEx
+    AlgMergeFacGo(acc, f, 1)
+
+Rem ---- the builders ----------------------------------------------------
+Rem Every one simplifies as it goes, at least to flattening and dropping
+Rem identities. AlgAddOf(x, AlgZero()) returns x, not a two-element sum.
+Rem This is not an optimisation: it is what keeps the two-or-more
+Rem invariant true, and it means most expressions reach AlgSimplify
+Rem already close to canonical.
+
+Def AlgVarOf(name As String) As AlgEx
+    AlgVar(name)
+
+Def AlgSumOfList(xs As List Of AlgEx) As AlgEx
+    Let flat = AlgFlatSum(xs)
+    Let k = Fold(Filter(flat, AlgIsNumL), AlgZero(), AlgRatAdd)
+    Let merged = Fold(Filter(flat, AlgNotNumL), { }, AlgMergeTerm)
+    Let kept = Filter(merged, AlgNotZeroL)
+    If AlgIsZero(k) Then
+        AlgPlainSum(kept)
+    Else
+        AlgPlainSum(Append(kept, k))
+
+Def AlgNotZeroL(x As AlgEx) As Boolean
+    Not AlgIsZero(x)
+
+Def AlgAddOf(a As AlgEx, b As AlgEx) As AlgEx
+    AlgSumOfList({ a, b })
+
+Def AlgNegOf(a As AlgEx) As AlgEx
+    AlgMulOf(AlgMinusOne(), a)
+
+Def AlgSubOf(a As AlgEx, b As AlgEx) As AlgEx
+    AlgAddOf(a, AlgNegOf(b))
+
+Def AlgHasZeroL(xs As List Of AlgEx) As Boolean
+    Any(xs, AlgIsZero)
+
+Def AlgProdOfList(xs As List Of AlgEx) As AlgEx
+    Let flat = AlgFlatProd(xs)
+    If AlgHasZeroL(flat) Then
+        AlgZero()
+    Else
+        Let k = Fold(Filter(flat, AlgIsNumL), AlgOne(), AlgRatMul)
+        Let merged = Fold(Filter(flat, AlgNotNumL), { }, AlgMergeFac)
+        Let kept = Filter(merged, AlgNotOneL)
+        If AlgIsZero(k) Then
+            AlgZero()
+        Else
+            If AlgIsOne(k) Then
+                AlgPlainProd(kept)
+            Else
+                AlgPlainProd(Prepend(k, kept))
+
+Def AlgNotOneL(x As AlgEx) As Boolean
+    Not AlgIsOne(x)
+
+Def AlgMulOf(a As AlgEx, b As AlgEx) As AlgEx
+    AlgProdOfList({ a, b })
+
+Rem The power identities, in the builder so nothing downstream has to
+Rem repeat them: x^0 is 1, x^1 is x, 1^x is 1, and 0^x is 0 for a positive
+Rem exponent. A numeric base to an integer exponent folds exactly.
+Def AlgPowOf(b As AlgEx, x As AlgEx) As AlgEx
+    If AlgIsZero(x) Then
+        AlgOne()
+    Else
+        If AlgIsOne(x) Then
+            b
+        Else
+            If AlgIsOne(b) Then
+                AlgOne()
+            Else
+                If AlgIsZero(b) Then
+                    AlgZero()
+                Else
+                    AlgPowFold(b, x)
+
+Def AlgPowFold(b As AlgEx, x As AlgEx) As AlgEx
+    If AlgIsNum(b) And AlgIsInt(x) And Abs(AlgNumOf(x)) <= 20 Then
+        If AlgNumOf(x) > 0 Then
+            AlgRat(AlgNumOf(b) ^ AlgNumOf(x), AlgDenOf(b) ^ AlgNumOf(x))
+        Else
+            AlgRat(AlgDenOf(b) ^ (0 - AlgNumOf(x)), AlgNumOf(b) ^ (0 - AlgNumOf(x)))
+    Else
+        AlgPowNest(b, x)
+
+Rem (b^p)^q is b^(p*q) Ã¢â‚¬â€ collapsing here stops towers accumulating.
+Rem And (a*b)^n distributes to a^n * b^n for an integer n. That rule is
+Rem load-bearing rather than cosmetic: without it 1/((-2)*(1+x)) is a
+Rem power whose BASE is a whole product, so the collector — which matches
+Rem on bases — can never cancel it against a separate (1+x), and a partial
+Rem fraction decomposition could not be recombined at all. Integer
+Rem exponents only, because (a*b)^(1/2) is not a^(1/2) * b^(1/2) once
+Rem signs are in play.
+Def AlgPowNest(b As AlgEx, x As AlgEx) As AlgEx
+    Select Case b
+        Case AlgPow(bb, xx)
+            AlgPow(bb, AlgMulOf(xx, x))
+        Case AlgProd(fs)
+            If AlgIsInt(x) Then
+                AlgProdOfList(Map(fs, Fn(f) => AlgPowOf(f, x)))
+            Else
+                AlgPow(b, x)
+        Case Else
+            AlgPow(b, x)
+
+Def AlgDivOf(a As AlgEx, b As AlgEx) As AlgEx
+    If AlgIsZero(b) Then
+        Error("ALGDIVOF: DIVISION BY ZERO")
+    Else
+        AlgMulOf(a, AlgPowOf(b, AlgMinusOne()))
+
+Def AlgSqrtOf(a As AlgEx) As AlgEx
+    AlgPowOf(a, AlgRat(1, 2))
+
+Rem ---- the fixpoint ----------------------------------------------------
+Rem One pass rebuilds the tree bottom-up through the builders, so every
+Rem rule above applies at every node. One pass is not enough: collecting
+Rem like terms creates constants to fold, folding creates identities to
+Rem drop, dropping creates one-element sums to collapse. So AlgSimplify
+Rem repeats until the result stops changing.
+Rem
+Rem CAPPED, and Error on overrun naming the word. A pair of rules that
+Rem undo each other loops forever and the failure is a hung mill with no
+Rem message; the cap turns that into a bug report. Nothing sensible
+Rem exceeds five passes.
+Rem
+Rem "Stops changing" is AlgCompare(before, after) = 0, never =.
+
+Def AlgPass(e As AlgEx) As AlgEx
+    Select Case e
+        Case AlgNum(n, d)
+            AlgRat(n, d)
+        Case AlgVar(v)
+            e
+        Case AlgSum(ts)
+            AlgSumOfList(Map(ts, AlgPass))
+        Case AlgProd(fs)
+            AlgProdOfList(Map(fs, AlgPass))
+        Case AlgPow(b, x)
+            AlgPowOf(AlgPass(b), AlgPass(x))
+        Case AlgCall(f, a)
+            AlgCallSimp(f, AlgPass(a))
+        Case Else
+            e
+
+Def AlgSimpGo(e As AlgEx, k As Number) As AlgEx
+    If k <= 0 Then
+        Error("ALGSIMPLIFY: DID NOT CONVERGE - TWO REWRITE RULES ARE FIGHTING")
+    Else
+        Let next = AlgPass(e)
+        If AlgCompare(e, next) = 0 Then
+            next
+        Else
+            AlgSimpGo(next, k - 1)
+
+Def AlgSimplify(e As AlgEx) As AlgEx
+    AlgSimpGo(e, AlgMaxPasses())
+
+Rem THE ONLY EQUALITY. = on two AlgEx is structural, so it reports x + y
+Rem and y + x as different, and two rationals as different if either
+Rem skipped AlgRat.
+Def AlgEqual(a As AlgEx, b As AlgEx) As Boolean
+    AlgCompare(AlgSimplify(a), AlgSimplify(b)) = 0
+
+Rem ---- inspection ------------------------------------------------------
+
+Def AlgDepth(e As AlgEx) As Number
+    Select Case e
+        Case AlgNum(n, d)
+            1
+        Case AlgVar(v)
+            1
+        Case AlgSum(ts)
+            1 + Fold(Map(ts, AlgDepth), 0, Fn(a, b) => Max(a, b))
+        Case AlgProd(fs)
+            1 + Fold(Map(fs, AlgDepth), 0, Fn(a, b) => Max(a, b))
+        Case AlgPow(b, x)
+            1 + Max(AlgDepth(b), AlgDepth(x))
+        Case AlgCall(f, a)
+            1 + AlgDepth(a)
+        Case Else
+            1
+
+Def AlgSize(e As AlgEx) As Number
+    Select Case e
+        Case AlgNum(n, d)
+            1
+        Case AlgVar(v)
+            1
+        Case AlgSum(ts)
+            1 + Fold(Map(ts, AlgSize), 0, +)
+        Case AlgProd(fs)
+            1 + Fold(Map(fs, AlgSize), 0, +)
+        Case AlgPow(b, x)
+            1 + AlgSize(b) + AlgSize(x)
+        Case AlgCall(f, a)
+            1 + AlgSize(a)
+        Case Else
+            1
+
+Def AlgVarsGo(e As AlgEx) As List Of String
+    Select Case e
+        Case AlgNum(n, d)
+            { }
+        Case AlgVar(v)
+            { v }
+        Case AlgSum(ts)
+            Flatten(Map(ts, AlgVarsGo))
+        Case AlgProd(fs)
+            Flatten(Map(fs, AlgVarsGo))
+        Case AlgPow(b, x)
+            Flatten({ AlgVarsGo(b), AlgVarsGo(x) })
+        Case AlgCall(f, a)
+            AlgVarsGo(a)
+        Case Else
+            { }
+
+Def AlgDedupGo(xs As List Of String, acc As List Of String) As List Of String
+    If IsEmpty(xs) Then
+        acc
+    Else
+        If Contains(acc, First(xs)) Then
+            AlgDedupGo(Rest(xs), acc)
+        Else
+            AlgDedupGo(Rest(xs), Append(acc, First(xs)))
+
+Def AlgVarsOf(e As AlgEx) As List Of String
+    Sort(AlgDedupGo(AlgVarsGo(e), { }))
+
+Def AlgHasVar(e As AlgEx, name As String) As Boolean
+    Contains(AlgVarsOf(e), name)
+
+Def AlgIsConst(e As AlgEx, var As String) As Boolean
+    Not AlgHasVar(e, var)
+
+Rem ---- the function table ----------------------------------------------
+Rem Every function needs an entry in AlgDiffFn AND in AlgEvalFn. One that
+Rem differentiates but cannot evaluate breaks AlgToFn; one that evaluates
+Rem but cannot differentiate breaks AlgDiff. The test suite asserts the
+Rem two are in step by iterating AlgFns(), so it cannot go stale when a
+Rem function is added. This is the easiest place in the machine to leave a
+Rem hole.
+
+Def AlgFns() As List Of String
+    { "sin", "cos", "tan", "asin", "acos", "atan",
+      "sinh", "cosh", "tanh", "exp", "ln", "log10", "sqrt", "abs" }
+
+Def AlgKnowsFn(name As String) As Boolean
+    Contains(AlgFns(), name)
+
+Rem The exact values worth knowing, and the reason pi and e are symbols:
+Rem sin(pi) is exactly 0 here, not 1.2246e-16.
+Def AlgCallSimp(f As String, a As AlgEx) As AlgEx
+    If f = "sin" And (AlgIsZero(a) Or AlgCompare(a, AlgPiSym()) = 0) Then
+        AlgZero()
+    Else
+        If f = "cos" And AlgIsZero(a) Then
+            AlgOne()
+        Else
+            If f = "cos" And AlgCompare(a, AlgPiSym()) = 0 Then
+                AlgMinusOne()
+            Else
+                If f = "tan" And AlgIsZero(a) Then
+                    AlgZero()
+                Else
+                    AlgCallSimp2(f, a)
+
+Def AlgCallSimp2(f As String, a As AlgEx) As AlgEx
+    If f = "exp" And AlgIsZero(a) Then
+        AlgOne()
+    Else
+        If f = "ln" And AlgIsOne(a) Then
+            AlgZero()
+        Else
+            If f = "ln" And AlgCompare(a, AlgESym()) = 0 Then
+                AlgOne()
+            Else
+                If f = "sqrt" Then
+                    AlgPowOf(a, AlgRat(1, 2))
+                Else
+                    AlgCallSimp3(f, a)
+
+Def AlgCallSimp3(f As String, a As AlgEx) As AlgEx
+    If f = "abs" And AlgIsNum(a) Then
+        AlgRat(Abs(AlgNumOf(a)), AlgDenOf(a))
+    Else
+        If (f = "sinh" Or f = "tanh") And AlgIsZero(a) Then
+            AlgZero()
+        Else
+            If f = "cosh" And AlgIsZero(a) Then
+                AlgOne()
+            Else
+                AlgCall(f, a)
+
+Def AlgCallOf(f As String, arg As AlgEx) As AlgEx
+    If Not AlgKnowsFn(f) Then
+        Error("ALGCALLOF: UNKNOWN FUNCTION '" & f & "' - ADD IT TO ALGFNS, ALGDIFFFN AND ALGEVALFN")
+    Else
+        AlgCallSimp(f, arg)
+
+Rem d/du of fn(u), with respect to the argument. The chain rule multiplies
+Rem this by u' at the call site.
+Def AlgDiffFn(name As String, u As AlgEx) As AlgEx
+    If name = "sin" Then
+        AlgCallOf("cos", u)
+    Else
+        If name = "cos" Then
+            AlgNegOf(AlgCallOf("sin", u))
+        Else
+            If name = "tan" Then
+                AlgAddOf(AlgOne(), AlgPowOf(AlgCallOf("tan", u), AlgRat(2, 1)))
+            Else
+                AlgDiffFn2(name, u)
+
+Def AlgDiffFn2(name As String, u As AlgEx) As AlgEx
+    If name = "asin" Then
+        AlgPowOf(AlgSubOf(AlgOne(), AlgPowOf(u, AlgRat(2, 1))), AlgRat(0 - 1, 2))
+    Else
+        If name = "acos" Then
+            AlgNegOf(AlgPowOf(AlgSubOf(AlgOne(), AlgPowOf(u, AlgRat(2, 1))),
+                              AlgRat(0 - 1, 2)))
+        Else
+            If name = "atan" Then
+                AlgDivOf(AlgOne(), AlgAddOf(AlgOne(), AlgPowOf(u, AlgRat(2, 1))))
+            Else
+                AlgDiffFn3(name, u)
+
+Def AlgDiffFn3(name As String, u As AlgEx) As AlgEx
+    If name = "sinh" Then
+        AlgCallOf("cosh", u)
+    Else
+        If name = "cosh" Then
+            AlgCallOf("sinh", u)
+        Else
+            If name = "tanh" Then
+                AlgSubOf(AlgOne(), AlgPowOf(AlgCallOf("tanh", u), AlgRat(2, 1)))
+            Else
+                AlgDiffFn4(name, u)
+
+Def AlgDiffFn4(name As String, u As AlgEx) As AlgEx
+    If name = "exp" Then
+        AlgCallOf("exp", u)
+    Else
+        If name = "ln" Then
+            AlgDivOf(AlgOne(), u)
+        Else
+            If name = "log10" Then
+                AlgDivOf(AlgOne(), AlgMulOf(u, AlgCallOf("ln", AlgRat(10, 1))))
+            Else
+                AlgDiffFn5(name, u)
+
+Rem sqrt never survives AlgCallSimp Ã¢â‚¬â€ it becomes a power Ã¢â‚¬â€ so its entry
+Rem exists for completeness of the table rather than for use. abs is not
+Rem differentiable at 0 and the entry says what it assumes.
+Def AlgDiffFn5(name As String, u As AlgEx) As AlgEx
+    If name = "sqrt" Then
+        AlgDivOf(AlgOne(), AlgMulOf(AlgRat(2, 1), AlgPowOf(u, AlgRat(1, 2))))
+    Else
+        If name = "abs" Then
+            AlgDivOf(u, AlgCallOf("abs", u))
+        Else
+            Error("ALGDIFFFN: NO DERIVATIVE FOR '" & name & "'")
+
+Def AlgEvalFn(name As String, x As Number) As Number
+    If name = "sin" Then
+        Sin(x)
+    Else
+        If name = "cos" Then
+            Cos(x)
+        Else
+            If name = "tan" Then
+                Tan(x)
+            Else
+                AlgEvalFn2(name, x)
+
+Def AlgEvalFn2(name As String, x As Number) As Number
+    If name = "asin" Then
+        Asin(x)
+    Else
+        If name = "acos" Then
+            Acos(x)
+        Else
+            If name = "atan" Then
+                Atn(x)
+            Else
+                AlgEvalFn3(name, x)
+
+Def AlgEvalFn3(name As String, x As Number) As Number
+    If name = "sinh" Then
+        (Exp(x) - Exp(0 - x)) / 2
+    Else
+        If name = "cosh" Then
+            (Exp(x) + Exp(0 - x)) / 2
+        Else
+            If name = "tanh" Then
+                Tanh(x)
+            Else
+                AlgEvalFn4(name, x)
+
+Def AlgEvalFn4(name As String, x As Number) As Number
+    If name = "exp" Then
+        Exp(x)
+    Else
+        If name = "ln" Then
+            Log(x)
+        Else
+            If name = "log10" Then
+                Log10(x)
+            Else
+                AlgEvalFn5(name, x)
+
+Def AlgEvalFn5(name As String, x As Number) As Number
+    If name = "sqrt" Then
+        Sqr(x)
+    Else
+        If name = "abs" Then
+            Abs(x)
+        Else
+            Error("ALGEVALFN: NO NUMERIC RULE FOR '" & name & "'")
+
+Rem ---- differentiation -------------------------------------------------
+Rem TOTAL: every representable expression differentiates. That is a
+Rem genuine asymmetry with integration, and it is worth stating because a
+Rem caller will wonder why one returns AlgEx and the other a Result.
+Rem
+Rem The general power rule d(u^v) = u^v * (v' * ln u + v * u'/u) is
+Rem written rather than the constant-exponent case only, because x^x will
+Rem arrive eventually and the special case is not shorter.
+
+Def AlgDiffProdGo(fs As List Of AlgEx, var As String, k As Number) As List Of AlgEx
+    If k > Length(fs) Then
+        { }
+    Else
+        Let others = Map(Filter(Range(1, Length(fs)), Fn(j) => j <> k),
+                         Fn(j) => Nth(fs, j))
+        Prepend(AlgProdOfList(Prepend(AlgDiff(Nth(fs, k), var), others)),
+                AlgDiffProdGo(fs, var, k + 1))
+
+Def AlgDiff(e As AlgEx, var As String) As AlgEx
+    AlgSimplify(AlgDiffRaw(e, var))
+
+Def AlgDiffRaw(e As AlgEx, var As String) As AlgEx
+    Select Case e
+        Case AlgNum(n, d)
+            AlgZero()
+        Case AlgVar(v)
+            Ifte(v = var, AlgOne(), AlgZero())
+        Case AlgSum(ts)
+            AlgSumOfList(Map(ts, Fn(t) => AlgDiffRaw(t, var)))
+        Case AlgProd(fs)
+            AlgSumOfList(AlgDiffProdGo(fs, var, 1))
+        Case AlgPow(b, x)
+            AlgDiffPow(b, x, var)
+        Case AlgCall(f, a)
+            AlgMulOf(AlgDiffFn(f, a), AlgDiffRaw(a, var))
+        Case Else
+            AlgZero()
+
+Def AlgDiffPow(b As AlgEx, x As AlgEx, var As String) As AlgEx
+    If AlgIsConst(x, var) Then
+        AlgProdOfList({ x, AlgPowOf(b, AlgSubOf(x, AlgOne())), AlgDiffRaw(b, var) })
+    Else
+        AlgMulOf(AlgPowOf(b, x),
+                 AlgAddOf(AlgMulOf(AlgDiffRaw(x, var), AlgCallOf("ln", b)),
+                          AlgDivOf(AlgMulOf(x, AlgDiffRaw(b, var)), b)))
+
+Def AlgDiffN(e As AlgEx, var As String, n As Number) As AlgEx
+    If n <= 0 Then
+        AlgSimplify(e)
+    Else
+        AlgDiffN(AlgDiff(e, var), var, n - 1)
+
+Def AlgGrad(e As AlgEx, vars As List Of String) As List Of AlgEx
+    Map(vars, Fn(v) => AlgDiff(e, v))
+
+Rem ---- printing --------------------------------------------------------
+Rem Minimal parenthesisation is the hard half, and the printer also has to
+Rem RECOGNISE subtraction and division on the way out, because Ã‚Â§the
+Rem representation has neither. A product holding -1 prints with a leading
+Rem minus; a factor with a negative exponent moves to a denominator. A CAS
+Rem that prints x * y ^ -1 instead of x / y is technically correct and
+Rem nobody will use it.
+Rem
+Rem Precedence for the parenthesis test: sums loosest, then products, then
+Rem powers, then atoms.
+
+Def AlgPrec(e As AlgEx) As Number
+    Select Case e
+        Case AlgSum(ts)
+            1
+        Case AlgProd(fs)
+            2
+        Case AlgPow(b, x)
+            3
+        Case AlgNum(n, d)
+            Ifte(n < 0 Or d <> 1, 2, 4)
+        Case Else
+            4
+
+Def AlgWrap(s As String, need As Boolean) As String
+    Ifte(need, "(" & s & ")", s)
+
+Def AlgShowNum(e As AlgEx) As String
+    If AlgDenOf(e) = 1 Then
+        Str(AlgNumOf(e))
+    Else
+        Str(AlgNumOf(e)) & " / " & Str(AlgDenOf(e))
+
+Rem Is this term negative Ã¢â‚¬â€ so the sum prints " - " and drops the sign?
+Def AlgIsNeg(e As AlgEx) As Boolean
+    Select Case e
+        Case AlgNum(n, d)
+            n < 0
+        Case AlgProd(fs)
+            Any(fs, Fn(f) => AlgIsNum(f) And AlgNumOf(f) < 0)
+        Case Else
+            False
+
+Def AlgNegate(e As AlgEx) As AlgEx
+    AlgMulOf(AlgMinusOne(), e)
+
+Rem A factor belongs in the denominator when its exponent is a negative
+Rem number Ã¢â‚¬â€ that is what division looks like in this representation.
+Def AlgIsDenom(f As AlgEx) As Boolean
+    Select Case f
+        Case AlgPow(b, x)
+            AlgIsNum(x) And AlgNumOf(x) < 0
+        Case Else
+            False
+
+Def AlgFlipPow(f As AlgEx) As AlgEx
+    Select Case f
+        Case AlgPow(b, x)
+            AlgPowPlain(b, AlgRatNeg(x))
+        Case Else
+            f
+
+Def AlgShow(e As AlgEx) As String
+    AlgShowAt(e, 0)
+
+Def AlgShowAt(e As AlgEx, minp As Number) As String
+    Select Case e
+        Case AlgNum(n, d)
+            AlgWrap(AlgShowNum(e), AlgPrec(e) < minp)
+        Case AlgVar(v)
+            v
+        Case AlgSum(ts)
+            AlgWrap(AlgShowSum(ts), 1 < minp)
+        Case AlgProd(fs)
+            AlgWrap(AlgShowProd(fs), 2 < minp)
+        Case AlgPow(b, x)
+            AlgWrap(AlgShowPow(b, x), 3 < minp)
+        Case AlgCall(f, a)
+            f & "(" & AlgShowAt(a, 0) & ")"
+        Case Else
+            "?"
+
+Def AlgShowSumGo(ts As List Of AlgEx, k As Number) As String
+    If k > Length(ts) Then
+        ""
+    Else
+        Let t = Nth(ts, k)
+        If AlgIsNeg(t) Then
+            " - " & AlgShowAt(AlgNegate(t), 2) & AlgShowSumGo(ts, k + 1)
+        Else
+            " + " & AlgShowAt(t, 2) & AlgShowSumGo(ts, k + 1)
+
+Def AlgShowSum(ts As List Of AlgEx) As String
+    Let h = Nth(ts, 1)
+    If AlgIsNeg(h) Then
+        "-" & AlgShowAt(AlgNegate(h), 2) & AlgShowSumGo(ts, 2)
+    Else
+        AlgShowAt(h, 2) & AlgShowSumGo(ts, 2)
+
+Def AlgJoinShow(xs As List Of AlgEx, sep As String, minp As Number) As String
+    Join(Map(xs, Fn(x) => AlgShowAt(x, minp)), sep)
+
+Def AlgShowProd(fs As List Of AlgEx) As String
+    Let dens = Map(Filter(fs, AlgIsDenom), AlgFlipPow)
+    Let nums = Filter(fs, Fn(f) => Not AlgIsDenom(f))
+    Let neg = Any(nums, Fn(f) => AlgIsNum(f) And AlgNumOf(f) = 0 - 1 And AlgDenOf(f) = 1)
+    Let keep = Filter(nums, Fn(f) => Not (AlgIsNum(f) And AlgNumOf(f) = 0 - 1 And AlgDenOf(f) = 1))
+    Let top = Ifte(IsEmpty(keep), "1", AlgJoinShow(keep, " * ", 3))
+    Let body = Ifte(IsEmpty(dens), top,
+                    top & " / " & Ifte(Length(dens) = 1, AlgJoinShow(dens, " * ", 4),
+                                       "(" & AlgJoinShow(dens, " * ", 3) & ")"))
+    Ifte(neg, "-" & body, body)
+
+Rem ^ is right-associative, so the LEFT operand needs brackets when it is
+Rem itself a power Ã¢â‚¬â€ (a ^ b) ^ c must not print as a ^ b ^ c, which means
+Rem something else. A negative exponent prints as a division instead,
+Rem because x ^ -2 is uglier than 1 / x ^ 2 and round-trips worse.
+Def AlgShowPow(b As AlgEx, x As AlgEx) As String
+    If AlgIsNum(x) And AlgNumOf(x) < 0 Then
+        "1 / " & AlgShowAt(AlgPowPlain(b, AlgRatNeg(x)), 3)
+    Else
+        AlgShowAt(b, 4) & " ^ " & AlgShowAt(x, 3)
+
+Def AlgShowFull(e As AlgEx) As String
+    Select Case e
+        Case AlgNum(n, d)
+            Ifte(d = 1, Str(n), "(" & Str(n) & " / " & Str(d) & ")")
+        Case AlgVar(v)
+            v
+        Case AlgSum(ts)
+            "(" & Join(Map(ts, AlgShowFull), " + ") & ")"
+        Case AlgProd(fs)
+            "(" & Join(Map(fs, AlgShowFull), " * ") & ")"
+        Case AlgPow(b, x)
+            "(" & AlgShowFull(b) & " ^ " & AlgShowFull(x) & ")"
+        Case AlgCall(f, a)
+            f & "(" & AlgShowFull(a) & ")"
+        Case Else
+            "?"
+
+Def AlgTreeGo(e As AlgEx, ind As Number) As String
+    Let pad = StrRep("  ", ind)
+    Select Case e
+        Case AlgNum(n, d)
+            pad & "NUM " & AlgShowNum(e) & Chr(10)
+        Case AlgVar(v)
+            pad & "VAR " & v & Chr(10)
+        Case AlgSum(ts)
+            pad & "SUM" & Chr(10) & Join(Map(ts, Fn(t) => AlgTreeGo(t, ind + 1)), "")
+        Case AlgProd(fs)
+            pad & "PROD" & Chr(10) & Join(Map(fs, Fn(f) => AlgTreeGo(f, ind + 1)), "")
+        Case AlgPow(b, x)
+            pad & "POW" & Chr(10) & AlgTreeGo(b, ind + 1) & AlgTreeGo(x, ind + 1)
+        Case AlgCall(f, a)
+            pad & "CALL " & f & Chr(10) & AlgTreeGo(a, ind + 1)
+        Case Else
+            pad & "?" & Chr(10)
+
+Def AlgTree(e As AlgEx) As String
+    AlgTreeGo(e, 0)
+
+Rem ---- tokenising ------------------------------------------------------
+Rem One pass to a list of strings, so the parser never does character
+Rem arithmetic. Digits and letters accumulate; everything else is its own
+Rem token; spaces separate and vanish.
+
+Def AlgIsDigit(c As String) As Boolean
+    c >= "0" And c <= "9"
+
+Def AlgIsAlpha(c As String) As Boolean
+    (c >= "a" And c <= "z") Or (c >= "A" And c <= "Z") Or c = "_"
+
+Def AlgIsWordCh(c As String) As Boolean
+    AlgIsAlpha(c) Or AlgIsDigit(c)
+
+Def AlgTokGo(s As String, i As Number, run As String, acc As List Of String) As List Of String
+    If i > Len(s) Then
+        Ifte(run = "", acc, Append(acc, run))
+    Else
+        Let c = Mid(s, i, 1)
+        If AlgIsWordCh(c) Or (c = "." And run <> "" And AlgIsDigit(Mid(run, 1, 1))) Then
+            AlgTokGo(s, i + 1, run & c, acc)
+        Else
+            Let flushed = Ifte(run = "", acc, Append(acc, run))
+            If c = " " Then
+                AlgTokGo(s, i + 1, "", flushed)
+            Else
+                AlgTokGo(s, i + 1, "", Append(flushed, c))
+
+Def AlgTokens(s As String) As List Of String
+    AlgTokGo(s, 1, "", { })
+
+Rem ---- parsing ---------------------------------------------------------
+Rem Recursive descent. The step type carries a continuation index on
+Rem success, so it is a parser-step type and NOT a Result Ã¢â‚¬â€ the same
+Rem distinction json, xml and csv make, and the reason issue #33 left
+Rem their JTake/XTake/CTake alone.
+Rem
+Rem Precedence: + - loosest, then * /, then unary minus, then ^ right-
+Rem associative and TIGHTER than unary minus, so -x^2 is -(x^2) and
+Rem 2^3^2 is 512. Both are places implementations differ and users have
+Rem opinions, and both are asserted.
+
+Type AlgTake = AlgTook(AlgTkVal As AlgEx, AlgTkNext As Number) | AlgTkBad(AlgTkWhy As String, AlgTkAt As Number)
+
+Def AlgTkAt2(ts As List Of String, i As Number) As String
+    Ifte(i > Length(ts), "", Nth(ts, i))
+
+Def AlgIsBad(t As AlgTake) As Boolean
+    Select Case t
+        Case AlgTkBad(w, a)
+            True
+        Case Else
+            False
+
+Def AlgTkV(t As AlgTake) As AlgEx
+    Select Case t
+        Case AlgTook(v, n)
+            v
+        Case Else
+            Error("ALGTKV: NOT A SUCCESSFUL PARSE STEP")
+
+Def AlgTkN(t As AlgTake) As Number
+    Select Case t
+        Case AlgTook(v, n)
+            n
+        Case Else
+            Error("ALGTKN: NOT A SUCCESSFUL PARSE STEP")
+
+Def AlgTkW(t As AlgTake) As String
+    Select Case t
+        Case AlgTkBad(w, a)
+            w
+        Case Else
+            ""
+
+Def AlgTkA(t As AlgTake) As Number
+    Select Case t
+        Case AlgTkBad(w, a)
+            a
+        Case Else
+            0
+
+Def AlgNumTok(t As String) As Boolean
+    AlgIsDigit(Mid(t, 1, 1))
+
+Def AlgAtom(ts As List Of String, i As Number, d As Number) As AlgTake
+    If d > AlgMaxDepth() Then
+        AlgTkBad("EXPRESSION NESTS TOO DEEPLY", i)
+    Else
+        Let t = AlgTkAt2(ts, i)
+        If t = "" Then
+            AlgTkBad("UNEXPECTED END OF EXPRESSION", i)
+        Else
+            If t = "(" Then
+                AlgParen(ts, i, d)
+            Else
+                If AlgNumTok(t) Then
+                    AlgTook(AlgOf(Val(t)), i + 1)
+                Else
+                    If AlgIsAlpha(Mid(t, 1, 1)) Then
+                        AlgNameTok(ts, i, d, t)
+                    Else
+                        AlgTkBad("UNEXPECTED '" & t & "'", i)
+
+Def AlgParen(ts As List Of String, i As Number, d As Number) As AlgTake
+    Let inner = AlgSumP(ts, i + 1, d + 1)
+    If AlgIsBad(inner) Then
+        inner
+    Else
+        If AlgTkAt2(ts, AlgTkN(inner)) <> ")" Then
+            AlgTkBad("MISSING )", AlgTkN(inner))
+        Else
+            AlgTook(AlgTkV(inner), AlgTkN(inner) + 1)
+
+Def AlgNameTok(ts As List Of String, i As Number, d As Number, t As String) As AlgTake
+    If AlgTkAt2(ts, i + 1) = "(" Then
+        If Not AlgKnowsFn(t) Then
+            AlgTkBad("UNKNOWN FUNCTION '" & t & "'", i)
+        Else
+            Let arg = AlgSumP(ts, i + 2, d + 1)
+            If AlgIsBad(arg) Then
+                arg
+            Else
+                If AlgTkAt2(ts, AlgTkN(arg)) <> ")" Then
+                    AlgTkBad("MISSING ) AFTER " & t, AlgTkN(arg))
+                Else
+                    AlgTook(AlgCallOf(t, AlgTkV(arg)), AlgTkN(arg) + 1)
+    Else
+        AlgTook(AlgVarOf(t), i + 1)
+
+Rem ^ binds tighter than unary minus and associates to the right, so its
+Rem right operand is parsed at the UNARY level: x ^ -2 reads, and
+Rem 2 ^ 3 ^ 2 is 2 ^ (3 ^ 2).
+Def AlgPowP(ts As List Of String, i As Number, d As Number) As AlgTake
+    Let b = AlgAtom(ts, i, d)
+    If AlgIsBad(b) Then
+        b
+    Else
+        If AlgTkAt2(ts, AlgTkN(b)) = "^" Then
+            Let x = AlgUnaryP(ts, AlgTkN(b) + 1, d + 1)
+            If AlgIsBad(x) Then
+                x
+            Else
+                AlgTook(AlgPowOf(AlgTkV(b), AlgTkV(x)), AlgTkN(x))
+        Else
+            b
+
+Def AlgUnaryP(ts As List Of String, i As Number, d As Number) As AlgTake
+    If AlgTkAt2(ts, i) = "-" Then
+        Let v = AlgUnaryP(ts, i + 1, d + 1)
+        If AlgIsBad(v) Then
+            v
+        Else
+            AlgTook(AlgNegOf(AlgTkV(v)), AlgTkN(v))
+    Else
+        If AlgTkAt2(ts, i) = "+" Then
+            AlgUnaryP(ts, i + 1, d + 1)
+        Else
+            AlgPowP(ts, i, d)
+
+Def AlgProdGo(ts As List Of String, acc As AlgEx, i As Number, d As Number) As AlgTake
+    Let op = AlgTkAt2(ts, i)
+    If op <> "*" And op <> "/" Then
+        AlgTook(acc, i)
+    Else
+        Let r = AlgUnaryP(ts, i + 1, d + 1)
+        If AlgIsBad(r) Then
+            r
+        Else
+            If op = "*" Then
+                AlgProdGo(ts, AlgMulOf(acc, AlgTkV(r)), AlgTkN(r), d)
+            Else
+                AlgProdGo(ts, AlgDivOf(acc, AlgTkV(r)), AlgTkN(r), d)
+
+Def AlgProdP(ts As List Of String, i As Number, d As Number) As AlgTake
+    Let f = AlgUnaryP(ts, i, d)
+    If AlgIsBad(f) Then
+        f
+    Else
+        AlgProdGo(ts, AlgTkV(f), AlgTkN(f), d)
+
+Def AlgSumGo(ts As List Of String, acc As AlgEx, i As Number, d As Number) As AlgTake
+    Let op = AlgTkAt2(ts, i)
+    If op <> "+" And op <> "-" Then
+        AlgTook(acc, i)
+    Else
+        Let r = AlgProdP(ts, i + 1, d + 1)
+        If AlgIsBad(r) Then
+            r
+        Else
+            If op = "+" Then
+                AlgSumGo(ts, AlgAddOf(acc, AlgTkV(r)), AlgTkN(r), d)
+            Else
+                AlgSumGo(ts, AlgSubOf(acc, AlgTkV(r)), AlgTkN(r), d)
+
+Def AlgSumP(ts As List Of String, i As Number, d As Number) As AlgTake
+    Let f = AlgProdP(ts, i, d)
+    If AlgIsBad(f) Then
+        f
+    Else
+        AlgSumGo(ts, AlgTkV(f), AlgTkN(f), d)
+
+Rem TOTAL: never aborts, and Err carries the 1-based token offset. This is
+Rem the one to reach for on anything a user typed.
+Def AlgRead(s As String) As Result
+    Let ts = AlgTokens(s)
+    If IsEmpty(ts) Then
+        Err("EMPTY EXPRESSION", 1)
+    Else
+        Let r = AlgSumP(ts, 1, 0)
+        If AlgIsBad(r) Then
+            Err(AlgTkW(r), AlgTkA(r))
+        Else
+            If AlgTkN(r) <= Length(ts) Then
+                Err("UNEXPECTED '" & AlgTkAt2(ts, AlgTkN(r)) & "'", AlgTkN(r))
+            Else
+                Ok(AlgTkV(r))
+
+Rem ABORTS on a bad parse. The one to reach for in a test or a literal,
+Rem where a typo should stop the program rather than travel.
+Def AlgParse(s As String) As AlgEx
+    Select Case AlgRead(s)
+        Case Ok(e)
+            e
+        Case Err(why, at)
+            Error("ALGPARSE: " & why & " AT TOKEN " & Str(at))
+        Case Else
+            Error("ALGPARSE: UNREACHABLE")
+
+Rem ---- substitution ----------------------------------------------------
+
+Def AlgSubst(e As AlgEx, var As String, r As AlgEx) As AlgEx
+    AlgSimplify(AlgSubstRaw(e, var, r))
+
+Def AlgSubstRaw(e As AlgEx, var As String, r As AlgEx) As AlgEx
+    Select Case e
+        Case AlgNum(n, d)
+            e
+        Case AlgVar(v)
+            Ifte(v = var, r, e)
+        Case AlgSum(ts)
+            AlgSumOfList(Map(ts, Fn(t) => AlgSubstRaw(t, var, r)))
+        Case AlgProd(fs)
+            AlgProdOfList(Map(fs, Fn(f) => AlgSubstRaw(f, var, r)))
+        Case AlgPow(b, x)
+            AlgPowOf(AlgSubstRaw(b, var, r), AlgSubstRaw(x, var, r))
+        Case AlgCall(f, a)
+            AlgCallOf(f, AlgSubstRaw(a, var, r))
+        Case Else
+            e
+
+Rem Replace every call to a named function with a body written in terms of
+Rem param. Four arguments rather than three, because "the argument" has to
+Rem be nameable: AlgSubstFn(e, "sin", "u", u^2) turns sin(x + 1) into
+Rem (x + 1)^2.
+Rem
+Rem The name must be one AlgFns already knows, because AlgCallOf refuses
+Rem to build a call to anything else and the parser therefore cannot
+Rem produce one. So this rewrites the table's functions — replacing sin by
+Rem its own series, say — rather than introducing user-defined ones. A
+Rem machine that let unknown names in would have a AlgCall nothing
+Rem downstream could differentiate or evaluate.
+Def AlgSubstFn(e As AlgEx, name As String, param As String, body As AlgEx) As AlgEx
+    AlgSimplify(AlgSubstFnRaw(e, name, param, body))
+
+Def AlgSubstFnRaw(e As AlgEx, name As String, param As String, body As AlgEx) As AlgEx
+    Select Case e
+        Case AlgNum(n, d)
+            e
+        Case AlgVar(v)
+            e
+        Case AlgSum(ts)
+            AlgSumOfList(Map(ts, Fn(t) => AlgSubstFnRaw(t, name, param, body)))
+        Case AlgProd(fs)
+            AlgProdOfList(Map(fs, Fn(f) => AlgSubstFnRaw(f, name, param, body)))
+        Case AlgPow(b, x)
+            AlgPowOf(AlgSubstFnRaw(b, name, param, body),
+                     AlgSubstFnRaw(x, name, param, body))
+        Case AlgCall(f, a)
+            Let inner = AlgSubstFnRaw(a, name, param, body)
+            Ifte(f = name, AlgSubstRaw(body, param, inner), AlgCallOf(f, inner))
+        Case Else
+            e
+
+Rem ---- evaluation ------------------------------------------------------
+Rem THE BOUNDARY. pi and e resolve to numbers HERE and nowhere else, which
+Rem is what lets sin(pi) simplify to exactly 0 upstream. An unbound
+Rem variable is an Error naming it, never a silent zero Ã¢â‚¬â€ that is the
+Rem failure mode that makes a formula evaluator untrustworthy.
+
+Def AlgLookup(names As List Of String, values As List Of Number, v As String) As Number
+    Let k = IndexOf(names, v)
+    If k = 0 Then
+        If v = "pi" Then
+            Pi()
+        Else
+            If v = "e" Then
+                Exp(1)
+            Else
+                Error("ALGEVAL: '" & v & "' HAS NO VALUE")
+    Else
+        Nth(values, k)
+
+Def AlgEvalGo(e As AlgEx, names As List Of String, values As List Of Number) As Number
+    Select Case e
+        Case AlgNum(n, d)
+            n / d
+        Case AlgVar(v)
+            AlgLookup(names, values, v)
+        Case AlgSum(ts)
+            Fold(Map(ts, Fn(t) => AlgEvalGo(t, names, values)), 0, Fn(a, b) => a + b)
+        Case AlgProd(fs)
+            Fold(Map(fs, Fn(f) => AlgEvalGo(f, names, values)), 1, Fn(a, b) => a * b)
+        Case AlgPow(b, x)
+            AlgEvalGo(b, names, values) ^ AlgEvalGo(x, names, values)
+        Case AlgCall(f, a)
+            AlgEvalFn(f, AlgEvalGo(a, names, values))
+        Case Else
+            Error("ALGEVAL: UNKNOWN EXPRESSION SHAPE")
+
+Def AlgEvalWith(e As AlgEx, names As List Of String, values As List Of Number) As Number
+    If Length(names) <> Length(values) Then
+        Error("ALGEVALWITH: NAMES AND VALUES ARE DIFFERENT LENGTHS")
+    Else
+        AlgEvalGo(e, names, values)
+
+Def AlgEvalAt(e As AlgEx, var As String, x As Number) As Number
+    AlgEvalGo(e, { var }, { x })
+
+Rem ---- THE BRIDGE ------------------------------------------------------
+Rem The word that justifies the machine. A formula read from a file, a CSV
+Rem header or a prompt becomes a function value, and every numeric word in
+Rem eng accepts it unchanged:
+Rem
+Rem     EngZeroOf(AlgToFn(AlgParse("x^3 - 2*x - 5"), "x"), 2, 3)
+Rem
+Rem Neither machine includes the other; a quotation is a builtin type, so
+Rem they compose with no dependency in either direction.
+Rem
+Rem The tree walk happens on EVERY call. Fine for a solver making a
+Rem hundred evaluations; not fine in a tight loop over a large expression.
+Rem AlgSimplify first Ã¢â‚¬â€ often a large reduction Ã¢â‚¬â€ and past that, this
+Rem machine is for symbolic work and eng is for numeric work.
+
+Def AlgToFn(e As AlgEx, var As String) As [ Number -- Number ]
+    Fn(x) => AlgEvalAt(e, var, x)
+
+Def AlgToFn2(e As AlgEx, v1 As String, v2 As String) As [ Number Number -- Number ]
+    Fn(x, y) => AlgEvalWith(e, { v1, v2 }, { x, y })
+
+Rem ---- expansion -------------------------------------------------------
+Rem Total: every product of sums can be distributed. Exponential, though,
+Rem and it will be the first thing to blow up Ã¢â‚¬â€ (a+b+c+d)^15 is 816 terms,
+Rem each a product of four powers, with the sort comparing them pairwise.
+Rem AlgExpandPow refuses above AlgMaxExpand rather than attempting it,
+Rem because the failure mode otherwise is a mill that never returns.
+
+Def AlgCross(acc As List Of AlgEx, f As AlgEx) As List Of AlgEx
+    Flatten(Map(acc, Fn(a) => Map(AlgSumParts(f), Fn(p) => AlgMulOf(a, p))))
+
+Def AlgDistribute(fs As List Of AlgEx) As AlgEx
+    AlgSumOfList(Fold(fs, { AlgOne() }, AlgCross))
+
+Def AlgRepeat(e As AlgEx, n As Number) As List Of AlgEx
+    Map(Range(1, n), Fn(k) => e)
+
+Def AlgIsSumL(e As AlgEx) As Boolean
+    Select Case e
+        Case AlgSum(ts)
+            True
+        Case Else
+            False
+
+Def AlgExpandPowRaw(b As AlgEx, x As AlgEx) As AlgEx
+    If AlgIsSumL(b) And AlgIsInt(x) And AlgNumOf(x) > 1 Then
+        If AlgNumOf(x) > AlgMaxExpand() Then
+            Error("ALGEXPANDPOW: EXPONENT ABOVE " & Str(AlgMaxExpand()) & " - THAT WOULD NOT RETURN")
+        Else
+            AlgDistribute(AlgRepeat(b, AlgNumOf(x)))
+    Else
+        AlgPowOf(b, x)
+
+Def AlgExpandRaw(e As AlgEx) As AlgEx
+    Select Case e
+        Case AlgNum(n, d)
+            e
+        Case AlgVar(v)
+            e
+        Case AlgSum(ts)
+            AlgSumOfList(Map(ts, AlgExpandRaw))
+        Case AlgProd(fs)
+            AlgDistribute(Map(fs, AlgExpandRaw))
+        Case AlgPow(b, x)
+            AlgExpandPowRaw(AlgExpandRaw(b), x)
+        Case AlgCall(f, a)
+            AlgCallOf(f, AlgExpandRaw(a))
+        Case Else
+            e
+
+Def AlgExpand(e As AlgEx) As AlgEx
+    AlgSimplify(AlgExpandRaw(e))
+
+Def AlgExpandPow(e As AlgEx) As AlgEx
+    AlgExpand(e)
+
+Rem ---- polynomials -----------------------------------------------------
+Rem Degree of one term in one variable, or -1 when the term is not
+Rem polynomial in it Ã¢â‚¬â€ a call holding the variable, or a negative or
+Rem fractional exponent.
+
+Def AlgTermDeg(e As AlgEx, var As String) As Number
+    Select Case e
+        Case AlgNum(n, d)
+            0
+        Case AlgVar(v)
+            Ifte(v = var, 1, 0)
+        Case AlgPow(b, x)
+            AlgPowDeg(b, x, var)
+        Case AlgProd(fs)
+            AlgSumDegs(Map(fs, Fn(f) => AlgTermDeg(f, var)))
+        Case AlgCall(f, a)
+            Ifte(AlgHasVar(a, var), 0 - 1, 0)
+        Case AlgSum(ts)
+            AlgSumDegs2(Map(ts, Fn(t) => AlgTermDeg(t, var)))
+        Case Else
+            0 - 1
+
+Def AlgPowDeg(b As AlgEx, x As AlgEx, var As String) As Number
+    If Not AlgHasVar(b, var) Then
+        Ifte(AlgHasVar(x, var), 0 - 1, 0)
+    Else
+        If AlgIsInt(x) And AlgNumOf(x) >= 0 Then
+            AlgTermDeg(b, var) * AlgNumOf(x)
+        Else
+            0 - 1
+
+Rem Any -1 poisons the whole term, which is the point: "not a polynomial"
+Rem is not a degree.
+Def AlgSumDegs(ds As List Of Number) As Number
+    If Any(ds, Fn(d) => d < 0) Then
+        0 - 1
+    Else
+        Fold(ds, 0, Fn(a, b) => a + b)
+
+Def AlgSumDegs2(ds As List Of Number) As Number
+    If Any(ds, Fn(d) => d < 0) Then
+        0 - 1
+    Else
+        Fold(ds, 0, Fn(a, b) => Max(a, b))
+
+Def AlgPolyDegree(e As AlgEx, var As String) As Number
+    AlgTermDeg(AlgExpand(e), var)
+
+Def AlgIsPoly(e As AlgEx, var As String) As Boolean
+    AlgPolyDegree(e, var) >= 0
+
+Rem The coefficient of var^k: take the terms of the expanded form whose
+Rem degree in var is k, divide each by var^k Ã¢â‚¬â€ which the simplifier does
+Rem by collecting exponents Ã¢â‚¬â€ and sum them. What comes back is free of
+Rem var, or the input was not a polynomial.
+Def AlgCoeffAt(e As AlgEx, var As String, k As Number) As AlgEx
+    Let ex = AlgExpand(e)
+    Let ts = AlgSumParts(ex)
+    Let hit = Filter(ts, Fn(t) => AlgTermDeg(t, var) = k)
+    AlgSimplify(AlgSumOfList(
+        Map(hit, Fn(t) => AlgDivOf(t, AlgPowOf(AlgVarOf(var), AlgRat(k, 1))))))
+
+Def AlgPolyCoeffs(e As AlgEx, var As String) As Result
+    Let dg = AlgPolyDegree(e, var)
+    If dg < 0 Then
+        Err("NOT A POLYNOMIAL IN " & var, 0)
+    Else
+        Ok(AlgFromList(Map(Range(0, dg), Fn(k) => AlgCoeffAt(e, var, k))))
+
+Rem Coefficients travel lowest power first, so index k is the coefficient
+Rem of var^k with no arithmetic at the call site. They are carried inside
+Rem an AlgSum purely so the Result has one AlgEx to hold; AlgCoeffList
+Rem takes them back out.
+Def AlgFromList(xs As List Of AlgEx) As AlgEx
+    AlgSum(xs)
+
+Def AlgCoeffList(e As AlgEx) As List Of AlgEx
+    Select Case e
+        Case AlgSum(ts)
+            ts
+        Case Else
+            { e }
+
+Def AlgFromCoeffs(cs As List Of AlgEx, var As String) As AlgEx
+    AlgSimplify(AlgSumOfList(
+        Map(Range(1, Length(cs)),
+            Fn(k) => AlgMulOf(Nth(cs, k),
+                              AlgPowOf(AlgVarOf(var), AlgRat(k - 1, 1))))))
+
+Rem ---- common factor ---------------------------------------------------
+
+Def AlgCommonFactor(e As AlgEx) As AlgEx
+    Select Case e
+        Case AlgSum(ts)
+            AlgPullCommon(ts)
+        Case Else
+            AlgSimplify(e)
+
+Def AlgPullCommon(ts As List Of AlgEx) As AlgEx
+    Let g = Fold(Map(ts, Fn(t) => Abs(AlgNumOf(AlgCoeffOf(t)))), 0,
+                 Fn(a, b) => AlgGcd(a, b))
+    If g <= 1 Then
+        AlgSimplify(AlgSum(ts))
+    Else
+        AlgMulOf(AlgRat(g, 1),
+                 AlgSumOfList(Map(ts, Fn(t) => AlgDivOf(t, AlgRat(g, 1)))))
+
+Rem ---- polynomial division ---------------------------------------------
+Rem Long division over coefficient lists. Lowest power first everywhere in
+Rem the public surface; this works highest-first internally because that
+Rem is the direction division runs, and reverses at both ends.
+
+Def AlgRevL(xs As List Of AlgEx) As List Of AlgEx
+    Reverse(xs)
+
+Def AlgTrimHi(cs As List Of AlgEx) As List Of AlgEx
+    If Length(cs) <= 1 Then
+        cs
+    Else
+        If AlgIsZero(AlgSimplify(First(cs))) Then
+            AlgTrimHi(Rest(cs))
+        Else
+            cs
+
+Rem One step: subtract f * divisor * x^shift from the remainder.
+Rem The accumulator is named left, not rem: Rem opens a comment, and a
+Rem parameter of that name takes the rest of the line with it.
+Def AlgDivStep(left As List Of AlgEx, dv As List Of AlgEx, f As AlgEx) As List Of AlgEx
+    Let sub = Map(Range(1, Length(left)),
+                  Fn(i) => Ifte(i <= Length(dv),
+                                AlgSimplify(AlgSubOf(Nth(left, i),
+                                                     AlgMulOf(f, Nth(dv, Min(i, Length(dv)))))),
+                                Nth(left, i)))
+    Rest(sub)
+
+Def AlgDivGo(left As List Of AlgEx, dv As List Of AlgEx, quo As List Of AlgEx,
+             k As Number) As List Of AlgEx
+    If k <= 0 Or Length(left) < Length(dv) Then
+        quo
+    Else
+        Let f = AlgSimplify(AlgDivOf(First(left), First(dv)))
+        AlgDivGo(AlgDivStep(left, dv, f), dv, Append(quo, f), k - 1)
+
+Rem The quotient and the remainder come from one walk; two words expose
+Rem them so a caller never has to unpack a pair.
+Def AlgDivParts(a As AlgEx, b As AlgEx, var As String) As Result
+    Select Case AlgPolyCoeffs(a, var)
+        Case Ok(ac)
+            AlgDivParts2(AlgCoeffList(ac), b, var)
+        Case Err(w, t)
+            Err(w, t)
+        Case Else
+            Err("UNREACHABLE", 0)
+
+Def AlgDivParts2(acs As List Of AlgEx, b As AlgEx, var As String) As Result
+    Select Case AlgPolyCoeffs(b, var)
+        Case Ok(bc)
+            AlgDivParts3(acs, AlgCoeffList(bc), var)
+        Case Err(w, t)
+            Err(w, t)
+        Case Else
+            Err("UNREACHABLE", 0)
+
+Def AlgDivParts3(acs As List Of AlgEx, bcs As List Of AlgEx, var As String) As Result
+    Let ah = AlgTrimHi(AlgRevL(acs))
+    Let bh = AlgTrimHi(AlgRevL(bcs))
+    If AlgIsZero(AlgSimplify(First(bh))) Then
+        Err("DIVISION BY THE ZERO POLYNOMIAL", 0)
+    Else
+        If Length(ah) < Length(bh) Then
+            Ok(AlgSum({ AlgZero(), AlgFromCoeffs(acs, var) }))
+        Else
+            Let n = Length(ah) - Length(bh) + 1
+            Let q = AlgDivGo(ah, bh, { }, n)
+            Let qs = Taken(q, n)
+            Let rm = AlgSubOf(AlgFromCoeffs(acs, var),
+                              AlgMulOf(AlgFromCoeffs(AlgRevL(qs), var),
+                                       AlgFromCoeffs(bcs, var)))
+            Ok(AlgSum({ AlgFromCoeffs(AlgRevL(qs), var), AlgExpand(rm) }))
+
+Def AlgPolyDivide(a As AlgEx, b As AlgEx, var As String) As Result
+    Select Case AlgDivParts(a, b, var)
+        Case Ok(p)
+            Ok(Nth(AlgCoeffList(p), 1))
+        Case Err(w, t)
+            Err(w, t)
+        Case Else
+            Err("UNREACHABLE", 0)
+
+Def AlgPolyRem(a As AlgEx, b As AlgEx, var As String) As Result
+    Select Case AlgDivParts(a, b, var)
+        Case Ok(p)
+            Ok(Nth(AlgCoeffList(p), 2))
+        Case Err(w, t)
+            Err(w, t)
+        Case Else
+            Err("UNREACHABLE", 0)
+
+Rem ---- factorisation ---------------------------------------------------
+Rem UNIVARIATE OVER THE RATIONALS, and it says so. The method is the
+Rem rational root theorem: clear denominators, then test +/- (divisors of
+Rem the constant term) over (divisors of the leading coefficient), and
+Rem divide out each root that lands. What is left when the rational roots
+Rem are gone comes back as one factor whether it is irreducible or not.
+Rem
+Rem Multivariate factorisation, factorisation over the reals or complexes,
+Rem and anything needing Berlekamp or Zassenhaus are out of scope. Err
+Rem with a reason is the CORRECT answer for x^2 + 1 Ã¢â‚¬â€ there is no rational
+Rem factorisation Ã¢â‚¬â€ and the reason must say so rather than "FAILED",
+Rem because those are different facts and only one is about the input.
+
+Def AlgDivisorsOf(n As Number) As List Of Number
+    Filter(Range(1, Max(Abs(n), 1)), Fn(k) => Abs(n) Mod k = 0)
+
+Def AlgLcmL(a As Number, b As Number) As Number
+    Ifte(a = 0 Or b = 0, 1, Abs(a * b) / AlgGcd(a, b))
+
+Rem Clear the denominators of a coefficient list, so the rational root
+Rem theorem has integers to work with.
+Def AlgClearDen(cs As List Of AlgEx) As List Of AlgEx
+    Let m = Fold(Map(cs, AlgDenOf), 1, AlgLcmL)
+    Map(cs, Fn(c) => AlgSimplify(AlgMulOf(c, AlgRat(m, 1))))
+
+Def AlgPolyAt(cs As List Of AlgEx, x As AlgEx) As AlgEx
+    AlgSimplify(AlgSumOfList(
+        Map(Range(1, Length(cs)),
+            Fn(k) => AlgMulOf(Nth(cs, k), AlgPowOf(x, AlgRat(k - 1, 1))))))
+
+Def AlgRootCands(cs As List Of AlgEx) As List Of AlgEx
+    Let c0 = AlgNumOf(Nth(cs, 1))
+    Let cn = AlgNumOf(Nth(cs, Length(cs)))
+    Let ps = AlgDivisorsOf(Ifte(c0 = 0, 1, c0))
+    Let qs = AlgDivisorsOf(cn)
+    Flatten(Map(ps, Fn(p) => Flatten(Map(qs, Fn(q) => { AlgRat(p, q), AlgRat(0 - p, q) }))))
+
+Def AlgFindRoot(cs As List Of AlgEx, cands As List Of AlgEx, k As Number) As Number
+    If k > Length(cands) Then
+        0
+    Else
+        If AlgIsZero(AlgPolyAt(cs, Nth(cands, k))) Then
+            k
+        Else
+            AlgFindRoot(cs, cands, k + 1)
+
+Rem Peel one rational root at a time, accumulating (var - root) factors.
+Def AlgFactorGo(e As AlgEx, var As String, acc As List Of AlgEx, k As Number) As List Of AlgEx
+    If k <= 0 Then
+        Append(acc, e)
+    Else
+        Select Case AlgPolyCoeffs(e, var)
+            Case Ok(cl)
+                AlgFactorGo2(e, var, acc, k, AlgClearDen(AlgCoeffList(cl)))
+            Case Else
+                Append(acc, e)
+
+Def AlgFactorGo2(e As AlgEx, var As String, acc As List Of AlgEx, k As Number,
+                 cs As List Of AlgEx) As List Of AlgEx
+    If Length(cs) < 2 Then
+        Append(acc, e)
+    Else
+        Let cands = AlgRootCands(cs)
+        Let hit = AlgFindRoot(cs, cands, 1)
+        If hit = 0 Then
+            Append(acc, e)
+        Else
+            Let r = Nth(cands, hit)
+            Let lin = AlgSubOf(AlgVarOf(var), r)
+            Select Case AlgPolyDivide(e, lin, var)
+                Case Ok(q)
+                    AlgFactorGo(q, var, Append(acc, lin), k - 1)
+                Case Else
+                    Append(acc, e)
+
+Def AlgFactor(e As AlgEx, var As String) As Result
+    If Not AlgIsPoly(e, var) Then
+        Err("NOT A POLYNOMIAL IN " & var, 0)
+    Else
+        Let dg = AlgPolyDegree(e, var)
+        If dg < 1 Then
+            Err("A CONSTANT HAS NOTHING TO FACTOR", 0)
+        Else
+            Let fs = AlgFactorGo(AlgExpand(e), var, { }, dg)
+            If Length(fs) < 2 Then
+                Err("IRREDUCIBLE OVER THE RATIONALS", 0)
+            Else
+                Ok(AlgProdOfList(fs))
+
+Rem ---- partial fractions -----------------------------------------------
+Rem DISTINCT LINEAR FACTORS ONLY, by the cover-up rule: for a denominator
+Rem that factors into distinct (x - r), the coefficient over (x - r) is
+Rem N(r) / D'(r). Repeated linear factors and irreducible quadratics
+Rem return Err rather than a guess, and the Rem says which cases are
+Rem covered because a caller needs to know before they try.
+
+Rem Numerator and denominator, in that order. A bare negative power needs
+Rem its own case: 1/(x^2-1) simplifies to AlgPow(sum, -1) with no product
+Rem around it, so matching only on AlgProd reports it as having no
+Rem denominator at all. An Ifte would not do here — it runs a List branch
+Rem rather than returning it.
+Def AlgSplitFrac(e As AlgEx) As List Of AlgEx
+    Select Case e
+        Case AlgProd(fs)
+            { AlgProdOfList(Filter(fs, Fn(f) => Not AlgIsDenom(f))),
+              AlgProdOfList(Map(Filter(fs, AlgIsDenom), AlgFlipPow)) }
+        Case AlgPow(b, x)
+            If AlgIsDenom(e) Then
+                { AlgOne(), AlgFlipPow(e) }
+            Else
+                { e, AlgOne() }
+        Case Else
+            { e, AlgOne() }
+
+Def AlgDistinctRoots(rs As List Of AlgEx) As Boolean
+    All(Range(1, Length(rs)),
+        Fn(i) => All(Range(1, Length(rs)),
+                     Fn(j) => i = j Or AlgCompare(Nth(rs, i), Nth(rs, j)) <> 0))
+
+Def AlgLinRootsGo(fs As List Of AlgEx, var As String) As List Of AlgEx
+    Map(fs, Fn(f) => AlgSimplify(AlgNegOf(AlgCoeffAt(f, var, 0))))
+
+Def AlgPartFrac(e As AlgEx, var As String) As Result
+    Let parts = AlgSplitFrac(AlgSimplify(e))
+    Let nu = Nth(parts, 1)
+    Let de = Nth(parts, 2)
+    If AlgIsOne(de) Then
+        Err("NOT A FRACTION IN " & var, 0)
+    Else
+        If AlgPolyDegree(nu, var) >= AlgPolyDegree(de, var) Then
+            Err("IMPROPER FRACTION - DIVIDE FIRST WITH ALGPOLYDIVIDE", 0)
+        Else
+            Select Case AlgFactor(de, var)
+                Case Ok(fp)
+                    AlgPartFrac2(nu, de, fp, var)
+                Case Err(w, t)
+                    Err("DENOMINATOR DOES NOT FACTOR OVER THE RATIONALS", 0)
+                Case Else
+                    Err("UNREACHABLE", 0)
+
+Rem A repeated factor arrives as a POWER, because the simplifier collects
+Rem (x-1)*(x-1) into (x-1)^2 — so the two uncovered cases are told apart
+Rem by shape, and each says which it is rather than sharing one vague
+Rem message.
+Def AlgIsLinPow(f As AlgEx, var As String) As Boolean
+    Select Case f
+        Case AlgPow(b, x)
+            AlgPolyDegree(b, var) = 1 And AlgIsInt(x) And AlgNumOf(x) > 1
+        Case Else
+            False
+
+Def AlgPartFrac2(nu As AlgEx, de As AlgEx, fp As AlgEx, var As String) As Result
+    Let fs = AlgProdParts(fp)
+    If Any(fs, Fn(f) => AlgIsLinPow(f, var)) Then
+        Err("REPEATED LINEAR FACTORS ARE NOT COVERED", 0)
+    Else
+        If Not All(fs, Fn(f) => AlgPolyDegree(f, var) = 1) Then
+            Err("ONLY LINEAR FACTORS ARE COVERED", 0)
+        Else
+            AlgPartFrac3(nu, de, fs, var)
+
+Rem The cover-up rule: over a denominator of distinct (x - r), the
+Rem coefficient on 1/(x - r) is N(r) / D'(r).
+Def AlgPartFrac3(nu As AlgEx, de As AlgEx, fs As List Of AlgEx, var As String) As Result
+    Let rs = AlgLinRootsGo(fs, var)
+    If Not AlgDistinctRoots(rs) Then
+        Err("REPEATED LINEAR FACTORS ARE NOT COVERED", 0)
+    Else
+        Let dd = AlgDiff(de, var)
+        Ok(AlgSumOfList(
+            Map(rs, Fn(r) => AlgDivOf(AlgSubst(nu, var, r),
+                                      AlgMulOf(AlgSubst(dd, var, r),
+                                               AlgSubOf(AlgVarOf(var), r))))))
+
+Rem Put a sum of fractions over one denominator — the inverse of
+Rem AlgPartFrac, and the word the canonical form cannot supply on its own.
+Rem The simplifier collects like BASES, so (1 + x)^-1 and (-2 - 2*x)^-1
+Rem are different bases to it even though one is a multiple of the other;
+Rem that is why a decomposition does not simplify back to what it came
+Rem from without this step. Both halves come back expanded.
+Def AlgNumerOf(t As AlgEx) As AlgEx
+    Nth(AlgSplitFrac(t), 1)
+
+Def AlgDenomOf(t As AlgEx) As AlgEx
+    Nth(AlgSplitFrac(t), 2)
+
+Def AlgTogether(e As AlgEx) As AlgEx
+    Select Case AlgSimplify(e)
+        Case AlgSum(ts)
+            AlgTogether2(ts)
+        Case Else
+            AlgSimplify(e)
+
+Def AlgTogether2(ts As List Of AlgEx) As AlgEx
+    Let den = AlgProdOfList(Map(ts, AlgDenomOf))
+    Let nums = Map(ts, Fn(t) => AlgMulOf(AlgNumerOf(t),
+                                         AlgDivOf(den, AlgDenomOf(t))))
+    AlgDivOf(AlgExpand(AlgSumOfList(nums)), AlgExpand(den))
+
+Rem ---- limits ----------------------------------------------------------
+Rem Substitute; if it is finite, that is the limit. If it is 0/0 and the
+Rem expression is a quotient, apply L'Hopital a bounded number of times.
+Rem
+Rem THIS IS THE HONEST 80%: no series expansion, no one-sided limits,
+Rem nothing that reasons about the sign of an approach. sin(x)/x at 0 and
+Rem (x^2-1)/(x-1) at 1 both work, which is what was asked for.
+Rem abs(x)/x at 0 correctly returns Err rather than picking a side.
+
+Def AlgSafeEval(e As AlgEx, var As String, at As AlgEx) As Result
+    Let s = AlgSubst(e, var, at)
+    If AlgHasVar(s, var) Then
+        Err("SUBSTITUTION LEFT THE VARIABLE BEHIND", 0)
+    Else
+        Ok(s)
+
+Def AlgLimGo(nu As AlgEx, de As AlgEx, var As String, at As AlgEx, k As Number) As Result
+    If k <= 0 Then
+        Err("L'HOPITAL DID NOT RESOLVE THE LIMIT IN THE ALLOWED STEPS", 0)
+    Else
+        Let n0 = AlgSubst(nu, var, at)
+        Let d0 = AlgSubst(de, var, at)
+        If AlgIsZero(d0) And AlgIsZero(n0) Then
+            AlgLimGo(AlgDiff(nu, var), AlgDiff(de, var), var, at, k - 1)
+        Else
+            If AlgIsZero(d0) Then
+                Err("THE LIMIT IS UNBOUNDED", 0)
+            Else
+                Ok(AlgSimplify(AlgDivOf(n0, d0)))
+
+Rem abs has a corner, and its derivative x/abs(x) is undefined exactly
+Rem there — so L'Hopital walks straight into it and the zero-annihilation
+Rem rule turns the undefined into a confident 0. abs(x)/x at 0 came back
+Rem as 0 before this check, which is a plausible wrong answer and the one
+Rem thing this machine must not produce. A limit that needs the SIGN of
+Rem the approach is refused, because that is the honest answer and this
+Rem method has no way to reach it.
+Def AlgHasKink(e As AlgEx, var As String, at As AlgEx) As Boolean
+    Select Case e
+        Case AlgCall(f, a)
+            (f = "abs" And AlgIsZero(AlgSubst(a, var, at))) Or AlgHasKink(a, var, at)
+        Case AlgSum(ts)
+            Any(ts, Fn(t) => AlgHasKink(t, var, at))
+        Case AlgProd(fs)
+            Any(fs, Fn(f) => AlgHasKink(f, var, at))
+        Case AlgPow(b, x)
+            AlgHasKink(b, var, at) Or AlgHasKink(x, var, at)
+        Case Else
+            False
+
+Def AlgLimit(e As AlgEx, var As String, at As AlgEx) As Result
+    Let s = AlgSimplify(e)
+    If AlgHasKink(s, var, at) Then
+        Err("THE LIMIT DEPENDS ON THE SIDE OF THE APPROACH - ABS HAS A CORNER AT THE POINT", 0)
+    Else
+        AlgLimit2(s, var, at)
+
+Def AlgLimit2(s As AlgEx, var As String, at As AlgEx) As Result
+    Let parts = AlgSplitFrac(s)
+    Let nu = Nth(parts, 1)
+    Let de = Nth(parts, 2)
+    If AlgIsOne(de) Then
+        AlgSafeEval(s, var, at)
+    Else
+        AlgLimGo(nu, de, var, at, 8)
+
+Rem At infinity, for rational functions only: compare degrees. Anything
+Rem else is an Err rather than a guess.
+Def AlgLimitInf(e As AlgEx, var As String) As Result
+    Let s = AlgSimplify(e)
+    Let parts = AlgSplitFrac(s)
+    Let nu = Nth(parts, 1)
+    Let de = Nth(parts, 2)
+    Let dn = AlgPolyDegree(nu, var)
+    Let dd = AlgPolyDegree(de, var)
+    If dn < 0 Or dd < 0 Then
+        Err("NOT A RATIONAL FUNCTION IN " & var, 0)
+    Else
+        If dn < dd Then
+            Ok(AlgZero())
+        Else
+            If dn > dd Then
+                Err("THE LIMIT IS UNBOUNDED", 0)
+            Else
+                Ok(AlgSimplify(AlgDivOf(AlgCoeffAt(nu, var, dn),
+                                        AlgCoeffAt(de, var, dd))))
+
+Rem ---- integration -----------------------------------------------------
+Rem TABLE-DRIVEN AND BOUNDED, and the boundary is documented rather than
+Rem discovered. AlgIntegRules names its own coverage so a caller can find
+Rem out what will work without reading the source, and so the docs page is
+Rem generated from it rather than drifting from it.
+Rem
+Rem Explicitly NOT implemented: the Risch algorithm, integration by parts,
+Rem general substitution, and anything with a non-elementary
+Rem antiderivative. AlgInteg(exp(x^2)) returns Err naming the non-linear
+Rem argument Ã¢â‚¬â€ the right answer, since no amount of engineering finds an
+Rem elementary antiderivative that does not exist.
+Rem
+Rem The test for this section is differentiation: integrate, differentiate
+Rem the result, and AlgEqual it against the integrand. That catches every
+Rem sign error and every missing factor.
+
+Def AlgIntegRules() As List Of String
+    { "a constant",
+      "x ^ n for n <> -1",
+      "x ^ -1 giving ln(x)",
+      "sin, cos, exp of the variable",
+      "a sum, term by term",
+      "a constant multiple",
+      "f(ax + b) for f in the table, by linear substitution" }
+
+Rem Is the argument linear in var, so f(ax+b) integrates as F(ax+b)/a?
+Def AlgLinCoeff(e As AlgEx, var As String) As Result
+    If AlgPolyDegree(e, var) <> 1 Then
+        Err("NOT LINEAR IN " & var, 0)
+    Else
+        Ok(AlgCoeffAt(e, var, 1))
+
+Def AlgIntegCall(f As String, a As AlgEx, var As String) As Result
+    Select Case AlgLinCoeff(a, var)
+        Case Ok(k)
+            AlgIntegCall2(f, a, k)
+        Case Err(w, t)
+            Err("NO RULE FOR " & Upper(f) & " OF A NON-LINEAR ARGUMENT", 0)
+        Case Else
+            Err("UNREACHABLE", 0)
+
+Def AlgIntegCall2(f As String, a As AlgEx, k As AlgEx) As Result
+    If f = "sin" Then
+        Ok(AlgDivOf(AlgNegOf(AlgCallOf("cos", a)), k))
+    Else
+        If f = "cos" Then
+            Ok(AlgDivOf(AlgCallOf("sin", a), k))
+        Else
+            If f = "exp" Then
+                Ok(AlgDivOf(AlgCallOf("exp", a), k))
+            Else
+                Err("NO RULE FOR " & Upper(f) & " IN THE INTEGRAL TABLE", 0)
+
+Def AlgIntegPow(b As AlgEx, x As AlgEx, var As String) As Result
+    If Not AlgIsConst(x, var) Then
+        Err("NO RULE FOR A VARIABLE EXPONENT", 0)
+    Else
+        Select Case AlgLinCoeff(b, var)
+            Case Ok(k)
+                AlgIntegPow2(b, x, k)
+            Case Err(w, t)
+                Err("NO RULE FOR A POWER OF A NON-LINEAR BASE", 0)
+            Case Else
+                Err("UNREACHABLE", 0)
+
+Def AlgIntegPow2(b As AlgEx, x As AlgEx, k As AlgEx) As Result
+    If AlgIsNum(x) And AlgCompare(x, AlgMinusOne()) = 0 Then
+        Ok(AlgDivOf(AlgCallOf("ln", b), k))
+    Else
+        Ok(AlgDivOf(AlgDivOf(AlgPowOf(b, AlgAddOf(x, AlgOne())),
+                             AlgAddOf(x, AlgOne())), k))
+
+Def AlgIntegRaw(e As AlgEx, var As String) As Result
+    If AlgIsConst(e, var) Then
+        Ok(AlgMulOf(e, AlgVarOf(var)))
+    Else
+        Select Case e
+            Case AlgVar(v)
+                Ok(AlgDivOf(AlgPowOf(AlgVarOf(var), AlgRat(2, 1)), AlgRat(2, 1)))
+            Case AlgSum(ts)
+                AlgIntegSum(ts, var)
+            Case AlgProd(fs)
+                AlgIntegProd(fs, var)
+            Case AlgPow(b, x)
+                AlgIntegPow(b, x, var)
+            Case AlgCall(f, a)
+                AlgIntegCall(f, a, var)
+            Case Else
+                Err("NO RULE FOR THIS SHAPE", 0)
+
+Def AlgIntegSum(ts As List Of AlgEx, var As String) As Result
+    Let rs = Map(ts, Fn(t) => AlgIntegRaw(t, var))
+    If Any(rs, AlgIsErrL) Then
+        Nth(Filter(rs, AlgIsErrL), 1)
+    Else
+        Ok(AlgSumOfList(Map(rs, AlgOkOf)))
+
+Def AlgIsErrL(r As Result) As Boolean
+    Select Case r
+        Case Err(w, a)
+            True
+        Case Else
+            False
+
+Rem The Ok payload, for a caller who has already matched or a test that
+Rem knows the answer. Errors on an Err, which is right for both.
+Def AlgOkOf(r As Result) As AlgEx
+    Select Case r
+        Case Ok(e)
+            e
+        Case Err(w, a)
+            Error("ALGOKOF: " & w)
+        Case Else
+            Error("ALGOKOF: NOT A RESULT")
+
+Def AlgWhyOf(r As Result) As String
+    Select Case r
+        Case Err(w, a)
+            w
+        Case Else
+            ""
+
+Rem Did a partial word refuse? Remember that a refusal here is usually an
+Rem ANSWER — "irreducible over the rationals" is a fact about the
+Rem polynomial — so this reads as "is the answer a boundary" more often
+Rem than "did something break".
+Def AlgIsErr(r As Result) As Boolean
+    AlgIsErrL(r)
+
+Rem The position an Err carries: a 1-based token offset from the parser,
+Rem and 0 from a rule boundary, which has no position to give.
+Def AlgAtOf(r As Result) As Number
+    Select Case r
+        Case Err(w, a)
+            a
+        Case Else
+            0
+
+Rem The invariant, exposed so the tests can assert it across a corpus: no
+Rem sum and no product may ever hold fewer than two elements. An invariant
+Rem that only holds sometimes is worse than none.
+Def AlgTwoOrMore(e As AlgEx) As Boolean
+    Select Case e
+        Case AlgSum(ts)
+            Length(ts) >= 2 And All(ts, AlgTwoOrMore)
+        Case AlgProd(fs)
+            Length(fs) >= 2 And All(fs, AlgTwoOrMore)
+        Case AlgPow(b, x)
+            AlgTwoOrMore(b) And AlgTwoOrMore(x)
+        Case AlgCall(f, a)
+            AlgTwoOrMore(a)
+        Case Else
+            True
+
+Rem The constant-multiple rule: pull the factors free of var out front,
+Rem and integrate what is left. Anything else in a product is beyond the
+Rem table.
+Def AlgIntegProd(fs As List Of AlgEx, var As String) As Result
+    Let ks = Filter(fs, Fn(f) => AlgIsConst(f, var))
+    Let rest = Filter(fs, Fn(f) => Not AlgIsConst(f, var))
+    If IsEmpty(ks) Then
+        Err("NO RULE FOR A PRODUCT OF TERMS THAT ALL HOLD " & var, 0)
+    Else
+        Select Case AlgIntegRaw(AlgProdOfList(rest), var)
+            Case Ok(i)
+                Ok(AlgMulOf(AlgProdOfList(ks), i))
+            Case Err(w, t)
+                Err(w, t)
+            Case Else
+                Err("UNREACHABLE", 0)
+
+Def AlgInteg(e As AlgEx, var As String) As Result
+    Select Case AlgIntegRaw(AlgSimplify(e), var)
+        Case Ok(i)
+            Ok(AlgSimplify(i))
+        Case Err(w, t)
+            Err(w, t)
+        Case Else
+            Err("UNREACHABLE", 0)
+
+Def AlgIntegDef(e As AlgEx, var As String, a As AlgEx, b As AlgEx) As Result
+    Select Case AlgInteg(e, var)
+        Case Ok(i)
+            Ok(AlgSimplify(AlgSubOf(AlgSubst(i, var, b), AlgSubst(i, var, a))))
+        Case Err(w, t)
+            Err(w, t)
+        Case Else
+            Err("UNREACHABLE", 0)
+
+Rem ---- solving ---------------------------------------------------------
+Rem Ok({ }) means the equation genuinely has no solutions of the kind this
+Rem machine finds; Err means no method applied. Those are different facts
+Rem and a caller can act differently on them, which is why this returns a
+Rem Result holding a list rather than a bare list that conflates them.
+
+Def AlgSolveLinear(e As AlgEx, var As String) As Result
+    If AlgPolyDegree(e, var) <> 1 Then
+        Err("NOT LINEAR IN " & var, 0)
+    Else
+        Ok(AlgSimplify(AlgNegOf(AlgDivOf(AlgCoeffAt(e, var, 0),
+                                         AlgCoeffAt(e, var, 1)))))
+
+Rem Exact, with a symbolic discriminant: sqrt of a rational stays a
+Rem power when it is not a perfect square, which is the whole point of
+Rem exact rationals. x^2 - 2 gives sqrt(2) and -sqrt(2), not 1.414.
+Def AlgSolveQuad(e As AlgEx, var As String) As Result
+    If AlgPolyDegree(e, var) <> 2 Then
+        Err("NOT QUADRATIC IN " & var, 0)
+    Else
+        Let a = AlgCoeffAt(e, var, 2)
+        Let b = AlgCoeffAt(e, var, 1)
+        Let c = AlgCoeffAt(e, var, 0)
+        Let disc = AlgSimplify(AlgSubOf(AlgPowOf(b, AlgRat(2, 1)),
+                                        AlgProdOfList({ AlgRat(4, 1), a, c })))
+        If AlgIsNum(disc) And AlgToNumber(disc) < 0 Then
+            Ok({ })
+        Else
+            Let rt = AlgSqrtOf(disc)
+            Let two = AlgMulOf(AlgRat(2, 1), a)
+            Ok({ AlgSimplify(AlgDivOf(AlgAddOf(AlgNegOf(b), rt), two)),
+                 AlgSimplify(AlgDivOf(AlgSubOf(AlgNegOf(b), rt), two)) })
+
+Def AlgSolve(e As AlgEx, var As String) As Result
+    Let dg = AlgPolyDegree(e, var)
+    If dg < 0 Then
+        Err("NOT A POLYNOMIAL IN " & var & " - NO METHOD", 0)
+    Else
+        If dg = 0 Then
+            Ok({ })
+        Else
+            If dg = 1 Then
+                AlgSolveLin1(e, var)
+            Else
+                If dg = 2 Then
+                    AlgSolveQuad(e, var)
+                Else
+                    AlgSolveHigh(e, var, dg)
+
+Def AlgSolveLin1(e As AlgEx, var As String) As Result
+    Select Case AlgSolveLinear(e, var)
+        Case Ok(r)
+            Ok({ r })
+        Case Err(w, t)
+            Err(w, t)
+        Case Else
+            Err("UNREACHABLE", 0)
+
+Rem Higher degrees go through factorisation and take the roots of whatever
+Rem linear and quadratic factors it found. A quintic with no rational root
+Rem is an Err, not an empty list Ã¢â‚¬â€ the distinction R3.11 exists for.
+Def AlgSolveHigh(e As AlgEx, var As String, dg As Number) As Result
+    Select Case AlgFactor(e, var)
+        Case Ok(fp)
+            Ok(AlgRootsOfFactors(AlgProdParts(fp), var))
+        Case Err(w, t)
+            Err("DEGREE " & Str(dg) & " WITH NO RATIONAL ROOTS - NO METHOD", 0)
+        Case Else
+            Err("UNREACHABLE", 0)
+
+Def AlgRootsOfFactors(fs As List Of AlgEx, var As String) As List Of AlgEx
+    Flatten(Map(fs, Fn(f) => AlgRootsOf1(f, var)))
+
+Def AlgRootsOf1(f As AlgEx, var As String) As List Of AlgEx
+    Let d = AlgPolyDegree(f, var)
+    If d = 1 Then
+        { AlgOkOf(AlgSolveLinear(f, var)) }
+    Else
+        If d = 2 Then
+            AlgListOf(AlgSolveQuad(f, var))
+        Else
+            { }
+
+Def AlgListOf(r As Result) As List Of AlgEx
+    Select Case r
+        Case Ok(xs)
+            xs
+        Case Else
+            { }
+
+Def AlgSolveFor(lhs As AlgEx, rhs As AlgEx, var As String) As Result
+    AlgSolve(AlgSubOf(lhs, rhs), var)
+
+Rem ---- series ----------------------------------------------------------
+Rem Repeated differentiation over the factorials, which are exact
+Rem rationals Ã¢â‚¬â€ so the Maclaurin series of sin is exactly x - x^3/6 +
+Rem x^5/120 and not a decimal approximation of it. That exactness is the
+Rem visible payoff of the rational representation.
+
+Def AlgFactorial(n As Number) As Number
+    If n <= 1 Then
+        1
+    Else
+        n * AlgFactorial(n - 1)
+
+Def AlgTaylorGo(e As AlgEx, var As String, at As AlgEx, n As Number,
+                k As Number, acc As List Of AlgEx) As List Of AlgEx
+    If k > n Then
+        acc
+    Else
+        Let dk = AlgDiffN(e, var, k)
+        Let ck = AlgSubst(dk, var, at)
+        If AlgHasVar(ck, var) Then
+            acc
+        Else
+            AlgTaylorGo(e, var, at, n, k + 1,
+                        Append(acc,
+                               AlgMulOf(AlgDivOf(ck, AlgRat(AlgFactorial(k), 1)),
+                                        AlgPowOf(AlgSubOf(AlgVarOf(var), at),
+                                                 AlgRat(k, 1)))))
+
+Def AlgTaylor(e As AlgEx, var As String, at As AlgEx, n As Number) As Result
+    If n < 0 Then
+        Err("A NEGATIVE ORDER HAS NO SERIES", 0)
+    Else
+        Let ts = AlgTaylorGo(e, var, at, n, 0, { })
+        If Length(ts) < n + 1 Then
+            Err("A DERIVATIVE COULD NOT BE EVALUATED AT THE POINT", 0)
+        Else
+            Ok(AlgSimplify(AlgSumOfList(ts)))
+
+Def AlgMaclaurin(e As AlgEx, var As String, n As Number) As Result
+    AlgTaylor(e, var, AlgZero(), n)
+
+Rem ---- first-order ODEs ------------------------------------------------
+Rem SEPARABLE AND LINEAR ONLY, and both inherit every limit of the
+Rem integrator Ã¢â‚¬â€ an ODE solver on top of a table integrator is exactly as
+Rem capable as the table and no more. The arbitrary constant appears as
+Rem the symbol C. Anything second-order, anything non-linear beyond
+Rem separable, and anything systems-shaped is an Err.
+Rem
+Rem The equation is given as the right-hand side of y' = f(x, y).
+
+Def AlgDeSolve(rhs As AlgEx, y As String, x As String) As Result
+    If Not AlgHasVar(rhs, y) Then
+        AlgDeQuad(rhs, y, x)
+    Else
+        AlgDeSep(rhs, y, x)
+
+Rem y' = f(x): one integration.
+Def AlgDeQuad(rhs As AlgEx, y As String, x As String) As Result
+    Select Case AlgInteg(rhs, x)
+        Case Ok(i)
+            Ok(AlgAddOf(i, AlgVarOf("C")))
+        Case Err(w, t)
+            Err(w, t)
+        Case Else
+            Err("UNREACHABLE", 0)
+
+Rem y' = g(x) * y is the separable case this covers: the solution is
+Rem C * exp(integral of g). A general separable right-hand side needs the
+Rem integral of 1/h(y), which is beyond the table more often than not, so
+Rem it is an honest Err rather than a partial attempt.
+Def AlgDeSep(rhs As AlgEx, y As String, x As String) As Result
+    Let g = AlgSimplify(AlgDivOf(rhs, AlgVarOf(y)))
+    If AlgHasVar(g, y) Then
+        Err("ONLY y' = g(x) AND y' = g(x) * y ARE COVERED", 0)
+    Else
+        Select Case AlgInteg(g, x)
+            Case Ok(i)
+                Ok(AlgMulOf(AlgVarOf("C"), AlgCallOf("exp", i)))
+            Case Err(w, t)
+                Err(w, t)
+            Case Else
+                Err("UNREACHABLE", 0)

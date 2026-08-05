@@ -1,0 +1,452 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem eng.shoddy — test program for machines/eng.shoddy
+Rem
+Rem Assert-driven, in the csvtest.shoddy / fin.shoddy pattern: it prints
+Rem what it is doing, stops at the first failed assertion, and ends with
+Rem ALL ASSERTIONS PASSED when none fail.
+Rem
+Rem Every number here is a KNOWN ANSWER — a textbook figure, an identity,
+Rem or one worked by hand — never a value recorded from a run. A numerics
+Rem library whose tests record its own output tests nothing at all.
+Rem
+Rem This file can only see Eng* words and builtins. eng.shoddy includes
+Rem stats, math, seq and str, and since v1.6.0 those do not bleed through
+Rem to a consumer, so Mean and StartsWith are not in scope here. That is
+Rem the scoping working, and it makes this file a live test of it: if the
+Rem wrapped surface were incomplete, this program would not compile.
+Rem
+Rem The ones that matter most are easy to miss:
+Rem
+Rem   * EngComb(52, 5) must be 2598960 EXACTLY. The factorial form
+Rem     overflows past 2^53 on the way, so an exact answer is what proves
+Rem     the multiplicative form is the one that ran.
+Rem   * EngStdDev and EngStdDevP are checked on the SAME data. They differ
+Rem     by the n-versus-n-1 divisor and nothing else, so a test that used
+Rem     one figure would pass with either word wired to either divisor.
+Rem   * EngCubicReal is checked on both branches. The three-real-root case
+Rem     goes through the trigonometric form and the single-root case
+Rem     through Cardano's radicals; they share no arithmetic.
+Rem   * EngNormalize is checked on a flat list, where the range is zero
+Rem     and the obvious implementation divides by it.
+Rem
+Rem What cannot be tested here: the aborting half of every guard. Shoddy
+Rem has no catchable errors, so EngZeroOf's refusal on a bracket with no
+Rem sign change, EngConvert's on two different quantities, EngAcosh's on
+Rem x < 1, EngIntegrate's on an odd n, EngModInv's on a non-coprime pair
+Rem and EngPolyDiv's on a zero divisor are verified by hand and named
+Rem here instead.
+Rem ==================================================================
+
+Include "../machines/eng.shoddy"
+
+Rem Doubles compare to a tolerance. The answers that must be exact are
+Rem asserted with = and would otherwise hide a real defect behind one.
+Def Close(a As Number, b As Number, tol As Number) As Boolean
+    Abs(a - b) <= tol
+
+Def Main()
+    Print("--- ANGLES ---")
+    Assert(Close(EngRad(180), Pi(), 0.0000000001), "180 DEGREES IS PI RADIANS")
+    Assert(Close(EngDeg(Pi()), 180, 0.0000000001), "AND BACK AGAIN")
+    Assert(Close(EngGradOf(Pi() / 2), 100, 0.0000000001), "A RIGHT ANGLE IS 100 GRADS")
+    Assert(Close(EngFromGrad(100), Pi() / 2, 0.0000000001), "AND BACK AGAIN")
+    Rem 30.5 degrees is 30 degrees and 30 minutes exactly.
+    Assert(Degs(EngDmsOf(30.5)) = 30, "DMS DEGREES")
+    Assert(Mins(EngDmsOf(30.5)) = 30, "DMS MINUTES")
+    Assert(Close(Secs(EngDmsOf(30.5)), 0, 0.0000001), "DMS SECONDS")
+    Assert(Close(EngFromDms(EngDmsOf(30.5)), 30.5, 0.0000000001), "DMS ROUND TRIP")
+    Rem The sign lives on the degrees and must survive the trip back.
+    Assert(Close(EngFromDms(EngDmsOf(0 - 30.5)), 0 - 30.5, 0.0000000001),
+           "AND A NEGATIVE BEARING ROUND TRIPS")
+
+    Print("--- TRIGONOMETRY ---")
+    Assert(Close(EngSec(0), 1, 0.0000000001), "SECANT OF ZERO")
+    Assert(Close(EngCsc(Pi() / 2), 1, 0.0000000001), "COSECANT OF A RIGHT ANGLE")
+    Assert(Close(EngCot(Pi() / 4), 1, 0.0000000001), "COTANGENT OF 45 DEGREES")
+    Assert(Close(EngAsec(2), Pi() / 3, 0.0000000001), "ARCSECANT OF 2 IS 60 DEGREES")
+    Assert(Close(EngAcsc(2), Pi() / 6, 0.0000000001), "ARCCOSECANT OF 2 IS 30 DEGREES")
+    Assert(Close(EngAcot(1), Pi() / 4, 0.0000000001), "ARCCOTANGENT OF 1")
+    Assert(Close(EngHypot(3, 4), 5, 0.0000000001), "THE 3-4-5 TRIANGLE")
+    Assert(Close(EngDistOf(0, 0, 3, 4), 5, 0.0000000001), "AND THE SAME AS A DISTANCE")
+    Assert(Close(EngAngleOf(1, 1), Pi() / 4, 0.0000000001), "DIRECTION OF A DIAGONAL")
+    Assert(Close(EngRectX(2, 0), 2, 0.0000000001), "RECTANGULAR X")
+    Assert(Close(EngRectY(2, Pi() / 2), 2, 0.0000000001), "RECTANGULAR Y")
+    Assert(Close(Mag(EngPolarOf(3, 4)), 5, 0.0000000001), "POLAR MAGNITUDE")
+    Assert(Close(Theta(EngPolarOf(0, 1)), Pi() / 2, 0.0000000001), "POLAR ANGLE")
+
+    Print("--- HYPERBOLICS ---")
+    Assert(Close(EngSinh(0), 0, 0.0000000001), "SINH OF ZERO")
+    Assert(Close(EngCosh(0), 1, 0.0000000001), "COSH OF ZERO")
+    Assert(Close(EngSinh(1), 1.1752011936, 0.0000000001), "SINH OF ONE")
+    Assert(Close(EngCosh(1), 1.5430806348, 0.0000000001), "COSH OF ONE")
+    Assert(Close(EngTanh(1), 0.7615941560, 0.0000000001), "TANH OF ONE")
+    Rem The defining identity, at an argument where both terms are large.
+    Assert(Close(EngCosh(2) * EngCosh(2) - EngSinh(2) * EngSinh(2), 1, 0.0000000001),
+           "COSH SQUARED MINUS SINH SQUARED IS ONE")
+    Assert(Close(EngSech(0), 1, 0.0000000001), "SECH OF ZERO")
+    Assert(Close(EngCsch(1), 0.8509181282, 0.0000000001), "CSCH OF ONE")
+    Assert(Close(EngCoth(1), 1.3130352855, 0.0000000001), "COTH OF ONE")
+    Assert(Close(EngAsinh(1), 0.8813735870, 0.0000000001), "ARSINH OF ONE")
+    Assert(Close(EngAcosh(1), 0, 0.0000000001), "ARCOSH OF ONE IS ZERO")
+    Assert(Close(EngAtanh(0.5), 0.5493061443, 0.0000000001), "ARTANH OF A HALF")
+    Assert(Close(EngAsech(0.5), 1.3169578969, 0.0000000001), "ARSECH OF A HALF")
+    Assert(Close(EngAcsch(1), 0.8813735870, 0.0000000001), "ARCSCH OF ONE")
+    Assert(Close(EngAcoth(2), 0.5493061443, 0.0000000001), "ARCOTH OF TWO")
+
+    Print("--- LOGARITHMS AND ROOTS ---")
+    Assert(Close(EngLog2(8), 3, 0.0000000001), "LOG BASE 2 OF 8")
+    Assert(Close(EngLogBase(10, 1000), 3, 0.0000000001), "LOG BASE 10 OF 1000")
+    Assert(Close(EngLog1p(1), 0.6931471806, 0.0000000001), "LOG1P OF ONE IS LOG 2")
+    Assert(Close(EngExpm1(1), 1.7182818285, 0.0000000001), "EXPM1 OF ONE IS E MINUS 1")
+    Assert(Close(EngExpm1(0), 0, 0.0000000001), "EXPM1 OF ZERO")
+    Rem Near zero the naive forms lose their digits; these must not.
+    Assert(Close(EngLog1p(0.0000000001) * 10000000000, 1, 0.00001),
+           "LOG1P KEEPS ITS DIGITS NEAR ZERO")
+    Assert(Close(EngExpm1(0.0000000001) * 10000000000, 1, 0.00001),
+           "AND SO DOES EXPM1")
+    Assert(Close(EngNthRoot(27, 3), 3, 0.0000000001), "CUBE ROOT OF 27")
+    Rem The case x ^ (1/n) gets wrong.
+    Assert(Close(EngNthRoot(0 - 27, 3), 0 - 3, 0.0000000001),
+           "AND THE CUBE ROOT OF A NEGATIVE")
+    Assert(Close(EngNthRoot(16, 4), 2, 0.0000000001), "FOURTH ROOT OF 16")
+
+    Print("--- COMPLEX NUMBERS ---")
+    Assert(EngCNear(EngCAdd(EngComplex(1, 2), EngComplex(3, 4)), EngComplex(4, 6),
+                    0.0000000001), "COMPLEX ADDITION")
+    Assert(EngCNear(EngCSub(EngComplex(1, 2), EngComplex(3, 4)),
+                    EngComplex(0 - 2, 0 - 2), 0.0000000001), "COMPLEX SUBTRACTION")
+    Rem (1 + 2i)(3 + 4i) = 3 + 4i + 6i + 8i^2 = -5 + 10i.
+    Assert(EngCNear(EngCMul(EngComplex(1, 2), EngComplex(3, 4)),
+                    EngComplex(0 - 5, 10), 0.0000000001), "COMPLEX MULTIPLICATION")
+    Rem (1 + 2i)/(3 + 4i) = (11 + 2i)/25.
+    Assert(EngCNear(EngCDiv(EngComplex(1, 2), EngComplex(3, 4)),
+                    EngComplex(0.44, 0.08), 0.0000000001), "COMPLEX DIVISION")
+    Assert(EngCNear(EngConj(EngComplex(3, 4)), EngComplex(3, 0 - 4), 0.0000000001),
+           "CONJUGATE")
+    Assert(Close(EngCAbs(EngComplex(3, 4)), 5, 0.0000000001), "MODULUS")
+    Assert(Close(EngCArg(EngComplex(1, 1)), Pi() / 4, 0.0000000001), "ARGUMENT")
+    Rem Euler: e^(i pi) + 1 = 0.
+    Assert(EngCNear(EngCExp(EngComplex(0, Pi())), EngComplex(0 - 1, 0), 0.0000000001),
+           "EULERS IDENTITY")
+    Assert(EngCNear(EngCSqrt(EngComplex(0 - 1, 0)), EngComplex(0, 1), 0.0000000001),
+           "THE SQUARE ROOT OF MINUS ONE")
+    Assert(EngCNear(EngCPow(EngComplex(0, 1), 2), EngComplex(0 - 1, 0), 0.0000000001),
+           "I SQUARED IS MINUS ONE")
+    Assert(EngCNear(EngCLog(EngCExp(EngComplex(0.5, 1))), EngComplex(0.5, 1),
+                    0.0000000001), "LOG UNDOES EXP")
+    Assert(Close(Mag(EngCToPolar(EngComplex(3, 4))), 5, 0.0000000001),
+           "COMPLEX TO POLAR")
+    Assert(EngCNear(EngCFromPolar(5, EngCArg(EngComplex(3, 4))), EngComplex(3, 4),
+                    0.0000000001), "AND POLAR TO COMPLEX")
+    Rem = is never the right comparison here, and this says why.
+    Assert((EngCAdd(EngComplex(0.1, 0), EngComplex(0.2, 0)) = EngComplex(0.3, 0)) = False,
+           "STRUCTURAL EQUALITY IS WRONG ON COMPLEX NUMBERS")
+    Assert(EngCNear(EngCAdd(EngComplex(0.1, 0), EngComplex(0.2, 0)), EngComplex(0.3, 0),
+                    0.0000000001), "AND ENGCNEAR IS RIGHT")
+    Rem The zero part is dropped and a negative never prints as "+ -".
+    Assert(EngCShow(EngComplex(5, 0)) = Str(5), "A REAL SHOWS WITHOUT AN I")
+    Assert(EngCShow(EngComplex(0, 2)) = Str(2) & "i", "AN IMAGINARY SHOWS WITHOUT A REAL")
+    Assert(EngCShow(EngComplex(3, 0 - 4)) = Str(3) & " - " & Str(4) & "i",
+           "AND A NEGATIVE IMAGINARY PART SUBTRACTS")
+
+    Print("--- DESCRIPTIVE STATISTICS ---")
+    Assert(Close(EngSum({ 1, 2, 3, 4 }), 10, 0.0000000001), "SUM")
+    Assert(Close(EngMean({ 1, 2, 3, 4 }), 2.5, 0.0000000001), "MEAN")
+    Assert(Close(EngMedian({ 1, 3, 2 }), 2, 0.0000000001), "MEDIAN OF AN ODD COUNT")
+    Assert(Close(EngMedian({ 1, 2, 3, 4 }), 2.5, 0.0000000001), "AND OF AN EVEN COUNT")
+    Rem The same eight numbers to both words. Sample divides by n-1 and
+    Rem population by n; either wired to either divisor passes a test that
+    Rem checks only one.
+    Assert(Close(EngStdDev({ 2, 4, 4, 4, 5, 5, 7, 9 }), 2.1380899353, 0.0000000001),
+           "SAMPLE STANDARD DEVIATION")
+    Assert(Close(EngStdDevP({ 2, 4, 4, 4, 5, 5, 7, 9 }), 2, 0.0000000001),
+           "POPULATION STANDARD DEVIATION ON THE SAME DATA")
+    Assert(Close(EngVar({ 2, 4, 4, 4, 5, 5, 7, 9 }), 4.5714285714, 0.0000000001),
+           "SAMPLE VARIANCE")
+    Assert(Close(EngVarP({ 2, 4, 4, 4, 5, 5, 7, 9 }), 4, 0.0000000001),
+           "POPULATION VARIANCE")
+    Assert(Close(EngQuantile({ 1, 2, 3, 4 }, 0.5), 2.5, 0.0000000001), "THE MEDIAN QUANTILE")
+    Assert(Close(EngMinimum({ 3, 1, 2 }), 1, 0.0000000001), "MINIMUM")
+    Assert(Close(EngMaximum({ 3, 1, 2 }), 3, 0.0000000001), "MAXIMUM")
+    Assert(Close(EngRangeOf({ 1, 5, 3 }), 4, 0.0000000001), "RANGE")
+    Assert(Close(EngSkewness({ 1, 2, 3, 4, 5 }), 0, 0.0000000001),
+           "SYMMETRIC DATA HAS NO SKEW")
+    Assert(Close(EngGeoMean({ 1, 4, 16 }), 4, 0.0000000001), "GEOMETRIC MEAN")
+    Assert(Close(EngWeightedMean({ 1, 2 }, { 1, 3 }), 1.75, 0.0000000001), "WEIGHTED MEAN")
+    Assert(Close(EngCorrel({ 1, 2, 3 }, { 2, 4, 6 }), 1, 0.0000000001),
+           "A PERFECT LINE CORRELATES AT ONE")
+    Assert(Close(EngCov({ 1, 2, 3 }, { 2, 4, 6 }), 2, 0.0000000001), "COVARIANCE")
+    Assert(Close(EngSpearman({ 1, 2, 3 }, { 1, 10, 100 }), 1, 0.0000000001),
+           "SPEARMAN SEES THE RANKS, NOT THE VALUES")
+    Assert(Close(Avg(EngStat1({ 1, 2, 3, 4 })), 2.5, 0.0000000001), "SUMMARY AVERAGE")
+    Assert(Close(Sd(EngStat1({ 1, 2, 3, 4 })), 1.2909944487, 0.0000000001), "SUMMARY SD")
+    Assert(Close(Total(EngStat1({ 1, 2, 3, 4 })), 10, 0.0000000001), "SUMMARY TOTAL")
+
+    Print("--- DISTRIBUTIONS ---")
+    Assert(Close(EngNormPdf(0, 0, 1), 0.3989422804, 0.0000000001), "STANDARD NORMAL PEAK")
+    Rem The density scales by 1/sd, which is the part a z-score-only word
+    Rem leaves to the caller to forget.
+    Assert(Close(EngNormPdf(100, 100, 15), 0.0265961520, 0.0000000001),
+           "AND SCALES WITH THE SPREAD")
+    Assert(Close(EngNormCdf(0, 0, 1), 0.5, 0.000001), "HALF THE NORMAL IS BELOW THE MEAN")
+    Assert(Close(EngNormCdf(1, 0, 1), 0.8413447461, 0.000001), "ONE SIGMA")
+    Assert(Close(EngNormCdf(110, 100, 15), 0.7475074625, 0.000001), "AN IQ OF 110")
+    Assert(Close(EngNormInv(0.975), 1.9599639845, 0.000001), "THE 97.5TH PERCENTILE")
+    Assert(Close(EngTInv(0.975, 10), 2.2281388519, 0.0001), "STUDENT T AT TEN DEGREES")
+    Assert(Close(EngTCdf(EngTInv(0.975, 10), 10), 0.975, 0.0001), "AND ITS CDF UNDOES IT")
+    Assert(Close(EngChi2Cdf(3.8414588207, 1), 0.95, 0.001), "CHI SQUARED AT ONE DEGREE")
+    Assert(Close(EngFCdf(1, 10, 10), 0.5, 0.001), "F IS SYMMETRIC AT ONE WITH EQUAL DEGREES")
+    Assert(Close(EngExpCdf(1, 1), 0.6321205588, 0.0000000001), "EXPONENTIAL CDF")
+
+    Print("--- CURVE FITTING ---")
+    Rem y = 2x + 1, exactly.
+    Assert(Close(Intercept(EngFitOf({ 1, 2, 3, 4 }, { 3, 5, 7, 9 }, EngLinear())), 1,
+                 0.0000000001), "LINEAR INTERCEPT")
+    Assert(Close(Slope(EngFitOf({ 1, 2, 3, 4 }, { 3, 5, 7, 9 }, EngLinear())), 2,
+                 0.0000000001), "LINEAR SLOPE")
+    Assert(Close(RFit(EngFitOf({ 1, 2, 3, 4 }, { 3, 5, 7, 9 }, EngLinear())), 1,
+                 0.0000000001), "AND A PERFECT FIT")
+    Rem y = 3 * 2^x, so the exponential form recovers a = 3 and b = ln 2.
+    Assert(Close(Intercept(EngFitOf({ 0, 1, 2, 3 }, { 3, 6, 12, 24 }, EngExpModel())), 3,
+                 0.0000000001), "EXPONENTIAL COEFFICIENT")
+    Assert(Close(Slope(EngFitOf({ 0, 1, 2, 3 }, { 3, 6, 12, 24 }, EngExpModel())),
+                 0.6931471806, 0.0000000001), "EXPONENTIAL RATE IS LOG 2")
+    Rem y = 2 x^3.
+    Assert(Close(Intercept(EngFitOf({ 1, 2, 3, 4 }, { 2, 16, 54, 128 }, EngPowerModel())),
+                 2, 0.0000000001), "POWER COEFFICIENT")
+    Assert(Close(Slope(EngFitOf({ 1, 2, 3, 4 }, { 2, 16, 54, 128 }, EngPowerModel())), 3,
+                 0.0000000001), "POWER EXPONENT")
+    Rem y = 5 + 2 ln x.
+    Assert(Close(Slope(EngFitOf({ 1, 2, 4, 8 },
+                                { 5, 6.3862943611, 7.7725887222, 9.1588830834 },
+                                EngLogModel())), 2, 0.0000001), "LOGARITHMIC SLOPE")
+
+    Print("--- NUMBER THEORY ---")
+    Assert(EngGcd(48, 18) = 6, "GREATEST COMMON DIVISOR")
+    Assert(EngGcd(0 - 48, 18) = 6, "AND IT IGNORES SIGN")
+    Assert(EngLcm(4, 6) = 12, "LEAST COMMON MULTIPLE")
+    Assert(EngIQuot(17, 5) = 3, "INTEGER QUOTIENT")
+    Assert(EngIRem(17, 5) = 2, "INTEGER REMAINDER")
+    Rem Truncated, not floored: the remainder takes the sign of the
+    Rem dividend, which is what Fix gives and what C gives.
+    Assert(EngIRem(0 - 17, 5) = 0 - 2, "AND A NEGATIVE DIVIDEND TRUNCATES TOWARD ZERO")
+    Assert(EngModPow(2, 10, 1000) = 24, "MODULAR EXPONENTIATION")
+    Rem 3^200 has 96 digits. Only square-and-multiply gets here at all.
+    Assert(EngModPow(3, 200, 50) = 1, "AND AN EXPONENT NO DIRECT POWER COULD REACH")
+    Assert(EngModInv(3, 11) = 4, "MODULAR INVERSE")
+    Assert(EngIsPrime(97), "97 IS PRIME")
+    Assert(Not EngIsPrime(91), "91 IS 7 TIMES 13")
+    Assert(Not EngIsPrime(1), "AND ONE IS NOT PRIME")
+    Assert(Length(EngPrimes(20)) = 8, "EIGHT PRIMES BELOW 20")
+    Assert(EngSum(EngPrimes(20)) = 77, "AND THEY SUM TO 77")
+    Rem 360 = 2 * 2 * 2 * 3 * 3 * 5.
+    Assert(Length(EngFactorize(360)) = 6, "SIX PRIME FACTORS OF 360")
+    Assert(EngSum(EngFactorize(360)) = 17, "AND THEY SUM TO 17")
+    Assert(Length(EngFactorize(97)) = 1, "A PRIME HAS ONE FACTOR")
+    Assert(Length(EngDivisors(28)) = 6, "SIX DIVISORS OF 28")
+    Rem 28 is perfect: its divisors sum to twice itself.
+    Assert(EngSum(EngDivisors(28)) = 56, "AND 28 IS A PERFECT NUMBER")
+    Assert(EngTotient(36) = 12, "EULERS TOTIENT")
+    Assert(EngTotient(97) = 96, "AND A PRIME LEAVES ALL BUT ITSELF")
+
+    Print("--- COMBINATORICS ---")
+    Assert(EngFact(0) = 1, "ZERO FACTORIAL IS ONE")
+    Assert(EngFact(10) = 3628800, "TEN FACTORIAL")
+    Assert(EngFact(18) = 6402373705728000, "AND 18! IS THE LAST EXACT ONE")
+    Assert(EngComb(5, 2) = 10, "FIVE CHOOSE TWO")
+    Rem Exactly, not nearly: the factorial form passes 2^53 en route.
+    Assert(EngComb(52, 5) = 2598960, "AND A POKER HAND IS EXACTLY 2598960")
+    Assert(EngComb(5, 0) = 1, "CHOOSING NOTHING")
+    Assert(EngComb(5, 6) = 0, "AND CHOOSING MORE THAN THERE IS")
+    Assert(EngPerm(5, 2) = 20, "FIVE PERMUTE TWO")
+    Assert(EngPerm(10, 3) = 720, "AND TEN PERMUTE THREE")
+    Assert(EngFib(0) = 0, "THE FIRST FIBONACCI")
+    Assert(EngFib(10) = 55, "AND THE TENTH")
+    Assert(Close(EngGamma(5), 24, 0.0000001), "GAMMA OF 5 IS 4 FACTORIAL")
+    Rem Gamma(1/2) is the square root of pi - the value that shows the
+    Rem function is not just factorials at the whole numbers.
+    Assert(Close(EngGamma(0.5), 1.7724538509, 0.0000001), "GAMMA OF A HALF IS ROOT PI")
+    Assert(Close(EngGammaLn(10), 12.8018274801, 0.0000001), "LOG GAMMA OF 10")
+    Assert(Close(EngBeta(2, 3), 0.0833333333, 0.0000001), "BETA OF 2 AND 3 IS A TWELFTH")
+
+    Print("--- DISCRETE DISTRIBUTIONS ---")
+    Assert(Close(EngBinomPdf(2, 5, 0.5), 0.3125, 0.0000000001), "TWO HEADS IN FIVE TOSSES")
+    Assert(Close(EngBinomCdf(2, 5, 0.5), 0.5, 0.0000000001), "AT MOST TWO IS EVEN MONEY")
+    Assert(Close(EngBinomCdf(5, 5, 0.5), 1, 0.0000000001), "AND THE WHOLE MASS IS ONE")
+    Assert(Close(EngPoissonPdf(0, 2), 0.1353352832, 0.0000000001), "NO ARRIVALS")
+    Assert(Close(EngPoissonPdf(2, 3), 0.2240418077, 0.0000000001), "TWO ARRIVALS AT RATE 3")
+    Assert(Close(EngPoissonCdf(1, 1), 0.7357588823, 0.0000000001), "AT MOST ONE AT RATE 1")
+    Assert(Close(EngGeomPdf(3, 0.5), 0.125, 0.0000000001), "FIRST SUCCESS ON THE THIRD TRY")
+    Assert(Close(EngGeomCdf(3, 0.5), 0.875, 0.0000000001), "WITHIN THREE TRIES")
+    Rem Two aces in a five-card hand: C(4,2) C(48,3) / C(52,5).
+    Assert(Close(EngHyperPdf(2, 5, 4, 52), 0.0399298181, 0.0000000001),
+           "TWO ACES IN A POKER HAND")
+    Assert(Close(EngHyperPdf(5, 5, 4, 52), 0, 0.0000000001),
+           "AND FIVE ACES IS IMPOSSIBLE")
+
+    Print("--- NUMERIC CALCULUS ---")
+    Assert(Close(EngDeriv(Fn(x) => x * x, 3), 6, 0.0000001), "THE DERIVATIVE OF X SQUARED")
+    Assert(Close(EngDeriv(Fn(x) => Sin(x), 0), 1, 0.0000001), "COS ZERO FROM SIN")
+    Assert(Close(EngDeriv2(Fn(x) => x * x * x, 2), 12, 0.0001), "THE SECOND DERIVATIVE OF A CUBE")
+    Rem Simpson is exact for cubics and below, so this must be exact.
+    Assert(Close(EngIntegrate(Fn(x) => x * x, 0, 1, 100), 0.3333333333, 0.0000000001),
+           "THE AREA UNDER X SQUARED")
+    Assert(Close(EngIntegrate(Fn(x) => Sin(x), 0, Pi(), 100), 2, 0.0000001),
+           "THE AREA UNDER A HALF SINE")
+    Rem n = 2 is the smallest legal interval count and takes the weighting
+    Rem path with no interior 2s at all.
+    Assert(Close(EngIntegrate(Fn(x) => x * x, 0, 1, 2), 0.3333333333, 0.0000000001),
+           "AND TWO INTERVALS IS ENOUGH FOR A PARABOLA")
+    Assert(EngSumOf(Fn(i) => i, 1, 100) = 5050, "THE SUM GAUSS DID AT SCHOOL")
+    Assert(EngProdOf(Fn(i) => i, 1, 5) = 120, "AND A PRODUCT IS A FACTORIAL")
+
+    Print("--- ROOTS AND OPTIMISATION ---")
+    Assert(Close(EngZeroOf(Fn(x) => x * x - 2, 0, 2), 1.4142135624, 0.0000000001),
+           "BISECTION FINDS ROOT TWO")
+    Assert(Close(EngNewtonOf(Fn(x) => x * x - 2, 1), 1.4142135624, 0.0000000001),
+           "AND SO DOES NEWTON")
+    Assert(Close(EngZeroOf(Fn(x) => Cos(x) - x, 0, 1), 0.7390851332, 0.0000000001),
+           "THE DOTTIE NUMBER")
+    Assert(Close(EngMinOf(Fn(x) => (x - 3) * (x - 3) + 1, 0, 10), 3, 0.0000001),
+           "THE MINIMUM OF A PARABOLA")
+    Assert(Close(EngMaxOf(Fn(x) => 0 - (x - 3) * (x - 3), 0, 10), 3, 0.0000001),
+           "AND THE MAXIMUM OF ITS REFLECTION")
+
+    Print("--- POLYNOMIALS ---")
+    Rem { 1, 0, -4 } is x^2 - 4, highest power first.
+    Assert(Close(EngPolyEval({ 1, 0, 0 - 4 }, 3), 5, 0.0000000001), "HORNER EVALUATION")
+    Assert(Close(EngPolyEval({ 1, 0, 0 - 4 }, 2), 0, 0.0000000001), "AND TWO IS A ROOT")
+    Assert(EngPolyDegree({ 0, 0, 1, 2 }) = 1, "LEADING ZEROS DO NOT COUNT AS DEGREE")
+    Assert(Close(EngPolyEval(EngPolyAdd({ 1, 2, 3 }, { 4, 5 }), 2), 24, 0.0000000001),
+           "ADDITION ALIGNS ON THE LOWEST POWER")
+    Rem (x^2 + 2x + 3) - (2x + 3) = x^2, which is 4 at x = 2.
+    Assert(Close(EngPolyEval(EngPolySub({ 1, 2, 3 }, { 2, 3 }), 2), 4, 0.0000000001),
+           "SUBTRACTION")
+    Rem And when the leading term cancels, the degree must drop with it.
+    Assert(Length(EngPolySub({ 1, 2, 3 }, { 1, 0, 0 })) = 2, "A CANCELLED LEADING TERM TRIMS")
+    Rem (x + 1)(x - 1) = x^2 - 1, which is 3 at x = 2.
+    Assert(Close(EngPolyEval(EngPolyMul({ 1, 1 }, { 1, 0 - 1 }), 2), 3, 0.0000000001),
+           "MULTIPLICATION")
+    Assert(Length(EngPolyMul({ 1, 1 }, { 1, 0 - 1 })) = 3, "AND THE DEGREES ADD")
+    Assert(Close(EngPolyEval(EngPolyScale({ 1, 2 }, 3), 1), 9, 0.0000000001), "SCALING")
+    Rem (x^2 - 4) / (x - 2) = x + 2, remainder 0.
+    Assert(Close(EngPolyEval(Quotient(EngPolyDiv({ 1, 0, 0 - 4 }, { 1, 0 - 2 })), 1), 3,
+                 0.0000000001), "DIVISION QUOTIENT")
+    Assert(Close(EngPolyEval(Remainder(EngPolyDiv({ 1, 0, 0 - 4 }, { 1, 0 - 2 })), 7), 0,
+                 0.0000000001), "AND AN EXACT DIVISION LEAVES NOTHING")
+    Rem (x^2 + 1) / (x - 1) = x + 1, remainder 2.
+    Assert(Close(EngPolyEval(Remainder(EngPolyDiv({ 1, 0, 1 }, { 1, 0 - 1 })), 7), 2,
+                 0.0000000001), "AND AN INEXACT ONE LEAVES A REMAINDER")
+    Assert(Close(EngPolyEval(EngPolyDeriv({ 1, 0, 0 - 4 }), 3), 6, 0.0000000001),
+           "DIFFERENTIATION")
+    Assert(Close(EngPolyEval(EngPolyIntegral({ 2, 0 }, 0), 3), 9, 0.0000000001),
+           "INTEGRATION")
+    Assert(Close(EngPolyArea({ 3, 0, 0 }, 0, 2), 8, 0.0000000001), "DEFINITE AREA")
+    Rem x^2 - 4 has real roots at 2 and -2.
+    Assert(Close(Re(Nth(EngQuadRoots(1, 0, 0 - 4), 1)), 2, 0.0000000001), "A REAL ROOT")
+    Assert(Close(Im(Nth(EngQuadRoots(1, 0, 0 - 4), 1)), 0, 0.0000000001),
+           "WITH NO IMAGINARY PART")
+    Rem x^2 + 1 has roots at +i and -i, and the word returns complex either
+    Rem way rather than changing its return type.
+    Assert(Close(Im(Nth(EngQuadRoots(1, 0, 1), 1)), 1, 0.0000000001), "AND A COMPLEX ROOT")
+    Assert(Close(Re(Nth(EngQuadRoots(1, 0, 1), 1)), 0, 0.0000000001), "WITH NO REAL PART")
+    Rem (x-1)(x-2)(x-3) = x^3 - 6x^2 + 11x - 6. Three real roots, so this
+    Rem goes through the trigonometric form.
+    Assert(Length(EngCubicReal(1, 0 - 6, 11, 0 - 6)) = 3, "THREE REAL CUBIC ROOTS")
+    Assert(Close(EngSum(EngCubicReal(1, 0 - 6, 11, 0 - 6)), 6, 0.0000001),
+           "AND THEY SUM TO SIX")
+    Rem x^3 - 8 has one real root, reached through Cardano's radicals
+    Rem instead - no arithmetic shared with the branch above.
+    Assert(Length(EngCubicReal(1, 0, 0, 0 - 8)) = 1, "ONE REAL CUBIC ROOT")
+    Assert(Close(Nth(EngCubicReal(1, 0, 0, 0 - 8), 1), 2, 0.0000001), "AND IT IS TWO")
+
+    Print("--- SEQUENCES ---")
+    Assert(Length(EngLinSpace(0, 1, 5)) = 5, "LINSPACE LENGTH")
+    Assert(Close(EngSum(EngLinSpace(0, 1, 5)), 2.5, 0.0000000001), "LINSPACE VALUES")
+    Assert(Close(Nth(EngLinSpace(0, 1, 5), 5), 1, 0.0000000001),
+           "AND IT REACHES THE FAR END EXACTLY")
+    Assert(Close(EngSum(EngGeomSpace(1, 1000, 4)), 1111, 0.0000001), "GEOMETRIC SPACING")
+    Assert(Close(Nth(EngCumSum({ 1, 2, 3 }), 3), 6, 0.0000000001), "RUNNING TOTAL")
+    Assert(Length(EngDiff({ 1, 4, 9, 16 })) = 3, "DIFFERENCES ARE ONE SHORTER")
+    Assert(Close(EngSum(EngDiff({ 1, 4, 9, 16 })), 15, 0.0000000001), "AND THEY TELESCOPE")
+    Assert(Length(EngMovAvg({ 1, 2, 3, 4 }, 2)) = 3, "MOVING AVERAGE LENGTH")
+    Assert(Close(EngSum(EngMovAvg({ 1, 2, 3, 4 }, 2)), 7.5, 0.0000000001),
+           "MOVING AVERAGE VALUES")
+    Assert(Close(EngSum(EngNormalize({ 10, 20, 30 })), 1.5, 0.0000000001), "NORMALISE")
+    Rem A flat list has a zero range, and the obvious code divides by it.
+    Assert(Close(EngSum(EngNormalize({ 5, 5, 5 })), 0, 0.0000000001),
+           "AND A FLAT LIST DOES NOT DIVIDE BY ZERO")
+    Assert(Close(EngDotOf({ 1, 2, 3 }, { 4, 5, 6 }), 32, 0.0000000001), "DOT PRODUCT")
+    Assert(Close(EngMagOf({ 3, 4 }), 5, 0.0000000001), "VECTOR MAGNITUDE")
+
+    Print("--- UNITS ---")
+    Assert(Close(EngConvert(1, EngMetre(), EngCentimetre()), 100, 0.0000000001),
+           "METRES TO CENTIMETRES")
+    Assert(Close(EngConvert(1, EngMile(), EngKilometre()), 1.609344, 0.0000000001),
+           "MILES TO KILOMETRES")
+    Assert(Close(EngConvert(12, EngInch(), EngFoot()), 1, 0.0000000001), "INCHES TO FEET")
+    Rem Fourteen pounds to the stone, as the mill records had it.
+    Assert(Close(EngConvert(1, EngStone(), EngPound()), 14, 0.0000001), "STONES TO POUNDS")
+    Assert(Close(EngConvert(1, EngHour(), EngMinute()), 60, 0.0000000001), "HOURS TO MINUTES")
+    Rem Temperature is the only quantity with an offset, and both fixed
+    Rem points must land.
+    Assert(Close(EngConvert(100, EngCelsius(), EngFahrenheit()), 212, 0.0000001),
+           "BOILING POINT")
+    Assert(Close(EngConvert(32, EngFahrenheit(), EngCelsius()), 0, 0.0000001),
+           "AND FREEZING POINT")
+    Assert(Close(EngConvert(0, EngCelsius(), EngKelvin()), 273.15, 0.0000001),
+           "AND ABSOLUTE ZERO IS THE OFFSET")
+    Assert(Close(EngConvert(1, EngAtm(), EngPsi()), 14.6959487755, 0.0000001),
+           "ATMOSPHERES TO PSI")
+    Assert(Close(EngConvert(1, EngKwh(), EngJoule()), 3600000, 0.0000001),
+           "KILOWATT HOURS TO JOULES")
+    Assert(Close(EngConvert(1, EngKph(), EngMps()), 0.2777777778, 0.0000001),
+           "KILOMETRES PER HOUR TO METRES PER SECOND")
+    Assert(Quantity(EngMetre()) = "LENGTH", "A UNIT CARRIES ITS QUANTITY")
+    Assert(Name(EngPsi()) = "PSI", "AND ITS NAME")
+
+    Print("--- CONSTANTS ---")
+    Assert(Value(EngLightSpeed()) = 299792458, "THE SPEED OF LIGHT IS EXACT BY DEFINITION")
+    Assert(Units(EngLightSpeed()) = "M/S", "AND CARRIES ITS UNITS")
+    Assert(CName(EngLightSpeed()) = "SPEED OF LIGHT", "AND ITS NAME")
+    Assert(Close(Value(EngAvogadro()) / (10 ^ 23), 6.02214076, 0.0000001),
+           "AVOGADRO CONSTANT")
+    Assert(Close(Value(EngPlanck()) * (10 ^ 34), 6.62607015, 0.0000001), "PLANCK CONSTANT")
+    Assert(Close(Value(EngStdGravity()), 9.80665, 0.0000001), "STANDARD GRAVITY")
+    Assert(Close(Value(EngGasConstant()), 8.314462618, 0.0000001), "MOLAR GAS CONSTANT")
+    Assert(Close(EngE(), 2.7182818285, 0.0000000001), "E")
+    Assert(Close(EngTau(), 6.2831853072, 0.0000000001), "TAU IS TWO PI")
+
+    Print("--- PRESENTATION ---")
+    Assert(Close(EngRoundTo(3.14159, 2), 3.14, 0.0000000001), "ROUNDING TO PLACES")
+    Assert(Close(EngFracOf(2.75), 0.75, 0.0000000001), "FRACTIONAL PART")
+    Assert(Close(EngClamp(5, 0, 3), 3, 0.0000000001), "CLAMPING")
+    Assert(Close(EngLerp(0, 10, 0.25), 2.5, 0.0000000001), "INTERPOLATION")
+    Assert(Close(EngInvLerp(0, 10, 2.5), 0.25, 0.0000000001), "AND BACK AGAIN")
+    Assert(Close(EngRemap(5, 0, 10, 0, 100), 50, 0.0000000001), "REMAPPING")
+    Assert(Close(EngSmoothstep(0, 1, 0.5), 0.5, 0.0000000001), "SMOOTHSTEP AT THE MIDPOINT")
+    Assert(EngSign(0 - 5) = 0 - 1, "SIGN OF A NEGATIVE")
+    Assert(EngSign(0) = 0, "AND OF ZERO")
+    Assert(EngNear(0.1 + 0.2, 0.3, 0.0000000001), "TOLERANT COMPARISON")
+    Rem Significant figures, not decimal places - the distinction the two
+    Rem words exist to keep apart.
+    Assert(Close(EngSigFig(0.00123456, 3), 0.00123, 0.0000000001), "THREE SIGNIFICANT FIGURES")
+    Assert(Close(EngSigFig(123456, 3), 123000, 0.0000000001), "AND THREE OF A LARGE NUMBER")
+    Assert(Close(EngRoundTo(0.00123456, 3), 0.001, 0.0000000001),
+           "WHERE ROUNDING TO PLACES GIVES SOMETHING ELSE")
+    Assert(EngSigFig(0, 3) = 0, "AND ZERO HAS NO EXPONENT TO TAKE")
+    Assert(EngMetricPrefix(0) = "", "THE UNPREFIXED DECADE")
+    Assert(EngMetricPrefix(1) = "k", "KILO")
+    Assert(EngMetricPrefix(0 - 2) = "u", "AND MICRO")
+    Rem 47000 ohms is written 47k on the part.
+    Assert(EngMetric(47000, 0) = "47k", "ENGINEERING NOTATION")
+    Assert(EngMetric(0.0000022, 1) = "2.2u", "AND BELOW ONE")
+    Assert(EngSci(12345, 2) = "1.23E+4", "SCIENTIFIC NOTATION")
+    Assert(EngSci(0.00012345, 2) = "1.23E-4", "AND A NEGATIVE EXPONENT")
+    Assert(EngCommas(1234567, 0) = "1,234,567", "GROUPED DIGITS")
+
+    Print("")
+    Print("ALL ASSERTIONS PASSED")

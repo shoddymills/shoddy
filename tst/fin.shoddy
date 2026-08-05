@@ -1,0 +1,270 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem fin.shoddy — test program for machines/fin.shoddy
+Rem
+Rem Assert-driven, in the csvtest.shoddy / jsontest.shoddy pattern: it
+Rem prints what it is doing, stops at the first failed assertion, and
+Rem ends with ALL ASSERTIONS PASSED when none fail.
+Rem
+Rem Every number here is a KNOWN ANSWER — a textbook figure, a
+Rem spreadsheet's, or one derived by hand — never a value recorded from
+Rem a run. A finance library whose tests record its own output tests
+Rem nothing at all, and is exactly the kind that gets trusted anyway.
+Rem
+Rem The two that matter most are easy to miss. FinComb(52, 5) must be
+Rem 2598960 EXACTLY: the factorial form overflows past 2^53 before it
+Rem gets there, so an exact answer proves the multiplicative form is
+Rem what ran. And FinDivGrowth is checked on a series that falls and
+Rem recovers, where a geometric average and an arithmetic one disagree —
+Rem on a smooth series they agree and the test proves nothing.
+Rem
+Rem What cannot be tested here: the aborting half of each guard. Shoddy
+Rem has no catchable errors, so FinIrr's refusal on a rootless series,
+Rem FinYtm's on an unpriceable bond, FinNper's on a payment that never
+Rem clears the interest and FinBreakEvenOf's on a negative contribution
+Rem margin are all verified by hand and named here instead.
+Rem ==================================================================
+
+Include "../machines/fin.shoddy"
+
+Rem Money and rates carry more places than they print, so compare to a
+Rem tolerance. The answers that must be exact are asserted with = and
+Rem would otherwise hide a real defect behind a tolerance.
+Def Near(a As Number, b As Number, tol As Number) As Boolean
+    Abs(a - b) <= tol
+
+Rem A date is only honest if it survives the trip to a day number and
+Rem back — that is what makes the century rules testable at all.
+Def RoundTrips(d As FinDate) As Boolean
+    Let back = FinFromSerial(FinSerial(d))
+    Yr(back) = Yr(d) And Mon(back) = Mon(d) And Day(back) = Day(d)
+
+Def Main()
+    Print("--- RATES AND CONVERSION ---")
+    Assert(Near(FinPct(5), 0.05, 0.0000001), "5 PERCENT IS 0.05")
+    Assert(Near(FinAsPct(0.05), 5, 0.0000001), "AND BACK AGAIN")
+    Rem 12% nominal compounded monthly is 12.6825% effective.
+    Assert(Near(FinEff(0.12, 12), 0.1268250, 0.0000005), "NOMINAL TO EFFECTIVE")
+    Assert(Near(FinNom(FinEff(0.12, 12), 12), 0.12, 0.0000001), "AND BACK AGAIN")
+    Assert(Near(FinRule72(0.08), 9, 0.0000001), "RULE OF 72 AT 8 PERCENT")
+    Rem Fisher exact, not 10 - 4: (1.10 / 1.04) - 1 = 5.769%.
+    Assert(Near(FinReal(0.10, 0.04), 0.0576923, 0.0000005), "REAL RETURN IS FISHER, NOT SUBTRACTION")
+    Assert(Not Near(FinReal(0.10, 0.04), 0.06, 0.0005), "AND IS NOT THE APPROXIMATION")
+    Assert(Near(FinPctChg(80, 100), 0.25, 0.0000001), "PERCENT CHANGE")
+    Assert(Near(FinToBps(0.0125), 125, 0.0000001), "BASIS POINTS OUT")
+    Assert(Near(FinFromBps(125), 0.0125, 0.0000001), "AND BACK")
+
+    Print("--- TIME VALUE OF MONEY ---")
+    Assert(Near(FinFv(1000, 0.05, 10), 1628.894627, 0.000001), "FUTURE VALUE")
+    Assert(Near(FinPv(FinFv(1000, 0.05, 10), 0.05, 10), 1000, 0.000001), "PRESENT VALUE INVERTS IT")
+    Rem The canonical 30-year mortgage: 200000 at 6% APR, monthly.
+    Assert(Near(FinPmt(200000, 0, 0.005, 360), 1199.101, 0.001), "THE 30-YEAR MORTGAGE PAYMENT")
+    Assert(Near(FinPmtDue(200000, 0, 0.005, 360),
+                FinPmt(200000, 0, 0.005, 360) / 1.005, 0.000001), "PAID AT THE START OF THE PERIOD")
+    Assert(Near(FinPvAnn(100, 0.05, 10), 772.173493, 0.000001), "PRESENT VALUE OF AN ANNUITY")
+    Assert(Near(FinFvAnn(100, 0.05, 10), 1257.789254, 0.000001), "FUTURE VALUE OF AN ANNUITY")
+    Assert(Near(FinPvAnnDue(100, 0.05, 10), FinPvAnn(100, 0.05, 10) * 1.05, 0.000001), "ANNUITY DUE")
+    Assert(Near(FinNper(200000, 0, 1199.101, 0.005), 360, 0.01), "AND HOW MANY PAYMENTS THAT IS")
+
+    Print("--- ZERO RATE ---")
+    Rem A 0% promotional loan is a real input, not an edge case: every
+    Rem word that divides by rate has to answer at the limit.
+    Assert(Near(FinPmt(1200, 0, 0, 12), 100, 0.0000001), "PAYMENT AT ZERO RATE")
+    Assert(Near(FinPvAnn(100, 0, 12), 1200, 0.0000001), "ANNUITY PV AT ZERO RATE")
+    Assert(Near(FinFvAnn(100, 0, 12), 1200, 0.0000001), "ANNUITY FV AT ZERO RATE")
+    Assert(Near(FinNper(1200, 0, 100, 0), 12, 0.0000001), "PERIODS AT ZERO RATE")
+
+    Print("--- INTEREST ---")
+    Assert(Near(Total(FinSimple(1000, 0.05, 3)), 1150, 0.0000001), "SIMPLE INTEREST TOTAL")
+    Assert(Near(Interest(FinSimple(1000, 0.05, 3)), 150, 0.0000001), "AND ITS INTEREST")
+    Assert(Near(Total(FinCompound(1000, 0.05, 1, 3)), 1157.625, 0.0000001), "COMPOUND INTEREST TOTAL")
+
+    Print("--- LOANS ---")
+    Rem The whole point of the closed forms: a schedule that disagrees
+    Rem with the balance is a schedule nobody can reconcile.
+    Assert(Near(Balance(FinAmortAt(200000, 0.005, 1199.101, 360)), 0, 0.5), "THE MORTGAGE CLOSES")
+    Assert(Near(FinSum(Map(FinSchedule(200000, 0.005, 360, 1199.101), Principal)),
+                200000, 0.5), "AND ITS PRINCIPAL COLUMN SUMS TO THE LOAN")
+    Assert(Near(Interest(FinAmortAt(200000, 0.005, 1199.101, 1)), 1000, 0.0000001),
+           "FIRST MONTH IS ALMOST ALL INTEREST")
+    Assert(Near(Principal(FinAmortRange(200000, 0.005, 1199.101, 1, 12))
+                + Balance(FinAmortRange(200000, 0.005, 1199.101, 1, 12)), 200000, 0.5),
+           "A RANGE AGGREGATES TO THE SAME PLACE")
+    Assert(Periods(FinExtraPayoff(200000, 0.005, 1199.101, 200)) > 0, "EXTRA PAYMENTS SAVE TIME")
+    Assert(Interest(FinExtraPayoff(200000, 0.005, 1199.101, 200)) > 0, "AND MONEY")
+    Assert(Periods(FinCardPayoff(2000, 0.18, 100)) > 0, "A CARD AT A FIXED PAYMENT CLEARS")
+    Assert(Periods(FinCardMinPayoff(2000, 0.18, 0.02))
+           > Periods(FinCardPayoff(2000, 0.18, 100)), "AND THE MINIMUM TAKES FAR LONGER")
+
+    Print("--- INVESTMENT APPRAISAL ---")
+    Assert(Near(FinIrr({ 0 - 1000, 400, 400, 400 }), 0.09701, 0.00001), "IRR OF AN EVEN SERIES")
+    Rem The property that ties the two NPV conventions together.
+    Assert(Near(FinNpvOf({ 0 - 1000, 400, 400, 400 }, FinIrr({ 0 - 1000, 400, 400, 400 })),
+                0, 0.0001), "NPV AT THE IRR IS ZERO")
+    Assert(Near(FinNpv(1000, { 400, 400, 400 }, 0.09701), 0, 0.001), "AND THE OTHER CONVENTION AGREES")
+    Assert(Near(FinPayback(1000, { 400, 400, 400 }), 2.5, 0.0000001), "PAYBACK INTERPOLATES")
+    Assert(Near(FinPayback(1000, { 100, 100 }), 0 - 1, 0.0000001), "AND REFUSES WHEN IT NEVER RECOVERS")
+    Assert(FinPaybackDisc(1000, { 400, 400, 400 }, 0.05) > FinPayback(1000, { 400, 400, 400 }),
+           "DISCOUNTING MAKES PAYBACK LONGER")
+    Assert(Near(FinCagr(100, 121, 2), 0.1, 0.0000001), "CAGR")
+    Assert(Near(FinRoi(100, 150), 0.5, 0.0000001), "ROI")
+    Assert(Near(FinNfv({ 100, 100 }, 0.1), 210, 0.0000001), "NET FUTURE VALUE")
+    Assert(Length(FinExpand({ FinFlow(50, 3), FinFlow(75, 2) })) = 5, "A CASH FLOW LIST EXPANDS")
+    Assert(Near(FinSum(FinExpand({ FinFlow(50, 3), FinFlow(75, 2) })), 300, 0.0000001),
+           "TO THE RIGHT TOTAL")
+    Assert(FinMirr({ 0 - 1000, 400, 400, 400 }, 0.05, 0.05) > 0, "MIRR IS POSITIVE ON A PROFITABLE SERIES")
+
+    Print("--- STATISTICS, WRAPPED ---")
+    Rem Sample and population differ visibly at n = 4. Getting these two
+    Rem swapped is invisible until someone checks against a spreadsheet.
+    Assert(Near(FinStdDev({ 2, 4, 4, 6 }), 1.632993, 0.000001), "SAMPLE STANDARD DEVIATION (N-1)")
+    Assert(Near(FinStdDevP({ 2, 4, 4, 6 }), 1.414214, 0.000001), "POPULATION STANDARD DEVIATION (N)")
+    Assert(Near(FinVar({ 2, 4, 4, 6 }), 2.666667, 0.000001), "SAMPLE VARIANCE")
+    Assert(Near(FinVarP({ 2, 4, 4, 6 }), 2, 0.0000001), "POPULATION VARIANCE")
+    Assert(Near(Avg(FinStat1({ 2, 4, 4, 6 })), 4, 0.0000001), "THE SUMMARY'S MEAN")
+    Assert(Near(Sd(FinStat1({ 2, 4, 4, 6 })), FinStdDev({ 2, 4, 4, 6 }), 0.0000001),
+           "ITS SD IS THE SAMPLE FORM")
+    Assert(Near(Total(FinStat1({ 2, 4, 4, 6 })), 16, 0.0000001), "AND ITS TOTAL IS THE SUM")
+    Assert(Near(FinMedian({ 1, 2, 3, 4 }), 2.5, 0.0000001), "MEDIAN")
+    Assert(Near(FinQuantile({ 1, 2, 3, 4 }, 0.5), 2.5, 0.0000001), "QUANTILE TAKES A FRACTION")
+    Assert(Near(FinMinimum({ 3, 1, 2 }), 1, 0.0000001), "MINIMUM")
+    Assert(Near(FinMaximum({ 3, 1, 2 }), 3, 0.0000001), "MAXIMUM")
+    Assert(Near(FinRangeOf({ 3, 1, 2 }), 2, 0.0000001), "RANGE")
+    Assert(Near(FinWeightedMean({ 1, 2 }, { 1, 3 }), 1.75, 0.0000001), "WEIGHTED MEAN")
+    Assert(Near(FinCorrel({ 1, 2, 3 }, { 2, 4, 6 }), 1, 0.0000001), "PERFECT CORRELATION")
+    Assert(Near(FinNormP(0, 0, 1), 0.5, 0.0000001), "THE NORMAL AT ITS MEAN")
+    Assert(Near(FinRound(1.2345, 2), 1.23, 0.0000001), "ROUNDING TO PLACES")
+
+    Print("--- GROWTH AVERAGES GEOMETRICALLY ---")
+    Assert(Near(FinDivGrowth({ 100, 110, 121 }), 0.1, 0.000001), "A SMOOTH SERIES GROWS AT 10 PERCENT")
+    Rem This is the one that proves it. A series that falls and recovers
+    Rem has a geometric growth of 10% and an arithmetic one of 15.5%.
+    Assert(Near(FinDivGrowth({ 100, 90, 121 }), 0.1, 0.000001),
+           "AND SO DOES ONE THAT FALLS AND RECOVERS")
+    Assert(Not Near(FinDivGrowth({ 100, 90, 121 }), 0.155, 0.01),
+           "WHICH AN ARITHMETIC MEAN WOULD GET WRONG")
+    Assert(Near(AvgReturn(FinRStat({ 0.1, 0.2, 0.3 })), 0.2, 0.0000001), "RETURN STATISTICS")
+    Assert(Near(FinYield(2.50, 50), 0.05, 0.0000001), "DIVIDEND YIELD")
+    Assert(Dca(FinDcaOf(1200, 3, { 10, 5, 10 })) > Lump(FinDcaOf(1200, 3, { 10, 5, 10 })),
+           "AVERAGING IN BEATS THE LUMP SUM WHEN THE PRICE DIPS")
+
+    Print("--- REGRESSION ---")
+    Assert(Near(Slope(FinFitOf({ 1, 2, 3 }, { 2, 4, 6 }, FinLinear())), 2, 0.000001),
+           "A LINE THROUGH THE ORIGIN")
+    Assert(Near(Intercept(FinFitOf({ 1, 2, 3 }, { 2, 4, 6 }, FinLinear())), 0, 0.000001),
+           "HAS NO INTERCEPT")
+    Assert(Near(RFit(FinFitOf({ 1, 2, 3 }, { 2, 4, 6 }, FinLinear())), 1, 0.000001),
+           "AND FITS PERFECTLY")
+    Assert(Near(Slope(FinFitOf({ 1, 2, 3 }, { 2, 4, 8 }, FinExpModel())), 0.693147, 0.000001),
+           "AN EXPONENTIAL DOUBLES EVERY STEP")
+
+    Print("--- SMALL BUSINESS ---")
+    Rem Cost 60 sold at 100: 40% margin, 66.7% markup. The same trade,
+    Rem two numbers, and the most common confusion in the group.
+    Assert(Near(FinMarginOf(60, 100), 0.4, 0.0000001), "MARGIN IS ON THE SELLING PRICE")
+    Assert(Near(FinMarkupOf(60, 100), 0.666667, 0.000001), "MARKUP IS ON THE COST")
+    Assert(Near(FinSellFromMargin(60, 0.4), 100, 0.0000001), "AND EACH SOLVER INVERTS ITS PARTNER")
+    Assert(Near(FinCostFromMargin(100, 0.4), 60, 0.0000001), "BOTH WAYS")
+    Assert(Near(Units(FinBreakEvenOf(1000, 5, 15, 0)), 100, 0.0000001), "BREAK-EVEN UNITS")
+    Assert(Near(Margin(FinBreakEvenOf(1000, 5, 15, 0)), 10, 0.0000001), "AND THE CONTRIBUTION MARGIN")
+    Assert(Near(Units(FinBreakEvenOf(1000, 5, 15, 500)), 150, 0.0000001), "A PROFIT TARGET RAISES IT")
+    Assert(Near(Net(FinPayrollOf(1000, { 0.2, 0.05 })), 750, 0.0000001), "GROSS TO NET")
+    Assert(Near(Withheld(FinPayrollOf(1000, { 0.2, 0.05 })), 250, 0.0000001), "AND WHAT WAS WITHHELD")
+    Assert(Near(Total(FinLateOf(1000, 0.12, 30, Fin360())), 1010, 0.0000001), "LATE INTEREST ON 30/360")
+    Assert(Near(Nth(FinCashProj(100, { 50, 50 }, { 20, 20 }), 2), 160, 0.0000001), "CASH PROJECTION RUNS")
+    Assert(Near(FinNetWorth({ 100, 200 }, { 50 }), 250, 0.0000001), "NET WORTH")
+    Assert(Near(SavingsRate(FinBudgetOf({ 1000 }, { 800 })), 0.2, 0.0000001), "SAVINGS RATE")
+    Assert(Near(SavingsRate(FinBudgetOf({ 0 }, { 0 })), 0, 0.0000001), "AND IS ZERO, NOT NAN, ON NO INCOME")
+
+    Print("--- GOALS AND PROJECTIONS ---")
+    Assert(Near(FinGoalPmt(1257.789254, 0, 0.05, 10), 100, 0.000001), "WHAT MUST I PUT BY")
+    Assert(Near(FinRetire(0, 100, 12, 0.12, 1), FinFvAnn(100, 0.01, 12), 0.000001),
+           "AND WHAT IT COMES TO")
+
+    Print("--- DEPRECIATION ---")
+    Rem Cost 10000, salvage 1000, life 5.
+    Assert(Near(FinSl(10000, 1000, 5), 1800, 0.0000001), "STRAIGHT LINE")
+    Assert(Near(Nth(FinSlBook(10000, 1000, 5), 5), 1000, 0.0000001), "DOWN TO THE SALVAGE FLOOR")
+    Assert(Near(Amount(FinSyd(10000, 1000, 5, 1)), 3000, 0.0000001), "SUM OF YEARS DIGITS, YEAR 1")
+    Assert(Near(Amount(FinSyd(10000, 1000, 5, 5)), 600, 0.0000001), "AND YEAR 5")
+    Assert(Near(Amount(FinDb(10000, 1000, 5, 2, 1)), 4000, 0.0000001), "DOUBLE DECLINING, YEAR 1")
+    Rem With salvage 1000 the declining charge never falls below the
+    Rem straight-line one, so no crossover happens and the schedule is
+    Rem declining balance throughout, the last year clipped by the floor.
+    Assert(Method(FinDbx(10000, 1000, 5, 2, 1)) = FinDbUsed(), "DECLINING BALANCE LEADS")
+    Assert(Method(FinDbx(10000, 1000, 5, 2, 5)) = FinDbUsed(), "AND HOLDS WHEN SALVAGE IS HIGH")
+    Assert(Near(FinSum(Map(Range(1, 5), Fn(k) => Amount(FinDbx(10000, 1000, 5, 2, k)))),
+                9000, 0.0000001), "AND ITS SCHEDULE SUMS TO COST LESS SALVAGE")
+    Rem Drop the floor and the crossover appears in year 4, where
+    Rem straight-line on the remaining two years beats 40% of the book.
+    Assert(Method(FinDbx(10000, 0, 5, 2, 3)) = FinDbUsed(), "WITH NO SALVAGE IT STILL LEADS")
+    Assert(Method(FinDbx(10000, 0, 5, 2, 4)) = FinSlUsed(), "UNTIL STRAIGHT LINE OVERTAKES IT")
+    Assert(Method(FinDbx(10000, 0, 5, 2, 5)) = FinSlUsed(), "AND KEEPS IT TO THE END")
+    Assert(Near(FinSum(Map(Range(1, 5), Fn(k) => Amount(FinDbx(10000, 0, 5, 2, k)))),
+                10000, 0.0000001), "WRITING THE WHOLE ASSET OFF")
+
+    Print("--- COMBINATORICS ---")
+    Assert(Near(FinFact(5), 120, 0.0000001), "FACTORIAL")
+    Assert(Near(FinPerm(10, 3), 720, 0.0000001), "PERMUTATIONS")
+    Rem Exactly, not nearly: the factorial form overflows past 2^53 long
+    Rem before it reaches this, so an exact answer proves the
+    Rem multiplicative form is what ran.
+    Assert(FinComb(52, 5) = 2598960, "A POKER HAND, EXACTLY")
+    Assert(FinComb(5, 2) = 10, "AND A SMALL ONE")
+
+    Print("--- DATES ---")
+    Assert(FinIsLeap(2000), "2000 IS A LEAP YEAR")
+    Assert(Not FinIsLeap(1900), "1900 IS NOT")
+    Assert(Not FinIsLeap(2100), "NOR IS 2100")
+    Assert(FinIsLeap(2024), "2024 IS")
+    Assert(RoundTrips(FinDate(1900, 2, 28)), "A DATE SURVIVES THE SERIAL ROUND TRIP")
+    Assert(RoundTrips(FinDate(2000, 2, 29)), "INCLUDING A LEAP CENTURY")
+    Assert(RoundTrips(FinDate(2100, 3, 1)), "AND A NON-LEAP CENTURY")
+    Assert(RoundTrips(FinDate(2026, 12, 31)), "AND A YEAR BOUNDARY")
+    Assert(FinSerial(FinDate(2026, 1, 2)) - FinSerial(FinDate(2026, 1, 1)) = 1, "CONSECUTIVE DAYS")
+    Assert(Day(FinDateAdd(FinDate(2026, 1, 31), 1)) = 1, "ADDING A DAY CROSSES THE MONTH")
+    Rem One month after 31 January is 28 February, not the 3rd of March.
+    Assert(Day(FinDateAddMonths(FinDate(2026, 1, 31), 1)) = 28, "MONTHS CLAMP TO THE MONTH END")
+    Assert(Day(FinDateAddMonths(FinDate(2024, 1, 31), 1)) = 29, "AND KNOW ABOUT LEAP YEARS")
+    Rem The NASD adjustment case: D1 is 31 so it becomes 30, and the
+    Rem count from there to 28 February is 28 days.
+    Assert(FinDays360(FinDate(2026, 1, 31), FinDate(2026, 2, 28)) = 28, "THE 30/360 END-OF-MONTH RULE")
+    Assert(FinDays360(FinDate(2026, 1, 1), FinDate(2027, 1, 1)) = 360, "AND A WHOLE 30/360 YEAR")
+    Assert(FinDateDiff(FinDate(2026, 1, 1), FinDate(2027, 1, 1), FinActual()) = 365,
+           "AN ACTUAL YEAR IS 365 DAYS")
+    Assert(Near(FinYearFrac(FinDate(2026, 1, 1), FinDate(2027, 1, 1), Fin360()), 1, 0.0000001),
+           "AND A 30/360 YEAR IS ONE")
+
+    Print("--- BONDS ---")
+    Rem A bond priced at par yields its coupon: the single property that
+    Rem checks price and yield against each other.
+    Assert(Near(FinBondPrice(FinDate(2026, 1, 1), FinDate(2031, 1, 1),
+                             0.06, 0.06, FinSemi(), Fin360()), 100, 0.0001),
+           "A 6 PERCENT BOND AT A 6 PERCENT YIELD PRICES AT PAR")
+    Assert(Near(FinYtm(FinDate(2026, 1, 1), FinDate(2031, 1, 1),
+                       0.06, 100, FinSemi(), Fin360()), 0.06, 0.000001),
+           "AND YIELDS 6 PERCENT AT PAR")
+    Assert(FinBondPrice(FinDate(2026, 1, 1), FinDate(2031, 1, 1), 0.06, 0.08, FinSemi(), Fin360())
+           < 100, "A HIGHER YIELD PRICES BELOW PAR")
+    Assert(FinBondPrice(FinDate(2026, 1, 1), FinDate(2031, 1, 1), 0.06, 0.04, FinSemi(), Fin360())
+           > 100, "AND A LOWER ONE ABOVE IT")
+    Assert(Near(FinAccrued(FinDate(2026, 1, 1), FinDate(2026, 1, 1),
+                           0.06, FinSemi(), Fin360()), 0, 0.0000001),
+           "NOTHING HAS ACCRUED ON A COUPON DATE")
+    Assert(Near(FinAccrued(FinDate(2026, 4, 1), FinDate(2026, 1, 1),
+                           0.06, FinSemi(), Fin360()), 1.5, 0.0001),
+           "AND HALF A PERIOD IS HALF A COUPON")
+    Assert(FinMdur(FinDate(2026, 1, 1), FinDate(2031, 1, 1), 0.06, 0.06, FinSemi()) > 0,
+           "MODIFIED DURATION IS POSITIVE")
+    Assert(FinMdur(FinDate(2026, 1, 1), FinDate(2031, 1, 1), 0.06, 0.06, FinSemi()) < 5,
+           "AND SHORTER THAN THE BOND")
+
+    Print("--- PRESENTATION ---")
+    Assert(FinFmt(1234.5) = "1,234.50", "GROUPED THOUSANDS AND TWO PLACES")
+    Assert(FinFmt(0) = "0.00", "ZERO")
+    Assert(FinFmt(0 - 1234.5) = "-1,234.50", "AND A NEGATIVE KEEPS ITS SIGN")
+    Assert(FinFmt(999999.99) = "999,999.99", "A LARGE ONE GROUPS CORRECTLY")
+
+    Print("ALL ASSERTIONS PASSED")

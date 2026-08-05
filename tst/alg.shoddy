@@ -1,0 +1,346 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem alg.shoddy — test program for machines/alg.shoddy
+Rem
+Rem Assert-driven, in the csvtest / fin / eng / lin pattern: it prints
+Rem what it is doing, stops at the first failed assertion, and ends with
+Rem ALL ASSERTIONS PASSED when none fail.
+Rem
+Rem BY PROPERTY FAR MORE THAN BY VALUE, because most of this machine's
+Rem answers are not unique. There are several correct factorisations of
+Rem the same polynomial, several correct antiderivatives, and many correct
+Rem ways to write the same minimal form. So:
+Rem
+Rem   * integration is checked by DIFFERENTIATING THE RESULT BACK
+Rem   * factorisation is checked by EXPANDING THE RESULT
+Rem   * partial fractions are checked by RECOMBINING THEM
+Rem   * the parser and printer are checked against EACH OTHER
+Rem
+Rem Asserting a particular string for any of those would pin an
+Rem implementation detail and break on the first improvement.
+Rem
+Rem THE ORDER IS TESTED FIRST AND DIRECTLY, before anything that depends
+Rem on it. If AlgCompare is not a total order then the sort inside AlgPass
+Rem is unstable, the fixpoint oscillates, and the mill spins until the cap
+Rem fires — at which point the error blames the cap and not the order.
+Rem Twenty lines here save a day there.
+Rem
+Rem This file includes BOTH alg and eng, which is allowed and is the only
+Rem place the bridge can be tested: neither machine includes the other, so
+Rem neither one's own suite can prove they compose. A test file is a mill
+Rem and mills include what they need.
+Rem
+Rem What cannot be tested here: the aborting guards. Shoddy has no
+Rem catchable errors, so AlgRat(1, 0), an unbound variable in AlgEvalAt,
+Rem the AlgSimplify fixpoint cap, AlgCallOf on an unknown function and
+Rem AlgExpandPow above its bound all kill the program rather than failing
+Rem an assertion. Each is verified by hand and named here instead.
+Rem Everything returning a Result IS assertable on both arms, which is the
+Rem argument for drawing the line where it is drawn.
+Rem ==================================================================
+
+Include "../machines/alg.shoddy"
+Include "../machines/eng.shoddy"
+Rem The corpus assertions fold All over lists, and All is seq's. alg
+Rem includes seq but does not export it, so this file asks for it itself —
+Rem which is the v1.6.0 scoping working exactly as intended.
+Include "../machines/seq.shoddy"
+
+Def X() As AlgEx
+    AlgVarOf("x")
+
+Def Y() As AlgEx
+    AlgVarOf("y")
+
+Def N(k As Number) As AlgEx
+    AlgRat(k, 1)
+
+Def P(s As String) As AlgEx
+    AlgParse(s)
+
+Rem The corpus: at least one of every variant, so a missing Case in any
+Rem walker shows up as an abort rather than as a wrong answer in
+Rem somebody's mill three months later.
+Def Corpus() As List Of AlgEx
+    { N(0), N(1), AlgRat(0 - 3, 4), X(), Y(),
+      P("x + 1"), P("x * y"), P("x ^ 2"), P("2 * x + 3 * y"),
+      P("sin(x)"), P("exp(2 * x + 1)"), P("1 / x"),
+      P("x ^ 3 - 2 * x - 5"), P("(x + 1) * (x - 1)"),
+      P("sin(x) / (1 + cos(x))"), P("2/3 * x + 1/6") }
+
+Def Close(a As Number, b As Number, tol As Number) As Boolean
+    Abs(a - b) <= tol
+
+Def Main()
+    Print("--- THE ORDER IS TOTAL (FIRST, BECAUSE EVERYTHING RESTS ON IT) ---")
+    Assert(All(Corpus(), Fn(a) => AlgCompare(a, a) = 0), "REFLEXIVE")
+    Assert(All(Corpus(),
+               Fn(a) => All(Corpus(),
+                            Fn(b) => AlgCompare(a, b) = 0 - AlgCompare(b, a))),
+           "ANTISYMMETRIC OVER THE WHOLE CORPUS")
+    Rem Transitivity over every triple: if a <= b and b <= c then a <= c.
+    Assert(All(Corpus(),
+               Fn(a) => All(Corpus(),
+                            Fn(b) => All(Corpus(),
+                                         Fn(c) => Not (AlgCompare(a, b) <= 0
+                                                       And AlgCompare(b, c) <= 0)
+                                                  Or AlgCompare(a, c) <= 0))),
+           "TRANSITIVE OVER EVERY TRIPLE")
+    Assert(All(Corpus(),
+               Fn(a) => All(Corpus(),
+                            Fn(b) => AlgCompare(a, b) <> 0 Or AlgEqual(a, b))),
+           "AND COMPARING EQUAL IMPLIES BEING EQUAL")
+
+    Print("--- EVERY WORD SURVIVES EVERY VARIANT ---")
+    Rem The test that catches a missing Case. If any walker has five of
+    Rem six branches it aborts here rather than in a mill.
+    Assert(All(Corpus(), Fn(e) => AlgDepth(AlgSimplify(e)) >= 1), "SIMPLIFY AND DEPTH")
+    Assert(All(Corpus(), Fn(e) => AlgSize(e) >= 1), "SIZE")
+    Assert(All(Corpus(), Fn(e) => Len(AlgShow(e)) > 0), "SHOW")
+    Assert(All(Corpus(), Fn(e) => Len(AlgShowFull(e)) > 0), "SHOWFULL")
+    Assert(All(Corpus(), Fn(e) => Len(AlgTree(e)) > 0), "TREE")
+    Assert(All(Corpus(), Fn(e) => AlgDepth(AlgDiff(e, "x")) >= 1), "DIFFERENTIATE")
+    Assert(All(Corpus(), Fn(e) => AlgDepth(AlgExpand(e)) >= 1), "EXPAND")
+    Assert(All(Corpus(), Fn(e) => Length(AlgVarsOf(e)) >= 0), "VARSOF")
+
+    Print("--- EXACT RATIONALS ---")
+    Assert(AlgNumOf(AlgRat(4, 0 - 6)) = 0 - 2, "SIGN MOVES TO THE NUMERATOR")
+    Assert(AlgDenOf(AlgRat(4, 0 - 6)) = 3, "AND THE GCD IS DIVIDED OUT")
+    Rem The assertion that separates a CAS from a calculator.
+    Assert(AlgEqual(AlgRatAdd(AlgExact(1, 3), AlgExact(1, 6)), AlgExact(1, 2)),
+           "ONE THIRD PLUS ONE SIXTH IS EXACTLY ONE HALF")
+    Assert(AlgDenOf(AlgSimplify(P("1/3 + 1/6"))) = 2, "AND THROUGH THE PARSER TOO")
+    Rem The simplest rational within tolerance, not the double's exact
+    Rem binary value 3602879701896397/36028797018963968.
+    Assert(AlgDenOf(AlgOf(0.1)) = 10, "0.1 RATIONALISES TO A TENTH")
+    Assert(AlgDenOf(AlgOf(0.25)) = 4, "AND 0.25 TO A QUARTER")
+    Assert(AlgNumOf(AlgOf(0 - 0.5)) = 0 - 1, "AND A NEGATIVE KEEPS ITS SIGN")
+    Assert(AlgToNumber(AlgRatMul(AlgExact(2, 3), AlgExact(3, 2))) = 1, "MULTIPLICATION")
+    Assert(AlgRatCmp(AlgExact(1, 3), AlgExact(1, 2)) = 0 - 1, "COMPARISON")
+
+    Print("--- SIMPLIFICATION ---")
+    Assert(AlgEqual(AlgAddOf(X(), X()), AlgMulOf(N(2), X())), "X PLUS X IS TWO X")
+    Assert(AlgEqual(AlgMulOf(X(), X()), AlgPowOf(X(), N(2))), "X TIMES X IS X SQUARED")
+    Assert(AlgEqual(AlgAddOf(X(), AlgZero()), X()), "ADDING ZERO")
+    Assert(AlgEqual(AlgMulOf(X(), AlgOne()), X()), "MULTIPLYING BY ONE")
+    Assert(AlgIsZero(AlgSimplify(AlgMulOf(X(), AlgZero()))), "MULTIPLYING BY ZERO")
+    Assert(AlgIsZero(AlgSimplify(AlgSubOf(X(), X()))), "X MINUS X IS ZERO")
+    Assert(AlgIsOne(AlgSimplify(AlgDivOf(X(), X()))), "X OVER X IS ONE")
+    Assert(AlgEqual(P("2 * x + 3 * x"), P("5 * x")), "LIKE TERMS COLLECT")
+    Assert(AlgEqual(P("x ^ 0"), AlgOne()), "ANYTHING TO THE ZERO")
+    Rem The assertion that proves the canonical order is doing its job.
+    Assert(AlgEqual(P("x + y"), P("y + x")), "SUMS COMMUTE INVISIBLY")
+    Assert(AlgEqual(P("x * y"), P("y * x")), "AND SO DO PRODUCTS")
+    Rem No sum or product may ever hold fewer than two elements.
+    Assert(All(Corpus(), Fn(e) => AlgTwoOrMore(AlgSimplify(e))),
+           "THE TWO-OR-MORE INVARIANT HOLDS ACROSS THE CORPUS")
+
+    Print("--- PARSING AND PRECEDENCE ---")
+    Assert(AlgToNumber(P("2^3^2")) = 512, "POWER IS RIGHT-ASSOCIATIVE, SO 512 NOT 64")
+    Assert(AlgEqual(P("-x^2"), AlgNegOf(AlgPowOf(X(), N(2)))),
+           "AND UNARY MINUS IS LOOSER THAN POWER")
+    Assert(AlgEqual(P("2 + 3 * 4"), N(14)), "TIMES BINDS TIGHTER THAN PLUS")
+    Assert(AlgEqual(P("(2 + 3) * 4"), N(20)), "AND BRACKETS OVERRIDE IT")
+
+    Print("--- PRINTING RECONSTRUCTS WHAT THE TYPE DOES NOT HAVE ---")
+    Assert(AlgShow(AlgSubOf(AlgVarOf("a"), AlgVarOf("b"))) = "a - b",
+           "SUBTRACTION, NOT a + -1 * b")
+    Assert(AlgShow(AlgDivOf(AlgVarOf("a"), AlgVarOf("b"))) = "a / b",
+           "DIVISION, NOT a * b ^ -1")
+    Assert(AlgShow(AlgNegOf(AlgVarOf("a"))) = "-a", "UNARY MINUS")
+    Assert(AlgShow(AlgSubOf(AlgVarOf("a"), AlgSubOf(AlgVarOf("b"), AlgVarOf("c"))))
+           = "a - (b - c)", "A MINUS A DIFFERENCE KEEPS ITS BRACKETS")
+    Assert(AlgShow(AlgDivOf(AlgVarOf("a"), AlgMulOf(AlgVarOf("b"), AlgVarOf("c"))))
+           = "a / (b * c)", "AND SO DOES A DIVISION BY A PRODUCT")
+    Assert(AlgShow(AlgNegOf(AlgAddOf(AlgVarOf("a"), AlgVarOf("b")))) = "-(a + b)",
+           "AND MINUS A SUM")
+
+    Print("--- THE ROUND TRIP (THE STRONGEST SINGLE TEST HERE) ---")
+    Rem Parser, printer and simplifier checked against each other over the
+    Rem whole corpus. Nothing else exercises all three at once.
+    Assert(All(Corpus(), Fn(e) => AlgEqual(P(AlgShow(e)), e)),
+           "EVERY CORPUS EXPRESSION SURVIVES SHOW THEN PARSE")
+
+    Print("--- READING IS TOTAL AND CARRIES A POSITION ---")
+    Assert(AlgIsErr(AlgRead("2 +* 3")), "A MALFORMED EXPRESSION IS AN ERR")
+    Assert(AlgAtOf(AlgRead("2 +* 3")) > 0, "AND THE ERR CARRIES A TOKEN OFFSET")
+    Assert(AlgIsErr(AlgRead("(1")), "AN UNCLOSED BRACKET")
+    Assert(AlgIsErr(AlgRead("")), "AND AN EMPTY STRING - CLEANLY, NOT BY ABORTING")
+    Assert(Not AlgIsErr(AlgRead("x + 1")), "WHILE A GOOD ONE READS")
+
+    Print("--- DIFFERENTIATION IS TOTAL ---")
+    Assert(AlgEqual(AlgDiff(P("x^3"), "x"), P("3 * x^2")), "POWER RULE")
+    Assert(AlgEqual(AlgDiff(P("sin(x)"), "x"), P("cos(x)")), "D SIN IS COS")
+    Assert(AlgEqual(AlgDiff(P("x * sin(x)"), "x"), P("sin(x) + x * cos(x)")),
+           "PRODUCT RULE, BY ALGEQUAL AND NOT BY STRING")
+    Assert(AlgEqual(AlgDiff(P("sin(x^2)"), "x"), P("2 * x * cos(x^2)")), "CHAIN RULE")
+    Rem The general case, which is why the constant-exponent shortcut was
+    Rem not written on its own.
+    Assert(AlgEqual(AlgDiff(P("x^x"), "x"), P("x^x * (ln(x) + 1)")), "GENERAL POWER RULE")
+    Assert(AlgEqual(AlgDiffN(P("x^3"), "x", 2), P("6 * x")), "SECOND DERIVATIVE")
+    Assert(AlgIsZero(AlgDiff(P("y"), "x")), "A FREE VARIABLE DIFFERENTIATES TO ZERO")
+    Assert(Length(AlgGrad(P("x^2 + y^2"), { "x", "y" })) = 2, "THE GRADIENT HAS ONE PER VARIABLE")
+
+    Print("--- THE FUNCTION TABLES ARE IN STEP ---")
+    Rem Iterating AlgFns means this cannot go stale when a function is
+    Rem added. A function that differentiates but cannot evaluate breaks
+    Rem AlgToFn; one that evaluates but cannot differentiate breaks AlgDiff.
+    Assert(All(AlgFns(), Fn(f) => AlgDepth(AlgDiffFn(f, X())) >= 1),
+           "EVERY FUNCTION HAS A DERIVATIVE")
+    Assert(All(AlgFns(), Fn(f) => AlgEvalFn(f, 0.5) = AlgEvalFn(f, 0.5)),
+           "AND EVERY FUNCTION EVALUATES")
+    Assert(AlgKnowsFn("sin") And Not AlgKnowsFn("bessel"), "AND THE TABLE KNOWS ITS OWN EXTENT")
+
+    Print("--- SYMBOLIC CONSTANTS ---")
+    Rem pi is a SYMBOL, so this is exactly 0 and not 1.2246e-16.
+    Assert(AlgIsZero(AlgCallOf("sin", AlgPiSym())), "SIN PI IS EXACTLY ZERO")
+    Assert(AlgIsOne(AlgCallOf("cos", AlgZero())), "COS ZERO IS EXACTLY ONE")
+    Assert(AlgIsOne(AlgCallOf("exp", AlgZero())), "EXP ZERO IS EXACTLY ONE")
+    Assert(AlgIsOne(AlgCallOf("ln", AlgESym())), "LN E IS EXACTLY ONE")
+    Rem And the value appears only at the evaluation boundary.
+    Assert(Close(AlgEvalAt(AlgPiSym(), "z", 0), 3.14159265358979, 0.0000000001),
+           "PI RESOLVES TO A NUMBER ONLY WHEN EVALUATED")
+
+    Print("--- EXPANSION ---")
+    Assert(AlgEqual(AlgExpand(P("(x + 1)^3")), P("x^3 + 3*x^2 + 3*x + 1")), "A BINOMIAL CUBE")
+    Assert(AlgEqual(AlgExpand(P("(x + y) * (x - y)")), P("x^2 - y^2")),
+           "A DIFFERENCE OF SQUARES")
+    Assert(AlgEqual(AlgExpand(P("2 * (x + 3)")), P("2*x + 6")), "AND A CONSTANT MULTIPLE")
+
+    Print("--- POLYNOMIALS ---")
+    Assert(AlgPolyDegree(P("x^3 - 2*x - 5"), "x") = 3, "DEGREE")
+    Assert(AlgPolyDegree(P("sin(x)"), "x") = 0 - 1, "AND A NON-POLYNOMIAL HAS NONE")
+    Assert(AlgIsPoly(P("x^2 + 1"), "x"), "IS A POLYNOMIAL")
+    Assert(Not AlgIsPoly(P("1/x"), "x"), "A NEGATIVE POWER IS NOT")
+    Assert(AlgEqual(AlgCoeffAt(P("x^3 - 2*x - 5"), "x", 0), N(0 - 5)), "CONSTANT COEFFICIENT")
+    Assert(AlgEqual(AlgCoeffAt(P("x^3 - 2*x - 5"), "x", 3), AlgOne()), "LEADING COEFFICIENT")
+    Rem Lowest power first, so index k is the coefficient of x^k.
+    Assert(Length(AlgCoeffList(AlgOkOf(AlgPolyCoeffs(P("x^3 - 2*x - 5"), "x")))) = 4,
+           "A CUBIC HAS FOUR COEFFICIENTS")
+    Assert(AlgEqual(AlgFromCoeffs(AlgCoeffList(AlgOkOf(AlgPolyCoeffs(P("x^3 - 2*x - 5"), "x"))), "x"),
+                    P("x^3 - 2*x - 5")), "AND COEFFICIENTS ROUND TRIP")
+    Assert(AlgEqual(AlgOkOf(AlgPolyDivide(P("x^2 - 1"), P("x - 1"), "x")), P("x + 1")),
+           "POLYNOMIAL DIVISION")
+    Assert(AlgIsZero(AlgOkOf(AlgPolyRem(P("x^2 - 1"), P("x - 1"), "x"))),
+           "AND AN EXACT DIVISION LEAVES NOTHING")
+    Assert(AlgEqual(AlgCommonFactor(P("2*x + 4*y")), P("2 * (x + 2*y)")), "COMMON FACTOR")
+
+    Print("--- FACTORISATION, BY EXPANDING THE RESULT ---")
+    Rem Never assert a factored FORM: 2*(x-1)*(x+1) and (2*x-2)*(x+1) are
+    Rem both correct. Assert that expanding it gives back the input.
+    Assert(AlgEqual(AlgExpand(AlgOkOf(AlgFactor(P("x^2 - 5*x + 6"), "x"))),
+                    AlgExpand(P("x^2 - 5*x + 6"))), "A QUADRATIC")
+    Assert(AlgEqual(AlgExpand(AlgOkOf(AlgFactor(P("x^2 - 1"), "x"))),
+                    AlgExpand(P("x^2 - 1"))), "A DIFFERENCE OF SQUARES")
+    Assert(AlgEqual(AlgExpand(AlgOkOf(AlgFactor(P("x^3 - 6*x^2 + 11*x - 6"), "x"))),
+                    AlgExpand(P("x^3 - 6*x^2 + 11*x - 6"))), "AND A CUBIC WITH THREE ROOTS")
+    Rem The refusal is as important as the successes, and the reason has to
+    Rem name the fact rather than say FAILED.
+    Assert(AlgIsErr(AlgFactor(P("x^2 + 1"), "x")), "X SQUARED PLUS ONE DOES NOT FACTOR")
+    Assert(Instr(AlgWhyOf(AlgFactor(P("x^2 + 1"), "x")), "IRREDUCIBLE") > 0,
+           "AND THE REASON SAYS IRREDUCIBLE, NOT FAILED")
+
+    Print("--- PARTIAL FRACTIONS, BY RECOMBINING THEM ---")
+    Assert(AlgEqual(AlgTogether(AlgOkOf(AlgPartFrac(P("1/(x^2-1)"), "x"))),
+                    P("1/(x^2-1)")), "A DECOMPOSITION RECOMBINES TO ITS INPUT")
+    Assert(AlgIsErr(AlgPartFrac(P("1/((x-1)*(x-1))"), "x")),
+           "A REPEATED FACTOR IS REFUSED")
+    Assert(Instr(AlgWhyOf(AlgPartFrac(P("1/((x-1)*(x-1))"), "x")), "REPEATED") > 0,
+           "AND SAYS WHICH CASE IT IS")
+    Assert(AlgIsErr(AlgPartFrac(P("1/(x^2+1)"), "x")),
+           "AND AN IRREDUCIBLE DENOMINATOR IS REFUSED TOO")
+
+    Print("--- LIMITS ---")
+    Assert(AlgEqual(AlgOkOf(AlgLimit(P("sin(x)/x"), "x", AlgZero())), AlgOne()),
+           "SIN X OVER X AT ZERO IS ONE, BY L'HOPITAL")
+    Assert(AlgEqual(AlgOkOf(AlgLimit(P("(x^2-1)/(x-1)"), "x", AlgOne())), N(2)),
+           "AND THE REMOVABLE SINGULARITY AT ONE IS TWO")
+    Assert(AlgEqual(AlgOkOf(AlgLimitInf(P("(2*x^2+1)/(x^2-3)"), "x")), N(2)),
+           "EQUAL DEGREES AT INFINITY GIVE THE RATIO OF LEADING COEFFICIENTS")
+    Assert(AlgIsZero(AlgOkOf(AlgLimitInf(P("1/x"), "x"))), "AND A SMALLER NUMERATOR GIVES ZERO")
+    Rem The refusal that matters: a limit needing the SIDE of the approach.
+    Rem This returned 0 before the check that catches it, which is exactly
+    Rem the plausible wrong answer this machine must not produce.
+    Assert(AlgIsErr(AlgLimit(P("abs(x)/x"), "x", AlgZero())),
+           "ABS X OVER X AT ZERO IS REFUSED, NOT GUESSED")
+
+    Print("--- INTEGRATION, BY DIFFERENTIATING IT BACK ---")
+    Rem The property that catches every sign error and every missing
+    Rem factor, and it covers exactly what AlgIntegRules claims.
+    Assert(AlgEqual(AlgDiff(AlgOkOf(AlgInteg(P("x^2"), "x")), "x"), P("x^2")), "A POWER")
+    Assert(AlgEqual(AlgDiff(AlgOkOf(AlgInteg(P("1/x"), "x")), "x"), P("1/x")),
+           "THE MINUS-ONE CASE, GIVING A LOGARITHM")
+    Assert(AlgEqual(AlgDiff(AlgOkOf(AlgInteg(P("sin(x)"), "x")), "x"), P("sin(x)")), "SINE")
+    Assert(AlgEqual(AlgDiff(AlgOkOf(AlgInteg(P("cos(x)"), "x")), "x"), P("cos(x)")), "COSINE")
+    Assert(AlgEqual(AlgDiff(AlgOkOf(AlgInteg(P("exp(2*x)"), "x")), "x"), P("exp(2*x)")),
+           "AND A LINEAR SUBSTITUTION")
+    Assert(AlgEqual(AlgDiff(AlgOkOf(AlgInteg(P("sin(x) + 3*x"), "x")), "x"),
+                    P("sin(x) + 3*x")), "A SUM WITH A CONSTANT MULTIPLE")
+    Assert(AlgEqual(AlgOkOf(AlgIntegDef(P("x^2"), "x", AlgZero(), N(3))), N(9)),
+           "AND THE DEFINITE INTEGRAL BY THE FUNDAMENTAL THEOREM")
+    Rem The honest refusal: exp(x^2) has no elementary antiderivative and
+    Rem no amount of engineering would find one.
+    Assert(AlgIsErr(AlgInteg(P("exp(x^2)"), "x")), "A NON-ELEMENTARY INTEGRAL IS REFUSED")
+    Assert(Instr(AlgWhyOf(AlgInteg(P("exp(x^2)"), "x")), "NON-LINEAR") > 0,
+           "AND THE REASON NAMES THE NON-LINEAR ARGUMENT")
+    Assert(Length(AlgIntegRules()) > 0, "AND THE TABLE DESCRIBES ITS OWN COVERAGE")
+
+    Print("--- SOLVING, AND THE DISTINCTION THAT MATTERS ---")
+    Assert(AlgEqual(Nth(AlgListOf(AlgSolve(P("2*x - 6"), "x")), 1), N(3)), "A LINEAR EQUATION")
+    Assert(Length(AlgListOf(AlgSolve(P("x^2 - 5*x + 6"), "x"))) = 2, "A QUADRATIC HAS TWO ROOTS")
+    Rem Exact and symbolic: sqrt(2), not 1.4142.
+    Assert(AlgEqual(AlgPowOf(Nth(AlgListOf(AlgSolve(P("x^2 - 2"), "x")), 1), N(2)), N(2)),
+           "AND A SURD STAYS SYMBOLIC - ITS SQUARE IS EXACTLY TWO")
+    Rem Ok({ }) means no solutions; Err means no method. Different facts.
+    Assert(Length(AlgListOf(AlgSolve(P("x^2 + 1"), "x"))) = 0, "NO REAL ROOTS IS AN EMPTY OK")
+    Assert(Not AlgIsErr(AlgSolve(P("x^2 + 1"), "x")), "AND IT IS AN OK, NOT AN ERR")
+    Assert(AlgIsErr(AlgSolve(P("sin(x)"), "x")), "WHILE NO METHOD IS AN ERR")
+    Assert(AlgEqual(Nth(AlgListOf(AlgSolveFor(P("2*x"), P("6"), "x")), 1), N(3)),
+           "AND SOLVEFOR MOVES THE RIGHT-HAND SIDE ACROSS")
+
+    Print("--- SERIES, EXACTLY ---")
+    Rem The visible payoff of exact rationals: 1/6 and 1/120, not 0.1667.
+    Assert(AlgEqual(AlgOkOf(AlgMaclaurin(P("sin(x)"), "x", 5)),
+                    P("x - x^3/6 + x^5/120")), "THE MACLAURIN SERIES OF SINE TO ORDER FIVE")
+    Assert(AlgEqual(AlgCoeffAt(AlgOkOf(AlgMaclaurin(P("sin(x)"), "x", 5)), "x", 3),
+                    AlgExact(0 - 1, 6)), "AND THE CUBIC COEFFICIENT IS EXACTLY MINUS A SIXTH")
+    Assert(AlgEqual(AlgCoeffAt(AlgOkOf(AlgMaclaurin(P("sin(x)"), "x", 5)), "x", 5),
+                    AlgExact(1, 120)), "AND THE FIFTH IS EXACTLY ONE OVER 120")
+    Assert(AlgEqual(AlgOkOf(AlgMaclaurin(P("exp(x)"), "x", 2)), P("1 + x + x^2/2")),
+           "AND THE SERIES OF EXP")
+
+    Print("--- FIRST-ORDER ODES ---")
+    Assert(AlgEqual(AlgOkOf(AlgDeSolve(P("y"), "y", "x")), P("C * exp(x)")),
+           "Y PRIME EQUALS Y GIVES C EXP X")
+    Assert(AlgEqual(AlgOkOf(AlgDeSolve(P("2*x"), "y", "x")), P("x^2 + C")),
+           "AND A PURE QUADRATURE INTEGRATES")
+    Assert(AlgIsErr(AlgDeSolve(P("y^2 * x"), "y", "x")), "A GENERAL SEPARABLE ONE IS REFUSED")
+
+    Print("--- SUBSTITUTION AND EVALUATION ---")
+    Assert(AlgEqual(AlgSubst(P("x^2 + 1"), "x", P("y + 1")), P("(y+1)^2 + 1")), "SUBSTITUTION")
+    Rem Only a function the table already knows can appear in a parsed
+    Rem expression at all, so AlgSubstFn rewrites those rather than
+    Rem introducing user-defined ones — replacing sin by its own series is
+    Rem the shape of use it is for.
+    Assert(AlgEqual(AlgSubstFn(P("sin(x + 1)"), "sin", "u", P("u^2")), P("(x+1)^2")),
+           "AND A FUNCTION CALL IS REPLACED BY ITS BODY")
+    Assert(AlgEvalAt(P("x^2 + 1"), "x", 3) = 10, "EVALUATION AT A POINT")
+    Assert(AlgEvalWith(P("x*y + 1"), { "x", "y" }, { 2, 5 }) = 11, "AND WITH SEVERAL VARIABLES")
+
+    Print("--- THE BRIDGE TO ENG ---")
+    Rem Neither machine includes the other, so this is the only place the
+    Rem composition can be tested. A quotation is a builtin type, which is
+    Rem exactly why they compose with no dependency in either direction.
+    Assert(Call(AlgToFn(P("x^2"), "x"), 3) = 9, "AN EXPRESSION BECOMES A FUNCTION VALUE")
+    Assert(Call(AlgToFn2(P("x*y"), "x", "y"), 3, 4) = 12, "AND A TWO-VARIABLE ONE TOO")
+    Assert(Close(EngZeroOf(AlgToFn(P("x^3 - 2*x - 5"), "x"), 2, 3), 2.0945514815, 0.0000001),
+           "AND ENGZEROOF SOLVES A FORMULA IT NEVER SAW COMPILED")
+    Assert(Close(EngIntegrate(AlgToFn(P("x^2"), "x"), 0, 3, 100), 9, 0.0000001),
+           "AND ENGINTEGRATE NUMERICALLY AGREES WITH ALGINTEGDEF")
+    Assert(Close(EngMinOf(AlgToFn(P("(x-3)^2 + 1"), "x"), 0, 10), 3, 0.000001),
+           "AND ENGMINOF FINDS THE MINIMUM OF A PARSED PARABOLA")
+
+    Print("")
+    Print("ALL ASSERTIONS PASSED")

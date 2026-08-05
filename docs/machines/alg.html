@@ -1,0 +1,356 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Symbolic algebra â€” machines/alg.shoddy">
+<title>alg â€” Symbolic algebra | Shoddy Machines</title>
+<link rel="stylesheet" href="../style.css">
+<link rel="icon" href="../favicon.svg" type="image/svg+xml">
+<link rel="alternate icon" href="../favicon.ico" sizes="48x48">
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+</head>
+<body>
+<div class="topbar"><div class="inner">
+  <div class="row">
+    <a class="phase" href="index.html"><img class="mark" src="../media/brand/shoddy-icon.svg" alt="" width="23" height="23">Shoddy Â· The Machines</a>
+    <span class="spacer"></span>
+    <nav class="docnav meta" aria-label="About"><a href="../heritage.html">Heritage</a><a href="../authorship.html">Authorship</a></nav>
+  </div>
+  <nav class="docnav main" aria-label="Documentation"><a href="../tutorials/index.html">Tutorials</a><a href="../guide.html">Guide</a><a href="../quickref.html">Reference</a><span class="here">Machines</span><a href="../mills/index.html">Mills</a><a href="../stack.html">Stack</a><a href="../spec.html">Spec</a><a href="../setup.html">Setup</a><a href="../vscode.html">VS Code</a><a href="../assistants.html">AI</a><a href="../build.html">Toolchain</a><a href="../errors.html">Errors</a></nav>
+</div></div>
+<div class="wrap">
+
+
+<header class="mast has-icon"><div><p class="eyebrow"><a href="index.html#numbers-math">The Machines &middot; Numbers &amp; math</a></p><h1>alg</h1><p class="kicker">Symbolic algebra &mdash; machines/alg.shoddy</p></div><img class="micon" src="../media/icons/alg.svg" alt="the alg machine&#39;s icon"></header>
+<nav class="pagertop" aria-label="Machines, in catalog order"><a href="lin.html">&larr; lin</a><a href="index.html">All machines</a><a href="stats.html">stats &rarr;</a></nav>
+
+<h2 id="summary">Summary</h2>
+<p><code>alg</code> is algebra over <code>AlgEx</code>, where the values are
+not numbers but the <em>formulae</em> that produce them. An expression type,
+a parser and a printer, exact rational arithmetic, a canonical-form
+simplifier, symbolic differentiation, expansion and factorisation, partial
+fractions, limits, a bounded integrator, equation solving, first-order ODEs,
+Taylor series &mdash; and the word that justifies the machine,
+<code>AlgToFn</code>, which turns an expression into a function value the
+rest of the tree can call. Every word is <strong>pure</strong> and prefixed
+<code>Alg</code>.</p>
+
+<p class="note"><strong>Read these two before anything else.</strong> The
+machine cannot be used without knowing them, and both are decisions that
+could not be changed later without rewriting every word:
+<strong>there is no subtraction node and no division node</strong>, and
+<strong>numbers are exact rationals</strong>.</p>
+
+<h3>There is no subtraction and no division</h3>
+<p>Six variants, not eight. <code>a - b</code> is a sum with a term
+multiplied by &minus;1; <code>a / b</code> is a product with a factor raised
+to &minus;1:</p>
+<pre class="basic"><code>AlgNum(AlgNumer, AlgDenom)     ' exact rational, always normalised
+AlgVar(AlgName)
+AlgSum(AlgTerms)               ' two or more
+AlgProd(AlgFactors)            ' two or more
+AlgPow(AlgBase, AlgExpo)
+AlgCall(AlgFn, AlgArg)         ' sin, cos, exp, ln, ...</code></pre>
+<p>That is extra work at construction, and <code>AlgSubOf</code> and
+<code>AlgDivOf</code> hide it. What it buys is that every function here has
+six cases instead of eight &mdash; and, the real prize, the simplifier never
+has to reason about <code>a - b + b</code>, because there is no subtraction
+to reason about. Collecting like terms over a flat n-ary sum is one
+<code>Fold</code>; over a binary tree with a subtraction node it is a
+research project. <code>AlgShow</code> reconstructs both on the way out, so
+you never see the representation.</p>
+
+<h3>Numbers are exact rationals</h3>
+<p><code>1/3 + 1/6</code> is exactly <code>1/2</code>, never
+<code>0.5</code>. <strong>This is what separates a CAS from a
+calculator.</strong> The moment it is 0.5, the simplifier cannot tell
+<code>1/3 + 1/6 - 1/2</code> from a small number, <code>AlgFactor</code>
+cannot find rational roots, and <code>AlgPartFrac</code> cannot solve for its
+coefficients. It is also why <code>AlgMaclaurin</code> gives you
+<code>1/120</code> and not <code>0.008333</code>.</p>
+<p>Decimals entering the machine are rationalised by continued fraction to
+the <em>simplest</em> rational within a tolerance &mdash;
+<code>AlgOf(0.1)</code> is <code>1/10</code>, not the double's exact binary
+value <code>3602879701896397/36028797018963968</code>, which is technically
+faithful, practically useless, and makes every subsequent gcd enormous.</p>
+
+<h2 id="why">Why It's Useful</h2>
+
+<h3>The bridge to <a href="eng.html">eng</a></h3>
+<p>Every calculus and solving word in <a href="eng.html">eng</a> takes a
+quotation. None of them could take a <em>formula</em>, because a formula was
+not a value anywhere in the tree. <code>AlgToFn</code> closes that:</p>
+<pre class="basic"><code>Include "alg.shoddy"
+Include "eng.shoddy"          ' both â€” neither includes the other
+
+Def Main()
+    Let e = AlgParse("x^3 - 2*x - 5")
+    Let f = AlgToFn(e, "x")
+
+    Print(EngZeroOf(f, 2, 3))               ' 2.0945514815 â€” solved numerically
+    Print(AlgShow(AlgDiff(e, "x")))         ' 3 * x ^ 2 - 2 â€” differentiated exactly</code></pre>
+<p>A formula read from a config file, a CSV column header or a user prompt
+becomes a function value, and every numeric word in <code>eng</code> accepts
+it unchanged. <strong>Neither machine includes the other</strong> &mdash; a
+quotation is a builtin type, so they compose with no dependency in either
+direction, and a program that only wants symbolic differentiation does not
+drag in a unit table.</p>
+
+<h3>Partial answers are answers</h3>
+<p>Integration, factorisation, limits, solving, parsing and the ODE solver
+all return the language's <code>Result</code>. And <strong><code>Err</code>
+here usually means "outside the implemented rules", which is an ordinary
+answer about the input rather than a fault</strong>:</p>
+<pre class="basic"><code>AlgFactor(AlgParse("x^2 + 1"), "x")
+    ' Err("IRREDUCIBLE OVER THE RATIONALS", 0)
+
+AlgInteg(AlgParse("exp(x^2)"), "x")
+    ' Err("NO RULE FOR EXP OF A NON-LINEAR ARGUMENT", 0)</code></pre>
+<p>The first states a true fact about the polynomial. The second is correct
+because <code>exp(xÂ²)</code> has no elementary antiderivative &mdash; no
+amount of engineering would find one. Neither says <code>"FAILED"</code>,
+because that would be a different and less useful claim.</p>
+<p><code>At</code> is <code>0</code> where there is no position and the
+1-based token offset where there is, which is how one <code>Result</code>
+serves both the parser and the rule boundary.</p>
+
+<h2 id="guide">User's Guide</h2>
+
+<h3>Reading and writing</h3>
+<pre class="basic"><code>Print(AlgShow(AlgParse("2*x + 3*x")))        ' 5 * x â€” simplified on the way in
+Print(AlgShow(AlgParse("a - (b - c)")))      ' a - (b - c) â€” minimal brackets
+Print(AlgToNumber(AlgParse("2^3^2")))        ' 512 â€” ^ is right-associative</code></pre>
+<p><code>AlgParse</code> aborts on a bad parse and is the one for a test or
+a literal. <code>AlgRead</code> is total, returns a <code>Result</code>, and
+is the one for anything a user typed. Precedence is conventional and pinned:
+<code>^</code> is right-associative and <strong>tighter than unary
+minus</strong>, so <code>-x^2</code> is <code>-(x^2)</code> and
+<code>2^3^2</code> is 512.</p>
+
+<h3>Calculus</h3>
+<pre class="basic"><code>Print(AlgShow(AlgDiff(AlgParse("x * sin(x)"), "x")))   ' sin(x) + x * cos(x)
+Print(AlgShow(AlgDiff(AlgParse("x^x"), "x")))          ' x ^ x * (1 + ln(x))
+
+Select Case AlgInteg(AlgParse("exp(2*x)"), "x")
+    Case Ok(i)
+        Print(AlgShow(i))                              ' (1 / 2) * exp(2 * x)
+    Case Err(why, at)
+        Print(why)</code></pre>
+<p><strong>Differentiation is total</strong> &mdash; every representable
+expression differentiates, so it returns an <code>AlgEx</code> and not a
+<code>Result</code>. That is a genuine asymmetry with integration and it is
+worth knowing: the general power rule is implemented, so <code>x^x</code>
+works rather than only constant exponents.</p>
+
+<h3>Exactness you can see</h3>
+<pre class="basic"><code>Print(AlgShow(AlgOkOf(AlgMaclaurin(AlgParse("sin(x)"), "x", 5))))
+    ' x - (1 / 6) * x ^ 3 + (1 / 120) * x ^ 5
+
+Print(AlgShow(Nth(AlgListOf(AlgSolve(AlgParse("x^2 - 2"), "x")), 1)))
+    ' a symbolic square root of 2, not 1.4142135624</code></pre>
+
+<h2 id="cannot">What This Cannot Do</h2>
+<p>For a computer algebra system the boundary is as much of the
+documentation as the capability. A user who discovers it by experiment will
+not trust the parts that work.</p>
+<ul>
+<li><strong>Integration is table-driven.</strong> Constants, <code>x^n</code>
+including <code>n = -1</code>, sin/cos/exp, sums, constant multiples, and
+<code>f(ax + b)</code> by linear substitution. Query the table at runtime
+with <code>AlgIntegRules()</code>. <strong>No</strong> Risch algorithm, no
+integration by parts, no general substitution.</li>
+<li><strong>Factorisation is univariate and over the rationals</strong>, by
+the rational root theorem. Multivariate factorisation, factorisation over
+the reals or complexes, and anything needing Berlekamp or Zassenhaus are out
+of scope.</li>
+<li><strong>Limits are substitution plus bounded L'HÃ´pital.</strong> No
+series expansion and no one-sided limits &mdash; a limit that depends on the
+<em>side</em> of the approach is refused rather than guessed, which is why
+<code>abs(x)/x</code> at 0 returns an <code>Err</code>.</li>
+<li><strong>Partial fractions cover distinct linear factors.</strong>
+Repeated linear factors and irreducible quadratics each return an
+<code>Err</code> naming which case it was.</li>
+<li><strong>ODEs are first-order only</strong> â€” <code>y' = g(x)</code> and
+<code>y' = g(x)Â·y</code>. Both inherit every limit of the integrator: an ODE
+solver on top of a table integrator is exactly as capable as the table.</li>
+<li><strong>Functions are unary.</strong> <code>atan2</code> and friends are
+not in the table, and adding one later means adding a variant rather than
+widening this one.</li>
+</ul>
+
+<h3>Three ceilings</h3>
+<ul>
+<li><strong>2<sup>53</sup>, and rationals reach it faster than you
+expect.</strong> Ten additions of distinct small primes and the denominator
+is past 6&times;10<sup>9</sup>; thirty and it is past 2<sup>53</sup>, where
+arithmetic goes silently wrong. <code>AlgRatAdd</code> divides by the gcd of
+the denominators <em>before</em> cross-multiplying for exactly this
+reason.</li>
+<li><strong>Expansion is exponential.</strong> Comfortable to a total degree
+of about 12 over three or four variables; <code>AlgExpandPow</code> refuses
+above its bound rather than attempting it, because the alternative failure
+mode is a mill that never returns.</li>
+<li><strong><code>AlgToFn</code> walks the tree on every call.</strong> Fine
+for a solver making a hundred evaluations, not fine in a tight numeric loop.
+<code>AlgSimplify</code> first; past that, this machine is for symbolic work
+and <a href="eng.html">eng</a> is for numeric work.</li>
+</ul>
+
+<h3>AlgEqual is canonical-form equality, not mathematical equality</h3>
+<p>Never compare two <code>AlgEx</code> with <code>=</code>: structural
+equality reports <code>x + y</code> and <code>y + x</code> as different.
+<code>AlgEqual</code> simplifies both and compares canonical forms, and is
+the only equality this machine offers.</p>
+<p>But the two are not the same thing. <code>1/(x*(x+1))</code> and
+<code>1/(x^2+x)</code> are the same function and are <strong>not</strong>
+<code>AlgEqual</code>, because the canonical form neither factors a
+denominator nor expands one &mdash; it has no basis on which to choose. Use
+<code>AlgExpand</code> or <code>AlgTogether</code> first when the two sides
+may disagree about that. A <code>False</code> means "not the same canonical
+form", which is a weaker claim than "not equal".</p>
+
+<h2 id="words">Word Reference</h2>
+
+<h3>Rationals</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>AlgRat(n, d)</td><td><strong>The only constructor of a number.</strong> Sign on the numerator, denominator positive, gcd divided out. Errors on a zero denominator. An <code>AlgNum</code> built any other way compares unequal to its own normal form and breaks the total order silently.</td></tr>
+<tr><td>AlgExact(n, d)</td><td>The same, for a caller who already has a fraction.</td></tr>
+<tr><td>AlgOf(x)</td><td>A <code>Number</code> to the simplest rational within tolerance, by continued fraction.</td></tr>
+<tr><td>AlgZero / AlgOne / AlgMinusOne</td><td>The three constants worth having by name.</td></tr>
+<tr><td>AlgPiSym / AlgESym</td><td><code>pi</code> and <code>e</code> as <strong>symbols</strong>, not values &mdash; which is why <code>sin(pi)</code> simplifies to exactly 0.</td></tr>
+<tr><td>AlgNumOf / AlgDenOf / AlgToNumber</td><td>Read a number out. Error unless it is one.</td></tr>
+<tr><td>AlgIsNum / AlgIsZero / AlgIsOne / AlgIsInt</td><td>Ask what it is.</td></tr>
+<tr><td>AlgRatAdd / AlgRatMul / AlgRatDiv / AlgRatNeg / AlgRatCmp</td><td>Exact arithmetic on two numbers.</td></tr>
+</table>
+
+<h3>Construction</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>AlgVarOf(name)</td><td>A symbol.</td></tr>
+<tr><td>AlgAddOf / AlgSubOf / AlgMulOf / AlgDivOf / AlgNegOf</td><td>The four operations and negation. <code>AlgSubOf</code> and <code>AlgDivOf</code> build the sugar the type does not have; <code>AlgDivOf</code> errors on a zero divisor.</td></tr>
+<tr><td>AlgSumOfList / AlgProdOfList</td><td>The n-ary forms.</td></tr>
+<tr><td>AlgPowOf(b, e) / AlgSqrtOf(a)</td><td>Powers. The identities apply here, so <code>x^0</code> is 1 and <code>x^1</code> is x before anything downstream sees them.</td></tr>
+<tr><td>AlgCallOf(fn, arg)</td><td>A function call. <strong>Errors on a name not in the table</strong> rather than building something nothing downstream can differentiate or evaluate.</td></tr>
+</table>
+<p class="note"><strong>Every builder simplifies as it goes.</strong>
+<code>AlgAddOf(x, AlgZero())</code> returns <code>x</code>, not a two-element
+sum. That is not an optimisation &mdash; it is what keeps the two-or-more
+invariant true, and it means most expressions reach
+<code>AlgSimplify</code> already close to canonical.</p>
+
+<h3>Parsing and printing</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>AlgParse(s)</td><td>&rarr; <code>AlgEx</code>. <strong>Aborts</strong> on a bad parse. For tests and literals.</td></tr>
+<tr><td>AlgRead(s)</td><td>&rarr; <code>Result</code>. Total; <code>Err</code> carries the 1-based token offset in <code>At</code>. For anything a user typed.</td></tr>
+<tr><td>AlgShow(e)</td><td>Minimally parenthesised infix, reconstructing subtraction and division.</td></tr>
+<tr><td>AlgShowFull(e) / AlgTree(e)</td><td>Fully bracketed, and the indented tree &mdash; both for debugging.</td></tr>
+</table>
+
+<h3>Canonical form</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>AlgSimplify(e)</td><td>The capped fixpoint. One pass is not enough &mdash; collecting terms creates constants to fold, folding creates identities to drop &mdash; so it repeats until nothing changes, and <strong>errors on overrun</strong> rather than hanging.</td></tr>
+<tr><td>AlgPass(e)</td><td>One rewriting pass, exposed for testing.</td></tr>
+<tr><td>AlgCompare(a, b)</td><td>The total order: &minus;1, 0 or 1. Numbers, then variables, then powers, products, sums, calls.</td></tr>
+<tr><td>AlgEqual(a, b)</td><td><strong>The only equality.</strong> See the caveat above.</td></tr>
+<tr><td>AlgSort(xs) / AlgTogether(e)</td><td>Canonical ordering of a term list; and a sum of fractions put over one denominator &mdash; the inverse of <code>AlgPartFrac</code>.</td></tr>
+<tr><td>AlgDepth / AlgSize / AlgVarsOf / AlgHasVar / AlgIsConst</td><td>Inspection.</td></tr>
+<tr><td>AlgTwoOrMore(e)</td><td>The invariant, exposed so a test can assert it: no sum or product ever holds fewer than two elements.</td></tr>
+</table>
+
+<h3>Differentiation</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>AlgDiff(e, var)</td><td>First derivative. <strong>Total</strong>, and simplified before returning &mdash; the second derivative of <code>x^3</code> is unreadable unsimplified and the third unprintable.</td></tr>
+<tr><td>AlgDiffN(e, var, n)</td><td>The nth.</td></tr>
+<tr><td>AlgGrad(e, vars)</td><td>One partial per variable.</td></tr>
+<tr><td>AlgFns() / AlgKnowsFn(name)</td><td>The function table, and whether a name is in it.</td></tr>
+<tr><td>AlgDiffFn(name, u) / AlgEvalFn(name, x)</td><td>The derivative and the numeric value of each. Both must exist for every name in <code>AlgFns()</code> &mdash; one without the other breaks <code>AlgToFn</code> or <code>AlgDiff</code>, and the test suite asserts they are in step by iterating the table.</td></tr>
+</table>
+
+<h3>Expansion, factorisation, polynomials</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>AlgExpand(e) / AlgExpandPow(e)</td><td>Distribute. Total &mdash; every product of sums can be expanded, which is the asymmetry with factorisation.</td></tr>
+<tr><td>AlgFactor(e, var)</td><td>&rarr; <code>Result</code>. Univariate, over the rationals.</td></tr>
+<tr><td>AlgCommonFactor(e)</td><td>Pull out the integer common factor of a sum. Total.</td></tr>
+<tr><td>AlgPolyDegree / AlgIsPoly</td><td>Degree in one variable, <code>-1</code> when it is not a polynomial in it.</td></tr>
+<tr><td>AlgPolyCoeffs(e, var)</td><td>&rarr; <code>Result</code>. <strong>Lowest power first</strong>, so index k is the coefficient of var^k. Unpack with <code>AlgCoeffList</code>.</td></tr>
+<tr><td>AlgCoeffAt(e, var, k) / AlgFromCoeffs(cs, var)</td><td>One coefficient; and the polynomial back from a list.</td></tr>
+<tr><td>AlgPolyDivide / AlgPolyRem</td><td>&rarr; <code>Result</code>. Quotient and remainder from one walk.</td></tr>
+<tr><td>AlgPartFrac(e, var)</td><td>&rarr; <code>Result</code>. Distinct linear factors, by the cover-up rule.</td></tr>
+</table>
+
+<h3>Limits, integration, solving</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>AlgLimit(e, var, at)</td><td>&rarr; <code>Result</code>. Substitution, then bounded L'HÃ´pital on a quotient.</td></tr>
+<tr><td>AlgLimitInf(e, var)</td><td>&rarr; <code>Result</code>. Degree comparison, rational functions only.</td></tr>
+<tr><td>AlgInteg(e, var) / AlgIntegDef(e, var, a, b)</td><td>&rarr; <code>Result</code>. Indefinite (no constant) and definite.</td></tr>
+<tr><td>AlgIntegRules()</td><td>What the table covers, as text, so a caller can find out what will work without reading the source &mdash; and so this page can be checked against it.</td></tr>
+<tr><td>AlgSolve(e, var)</td><td>&rarr; <code>Result</code> holding a list. <strong><code>Ok({ })</code> means no solutions; <code>Err</code> means no method.</strong> Those are different facts and a caller can act differently on them.</td></tr>
+<tr><td>AlgSolveFor(lhs, rhs, var)</td><td>The same, with the right-hand side moved across.</td></tr>
+<tr><td>AlgSolveLinear / AlgSolveQuad</td><td>The two closed forms. The quadratic keeps an exact discriminant, so a surd stays symbolic.</td></tr>
+<tr><td>AlgDeSolve(rhs, y, x)</td><td>&rarr; <code>Result</code>. First-order only; the arbitrary constant appears as <code>C</code>.</td></tr>
+<tr><td>AlgTaylor / AlgMaclaurin</td><td>&rarr; <code>Result</code>. Exact rational coefficients.</td></tr>
+</table>
+
+<h3>Substitution, evaluation, the bridge</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>AlgSubst(e, var, r)</td><td>Replace a variable with an expression.</td></tr>
+<tr><td>AlgSubstFn(e, name, param, body)</td><td>Replace calls to a function with a body written in <code>param</code>. The name must be one the table knows.</td></tr>
+<tr><td>AlgEvalAt(e, var, x)</td><td>&rarr; <code>Number</code>. <strong>The boundary</strong> where <code>pi</code> and <code>e</code> become values. An unbound variable is an error naming it, never a silent zero.</td></tr>
+<tr><td>AlgEvalWith(e, names, values)</td><td>The same with several variables, as two parallel lists.</td></tr>
+<tr><td>AlgToFn(e, var)</td><td><strong>The bridge.</strong> &rarr; <code>[ Number -- Number ]</code>, which every numeric word in <a href="eng.html">eng</a> accepts.</td></tr>
+<tr><td>AlgToFn2(e, v1, v2)</td><td>The two-variable form.</td></tr>
+<tr><td>AlgOkOf(r) / AlgWhyOf(r) / AlgIsErr(r) / AlgAtOf(r) / AlgListOf(r)</td><td>Reading a <code>Result</code> without a <code>Select Case</code>, for a caller who has already checked or a test that knows the answer. <code>AlgOkOf</code> errors on an <code>Err</code>.</td></tr>
+</table>
+
+<h2 id="story">The Story Behind the Machine</h2>
+<p><strong>George Peacock</strong> (1791&ndash;1858) was born at Denton in
+Wharfedale, in the West Riding of Yorkshire, and his <em>Treatise on
+Algebra</em> of 1830 founded what he called <strong>symbolical
+algebra</strong>: the doctrine that algebra is the manipulation of symbols
+according to stated rules, valid independently of what the symbols are taken
+to mean. Before Peacock, algebra was understood as generalised arithmetic
+and an expression had to <em>stand for</em> a quantity; after him, the rules
+could be studied and applied on their own terms.</p>
+<p>That doctrine is not a decorative parallel to this machine &mdash; it is
+its operating premise, exactly and literally. <code>AlgDiff</code>
+differentiates <code>x^3</code> without knowing or caring what
+<code>x</code> is, because the power rule is a rule about symbols. A
+computer algebra system is only possible at all because Peacock was right.
+And Denton sits in Wharfedale a few miles from Otley, in the same riding as
+the mills this language is named for.</p>
+
+<h2 id="usedby">Who Uses It</h2>
+<p>Nothing yet &mdash; <code>alg</code> is new. A mill that puts it to work
+will appear here; a formula evaluator that reads expressions from a file and
+hands them to <a href="eng.html">eng</a> is the obvious one, and would make
+the case for both machines at once.</p>
+
+<h2 id="uses">The Machines It Uses</h2>
+<table>
+<tr><th></th><th>Machine</th><th>Why</th></tr>
+<tr><td class="uicon"><a href="seq.html"><img src="../media/icons/seq.svg" alt=""></a></td><td><a href="seq.html">seq</a></td><td><code>Flatten</code> is the whole of expansion and variable collection, <code>All</code> and <code>Any</code> carry the invariants, <code>Append</code> and <code>Taken</code> build the coefficient lists, and <code>IndexOf</code> looks up a binding.</td></tr>
+<tr><td class="uicon"><a href="str.html"><img src="../media/icons/str.svg" alt=""></a></td><td><a href="str.html">str</a></td><td><code>Join</code> assembles the printer's output and <code>StrRep</code> indents <code>AlgTree</code>.</td></tr>
+</table>
+<p class="note"><strong>Not <a href="eng.html">eng</a>, and not <code>bool</code>.</strong> The three do not overlap and none
+includes another: <code>eng</code> is continuous mathematics over <code>Number</code>, <code>bool</code> (proposed) is discrete logic over bit patterns and <code>Boolean</code>, and this is algebra over <code>AlgEx</code>.
+<code>AlgToFn</code> is the bridge, and a quotation is a builtin type, so it
+costs neither machine a dependency.</p>
+
+<nav class="pager" aria-label="Machines, in catalog order">
+  <a href="lin.html"><span class="dir">&larr; Previous machine</span><span class="ttl">lin</span></a>
+  <a class="next" href="stats.html"><span class="dir">Next machine &rarr;</span><span class="ttl">stats</span></a>
+</nav>
+<footer>Named for the shoddy mills of the West Riding: Useless Things Made
+Useful Through Skill (<a href="../heritage.html">the heritage of the name</a>).<br>
+&copy; 2026 Stephen Vincent Foster</footer>
+</div>
+</body>
+</html>

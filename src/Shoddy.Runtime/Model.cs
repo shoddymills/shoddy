@@ -121,6 +121,66 @@ public sealed class Pat
 /// time shape plus the C# expression the weave emits to reach it.</summary>
 public sealed record ExternalType(TypeDef Shape, string FieldRef);
 
+/// <summary>The types the language itself declares: absence, and failure
+/// with a reason. Every program has them with no Include, because a
+/// replacement for NULL you have to import is not a replacement for NULL.
+///
+/// THESE ARE THE ONE SHARED INSTANCE. Record equality is
+/// ReferenceEquals(a.RType, b.RType) and a Case pattern resolves to a
+/// TypeDef, so if each assembly minted its own SOME then a Some returned
+/// by a machine would not match a Case Some in the mill that called it —
+/// silently, and only at runtime. Every weave reaches these four fields
+/// instead of emitting a copy, exactly as it reaches a machine's exported
+/// type through its manifest.
+///
+/// NO ACCESSOR WORDS ARE GENERATED FOR THEM. A field accessor on a sum
+/// type is partial: Value(None()) compiles and dies in Engine.Field with
+/// "None has no field Value", which is the very hole Option exists to
+/// close. Pattern binders are positional and named at the match site, so
+/// Case Some(x) already hands over the value and the accessor would add
+/// only a way to skip the match. Parser.ParseTypeDecl calls NoteAccessor
+/// per field; predeclaring simply does not.</summary>
+public static class Prelude
+{
+    static TypeDef Make(string disp, params string[] fdisp)
+    {
+        var t = new TypeDef { Name = disp.ToUpperInvariant(), Disp = disp };
+        foreach (string f in fdisp)
+        {
+            t.Fields.Add(f.ToUpperInvariant());
+            t.FDisp.Add(f);
+        }
+        return t;
+    }
+
+    /// <summary>Option = Some(Value) | None.</summary>
+    public static readonly TypeDef Some = Make("Some", "Value");
+    public static readonly TypeDef None = Make("None");
+
+    /// <summary>Result = Ok(Value) | Err(Why, At). At is 0 when there is no
+    /// position, which already reads as "absent" in a tree where IndexOf
+    /// returns 0 for not-found. Both fields are free because no accessor
+    /// word is generated — otherwise At would collide with scribbler's
+    /// event timestamp and Why with every parser's Case binder.</summary>
+    public static readonly TypeDef Ok = Make("Ok", "Value");
+    public static readonly TypeDef Err = Make("Err", "Why", "At");
+
+    public static readonly TypeDef[] All = { Some, None, Ok, Err };
+
+    /// <summary>The C# expression a weave emits to reach each one — the
+    /// same role a machine manifest's FieldRef plays.</summary>
+    public static string? FieldRefFor(string name) => name switch
+    {
+        "SOME" => "Shoddy.Runtime.Prelude.Some",
+        "NONE" => "Shoddy.Runtime.Prelude.None",
+        "OK" => "Shoddy.Runtime.Prelude.Ok",
+        "ERR" => "Shoddy.Runtime.Prelude.Err",
+        _ => null,
+    };
+
+    public static bool Declares(string name) => FieldRefFor(name) != null;
+}
+
 /// <summary>Where a top-level name was declared. Kind reads as a noun
 /// phrase in the duplicate message: "Def", "Type", "Let".</summary>
 public readonly record struct DeclSite(string Kind, string? File, int Line);
@@ -250,6 +310,24 @@ public sealed class ShoddyProgram
     public void RecordSite(string name, string kind, string? file, int line) =>
         Sites[name] = new DeclSite(kind, file, line);
 
+    /// <summary>Seed the language's own types, before a line of source is
+    /// read. They go into Types like any other declaration, so patterns and
+    /// constructors resolve normally — but no NoteAccessor call is made, so
+    /// Value/Why/At never become words (see Prelude).
+    ///
+    /// A Site IS recorded, with a null file, so that a program declaring its
+    /// own `Type Option = Some(v) | None` collides in ClaimName and is told
+    /// so, rather than silently shadowing the language's.</summary>
+    public void Predeclare()
+    {
+        foreach (TypeDef t in Prelude.All)
+        {
+            if (FindType(t.Name) != null) continue;
+            Types.Add(t);
+            RecordSite(t.Name, "Type", null, 0);
+        }
+    }
+
     /// <summary>"Def 'HINTS' (cave-tables.shoddy:14)", or a bare kind when
     /// the name came from a machine DLL and has no source line.</summary>
     public string DescribeSite(string name)
@@ -273,10 +351,18 @@ public sealed class ShoddyProgram
     public bool HasDef(string name) =>
         Defs.ContainsKey(name) || ExternalDefs.ContainsKey(name);
 
+    /// <summary>Does some declared type have this field, so a bare word
+    /// should compile to an accessor? This is the fallback that makes a
+    /// field name a word without NoteAccessor ever being called — which is
+    /// why suppressing the Prelude's accessors has to happen HERE and not
+    /// only at declaration. Some(Value) must not make Value a word:
+    /// Value(None()) would compile and die at runtime with "None has no
+    /// field Value", reopening the hole Option closes. Select Case is the
+    /// only way into the language's own types.</summary>
     public bool AnyTypeHasField(string f)
     {
         foreach (TypeDef t in Types)
-            if (t.FieldIndex(f) >= 0) return true;
+            if (!Prelude.Declares(t.Name) && t.FieldIndex(f) >= 0) return true;
         foreach (ExternalType t in ExternalTypes.Values)
             if (t.Shape.FieldIndex(f) >= 0) return true;
         return false;

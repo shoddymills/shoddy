@@ -30,8 +30,12 @@ Def PhiSquared() As Number
 
 Rem ---- sum types + nested patterns ----------------------------------
 
+Rem Option and Result are NOT declared here. They are the language's, and
+Rem declaring them would now collide in ClaimName. Until v1.7.0 this file
+Rem carried its own `Type Option = Some(v) | None`, which was the whole of
+Rem the tree's use of it — the feature existed and nothing reached for it,
+Rem because reaching for it meant declaring it first.
 Type Shape = Circle(r) | Rect(w, h)
-Type Option = Some(v) | None
 
 Def Area(s As Shape) As Number
     Select Case s
@@ -54,6 +58,22 @@ Def ShowOpt(o As Option) As String
             "SOME " & Str(v)
         Case None
             "NONE"
+
+Rem Result is the language's too. Err carries a reason AND a position, and
+Rem At is 0 when there is no position to give — which reads correctly in a
+Rem tree where IndexOf already returns 0 for "not there".
+Def Reciprocal(n As Number) As Result
+    If n = 0 Then
+        Err("DIVISION BY ZERO", 0)
+    Else
+        Ok(1 / n)
+
+Def ShowResult(r As Result) As String
+    Select Case r
+        Case Ok(v)
+            "OK " & Str(v)
+        Case Err(why, at)
+            "ERR " & why & " AT " & Str(at)
 
 Def NestSum(p As Pair) As Number
     Select Case p
@@ -151,10 +171,11 @@ Def Main()
     Print(ValOr("PLOUGH", -1))                      Rem -1
     Print(IsBool(" true "))                         Rem True
     Print(IsBool("YES"))                            Rem False (strict)
-    Print(Bool("FALSE"))                            Rem False
-    Print(BoolOr("y", False))                       Rem True
-    Print(BoolOr("0", True))                        Rem False
-    Print(BoolOr("MAYBE", True))                    Rem True (the fallback)
+    Print(ToBool("FALSE"))                          Rem False
+    Print(ToBoolOr("y", False))                     Rem True
+    Print(ToBoolOr("0", True))                      Rem False
+    Print(ToBoolOr("MAYBE", True))                  Rem True (the fallback)
+    Print(ShowOpt(ToBoolOpt("MAYBE")))              Rem NONE — and it SAYS so
     Print("[" & PadLeft("42", 5) & "]")             Rem [   42]
     Print("[" & PadRight("42", 5) & "]")            Rem [42   ]
     Print(PadLeft("TOOWIDE", 3))                    Rem toowide (unchanged)
@@ -169,8 +190,13 @@ Def Main()
     Print(Commas(999, 0))                           Rem 999
     Print(Commas(-1000, 0))                         Rem -1,000
     Assert(ValOr("3.14", 0) = Val("3.14"), "VALOR AGREES WITH VAL")
-    Assert(Bool("true") And Not Bool("FALSE"), "BOOL IS CASE-BLIND")
-    Assert(BoolOr("nonsense", True) And Not BoolOr("nonsense", False), "BOOLOR FALLS BACK")
+    Assert(ToBool("true") And Not ToBool("FALSE"), "TOBOOL IS CASE-BLIND")
+    Assert(ToBoolOr("nonsense", True) And Not ToBoolOr("nonsense", False), "TOBOOLOR FALLS BACK")
+    Rem The distinction the fallback destroys and Option keeps: ToBoolOr
+    Rem cannot tell you whether False was parsed or supplied. This can.
+    Assert(ToBoolOpt("no") = Some(False), "A PARSED FALSE IS SOME FALSE")
+    Assert(ToBoolOpt("nonsense") = None(), "AN UNPARSEABLE ONE IS NONE")
+    Assert((ToBoolOpt("nonsense") = Some(False)) = False, "AND THE TWO ARE NOT THE SAME ANSWER")
     Assert(ToFixed(0, 2) = "0.00", "TOFIXED PADS ZERO")
     Assert(Commas(0, 0) = "0", "COMMAS SURVIVES ZERO")
     Print("--- COMMODITY ---")
@@ -262,6 +288,21 @@ Def Main()
     Print(NestSum(Pair(5, 6)))                          Rem 0 (falls through)
     Assert(Area(Rect(3, 4)) = 12, "SUM TYPE DISPATCH")
     Assert(Halve(7) = None(), "ZERO-FIELD VARIANT EQUALITY")
+    Print("--- THE LANGUAGE'S OWN TYPES ---")
+    Rem Nothing is included to get these. That is the point of them.
+    Print(ShowResult(Reciprocal(4)))                    Rem OK 0.25
+    Print(ShowResult(Reciprocal(0)))                    Rem ERR ... AT 0
+    Print(ShowOpt(IndexOpt({ 5, 6, 7 }, 7)))            Rem SOME 3
+    Print(ShowOpt(IndexOpt({ 5, 6, 7 }, 99)))           Rem NONE
+    Assert(Some(1) = Some(1), "SOME EQUALITY")
+    Assert((Some(1) = Some(2)) = False, "SOME INEQUALITY")
+    Assert((Some(1) = None()) = False, "SOME IS NOT NONE")
+    Assert(Ok(1) = Ok(1) And Err("X", 2) = Err("X", 2), "RESULT EQUALITY")
+    Assert((Ok(1) = Err("X", 2)) = False, "OK IS NOT ERR")
+    Rem IndexOf's 0 and IndexOpt's None are the same fact, one of them
+    Rem said in the language and one of them remembered by the reader.
+    Assert(IndexOpt({ 5, 6, 7 }, 99) = None(), "A MISS IS NONE")
+    Assert(IndexOpt({ 5, 6, 7 }, 5) = Some(1), "AND A HIT CARRIES THE INDEX")
     Print("--- DICT ---")
     Let d1 = DictPut(DictPut({ }, "ADA", 96), "LIN", 78)
     Print(DictGet(d1, "ADA"))                           Rem 96

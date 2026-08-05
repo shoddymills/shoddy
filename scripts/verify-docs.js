@@ -21,6 +21,11 @@
 //                every fact an assistant gets wrong without being told
 //   runtime    - the .NET version quoted in the docs matches what the mill
 //                actually targets
+//   encoding   - no tracked text file carries UTF-8 that has been round-tripped
+//                through CP1252. v1.7.0 shipped ~400 mangled characters past
+//                this gate because it had no such check (issue #36). A file
+//                that is legitimately about the fault opts out with a marker;
+//                see the check itself for the exact string.
 //
 // Exit 0 and "ALL PAGES MATCH GROUND TRUTH" is the pass. Any mismatch prints
 // page vs truth and exits 1. Run it before cutting a release, and whenever
@@ -231,6 +236,59 @@ if (!tfm) { console.log("cannot read TargetFramework from the mill's csproj"); b
 else for (const f of [...pages.map(p => path.relative(root, p).replace(/\\/g, "/")), "README.md"])
   for (const m of read(f).matchAll(/\.NET(?:&nbsp;|\s)([0-9]+)\b/g))
     if (m[1] !== tfm[1]) { console.log(f + ': says ".NET ' + m[1] + '", the mill targets net' + tfm[1] + ".0"); bad++; }
+
+// ---- encoding: no file may carry UTF-8 that was mangled through CP1252 ----
+// v1.7.0 shipped ~400 mangled characters across eighteen files - the README's
+// own headers among them - and this gate passed on every one of them, twice.
+// Nothing else in the toolchain has any reason to notice: the corruption sits
+// in comments and prose, so the compiler, the tests and verify-errors are all
+// happy. See issue #36.
+//
+// The signature is a lead byte from a multi-byte UTF-8 sequence that has been
+// decoded as CP1252 and re-encoded: an A-circumflex, A-tilde or a-circumflex
+// immediately followed by CP1252's high punctuation or a Latin-1 character.
+// That pairing does not occur in real prose in any language this repo uses.
+//
+// Both patterns are built from code points rather than written literally, so
+// this file does not trip its own check - which is the same problem the
+// exemption below exists to solve, met one line earlier.
+const MOJI_LEAD = "[\\u00C2\\u00C3\\u00E2]";
+const MOJI_NEXT = "[\\u00A0-\\u00BF\\u0152\\u0153\\u0160\\u0161\\u0178\\u017D\\u017E"
+                + "\\u0192\\u02C6\\u02DC\\u2013\\u2014\\u2018-\\u201A\\u201C-\\u201E"
+                + "\\u2020-\\u2022\\u2026\\u2030\\u2039\\u203A\\u20AC\\u2122]";
+const MOJI = new RegExp(MOJI_LEAD + MOJI_NEXT);
+
+// A file that is ABOUT this fault must be able to quote it. Carry this marker
+// anywhere in the file and its mangled sequences are treated as evidence
+// rather than damage. Named in RELEASING.md so a writer finds it before they
+// reach for deleting the check.
+const MOJI_OPT_OUT = "verify-docs: mojibake is the subject here";
+
+const TEXT_EXT = new Set([".md", ".html", ".shoddy", ".js", ".json", ".xml",
+                          ".svg", ".cs", ".sh", ".cmd", ".ps1", ".txt", ".yml"]);
+const SKIP_DIR = new Set([".git", "bin", "obj", "artifacts", "node_modules"]);
+
+function textFiles(dir, out = []) {
+  for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+    if (e.isDirectory()) { if (!SKIP_DIR.has(e.name)) textFiles(path.join(dir, e.name), out); }
+    else if (TEXT_EXT.has(path.extname(e.name).toLowerCase())) out.push(path.join(dir, e.name));
+  }
+  return out;
+}
+
+for (const file of textFiles(root)) {
+  let text;
+  try { text = fs.readFileSync(file, "utf8"); } catch { continue; }
+  if (text.includes(MOJI_OPT_OUT)) continue;
+  const rel = path.relative(root, file).replace(/\\/g, "/");
+  text.split("\n").forEach((line, i) => {
+    if (MOJI.test(line)) {
+      console.log(rel + ":" + (i + 1) + ": UTF-8 mangled through CP1252 - "
+                  + line.trim().slice(0, 72));
+      bad++;
+    }
+  });
+}
 
 console.log(bad === 0 ? "ALL PAGES MATCH GROUND TRUTH" : bad + " mismatches");
 process.exit(bad === 0 ? 0 : 1);

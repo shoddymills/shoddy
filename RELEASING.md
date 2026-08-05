@@ -74,6 +74,32 @@ node scripts/verify-errors.js
 
 The second asserts every diagnostic string the toolchain can raise appears
 on `docs/errors.html` — a new or reworded message cannot ship undocumented.
+
+**One of the first's checks is worth knowing about before it fires.** It
+refuses any tracked text file carrying UTF-8 that has been round-tripped
+through CP1252 — the corruption that turns an em dash into three characters
+and, on a second pass, into eight. v1.7.0 shipped about four hundred of them
+across eighteen files, including the README's own section headers, and this
+gate passed on every one because it had no such check (issue #36). Nothing
+else notices: the damage sits in comments and prose, so the compiler, the
+tests and `verify-errors.js` are all satisfied.
+
+If you get a hit, the usual cause on Windows is:
+
+```powershell
+$t = Get-Content file -Raw          # decodes as CP1252 when there is no BOM
+Set-Content file -Value $t -Encoding utf8
+```
+
+`Get-Content -Raw` reads a BOM-less UTF-8 file as Windows-1252, and writing
+it back makes that permanent. Read and write with explicit encodings instead
+— `[System.IO.File]::ReadAllText($p, $utf8)` — or edit the file with
+something that does not guess.
+
+A file that is legitimately *about* the fault, such as a release note
+explaining one, opts out by carrying the marker
+`verify-docs: mojibake is the subject here` anywhere in its text. Reach for
+that before reaching for disabling the check.
 The first is read-only too, and rebuilds its ground truth from the tree on
 every run: each
 machine page's **"Who Uses It"** (machines that `Include` it, mills that call

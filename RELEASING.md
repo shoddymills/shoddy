@@ -63,17 +63,31 @@ Releases page afterwards.
 
 ## Doc review — before you ship
 
-The tests gate the code; this gates the documentation. Run it on the feature
-branch, before the notes are finalized, so what the notes describe is what the
-docs say.
+The tests gate the code; this gates the documentation (and, below, the repo's
+own file permissions). Run these on the feature branch, before the notes are
+finalized, so what the notes describe is what the docs say.
 
 ```sh
 node scripts/verify-docs.js
 node scripts/verify-errors.js
+node scripts/verify-permissions.js
 ```
 
 The second asserts every diagnostic string the toolchain can raise appears
 on `docs/errors.html` — a new or reworded message cannot ship undocumented.
+
+**The third checks the executable bit on every tracked script, and fixes it
+if it's wrong.** A script committed without `+x` runs fine on Windows, where
+NTFS has no execute bit to check, and only fails once something honors the
+bit literally — the Release workflow's Linux runner, WSL, a Mac. v1.8.0
+shipped four scripts this way; one of them (`mills/devils-dust/build.sh`)
+took down the Release workflow with `Permission denied`, exit 126, and the
+rest were only found by auditing every script by hand afterward. `git
+update-index --chmod=+x` is the fix, not a filesystem `chmod` — a checkout
+with `core.filemode=false`, the default on Windows, makes a raw `chmod`
+invisible to git no matter what the filesystem did. `ALL EXECUTABLE BITS OK`
+is the pass; `FIXED N EXECUTABLE BIT(S)` means the correction is now staged —
+`git status` will show it, and it ships in whatever commit you make next.
 
 **One of the first's checks is worth knowing about before it fires.** It
 refuses any tracked text file carrying UTF-8 that has been round-tripped

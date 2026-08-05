@@ -63,9 +63,16 @@ for (const d of ["machines", "mills", "tutorials", "tst"]) walk(path.join(root, 
 // exactly like a word call until you know which names are types --------
 
 const types = new Set(["Some", "None", "Ok", "Err"]);   // the prelude's own
-for (const f of files)
-  for (const m of fs.readFileSync(f, "utf8").matchAll(/^Type\s+([A-Za-z_][\w]*)/gm))
-    types.add(m[1]);
+for (const f of files) {
+  const t = fs.readFileSync(f, "utf8");
+  for (const m of t.matchAll(/^Type\s+([A-Za-z_][\w]*)/gm)) types.add(m[1]);
+  // A sum type's VARIANTS are constructors too, and they are where a
+  // machine's small constants live - alg's AlgNum(0, 1) is a record built
+  // by a variant name, not by the type's own.
+  for (const m of t.matchAll(/^Type\s+[A-Za-z_]\w*\s*=(.*)$/gm))
+    for (const v of m[1].matchAll(/([A-Za-z_]\w*)\s*[(|]|([A-Za-z_]\w*)\s*$/g))
+      types.add(v[1] || v[2]);
+}
 
 // The two words a constant initializer may name: the compiler folds both
 // at codegen, and there is no array literal in the language, so without

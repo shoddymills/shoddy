@@ -109,8 +109,11 @@ Rem pattern match on that variant. If a variant grows, append.
 Type AlgEx = AlgNum(AlgNumer As Number, AlgDenom As Number) | AlgVar(AlgName As String) | AlgSum(AlgTerms As List Of AlgEx) | AlgProd(AlgFactors As List Of AlgEx) | AlgPow(AlgBase As AlgEx, AlgExpo As AlgEx) | AlgCall(AlgFn As String, AlgArg As AlgEx)
 
 Rem ---- caps and constants ----------------------------------------------
-Rem A machine may not carry a top-level Let, so every constant is a
-Rem zero-arg Def.
+Rem The caps are Numbers, so they stay zero-arg Defs: a scalar compares by
+Rem value and a literal push costs what a global push costs. The tables
+Rem that are lists — AlgFns, AlgIntegRules — are held by a top-level Let
+Rem instead, which is what makes AlgFns() = AlgFns() true and stops the
+Rem list being rebuilt on every read.
 
 Def AlgMaxDepth() As Number
     200
@@ -151,23 +154,33 @@ Def AlgRat(n As Number, d As Number) As AlgEx
         Else
             AlgNum(s * n / g, Abs(d) / g)
 
+Let exZero = AlgNum(0, 1)
+
 Def AlgZero() As AlgEx
-    AlgNum(0, 1)
+    exZero
+
+Let exOne = AlgNum(1, 1)
 
 Def AlgOne() As AlgEx
-    AlgNum(1, 1)
+    exOne
+
+Let exMinusOne = AlgNum(0 - 1, 1)
 
 Def AlgMinusOne() As AlgEx
-    AlgNum(0 - 1, 1)
+    exMinusOne
 
 Rem The SYMBOLS, not the values. sin(pi) simplifies to exactly 0 because
 Rem pi is a variable here; its numeric value appears only at the
 Rem evaluation boundary.
+Let exPiSym = AlgVar("pi")
+
 Def AlgPiSym() As AlgEx
-    AlgVar("pi")
+    exPiSym
+
+Let exESym = AlgVar("e")
 
 Def AlgESym() As AlgEx
-    AlgVar("e")
+    exESym
 
 Def AlgIsNum(e As AlgEx) As Boolean
     Select Case e
@@ -800,12 +813,20 @@ Rem two are in step by iterating AlgFns(), so it cannot go stale when a
 Rem function is added. This is the easiest place in the machine to leave a
 Rem hole.
 
-Def AlgFns() As List Of String
-    { "sin", "cos", "tan", "asin", "acos", "atan",
-      "sinh", "cosh", "tanh", "exp", "ln", "log10", "sqrt", "abs" }
+Rem Held by a Let, not rebuilt by the Def: AlgKnowsFn is reached from
+Rem every AlgCallOf, which is nine of the differentiation rules, the
+Rem substituter, the expander and the integrator. A Taylor series to
+Rem order five rebuilt this fourteen-string list thousands of times.
+Let fnNames = { "sin", "cos", "tan", "asin", "acos", "atan",
+                "sinh", "cosh", "tanh", "exp", "ln", "log10", "sqrt", "abs" }
 
+Def AlgFns() As List Of String
+    fnNames
+
+Rem Reads the binding rather than its own publishing Def: this is the
+Rem hot path named above, and the Def is only there to publish.
 Def AlgKnowsFn(name As String) As Boolean
-    Contains(AlgFns(), name)
+    Contains(fnNames, name)
 
 Rem The exact values worth knowing, and the reason pi and e are symbols:
 Rem sin(pi) is exactly 0 here, not 1.2246e-16.
@@ -2098,14 +2119,16 @@ Rem The test for this section is differentiation: integrate, differentiate
 Rem the result, and AlgEqual it against the integrand. That catches every
 Rem sign error and every missing factor.
 
+Let integRules = { "a constant",
+                   "x ^ n for n <> -1",
+                   "x ^ -1 giving ln(x)",
+                   "sin, cos, exp of the variable",
+                   "a sum, term by term",
+                   "a constant multiple",
+                   "f(ax + b) for f in the table, by linear substitution" }
+
 Def AlgIntegRules() As List Of String
-    { "a constant",
-      "x ^ n for n <> -1",
-      "x ^ -1 giving ln(x)",
-      "sin, cos, exp of the variable",
-      "a sum, term by term",
-      "a constant multiple",
-      "f(ax + b) for f in the table, by linear substitution" }
+    integRules
 
 Rem Is the argument linear in var, so f(ax+b) integrates as F(ax+b)/a?
 Def AlgLinCoeff(e As AlgEx, var As String) As Result

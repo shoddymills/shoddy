@@ -81,20 +81,29 @@ Include "dict.shoddy"
 Include "xml.shoddy"
 
 Rem ---- constants -------------------------------------------------------
-Rem Machines cannot carry a top-level Let, so the tables are zero-arg
-Rem Defs, as vt100's Esc() is.
+Rem Each table is held by a top-level Let and published by a one-line
+Rem Def. The parser consults all four of these on every tag it opens, and
+Rem a Def would rebuild the list every time; held this way they are built
+Rem once, and HVoids() = HVoids() is true, which a rebuilt list can never
+Rem be. HClosedBySibling is a list of Pair, a type from dict, and reaching
+Rem another machine's type from a constant is fine — the CLR has run that
+Rem class's initializer before this one reads it.
 
 Rem The void elements: they have no content and no end tag. Written
 Rem bare — <br>, not <br/> — because that is what HTML5 serialises and
 Rem what every page in the wild contains.
+Let tagsVoids = { "area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr" }
+
 Def HVoids() As List Of String
-    { "area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr" }
+    tagsVoids
 
 Rem Inside these, < does not start a tag. Everything up to the matching
 Rem end tag is text, which is the only way a page can carry JavaScript
 Rem containing a < without escaping it.
+Let tagsRawText = { "script", "style" }
+
 Def HRawText() As List Of String
-    { "script", "style" }
+    tagsRawText
 
 Rem What closes an open element when it starts. The list is the
 Rem customary one; it is what makes a page written without </li> parse
@@ -102,16 +111,20 @@ Rem into the list the author meant. Note that a cell is closed by the
 Rem next ROW as well as by the next cell — without that, a table written
 Rem without a single end tag nests one row inside the last cell of the
 Rem one before it, which is the shape of a great many hand-written pages.
-Def HClosedBySibling() As List Of Pair
-    { Pair("li", { "li" }), Pair("dt", { "dt", "dd" }), Pair("dd", { "dd", "dt" }),
+Let tagsClosedBySibling = { Pair("li", { "li" }), Pair("dt", { "dt", "dd" }), Pair("dd", { "dd", "dt" }),
       Pair("option", { "option" }), Pair("tr", { "tr" }),
       Pair("td", { "td", "th", "tr" }), Pair("th", { "th", "td", "tr" }),
       Pair("thead", { "tbody", "tfoot" }), Pair("tbody", { "tbody", "tfoot" }), Pair("tfoot", { "tbody" }) }
 
+Def HClosedBySibling() As List Of Pair
+    tagsClosedBySibling
+
 Rem A <p> also closes when any of these opens, because none of them can
 Rem be inside a paragraph.
+Let tagsClosesP = { "address", "article", "aside", "blockquote", "div", "dl", "fieldset", "footer", "form", "h1", "h2", "h3", "h4", "h5", "h6", "header", "hr", "main", "nav", "ol", "p", "pre", "section", "table", "ul" }
+
 Def HClosesP() As List Of String
-    { "address", "article", "aside", "blockquote", "div", "dl", "fieldset", "footer", "form", "h1", "h2", "h3", "h4", "h5", "h6", "header", "hr", "main", "nav", "ol", "p", "pre", "section", "table", "ul" }
+    tagsClosesP
 
 Rem The named character references worth carrying. Chosen by counting
 Rem what hand-written pages actually use rather than by transcribing the

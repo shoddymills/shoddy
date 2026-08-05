@@ -207,16 +207,36 @@ function Invoke-MachineSuites {
 # working inside an individual mill. Forward-slash the path first: bash's
 # own `dirname "$0"`, which every build.sh uses to find itself, only
 # recognizes '/' as a separator.
+#
+# Deliberately NOT `Get-Command bash`: Windows ships its own WSL-launcher
+# stub at .../WindowsApps/bash.exe, which PATH resolves ahead of Git Bash
+# on a machine with no WSL distro configured, and fails outright rather
+# than running anything. Find Git Bash the same way git itself is found —
+# bin/bash.exe sits beside cmd/git.exe in every Git for Windows install —
+# so this runs the interpreter the repo actually means.
+function Find-GitBash {
+    $git = Get-Command git -ErrorAction SilentlyContinue
+    if ($git) {
+        $candidate = Join-Path (Split-Path (Split-Path $git.Source)) 'bin\bash.exe'
+        if (Test-Path $candidate) { return $candidate }
+    }
+    $onPath = Get-Command bash -All -ErrorAction SilentlyContinue |
+        Where-Object { $_.Source -notmatch 'WindowsApps' } | Select-Object -First 1
+    if ($onPath) { return $onPath.Source }
+    return $null
+}
+
 function Invoke-MillSuites {
     Assert-Mill
-    if (-not (Get-Command bash -ErrorAction SilentlyContinue)) {
-        Write-Error 'bash not found on PATH - install Git for Windows (Git Bash) or run under WSL to test the mills.'
+    $bash = Find-GitBash
+    if (-not $bash) {
+        Write-Error 'Git Bash not found - install Git for Windows, or run under WSL, to test the mills.'
         exit 1
     }
     foreach ($m in Get-ChildItem mills -Directory | Sort-Object Name) {
         Write-Host "==> mills/$($m.Name)/build.sh test"
         $script = ($m.FullName -replace '\\', '/') + '/build.sh'
-        & bash $script test
+        & $bash $script test
         if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     }
 }

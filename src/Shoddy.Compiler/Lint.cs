@@ -261,11 +261,19 @@ public static class Lint
 
     // ================= word / accessor collisions ======================
 
-    /// <summary>A Def or machine word sharing a case-folded name with a
-    /// record field accessor. The word wins silently — no ambiguity
-    /// diagnostic fires — and the mis-resolution surfaces as wrong-shaped
-    /// stack traffic far from the site (str's Fixed vs mungo's Fixed
-    /// field, 2026-08-01). Warned at the definition creating it.</summary>
+    /// <summary>A Def, machine word or top-level Let sharing a case-folded
+    /// name with a record field accessor. The word wins silently — no
+    /// ambiguity diagnostic fires — and the mis-resolution surfaces as
+    /// wrong-shaped stack traffic far from the site (str's Fixed vs
+    /// mungo's Fixed field, 2026-08-01). Warned at the definition creating
+    /// it.
+    ///
+    /// A top-level Let is in that list because it resolves ahead of an
+    /// accessor exactly as a Def does — GlobalVisible is consulted before
+    /// prog.Accessors — and because a machine may now carry one. `Let
+    /// factr` beside a Factr accessor is the params-shadow-accessors trap
+    /// at file scope, and until this covered it the only sign was a stack
+    /// effect warning two Defs away.</summary>
     static void WordAccessorCollisions(ShoddyProgram prog, Result r)
     {
         Dictionary<string, Owner> owner = AccessorOwners(prog);
@@ -276,7 +284,8 @@ public static class Lint
         {
             string kind =
                 prog.Defs.ContainsKey(name) ? "Def" :
-                prog.ExternalDefs.ContainsKey(name) ? "machine word" : "";
+                prog.ExternalDefs.ContainsKey(name) ? "machine word" :
+                prog.Sites.TryGetValue(name, out DeclSite s) && s.Kind == "Let" ? "Let" : "";
             if (kind == "") continue;
             string site = prog.DescribeSite(name);
             r.Warnings.Add($"warning: {kind} '{name}' ({site}) collides with field " +

@@ -1,0 +1,89 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem test.shoddy — the MPS reader and the solver behind it, graded
+Rem against two files whose answers are published.
+Rem
+Rem     ./build.sh test        (from here)
+Rem     build.cmd test         (from here, Windows)
+Rem
+Rem Run from THIS directory: the fixture paths are relative, the same
+Rem way they are for the mill itself.
+Rem
+Rem files/mix.mps carries its own answer in its comment header — X = 2,
+Rem Y = 4, cost 38, shadow prices 1 and 3 — and it is small enough to
+Rem check by hand, which is what makes it the one to fail first.
+Rem files/blend.mps is Murtagh's BLEND, 83 variables and 74 rows, whose
+Rem optimum is a published number: -30.81214985. A linear program that
+Rem is subtly wrong still returns a vector, and a solver that has lost
+Rem two decimal places still says OPTIMAL, so the objective is asserted
+Rem to eight figures rather than to a tolerance anyone could pass.
+Rem
+Rem What is left untested here is Report and the argument handling in
+Rem simplex-mps.shoddy, which are Print and Args around this arithmetic.
+Rem ==================================================================
+
+Include "matrix.shoddy"
+Include "simplex.shoddy"
+Include "mps.shoddy"
+
+Def NamedValue(names As List Of String, xs As Array Of Number, want As String) As Number
+    Nth(xs, First(Filter(Range(1, Length(names)), Fn(i) => Nth(names, i) = want)))
+
+Def CountNonzero(xs As Array Of Number) As Number
+    Length(Filter(ToList(xs), Fn(v) => Abs(v) > 0.0000005))
+
+Def Main()
+    Print("--- the small one, whose answer is in its own header ---")
+    Let mix = LoadMpsModel("files/mix.mps", False)
+    Let mixP = Prob(mix)
+    Assert(Length(Costs(mixP)) = 2, "TWO VARIABLES")
+    Assert(Rows(A(mixP)) = 2, "AND TWO CONSTRAINT ROWS")
+    Rem Element by element: two Lists compare by identity, so a list
+    Rem literal here would be False however right the names are.
+    Assert(Nth(VarNames(mix), 1) = "X" And Nth(VarNames(mix), 2) = "Y",
+           "THE COLUMN NAMES SURVIVE THE PARSE, IN FILE ORDER")
+    Let mixS = Optimize(mixP)
+    Print("status " & Status(mixS) & ", cost " & Str(Cost(mixS)))
+    Assert(Status(mixS) = "OPTIMAL", "THE SUPPLEMENT MIX HAS AN OPTIMUM")
+    Assert(Cost(mixS) = 38, "COSTING 38, EXACTLY AS THE FILE'S HEADER SAYS")
+    Rem To a tolerance, not exactly: the simplex reaches a corner by
+    Rem pivoting in floating point, and Y arrives a few bits under 4.
+    Print(X(mixS))
+    Assert(Abs(NamedValue(VarNames(mix), X(mixS), "X") - 2) < 0.0000001, "TWO OF X")
+    Assert(Abs(NamedValue(VarNames(mix), X(mixS), "Y") - 4) < 0.0000001, "AND FOUR OF Y")
+
+    Print("--- and its sensitivity analysis, which is the harder half ---")
+    Rem A solver can find the right corner and still price it wrongly.
+    Print(DualPrices(mixS))
+    Assert(Abs(NamedValue(ConNames(mix), DualPrices(mixS), "VITA") - 1) < 0.0000001,
+           "VITAMIN A IS WORTH 1 PER UNIT OF RHS")
+    Assert(Abs(NamedValue(ConNames(mix), DualPrices(mixS), "VITC") - 3) < 0.0000001, "AND VITAMIN C 3")
+    Assert(CountNonzero(Reduced(mixS)) = 0, "NEITHER VARIABLE IS PENALISED, BECAUSE BOTH ARE IN THE SOLUTION")
+
+    Print("--- BLEND, against its published optimum ---")
+    Let blend = LoadMpsModel("files/blend.mps", False)
+    Let blendP = Prob(blend)
+    Print(Str(Length(Costs(blendP))) & " variables, " & Str(Rows(A(blendP))) & " rows (normalised to >=)")
+    Assert(Length(Costs(blendP)) = 83, "EIGHTY-THREE COLUMNS READ OUT OF THE FILE")
+    Assert(Rows(A(blendP)) = 117, "AND ITS ROWS, WITH EVERY E ROW SPLIT INTO ITS >= PAIR")
+    Let blendS = Optimize(blendP)
+    Print("status " & Status(blendS) & ", iterations " & Str(Iterations(blendS))
+          & ", objective " & Str(Cost(blendS)))
+    Assert(Status(blendS) = "OPTIMAL", "BLEND SOLVES")
+    Assert(Abs(Cost(blendS) - (0 - 30.81214985)) < 0.00000005, "TO ITS PUBLISHED OPTIMUM, TO EIGHT FIGURES")
+    Assert(CountNonzero(X(blendS)) = 54, "WITH 54 OF THE 83 VARIABLES NONZERO")
+    Assert(Length(VarNames(blend)) = 83 And Length(ConNames(blend)) = 117,
+           "AND A NAME FOR EVERY COLUMN AND EVERY NORMALISED ROW")
+
+    Print("--- the zero-lower switch changes nothing it should not ---")
+    Rem blend.mps has no BOUNDS section, so forcing x >= 0 on every
+    Rem variable must leave the same problem and the same answer. The
+    Rem switch is for files that HAVE one; this pins down that it is not
+    Rem quietly rewriting the ones that do not.
+    Let blendZ = Optimize(Prob(LoadMpsModel("files/blend.mps", True)))
+    Assert(Cost(blendZ) = Cost(blendS), "SAME OBJECTIVE UNDER -z, TO THE LAST BIT")
+    Assert(X(blendZ) = X(blendS), "AND THE SAME VECTOR")
+
+    Print("ALL SIMPLEX-FROM-MPS CHECKS PASSED")

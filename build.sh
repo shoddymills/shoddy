@@ -4,7 +4,8 @@
 #
 #   ./build.sh all [bump]            everything: clean, test, then .vsix
 #   ./build.sh build                 build the mill into bin/
-#   ./build.sh test                  golden suite + libtest + net loopback check
+#   ./build.sh test                  everything: dotnet tests, the machine
+#                                    suites and every mill's own suite
 #   ./build.sh run FILE.shoddy       compile in memory and run a program
 #   ./build.sh weave FILE.shoddy     compile a program to an assembly
 #   ./build.sh machines              compile every machine to a machine DLL
@@ -83,6 +84,39 @@ machines() {
 # is) and the machines it needs. The extension points SHODDYLIB at the
 # staged machines/, where Include finds the source and the resolver
 # finds the DLL beside it in bin/.
+# The machine suites. Every machines/<name>.shoddy that has one is
+# graded here, by name rather than by glob: a suite that stops being
+# listed is a suite that stops running, and the whole point of this
+# list is that nine of them had stopped running without anyone
+# noticing. isamdump runs after isamtest and takes DELETE, because it
+# reopens the file isamtest leaves behind — the round trip across two
+# processes is the thing being proved, and DELETE clears up after it.
+machine_suites() {
+    ensure_mill
+    for suite in csvtest htmltest jsontest nettest neuraltest \
+                 randomtest shakertest xmltest; do
+        echo "==> tst/$suite.shoddy"
+        "$MILL" run "tst/$suite.shoddy" </dev/null
+    done
+    echo "==> tst/isamtest.shoddy"
+    "$MILL" run tst/isamtest.shoddy </dev/null
+    echo "==> tst/isamdump.shoddy"
+    "$MILL" run tst/isamdump.shoddy DELETE </dev/null
+}
+
+# Every mill's own test target, through the mill's own build.sh, so
+# there is one statement of how a mill is tested and it lives with the
+# mill. Every directory under mills/ is visited: a mill with no test
+# target fails here with its usage message, which is the intended
+# answer to shipping one without a suite.
+mill_suites() {
+    ensure_mill
+    for m in mills/*/; do
+        echo "==> ${m}build.sh test"
+        ( cd "$m" && ./build.sh test </dev/null )
+    done
+}
+
 stage() {
     machines
     rm -rf "$STAGE_MILL" "$STAGE_LIB"
@@ -162,6 +196,13 @@ case "${1:-help}" in
         # here beside everything else and the tutorial cannot drift from
         # code that no longer compiles.
         "$MILL" run tutorials/spiro/test.shoddy
+        # Everything else the tree can prove about itself: a suite for
+        # every machine that has one, and every mill's own suite. Both
+        # existed before and neither ran here, which meant a release
+        # could ship a broken machine or a broken mill through a green
+        # gate. Nothing is released that has not been through this.
+        machine_suites
+        mill_suites
         ;;
     run)
         [ $# -ge 2 ] || { echo "usage: ./build.sh run FILE.shoddy" >&2; exit 2; }
@@ -199,7 +240,7 @@ case "${1:-help}" in
         echo "cleaned."
         ;;
     help|-h|--help)
-        sed -n '2,25p' "$SELF" | sed 's/^# \{0,1\}//'
+        sed -n '2,26p' "$SELF" | sed 's/^# \{0,1\}//'
         ;;
     *)
         echo "unknown command: $1" >&2

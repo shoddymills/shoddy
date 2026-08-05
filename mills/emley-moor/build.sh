@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build / run the rag-and-bone mill (Unix: Linux / macOS / WSL).
+# Build / run the emley-moor mill (Unix: Linux / macOS / WSL).
 # Windows users: use build.cmd (same commands).
 #
 #   ./build.sh            serve on http://127.0.0.1:8080/
@@ -34,7 +34,7 @@ ensure_mill() {
 case "${1:-run}" in
     run)
         ensure_mill
-        "$MILL" run --allow-net rag-and-bone.shoddy
+        "$MILL" run --allow-net emley-moor.shoddy
         ;;
     test)
         ensure_mill
@@ -43,8 +43,8 @@ case "${1:-run}" in
     build)
         ensure_mill
         mkdir -p bin
-        "$MILL" weave rag-and-bone.shoddy -o bin/rag-and-bone.dll
-        echo "woven into bin/ - run with: dotnet bin/rag-and-bone.dll (needs SHODDY_ALLOW_NET=1)"
+        "$MILL" weave emley-moor.shoddy -o bin/emley-moor.dll
+        echo "woven into bin/ - run with: dotnet bin/emley-moor.dll (needs SHODDY_ALLOW_NET=1)"
         ;;
     clean)
         rm -rf bin

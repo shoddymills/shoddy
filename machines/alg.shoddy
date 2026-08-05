@@ -1,15 +1,15 @@
-﻿Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
 Rem Licensed under the MIT License. See the LICENSE file in the project root.
 
 Rem ==================================================================
-Rem alg.shoddy â€” Shoddy standard library: symbolic algebra
+Rem alg.shoddy — Shoddy standard library: symbolic algebra
 Rem
 Rem Algebra over AlgEx, where the values are not numbers but the FORMULAE
 Rem that produce them. An expression type, a parser and a printer, exact
 Rem rational arithmetic, a canonical-form simplifier, differentiation,
 Rem expansion and factorisation, partial fractions, limits, a bounded
-Rem integrator, equation solving, first-order ODEs, Taylor series, and â€”
-Rem the word that justifies the machine â€” compilation of an expression to
+Rem integrator, equation solving, first-order ODEs, Taylor series, and —
+Rem the word that justifies the machine — compilation of an expression to
 Rem a quotation, so a formula read from a file becomes a function value.
 Rem
 Rem     Let f = AlgToFn(AlgParse("x^3 - 2*x - 5"), "x")
@@ -37,7 +37,7 @@ Rem     1/2, the simplifier cannot recognise zero, AlgFactor cannot find
 Rem     rational roots, and AlgPartFrac cannot solve for its coefficients.
 Rem
 Rem   * NEVER COMPARE TWO AlgEx WITH =. Structural equality reports x + y
-Rem     and y + x as different. AlgEqual â€” simplify both, then compare â€”
+Rem     and y + x as different. AlgEqual — simplify both, then compare —
 Rem     is the only equality this machine offers, and the only one used
 Rem     inside it or its tests.
 Rem
@@ -66,7 +66,7 @@ Rem   * EVERY WORD, TYPE, VARIANT AND FIELD IS PREFIXED Alg. The fields
 Rem     too, and not for tidiness: a machine's field accessors are
 Rem     exported, so an unprefixed Num or Base or Terms would become a
 Rem     bare word in every program that includes this one. Fn could not be
-Rem     a field name at all â€” the parser reads it as lambda syntax.
+Rem     a field name at all — the parser reads it as lambda syntax.
 Rem
 Rem The ceilings, each stated where it bites:
 Rem
@@ -109,8 +109,11 @@ Rem pattern match on that variant. If a variant grows, append.
 Type AlgEx = AlgNum(AlgNumer As Number, AlgDenom As Number) | AlgVar(AlgName As String) | AlgSum(AlgTerms As List Of AlgEx) | AlgProd(AlgFactors As List Of AlgEx) | AlgPow(AlgBase As AlgEx, AlgExpo As AlgEx) | AlgCall(AlgFn As String, AlgArg As AlgEx)
 
 Rem ---- caps and constants ----------------------------------------------
-Rem A machine may not carry a top-level Let, so every constant is a
-Rem zero-arg Def.
+Rem The caps are Numbers, so they stay zero-arg Defs: a scalar compares by
+Rem value and a literal push costs what a global push costs. The tables
+Rem that are lists — AlgFns, AlgIntegRules — are held by a top-level Let
+Rem instead, which is what makes AlgFns() = AlgFns() true and stops the
+Rem list being rebuilt on every read.
 
 Def AlgMaxDepth() As Number
     200
@@ -151,23 +154,33 @@ Def AlgRat(n As Number, d As Number) As AlgEx
         Else
             AlgNum(s * n / g, Abs(d) / g)
 
+Let exZero = AlgNum(0, 1)
+
 Def AlgZero() As AlgEx
-    AlgNum(0, 1)
+    exZero
+
+Let exOne = AlgNum(1, 1)
 
 Def AlgOne() As AlgEx
-    AlgNum(1, 1)
+    exOne
+
+Let exMinusOne = AlgNum(0 - 1, 1)
 
 Def AlgMinusOne() As AlgEx
-    AlgNum(0 - 1, 1)
+    exMinusOne
 
 Rem The SYMBOLS, not the values. sin(pi) simplifies to exactly 0 because
 Rem pi is a variable here; its numeric value appears only at the
 Rem evaluation boundary.
+Let exPiSym = AlgVar("pi")
+
 Def AlgPiSym() As AlgEx
-    AlgVar("pi")
+    exPiSym
+
+Let exESym = AlgVar("e")
 
 Def AlgESym() As AlgEx
-    AlgVar("e")
+    exESym
 
 Def AlgIsNum(e As AlgEx) As Boolean
     Select Case e
@@ -236,12 +249,12 @@ Def AlgExact(n As Number, d As Number) As AlgEx
     AlgRat(n, d)
 
 Rem A decimal becomes the SIMPLEST rational within AlgTol, by continued
-Rem fraction â€” not the double's exact binary value. AlgOf(0.1) is 1/10 and
+Rem fraction — not the double's exact binary value. AlgOf(0.1) is 1/10 and
 Rem not 3602879701896397/36028797018963968, which is technically faithful,
 Rem practically useless, and makes every subsequent gcd enormous.
 Rem The convergents of the continued fraction, by the standard recurrence
 Rem h(k) = a(k)h(k-1) + h(k-2) over both numerator and denominator. The
-Rem seeds are h(-1)/k(-1) = 1/0 and h(-2)/k(-2) = 0/1 â€” that 1/0 is not a
+Rem seeds are h(-1)/k(-1) = 1/0 and h(-2)/k(-2) = 0/1 — that 1/0 is not a
 Rem rational and is never returned, it is only ever the older term of the
 Rem recurrence. Stop when the remainder vanishes, which is what "the
 Rem simplest rational within tolerance" means.
@@ -267,7 +280,7 @@ Rem ---- the total order -------------------------------------------------
 Rem AlgCompare must be antisymmetric, transitive, and never 0 for two
 Rem structurally different expressions. Without that the sort inside
 Rem AlgPass is unstable, the fixpoint oscillates, and the mill spins until
-Rem the cap fires â€” at which point the error blames the cap and not the
+Rem the cap fires — at which point the error blames the cap and not the
 Rem order. The tests check the order directly, and first.
 Rem
 Rem The order: numbers, variables, powers, products, sums, calls; within a
@@ -411,7 +424,7 @@ Def AlgSort(xs As List Of AlgEx) As List Of AlgEx
 Rem ---- splitting a term ------------------------------------------------
 Rem Collecting like terms in a sum means recognising that 2*x and 3*x
 Rem share a part. AlgCoeffOf gives the rational, AlgRestOf everything
-Rem else Ã¢â‚¬â€ so 2*x is (2, x), x is (1, x) and 2 is (2, 1).
+Rem else — so 2*x is (2, x), x is (1, x) and 2 is (2, 1).
 
 Def AlgIsNumL(x As AlgEx) As Boolean
     AlgIsNum(x)
@@ -491,7 +504,7 @@ Def AlgTimesPlain(c As AlgEx, r As AlgEx) As AlgEx
             Else
                 AlgPlainProd(Prepend(c, AlgProdParts(r)))
 
-Rem base to the exponent, without the identities the builder applies Ã¢â‚¬â€
+Rem base to the exponent, without the identities the builder applies —
 Rem used when rebuilding a collected product.
 Def AlgPowPlain(b As AlgEx, x As AlgEx) As AlgEx
     If AlgIsOne(x) Then
@@ -527,7 +540,7 @@ Def AlgFlatProd(xs As List Of AlgEx) As List Of AlgEx
 Rem ---- collecting ------------------------------------------------------
 Rem Merge a term into an accumulator of already-merged terms: if one of
 Rem them has the same non-numeric part, add the coefficients; otherwise
-Rem append. One Fold over a flat n-ary sum Ã¢â‚¬â€ which is the whole reason the
+Rem append. One Fold over a flat n-ary sum — which is the whole reason the
 Rem representation is flat and n-ary.
 
 Def AlgMergeTermGo(acc As List Of AlgEx, t As AlgEx, k As Number) As List Of AlgEx
@@ -642,7 +655,7 @@ Def AlgPowFold(b As AlgEx, x As AlgEx) As AlgEx
     Else
         AlgPowNest(b, x)
 
-Rem (b^p)^q is b^(p*q) Ã¢â‚¬â€ collapsing here stops towers accumulating.
+Rem (b^p)^q is b^(p*q) — collapsing here stops towers accumulating.
 Rem And (a*b)^n distributes to a^n * b^n for an integer n. That rule is
 Rem load-bearing rather than cosmetic: without it 1/((-2)*(1+x)) is a
 Rem power whose BASE is a whole product, so the collector — which matches
@@ -800,12 +813,20 @@ Rem two are in step by iterating AlgFns(), so it cannot go stale when a
 Rem function is added. This is the easiest place in the machine to leave a
 Rem hole.
 
-Def AlgFns() As List Of String
-    { "sin", "cos", "tan", "asin", "acos", "atan",
-      "sinh", "cosh", "tanh", "exp", "ln", "log10", "sqrt", "abs" }
+Rem Held by a Let, not rebuilt by the Def: AlgKnowsFn is reached from
+Rem every AlgCallOf, which is nine of the differentiation rules, the
+Rem substituter, the expander and the integrator. A Taylor series to
+Rem order five rebuilt this fourteen-string list thousands of times.
+Let fnNames = { "sin", "cos", "tan", "asin", "acos", "atan",
+                "sinh", "cosh", "tanh", "exp", "ln", "log10", "sqrt", "abs" }
 
+Def AlgFns() As List Of String
+    fnNames
+
+Rem Reads the binding rather than its own publishing Def: this is the
+Rem hot path named above, and the Def is only there to publish.
 Def AlgKnowsFn(name As String) As Boolean
-    Contains(AlgFns(), name)
+    Contains(fnNames, name)
 
 Rem The exact values worth knowing, and the reason pi and e are symbols:
 Rem sin(pi) is exactly 0 here, not 1.2246e-16.
@@ -908,7 +929,7 @@ Def AlgDiffFn4(name As String, u As AlgEx) As AlgEx
             Else
                 AlgDiffFn5(name, u)
 
-Rem sqrt never survives AlgCallSimp Ã¢â‚¬â€ it becomes a power Ã¢â‚¬â€ so its entry
+Rem sqrt never survives AlgCallSimp — it becomes a power — so its entry
 Rem exists for completeness of the table rather than for use. abs is not
 Rem differentiable at 0 and the entry says what it assumes.
 Def AlgDiffFn5(name As String, u As AlgEx) As AlgEx
@@ -1034,7 +1055,7 @@ Def AlgGrad(e As AlgEx, vars As List Of String) As List Of AlgEx
 
 Rem ---- printing --------------------------------------------------------
 Rem Minimal parenthesisation is the hard half, and the printer also has to
-Rem RECOGNISE subtraction and division on the way out, because Ã‚Â§the
+Rem RECOGNISE subtraction and division on the way out, because the
 Rem representation has neither. A product holding -1 prints with a leading
 Rem minus; a factor with a negative exponent moves to a denominator. A CAS
 Rem that prints x * y ^ -1 instead of x / y is technically correct and
@@ -1065,7 +1086,7 @@ Def AlgShowNum(e As AlgEx) As String
     Else
         Str(AlgNumOf(e)) & " / " & Str(AlgDenOf(e))
 
-Rem Is this term negative Ã¢â‚¬â€ so the sum prints " - " and drops the sign?
+Rem Is this term negative — so the sum prints " - " and drops the sign?
 Def AlgIsNeg(e As AlgEx) As Boolean
     Select Case e
         Case AlgNum(n, d)
@@ -1079,7 +1100,7 @@ Def AlgNegate(e As AlgEx) As AlgEx
     AlgMulOf(AlgMinusOne(), e)
 
 Rem A factor belongs in the denominator when its exponent is a negative
-Rem number Ã¢â‚¬â€ that is what division looks like in this representation.
+Rem number — that is what division looks like in this representation.
 Def AlgIsDenom(f As AlgEx) As Boolean
     Select Case f
         Case AlgPow(b, x)
@@ -1146,7 +1167,7 @@ Def AlgShowProd(fs As List Of AlgEx) As String
     Ifte(neg, "-" & body, body)
 
 Rem ^ is right-associative, so the LEFT operand needs brackets when it is
-Rem itself a power Ã¢â‚¬â€ (a ^ b) ^ c must not print as a ^ b ^ c, which means
+Rem itself a power — (a ^ b) ^ c must not print as a ^ b ^ c, which means
 Rem something else. A negative exponent prints as a division instead,
 Rem because x ^ -2 is uglier than 1 / x ^ 2 and round-trips worse.
 Def AlgShowPow(b As AlgEx, x As AlgEx) As String
@@ -1226,7 +1247,7 @@ Def AlgTokens(s As String) As List Of String
 
 Rem ---- parsing ---------------------------------------------------------
 Rem Recursive descent. The step type carries a continuation index on
-Rem success, so it is a parser-step type and NOT a Result Ã¢â‚¬â€ the same
+Rem success, so it is a parser-step type and NOT a Result — the same
 Rem distinction json, xml and csv make, and the reason issue #33 left
 Rem their JTake/XTake/CTake alone.
 Rem
@@ -1480,7 +1501,7 @@ Def AlgSubstFnRaw(e As AlgEx, name As String, param As String, body As AlgEx) As
 Rem ---- evaluation ------------------------------------------------------
 Rem THE BOUNDARY. pi and e resolve to numbers HERE and nowhere else, which
 Rem is what lets sin(pi) simplify to exactly 0 upstream. An unbound
-Rem variable is an Error naming it, never a silent zero Ã¢â‚¬â€ that is the
+Rem variable is an Error naming it, never a silent zero — that is the
 Rem failure mode that makes a formula evaluator untrustworthy.
 
 Def AlgLookup(names As List Of String, values As List Of Number, v As String) As Number
@@ -1534,7 +1555,7 @@ Rem they compose with no dependency in either direction.
 Rem
 Rem The tree walk happens on EVERY call. Fine for a solver making a
 Rem hundred evaluations; not fine in a tight loop over a large expression.
-Rem AlgSimplify first Ã¢â‚¬â€ often a large reduction Ã¢â‚¬â€ and past that, this
+Rem AlgSimplify first — often a large reduction — and past that, this
 Rem machine is for symbolic work and eng is for numeric work.
 
 Def AlgToFn(e As AlgEx, var As String) As [ Number -- Number ]
@@ -1545,7 +1566,7 @@ Def AlgToFn2(e As AlgEx, v1 As String, v2 As String) As [ Number Number -- Numbe
 
 Rem ---- expansion -------------------------------------------------------
 Rem Total: every product of sums can be distributed. Exponential, though,
-Rem and it will be the first thing to blow up Ã¢â‚¬â€ (a+b+c+d)^15 is 816 terms,
+Rem and it will be the first thing to blow up — (a+b+c+d)^15 is 816 terms,
 Rem each a product of four powers, with the sort comparing them pairwise.
 Rem AlgExpandPow refuses above AlgMaxExpand rather than attempting it,
 Rem because the failure mode otherwise is a mill that never returns.
@@ -1600,7 +1621,7 @@ Def AlgExpandPow(e As AlgEx) As AlgEx
 
 Rem ---- polynomials -----------------------------------------------------
 Rem Degree of one term in one variable, or -1 when the term is not
-Rem polynomial in it Ã¢â‚¬â€ a call holding the variable, or a negative or
+Rem polynomial in it — a call holding the variable, or a negative or
 Rem fractional exponent.
 
 Def AlgTermDeg(e As AlgEx, var As String) As Number
@@ -1650,8 +1671,8 @@ Def AlgIsPoly(e As AlgEx, var As String) As Boolean
     AlgPolyDegree(e, var) >= 0
 
 Rem The coefficient of var^k: take the terms of the expanded form whose
-Rem degree in var is k, divide each by var^k Ã¢â‚¬â€ which the simplifier does
-Rem by collecting exponents Ã¢â‚¬â€ and sum them. What comes back is free of
+Rem degree in var is k, divide each by var^k — which the simplifier does
+Rem by collecting exponents — and sum them. What comes back is free of
 Rem var, or the input was not a polynomial.
 Def AlgCoeffAt(e As AlgEx, var As String, k As Number) As AlgEx
     Let ex = AlgExpand(e)
@@ -1805,8 +1826,8 @@ Rem are gone comes back as one factor whether it is irreducible or not.
 Rem
 Rem Multivariate factorisation, factorisation over the reals or complexes,
 Rem and anything needing Berlekamp or Zassenhaus are out of scope. Err
-Rem with a reason is the CORRECT answer for x^2 + 1 Ã¢â‚¬â€ there is no rational
-Rem factorisation Ã¢â‚¬â€ and the reason must say so rather than "FAILED",
+Rem with a reason is the CORRECT answer for x^2 + 1 — there is no rational
+Rem factorisation — and the reason must say so rather than "FAILED",
 Rem because those are different facts and only one is about the input.
 
 Def AlgDivisorsOf(n As Number) As List Of Number
@@ -2091,21 +2112,23 @@ Rem
 Rem Explicitly NOT implemented: the Risch algorithm, integration by parts,
 Rem general substitution, and anything with a non-elementary
 Rem antiderivative. AlgInteg(exp(x^2)) returns Err naming the non-linear
-Rem argument Ã¢â‚¬â€ the right answer, since no amount of engineering finds an
+Rem argument — the right answer, since no amount of engineering finds an
 Rem elementary antiderivative that does not exist.
 Rem
 Rem The test for this section is differentiation: integrate, differentiate
 Rem the result, and AlgEqual it against the integrand. That catches every
 Rem sign error and every missing factor.
 
+Let integRules = { "a constant",
+                   "x ^ n for n <> -1",
+                   "x ^ -1 giving ln(x)",
+                   "sin, cos, exp of the variable",
+                   "a sum, term by term",
+                   "a constant multiple",
+                   "f(ax + b) for f in the table, by linear substitution" }
+
 Def AlgIntegRules() As List Of String
-    { "a constant",
-      "x ^ n for n <> -1",
-      "x ^ -1 giving ln(x)",
-      "sin, cos, exp of the variable",
-      "a sum, term by term",
-      "a constant multiple",
-      "f(ax + b) for f in the table, by linear substitution" }
+    integRules
 
 Rem Is the argument linear in var, so f(ax+b) integrates as F(ax+b)/a?
 Def AlgLinCoeff(e As AlgEx, var As String) As Result
@@ -2331,7 +2354,7 @@ Def AlgSolveLin1(e As AlgEx, var As String) As Result
 
 Rem Higher degrees go through factorisation and take the roots of whatever
 Rem linear and quadratic factors it found. A quintic with no rational root
-Rem is an Err, not an empty list Ã¢â‚¬â€ the distinction R3.11 exists for.
+Rem is an Err, not an empty list — the distinction R3.11 exists for.
 Def AlgSolveHigh(e As AlgEx, var As String, dg As Number) As Result
     Select Case AlgFactor(e, var)
         Case Ok(fp)
@@ -2366,7 +2389,7 @@ Def AlgSolveFor(lhs As AlgEx, rhs As AlgEx, var As String) As Result
 
 Rem ---- series ----------------------------------------------------------
 Rem Repeated differentiation over the factorials, which are exact
-Rem rationals Ã¢â‚¬â€ so the Maclaurin series of sin is exactly x - x^3/6 +
+Rem rationals — so the Maclaurin series of sin is exactly x - x^3/6 +
 Rem x^5/120 and not a decimal approximation of it. That exactness is the
 Rem visible payoff of the rational representation.
 
@@ -2407,7 +2430,7 @@ Def AlgMaclaurin(e As AlgEx, var As String, n As Number) As Result
 
 Rem ---- first-order ODEs ------------------------------------------------
 Rem SEPARABLE AND LINEAR ONLY, and both inherit every limit of the
-Rem integrator Ã¢â‚¬â€ an ODE solver on top of a table integrator is exactly as
+Rem integrator — an ODE solver on top of a table integrator is exactly as
 Rem capable as the table and no more. The arbitrary constant appears as
 Rem the symbol C. Anything second-order, anything non-linear beyond
 Rem separable, and anything systems-shaped is an Err.

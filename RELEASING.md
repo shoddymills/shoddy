@@ -74,6 +74,32 @@ node scripts/verify-errors.js
 
 The second asserts every diagnostic string the toolchain can raise appears
 on `docs/errors.html` — a new or reworded message cannot ship undocumented.
+
+**One of the first's checks is worth knowing about before it fires.** It
+refuses any tracked text file carrying UTF-8 that has been round-tripped
+through CP1252 — the corruption that turns an em dash into three characters
+and, on a second pass, into eight. v1.7.0 shipped about four hundred of them
+across eighteen files, including the README's own section headers, and this
+gate passed on every one because it had no such check (issue #36). Nothing
+else notices: the damage sits in comments and prose, so the compiler, the
+tests and `verify-errors.js` are all satisfied.
+
+If you get a hit, the usual cause on Windows is:
+
+```powershell
+$t = Get-Content file -Raw          # decodes as CP1252 when there is no BOM
+Set-Content file -Value $t -Encoding utf8
+```
+
+`Get-Content -Raw` reads a BOM-less UTF-8 file as Windows-1252, and writing
+it back makes that permanent. Read and write with explicit encodings instead
+— `[System.IO.File]::ReadAllText($p, $utf8)` — or edit the file with
+something that does not guess.
+
+A file that is legitimately *about* the fault, such as a release note
+explaining one, opts out by carrying the marker
+`verify-docs: mojibake is the subject here` anywhere in its text. Reach for
+that before reaching for disabling the check.
 The first is read-only too, and rebuilds its ground truth from the tree on
 every run: each
 machine page's **"Who Uses It"** (machines that `Include` it, mills that call
@@ -100,10 +126,20 @@ builtin, does the editor grammar highlight them — has its own review prompt in
 the maintainer's working notes; new builtins and machine words are the usual
 suspects.
 
-One lint-specific step: sweep once with `machines/bin` set aside. The release
-build splices machine *source* into programs, and a spliced program can lint
-differently than the DLL-mode sweep — a machine's local `Let` and a program's
-accessor read only meet when spliced.
+**There used to be a second sweep here — with `machines/bin` set aside, on the
+grounds that the release build splices machine source and a spliced program can
+lint differently. Don't do it; it no longer does anything.** v1.6.0 made a
+machine *always* used compiled: an `Include` that resolves into a machine
+library now builds the DLL if one is missing rather than splicing the source. So
+moving `machines/bin` away does not produce a spliced program, it produces
+`machine seq.shoddy is not built — building` and a full rebuild, and the sweep
+that follows is identical to the ordinary one. `IsMachineLibrary` decides by
+directory, so spelling the include as `../machines/x.shoddy` doesn't splice
+either.
+
+Splicing is still how a program's *own* multi-file sources are combined — the
+files beside the includer, as in `mills/mungo-caverns/` — and those are covered
+by the ordinary sweep, because that is the only way they are ever compiled.
 
 ---
 
@@ -118,15 +154,29 @@ Pushes the current `feature/*` branch, merges it `--no-ff` into `main`, pushes
 tree, from a non-feature branch, or when there is nothing to merge, and on a merge
 conflict it aborts cleanly and puts you back on your branch.
 
+It prints the commits it is about to merge and asks `Proceed? (y/N)`. **Pass
+`-Yes` (PowerShell) or `-y` (sh/cmd) to skip that prompt** — required from any
+shell without a terminal on stdin, such as CI or an assistant's, where the
+unanswered prompt reads EOF and the script aborts having done nothing.
+
 By hand, if you prefer:
 
 ```sh
 git checkout main && git pull origin main
-git merge --no-ff feature/x
+git merge --no-ff feature/x -m "Merge branch 'feature/x'"
 git push origin main
 ```
 
 `--no-ff` keeps the feature visible as a bubble in history.
+
+**Note the `-m`, and do not drop it.** `git merge --no-ff` without a message
+opens your editor for the merge commit, and if `core.editor` is unset git falls
+back to whatever `EDITOR`/`VISUAL` names — or to `vi`. On Windows that can mean
+a window you cannot find or a console editor you cannot exit, with the merge
+half-done and the terminal apparently hung. **The scripts always pass `-m`**, so
+this is a hazard of the by-hand path only; it is why the two commands above and
+in §2 carry one. If it happens anyway, the merge is not lost — quit the editor
+any way you can and `git merge --continue`, or `git merge --abort` to back out.
 
 ### Shut the build servers down first
 
@@ -161,6 +211,10 @@ origin:
    pushes the release branch.
 4. Tags `v1.0.0` and pushes the tag — **this is the moment the release ships.**
 5. Merges the release branch `--no-ff` into `main` and pushes.
+
+It prints the whole plan — including whether it found `release-notes/v1.0.0.md`
+— and asks `Proceed? (y/N)` before step 1. **`-Yes` / `-y` skips it**, as for
+`shoddy-feature`. Read the plan the first time; skip it when scripting.
 
 The local build in step 2 is a gate, not a source of artifacts. The package that
 reaches users is the one the Release workflow builds from the tag.
@@ -221,12 +275,16 @@ if you're feeling paranoid — it's the artifact users get, and nothing local pr
 
 The scripts are a convenience, not a dependency. The equivalent, in full:
 
+Every `git merge --no-ff` below carries `-m`. That is not decoration — without
+it git opens an editor for the merge commit (see §1).
+
 ```sh
 # notes first — they must be in the commit the tag points at
 git add release-notes/v1.0.0.md && git commit -m "notes for v1.0.0"
 
 git checkout main && git pull origin main
-git merge --no-ff feature/x && git push origin main
+git merge --no-ff feature/x -m "Merge branch 'feature/x'"
+git push origin main
 
 git checkout -b release/V1.0.0
 ./build.sh all 1.0.0                              # clean → test → machines → stage → vsix
@@ -236,7 +294,8 @@ git push -u origin release/V1.0.0
 git tag v1.0.0 && git push origin v1.0.0          # ← the Release workflow starts here
 
 git checkout main
-git merge --no-ff release/V1.0.0 && git push origin main
+git merge --no-ff release/V1.0.0 -m "Merge branch 'release/V1.0.0'"
+git push origin main
 ```
 
 Unix `./build.sh`, Windows `build.cmd` or `./build.ps1` — same commands.

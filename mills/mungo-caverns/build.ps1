@@ -10,6 +10,11 @@
 # are significant to five letters, as they have been since 1977 -- XYZZY,
 # PLUGH, and PLOVER all still work.
 #
+# run is LIVE: it launches from wherever you actually typed .\build.ps1,
+# not from this directory - so a save-file name you type in-game (SAVE,
+# RESTORE) resolves against your own shell, not the mill's folder. test
+# stays pinned to this directory: it reads the mill's own fixture suites.
+#
 # The cave lives in the mungo-caverns-*.shoddy tables, which are
 # hand-edited source.
 #
@@ -25,6 +30,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+$OrigLocation = Get-Location
 
 # Push rather than Set. Set-Location changes the SESSION's directory, not a
 # scope's, so a mill script run from the repo root - which is how
@@ -33,22 +39,13 @@ $ErrorActionPreference = 'Stop'
 # every path out of the switch below restores where you were.
 Push-Location $PSScriptRoot
 try {
-
-    $Repo = '../..'
-    $Mill = Join-Path $Repo 'bin/mill.exe'
-
-    function Assert-Mill {
-        if (-not (Test-Path $Mill)) {
-            Write-Host "mill toolchain not built; building it into $Repo/bin ..."
-            dotnet publish (Join-Path $Repo 'src/Shoddy.Mill') -c Release -o (Join-Path $Repo 'bin')
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-        }
-    }
+    $MillDir = $PSScriptRoot
+    . (Join-Path $MillDir '../../scripts/mill-common.ps1')
 
     switch ($Command) {
         'run' {
             Assert-Mill
-            & $Mill run mungo-caverns.shoddy
+            Invoke-Live $OrigLocation { & $Mill run (Join-Path $MillDir 'mungo-caverns.shoddy') }
             exit $LASTEXITCODE
         }
         'test' {
@@ -73,9 +70,6 @@ try {
         }
     }
 
-    # Branches that run no native command leave $LASTEXITCODE at whatever
-    # the last one set, so a target like clean could report a failure it
-    # had nothing to do with. The .sh twin's case arm returns 0 here.
     exit 0
 }
 finally { Pop-Location }

@@ -8,10 +8,13 @@
 #   ./build.sh build            weave the program into bin/
 #   ./build.sh clean            remove bin/
 #
-# SPEC defaults to files/grades.spec. Paths INSIDE a spec (data.file,
-# window.capture) are relative to the directory you run from, which the
-# run target makes the repo root — so a spec written for ./build.sh says
-# mills/tally/files/... The shipped specs do exactly that.
+# run and capture are LIVE: they launch from wherever you actually typed
+# ./build.sh, not from this directory. SPEC defaults to this mill's own
+# files/grades.spec if you don't give one; a SPEC you do name resolves
+# against your own shell, same as any ordinary file argument would.
+# Paths INSIDE a spec (data.file, window.capture) are relative to
+# wherever the spec itself resolved from — the shipped default spec
+# names files/... to match sitting beside it.
 #
 # capture passes --no-window, which opens every scribbler hidden and stops
 # windows outliving the program. Pair it with window.show = no in the spec:
@@ -23,40 +26,30 @@
 # between a file's text and a finished report is pure, which is the whole
 # reason tally-core.shoddy and tally.shoddy are separate files.
 set -euo pipefail
+ORIG_DIR=$(pwd)
 cd "$(dirname "$0")"
+. ../../scripts/mill-common.sh
 
-REPO=../..
-MILL=$REPO/bin/mill
-SPEC=${2:-mills/tally/files/grades.spec}
-
-ensure_mill() {
-    [ -x "$MILL" ] || {
-        echo "mill toolchain not built; building it into $REPO/bin ..."
-        dotnet publish "$REPO/src/Shoddy.Mill" -c Release -o "$REPO/bin"
-    }
-}
+SPEC=${2:-$MILL_DIR/files/grades.spec}
 
 case "${1:-run}" in
     run)
         ensure_mill
-        ( cd "$REPO" && bin/mill run mills/tally/tally.shoddy "$SPEC" )
+        run_live "$MILL" run "$MILL_DIR/tally.shoddy" "$SPEC"
         ;;
     capture)
         ensure_mill
-        ( cd "$REPO" && bin/mill run --no-window mills/tally/tally.shoddy "$SPEC" )
+        run_live "$MILL" run --no-window "$MILL_DIR/tally.shoddy" "$SPEC"
         ;;
     test)
+        # test.shoddy's own fixtureDir is repo-root-relative
+        # (mills/tally/files/), not mill-relative, so this one runs from
+        # the repo root rather than staying pinned to this directory.
         ensure_mill
-        ( cd "$REPO" && bin/mill run mills/tally/test.shoddy < /dev/null )
+        run_from_repo "$MILL" run mills/tally/test.shoddy < /dev/null
         ;;
     build)
-        ensure_mill
-        # weave writes BESIDE the source and has no -o flag; this moves the
-        # result into bin/, the same shuffle the other weaving mills do.
-        "$MILL" weave tally.shoddy
-        mkdir -p bin
-        mv -f tally.dll tally.runtimeconfig.json bin/
-        mv -f Shoddy.*.dll bin/ 2>/dev/null || true
+        weave_and_move tally.shoddy
         echo "woven into bin/ - but note that a woven program has no window"
         echo "backend: charts need 'mill run'. Reports and captures are fine."
         ;;

@@ -20,16 +20,7 @@
 # split is the point of the mill; the tests are what it buys.
 set -euo pipefail
 cd "$(dirname "$0")"
-
-REPO=../..
-MILL=$REPO/bin/mill
-
-ensure_mill() {
-    [ -x "$MILL" ] || {
-        echo "mill toolchain not built; building it into $REPO/bin ..."
-        dotnet publish "$REPO/src/Shoddy.Mill" -c Release -o "$REPO/bin"
-    }
-}
+. ../../scripts/mill-common.sh
 
 case "${1:-run}" in
     run)
@@ -41,13 +32,7 @@ case "${1:-run}" in
         "$MILL" run test.shoddy < /dev/null
         ;;
     build)
-        ensure_mill
-        # weave writes BESIDE the source and has no -o flag; this moves the
-        # result into bin/, the same shuffle the other weaving mills do.
-        "$MILL" weave emley-moor.shoddy
-        mkdir -p bin
-        mv -f emley-moor.dll emley-moor.runtimeconfig.json bin/
-        mv -f Shoddy.*.dll bin/ 2>/dev/null || true
+        weave_and_move emley-moor.shoddy
         echo "woven into bin/ - run with: dotnet bin/emley-moor.dll (needs SHODDY_ALLOW_NET=1)"
         ;;
     clean)

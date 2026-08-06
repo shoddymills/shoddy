@@ -30,44 +30,27 @@ $ErrorActionPreference = 'Stop'
 # every path out of the switch below restores where you were.
 Push-Location $PSScriptRoot
 try {
-
-    $Repo = '../..'
-    $Mill = Join-Path $Repo 'bin/mill.exe'
-
-    function Assert-Mill {
-        if (-not (Test-Path $Mill)) {
-            Write-Host "mill toolchain not built; building it into $Repo/bin ..."
-            dotnet publish (Join-Path $Repo 'src/Shoddy.Mill') -c Release -o (Join-Path $Repo 'bin')
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-        }
-    }
+    $MillDir = $PSScriptRoot
+    . (Join-Path $MillDir '../../scripts/mill-common.ps1')
 
     switch ($Command) {
         'run' {
             Assert-Mill
-            Push-Location $Repo
-            try { & bin/mill.exe run --allow-net mills/weather-glass/weather-glass.shoddy $Zip }
-            finally { Pop-Location }
+            & $Mill run --allow-net weather-glass.shoddy $Zip
             exit $LASTEXITCODE
         }
         'test' {
+            # test.shoddy's own fixtureDir is repo-root-relative
+            # (mills/weather-glass/files/), not mill-relative, so this
+            # one runs from the repo root rather than staying pinned to
+            # this directory. $null on the pipeline is this shell's
+            # `< /dev/null`.
             Assert-Mill
-            # $null on the pipeline is this shell's `< /dev/null`.
-            Push-Location $Repo
-            try { $null | & bin/mill.exe run mills/weather-glass/test.shoddy }
-            finally { Pop-Location }
+            Invoke-Live $Repo { $null | & $Mill run mills/weather-glass/test.shoddy }
             exit $LASTEXITCODE
         }
         'build' {
-            Assert-Mill
-            # weave writes BESIDE the source and has no -o flag; this moves the
-            # result into bin/, the same shuffle the other weaving mills do.
-            & $Mill weave weather-glass.shoddy
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-            New-Item -ItemType Directory -Path bin -Force | Out-Null
-            Move-Item -Force weather-glass.dll, weather-glass.runtimeconfig.json bin/
-            $extra = @(Get-ChildItem Shoddy.*.dll -ErrorAction SilentlyContinue)
-            if ($extra.Count -gt 0) { Move-Item -Force $extra bin/ }
+            Invoke-Weave weather-glass.shoddy
             Write-Host 'woven into bin/ - run with: dotnet bin/weather-glass.dll 63011 (needs SHODDY_ALLOW_NET=1)'
         }
         'clean' {
@@ -79,9 +62,6 @@ try {
         }
     }
 
-    # Branches that run no native command leave $LASTEXITCODE at whatever
-    # the last one set, so a target like clean could report a failure it
-    # had nothing to do with. The .sh twin's case arm returns 0 here.
     exit 0
 }
 finally { Pop-Location }

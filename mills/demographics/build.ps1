@@ -18,9 +18,11 @@
 #   dotnet bin/demographics-train.dll
 #   dotnet bin/demographics.dll
 #
-# Neither takes arguments - the data and model paths are fixed at
-# dat/, relative to this directory, so run from here. Train first;
-# the predictor aborts (politely) without dat/people-model.bin.
+# Neither takes arguments - the data and model paths are fixed at dat/,
+# relative to this directory, and train/run always run from here
+# regardless of where you invoke this script from: the model is the
+# mill's own asset, not something to relocate by choice of cwd. Train
+# first; the predictor aborts (politely) without dat/people-model.bin.
 [CmdletBinding()]
 param(
     [Parameter(Position = 0)][string]$Command = 'build'
@@ -35,35 +37,14 @@ $ErrorActionPreference = 'Stop'
 # every path out of the switch below restores where you were.
 Push-Location $PSScriptRoot
 try {
+    $MillDir = $PSScriptRoot
+    . (Join-Path $MillDir '../../scripts/mill-common.ps1')
 
-    $Repo = '../..'
-    $Mill = Join-Path $Repo 'bin/mill.exe'
     $TrainOut = 'bin/demographics-train.dll'
     $RunOut = 'bin/demographics.dll'
 
-    function Assert-Mill {
-        if (-not (Test-Path $Mill)) {
-            Write-Host "mill toolchain not built; building it into $Repo/bin ..."
-            dotnet publish (Join-Path $Repo 'src/Shoddy.Mill') -c Release -o (Join-Path $Repo 'bin')
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-        }
-    }
-
-    # The weave drops its output beside the source; this moves it into bin/,
-    # the same shuffle the .sh does with mv -f. Shoddy.*.dll may or may not be
-    # there depending on what the weave decided to copy, so its absence is not
-    # an error.
     function Invoke-BuildMill {
-        Assert-Mill
-        & $Mill weave demographics-train.shoddy
-        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-        & $Mill weave demographics.shoddy
-        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-        New-Item -ItemType Directory -Path bin -Force | Out-Null
-        Move-Item -Force demographics-train.dll, demographics-train.runtimeconfig.json bin/
-        Move-Item -Force demographics.dll, demographics.runtimeconfig.json bin/
-        $extra = @(Get-ChildItem Shoddy.*.dll -ErrorAction SilentlyContinue)
-        if ($extra.Count -gt 0) { Move-Item -Force $extra bin/ }
+        Invoke-Weave demographics-train.shoddy, demographics.shoddy
         Write-Host "built -> $TrainOut, $RunOut"
     }
 
@@ -100,9 +81,6 @@ try {
         }
     }
 
-    # Branches that run no native command leave $LASTEXITCODE at whatever
-    # the last one set, so a target like clean could report a failure it
-    # had nothing to do with. The .sh twin's case arm returns 0 here.
     exit 0
 }
 finally { Pop-Location }

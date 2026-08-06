@@ -10,6 +10,11 @@
 # are significant to five letters, as they have been since 1977 -- XYZZY,
 # PLUGH, and PLOVER all still work.
 #
+# run is LIVE: it launches from wherever you actually typed ./build.sh,
+# not from this directory - so a save-file name you type in-game (SAVE,
+# RESTORE) resolves against your own shell, not the mill's folder. test
+# stays pinned to this directory: it reads the mill's own fixture suites.
+#
 # The cave lives in the mungo-caverns-*.shoddy tables, which are
 # hand-edited source.
 #
@@ -20,22 +25,14 @@
 # tests/test-fuzz.shoddy throws random commands at it.  194 assertions,
 # about twenty seconds, and "test" runs the lot.  See tests/README.
 set -euo pipefail
+ORIG_DIR=$(pwd)
 cd "$(dirname "$0")"
-
-REPO=../..
-MILL=$REPO/bin/mill
-
-ensure_mill() {
-    [ -x "$MILL" ] || {
-        echo "mill toolchain not built; building it into $REPO/bin ..."
-        dotnet publish "$REPO/src/Shoddy.Mill" -c Release -o "$REPO/bin"
-    }
-}
+. ../../scripts/mill-common.sh
 
 case "${1:-run}" in
     run)
         ensure_mill
-        "$MILL" run mungo-caverns.shoddy
+        run_live "$MILL" run "$MILL_DIR/mungo-caverns.shoddy"
         ;;
     test)
         ensure_mill

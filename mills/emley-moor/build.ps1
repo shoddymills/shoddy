@@ -32,17 +32,8 @@ $ErrorActionPreference = 'Stop'
 # every path out of the switch below restores where you were.
 Push-Location $PSScriptRoot
 try {
-
-    $Repo = '../..'
-    $Mill = Join-Path $Repo 'bin/mill.exe'
-
-    function Assert-Mill {
-        if (-not (Test-Path $Mill)) {
-            Write-Host "mill toolchain not built; building it into $Repo/bin ..."
-            dotnet publish (Join-Path $Repo 'src/Shoddy.Mill') -c Release -o (Join-Path $Repo 'bin')
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-        }
-    }
+    $MillDir = $PSScriptRoot
+    . (Join-Path $MillDir '../../scripts/mill-common.ps1')
 
     switch ($Command) {
         'run' {
@@ -57,15 +48,7 @@ try {
             exit $LASTEXITCODE
         }
         'build' {
-            Assert-Mill
-            # weave writes BESIDE the source and has no -o flag; this moves the
-            # result into bin/, the same shuffle the other weaving mills do.
-            & $Mill weave emley-moor.shoddy
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-            New-Item -ItemType Directory -Path bin -Force | Out-Null
-            Move-Item -Force emley-moor.dll, emley-moor.runtimeconfig.json bin/
-            $extra = @(Get-ChildItem Shoddy.*.dll -ErrorAction SilentlyContinue)
-            if ($extra.Count -gt 0) { Move-Item -Force $extra bin/ }
+            Invoke-Weave emley-moor.shoddy
             Write-Host 'woven into bin/ - run with: dotnet bin/emley-moor.dll (needs SHODDY_ALLOW_NET=1)'
         }
         'clean' {
@@ -77,9 +60,6 @@ try {
         }
     }
 
-    # Branches that run no native command leave $LASTEXITCODE at whatever
-    # the last one set, so a target like clean could report a failure it
-    # had nothing to do with. The .sh twin's case arm returns 0 here.
     exit 0
 }
 finally { Pop-Location }

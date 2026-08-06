@@ -8,6 +8,10 @@
 #   ./build.ps1 test       solve both fixtures and check the answers
 #   ./build.ps1 clean      remove built binaries from bin/
 #
+# run is LIVE: FILE (and -z) are resolved from wherever you actually
+# typed .\build.ps1, not from this directory - so a path you give at the
+# command line works the way it would for any ordinary program.
+#
 # The build weaves simplex-mps.shoddy to a self-contained assembly and
 # drops every binary (the program, its runtimeconfig, Shoddy.Runtime.dll)
 # into bin/. To just run an already-built program, no rebuild:
@@ -22,6 +26,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+$OrigLocation = Get-Location
 
 # Push rather than Set. Set-Location changes the SESSION's directory, not a
 # scope's, so a mill script run from the repo root - which is how
@@ -30,32 +35,14 @@ $ErrorActionPreference = 'Stop'
 # every path out of the switch below restores where you were.
 Push-Location $PSScriptRoot
 try {
+    $MillDir = $PSScriptRoot
+    . (Join-Path $MillDir '../../scripts/mill-common.ps1')
 
-    $Repo = '../..'
-    $Mill = Join-Path $Repo 'bin/mill.exe'
     $Src = 'simplex-mps.shoddy'
     $Out = 'bin/simplex-mps.dll'
 
-    function Assert-Mill {
-        if (-not (Test-Path $Mill)) {
-            Write-Host "mill toolchain not built; building it into $Repo/bin ..."
-            dotnet publish (Join-Path $Repo 'src/Shoddy.Mill') -c Release -o (Join-Path $Repo 'bin')
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-        }
-    }
-
-    # The weave drops its output beside the source; this moves it into bin/,
-    # the same shuffle the .sh does with mv -f. Shoddy.*.dll may or may not be
-    # there depending on what the weave decided to copy, so its absence is not
-    # an error.
     function Invoke-BuildMill {
-        Assert-Mill
-        & $Mill weave $Src
-        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-        New-Item -ItemType Directory -Path bin -Force | Out-Null
-        Move-Item -Force simplex-mps.dll, simplex-mps.runtimeconfig.json bin/
-        $extra = @(Get-ChildItem Shoddy.*.dll -ErrorAction SilentlyContinue)
-        if ($extra.Count -gt 0) { Move-Item -Force $extra bin/ }
+        Invoke-Weave $Src
         Write-Host "built -> $Out"
     }
 
@@ -69,7 +56,7 @@ try {
                 exit 2
             }
             if (-not (Test-Path $Out)) { Invoke-BuildMill }
-            & dotnet $Out @Rest
+            Invoke-Live $OrigLocation { & dotnet (Join-Path $MillDir $Out) @Rest }
             exit $LASTEXITCODE
         }
         'test' {
@@ -88,9 +75,6 @@ try {
         }
     }
 
-    # Branches that run no native command leave $LASTEXITCODE at whatever
-    # the last one set, so a target like clean could report a failure it
-    # had nothing to do with. The .sh twin's case arm returns 0 here.
     exit 0
 }
 finally { Pop-Location }

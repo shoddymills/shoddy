@@ -13,16 +13,7 @@
 # quits.
 set -euo pipefail
 cd "$(dirname "$0")"
-
-REPO=../..
-MILL=$REPO/bin/mill
-
-ensure_mill() {
-    [ -x "$MILL" ] || {
-        echo "mill toolchain not built; building it into $REPO/bin ..."
-        dotnet publish "$REPO/src/Shoddy.Mill" -c Release -o "$REPO/bin"
-    }
-}
+. ../../scripts/mill-common.sh
 
 case "${1:-run}" in
     run)

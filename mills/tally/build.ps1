@@ -8,10 +8,13 @@
 #   ./build.ps1 build            weave the program into bin/
 #   ./build.ps1 clean            remove bin/
 #
-# SPEC defaults to files/grades.spec. Paths INSIDE a spec (data.file,
-# window.capture) are relative to the directory you run from, which the
-# run target makes the repo root - so a spec written for ./build.ps1 says
-# mills/tally/files/... The shipped specs do exactly that.
+# run and capture are LIVE: they launch from wherever you actually typed
+# .\build.ps1, not from this directory. SPEC defaults to this mill's own
+# files/grades.spec if you don't give one; a SPEC you do name resolves
+# against your own shell, same as any ordinary file argument would.
+# Paths INSIDE a spec (data.file, window.capture) are relative to
+# wherever the spec itself resolved from - the shipped default spec
+# names files/... to match sitting beside it.
 #
 # capture passes --no-window, which opens every scribbler hidden and stops
 # windows outliving the program. Pair it with window.show = no in the spec:
@@ -25,10 +28,11 @@
 [CmdletBinding()]
 param(
     [Parameter(Position = 0)][string]$Command = 'run',
-    [Parameter(Position = 1)][string]$Spec = 'mills/tally/files/grades.spec'
+    [Parameter(Position = 1)][string]$Spec = ''
 )
 
 $ErrorActionPreference = 'Stop'
+$OrigLocation = Get-Location
 
 # Push rather than Set. Set-Location changes the SESSION's directory, not a
 # scope's, so a mill script run from the repo root - which is how
@@ -37,51 +41,34 @@ $ErrorActionPreference = 'Stop'
 # every path out of the switch below restores where you were.
 Push-Location $PSScriptRoot
 try {
+    $MillDir = $PSScriptRoot
+    . (Join-Path $MillDir '../../scripts/mill-common.ps1')
 
-    $Repo = '../..'
-    $Mill = Join-Path $Repo 'bin/mill.exe'
-
-    function Assert-Mill {
-        if (-not (Test-Path $Mill)) {
-            Write-Host "mill toolchain not built; building it into $Repo/bin ..."
-            dotnet publish (Join-Path $Repo 'src/Shoddy.Mill') -c Release -o (Join-Path $Repo 'bin')
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-        }
-    }
+    $SpecPath = if ($Spec) { $Spec } else { Join-Path $MillDir 'files/grades.spec' }
 
     switch ($Command) {
         'run' {
             Assert-Mill
-            Push-Location $Repo
-            try { & bin/mill.exe run mills/tally/tally.shoddy $Spec }
-            finally { Pop-Location }
+            Invoke-Live $OrigLocation { & $Mill run (Join-Path $MillDir 'tally.shoddy') $SpecPath }
             exit $LASTEXITCODE
         }
         'capture' {
             Assert-Mill
-            Push-Location $Repo
-            try { & bin/mill.exe run --no-window mills/tally/tally.shoddy $Spec }
-            finally { Pop-Location }
+            Invoke-Live $OrigLocation { & $Mill run --no-window (Join-Path $MillDir 'tally.shoddy') $SpecPath }
             exit $LASTEXITCODE
         }
         'test' {
+            # test.shoddy's own fixtureDir is repo-root-relative
+            # (mills/tally/files/), not mill-relative, so this one runs
+            # from the repo root rather than staying pinned to this
+            # directory. $null on the pipeline is this shell's
+            # `< /dev/null`.
             Assert-Mill
-            # $null on the pipeline is this shell's `< /dev/null`.
-            Push-Location $Repo
-            try { $null | & bin/mill.exe run mills/tally/test.shoddy }
-            finally { Pop-Location }
+            Invoke-Live $Repo { $null | & $Mill run mills/tally/test.shoddy }
             exit $LASTEXITCODE
         }
         'build' {
-            Assert-Mill
-            # weave writes BESIDE the source and has no -o flag; this moves the
-            # result into bin/, the same shuffle the other weaving mills do.
-            & $Mill weave tally.shoddy
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-            New-Item -ItemType Directory -Path bin -Force | Out-Null
-            Move-Item -Force tally.dll, tally.runtimeconfig.json bin/
-            $extra = @(Get-ChildItem Shoddy.*.dll -ErrorAction SilentlyContinue)
-            if ($extra.Count -gt 0) { Move-Item -Force $extra bin/ }
+            Invoke-Weave tally.shoddy
             Write-Host 'woven into bin/ - but note that a woven program has no window'
             Write-Host "backend: charts need 'mill run'. Reports and captures are fine."
         }
@@ -94,9 +81,6 @@ try {
         }
     }
 
-    # Branches that run no native command leave $LASTEXITCODE at whatever
-    # the last one set, so a target like clean could report a failure it
-    # had nothing to do with. The .sh twin's case arm returns 0 here.
     exit 0
 }
 finally { Pop-Location }

@@ -8,6 +8,10 @@
 #   ./build.sh test       solve both fixtures and check the answers
 #   ./build.sh clean      remove built binaries from bin/
 #
+# run is LIVE: FILE (and -z) are resolved from wherever you actually
+# typed ./build.sh, not from this directory - so a path you give at the
+# command line works the way it would for any ordinary program.
+#
 # The build weaves simplex-mps.shoddy to a self-contained assembly and
 # drops every binary (the program, its runtimeconfig, Shoddy.Runtime.dll)
 # into bin/. To just run an already-built program, no rebuild:
@@ -16,26 +20,15 @@
 #
 # Add -z (or --zero-lower) to force x >= 0 on every variable.
 set -euo pipefail
+ORIG_DIR=$(pwd)
 cd "$(dirname "$0")"
+. ../../scripts/mill-common.sh
 
-REPO=../..
-MILL=$REPO/bin/mill
 SRC=simplex-mps.shoddy
 OUT=bin/simplex-mps.dll
 
-ensure_mill() {
-    [ -x "$MILL" ] || {
-        echo "mill toolchain not built; building it into $REPO/bin ..."
-        dotnet publish "$REPO/src/Shoddy.Mill" -c Release -o "$REPO/bin"
-    }
-}
-
 build() {
-    ensure_mill
-    "$MILL" weave "$SRC"
-    mkdir -p bin
-    mv -f simplex-mps.dll simplex-mps.runtimeconfig.json bin/
-    mv -f Shoddy.*.dll bin/ 2>/dev/null || true
+    weave_and_move "$SRC"
     echo "built -> $OUT"
 }
 
@@ -47,7 +40,7 @@ case "${1:-build}" in
         [ $# -ge 2 ] || { echo "usage: ./build.sh run FILE.mps [-z]" >&2; exit 2; }
         [ -f "$OUT" ] || build
         shift
-        dotnet "$OUT" "$@"
+        run_live dotnet "$MILL_DIR/$OUT" "$@"
         ;;
     test)
         ensure_mill

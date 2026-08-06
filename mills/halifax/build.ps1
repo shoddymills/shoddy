@@ -6,13 +6,13 @@
 #   ./build.ps1 test             the headless suite: no terminal needed
 #   ./build.ps1 demo             the golden session, fed from files/demo.halifax
 #   ./build.ps1 build            weave the program into bin/
-#   ./build.ps1 clean            remove bin/
 #
-# run and demo both execute from the REPO ROOT, so a path you type at the
-# prompt - SAVE "mine.halifax" - lands there, and so does the halifaxrc
-# the shell looks for on the way up. That is the same rule tally uses for
-# its spec paths: relative to where you ran from, not to where the mill
-# happens to live.
+# run is LIVE: it launches from wherever you actually typed .\build.ps1,
+# not from this directory - so a path you give SAVE, LOAD or TAPESAVE at
+# the prompt, and halifaxrc on the way in, resolve against your own
+# shell, exactly as they would running the calculator directly. test and
+# demo stay pinned to this directory: they read the mill's own fixtures
+# (test.shoddy, files/demo.halifax), not anything you typed.
 #
 # demo feeds files/demo.halifax to the prompt: the R5.2 sequence, in
 # order, ending on a traced cascade. It is there to show the shell works
@@ -31,6 +31,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+$OrigLocation = Get-Location
 
 # Push rather than Set. Set-Location changes the SESSION's directory, not a
 # scope's, so a mill script run from the repo root - which is how
@@ -39,66 +40,37 @@ $ErrorActionPreference = 'Stop'
 # every path out of the switch below restores where you were.
 Push-Location $PSScriptRoot
 try {
-
-    $Repo = '../..'
-    $Mill = Join-Path $Repo 'bin/mill.exe'
-
-    function Assert-Mill {
-        if (-not (Test-Path $Mill)) {
-            Write-Host "mill toolchain not built; building it into $Repo/bin ..."
-            dotnet publish (Join-Path $Repo 'src/Shoddy.Mill') -c Release -o (Join-Path $Repo 'bin')
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-        }
-    }
+    $MillDir = $PSScriptRoot
+    . (Join-Path $MillDir '../../scripts/mill-common.ps1')
 
     switch ($Command) {
         'run' {
             Assert-Mill
-            Push-Location $Repo
-            try { & bin/mill.exe run mills/halifax/halifax.shoddy }
-            finally { Pop-Location }
+            Invoke-Live $OrigLocation { & $Mill run (Join-Path $MillDir 'halifax.shoddy') }
             exit $LASTEXITCODE
         }
         'test' {
             Assert-Mill
-            # $null on the pipeline is this shell's `< /dev/null`: it closes
-            # stdin, so a suite that ever read a line would hit EOF rather
-            # than wait for a keystroke that is not coming.
-            Push-Location $Repo
-            try { $null | & bin/mill.exe run mills/halifax/test.shoddy }
-            finally { Pop-Location }
+            $null | & $Mill run test.shoddy
             exit $LASTEXITCODE
         }
         'demo' {
             Assert-Mill
-            Push-Location $Repo
-            try { Get-Content mills/halifax/files/demo.halifax | & bin/mill.exe run mills/halifax/halifax.shoddy }
-            finally { Pop-Location }
+            Get-Content files/demo.halifax | & $Mill run halifax.shoddy
             exit $LASTEXITCODE
         }
         'build' {
-            Assert-Mill
-            # weave writes BESIDE the source and has no -o flag; this moves the
-            # result into bin/, the same shuffle the other weaving mills do.
-            & $Mill weave halifax.shoddy
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-            New-Item -ItemType Directory -Path bin -Force | Out-Null
-            Move-Item -Force halifax.dll, halifax.runtimeconfig.json bin/
-            $extra = @(Get-ChildItem Shoddy.*.dll -ErrorAction SilentlyContinue)
-            if ($extra.Count -gt 0) { Move-Item -Force $extra bin/ }
+            Invoke-Weave halifax.shoddy
             Write-Host 'woven into bin/'
         }
-        'clean' {
-            if (Test-Path bin) { Remove-Item -Recurse -Force bin }
-        }
         default {
-            [Console]::Error.WriteLine('usage: ./build.ps1 [run|test|demo|build|clean]')
+            [Console]::Error.WriteLine('usage: ./build.ps1 [run|test|demo|build]')
             exit 2
         }
     }
 
     # Branches that run no native command leave $LASTEXITCODE at whatever
-    # the last one set, so a target like clean could report a failure it
+    # the last one set, so a target like build could report a failure it
     # had nothing to do with. The .sh twin's case arm returns 0 here.
     exit 0
 }

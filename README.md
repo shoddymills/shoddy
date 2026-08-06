@@ -15,19 +15,23 @@ the colours, and why they are these colours and no others, are in
 
 A purely functional BASIC. Friendly typed syntax on the surface —
 parenthesized calls, infix operators, `Let`, records, `Select Case`
-pattern matching — compiled onto a concatenative (Forth/Joy-style) stack
-core that remains a legal dialect. Python's layout, BASIC's keywords,
-Joy's soul.
+pattern matching — compiled by the **mill** onto .NET through a
+concatenative (Forth/Joy-style) stack core that remains a legal dialect.
+Python's layout, BASIC's keywords, Joy's soul.
 
 <p align="center">
-  <img src="docs/media/shoddy-tour.gif" width="900"
+  <img src="docs/media/shoddy-tour.gif" width="100%"
        alt="Six cards of Shoddy: Let binds once and never rebinds; sum types with Select Case destructuring them; JsonRead returning JOk or JErr instead of throwing; Map, Filter and Fold taking Fn lambdas; the same Def Square written as typed syntax and again as stack code with Dup *; and Include pulling in the json and https machines.">
 </p>
 
 Nothing mutates: `Let` binds once, updates return new values, iteration
 is recursion and `Map`/`Filter`/`Fold`. And the whole surface desugars to
-stack code you can also write directly: `Def Square ( Number -- Number )`
-/ `Dup *`.
+stack code you can also write directly — the same `Square` is
+`Def Square(n As Number) As Number` / `n * n`, or
+`Def Square ( Number -- Number )` / `Dup *`, and both are Shoddy. The
+standard library is written in that same language: one folder of Shoddy
+source per **machine**, from `seq` and `str` out to neural nets and
+TCP/IP.
 
 ## The showpieces
 
@@ -35,7 +39,7 @@ stack code you can also write directly: `Def Square ( Number -- Number )`
 adventure — and Devil's Dust, the language's own name-story animated, with
 a tuning console that goes to eleven.*
 
-<table>
+<table width="100%">
   <tr>
     <td align="center">
       <a href="https://shoddymills.github.io/shoddy/mills/mungo-caverns.html"><img src="docs/media/mungo-caverns.gif" alt="Mungo Caverns played in a terminal: into the well house, take the lamp, xyzzy to the debris room" width="100%"></a><br>
@@ -52,7 +56,7 @@ a tuning console that goes to eleven.*
 
 ## Two minutes to running
 
-<table>
+<table width="100%">
   <tr>
     <td width="55%" valign="middle">
       <b>One download is the whole toolchain.</b> The VS Code extension
@@ -78,7 +82,7 @@ a tuning console that goes to eleven.*
 *Build a real program from an empty folder, learn the method for driving the
 same craft with an AI assistant, then watch that method run at full size.*
 
-<table>
+<table width="100%">
   <tr>
     <td width="33%" align="center" valign="top">
       <a href="https://shoddymills.github.io/shoddy/tutorials/first-mill.html"><img src="docs/media/icons/tutorials.gif" alt="a turtle drawing a colour spirograph, line by line" width="100%"></a><br>
@@ -109,7 +113,7 @@ unit-tested pure core and a thin I/O shell. Click through for the full
 write-up on each one, or start at
 [the mills catalog](https://shoddymills.github.io/shoddy/mills/index.html).
 
-<table>
+<table width="100%">
   <tr>
     <td width="25%" align="center" valign="top">
       <a href="https://shoddymills.github.io/shoddy/mills/mungo-caverns.html"><img src="docs/media/mungo-caverns.svg" alt="Mungo Caverns in a terminal" width="100%"></a><br>
@@ -170,56 +174,55 @@ sound, statistics, neural nets, an LP solver, keyed files, and TCP/IP,
 batteries included. Full word references in
 [the machines catalog](https://shoddymills.github.io/shoddy/machines/index.html).
 
-<table>
+<table width="100%">
   <tr>
-    <td width="25%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/seq.html"><img src="docs/media/icons/seq.svg" alt="seq" width="100%"></a><br><b>seq</b><br><sub>Map, Filter, Fold and friends</sub></td>
-    <td width="25%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/str.html"><img src="docs/media/icons/str.svg" alt="str" width="100%"></a><br><b>str</b><br><sub>string helpers</sub></td>
-    <td width="25%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/math.html"><img src="docs/media/icons/math.svg" alt="math" width="100%"></a><br><b>math</b><br><sub>the derived math layer</sub></td>
-    <td width="25%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/eng.html"><img src="docs/media/icons/eng.svg" alt="eng" width="100%"></a><br><b>eng</b><br><sub>the engineer's calculator</sub></td>
-    <td width="25%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/matrix.html"><img src="docs/media/icons/matrix.svg" alt="matrix" width="100%"></a><br><b>matrix</b><br><sub>flat row-major matrices</sub></td>
+    <td width="20%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/seq.html"><img src="docs/media/icons/seq.svg" alt="seq" width="100%"></a><br><b>seq</b><br><sub>Map, Filter, Fold and friends</sub></td>
+    <td width="20%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/str.html"><img src="docs/media/icons/str.svg" alt="str" width="100%"></a><br><b>str</b><br><sub>string helpers</sub></td>
+    <td width="20%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/math.html"><img src="docs/media/icons/math.svg" alt="math" width="100%"></a><br><b>math</b><br><sub>the derived math layer</sub></td>
+    <td width="20%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/eng.html"><img src="docs/media/icons/eng.svg" alt="eng" width="100%"></a><br><b>eng</b><br><sub>the engineer's calculator</sub></td>
+    <td width="20%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/matrix.html"><img src="docs/media/icons/matrix.svg" alt="matrix" width="100%"></a><br><b>matrix</b><br><sub>flat row-major matrices</sub></td>
   </tr>
   <tr>
-    <td width="25%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/lin.html"><img src="docs/media/icons/lin.svg" alt="lin" width="100%"></a><br><b>lin</b><br><sub>solve, factor, eigenvalues</sub></td>
-    <td width="25%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/alg.html"><img src="docs/media/icons/alg.svg" alt="alg" width="100%"></a><br><b>alg</b><br><sub>formulae as values</sub></td>
-    <td width="25%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/stats.html"><img src="docs/media/icons/stats.svg" alt="stats" width="100%"></a><br><b>stats</b><br><sub>means to real p-values</sub></td>
-    <td width="25%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/random.html"><img src="docs/media/icons/random.svg" alt="random" width="100%"></a><br><b>random</b><br><sub>shuffles, samples, ranges</sub></td>
-    <td width="25%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/neural.html"><img src="docs/media/icons/neural.svg" alt="neural" width="100%"></a><br><b>neural</b><br><sub>feed-forward nets, two heads</sub></td>
-    <td width="25%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/money.html"><img src="docs/media/icons/money.svg" alt="money" width="100%"></a><br><b>money</b><br><sub>exact cents, no drift</sub></td>
+    <td width="20%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/lin.html"><img src="docs/media/icons/lin.svg" alt="lin" width="100%"></a><br><b>lin</b><br><sub>solve, factor, eigenvalues</sub></td>
+    <td width="20%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/alg.html"><img src="docs/media/icons/alg.svg" alt="alg" width="100%"></a><br><b>alg</b><br><sub>formulae as values</sub></td>
+    <td width="20%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/stats.html"><img src="docs/media/icons/stats.svg" alt="stats" width="100%"></a><br><b>stats</b><br><sub>means to real p-values</sub></td>
+    <td width="20%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/random.html"><img src="docs/media/icons/random.svg" alt="random" width="100%"></a><br><b>random</b><br><sub>shuffles, samples, ranges</sub></td>
+    <td width="20%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/neural.html"><img src="docs/media/icons/neural.svg" alt="neural" width="100%"></a><br><b>neural</b><br><sub>feed-forward nets, two heads</sub></td>
   </tr>
   <tr>
-    <td width="25%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/file.html"><img src="docs/media/icons/file.svg" alt="file" width="100%"></a><br><b>file</b><br><sub>line-oriented text I/O</sub></td>
-    <td width="25%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/fin.html"><img src="docs/media/icons/fin.svg" alt="fin" width="100%"></a><br><b>fin</b><br><sub>money over time</sub></td>
-    <td width="25%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/recio.html"><img src="docs/media/icons/recio.svg" alt="recio" width="100%"></a><br><b>recio</b><br><sub>fixed-size binary records</sub></td>
-    <td width="25%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/dict.html"><img src="docs/media/icons/dict.svg" alt="dict" width="100%"></a><br><b>dict</b><br><sub>key/value over Pair lists</sub></td>
-    <td width="25%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/isam.html"><img src="docs/media/icons/isam.svg" alt="isam" width="100%"></a><br><b>isam</b><br><sub>keyed files, B+tree index</sub></td>
+    <td width="20%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/money.html"><img src="docs/media/icons/money.svg" alt="money" width="100%"></a><br><b>money</b><br><sub>exact cents, no drift</sub></td>
+    <td width="20%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/file.html"><img src="docs/media/icons/file.svg" alt="file" width="100%"></a><br><b>file</b><br><sub>line-oriented text I/O</sub></td>
+    <td width="20%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/fin.html"><img src="docs/media/icons/fin.svg" alt="fin" width="100%"></a><br><b>fin</b><br><sub>money over time</sub></td>
+    <td width="20%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/recio.html"><img src="docs/media/icons/recio.svg" alt="recio" width="100%"></a><br><b>recio</b><br><sub>fixed-size binary records</sub></td>
+    <td width="20%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/dict.html"><img src="docs/media/icons/dict.svg" alt="dict" width="100%"></a><br><b>dict</b><br><sub>key/value over Pair lists</sub></td>
   </tr>
   <tr>
-    <td width="25%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/json.html"><img src="docs/media/icons/json.svg" alt="json" width="100%"></a><br><b>json</b><br><sub>JSON, both directions</sub></td>
-    <td width="25%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/xml.html"><img src="docs/media/icons/xml.svg" alt="xml" width="100%"></a><br><b>xml</b><br><sub>XML, both directions</sub></td>
-    <td width="25%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/html.html"><img src="docs/media/icons/html.svg" alt="html" width="100%"></a><br><b>html</b><br><sub>web pages, forgivingly</sub></td>
-    <td width="25%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/csv.html"><img src="docs/media/icons/csv.svg" alt="csv" width="100%"></a><br><b>csv</b><br><sub>tables, quoted properly</sub></td>
-    <td width="25%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/shaker.html"><img src="docs/media/icons/shaker.svg" alt="shaker" width="100%"></a><br><b>shaker</b><br><sub>reversible obfuscation</sub></td>
+    <td width="20%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/isam.html"><img src="docs/media/icons/isam.svg" alt="isam" width="100%"></a><br><b>isam</b><br><sub>keyed files, B+tree index</sub></td>
+    <td width="20%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/json.html"><img src="docs/media/icons/json.svg" alt="json" width="100%"></a><br><b>json</b><br><sub>JSON, both directions</sub></td>
+    <td width="20%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/xml.html"><img src="docs/media/icons/xml.svg" alt="xml" width="100%"></a><br><b>xml</b><br><sub>XML, both directions</sub></td>
+    <td width="20%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/html.html"><img src="docs/media/icons/html.svg" alt="html" width="100%"></a><br><b>html</b><br><sub>web pages, forgivingly</sub></td>
+    <td width="20%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/csv.html"><img src="docs/media/icons/csv.svg" alt="csv" width="100%"></a><br><b>csv</b><br><sub>tables, quoted properly</sub></td>
   </tr>
   <tr>
-    <td width="25%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/net.html"><img src="docs/media/icons/net.svg" alt="net" width="100%"></a><br><b>net</b><br><sub>TCP/IP, non-blocking</sub></td>
-    <td width="25%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/https.html"><img src="docs/media/icons/https.svg" alt="https" width="100%"></a><br><b>https</b><br><sub>HTTP over TLS</sub></td>
-    <td width="25%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/simplex.html"><img src="docs/media/icons/simplex.svg" alt="simplex" width="100%"></a><br><b>simplex</b><br><sub>linear programming</sub></td>
-    <td width="25%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/mps.html"><img src="docs/media/icons/mps.svg" alt="mps" width="100%"></a><br><b>mps</b><br><sub>the LP file format</sub></td>
+    <td width="20%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/shaker.html"><img src="docs/media/icons/shaker.svg" alt="shaker" width="100%"></a><br><b>shaker</b><br><sub>reversible obfuscation</sub></td>
+    <td width="20%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/net.html"><img src="docs/media/icons/net.svg" alt="net" width="100%"></a><br><b>net</b><br><sub>TCP/IP, non-blocking</sub></td>
+    <td width="20%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/https.html"><img src="docs/media/icons/https.svg" alt="https" width="100%"></a><br><b>https</b><br><sub>HTTP over TLS</sub></td>
+    <td width="20%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/simplex.html"><img src="docs/media/icons/simplex.svg" alt="simplex" width="100%"></a><br><b>simplex</b><br><sub>linear programming</sub></td>
+    <td width="20%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/mps.html"><img src="docs/media/icons/mps.svg" alt="mps" width="100%"></a><br><b>mps</b><br><sub>the LP file format</sub></td>
   </tr>
   <tr>
-    <td width="25%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/clock.html"><img src="docs/media/icons/clock.svg" alt="clock" width="100%"></a><br><b>clock</b><br><sub>timing and timestamps</sub></td>
-    <td width="25%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/vt100.html"><img src="docs/media/icons/vt100.svg" alt="vt100" width="100%"></a><br><b>vt100</b><br><sub>terminal control codes</sub></td>
-    <td width="25%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/keys.html"><img src="docs/media/icons/keys.svg" alt="keys" width="100%"></a><br><b>keys</b><br><sub>key codes to GameKeys</sub></td>
-    <td width="25%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/scribbler.html"><img src="docs/media/icons/scribbler.svg" alt="scribbler" width="100%"></a><br><b>scribbler</b><br><sub>pixels in a window</sub></td>
+    <td width="20%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/clock.html"><img src="docs/media/icons/clock.svg" alt="clock" width="100%"></a><br><b>clock</b><br><sub>timing and timestamps</sub></td>
+    <td width="20%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/vt100.html"><img src="docs/media/icons/vt100.svg" alt="vt100" width="100%"></a><br><b>vt100</b><br><sub>terminal control codes</sub></td>
+    <td width="20%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/keys.html"><img src="docs/media/icons/keys.svg" alt="keys" width="100%"></a><br><b>keys</b><br><sub>key codes to GameKeys</sub></td>
+    <td width="20%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/scribbler.html"><img src="docs/media/icons/scribbler.svg" alt="scribbler" width="100%"></a><br><b>scribbler</b><br><sub>pixels in a window</sub></td>
+    <td width="20%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/turtle.html"><img src="docs/media/icons/turtle.svg" alt="turtle" width="100%"></a><br><b>turtle</b><br><sub>purely functional turtles</sub></td>
   </tr>
   <tr>
-    <td width="25%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/turtle.html"><img src="docs/media/icons/turtle.svg" alt="turtle" width="100%"></a><br><b>turtle</b><br><sub>purely functional turtles</sub></td>
-    <td width="25%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/plotter.html"><img src="docs/media/icons/plotter.svg" alt="plotter" width="100%"></a><br><b>plotter</b><br><sub>statistical charts</sub></td>
-    <td width="25%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/buzzer.html"><img src="docs/media/icons/buzzer.svg" alt="buzzer" width="100%"></a><br><b>buzzer</b><br><sub>notes, MML tunes, three waves</sub></td>
-    <td width="25%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/cuttle.html"><img src="docs/media/icons/cuttle.svg" alt="cuttle" width="100%"></a><br><b>cuttle</b><br><sub>a runtime stack, reified</sub></td>
-    <td width="25%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/reckoner.html"><img src="docs/media/icons/reckoner.svg" alt="reckoner" width="100%"></a><br><b>reckoner</b><br><sub>RPN lines against a dictionary</sub></td>
-    <td width="25%"></td>
-    <td width="25%"></td>
+    <td width="20%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/plotter.html"><img src="docs/media/icons/plotter.svg" alt="plotter" width="100%"></a><br><b>plotter</b><br><sub>statistical charts</sub></td>
+    <td width="20%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/buzzer.html"><img src="docs/media/icons/buzzer.svg" alt="buzzer" width="100%"></a><br><b>buzzer</b><br><sub>notes, MML tunes, three waves</sub></td>
+    <td width="20%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/cuttle.html"><img src="docs/media/icons/cuttle.svg" alt="cuttle" width="100%"></a><br><b>cuttle</b><br><sub>a runtime stack, reified</sub></td>
+    <td width="20%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/reckoner.html"><img src="docs/media/icons/reckoner.svg" alt="reckoner" width="100%"></a><br><b>reckoner</b><br><sub>RPN lines against a dictionary</sub></td>
+    <td width="20%"></td>
   </tr>
 </table>
 

@@ -1,0 +1,205 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem seedstats.shoddy — reckoner seed: stats.shoddy's descriptive layer
+Rem
+Rem The eleven words a data session actually reaches for: MEAN, MEDIAN,
+Rem STDEV, STDEVP, VAR, SUM, QUANTILE, CORREL, NORMCDF, NORMINV and TCDF.
+Rem stats.shoddy carries a much larger surface — skewness, the t/F/chi2
+Rem tests, Anova, confidence intervals — deliberately left for a future
+Rem seed rather than bridged wholesale here: R2.4's promise is that a
+Rem domain arrives with zero engine changes whenever it is wanted, not
+Rem that every word in a machine arrives on day one.
+Rem
+Rem GUARDED WHERE STATS.SHODDY ISN'T. Mean, Median, StdDev, Var and
+Rem Quantile all divide, index or Error somewhere inside on an empty or
+Rem too-short list; every guard below runs before the call that would
+Rem otherwise abort, which is R4.1's duplication tax paid once per word.
+Rem ==================================================================
+
+Include "stats.shoddy"
+Include "cuttle.shoddy"
+Include "reckoner.shoddy"
+Include "seq.shoddy"
+
+Rem ---- a LIST cell as List Of Number -------------------------------------
+Rem Every stats word wants numbers, not cells; this is the one crossing
+Rem every word below goes through, and the one place a non-numeric
+Rem element is named rather than crashing deep inside stats.shoddy.
+
+Def SListNum(word As String, c As Cell) As Result
+    Select Case RckListArg(word, c)
+        Case Ok(xs)
+            SNumsAt(word, xs, { })
+        Case Err(w, at)
+            Err(w, at)
+        Case Else
+            Err(word & " did not answer", 0)
+
+Def SNumsAt(word As String, xs As List Of Cell, acc As List Of Number) As Result
+    If IsEmpty(xs) Then
+        Ok(acc)
+    Else
+        SNumsNext(word, xs, acc, First(xs))
+
+Def SNumsNext(word As String, xs As List Of Cell, acc As List Of Number, c As Cell) As Result
+    Select Case c
+        Case CutNum(x)
+            SNumsAt(word, Rest(xs), Append(acc, x))
+        Case Else
+            Err(RckKindWhy(word, "a LIST of NUMBERs", c), 0)
+
+Rem ---- one-list words: MEAN MEDIAN STDEV STDEVP VAR SUM ------------------
+
+Def SSeedMean(st As RckState) As RckState
+    RckReg(st, "MEAN", 1, RckPure(Fn(vs) => SOneList("MEAN", First(vs), SNeedSome, Mean)), "( xs -- m )", "The arithmetic mean of a list of numbers.")
+
+Def SSeedMedian(st As RckState) As RckState
+    RckReg(st, "MEDIAN", 1, RckPure(Fn(vs) => SOneList("MEDIAN", First(vs), SNeedSome, Median)), "( xs -- m )", "The middle value of a list of numbers.")
+
+Def SSeedStdev(st As RckState) As RckState
+    RckReg(st, "STDEV", 1, RckPure(Fn(vs) => SOneList("STDEV", First(vs), SNeedTwo, StdDev)), "( xs -- s )", "Sample standard deviation (divides by n-1).")
+
+Def SSeedStdevp(st As RckState) As RckState
+    RckReg(st, "STDEVP", 1, RckPure(Fn(vs) => SOneList("STDEVP", First(vs), SNeedSome, StdDevP)), "( xs -- s )", "Population standard deviation (divides by n).")
+
+Def SSeedVar(st As RckState) As RckState
+    RckReg(st, "VAR", 1, RckPure(Fn(vs) => SOneList("VAR", First(vs), SNeedTwo, Var)), "( xs -- v )", "Sample variance (divides by n-1).")
+
+Def SSeedSum(st As RckState) As RckState
+    RckReg(st, "SUM", 1, RckPure(Fn(vs) => SOneList("SUM", First(vs), SNeedNone, Sum)), "( xs -- s )", "The total of a list of numbers; 0 for an empty list.")
+
+Rem Every list-taking word shares this shape: read the numbers, ask the
+Rem length guard whether there are enough of them, then call in.
+Def SOneList(word As String, c As Cell, enough As [ Number -- String ], f As [ List Of Number -- Number ]) As RckWork
+    Select Case SListNum(word, c)
+        Case Ok(ns)
+            SOneListAt(word, ns, Call(enough, Length(ns)), f)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Def SOneListAt(word As String, ns As List Of Number, why As String, f As [ List Of Number -- Number ]) As RckWork
+    If why <> "" Then
+        RckWorkBad(word & " " & why)
+    Else
+        RckVals({ CutNum(Call(f, ns)) })
+
+Def SNeedNone(n As Number) As String
+    ""
+
+Def SNeedSome(n As Number) As String
+    Ifte(n < 1, "needs at least one value, the list is empty", "")
+
+Def SNeedTwo(n As Number) As String
+    Ifte(n < 2, "needs at least two values, got " & Str(n), "")
+
+Rem ---- QUANTILE -----------------------------------------------------------
+Rem Quantile Errors both on an empty list and on p outside [0, 1]; both
+Rem are pre-flighted here rather than reached.
+
+Def SSeedQuantile(st As RckState) As RckState
+    RckReg(st, "QUANTILE", 2, RckPure(Fn(vs) => SQuantile(vs)), "( xs p -- q )", "The value at fraction p (0 to 1) into the sorted list.")
+
+Def SQuantile(vs As List Of Cell) As RckWork
+    Select Case SListNum("QUANTILE", First(vs))
+        Case Ok(ns)
+            SQuantileP(ns, Nth(vs, 2))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("QUANTILE did not answer")
+
+Def SQuantileP(ns As List Of Number, c As Cell) As RckWork
+    Select Case RckNumArg("QUANTILE", c)
+        Case Ok(p)
+            SQuantileAt(ns, p)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("QUANTILE did not answer")
+
+Def SQuantileAt(ns As List Of Number, p As Number) As RckWork
+    If IsEmpty(ns) Then
+        RckWorkBad("QUANTILE needs at least one value, the list is empty")
+    Else
+        If p < 0 Or p > 1 Then
+            RckWorkBad("QUANTILE needs p between 0 and 1, got " & Str(p))
+        Else
+            RckVals({ CutNum(Quantile(ns, p)) })
+
+Rem ---- CORREL ---------------------------------------------------------
+Rem Correl divides by each list's own standard deviation, so a
+Rem too-short list or a constant one (stdev zero) is refused first.
+
+Def SSeedCorrel(st As RckState) As RckState
+    RckReg(st, "CORREL", 2, RckPure(Fn(vs) => SCorrel(vs)), "( xs ys -- r )", "Pearson correlation between two lists of numbers of the same length.")
+
+Def SCorrel(vs As List Of Cell) As RckWork
+    Select Case SListNum("CORREL", First(vs))
+        Case Ok(xs)
+            SCorrelY(xs, Nth(vs, 2))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("CORREL did not answer")
+
+Def SCorrelY(xs As List Of Number, c As Cell) As RckWork
+    Select Case SListNum("CORREL", c)
+        Case Ok(ys)
+            SCorrelAt(xs, ys)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("CORREL did not answer")
+
+Def SCorrelAt(xs As List Of Number, ys As List Of Number) As RckWork
+    If Length(xs) <> Length(ys) Then
+        RckWorkBad("CORREL needs two lists of the same length, got " & Str(Length(xs)) & " and " & Str(Length(ys)))
+    Else
+        If Length(xs) < 2 Then
+            RckWorkBad("CORREL needs at least two values in each list, got " & Str(Length(xs)))
+        Else
+            SCorrelSpread(xs, ys)
+
+Def SCorrelSpread(xs As List Of Number, ys As List Of Number) As RckWork
+    If StdDev(xs) = 0 Or StdDev(ys) = 0 Then
+        RckWorkBad("CORREL needs both lists to vary, and one of them does not")
+    Else
+        RckVals({ CutNum(Correl(xs, ys)) })
+
+Rem ---- NORMCDF, NORMINV, TCDF ----------------------------------------------
+Rem NormCdf is total. NormInv Errors outside (0, 1); TCdf divides by
+Rem df + t*t, safe whenever df is positive.
+
+Def SSeedNormcdf(st As RckState) As RckState
+    RckReg(st, "NORMCDF", 1, RckPure(Fn(vs) => RckLift1("NORMCDF", vs, RckAlways, "", NormCdf)), "( z -- p )", "The standard normal cumulative distribution at z.")
+
+Def SSeedNorminv(st As RckState) As RckState
+    RckReg(st, "NORMINV", 1, RckPure(Fn(vs) => RckLift1("NORMINV", vs, SUnitOpen, "needs p strictly between 0 and 1", NormInv)), "( p -- z )", "The standard normal quantile for probability p.")
+
+Def SUnitOpen(p As Number) As Boolean
+    p > 0 And p < 1
+
+Def SSeedTcdf(st As RckState) As RckState
+    RckReg(st, "TCDF", 2, RckPure(Fn(vs) => RckLift2("TCDF", vs, STcdfOk, "needs a positive degrees of freedom", TCdf)), "( t df -- p )", "The Student's t cumulative distribution at t with df degrees of freedom.")
+
+Def STcdfOk(t As Number, df As Number) As Boolean
+    df > 0
+
+Rem ---- the seed -------------------------------------------------------
+
+Def RckSeedStats(st As RckState) As RckState
+    Let st1 = SSeedMean(RckSeeding(st, "seed-stats"))
+    Let st2 = SSeedMedian(st1)
+    Let st3 = SSeedStdev(st2)
+    Let st4 = SSeedStdevp(st3)
+    Let st5 = SSeedVar(st4)
+    Let st6 = SSeedSum(st5)
+    Let st7 = SSeedQuantile(st6)
+    Let st8 = SSeedCorrel(st7)
+    Let st9 = SSeedNormcdf(st8)
+    Let st10 = SSeedNorminv(st9)
+    SSeedTcdf(st10)

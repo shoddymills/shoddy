@@ -1,0 +1,72 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem seedclock.shoddy — reckoner seed: clock.shoddy
+Rem
+Rem STAMP, STAMPDATE, STAMPTIME, TICKS, ELAPSED and FORMATDURATION.
+Rem NOT TIMEIT: it takes a quotation, and R2.5's rule for a bridged word
+Rem that wants a function is that it isn't bridged — a combinator covers
+Rem the case instead, and none of TIMES/MAP/FILTER/FOLD answers a
+Rem duration, so a program reaches for TICKS before and ELAPSED after.
+Rem
+Rem Every word here is total: Stamp, StampDate, StampTime and Ticks
+Rem cannot fail, and FormatDuration is arithmetic and string formatting
+Rem over whatever number it is given.
+Rem
+Rem STAMP, STAMPDATE, STAMPTIME AND TICKS TOUCH THE WORLD; FORMATDURATION
+Rem DOES NOT. Reading the clock answers something different from one
+Rem call to the next exactly as reading a file does (R4.10's line about
+Rem effect being a property of the word); formatting a number that is
+Rem already on the stack touches nothing.
+Rem ==================================================================
+
+Include "clock.shoddy"
+Include "cuttle.shoddy"
+Include "reckoner.shoddy"
+
+Def CkSeedStamp(st As RckState) As RckState
+    RckReg(st, "STAMP", 0, RckTouch(Fn(vs) => RckVals({ CutStr(Stamp()) })), "( -- s )", "The current date and time, ISO-8601.")
+
+Def CkSeedStampdate(st As RckState) As RckState
+    RckReg(st, "STAMPDATE", 0, RckTouch(Fn(vs) => RckVals({ CutStr(StampDate()) })), "( -- s )", "The current date, YYYY-MM-DD.")
+
+Def CkSeedStamptime(st As RckState) As RckState
+    RckReg(st, "STAMPTIME", 0, RckTouch(Fn(vs) => RckVals({ CutStr(StampTime()) })), "( -- s )", "The current time of day, HH:MM:SS.mmm.")
+
+Def CkSeedTicks(st As RckState) As RckState
+    RckReg(st, "TICKS", 0, RckTouch(Fn(vs) => RckVals({ CutNum(Ticks()) })), "( -- n )", "Monotonic milliseconds since the program started; for measuring, not stamping.")
+
+Def CkSeedElapsed(st As RckState) As RckState
+    RckReg(st, "ELAPSED", 1, RckTouch(Fn(vs) => CkElapsed(vs)), "( since -- ms )", "Milliseconds since the TICKS value since.")
+
+Def CkElapsed(vs As List Of Cell) As RckWork
+    Select Case RckNumArg("ELAPSED", First(vs))
+        Case Ok(since)
+            RckVals({ CutNum(Elapsed(since)) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("ELAPSED did not answer")
+
+Def CkSeedFormatduration(st As RckState) As RckState
+    RckReg(st, "FORMATDURATION", 1, RckPure(Fn(vs) => CkFormatduration(vs)), "( ms -- s )", "ms written as a duration, e.g. \"1m 04.2s\".")
+
+Def CkFormatduration(vs As List Of Cell) As RckWork
+    Select Case RckNumArg("FORMATDURATION", First(vs))
+        Case Ok(ms)
+            RckVals({ CutStr(FormatDuration(ms)) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("FORMATDURATION did not answer")
+
+Rem ---- the seed -----------------------------------------------------------
+
+Def RckSeedClock(st As RckState) As RckState
+    Let st1 = CkSeedStamp(RckSeeding(st, "seed-clock"))
+    Let st2 = CkSeedStampdate(st1)
+    Let st3 = CkSeedStamptime(st2)
+    Let st4 = CkSeedTicks(st3)
+    Let st5 = CkSeedElapsed(st4)
+    CkSeedFormatduration(st5)

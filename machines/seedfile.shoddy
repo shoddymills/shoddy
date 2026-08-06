@@ -1,0 +1,176 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem seedfile.shoddy — reckoner seed: text files, over the guarded
+Rem builtins rather than file.shoddy's own aborting words
+Rem
+Rem READLINES, WRITELINES, APPENDLINE and FILEEXISTS. Per R3.5(a), a
+Rem bridged word must not be able to abort the session, and file.shoddy's
+Rem ReadLines/WriteLines/AppendLine are built on the aborting ReadFile,
+Rem WriteFile and AppendFile — so this seed does NOT call them. It
+Rem reimplements their line-splitting and line-joining over
+Rem TRYREADFILE and TRYWRITEFILE instead, which is the guarded pair
+Rem R3.1 exists to provide.
+Rem
+Rem APPENDLINE HAS NO GUARDED BUILTIN TWIN. There is a TRYWRITEFILE but
+Rem no TryAppendFile, so APPENDLINE reads what is there (nothing, if the
+Rem path does not yet exist or cannot be read) and writes it back with
+Rem the new line on the end — an honest emulation, not the real O_APPEND,
+Rem and the one place this seed's behaviour is not simply the builtin's.
+Rem
+Rem Every word here touches the world: reading a path answers something
+Rem different from one run to the next exactly as writing one does, so
+Rem all four are RckTouch, including FILEEXISTS.
+Rem ==================================================================
+
+Include "str.shoddy"
+Include "cuttle.shoddy"
+Include "reckoner.shoddy"
+Include "seq.shoddy"
+
+Rem ---- a LIST cell as List Of String --------------------------------------
+
+Def FlListStr(word As String, c As Cell) As Result
+    Select Case RckListArg(word, c)
+        Case Ok(xs)
+            FlStrsAt(word, xs, { })
+        Case Err(w, at)
+            Err(w, at)
+        Case Else
+            Err(word & " did not answer", 0)
+
+Def FlStrsAt(word As String, xs As List Of Cell, acc As List Of String) As Result
+    If IsEmpty(xs) Then
+        Ok(acc)
+    Else
+        FlStrsNext(word, xs, acc, First(xs))
+
+Def FlStrsNext(word As String, xs As List Of Cell, acc As List Of String, c As Cell) As Result
+    Select Case c
+        Case CutStr(t)
+            FlStrsAt(word, Rest(xs), Append(acc, t))
+        Case Else
+            Err(RckKindWhy(word, "a LIST of STRINGs", c), 0)
+
+Rem file.shoddy's own line-splitting, lifted out from around ReadFile so
+Rem it can run on text TRYREADFILE already holds.
+Def FlLinesOf(c As String) As List Of String
+    FlLinesNorm(Replace(c, "\r", ""))
+
+Def FlLinesNorm(c As String) As List Of String
+    If c = "" Then
+        { }
+    Else
+        If EndsWith(c, "\n") Then
+            Split(Left(c, Len(c) - 1), "\n")
+        Else
+            Split(c, "\n")
+
+Rem ---- READLINES --------------------------------------------------------
+
+Def FlSeedReadlines(st As RckState) As RckState
+    RckReg(st, "READLINES", 1, RckTouch(Fn(vs) => FlReadlines(vs)), "( path -- list )", "The file's lines, or a refusal naming why it could not be read.")
+
+Def FlReadlines(vs As List Of Cell) As RckWork
+    Select Case RckTextArg("READLINES", First(vs))
+        Case Ok(path)
+            FlReadlinesAt(TryReadFile(path))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("READLINES did not answer")
+
+Def FlReadlinesAt(r As Result) As RckWork
+    Select Case r
+        Case Ok(text)
+            RckVals({ CutList(Map(FlLinesOf(text), CutStr)) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("READLINES did not answer")
+
+Rem ---- WRITELINES -------------------------------------------------------
+
+Def FlSeedWritelines(st As RckState) As RckState
+    RckReg(st, "WRITELINES", 2, RckTouch(Fn(vs) => FlWritelines(vs)), "( path list -- ok )", "Write the list's strings to path, one per line; True on success.")
+
+Def FlWritelines(vs As List Of Cell) As RckWork
+    Select Case RckTextArg("WRITELINES", Nth(vs, 1))
+        Case Ok(path)
+            FlWritelinesAt(path, Nth(vs, 2))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("WRITELINES did not answer")
+
+Def FlWritelinesAt(path As String, c As Cell) As RckWork
+    Select Case FlListStr("WRITELINES", c)
+        Case Ok(lines)
+            RckVals({ CutBool(TryWriteFile(path, Join(lines, "\n") & "\n")) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("WRITELINES did not answer")
+
+Rem ---- APPENDLINE ---------------------------------------------------------
+
+Def FlSeedAppendline(st As RckState) As RckState
+    RckReg(st, "APPENDLINE", 2, RckTouch(Fn(vs) => FlAppendline(vs)), "( path s -- ok )", "Add s as a new last line of path (created if it does not exist); True on success.")
+
+Def FlAppendline(vs As List Of Cell) As RckWork
+    Select Case RckTextArg("APPENDLINE", Nth(vs, 1))
+        Case Ok(path)
+            FlAppendlineAt(path, Nth(vs, 2))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("APPENDLINE did not answer")
+
+Def FlAppendlineAt(path As String, c As Cell) As RckWork
+    Select Case RckTextArg("APPENDLINE", c)
+        Case Ok(s)
+            RckVals({ CutBool(TryWriteFile(path, FlExisting(path) & s & "\n")) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("APPENDLINE did not answer")
+
+Def FlExisting(path As String) As String
+    Select Case TryReadFile(path)
+        Case Ok(text)
+            FlWithNl(text)
+        Case Else
+            ""
+
+Def FlWithNl(text As String) As String
+    If text = "" Or EndsWith(text, "\n") Then
+        text
+    Else
+        text & "\n"
+
+Rem ---- FILEEXISTS ---------------------------------------------------------
+Rem Informational, not a guard (R5): True/False, never the pre-flight
+Rem that satisfies R3.5(a) — a directory answers False and an unwritable
+Rem existing file answers True. Every other word here answers on its
+Rem own rather than leaning on this one.
+
+Def FlSeedFileexists(st As RckState) As RckState
+    RckReg(st, "FILEEXISTS", 1, RckTouch(Fn(vs) => FlFileexists(vs)), "( path -- flag )", "Whether path names an existing file — informational only, not a guard: a directory answers False and an unwritable file answers True.")
+
+Def FlFileexists(vs As List Of Cell) As RckWork
+    Select Case RckTextArg("FILEEXISTS", First(vs))
+        Case Ok(path)
+            RckVals({ CutBool(FileExists(path)) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("FILEEXISTS did not answer")
+
+Rem ---- the seed -----------------------------------------------------------
+
+Def RckSeedFile(st As RckState) As RckState
+    Let st1 = FlSeedReadlines(RckSeeding(st, "seed-file"))
+    Let st2 = FlSeedWritelines(st1)
+    Let st3 = FlSeedAppendline(st2)
+    FlSeedFileexists(st3)

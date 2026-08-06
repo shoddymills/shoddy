@@ -1,0 +1,105 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem seedmoney.shoddy — reckoner seed: money.shoddy's exact currency
+Rem
+Rem MONEY builds a MONEY cell from a NUMBER of dollars; MADD and MSUB
+Rem name the same arithmetic the engine core's polymorphic + and -
+Rem already give money cells, for a dictionary that wants to say what it
+Rem means; MSPLIT allocates a MONEY into n parts without losing a penny;
+Rem MFMT is the exact string RckShow already renders a MONEY cell as,
+Rem for a program that wants the text itself rather than the display.
+Rem ==================================================================
+
+Include "money.shoddy"
+Include "cuttle.shoddy"
+Include "reckoner.shoddy"
+
+Rem ---- MONEY --------------------------------------------------------
+
+Def MnSeedMoney(st As RckState) As RckState
+    RckReg(st, "MONEY", 1, RckPure(Fn(vs) => MnMoney(vs)), "( x -- money )", "x dollars, as exact currency to the cent.")
+
+Def MnMoney(vs As List Of Cell) As RckWork
+    Select Case RckNumArg("MONEY", First(vs))
+        Case Ok(x)
+            RckVals({ CutMoney(Dollars(x)) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("MONEY did not answer")
+
+Rem ---- MADD, MSUB -------------------------------------------------------
+Rem Both money-and-money only: CutAdd/CutSub already name both kinds on
+Rem a mismatch, so that message is reused rather than rewritten.
+
+Def MnSeedMadd(st As RckState) As RckState
+    RckReg(st, "MADD", 2, RckPure(Fn(vs) => MnBoth("MADD", vs, MoneyAdd)), "( a b -- a+b )", "Two MONEY cells added exactly.")
+
+Def MnSeedMsub(st As RckState) As RckState
+    RckReg(st, "MSUB", 2, RckPure(Fn(vs) => MnBoth("MSUB", vs, MoneySub)), "( a b -- a-b )", "Two MONEY cells subtracted exactly.")
+
+Def MnBoth(word As String, vs As List Of Cell, f As [ Money Money -- Money ]) As RckWork
+    Select Case Nth(vs, 1)
+        Case CutMoney(a)
+            MnBothOn(word, a, Nth(vs, 2), f)
+        Case Else
+            RckWorkBad(RckKindWhy(word, "two MONEYs", Nth(vs, 1)))
+
+Def MnBothOn(word As String, a As Money, c As Cell, f As [ Money Money -- Money ]) As RckWork
+    Select Case c
+        Case CutMoney(b)
+            RckVals({ CutMoney(Call(f, a, b)) })
+        Case Else
+            RckWorkBad(RckKindWhy(word, "two MONEYs", c))
+
+Rem ---- MSPLIT -----------------------------------------------------------
+Rem MoneySplit divides by n before Range(1, n) ever runs, so n <= 0
+Rem would reach that division rather than an empty list; refused first.
+
+Def MnSeedMsplit(st As RckState) As RckState
+    RckReg(st, "MSPLIT", 2, RckPure(Fn(vs) => MnSplit(vs)), "( m n -- list )", "m divided into n MONEY shares, no penny created or lost.")
+
+Def MnSplit(vs As List Of Cell) As RckWork
+    Select Case Nth(vs, 1)
+        Case CutMoney(m)
+            MnSplitOn(m, Nth(vs, 2))
+        Case Else
+            RckWorkBad(RckKindWhy("MSPLIT", "a MONEY", Nth(vs, 1)))
+
+Def MnSplitOn(m As Money, c As Cell) As RckWork
+    Select Case RckWholeArg("MSPLIT", c)
+        Case Ok(n)
+            MnSplitAt(m, n)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("MSPLIT did not answer")
+
+Def MnSplitAt(m As Money, n As Number) As RckWork
+    If n < 1 Then
+        RckWorkBad("MSPLIT needs a whole number of shares of 1 or more, got " & Str(n))
+    Else
+        RckVals({ CutList(Map(MoneySplit(m, n), CutMoney)) })
+
+Rem ---- MFMT ---------------------------------------------------------
+
+Def MnSeedMfmt(st As RckState) As RckState
+    RckReg(st, "MFMT", 1, RckPure(Fn(vs) => MnFmt(vs)), "( money -- s )", "A MONEY cell formatted as text, e.g. $1,234.56.")
+
+Def MnFmt(vs As List Of Cell) As RckWork
+    Select Case First(vs)
+        Case CutMoney(m)
+            RckVals({ CutStr(MoneyFmt(m)) })
+        Case Else
+            RckWorkBad(RckKindWhy("MFMT", "a MONEY", First(vs)))
+
+Rem ---- the seed -----------------------------------------------------------
+
+Def RckSeedMoney(st As RckState) As RckState
+    Let st1 = MnSeedMoney(RckSeeding(st, "seed-money"))
+    Let st2 = MnSeedMadd(st1)
+    Let st3 = MnSeedMsub(st2)
+    Let st4 = MnSeedMsplit(st3)
+    MnSeedMfmt(st4)

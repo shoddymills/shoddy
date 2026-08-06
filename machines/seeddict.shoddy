@@ -1,0 +1,146 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem seeddict.shoddy — reckoner seed: dict.shoddy over a LIST of PAIRs
+Rem
+Rem DPUT, DGET, DHAS and DKEYS. A "dict" at the keyboard is an ordinary
+Rem LIST cell whose elements are PAIR cells — no new stack case, per
+Rem R4.16's discipline applied to association lists rather than arrays:
+Rem "rate" 0.05 PAIR 1 GATHER is a one-entry dict, and DPUT grows it.
+Rem
+Rem NOT DELEGATED TO dict.shoddy's OWN WORDS, on purpose. DictGet,
+Rem DictHas and DictPut compare keys with the language's native =, which
+Rem compares a LIST or a PROGRAM cell by identity rather than by value
+Rem (cuttle's own CutShow/CutEqual commentary says so of CutList).
+Rem Keying by CutEqual instead — the same structural equality = already
+Rem gives every other stack word — is what lets "rate" and a computed
+Rem { 1 2 } key alike behave the way DUP EQUAL already promised they
+Rem would.
+Rem
+Rem DGET IS GUARDED WHERE DictGet ISN'T: DictGet Errors on a missing
+Rem key; DGET answers a refusal instead, naming the key.
+Rem ==================================================================
+
+Include "cuttle.shoddy"
+Include "reckoner.shoddy"
+Include "seq.shoddy"
+
+Rem ---- a LIST cell as a list of PAIR cells ---------------------------
+
+Def DcPairs(word As String, c As Cell) As Result
+    Select Case RckListArg(word, c)
+        Case Ok(xs)
+            DcPairsAt(word, xs, { })
+        Case Err(w, at)
+            Err(w, at)
+        Case Else
+            Err(word & " did not answer", 0)
+
+Def DcPairsAt(word As String, xs As List Of Cell, acc As List Of Cell) As Result
+    If IsEmpty(xs) Then
+        Ok(acc)
+    Else
+        DcPairsNext(word, xs, acc, First(xs))
+
+Def DcPairsNext(word As String, xs As List Of Cell, acc As List Of Cell, c As Cell) As Result
+    Select Case c
+        Case CutPair(p)
+            DcPairsAt(word, Rest(xs), Append(acc, c))
+        Case Else
+            Err(RckKindWhy(word, "a LIST of PAIRs", c), 0)
+
+Def DcKeyOf(c As Cell) As Cell
+    Select Case c
+        Case CutPair(p)
+            Fst(p)
+        Case Else
+            c
+
+Def DcValOf(c As Cell) As Cell
+    Select Case c
+        Case CutPair(p)
+            Snd(p)
+        Case Else
+            c
+
+Rem ---- DHAS -----------------------------------------------------------
+
+Def DcSeedDhas(st As RckState) As RckState
+    RckReg(st, "DHAS", 2, RckPure(Fn(vs) => DcHas(vs)), "( d k -- flag )", "Whether the dict has an entry for key k.")
+
+Def DcHas(vs As List Of Cell) As RckWork
+    Select Case DcPairs("DHAS", Nth(vs, 1))
+        Case Ok(ps)
+            RckVals({ CutBool(Any(ps, Fn(p) => CutEqual(DcKeyOf(p), Nth(vs, 2)))) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("DHAS did not answer")
+
+Rem ---- DGET -------------------------------------------------------------
+
+Def DcSeedDget(st As RckState) As RckState
+    RckReg(st, "DGET", 2, RckPure(Fn(vs) => DcGet(vs)), "( d k -- v )", "The value stored under key k.")
+
+Def DcGet(vs As List Of Cell) As RckWork
+    Select Case DcPairs("DGET", Nth(vs, 1))
+        Case Ok(ps)
+            DcGetAt(ps, Nth(vs, 2))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("DGET did not answer")
+
+Def DcGetAt(ps As List Of Cell, k As Cell) As RckWork
+    If IsEmpty(ps) Then
+        RckWorkBad("DGET found no entry for that key")
+    Else
+        DcGetOne(ps, k, First(ps))
+
+Def DcGetOne(ps As List Of Cell, k As Cell, p As Cell) As RckWork
+    If CutEqual(DcKeyOf(p), k) Then
+        RckVals({ DcValOf(p) })
+    Else
+        DcGetAt(Rest(ps), k)
+
+Rem ---- DPUT -----------------------------------------------------------
+Rem Replaces the entry under k if there is one, otherwise appends —
+Rem DictPut's own shape, on CutEqual keys instead of native =.
+
+Def DcSeedDput(st As RckState) As RckState
+    RckReg(st, "DPUT", 3, RckPure(Fn(vs) => DcPut(vs)), "( d k v -- d )", "The dict with key k set to v, added if it was not already there.")
+
+Def DcPut(vs As List Of Cell) As RckWork
+    Select Case DcPairs("DPUT", Nth(vs, 1))
+        Case Ok(ps)
+            RckVals({ CutList(Append(DcWithout(ps, Nth(vs, 2)), CutPair(Pair(Nth(vs, 2), Nth(vs, 3))))) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("DPUT did not answer")
+
+Def DcWithout(ps As List Of Cell, k As Cell) As List Of Cell
+    Filter(ps, Fn(p) => Not CutEqual(DcKeyOf(p), k))
+
+Rem ---- DKEYS ------------------------------------------------------------
+
+Def DcSeedDkeys(st As RckState) As RckState
+    RckReg(st, "DKEYS", 1, RckPure(Fn(vs) => DcKeys(vs)), "( d -- list )", "The dict's keys, in the order they were entered.")
+
+Def DcKeys(vs As List Of Cell) As RckWork
+    Select Case DcPairs("DKEYS", First(vs))
+        Case Ok(ps)
+            RckVals({ CutList(Map(ps, DcKeyOf)) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("DKEYS did not answer")
+
+Rem ---- the seed -----------------------------------------------------------
+
+Def RckSeedDict(st As RckState) As RckState
+    Let st1 = DcSeedDhas(RckSeeding(st, "seed-dict"))
+    Let st2 = DcSeedDget(st1)
+    Let st3 = DcSeedDput(st2)
+    DcSeedDkeys(st3)

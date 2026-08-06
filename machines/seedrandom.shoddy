@@ -1,0 +1,154 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem seedrandom.shoddy — reckoner seed: random.shoddy, plus the SEED
+Rem builtin random.shoddy itself never calls
+Rem
+Rem RANDOM, RANDOMRANGE, RANDOMINT, SHUFFLE, SAMPLE and SEED.
+Rem
+Rem SEED IS THE RUNTIME'S OWN BUILTIN, REACHED DIRECTLY. random.shoddy's
+Rem header calls itself "seedless by construction" and that is true of
+Rem the machine — it never calls the SEED builtin, so nothing in it
+Rem threads a seed through a program. But the builtin the runtime itself
+Rem provides (RND's own generator, reseedable in one call — see
+Rem Engine.cs's "SEED" case and docs/quickref.html's Seed(n) entry) is
+Rem exactly what the test approach's "SEED fixes the random seed" (R5's
+Rem test-plan note) needs, and it costs nothing to reach: Seed(n) is a
+Rem builtin, callable with no Include at all, the same footing PI() and
+Rem RND() stand on.
+Rem
+Rem RANDOMRANGE AND RANDOMINT ERROR WHEN HI IS BELOW LO; both are
+Rem pre-flighted here rather than reached. RANDOM, SHUFFLE and SEED are
+Rem total. SAMPLE is already total in random.shoddy itself — n <= 0 or
+Rem an empty list answers { }, and n at or past the list's length
+Rem answers every element, shuffled — so the only thing SAMPLE's word
+Rem guards is that n arrived as a whole number, which Sample's own walk
+Rem assumes but never checks.
+Rem
+Rem EVERY WORD HERE TOUCHES THE WORLD. Calling Random() twice with the
+Rem same arguments gives two different answers on purpose (random.shoddy's
+Rem own words on itself); that is what makes it an effect exactly as
+Rem reading a clock or a file is one, SEED most of all since it changes
+Rem what every later draw in the session answers.
+Rem ==================================================================
+
+Include "random.shoddy"
+Include "cuttle.shoddy"
+Include "reckoner.shoddy"
+
+Def RdSeedRandom(st As RckState) As RckState
+    RckReg(st, "RANDOM", 0, RckTouch(Fn(vs) => RckVals({ CutNum(Random()) })), "( -- x )", "A fresh random number in [0, 1).")
+
+Def RdSeedRandomrange(st As RckState) As RckState
+    RckReg(st, "RANDOMRANGE", 2, RckTouch(Fn(vs) => RdRandomrange(vs)), "( lo hi -- x )", "A fresh random number in [lo, hi).")
+
+Def RdRandomrange(vs As List Of Cell) As RckWork
+    Select Case RckNumArg("RANDOMRANGE", Nth(vs, 1))
+        Case Ok(lo)
+            RdRandomrangeAt(lo, Nth(vs, 2))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("RANDOMRANGE did not answer")
+
+Def RdRandomrangeAt(lo As Number, c As Cell) As RckWork
+    Select Case RckNumArg("RANDOMRANGE", c)
+        Case Ok(hi)
+            RdRandomrangeOf(lo, hi)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("RANDOMRANGE did not answer")
+
+Def RdRandomrangeOf(lo As Number, hi As Number) As RckWork
+    If hi < lo Then
+        RckWorkBad("RANDOMRANGE needs hi at or above lo, got " & Str(lo) & " and " & Str(hi))
+    Else
+        RckVals({ CutNum(RandomRange(lo, hi)) })
+
+Def RdSeedRandomint(st As RckState) As RckState
+    RckReg(st, "RANDOMINT", 2, RckTouch(Fn(vs) => RdRandomint(vs)), "( lo hi -- n )", "A fresh random whole number from lo to hi, both inclusive.")
+
+Def RdRandomint(vs As List Of Cell) As RckWork
+    Select Case RckNumArg("RANDOMINT", Nth(vs, 1))
+        Case Ok(lo)
+            RdRandomintAt(lo, Nth(vs, 2))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("RANDOMINT did not answer")
+
+Def RdRandomintAt(lo As Number, c As Cell) As RckWork
+    Select Case RckNumArg("RANDOMINT", c)
+        Case Ok(hi)
+            RdRandomintOf(lo, hi)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("RANDOMINT did not answer")
+
+Def RdRandomintOf(lo As Number, hi As Number) As RckWork
+    If hi < lo Then
+        RckWorkBad("RANDOMINT needs hi at or above lo, got " & Str(lo) & " and " & Str(hi))
+    Else
+        RckVals({ CutNum(RandomInt(lo, hi)) })
+
+Def RdSeedShuffle(st As RckState) As RckState
+    RckReg(st, "SHUFFLE", 1, RckTouch(Fn(vs) => RdShuffle(vs)), "( list -- list )", "The list in a fresh random order.")
+
+Def RdShuffle(vs As List Of Cell) As RckWork
+    Select Case RckListArg("SHUFFLE", First(vs))
+        Case Ok(xs)
+            RckVals({ CutList(Shuffle(xs)) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("SHUFFLE did not answer")
+
+Def RdSeedSample(st As RckState) As RckState
+    RckReg(st, "SAMPLE", 2, RckTouch(Fn(vs) => RdSample(vs)), "( list n -- list )", "n distinct elements of the list without replacement, random order; every element, shuffled, when n is at or past its length.")
+
+Def RdSample(vs As List Of Cell) As RckWork
+    Select Case RckListArg("SAMPLE", Nth(vs, 1))
+        Case Ok(xs)
+            RdSampleAt(xs, Nth(vs, 2))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("SAMPLE did not answer")
+
+Def RdSampleAt(xs As List Of Cell, c As Cell) As RckWork
+    Select Case RckWholeArg("SAMPLE", c)
+        Case Ok(n)
+            RckVals({ CutList(Sample(xs, n)) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("SAMPLE did not answer")
+
+Def RdSeedSeed(st As RckState) As RckState
+    RckReg(st, "SEED", 1, RckTouch(Fn(vs) => RdSeed(vs)), "( n -- )", "Reseed RND so RANDOM, RANDOMRANGE, RANDOMINT, SHUFFLE and SAMPLE answer reproducibly from here.")
+
+Def RdSeed(vs As List Of Cell) As RckWork
+    Select Case RckNumArg("SEED", First(vs))
+        Case Ok(n)
+            RdSeedOf(n)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("SEED did not answer")
+
+Def RdSeedOf(n As Number) As RckWork
+    Seed(n)
+    RckVals({ })
+
+Rem ---- the seed -----------------------------------------------------------
+
+Def RckSeedRandom(st As RckState) As RckState
+    Let st1 = RdSeedRandom(RckSeeding(st, "seed-random"))
+    Let st2 = RdSeedRandomrange(st1)
+    Let st3 = RdSeedRandomint(st2)
+    Let st4 = RdSeedShuffle(st3)
+    Let st5 = RdSeedSample(st4)
+    RdSeedSeed(st5)

@@ -1,0 +1,174 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem seedisam.shoddy — reckoner seed: isam.shoddy, whole-table words
+Rem only, over a handle the CALLER already opened
+Rem
+Rem THIS SEED DOES NOT, AND CANNOT, REGISTER ISAMOPEN. R3.5(b) is
+Rem absolute: a handle must never reach the stack, because a handle is a
+Rem NUMBER capped at 16 and shared with sockets, and UNDO after an open
+Rem would restore the stack while leaving the handle open and now
+Rem unreachable. There is no guarded form of "open a table from the
+Rem entry line" that keeps that promise, so this seed does not offer
+Rem one. Instead, RckSeedIsamNum/RckSeedIsamStr take an ALREADY-OPEN
+Rem Isam handle as their own argument — closed over inside the words
+Rem they register, never pushed — the way a form field or an embedded
+Rem scripting layer (R1.4's "equally its callers") would seed the
+Rem engine with a table its host already knows about.
+Rem
+Rem TWO ENTRY POINTS, NOT ONE GENERIC ONE. isam.shoddy's keys must be
+Rem NUMBERs or STRINGs (its own header comment says so), and Shoddy has
+Rem no way to ask a Cell which of the two it holds and hand back a
+Rem value of the matching generic type — so a NUMBER-keyed table seeds
+Rem through RckSeedIsamNum and a STRING-keyed one through
+Rem RckSeedIsamStr. Both register the same five words.
+Rem
+Rem RECORDS CROSS THE BRIDGE THROUGH cellOf, A FUNCTION THE CALLER
+Rem SUPPLIES ( [ t -- Cell ] ), not a new stack case: isam's record type
+Rem is the caller's own Type, unknown here exactly as it is unknown to
+Rem isam.shoddy itself, and a PAIR built from field to field (as
+Rem CSVPAIRS already does for a CSV row) is the usual shape to hand
+Rem back. ISAMGETOR needs no inverse: its default argument is already a
+Rem CELL as typed on the entry line, pushed back unchanged when the key
+Rem is absent, never converted to or from the record type.
+Rem
+Rem WHOLE-TABLE WORDS ONLY (R3.5(b) again): ISAMALL, ISAMRANGE, ISAMHAS,
+Rem ISAMGETOR and ISAMCOUNT. No BOPEN, no SEEK, no per-slot access.
+Rem ==================================================================
+
+Include "isam.shoddy"
+Include "cuttle.shoddy"
+Include "reckoner.shoddy"
+
+Rem ---- NUMBER-keyed tables ----------------------------------------------
+
+Def RckSeedIsamNum(st As RckState, db As Isam, cellOf As [ t -- Cell ]) As RckState
+    Let st1 = IsnSeedAll(RckSeeding(st, "seed-isam"), db, cellOf)
+    Let st2 = IsnSeedCount(st1, db)
+    Let st3 = IsnSeedHas(st2, db)
+    Let st4 = IsnSeedRange(st3, db, cellOf)
+    IsnSeedGetor(st4, db, cellOf)
+
+Def IsnSeedAll(st As RckState, db As Isam, cellOf As [ t -- Cell ]) As RckState
+    RckReg(st, "ISAMALL", 0, RckTouch(Fn(vs) => RckVals({ CutList(Map(IsamAll(db), cellOf)) })), "( -- list )", "Every record in the table, key order.")
+
+Def IsnSeedCount(st As RckState, db As Isam) As RckState
+    RckReg(st, "ISAMCOUNT", 0, RckTouch(Fn(vs) => RckVals({ CutNum(IsamCount(db)) })), "( -- n )", "How many records the table holds.")
+
+Def IsnSeedHas(st As RckState, db As Isam) As RckState
+    RckReg(st, "ISAMHAS", 1, RckTouch(Fn(vs) => IsnHas(db, vs)), "( k -- flag )", "Whether the table has a record under key k.")
+
+Def IsnHas(db As Isam, vs As List Of Cell) As RckWork
+    Select Case RckNumArg("ISAMHAS", First(vs))
+        Case Ok(k)
+            RckVals({ CutBool(IsamHas(db, k)) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("ISAMHAS did not answer")
+
+Def IsnSeedRange(st As RckState, db As Isam, cellOf As [ t -- Cell ]) As RckState
+    RckReg(st, "ISAMRANGE", 2, RckTouch(Fn(vs) => IsnRange(db, cellOf, vs)), "( lo hi -- list )", "The records with keys from lo to hi inclusive, key order.")
+
+Def IsnRange(db As Isam, cellOf As [ t -- Cell ], vs As List Of Cell) As RckWork
+    Select Case RckNumArg("ISAMRANGE", Nth(vs, 1))
+        Case Ok(lo)
+            IsnRangeAt(db, cellOf, lo, Nth(vs, 2))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("ISAMRANGE did not answer")
+
+Def IsnRangeAt(db As Isam, cellOf As [ t -- Cell ], lo As Number, c As Cell) As RckWork
+    Select Case RckNumArg("ISAMRANGE", c)
+        Case Ok(hi)
+            RckVals({ CutList(Map(IsamRange(db, lo, hi), cellOf)) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("ISAMRANGE did not answer")
+
+Def IsnSeedGetor(st As RckState, db As Isam, cellOf As [ t -- Cell ]) As RckState
+    RckReg(st, "ISAMGETOR", 2, RckTouch(Fn(vs) => IsnGetor(db, cellOf, vs)), "( k dflt -- rec )", "The record under key k, or dflt unchanged when there is none.")
+
+Def IsnGetor(db As Isam, cellOf As [ t -- Cell ], vs As List Of Cell) As RckWork
+    Select Case RckNumArg("ISAMGETOR", Nth(vs, 1))
+        Case Ok(k)
+            RckVals({ IsnGetorAt(db, cellOf, k, Nth(vs, 2)) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("ISAMGETOR did not answer")
+
+Def IsnGetorAt(db As Isam, cellOf As [ t -- Cell ], k As Number, dflt As Cell) As Cell
+    If IsamHas(db, k) Then
+        Call(cellOf, IsamGet(db, k))
+    Else
+        dflt
+
+Rem ---- STRING-keyed tables ------------------------------------------------
+
+Def RckSeedIsamStr(st As RckState, db As Isam, cellOf As [ t -- Cell ]) As RckState
+    Let st1 = IssSeedAll(RckSeeding(st, "seed-isam"), db, cellOf)
+    Let st2 = IssSeedCount(st1, db)
+    Let st3 = IssSeedHas(st2, db)
+    Let st4 = IssSeedRange(st3, db, cellOf)
+    IssSeedGetor(st4, db, cellOf)
+
+Def IssSeedAll(st As RckState, db As Isam, cellOf As [ t -- Cell ]) As RckState
+    RckReg(st, "ISAMALL", 0, RckTouch(Fn(vs) => RckVals({ CutList(Map(IsamAll(db), cellOf)) })), "( -- list )", "Every record in the table, key order.")
+
+Def IssSeedCount(st As RckState, db As Isam) As RckState
+    RckReg(st, "ISAMCOUNT", 0, RckTouch(Fn(vs) => RckVals({ CutNum(IsamCount(db)) })), "( -- n )", "How many records the table holds.")
+
+Def IssSeedHas(st As RckState, db As Isam) As RckState
+    RckReg(st, "ISAMHAS", 1, RckTouch(Fn(vs) => IssHas(db, vs)), "( k -- flag )", "Whether the table has a record under key k.")
+
+Def IssHas(db As Isam, vs As List Of Cell) As RckWork
+    Select Case RckTextArg("ISAMHAS", First(vs))
+        Case Ok(k)
+            RckVals({ CutBool(IsamHas(db, k)) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("ISAMHAS did not answer")
+
+Def IssSeedRange(st As RckState, db As Isam, cellOf As [ t -- Cell ]) As RckState
+    RckReg(st, "ISAMRANGE", 2, RckTouch(Fn(vs) => IssRange(db, cellOf, vs)), "( lo hi -- list )", "The records with keys from lo to hi inclusive, key order.")
+
+Def IssRange(db As Isam, cellOf As [ t -- Cell ], vs As List Of Cell) As RckWork
+    Select Case RckTextArg("ISAMRANGE", Nth(vs, 1))
+        Case Ok(lo)
+            IssRangeAt(db, cellOf, lo, Nth(vs, 2))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("ISAMRANGE did not answer")
+
+Def IssRangeAt(db As Isam, cellOf As [ t -- Cell ], lo As String, c As Cell) As RckWork
+    Select Case RckTextArg("ISAMRANGE", c)
+        Case Ok(hi)
+            RckVals({ CutList(Map(IsamRange(db, lo, hi), cellOf)) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("ISAMRANGE did not answer")
+
+Def IssSeedGetor(st As RckState, db As Isam, cellOf As [ t -- Cell ]) As RckState
+    RckReg(st, "ISAMGETOR", 2, RckTouch(Fn(vs) => IssGetor(db, cellOf, vs)), "( k dflt -- rec )", "The record under key k, or dflt unchanged when there is none.")
+
+Def IssGetor(db As Isam, cellOf As [ t -- Cell ], vs As List Of Cell) As RckWork
+    Select Case RckTextArg("ISAMGETOR", Nth(vs, 1))
+        Case Ok(k)
+            RckVals({ IssGetorAt(db, cellOf, k, Nth(vs, 2)) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("ISAMGETOR did not answer")
+
+Def IssGetorAt(db As Isam, cellOf As [ t -- Cell ], k As String, dflt As Cell) As Cell
+    If IsamHas(db, k) Then
+        Call(cellOf, IsamGet(db, k))
+    Else
+        dflt

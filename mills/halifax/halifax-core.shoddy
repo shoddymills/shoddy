@@ -14,16 +14,18 @@ Rem
 Rem WHAT IS HERE AND WHAT IS NOT. Almost nothing of the calculator is in
 Rem this file, and that is the point: the stack, the dictionary, the
 Rem registers, the modes, UNDO, REDO, TRACE, the tape, HELP and WORDS are
-Rem all reckoner's, and the arithmetic, statistics, money and matrices are
-Rem the seven seed files'. What Halifax adds is an assembled state, a
-Rem banner, and the five words a shell has to answer for itself.
+Rem all reckoner's, and the arithmetic, statistics, money, matrices,
+Rem files, clocks, randomness, CSV and boolean/bitwise words are the
+Rem seed files'. What Halifax adds is an assembled state, a banner, and
+Rem the words a shell has to answer for itself.
 Rem
-Rem THE FIVE WORDS THE SHELL OWNS. SAVE, LOAD and TAPESAVE name a path,
-Rem QUIT ends the session, and RESET builds a new state. None can be an
-Rem ordinary dictionary word: the first three perform an effect and the
-Rem engine performs none, QUIT is the loop's business, and RESET has to
-Rem know which seeds the dictionary was made from — which only this file
-Rem does. They are intercepted from the line before it reaches RckEval.
+Rem THE WORDS THE SHELL OWNS. SAVE, LOAD and TAPESAVE name a path, QUIT
+Rem and its second spelling EXIT end the session, and RESET builds a new
+Rem state. None can be an ordinary dictionary word: the first three
+Rem perform an effect and the engine performs none, QUIT/EXIT are the
+Rem loop's business, and RESET has to know which seeds the dictionary was
+Rem made from — which only this file does. They are intercepted from the
+Rem line before it reaches RckEval.
 Rem
 Rem THEY ARE REGISTERED ANYWAY, for their metadata alone. The interception
 Rem happens first so the registered body never runs in the real shell;
@@ -48,6 +50,11 @@ Include "../../machines/seeds/seedstr.shoddy"
 Include "../../machines/seeds/seedmoney.shoddy"
 Include "../../machines/seeds/seedmatrix.shoddy"
 Include "../../machines/seeds/seeddict.shoddy"
+Include "../../machines/seeds/seedfile.shoddy"
+Include "../../machines/seeds/seedclock.shoddy"
+Include "../../machines/seeds/seedrandom.shoddy"
+Include "../../machines/seeds/seedcsv.shoddy"
+Include "../../machines/seeds/seedbool.shoddy"
 
 Rem ---- what a typed line turns out to be -------------------------------
 
@@ -70,15 +77,22 @@ Def HxTapeSaveWord() As String
 Def HxQuitWord() As String
     "QUIT"
 
+Rem A second spelling of QUIT and nothing more — same interception, same
+Rem refusal if it turns up mid-line, same HELP text. Kept as its own
+Rem word rather than folded into HxQuitWord so QUIT itself, and what it
+Rem does, is untouched.
+Def HxExitWord() As String
+    "EXIT"
+
 Def HxResetWord() As String
     "RESET"
 
-Rem The three that name a file, and the two that name nothing.
+Rem The three that name a file, and the three that name nothing.
 Def HxPathWords() As List Of String
     { HxSaveWord(), HxLoadWord(), HxTapeSaveWord() }
 
 Def HxPlainWords() As List Of String
-    { HxQuitWord(), HxResetWord() }
+    { HxQuitWord(), HxExitWord(), HxResetWord() }
 
 Def HxShellWordNames() As List Of String
     Concat(HxPathWords(), HxPlainWords())
@@ -148,15 +162,16 @@ Rem with something wrong in it.
 Def HxQuits(line As String) As Boolean
     Select Case HxRead(line)
         Case HxPlain(w)
-            w = HxQuitWord()
+            w = HxQuitWord() Or w = HxExitWord()
         Case Else
             False
 
 Rem ---- the state a session starts from ---------------------------------
 
-Rem The seven seeds of R1.1, in order, and then the shell's own five. The
-Rem order is the order WORDS groups them in, which is the order someone
-Rem built the dictionary in and the order they will look for a word in.
+Rem The seven seeds of R1.1, then the five that followed, in order, and
+Rem then the shell's own five. The order is the order WORDS groups them
+Rem in, which is the order someone built the dictionary in and the order
+Rem they will look for a word in.
 Def HxFresh() As RckState
     Let s1 = RckSeedMath(RckNew())
     Let s2 = RckSeedStats(s1)
@@ -165,7 +180,12 @@ Def HxFresh() As RckState
     Let s5 = RckSeedMoney(s4)
     Let s6 = RckSeedMatrix(s5)
     Let s7 = RckSeedDict(s6)
-    HxShellSeed(s7)
+    Let s8 = RckSeedFile(s7)
+    Let s9 = RckSeedClock(s8)
+    Let s10 = RckSeedRandom(s9)
+    Let s11 = RckSeedCsv(s10)
+    Let s12 = RckSeedBool(s11)
+    HxShellSeed(s12)
 
 Def HxShellName() As String
     "shell"
@@ -182,8 +202,9 @@ Def HxShellSeed(st As RckState) As RckState
     Let s2 = RckReg(s1, HxLoadWord(), 0, RckTouch(Fn(vs) => HxShellOnly(HxLoadWord())), "( -- )", "Read a file of definitions back in; one bad line refuses the whole file.")
     Let s3 = RckReg(s2, HxTapeSaveWord(), 0, RckTouch(Fn(vs) => HxShellOnly(HxTapeSaveWord())), "( -- )", "Write the tape to a file, exactly as it was shown.")
     Let s4 = RckReg(s3, HxQuitWord(), 0, RckTouch(Fn(vs) => HxShellOnly(HxQuitWord())), "( -- )", "Leave. Nothing is saved for you; SAVE first if you want your words kept.")
-    Let s5 = RckReg(s4, HxResetWord(), 0, RckPure(Fn(vs) => HxShellOnly(HxResetWord())), "( -- )", "Start again: empty stack, no history, no tape, and only the words you started with.")
-    RckSeeding(s5, RckUserName())
+    Let s5 = RckReg(s4, HxExitWord(), 0, RckTouch(Fn(vs) => HxShellOnly(HxExitWord())), "( -- )", "Leave, exactly like QUIT. Nothing is saved for you; SAVE first if you want your words kept.")
+    Let s6 = RckReg(s5, HxResetWord(), 0, RckPure(Fn(vs) => HxShellOnly(HxResetWord())), "( -- )", "Start again: empty stack, no history, no tape, and only the words you started with.")
+    RckSeeding(s6, RckUserName())
 
 Def HxShellOnly(name As String) As RckWork
     RckWorkBad(name & " is the shell's word, not the dictionary's: type it as the whole line and nothing else")
@@ -192,7 +213,7 @@ Rem ---- what the shell shows -------------------------------------------
 
 Def HxBanner() As List Of String
     { "shoddy halifax — RPN. Numbers go on the stack; words work on them.",
-      "WORDS lists, HELP <word> explains, TRACE follows, UNDO backs out, QUIT leaves." }
+      "WORDS lists, HELP <word> explains, TRACE follows, UNDO backs out, QUIT (or EXIT) leaves." }
 
 Rem The prompt IS the tape's mark, deliberately: a tape row is the prompt
 Rem with what was typed after it, so a saved tape reads back as the

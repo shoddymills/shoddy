@@ -1889,6 +1889,13 @@ Def RckSave(st As RckState) As List Of String
 Rem Load is evaluation, so a saved line is validated exactly as a typed
 Rem one is — and a malformed line refuses the WHOLE load, leaving the
 Rem dictionary as it was rather than half-populated.
+Rem
+Rem EACH LINE REMEMBERS, the same as a typed one, through RckRemember —
+Rem without it a loaded file's own lines never grew RckHist, so a script
+Rem that LOADs and then tries UNDO found nothing to undo even though
+Rem typing the identical lines at a prompt works. RckHist is not the
+Rem tape: RckLoad still writes no tape rows of its own (below), only
+Rem history for UNDO/REDO to step through.
 Def RckLoad(st As RckState, lines As List Of String) As RckLine
     RckLoadOn(st, st, lines, { })
 
@@ -1901,17 +1908,28 @@ Def RckLoadOn(orig As RckState, st As RckState, lines As List Of String, out As 
 Def RckLoadLine(orig As RckState, st As RckState, line As String, more As List Of String, out As List Of String) As RckLine
     Select Case RckTokens(line)
         Case Ok(toks)
-            RckLoadRan(orig, RckWalk(st, toks, out), more)
+            RckLoadRan(orig, st, line, RckWalk(RckRemember(st), toks, { }), more, out)
         Case Err(w, at)
-            RckStop(orig, w, out)
+            RckStop(orig, w, Concat(out, RckLoadFailRow(st, line, { }, w)))
         Case Else
-            RckStop(orig, "the saved line did not read", out)
+            RckStop(orig, "the saved line did not read", Concat(out, RckLoadFailRow(st, line, { }, "the saved line did not read")))
 
-Def RckLoadRan(orig As RckState, r As RckRun, more As List Of String) As RckLine
+Def RckLoadRan(orig As RckState, before As RckState, line As String, r As RckRun, more As List Of String, out As List Of String) As RckLine
     Select Case r
-        Case RckWent(st2, out2)
-            RckLoadOn(orig, st2, more, out2)
-        Case RckBroke(w, out2)
-            RckStop(orig, w, out2)
+        Case RckWent(st2, said)
+            RckLoadOn(orig, st2, more, Concat(out, RckLoadOkRow(st2, line, said)))
+        Case RckBroke(w, said)
+            RckStop(orig, w, Concat(out, RckLoadFailRow(before, line, said, w)))
         Case Else
-            RckStop(orig, "the saved line did not answer", { })
+            RckStop(orig, "the saved line did not answer", out)
+
+Rem The transcript a LOAD leaves behind — one row shaped exactly like a
+Rem typed line's tape row (mark, whatever it said, the stack it left) —
+Rem so a caller that wants to show what a load did can, without a second
+Rem evaluation. Whether it is shown is the shell's call; RckLoad always
+Rem builds it, and still touches no tape.
+Def RckLoadOkRow(st2 As RckState, line As String, said As List Of String) As List Of String
+    Concat(Prepend(RckTapeMark() & line, said), RckShow(st2))
+
+Def RckLoadFailRow(st As RckState, line As String, said As List Of String, why As String) As List Of String
+    Concat(Append(Prepend(RckTapeMark() & line, said), RckWhyMark() & why), RckShow(st))

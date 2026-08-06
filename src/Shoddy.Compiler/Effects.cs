@@ -55,6 +55,7 @@ public static class Effects
         ["UPPER"] = new(1, 1), ["LOWER"] = new(1, 1),
         // console and files
         ["PRINT"] = new(1, 0), ["READFILE"] = new(1, 1),
+        ["TRYREADFILE"] = new(1, 1),
         ["WRITEFILE"] = new(2, 0), ["APPENDFILE"] = new(2, 0),
         ["TRYWRITEFILE"] = new(2, 1), ["FILEEXISTS"] = new(1, 1),
         ["DELETEFILE"] = new(1, 0),

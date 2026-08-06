@@ -273,6 +273,23 @@ public sealed partial class Engine
         if (!Builtin(w, line)) UnknownWord(w, line);
     }
 
+    // ---- text files ----
+
+    /// <summary>The reason TRYREADFILE reports inside its Err, as a short
+    /// phrase from a closed set. A caller that could act differently on why
+    /// it failed is the whole test for Result over Option, so the phrase has
+    /// to distinguish the cases a mistyped entry line actually produces —
+    /// and it must not be the platform's exception text, which varies by OS
+    /// and by locale and would make a golden test unwritable. The directory
+    /// check is explicit rather than left to the exception: every platform
+    /// reports it as access denied, which is the one wrong answer here,
+    /// since a directory is exactly what FILEEXISTS also gets wrong.</summary>
+    static string ReadWhy(Exception e, string path) =>
+        Directory.Exists(path) ? "IS A DIRECTORY"
+        : e is FileNotFoundException or DirectoryNotFoundException ? "NO SUCH FILE"
+        : e is UnauthorizedAccessException ? "ACCESS DENIED"
+        : "UNREADABLE";
+
     // ---- binary random-access files ----
 
     FileStream BinHandle(double h, int line, string w)
@@ -563,6 +580,41 @@ public sealed partial class Engine
                 try { buf = File.ReadAllBytes(path); }
                 catch (Exception) { throw Die(line, $"READFILE: cannot open '{path}'"); }
                 PushStr(Bytes.GetString(buf));
+                return true;
+            }
+            case "TRYREADFILE":                 // ( path -- Result )
+            {
+                // READFILE with the failure REPORTED rather than fatal, and
+                // the twin TRYWRITEFILE has always had. Whole-file reads were
+                // the one I/O family with no guarded form: writes answer
+                // through TRYWRITEFILE, binary reads pre-flight through
+                // BSIZE, but a mistyped path handed to READFILE ends the run,
+                // and FILEEXISTS cannot stand in for the question -- a
+                // directory reports false and an unreadable existing file
+                // reports true.
+                //
+                // It answers the LANGUAGE's own Result rather than a Boolean
+                // or a flat Array, because unlike TRYWRITEFILE it has a
+                // payload to carry on success and a reason worth telling
+                // apart on failure. Ok(text) or Err(why, 0) -- At is 0
+                // because a failure to open has no position in the file.
+                // Prelude's TypeDefs are the one shared instance, so the
+                // record this pushes matches a Case Ok in any weave (the
+                // usual "a builtin cannot reach a TypeDef" bar applies to
+                // MACHINE types, not to the four the language predeclares).
+                string path = PopStr(line, w);
+                byte[] buf;
+                try { buf = File.ReadAllBytes(path); }
+                catch (Exception e) when (e is not ShoddyError)
+                {
+                    Push(Value.OfRec(Prelude.Err, new[]
+                    {
+                        Value.OfStr($"CANNOT READ '{path}' ({ReadWhy(e, path)})"),
+                        Value.OfNum(0),
+                    }));
+                    return true;
+                }
+                Push(Value.OfRec(Prelude.Ok, new[] { Value.OfStr(Bytes.GetString(buf)) }));
                 return true;
             }
             case "WRITEFILE":
@@ -1639,7 +1691,8 @@ public sealed partial class Engine
         "AND", "OR", "NOT", "TRUE", "FALSE",
         "&", "LEN", "STR", "VAL", "ISNUMERIC", "VALOR", "LEFT", "RIGHT", "MID", "CHR", "ASC",
         "UPPER", "LOWER",
-        "PRINT", "READFILE", "WRITEFILE", "APPENDFILE", "TRYWRITEFILE", "FILEEXISTS",
+        "PRINT", "READFILE", "TRYREADFILE", "WRITEFILE", "APPENDFILE",
+        "TRYWRITEFILE", "FILEEXISTS",
         "DELETEFILE", "BOPEN", "BCLOSE", "SEEK", "BPOS", "BSIZE",
         "PUTNUM", "GETNUM", "PUTBOOL", "GETBOOL", "PUTSTR", "GETSTR",
         "TCPCONNECT", "TCPLISTEN", "TCPACCEPT", "TCPSEND", "TCPRECV",

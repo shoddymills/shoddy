@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Build / run the tally mill (Unix: Linux / macOS / WSL).
-# Windows users: run this via Git Bash or WSL (same commands).
+# Windows users: use build.ps1 (same commands).
 #
 #   ./build.sh run [SPEC]       read the spec, print the report, show the chart
 #   ./build.sh capture [SPEC]   the same, with nothing on screen — the PNG is the output
@@ -51,8 +51,12 @@ case "${1:-run}" in
         ;;
     build)
         ensure_mill
+        # weave writes BESIDE the source and has no -o flag; this moves the
+        # result into bin/, the same shuffle the other weaving mills do.
+        "$MILL" weave tally.shoddy
         mkdir -p bin
-        "$MILL" weave tally.shoddy -o bin/tally.dll
+        mv -f tally.dll tally.runtimeconfig.json bin/
+        mv -f Shoddy.*.dll bin/ 2>/dev/null || true
         echo "woven into bin/ - but note that a woven program has no window"
         echo "backend: charts need 'mill run'. Reports and captures are fine."
         ;;

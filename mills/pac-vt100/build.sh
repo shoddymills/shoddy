@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Run Shoddy Pac (Unix: Linux / macOS / WSL).
-# Windows users: run this via Git Bash or WSL (same commands).
+# Windows users: use build.ps1 (same commands).
 #
 #   ./build.sh          run the game
 #   ./build.sh test     run the headless simulation smoke check

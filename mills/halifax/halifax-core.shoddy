@@ -1,0 +1,270 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem halifax-core.shoddy — the calculator, with nothing that touches the
+Rem world.
+Rem
+Rem Pure. Nothing here reads a file, writes one or prints: halifax.shoddy
+Rem does all three and nothing else, and this half turns a typed line
+Rem into the lines a shell should show. That is the whole reason for the
+Rem split — a program with a prompt in it cannot be tested, and
+Rem test.shoddy grades this file with no terminal anywhere near it.
+Rem
+Rem WHAT IS HERE AND WHAT IS NOT. Almost nothing of the calculator is in
+Rem this file, and that is the point: the stack, the dictionary, the
+Rem registers, the modes, UNDO, REDO, TRACE, the tape, HELP and WORDS are
+Rem all reckoner's, and the arithmetic, statistics, money and matrices are
+Rem the seven seed files'. What Halifax adds is an assembled state, a
+Rem banner, and the five words a shell has to answer for itself.
+Rem
+Rem THE FIVE WORDS THE SHELL OWNS. SAVE, LOAD and TAPESAVE name a path,
+Rem QUIT ends the session, and RESET builds a new state. None can be an
+Rem ordinary dictionary word: the first three perform an effect and the
+Rem engine performs none, QUIT is the loop's business, and RESET has to
+Rem know which seeds the dictionary was made from — which only this file
+Rem does. They are intercepted from the line before it reaches RckEval.
+Rem
+Rem THEY ARE REGISTERED ANYWAY, for their metadata alone. The interception
+Rem happens first so the registered body never runs in the real shell;
+Rem what registration buys is that WORDS lists them and HELP SAVE
+Rem answers. A mill whose file words are invisible to the two words
+Rem someone explores with has hidden a third of itself.
+Rem
+Rem RENDERING IS NOT HERE EITHER. RckShow is the render, [ empty ] and
+Rem [ depth n ] included, because the tape records the rendered rows and a
+Rem second render in a mill would let the tape and the screen disagree.
+Rem What this file owns are the lines AROUND the stack — the banner, the
+Rem prompt, the tape pane — and each is a line-list producer so the
+Rem full-screen face can reuse it unchanged.
+Rem ==================================================================
+
+Include "../../machines/seq.shoddy"
+Include "../../machines/reckoner.shoddy"
+Include "../../machines/seeds/seedmath.shoddy"
+Include "../../machines/seeds/seedstats.shoddy"
+Include "../../machines/seeds/seedseq.shoddy"
+Include "../../machines/seeds/seedstr.shoddy"
+Include "../../machines/seeds/seedmoney.shoddy"
+Include "../../machines/seeds/seedmatrix.shoddy"
+Include "../../machines/seeds/seeddict.shoddy"
+
+Rem ---- what a typed line turns out to be -------------------------------
+
+Rem The shell reads one of these and does one thing per case. A line the
+Rem shell has no business in is HxEval and goes to the engine whole,
+Rem including a line that will not even tokenize: the engine's refusal for
+Rem an unterminated string is the one everyone should see, and a second
+Rem tokenizer here would be a second answer to the same question.
+Type HxAsk = HxEval(AskLine As String) | HxPath(PathWord As String, PathName As String) | HxPlain(PlainWord As String) | HxAskBad(AskWhy As String)
+
+Def HxSaveWord() As String
+    "SAVE"
+
+Def HxLoadWord() As String
+    "LOAD"
+
+Def HxTapeSaveWord() As String
+    "TAPESAVE"
+
+Def HxQuitWord() As String
+    "QUIT"
+
+Def HxResetWord() As String
+    "RESET"
+
+Rem The three that name a file, and the two that name nothing.
+Def HxPathWords() As List Of String
+    { HxSaveWord(), HxLoadWord(), HxTapeSaveWord() }
+
+Def HxPlainWords() As List Of String
+    { HxQuitWord(), HxResetWord() }
+
+Def HxShellWordNames() As List Of String
+    Concat(HxPathWords(), HxPlainWords())
+
+Rem A shell word is only a shell word as the WHOLE line. Anywhere else in
+Rem a line it is an ordinary token and the engine refuses it through the
+Rem registered stub, which is why 3 4 SAVE "x" says so rather than quietly
+Rem writing a file in the middle of a calculation.
+Def HxRead(line As String) As HxAsk
+    Select Case RckTokens(line)
+        Case Ok(toks)
+            HxReadToks(line, toks)
+        Case Else
+            HxEval(line)
+
+Def HxReadToks(line As String, toks As List Of String) As HxAsk
+    If IsEmpty(toks) Then
+        HxEval(line)
+    Else
+        HxReadFirst(line, Upper(First(toks)), Rest(toks))
+
+Def HxReadFirst(line As String, head As String, more As List Of String) As HxAsk
+    If Contains(HxPathWords(), head) Then
+        HxReadPath(head, more)
+    Else
+        If Contains(HxPlainWords(), head) Then
+            HxReadPlain(head, more)
+        Else
+            HxEval(line)
+
+Rem The path is a quoted string, as it is everywhere else in the language.
+Rem An unquoted word would read as a dictionary name and a bare path with
+Rem a space in it would read as two tokens, so the quotes are the whole of
+Rem the grammar rather than a decoration on it.
+Def HxReadPath(head As String, more As List Of String) As HxAsk
+    If IsEmpty(more) Then
+        HxAskBad(head & " needs a file name in quotes after it")
+    Else
+        If Not RckIsText(First(more)) Then
+            HxAskBad(head & " needs its file name in quotes, not " & First(more))
+        Else
+            HxReadPathEnd(head, RckTextOf(First(more)), Rest(more))
+
+Def HxReadPathEnd(head As String, name As String, rest As List Of String) As HxAsk
+    If Not IsEmpty(rest) Then
+        HxAskBad(head & " takes one file name and nothing after it")
+    Else
+        If name = "" Then
+            HxAskBad(head & " needs a file name, and the quotes are empty")
+        Else
+            HxPath(head, name)
+
+Def HxReadPlain(head As String, more As List Of String) As HxAsk
+    If IsEmpty(more) Then
+        HxPlain(head)
+    Else
+        HxAskBad(head & " takes nothing after it")
+
+Rem Whether a line is QUIT and nothing else. The shell's loop has to know
+Rem this BEFORE it takes its turn, because the loop is one self-recursive
+Rem Def and a turn that could end the session would have to hand back a
+Rem stop for some other Def to act on — which would make the tail call a
+Rem mutual one and put a frame on the stack per line entered. So the test
+Rem is pure, it lives here with the rest of the reading, and QUIT 5 is not
+Rem a quit: it goes to the turn and earns a refusal like any other line
+Rem with something wrong in it.
+Def HxQuits(line As String) As Boolean
+    Select Case HxRead(line)
+        Case HxPlain(w)
+            w = HxQuitWord()
+        Case Else
+            False
+
+Rem ---- the state a session starts from ---------------------------------
+
+Rem The seven seeds of R1.1, in order, and then the shell's own five. The
+Rem order is the order WORDS groups them in, which is the order someone
+Rem built the dictionary in and the order they will look for a word in.
+Def HxFresh() As RckState
+    Let s1 = RckSeedMath(RckNew())
+    Let s2 = RckSeedStats(s1)
+    Let s3 = RckSeedSeq(s2)
+    Let s4 = RckSeedStr(s3)
+    Let s5 = RckSeedMoney(s4)
+    Let s6 = RckSeedMatrix(s5)
+    Let s7 = RckSeedDict(s6)
+    HxShellSeed(s7)
+
+Def HxShellName() As String
+    "shell"
+
+Rem Registered for HELP and WORDS. The bodies are refusals because a body
+Rem that ran would mean the interception had failed, and a refusal is what
+Rem the engine answers with everywhere else. The three file words and QUIT
+Rem are RckTouch so WORDS groups them under "touches the world" — which is
+Rem true of them, whoever ends up carrying it out; RESET is RckPure,
+Rem because building a fresh dictionary touches nothing.
+Def HxShellSeed(st As RckState) As RckState
+    Let s0 = RckSeeding(st, HxShellName())
+    Let s1 = RckReg(s0, HxSaveWord(), 0, RckTouch(Fn(vs) => HxShellOnly(HxSaveWord())), "( -- )", "Write the words you have defined to a file: SAVE " & RckQuoteMark() & "mine.halifax" & RckQuoteMark() & ".")
+    Let s2 = RckReg(s1, HxLoadWord(), 0, RckTouch(Fn(vs) => HxShellOnly(HxLoadWord())), "( -- )", "Read a file of definitions back in; one bad line refuses the whole file.")
+    Let s3 = RckReg(s2, HxTapeSaveWord(), 0, RckTouch(Fn(vs) => HxShellOnly(HxTapeSaveWord())), "( -- )", "Write the tape to a file, exactly as it was shown.")
+    Let s4 = RckReg(s3, HxQuitWord(), 0, RckTouch(Fn(vs) => HxShellOnly(HxQuitWord())), "( -- )", "Leave. Nothing is saved for you; SAVE first if you want your words kept.")
+    Let s5 = RckReg(s4, HxResetWord(), 0, RckPure(Fn(vs) => HxShellOnly(HxResetWord())), "( -- )", "Start again: empty stack, no history, no tape, and only the words you started with.")
+    RckSeeding(s5, RckUserName())
+
+Def HxShellOnly(name As String) As RckWork
+    RckWorkBad(name & " is the shell's word, not the dictionary's: type it as the whole line and nothing else")
+
+Rem ---- what the shell shows -------------------------------------------
+
+Def HxBanner() As List Of String
+    { "shoddy halifax — RPN. Numbers go on the stack; words work on them.",
+      "WORDS lists, HELP <word> explains, TRACE follows, UNDO backs out, QUIT leaves." }
+
+Rem The prompt IS the tape's mark, deliberately: a tape row is the prompt
+Rem with what was typed after it, so a saved tape reads back as the
+Rem session it was.
+Def HxPrompt() As String
+    RckTapeMark()
+
+Rem A transaction: the lines to show, and the state to carry on from. Both
+Rem cases of RckLine are covered here and nowhere else, so the shell never
+Rem matches on an engine type.
+Def HxShown(r As RckLine) As List Of String
+    Select Case r
+        Case RckNext(st, out)
+            Concat(out, RckShow(st))
+        Case RckStop(st, why, out)
+            Concat(Append(out, RckWhyMark() & why), RckShow(st))
+        Case Else
+            { RckWhyMark() & "the line did not answer" }
+
+Def HxAfter(st As RckState, r As RckLine) As RckState
+    Select Case r
+        Case RckNext(st2, out)
+            st2
+        Case RckStop(st2, why, out)
+            st2
+        Case Else
+            st
+
+Rem One typed line, evaluated. This is what the shell loops on and what
+Rem the test drives; the shell adds a prompt and a Print and nothing else.
+Def HxDo(st As RckState, line As String) As RckLine
+    RckEval(st, line)
+
+Rem A refusal the shell itself raises — a bad SAVE line, a file that is
+Rem not there — shown the same way the engine's are, and recorded on the
+Rem tape the same way, because to the person reading it there is no
+Rem difference between the two.
+Def HxRefused(st As RckState, line As String, why As String) As RckLine
+    RckStop(RckTapedBad(st, line, { }, why), why, { })
+
+Rem And a confirmation, for the same reason: "saved 1 word" belongs on the
+Rem tape between the line that caused it and the stack that followed.
+Def HxSaid(st As RckState, line As String, said As String) As RckLine
+    RckNext(RckTapedOk(st, st, line, { said }), { said })
+
+Rem ---- the tape pane ---------------------------------------------------
+
+Rem The last n rows, oldest first, for a pane that is shorter than the
+Rem tape. Asking for more rows than there are is not an error: a session
+Rem three lines old fills three lines of the pane and leaves the rest.
+Def HxTapePane(st As RckState, n As Number) As List Of String
+    HxLastRows(RckTape(st), n)
+
+Def HxLastRows(rows As List Of String, n As Number) As List Of String
+    If n < 1 Then
+        { }
+    Else
+        If Length(rows) <= n Then
+            rows
+        Else
+            DropN(rows, Length(rows) - n)
+
+Rem ---- counting, for the shell's confirmations ------------------------
+
+Def HxUserCount(st As RckState) As Number
+    Length(Filter(RckDict(st), RckIsUser))
+
+Rem "1 word", "2 words" — the English, in one place, because it is needed
+Rem for words and for rows and getting it wrong twice would be worse than
+Rem getting it wrong once.
+Def HxCounted(n As Number, one As String, many As String) As String
+    If n = 1 Then
+        Str(n) & " " & one
+    Else
+        Str(n) & " " & many

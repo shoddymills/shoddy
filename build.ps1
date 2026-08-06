@@ -207,56 +207,53 @@ function Invoke-MachineSuites {
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 }
 
-# Every mill's own test target, through the mill's own build.sh, so there
+# Every mill's own test target, through the mill's own build.ps1, so there
 # is one statement of how a mill is tested and it lives with the mill.
 # Every directory under mills/ is visited: a mill with no test target
 # fails here with its usage message, which is the intended answer to
 # shipping one without a suite.
 #
-# No mill carries a native build.ps1 twin, so this runs each build.sh
-# through Git Bash — the same tool the docs point Windows users at for
-# working inside an individual mill. Forward-slash the path first: bash's
-# own `dirname "$0"`, which every build.sh uses to find itself, only
-# recognizes '/' as a separator.
-#
-# Deliberately NOT `Get-Command bash`: Windows ships its own WSL-launcher
-# stub at .../WindowsApps/bash.exe, which PATH resolves ahead of Git Bash
-# on a machine with no WSL distro configured, and fails outright rather
-# than running anything. Find Git Bash the same way git itself is found —
-# bin/bash.exe sits beside cmd/git.exe in every Git for Windows install —
-# so this runs the interpreter the repo actually means.
-function Find-GitBash {
-    $git = Get-Command git -ErrorAction SilentlyContinue
-    if ($git) {
-        $candidate = Join-Path (Split-Path (Split-Path $git.Source)) 'bin\bash.exe'
-        if (Test-Path $candidate) { return $candidate }
-    }
-    $onPath = Get-Command bash -All -ErrorAction SilentlyContinue |
-        Where-Object { $_.Source -notmatch 'WindowsApps' } | Select-Object -First 1
-    if ($onPath) { return $onPath.Source }
-    return $null
-}
-
+# Every mill carries a native build.ps1 beside its build.sh, so this runs
+# PowerShell to PowerShell and needs no bash on the machine at all. It
+# used to hunt down Git Bash and run the .sh through it, which worked but
+# meant a Windows contributor could not test a mill without installing a
+# second shell — and meant the twins could drift, since only one of them
+# was ever exercised here. A mill missing its .ps1 fails loudly rather
+# than silently falling back, because a silent fallback is how the gap
+# lasted this long.
 function Invoke-MillSuites {
     Assert-Mill
-    $bash = Find-GitBash
-    if (-not $bash) {
-        Write-Error 'Git Bash not found - install Git for Windows, or run under WSL, to test the mills.'
-        exit 1
-    }
     foreach ($m in Get-ChildItem mills -Directory | Sort-Object Name) {
-        Write-Host "==> mills/$($m.Name)/build.sh test"
-        $script = ($m.FullName -replace '\\', '/') + '/build.sh'
-        & $bash $script test
+        $script = Join-Path $m.FullName 'build.ps1'
+        if (-not (Test-Path $script)) {
+            [Console]::Error.WriteLine("mills/$($m.Name) has no build.ps1 - every mill carries both twins.")
+            exit 1
+        }
+        Write-Host "==> mills/$($m.Name)/build.ps1 test"
+        & $script test
         if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     }
 }
 
+# vsce is the ONE target with a dependency outside this repo's own tools,
+# and it is unavoidable: a .vsix is a VS Code extension package and there is
+# no dotnet or Shoddy path to producing one. Every other target here — and
+# every mill's own wrapper — needs nothing but PowerShell, dotnet and
+# bin/mill.
+#
+# It is REPORTED rather than installed. This used to run
+# `npm install -g @vscode/vsce` when vsce was missing, which is a build
+# script putting software on your machine, globally, without asking. CI does
+# not need that behaviour either: release.yml installs vsce as its own
+# explicit step before it calls this.
 function Invoke-Vsix {
     param([string]$Bump)
     if (-not (Get-Command vsce -ErrorAction SilentlyContinue)) {
-        Write-Host 'installing @vscode/vsce (npm -g)...'
-        npm install -g @vscode/vsce
+        [Console]::Error.WriteLine('vsix needs @vscode/vsce, which is not installed.')
+        [Console]::Error.WriteLine('  npm install -g @vscode/vsce      (needs Node.js)')
+        [Console]::Error.WriteLine('Every other target - build, test, run, weave, machines,')
+        [Console]::Error.WriteLine('stage, clean - needs only PowerShell and dotnet.')
+        exit 1
     }
     Invoke-Stage
     Push-Location vscode-shoddy
@@ -295,12 +292,12 @@ switch ($Command) {
     'build' { Invoke-Build }
     'test' { Invoke-Test }
     'run' {
-        if (-not $File) { Write-Error 'usage: ./build.ps1 run FILE.shoddy'; exit 2 }
+        if (-not $File) { [Console]::Error.WriteLine('usage: ./build.ps1 run FILE.shoddy'); exit 2 }
         Assert-Mill
         & $Mill run $File
     }
     'weave' {
-        if (-not $File) { Write-Error 'usage: ./build.ps1 weave FILE.shoddy'; exit 2 }
+        if (-not $File) { [Console]::Error.WriteLine('usage: ./build.ps1 weave FILE.shoddy'); exit 2 }
         Assert-Mill
         & $Mill weave $File
     }
@@ -313,7 +310,7 @@ switch ($Command) {
             ForEach-Object { $_ -replace '^#\s?', '' }
     }
     default {
-        Write-Error "unknown command: $Command`nrun './build.ps1 help' for usage."
+        [Console]::Error.WriteLine("unknown command: $Command`nrun './build.ps1 help' for usage.")
         exit 2
     }
 }

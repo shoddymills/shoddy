@@ -33,8 +33,9 @@ concatenative core as a value a program can drive one line at a time —
 the runtime dialect is Appendix A, reified. Literals, dictionary lookup,
 list literals (<code>{ &hellip; }</code>), quoted programs
 (<code>[ &hellip; ]</code>), user-word definition (<code>: NAME &hellip; ;</code>),
-registers (<code>STO</code>/<code>RCL</code>), mode words, <code>UNDO</code>
-and <code>HELP</code> are all here, plus the combinators
+registers (<code>STO</code>/<code>RCL</code>), mode words,
+<code>UNDO</code>/<code>REDO</code>, a <code>TRACE</code> mode, an
+adding-machine tape and <code>HELP</code> are all here, plus the combinators
 (<code>IFT IFTE TIMES MAP FILTER FOLD</code>) that take a quoted program off
 the stack and run it back through this same evaluator.</p>
 <p>It is general infrastructure, not a calculator: a formula read from a
@@ -206,6 +207,7 @@ evaluator itself</p>
 <tr><td>STO ( x name -- )</td><td>Bank a cell in a named register.</td></tr>
 <tr><td>RCL ( name -- x )</td><td>Fetch a cell from a named register.</td></tr>
 <tr><td>UNDO ( -- )</td><td>Put the stack back as the previous line found it.</td></tr>
+<tr><td>REDO ( -- )</td><td>Put back the stack UNDO stepped away from; anything else you do clears it.</td></tr>
 <tr><td>DEG ( -- )</td><td>Read and write angles in degrees.</td></tr>
 <tr><td>RAD ( -- )</td><td>Read and write angles in radians.</td></tr>
 <tr><td>FIX ( n -- )</td><td>Show numbers to n decimal places.</td></tr>
@@ -217,6 +219,39 @@ evaluator itself</p>
 <tr><td>HELP ( -- )</td><td>Show what the word named next does — <code>HELP MEAN</code>, not <code>"MEAN" HELP</code>.</td></tr>
 <tr><td>WORDS ( -- )</td><td>List every word in the dictionary, grouped by where it came from.</td></tr>
 </table>
+
+<h3>The trace and the tape</h3>
+<p>Both are state, because both are reached by dictionary words and a
+dictionary word reaches the state or it reaches nothing. Neither performs
+an effect: the trace rides the same output lines every other word answers
+with, and the shell decides what to do with them.</p>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>TRACE ( -- )</td><td>Show the stack after every token, indented where a program runs, until NOTRACE.</td></tr>
+<tr><td>NOTRACE ( -- )</td><td>Stop showing the stack after every token.</td></tr>
+<tr><td>TAPE ( -- n )</td><td>How many rows the tape holds; it keeps the last 500 and drops the oldest.</td></tr>
+<tr><td>CLEARTAPE ( -- )</td><td>Throw the tape away and start it again empty.</td></tr>
+</table>
+<p>A trace row is the token, a marker and a stack. The marker is
+<code>|</code> for a token that ran, <code>&raquo;</code> for a
+sub-evaluation being entered and <code>&laquo;</code> for one returning,
+and the indent is two spaces per level of nesting. That indent is not
+decoration: a user word's body, a <code>{ &hellip; }</code> literal and
+every pass of a combinator run on a <em>fresh</em> stack, so the cells on
+an indented row are a different stack from the ones above it. Printed
+flat, a cascade would read as one stack that suddenly lost its lower
+half.</p>
+<pre><code>&gt; 250 VAT
+  250        | 300 250
+  VAT        &raquo; DUP 0.2 * +
+    DUP      | 250 250
+    0.2      | 250 250 0.2
+    *        | 250 50
+    +        | 300
+  VAT        &laquo; 300 300</code></pre>
+<p><code>VAT</code> is applied with <code>300 250</code> on the caller's
+stack and its body sees only the <code>250</code> — the one cell a user
+word is ever given.</p>
 
 <h3>Trigonometry — honours the current angle mode</h3>
 <table>
@@ -243,8 +278,8 @@ evaluator itself</p>
 <tr><th>Word</th><th>Description</th></tr>
 <tr><td>RckSave(st)</td><td>The user dictionary as a <code>List Of String</code>, one <code>: NAME &hellip; ;</code> line per definition — the mill owns the path.</td></tr>
 <tr><td>RckLoad(st, lines)</td><td>Re-registers a saved dictionary; a malformed line errors and leaves the dictionary unchanged.</td></tr>
-<tr><td>RckShow(st)</td><td>Line-oriented text: <code>x: y: z: t:</code> labels, deepest last.</td></tr>
-<tr><td>RckRows(st)</td><td>Structured rows (label, kind constant, text) for a graphical shell — the same formatting path as <code>RckShow</code>, so the two cannot disagree.</td></tr>
+<tr><td>RckShow(st)</td><td>Line-oriented text for a scrolling shell: <code>x: y: z: t:</code> labels, deepest first so <code>x</code> lands nearest the prompt. Complete on its own — <code>[ empty ]</code> for an empty stack, and <code>[ depth n ]</code> above the top four for one deeper than four.</td></tr>
+<tr><td>RckRows(st)</td><td>Structured rows (label, kind constant, text) for a graphical shell, one per cell however deep — the same formatting path as <code>RckShow</code>, so the two cannot disagree about a row. A graphical shell paints what it has room for and puts the depth in a status field.</td></tr>
 </table>
 
 <h2 id="seeds">The Reckoner Seeds</h2>
@@ -272,9 +307,12 @@ is listed here instead, where seeding one actually means something.</p>
 </table>
 
 <h2 id="usedby">Who Uses It</h2>
-<p>Every reckoner seed listed above includes this engine to register its
-words against — already listed there rather than repeated here. Beyond
-the seeds, nothing else in the tree includes reckoner directly yet.</p>
+<table>
+<tr><th></th><th>User</th><th>How</th></tr>
+<tr><td class="uicon"><a href="../mills/halifax.html"><img src="../media/icons/halifax.svg" alt=""></a></td><td><a href="../mills/halifax.html">halifax</a></td><td>The whole of the calculator. <code>RckNew</code> folded through seven seeds is its dictionary, <code>RckEval</code> is the only door its shell needs, and <code>RckShow</code>, <code>RckSave</code>, <code>RckLoad</code> and <code>RckTape</code> are its render, its file format and its tape.</td></tr>
+</table>
+<p>Every reckoner seed listed above also includes this engine, to register its
+words against — already listed there rather than repeated here.</p>
 
 <h2 id="uses">The Machines It Uses</h2>
 <table>

@@ -1,0 +1,469 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem test.shoddy — the headless suite for halifax-core.shoddy.
+Rem
+Rem     bin/mill run mills/halifax/test.shoddy       (from the repo root)
+Rem     ./build.sh test                              (from this directory)
+Rem
+Rem Assert-driven, in the tally / reckonertest pattern: it prints what it
+Rem is doing and stops at the first assertion that fails, ending with ALL
+Rem ASSERTIONS PASSED when it does not. No terminal, no window, no
+Rem network, no files it did not write itself.
+Rem
+Rem THE GOLDEN TRANSCRIPTS ARE THE CONTRACT, so they are asserted whole
+Rem rather than sampled: the three sessions are written out here exactly as
+Rem the docs page shows them, and the suite fails on a single byte. That is
+Rem the point of them — a render that drifts is a docs page that lies, and
+Rem there is no other way to notice.
+Rem
+Rem WHAT IS NOT TESTED HERE is the loop and the four file words, which are
+Rem halifax.shoddy's and are effects. What IS tested is every decision
+Rem underneath them: HxRead on each shape of line, the refusals, the
+Rem registered stubs, and RckSave's text — so the shell is left with
+Rem nothing but Print, InputLine and the two guarded file builtins.
+Rem ==================================================================
+
+Include "../../machines/str.shoddy"
+Include "halifax-core.shoddy"
+
+Rem ---- the harness -----------------------------------------------------
+
+Rem A scripted session: every line fed to the core in order, and every
+Rem line it would have shown, banner included. This is the shell's whole
+Rem behaviour minus the printing, which is why the transcripts can be
+Rem asserted without a terminal.
+Def Session(lines As List Of String) As List Of String
+    Concat(HxBanner(), SessionFrom(HxFresh(), lines))
+
+Def SessionFrom(st As RckState, lines As List Of String) As List Of String
+    Concat(RckShow(st), SessionOn(st, lines))
+
+Def SessionOn(st As RckState, lines As List Of String) As List Of String
+    If IsEmpty(lines) Then
+        { }
+    Else
+        SessionStep(st, First(lines), Rest(lines))
+
+Def SessionStep(st As RckState, line As String, more As List Of String) As List Of String
+    Let r = Acted(st, line)
+    Concat(Prepend(HxPrompt() & line, HxShown(r)), SessionOn(HxAfter(st, r), more))
+
+Rem The core's own dispatch, minus the three words that write files. A
+Rem test cannot write a file and still be the pure half's test, so SAVE,
+Rem LOAD and TAPESAVE are exercised through what they are BUILT from —
+Rem RckSave, RckLoad and RckTape — and the transcript's "saved 1 word" is
+Rem the one line the shell contributes.
+Def Acted(st As RckState, line As String) As RckLine
+    Select Case HxRead(line)
+        Case HxEval(l)
+            HxDo(st, l)
+        Case HxPath(w, p)
+            Faked(st, line, w, p)
+        Case HxPlain(w)
+            Plained(st, line, w)
+        Case HxAskBad(why)
+            HxRefused(st, line, why)
+        Case Else
+            HxRefused(st, line, "the line did not read")
+
+Def Faked(st As RckState, line As String, w As String, path As String) As RckLine
+    If w = HxSaveWord() Then
+        HxSaid(st, line, "saved " & HxCounted(HxUserCount(st), "word", "words"))
+    Else
+        If w = HxTapeSaveWord() Then
+            HxSaid(st, line, "wrote " & HxCounted(Length(RckTape(st)), "row", "rows"))
+        Else
+            HxSaid(st, line, "loaded " & HxCounted(0, "word", "words"))
+
+Def Plained(st As RckState, line As String, w As String) As RckLine
+    If w = HxResetWord() Then
+        RckNext(HxFresh(), { "reset" })
+    Else
+        HxRefused(st, line, "quit is the loop's")
+
+Rem One line, for the cases that do not need a whole session.
+Def Ran(st As RckState, line As String) As RckState
+    HxAfter(st, Acted(st, line))
+
+Def Runs(st As RckState, lines As List Of String) As RckState
+    Fold(lines, st, Ran)
+
+Def Shown(st As RckState, line As String) As List Of String
+    HxShown(Acted(st, line))
+
+Def Said(st As RckState, line As String) As String
+    Join(Shown(st, line), " / ")
+
+Def Q(s As String) As String
+    RckQuoteMark() & s & RckQuoteMark()
+
+Rem ---- the transcripts, byte for byte ----------------------------------
+
+Def SessionOneLines() As List Of String
+    { "3 4 + 5 *",
+      "2 DUP *",
+      "DROP 1250.75 MONEY 3 MSPLIT",
+      "UNDO",
+      "REDO",
+      "UNDO",
+      "DEG 90 SIN",
+      "1 0 /",
+      "7 8 9" }
+
+Def SessionOneWant() As List Of String
+    { "shoddy halifax — RPN. Numbers go on the stack; words work on them.",
+      "WORDS lists, HELP <word> explains, TRACE follows, UNDO backs out, QUIT leaves.",
+      "[ empty ]",
+      "> 3 4 + 5 *",
+      "x: 35",
+      "> 2 DUP *",
+      "y: 35",
+      "x: 4",
+      "> DROP 1250.75 MONEY 3 MSPLIT",
+      "y: 35",
+      "x: { $416.92 $416.92 $416.91 }",
+      "> UNDO",
+      "y: 35",
+      "x: 4",
+      "> REDO",
+      "y: 35",
+      "x: { $416.92 $416.92 $416.91 }",
+      "> UNDO",
+      "y: 35",
+      "x: 4",
+      "> DEG 90 SIN",
+      "z: 35",
+      "y: 4",
+      "x: 1",
+      "> 1 0 /",
+      "?: / cannot divide by zero",
+      "z: 35",
+      "y: 4",
+      "x: 1",
+      "> 7 8 9",
+      "[ depth 6 ]",
+      "t: 1",
+      "z: 7",
+      "y: 8",
+      "x: 9" }
+
+Def SessionTwoLines() As List Of String
+    { ": VAT DUP 0.2 * + ;",
+      "250 VAT",
+      "TRACE",
+      "250 VAT",
+      "NOTRACE",
+      "SAVE " & Q("mine.halifax") }
+
+Def SessionTwoWant() As List Of String
+    { "shoddy halifax — RPN. Numbers go on the stack; words work on them.",
+      "WORDS lists, HELP <word> explains, TRACE follows, UNDO backs out, QUIT leaves.",
+      "[ empty ]",
+      "> : VAT DUP 0.2 * + ;",
+      "ok: VAT defined",
+      "[ empty ]",
+      "> 250 VAT",
+      "x: 300",
+      "> TRACE",
+      "trace on",
+      "x: 300",
+      "> 250 VAT",
+      "  250        | 300 250",
+      "  VAT        » DUP 0.2 * +",
+      "    DUP      | 250 250",
+      "    0.2      | 250 250 0.2",
+      "    *        | 250 50",
+      "    +        | 300",
+      "  VAT        « 300 300",
+      "y: 300",
+      "x: 300",
+      "> NOTRACE",
+      "trace off",
+      "y: 300",
+      "x: 300",
+      "> SAVE " & Q("mine.halifax"),
+      "saved 1 word",
+      "y: 300",
+      "x: 300" }
+
+Def SessionThreeLines() As List Of String
+    { "4 " & Q("B") & " STO",
+      ": HYP DUP * " & Q("B") & " RCL DUP * + SQRT ;",
+      "3 HYP" }
+
+Def SessionThreeWant() As List Of String
+    { "shoddy halifax — RPN. Numbers go on the stack; words work on them.",
+      "WORDS lists, HELP <word> explains, TRACE follows, UNDO backs out, QUIT leaves.",
+      "[ empty ]",
+      "> 4 " & Q("B") & " STO",
+      "ok: B",
+      "[ empty ]",
+      "> : HYP DUP * " & Q("B") & " RCL DUP * + SQRT ;",
+      "ok: HYP defined",
+      "[ empty ]",
+      "> 3 HYP",
+      "x: 5" }
+
+Rem A mismatch has to say WHICH line, or a byte-exact test is a test you
+Rem cannot debug. The first differing row is printed with both sides.
+Def SameLines(got As List Of String, want As List Of String, what As String)
+    If Length(got) <> Length(want) Then
+        SaidWrong(got, want, what, "line counts differ: got " & Str(Length(got)) & ", want " & Str(Length(want)))
+    Else
+        SameAt(got, want, what, 1)
+
+Def SameAt(got As List Of String, want As List Of String, what As String, k As Number)
+    If k > Length(got) Then
+        Print("  " & what & " — " & Str(Length(got)) & " lines, byte for byte")
+    Else
+        If Nth(got, k) <> Nth(want, k) Then
+            SaidWrong(got, want, what, "line " & Str(k) & ":" & Chr(10) & "    got  [" & Nth(got, k) & "]" & Chr(10) & "    want [" & Nth(want, k) & "]")
+        Else
+            SameAt(got, want, what, k + 1)
+
+Def SaidWrong(got As List Of String, want As List Of String, what As String, why As String)
+    Print("GOT:")
+    Print(Join(Map(got, Fn(r) => "  [" & r & "]"), Chr(10)))
+    Error("TRANSCRIPT " & what & " DIFFERS AT " & why)
+
+Rem ---- the suite -------------------------------------------------------
+
+Def Main()
+    Let s0 = HxFresh()
+
+    Print("--- the golden transcripts reproduce byte for byte ---")
+    SameLines(Session(SessionOneLines()), SessionOneWant(), "one")
+    SameLines(Session(SessionTwoLines()), SessionTwoWant(), "two")
+    SameLines(Session(SessionThreeLines()), SessionThreeWant(), "three")
+
+    Print("--- the render's edges ---")
+    Assert(Join(RckShow(s0), " / ") = "[ empty ]", "AN EMPTY STACK SAYS SO")
+    Assert(Join(RckShow(Ran(s0, "1 2 3 4")), " / ") = "t: 1 / z: 2 / y: 3 / x: 4", "FOUR ROWS AND NO DEPTH LINE AT DEPTH FOUR")
+    Assert(Join(RckShow(Ran(s0, "1 2 3 4 5")), " / ") = "[ depth 5 ] / t: 2 / z: 3 / y: 4 / x: 5", "THE DEPTH ABOVE THE TOP FOUR AT DEPTH FIVE")
+
+    Print("--- a traced combinator traces the program cells ---")
+    Let tr = Ran(s0, "TRACE")
+    Assert(Said(tr, "{ 1 2 3 } [ 2 * ] MAP") = Join({ "  {          » 1 2 3",
+                                                      "    1        | 1",
+                                                      "    2        | 1 2",
+                                                      "    3        | 1 2 3",
+                                                      "  {          « { 1 2 3 }",
+                                                      "  [          | { 1 2 3 } [ 2 * ]",
+                                                      "  MAP        » 2 *",
+                                                      "    2        | 1 2",
+                                                      "    *        | 2",
+                                                      "  MAP        » 2 *",
+                                                      "    2        | 2 2",
+                                                      "    *        | 4",
+                                                      "  MAP        » 2 *",
+                                                      "    2        | 3 2",
+                                                      "    *        | 6",
+                                                      "  MAP        « { 2 4 6 }",
+                                                      "x: { 2 4 6 }" }, " / "), "MAP TRACES ONE PASS PER ELEMENT AND MERGES ONCE")
+    Rem A failing token traces what ran and then refuses, and the state is
+    Rem the one the line started from — trace rows are not a side effect
+    Rem that survives the transaction, they are output about it.
+    Assert(Said(tr, "3 4 + 1 0 / 9") = Join({ "  3          | 3",
+                                              "  4          | 3 4",
+                                              "  +          | 7",
+                                              "  1          | 7 1",
+                                              "  0          | 7 1 0",
+                                              "?: / cannot divide by zero",
+                                              "[ empty ]" }, " / "), "A FAILING TOKEN TRACES UP TO THE FAILURE")
+    Assert(Said(Ran(tr, "NOTRACE"), "3 4 +") = "x: 7", "NOTRACE TURNS IT OFF")
+
+    Print("--- the one-cell rule for user words ---")
+    Let u = Ran(s0, ": HYP DUP * SWAP DUP * + SQRT ;")
+    Assert(Said(u, "3 4 HYP") = "?: SWAP needs 2, the stack holds 1 / [ empty ]", "A BODY THAT WANTS TWO CELLS REFUSES RATHER THAN REACHING PAST ITS OWN")
+    Let v = Runs(s0, { "4 " & Q("B") & " STO", ": HYP DUP * " & Q("B") & " RCL DUP * + SQRT ;" })
+    Assert(Said(v, "3 HYP") = "x: 5", "AND THE REGISTER IS HOW THE SECOND ARGUMENT ARRIVES")
+
+    Print("--- the tape records what was shown ---")
+    Let t3 = Runs(s0, { "3 4 +", "1 0 /", "2 *" })
+    Assert(Join(RckTape(t3), " / ") = "> 3 4 + / x: 7 / > 1 0 / / ?: / cannot divide by zero / x: 7 / > 2 * / x: 14", "THREE TRANSACTIONS, THE REFUSAL AMONG THEM")
+    Assert(Join(RckShow(Ran(t3, "TAPE")), " / ") = "y: 14 / x: 7", "TAPE PUSHES THE ROW COUNT")
+    Assert(Length(RckTape(Ran(t3, "CLEARTAPE"))) = 0, "CLEARTAPE LEAVES NOTHING, NOT EVEN ITSELF")
+    Assert(Join(RckShow(Ran(Ran(t3, "CLEARTAPE"), "TAPE")), " / ") = "y: 14 / x: 0", "SO TAPE THEN PUSHES 0")
+    Rem The cap is on ROWS. Two hundred lines of one number each render one
+    Rem row per cell, so the stack alone overruns five hundred long before
+    Rem the entry lines do.
+    Let big = Fold(Range(1, 200), s0, Fn(a, k) => Ran(a, Str(k)))
+    Assert(Length(RckTape(big)) = RckTapeCap(), "THE TAPE IS BOUNDED AT ITS CAP")
+    Assert(Last(RckTape(big)) = "x: 200", "THE NEWEST ROW IS THE LAST ONE")
+    Assert(First(RckTape(big)) <> "> 1", "AND THE OLDEST WENT, NOT THE NEWEST")
+    Rem The drop itself, exactly. CLEAR n on an empty stack is a line worth
+    Rem two rows every time — the entry line and one x: — so half the cap's
+    Rem worth of them fills it to the row, and the next line drops the two
+    Rem oldest to make room for its own two.
+    Let fill = Fold(Range(1, RckTapeCap() / 2), s0, Fn(a, k) => Ran(a, "CLEAR " & Str(k)))
+    Assert(Length(RckTape(fill)) = RckTapeCap(), "A TAPE FILLED EXACTLY TO THE CAP IS AT THE CAP")
+    Assert(First(RckTape(fill)) = "> CLEAR 1", "AND ITS FIRST ROW IS STILL THE FIRST THING TYPED")
+    Let over = Ran(fill, "CLEAR 999")
+    Assert(Length(RckTape(over)) = RckTapeCap(), "ONE LINE MORE LEAVES IT AT THE CAP")
+    Assert(First(RckTape(over)) = Nth(RckTape(fill), 3), "AND THE OLDEST ROWS WENT, PROMOTING THE ONES BEHIND THEM")
+    Assert(Last(RckTape(over)) = "x: 999", "WHILE THE NEWEST ROW IS THE ONE JUST ADDED")
+
+    Print("--- the tape pane takes the last rows, however few there are ---")
+    Assert(Join(HxTapePane(t3, 3), " / ") = "x: 7 / > 2 * / x: 14", "A PANE OF THREE IS THE LAST THREE ROWS")
+    Assert(Length(HxTapePane(t3, 3)) = 3, "AND IS THREE ROWS LONG")
+    Assert(Length(HxTapePane(t3, 99)) = 7, "AND A PANE BIGGER THAN THE TAPE IS THE WHOLE TAPE")
+    Assert(IsEmpty(HxTapePane(t3, 0)), "AND A PANE OF NOTHING IS NOTHING")
+
+    Print("--- RESET starts again, and leaves no tape of having done so ---")
+    Let rs = Ran(t3, "RESET")
+    Assert(Join(RckShow(rs), " / ") = "[ empty ]", "RESET EMPTIES THE STACK")
+    Assert(IsEmpty(RckTape(rs)), "AND THE TAPE")
+    Assert(IsEmpty(RckSave(rs)), "AND THE WORDS DEFINED")
+    Assert(RckKnows(rs, "MSPLIT") And RckKnows(rs, "MEAN") And RckKnows(rs, "SAVE"), "BUT THE SEEDS AND THE SHELL WORDS ARE BACK")
+    Let rs2 = Ran(Runs(s0, { "1 2", "3 4" }), "RESET")
+    Assert(Said(rs2, "REDO") = "?: there is nothing to redo / [ empty ]", "AND THERE IS NO HISTORY TO STEP INTO")
+
+    Print("--- undo and redo are inverses ---")
+    Let h = Runs(s0, { "3 4 +", "5 *" })
+    Assert(Join(RckShow(h), " / ") = "x: 35", "TWO LINES IN")
+    Assert(Join(RckShow(Ran(h, "UNDO")), " / ") = "x: 7", "UNDO GOES BACK ONE TRANSACTION")
+    Assert(Join(RckShow(Runs(h, { "UNDO", "UNDO" })), " / ") = "[ empty ]", "AND AGAIN, TO WHERE THE SESSION BEGAN")
+    Assert(Join(RckShow(Runs(h, { "UNDO", "UNDO", "REDO", "REDO" })), " / ") = "x: 35", "AND REDO WALKS THE WHOLE WAY BACK")
+    Assert(Said(Runs(h, { "UNDO", "9" }), "REDO") = "?: there is nothing to redo / y: 7 / x: 9", "A NEW ENTRY CLEARS THE FORWARD HISTORY")
+    Assert(Said(Ran(h, "3 4 UNDO 5"), "REDO") = "?: there is nothing to redo / y: 7 / x: 5", "AND SO DOES ONE MID-LINE, AFTER THE UNDO IN IT")
+    Assert(Said(s0, "REDO") = "?: there is nothing to redo / [ empty ]", "REDO WITH NOTHING TO REDO REFUSES")
+    Assert(Said(s0, "UNDO") = "?: there is nothing to undo / [ empty ]", "AND SO DOES UNDO")
+
+    Print("--- the dictionary as text ---")
+    Let d = Runs(s0, { ": VAT DUP 0.2 * + ;", ": NET DUP 6 / - ;" })
+    Assert(Join(RckSave(d), " / ") = ": VAT DUP 0.2 * + ; / : NET DUP 6 / - ;", "SAVE IS READABLE DEFINITION TEXT")
+    Assert(Join(RckSave(RckLoadOk(s0, RckSave(d))), " / ") = Join(RckSave(d), " / "), "AND LOAD OF IT ROUND-TRIPS")
+    Rem A file naming a word the dictionary has not got refuses whole.
+    Let bad = { ": VAT DUP 0.2 * + ;", ": OOPS NOSUCHWORD ;" }
+    Assert(RckLoadWhy(s0, bad) = "unknown word NOSUCHWORD", "A FILE NAMING AN UNKNOWN WORD REFUSES WITH THE WORD NAMED")
+    Assert(IsEmpty(RckSave(RckLoadOk(s0, bad))), "AND LEAVES THE DICTIONARY EXACTLY AS IT WAS")
+
+    Print("--- the shell's five words are read from the line ---")
+    Assert(Reads("SAVE " & Q("mine.halifax")) = "path SAVE mine.halifax", "SAVE WITH A QUOTED NAME")
+    Assert(Reads("load " & Q("a b.txt")) = "path LOAD a b.txt", "LOWER CASE, AND A NAME WITH A SPACE IN IT")
+    Assert(Reads("TAPESAVE " & Q("t.txt")) = "path TAPESAVE t.txt", "TAPESAVE")
+    Assert(Reads("QUIT") = "plain QUIT", "QUIT ALONE")
+    Assert(Reads("reset") = "plain RESET", "RESET ALONE")
+    Assert(Reads("3 4 +") = "eval 3 4 +", "AND ANYTHING ELSE GOES TO THE ENGINE WHOLE")
+    Assert(Reads("") = "eval ", "INCLUDING AN EMPTY LINE")
+    Assert(Reads("3 4 SAVE " & Q("x")) = "eval 3 4 SAVE " & Q("x"), "A SHELL WORD IS ONLY ONE AS THE WHOLE LINE")
+    Assert(Reads("SAVE") = "bad SAVE needs a file name in quotes after it", "SAVE WITH NOTHING AFTER IT")
+    Assert(Reads("SAVE mine") = "bad SAVE needs its file name in quotes, not mine", "SAVE WITH AN UNQUOTED NAME")
+    Assert(Reads("SAVE " & Q("a") & " " & Q("b")) = "bad SAVE takes one file name and nothing after it", "SAVE WITH TWO NAMES")
+    Assert(Reads("SAVE " & Q("")) = "bad SAVE needs a file name, and the quotes are empty", "SAVE WITH EMPTY QUOTES")
+    Assert(Reads("QUIT 5") = "bad QUIT takes nothing after it", "QUIT WITH SOMETHING AFTER IT")
+    Assert(Reads("SAVE " & RckQuoteMark() & "unterminated") = "eval SAVE " & RckQuoteMark() & "unterminated", "AND A LINE THAT WILL NOT TOKENIZE GOES TO THE ENGINE, WHICH OWNS THAT REFUSAL")
+    Assert(HxQuits("QUIT") And HxQuits("quit") And Not HxQuits("QUIT 5") And Not HxQuits("3 4 +"), "AND THE LOOP'S QUIT TEST AGREES WITH ALL OF IT")
+
+    Print("--- the shell's words are in the dictionary for HELP and WORDS ---")
+    Assert(RckKnows(s0, "SAVE") And RckKnows(s0, "LOAD") And RckKnows(s0, "TAPESAVE") And RckKnows(s0, "QUIT") And RckKnows(s0, "RESET"), "ALL FIVE ARE REGISTERED")
+    Assert(Contains(RckWords(s0), "-- shell --"), "AND WORDS GIVES THEM A GROUP OF THEIR OWN")
+    Assert(Length(RckHelp(s0, "SAVE")) = 3, "HELP SAVE ANSWERS")
+    Assert(Contains(RckHelp(s0, "TAPESAVE"), "TAPESAVE  ( -- )"), "WITH ITS STACK EFFECT")
+    Rem Reached directly, which only a headless test can do, every stub is
+    Rem a refusal rather than an abort — the interception is the shell's
+    Rem and the guard is the engine's, and both have to hold.
+    Assert(Said(s0, "3 SAVE") = "?: SAVE is the shell's word, not the dictionary's: type it as the whole line and nothing else / [ empty ]", "AND REACHED DIRECTLY IT REFUSES")
+    Assert(Said(s0, "3 RESET DROP") = "?: RESET is the shell's word, not the dictionary's: type it as the whole line and nothing else / [ empty ]", "INCLUDING THE ONE THAT TOUCHES NOTHING")
+    Assert(Not RckTouches(Found(s0, "RESET")), "RESET TOUCHES NOTHING")
+    Assert(RckTouches(Found(s0, "SAVE")) And RckTouches(Found(s0, "TAPESAVE")), "AND THE ONES THAT WRITE FILES SAY SO")
+
+    Print("--- every word carries its metadata, the shell's included ---")
+    Assert(IsEmpty(Filter(RckDict(s0), Fn(e) => WordEffect(e) = "" Or WordDesc(e) = "")), "NO WORD IS WITHOUT AN EFFECT LINE AND A DESCRIPTION")
+
+    Print("--- nothing keyable aborts: the fuzz list ---")
+    Assert(Fuzzed(s0, FuzzList()), "EVERY LINE IN THE FUZZ LIST WAS SURVIVED")
+    Print("  " & Str(Length(FuzzList())) & " lines fed, and 3 4 + still answered 7 after every one")
+
+    Print("")
+    Print("ALL ASSERTIONS PASSED")
+
+Rem ---- reading, as one string, so the cases read as a table -----------
+
+Def Reads(line As String) As String
+    Select Case HxRead(line)
+        Case HxEval(l)
+            "eval " & l
+        Case HxPath(w, p)
+            "path " & w & " " & p
+        Case HxPlain(w)
+            "plain " & w
+        Case HxAskBad(why)
+            "bad " & why
+        Case Else
+            "none"
+
+Def Found(st As RckState, name As String) As RckEntry
+    Select Case RckFind(st, name)
+        Case Some(e)
+            e
+        Case Else
+            Error("no such word " & name)
+
+Rem RckLoad answers a line; these read the two halves of it without a
+Rem match at every call site.
+Def RckLoadOk(st As RckState, lines As List Of String) As RckState
+    Select Case RckLoad(st, lines)
+        Case RckNext(st2, out)
+            st2
+        Case RckStop(st2, why, out)
+            st2
+        Case Else
+            st
+
+Def RckLoadWhy(st As RckState, lines As List Of String) As String
+    Select Case RckLoad(st, lines)
+        Case RckStop(st2, why, out)
+            why
+        Case Else
+            ""
+
+Rem ---- the fuzz list ---------------------------------------------------
+
+Rem Every mill-level word with nothing to work on, every kind of malformed
+Rem line, and every shell word misused. Survival is proved by the NEXT
+Rem line: a refusal that lost the state would show up as the following
+Rem line failing too, so each case asserts that 3 4 + still answers 7
+Rem afterwards.
+Def FuzzList() As List Of String
+    Concat(FuzzEmpty(), FuzzShapes())
+
+Def FuzzEmpty() As List Of String
+    { "DUP", "DROP", "SWAP", "OVER", "ROT", "NIP", "TUCK", "ROLL", "PICK",
+      "+", "-", "*", "/", "SQRT", "SIN", "MEAN", "MEDIAN", "SUM", "MONEY",
+      "MSPLIT", "MFMT", "MAT", "DPUT", "DGET", "GATHER", "UNPACK", "LASTX",
+      "STO", "RCL", "FIX", "MAP", "FILTER", "FOLD", "TIMES", "IFT", "IFTE",
+      "TAPE", "CLEARTAPE", "TRACE", "NOTRACE", "UNDO", "REDO", "WORDS" }
+
+Def FuzzShapes() As List Of String
+    { "", "   ", "NOSUCHWORD", "3 " & RckQuoteMark() & "unterminated",
+      "{ 1 2", "[ DUP", "} 1", "] 1", "; 1", ": ;", ": ", ":",
+      ": X ", ": X NOSUCHWORD ;", ": X X ;", ": 3 DUP ;", ": " & Q("X") & " DUP ;",
+      "1 2 " & Q("k") & " STO " & Q("nope") & " RCL",
+      "{ 1 2 } [ DROP ] MAP", "{ 1 2 } [ 1 2 ] MAP", "{ 1 2 } [ 3 ] FILTER",
+      "1 [ DUP ] 0 TIMES", "1 " & Q("x") & " * ", "TRUE 3 +",
+      "12 FIX", "1 0 MOD", "1 0 WRAP", "0 LN", "2 ASIN",
+      "HELP", "VIEW", "HELP NOSUCHWORD", "VIEW DUP",
+      "SAVE", "LOAD", "TAPESAVE", "SAVE mine", "QUIT 5", "RESET 5",
+      "SAVE " & Q(""), "3 4 SAVE " & Q("x"), "3 QUIT" }
+
+Rem Survival is proved by the NEXT LINE and not by the error, so each case
+Rem runs the fuzz line and then a plain sum on whatever came back.
+Rem
+Rem The test is on the LAST row and not the whole render, because some of
+Rem these lines are perfectly good — TAPE pushes a count, TRACE turns
+Rem tracing on, WORDS prints a list — and a fuzz list that only admitted
+Rem refusals would be a fuzz list that stopped testing as soon as a word
+Rem started working. What has to hold is that x is still 7 afterwards:
+Rem the mill went on evaluating, whatever the line before did or left.
+Def Fuzzed(st As RckState, lines As List Of String) As Boolean
+    If IsEmpty(lines) Then
+        True
+    Else
+        Survives(st, First(lines), Rest(lines))
+
+Def Survives(st As RckState, line As String, more As List Of String) As Boolean
+    Assert(Last(Shown(Ran(st, line), "3 4 +")) = "x: 7", "THE MILL SURVIVED [" & line & "]")
+    Fuzzed(st, more)

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Run Shoddy Invaders (Unix: Linux / macOS / WSL).
-# Windows users: run this via Git Bash or WSL (same commands).
+# Windows users: use build.ps1 (same commands).
 #
 #   ./build.sh          run the game
 #   ./build.sh run      same as above

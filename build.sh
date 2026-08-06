@@ -231,8 +231,23 @@ case "${1:-help}" in
         stage
         ;;
     vsix)
+        # vsce is the ONE target with a dependency outside this repo's own
+        # tools, and it is unavoidable: a .vsix is a VS Code extension
+        # package and there is no dotnet or Shoddy path to producing one.
+        # Every other target here — and every mill's own wrapper — needs
+        # nothing but this shell, dotnet, and bin/mill.
+        #
+        # It is REPORTED rather than installed. This used to run
+        # `npm install -g @vscode/vsce` when vsce was missing, which is a
+        # build script putting software on your machine, globally, without
+        # asking. CI does not need that behaviour either: release.yml
+        # installs vsce as its own explicit step before it calls this.
         command -v vsce >/dev/null 2>&1 || {
-            echo "installing @vscode/vsce (npm -g)..."; npm install -g @vscode/vsce
+            echo "vsix needs @vscode/vsce, which is not installed." >&2
+            echo "  npm install -g @vscode/vsce      (needs Node.js)" >&2
+            echo "Every other target — build, test, run, weave, machines," >&2
+            echo "stage, clean — needs only this shell and dotnet." >&2
+            exit 1
         }
         stage
         (

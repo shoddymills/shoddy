@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Build / run the weather-glass mill (Unix: Linux / macOS / WSL).
-# Windows users: run this via Git Bash or WSL (same commands).
+# Windows users: use build.ps1 (same commands).
 #
 #   ./build.sh run 63011   fetch and draw the report for a US ZIP
 #   ./build.sh test        the offline suite - no network, no --allow-net
@@ -39,8 +39,12 @@ case "${1:-run}" in
         ;;
     build)
         ensure_mill
+        # weave writes BESIDE the source and has no -o flag; this moves the
+        # result into bin/, the same shuffle the other weaving mills do.
+        "$MILL" weave weather-glass.shoddy
         mkdir -p bin
-        "$MILL" weave weather-glass.shoddy -o bin/weather-glass.dll
+        mv -f weather-glass.dll weather-glass.runtimeconfig.json bin/
+        mv -f Shoddy.*.dll bin/ 2>/dev/null || true
         echo "woven into bin/ - run with: dotnet bin/weather-glass.dll 63011 (needs SHODDY_ALLOW_NET=1)"
         ;;
     clean)

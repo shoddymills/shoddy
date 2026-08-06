@@ -117,13 +117,30 @@ Def RckUserName() As String
 
 Rem Fifty states of history, oldest dropped. A cap rather than a growing
 Rem tape because the tape is a convenience and a session is not a
-Rem transaction log.
+Rem transaction log. The forward history REDO pops from is bounded by the
+Rem same number, since it can never hold more than the history gave it.
 Def RckHistCap() As Number
     50
+
+Rem Five hundred rendered rows of tape, oldest dropped. Larger than the
+Rem history because a row is a line of text and a history entry is a
+Rem whole stack, and because the tape is what someone saves and reads
+Rem afterwards rather than something the engine walks.
+Def RckTapeCap() As Number
+    500
 
 Rem How wide the WORDS listing packs its names.
 Def RckListWidth() As Number
     68
+
+Rem The trace's one measurement: the column its marker sits in. The token
+Rem field shrinks as the indent grows so this column holds, which is what
+Rem makes the stacks line up down a cascade that changes depth.
+Def RckTraceBar() As Number
+    14
+
+Def RckTraceStep() As Number
+    2
 
 Rem ---- the types -------------------------------------------------------
 
@@ -157,6 +174,14 @@ Type RckEntry
 Rem The whole of a session. Every keystroke produces a new one of these,
 Rem which is why UNDO is a consequence of the semantics rather than a
 Rem feature.
+Rem
+Rem The last three are appended rather than woven in, per the append-only
+Rem rule. RckFore is what REDO pops: UNDO is destructive — it drops the
+Rem two history entries it stepped over — so the stack it walked away
+Rem from has to be banked somewhere or it is gone. RckTape and RckTrace
+Rem live here rather than in a shell because TAPE, CLEARTAPE, TRACE and
+Rem NOTRACE are dictionary words, and a dictionary word reaches the state
+Rem or it reaches nothing.
 Type RckState
     RckStack As Stack
     RckDict  As List Of RckEntry
@@ -167,6 +192,9 @@ Type RckState
     RckLastX As Option
     RckSeed  As String
     RckDeep  As Number
+    RckTrace As Boolean
+    RckTape  As List Of String
+    RckFore  As List Of Stack
 
 Rem What evaluating a line answers. Both cases carry output lines for the
 Rem shell to print, and the failing case carries the state as it was.
@@ -203,7 +231,7 @@ Rem speaks everywhere else and PI 2 / SIN should work before anything is
 Rem set; DEG is one word away and exists for entry, which is the only
 Rem thing it exists for.
 Def RckBare() As RckState
-    RckState(CutNew(), { }, { }, CutFmtStd(), RckRadians(), { }, None(), RckCoreName(), 0)
+    RckState(CutNew(), { }, { }, CutFmtStd(), RckRadians(), { }, None(), RckCoreName(), 0, False, { }, { })
 
 Rem The engine core seeded. This is what a mill starts from, and what a
 Rem seed file is handed.
@@ -570,6 +598,11 @@ Def RckCoreRest() As List Of RckEntry
     { RckCoreOf("STO", 2, RckCore("STO"), "( x name -- )", "Bank a cell in a named register."),
       RckCoreOf("RCL", 1, RckCore("RCL"), "( name -- x )", "Fetch a cell from a named register."),
       RckCoreOf("UNDO", 0, RckCore("UNDO"), "( -- )", "Put the stack back as the previous line found it."),
+      RckCoreOf("REDO", 0, RckCore("REDO"), "( -- )", "Put back the stack UNDO stepped away from; anything else you do clears it."),
+      RckCoreOf("TRACE", 0, RckCore("TRACE"), "( -- )", "Show the stack after every token, indented where a program runs, until NOTRACE."),
+      RckCoreOf("NOTRACE", 0, RckCore("NOTRACE"), "( -- )", "Stop showing the stack after every token."),
+      RckCoreOf("TAPE", 0, RckCore("TAPE"), "( -- n )", "How many rows the tape holds; it keeps the last " & Str(RckTapeCap()) & " and drops the oldest."),
+      RckCoreOf("CLEARTAPE", 0, RckCore("CLEARTAPE"), "( -- )", "Throw the tape away and start it again empty."),
       RckCoreOf("DEG", 0, RckCore("DEG"), "( -- )", "Read and write angles in degrees."),
       RckCoreOf("RAD", 0, RckCore("RAD"), "( -- )", "Read and write angles in radians."),
       RckCoreOf("FIX", 1, RckCore("FIX"), "( n -- )", "Show numbers to n decimal places."),
@@ -625,8 +658,39 @@ Def RckRowAt(cells As List Of Cell, k As Number, f As CutFmt) As RckRow
 Def RckRowOf(c As Cell, label As String, f As CutFmt) As RckRow
     RckRow(label, CutKindOf(c), CutShow(c, f))
 
+Rem RckShow is what a scrolling shell prints and what the tape records,
+Rem so it is the render that has to be complete on its own: an empty
+Rem stack says so rather than printing nothing, and a deep one names its
+Rem depth rather than running down the terminal. Four levels because
+Rem x/y/z/t are the four a stack machine has names for.
+Rem
+Rem RckRows is NOT capped and gains neither line. A graphical shell paints
+Rem every row it has room for and puts the depth in a status field, which
+Rem is a different arrangement of the same truth rather than a second
+Rem truth — the rows themselves still come from one place.
+Def RckShowCap() As Number
+    4
+
 Def RckShow(st As RckState) As List Of String
-    Map(RckRows(st), Fn(r) => RowLabel(r) & ": " & RowText(r))
+    RckShown(RckRows(st))
+
+Def RckShown(rows As List Of RckRow) As List Of String
+    If IsEmpty(rows) Then
+        { "[ empty ]" }
+    Else
+        If Length(rows) <= RckShowCap() Then
+            RckLabelled(rows)
+        Else
+            Prepend("[ depth " & Str(Length(rows)) & " ]", RckLabelled(RckTopRows(rows)))
+
+Rem The rows arrive deepest first, so the shallowest RckShowCap of them
+Rem are the LAST ones — and the marker goes above them, at the deep end,
+Rem which is where the rows it is counting for would have been.
+Def RckTopRows(rows As List Of RckRow) As List Of RckRow
+    DropN(rows, Length(rows) - RckShowCap())
+
+Def RckLabelled(rows As List Of RckRow) As List Of String
+    Map(rows, Fn(r) => RowLabel(r) & ": " & RowText(r))
 
 Rem ---- help and the word list ------------------------------------------
 
@@ -706,10 +770,113 @@ Def RckLastLine(cur As String) As List Of String
     Else
         { "  " & cur }
 
+Rem ---- the trace -------------------------------------------------------
+Rem One row per token, and the row is a value like everything else: it
+Rem goes onto the output lines the shell prints, so TRACE costs the engine
+Rem no effect and no terminal.
+Rem
+Rem THE INDENT IS NOT DECORATION. A user word's body, a { } literal and a
+Rem combinator's program all run on a FRESH stack, so the cells on an
+Rem indented row are a different stack from the ones on the row above it.
+Rem Printed flat, the cascade would read as one stack that suddenly lost
+Rem its lower half. Two spaces per level of RckDeep is what says otherwise,
+Rem and the » and « rows are where the change of stack happens.
+Rem
+Rem Trace rows deliberately do NOT go through RckSaid. That suppresses
+Rem output below the entry line, which is right for an "ok:" nobody asked
+Rem for and exactly wrong for a trace: the sub-evaluation RckSaid hides is
+Rem the thing someone turned TRACE on to see.
+
+Def RckTraceMark() As String
+    "|"
+
+Def RckTraceIn() As String
+    "»"
+
+Def RckTraceOut() As String
+    "«"
+
+Rem The field the token sits in shrinks as the indent grows, so the marker
+Rem holds its column. A token too long for what is left is not cut short —
+Rem the marker gives way for that row instead, because a trace that
+Rem truncates the token is a trace of something else.
+Def RckTraceRow(deep As Number, t As String, mark As String, text As String) As String
+    Let pad = RckTraceStep() * (deep + 1)
+    Let wide = Max(RckTraceBar() - 1 - pad, 1)
+    StrRep(" ", pad) & PadRight(t, Max(wide, Len(t) + 1)) & mark & " " & text
+
+Rem A stack as a trace row shows it: deepest first, top-rightmost, the
+Rem same order and the same CutShow the labelled render uses. CutCells
+Rem hands them back top first, hence the Reverse.
+Def RckTraceStack(st As RckState) As String
+    If CutDepth(RckStack(st)) = 0 Then
+        "[ empty ]"
+    Else
+        Join(Reverse(Map(CutCells(RckStack(st)), Fn(c) => CutShow(c, RckFmt(st)))), " ")
+
+Rem Tracing is read off the state BEFORE and AFTER, and both must agree,
+Rem so TRACE does not trace itself turning on and NOTRACE does not trace
+Rem itself turning off. Either would be a row about the trace rather than
+Rem about the calculation.
+Def RckTracing(st0 As RckState, st2 As RckState) As Boolean
+    RckTrace(st0) And RckTrace(st2)
+
+Rem A token that ran: the stack it left, at the caller's indent.
+Def RckTraceDid(st0 As RckState, t As String, st2 As RckState, out As List Of String) As List Of String
+    If RckTracing(st0, st2) Then
+        Append(out, RckTraceRow(RckDeep(st0), t, RckTraceMark(), RckTraceStack(st2)))
+    Else
+        out
+
+Rem Entering a sub-evaluation: the tokens about to run, where the stack
+Rem would otherwise be. A combinator emits one of these per pass, which is
+Rem what makes a MAP over three elements read as three runs of one program.
+Def RckTraceInto(st As RckState, name As String, toks As List Of String, out As List Of String) As List Of String
+    If RckTrace(st) Then
+        Append(out, RckTraceRow(RckDeep(st), name, RckTraceIn(), Join(toks, " ")))
+    Else
+        out
+
+Rem Leaving one, once its answer has been merged into the caller: the
+Rem caller's stack, at the caller's indent. One per token however many
+Rem passes ran, because one token is what returned.
+Def RckTraceBack(st As RckState, name As String, st3 As RckState, out As List Of String) As List Of String
+    If RckTracing(st, st3) Then
+        Append(out, RckTraceRow(RckDeep(st), name, RckTraceOut(), RckTraceStack(st3)))
+    Else
+        out
+
+Def RckBackFrom(st As RckState, name As String, st3 As RckState, out As List Of String) As RckRun
+    RckWent(st3, RckTraceBack(st, name, st3, out))
+
+Rem The tags whose own row is a « rather than a |, because they run a
+Rem program and RckTraceBack has already reported them coming back. A
+Rem second row from RckDidWord would say the same thing twice.
+Def RckRunsProg(tag As String) As Boolean
+    Contains({ "IFT", "IFTE", "TIMES", "MAP", "FILTER", "FOLD" }, tag)
+
 Rem ---- the stack, as the evaluator moves it ----------------------------
 
+Rem Any ordinary step forward abandons the forward history: the user has
+Rem moved on, and a REDO into a branch they left would put back a stack
+Rem that does not follow from what is on screen. UNDO and REDO are the two
+Rem exceptions, being the words that own it. Guarding on empty keeps this
+Rem free for every session that never undoes anything, which is most.
+Def RckMoved(st As RckState) As RckState
+    If IsEmpty(RckFore(st)) Then
+        st
+    Else
+        With(st, RckFore = { })
+
 Def RckPushed(st As RckState, c As Cell) As RckState
-    With(st, RckStack = CutPush(RckStack(st), c))
+    With(RckMoved(st), RckStack = CutPush(RckStack(st), c))
+
+Rem A literal is a token too, and gets its row like any other.
+Def RckPushedOn(st As RckState, t As String, c As Cell, more As List Of String, out As List Of String) As RckRun
+    RckWalkedOn(st, t, RckPushed(st, c), more, out)
+
+Def RckWalkedOn(st As RckState, t As String, st2 As RckState, more As List Of String, out As List Of String) As RckRun
+    RckWalk(st2, more, RckTraceDid(st, t, st2, out))
 
 Def RckPushAll(st As RckState, cells As List Of Cell) As RckState
     With(st, RckStack = Fold(cells, RckStack(st), CutPush))
@@ -802,10 +969,10 @@ Rem the language's own and is inherited rather than corrected here, since
 Rem a dictionary name starting with a digit is not a name anyone writes.
 Def RckAtom(st As RckState, t As String, more As List Of String, out As List Of String) As RckRun
     If RckIsText(t) Then
-        RckWalk(RckPushed(st, CutStr(RckTextOf(t))), more, out)
+        RckPushedOn(st, t, CutStr(RckTextOf(t)), more, out)
     Else
         If IsNumeric(t) Then
-            RckWalk(RckPushed(st, CutNum(Val(t))), more, out)
+            RckPushedOn(st, t, CutNum(Val(t)), more, out)
         Else
             RckNamed(st, Upper(t), more, out)
 
@@ -843,15 +1010,30 @@ Def RckAsked(st As RckState, tag As String, name As String) As List Of String
     Else
         RckHelp(st, name)
 
-Rem Every other word: take its arguments, run it, walk on.
+Rem Every other word: take its arguments, run it, walk on. This is the one
+Rem funnel every word application passes through, so it is where the
+Rem forward history goes — except for the two words that own it.
 Def RckWorked(st As RckState, e As RckEntry, more As List Of String, out As List Of String) As RckRun
-    Select Case RckArgsOf(st, e)
+    Select Case RckArgsOf(RckMovedFor(st, e), e)
         Case RckHasArgs(st1, args)
             RckThen(RckRan(st1, e, args, out), more)
         Case RckArgsBad(w)
             RckBroke(w, out)
         Case Else
             RckBroke(WordName(e) & " could not take its arguments", out)
+
+Def RckMovedFor(st As RckState, e As RckEntry) As RckState
+    If RckOwnsFore(e) Then
+        st
+    Else
+        RckMoved(st)
+
+Def RckOwnsFore(e As RckEntry) As Boolean
+    Select Case WordBody(e)
+        Case RckCore(tag)
+            tag = "UNDO" Or tag = "REDO"
+        Case Else
+            False
 
 Def RckThen(r As RckRun, more As List Of String) As RckRun
     Select Case r
@@ -865,15 +1047,38 @@ Def RckThen(r As RckRun, more As List Of String) As RckRun
 Def RckRan(st As RckState, e As RckEntry, args As List Of Cell, out As List Of String) As RckRun
     Select Case WordBody(e)
         Case RckPure(f)
-            RckWorkDone(st, Call(f, args), out)
+            RckDidWord(st, e, RckWorkDone(st, Call(f, args), out))
         Case RckTouch(f)
-            RckWorkDone(st, Call(f, args), out)
+            RckDidWord(st, e, RckWorkDone(st, Call(f, args), out))
         Case RckUser(ts, touch)
             RckRanUser(st, WordName(e), ts, args, out)
         Case RckCore(tag)
-            RckCoreDo(st, tag, args, out)
+            RckDidWord(st, e, RckCoreDo(st, tag, args, out))
         Case Else
             RckBroke(WordName(e) & " has no body", out)
+
+Rem The | row for a word that did not run a program. A user word and the
+Rem combinators are left out because RckTraceBack has already reported
+Rem them coming back, and a token gets one row.
+Def RckDidWord(st As RckState, e As RckEntry, r As RckRun) As RckRun
+    Select Case r
+        Case RckWent(st2, out2)
+            RckWentSaid(st, e, st2, out2)
+        Case Else
+            r
+
+Def RckWentSaid(st As RckState, e As RckEntry, st2 As RckState, out As List Of String) As RckRun
+    If RckOwnsRow(e) Then
+        RckWent(st2, out)
+    Else
+        RckWent(st2, RckTraceDid(st, WordName(e), st2, out))
+
+Def RckOwnsRow(e As RckEntry) As Boolean
+    Select Case WordBody(e)
+        Case RckCore(tag)
+            RckRunsProg(tag)
+        Case Else
+            False
 
 Def RckWorkDone(st As RckState, w As RckWork, out As List Of String) As RckRun
     Select Case w
@@ -888,9 +1093,9 @@ Rem A user word: one cell in on a fresh stack, and whatever it leaves
 Rem pushed back onto the caller's. The state it changed on the way —
 Rem registers, dictionary, modes — comes back with it.
 Def RckRanUser(st As RckState, name As String, ts As List Of String, args As List Of Cell, out As List Of String) As RckRun
-    Select Case RckSub(st, args, ts, out)
+    Select Case RckSubIn(st, name, args, ts, out)
         Case RckWent(st2, out2)
-            RckWent(RckKeep(st, st2, Reverse(CutCells(RckStack(st2)))), out2)
+            RckBackFrom(st, name, RckKeep(st, st2, Reverse(CutCells(RckStack(st2)))), out2)
         Case RckBroke(w, out2)
             RckBroke(w, out2)
         Case Else
@@ -903,6 +1108,12 @@ Rem that word; banked from the entry line it is the answer to the line,
 Rem which is what the worked sessions show.
 Def RckSub(st As RckState, given As List Of Cell, toks As List Of String, out As List Of String) As RckRun
     RckWalk(With(st, RckStack = CutOf(given), RckDeep = RckDeep(st) + 1), toks, out)
+
+Rem The same, announced. Every sub-evaluation in the machine goes through
+Rem here so that turning TRACE on cannot miss one: a user word's body, a
+Rem { } literal, and every pass of every combinator.
+Def RckSubIn(st As RckState, name As String, given As List Of Cell, toks As List Of String, out As List Of String) As RckRun
+    RckSub(st, given, toks, RckTraceInto(st, name, toks, out))
 
 Rem What a program must leave: exactly one cell. A program that leaves
 Rem none or two has been mistyped, and saying so beats quietly taking
@@ -929,9 +1140,9 @@ Def RckDoList(st As RckState, more As List Of String, out As List Of String) As 
             RckBroke("the list did not scan", out)
 
 Def RckListMade(st As RckState, inner As List Of String, out As List Of String) As RckRun
-    Select Case RckSub(st, { }, inner, out)
+    Select Case RckSubIn(st, RckListOpen(), { }, inner, out)
         Case RckWent(st2, out2)
-            RckWent(RckKeep(st, st2, { CutList(Reverse(CutCells(RckStack(st2)))) }), out2)
+            RckBackFrom(st, RckListOpen(), RckKeep(st, st2, { CutList(Reverse(CutCells(RckStack(st2)))) }), out2)
         Case RckBroke(w, out2)
             RckBroke(w, out2)
         Case Else
@@ -943,7 +1154,7 @@ Rem re-readable, and what keeps closures out of the language entirely.
 Def RckDoProg(st As RckState, more As List Of String, out As List Of String) As RckRun
     Select Case RckUpTo(more, RckProgOpen(), RckProgClose())
         Case RckSpanned(inner, tail)
-            RckWalk(RckPushed(st, CutProg(inner)), tail, out)
+            RckPushedOn(st, RckProgOpen(), CutProg(inner), tail, out)
         Case RckSpanBad(w)
             RckBroke(w, out)
         Case Else
@@ -1106,6 +1317,16 @@ Def RckCoreDo(st As RckState, tag As String, args As List Of Cell, out As List O
             RckRcl(st, args, out)
         Case "UNDO"
             RckUndo(st, out)
+        Case "REDO"
+            RckRedo(st, out)
+        Case "TRACE"
+            RckWent(With(st, RckTrace = True), RckSaid(st, out, "trace on"))
+        Case "NOTRACE"
+            RckWent(With(st, RckTrace = False), RckSaid(st, out, "trace off"))
+        Case "TAPE"
+            RckWent(RckPushed(st, CutNum(Length(RckTape(st)))), out)
+        Case "CLEARTAPE"
+            RckWent(With(st, RckTape = { }), out)
         Case "DEG"
             RckWent(With(st, RckAngle = RckDegrees()), out)
         Case "RAD"
@@ -1251,7 +1472,25 @@ Def RckUndo(st As RckState, out As List Of String) As RckRun
     If Length(RckHist(st)) < 2 Then
         RckBroke("there is nothing to undo", out)
     Else
-        RckWent(With(With(st, RckStack = Nth(RckHist(st), 2)), RckHist = DropN(RckHist(st), 2)), out)
+        RckWent(RckUndone(st), out)
+
+Rem Stepping back BANKS the stack it is stepping away from, because this
+Rem is where it would otherwise be lost: the two history entries go, and
+Rem nothing else in the state remembers what was on screen a moment ago.
+Def RckUndone(st As RckState) As RckState
+    With(With(With(st, RckFore = Taken(Prepend(RckStack(st), RckFore(st)), RckHistCap())), RckStack = Nth(RckHist(st), 2)), RckHist = DropN(RckHist(st), 2))
+
+Rem REDO takes one back off. It does NOT push to the history, because the
+Rem line REDO arrived on already did that through RckRemember — which is
+Rem what makes the two exact inverses however many times they alternate.
+Def RckRedo(st As RckState, out As List Of String) As RckRun
+    If IsEmpty(RckFore(st)) Then
+        RckBroke("there is nothing to redo", out)
+    Else
+        RckWent(RckRedone(st), out)
+
+Def RckRedone(st As RckState) As RckState
+    With(With(st, RckStack = First(RckFore(st))), RckFore = Rest(RckFore(st)))
 
 Def RckRemember(st As RckState) As RckState
     With(st, RckHist = Taken(Prepend(RckStack(st), RckHist(st)), RckHistCap()))
@@ -1387,7 +1626,7 @@ Def RckOneShot(st As RckState, word As String, x As Cell, prog As Cell, out As L
             RckBroke(word & " did not answer", out)
 
 Def RckShotAt(st As RckState, word As String, given As List Of Cell, ts As List Of String, out As List Of String) As RckRun
-    Select Case RckSub(st, given, ts, out)
+    Select Case RckSubIn(st, word, given, ts, out)
         Case RckWent(st2, out2)
             RckShotDone(st, word, st2, out2)
         Case RckBroke(w, out2)
@@ -1398,7 +1637,7 @@ Def RckShotAt(st As RckState, word As String, given As List Of Cell, ts As List 
 Def RckShotDone(st As RckState, word As String, st2 As RckState, out As List Of String) As RckRun
     Select Case RckOnly(word, st2)
         Case Ok(v)
-            RckWent(RckKeep(st, st2, { v }), out)
+            RckBackFrom(st, word, RckKeep(st, st2, { v }), out)
         Case Err(w, at)
             RckBroke(w, out)
         Case Else
@@ -1439,7 +1678,7 @@ Def RckOverProg(st As RckState, word As String, xs As List Of Cell, prog As Cell
 Def RckOverStep(a As RckFlow, x As Cell, word As String, ts As List Of String, keep As Boolean) As RckFlow
     Select Case a
         Case RckFlowing(st, done, out)
-            RckOverRan(st, done, x, word, keep, RckSub(st, { x }, ts, out))
+            RckOverRan(st, done, x, word, keep, RckSubIn(st, word, { x }, ts, out))
         Case Else
             a
 
@@ -1482,7 +1721,7 @@ Rem The collected cells come back reversed, since each pass prepended.
 Def RckListed(st As RckState, word As String, a As RckFlow) As RckRun
     Select Case a
         Case RckFlowing(st2, done, out)
-            RckWent(RckKeep(st, st2, { CutList(Reverse(done)) }), out)
+            RckBackFrom(st, word, RckKeep(st, st2, { CutList(Reverse(done)) }), out)
         Case RckFlowBad(w, out)
             RckBroke(w, out)
         Case Else
@@ -1509,7 +1748,7 @@ Def RckFoldProg(st As RckState, xs As List Of Cell, init As Cell, prog As Cell, 
 Def RckFoldStep(a As RckFlow, x As Cell, ts As List Of String) As RckFlow
     Select Case a
         Case RckFlowing(st, acc, out)
-            RckPassed(st, "FOLD", RckSub(st, { First(acc), x }, ts, out))
+            RckPassed(st, "FOLD", RckSubIn(st, "FOLD", { First(acc), x }, ts, out))
         Case Else
             a
 
@@ -1534,7 +1773,7 @@ Def RckTimesProg(st As RckState, x As Cell, prog As Cell, n As Number, out As Li
 Def RckTimesStep(a As RckFlow, ts As List Of String) As RckFlow
     Select Case a
         Case RckFlowing(st, acc, out)
-            RckPassed(st, "TIMES", RckSub(st, { First(acc) }, ts, out))
+            RckPassed(st, "TIMES", RckSubIn(st, "TIMES", { First(acc) }, ts, out))
         Case Else
             a
 
@@ -1561,7 +1800,7 @@ Def RckPassedOne(st As RckState, word As String, st2 As RckState, out As List Of
 Def RckOnlyOut(st As RckState, word As String, a As RckFlow) As RckRun
     Select Case a
         Case RckFlowing(st2, acc, out)
-            RckWent(RckKeep(st, st2, { First(acc) }), out)
+            RckBackFrom(st, word, RckKeep(st, st2, { First(acc) }), out)
         Case RckFlowBad(w, out)
             RckBroke(w, out)
         Case Else
@@ -1573,22 +1812,69 @@ Rem Everything above works on tokens; this is the only door a shell needs.
 Def RckEval(st As RckState, line As String) As RckLine
     Select Case RckTokens(line)
         Case Ok(toks)
-            RckLineDone(st, RckWalk(RckRemember(st), toks, { }))
+            RckLineDone(st, line, RckWalk(RckRemember(st), toks, { }))
         Case Err(w, at)
-            RckStop(st, w, { })
+            RckStop(RckTapedBad(st, line, { }, w), w, { })
         Case Else
-            RckStop(st, "the line did not read", { })
+            RckStop(RckTapedBad(st, line, { }, "the line did not read"), "the line did not read", { })
 
 Rem The error case hands back ST — the state as the line found it, with
 Rem no history entry and nothing the line managed to do before it failed.
-Def RckLineDone(st As RckState, r As RckRun) As RckLine
+Rem The TAPE is the one thing it hands back changed, because a refusal is
+Rem something the user saw and a tape that omitted it would be a record of
+Rem a session that did not happen.
+Def RckLineDone(st As RckState, line As String, r As RckRun) As RckLine
     Select Case r
         Case RckWent(st2, out)
-            RckNext(st2, out)
+            RckNext(RckTapedOk(st, st2, line, out), out)
         Case RckBroke(w, out)
-            RckStop(st, w, out)
+            RckStop(RckTapedBad(st, line, out, w), w, out)
         Case Else
-            RckStop(st, "the line did not answer", { })
+            RckStop(RckTapedBad(st, line, { }, "the line did not answer"), "the line did not answer", { })
+
+Rem ---- the tape --------------------------------------------------------
+Rem What the shell showed, kept in the state: the entry line, whatever the
+Rem line said, and the stack AS RENDERED. RckShow and not RckRows, because
+Rem the tape and the screen have to be the same text — that is the whole
+Rem reason [ empty ] and [ depth n ] belong to the engine's render.
+Rem
+Rem RckLoad does not come through here, so loading a file of definitions
+Rem leaves no rows: the tape is a record of a session, not of a startup.
+
+Def RckTapedOk(st0 As RckState, st2 As RckState, line As String, out As List Of String) As RckState
+    If RckTapeCleared(st0, st2) Then
+        st2
+    Else
+        RckTapeAdd(st2, Concat(Prepend(RckTapeMark() & line, out), RckShow(st2)))
+
+Rem A line that deliberately made the tape SHORTER is not itself recorded.
+Rem CLEARTAPE tears the paper off, and paper torn off does not come back
+Rem with the tearing written on it — without this, the one word whose job
+Rem is to empty the tape could never leave it empty.
+Def RckTapeCleared(st0 As RckState, st2 As RckState) As Boolean
+    Length(RckTape(st2)) < Length(RckTape(st0))
+
+Def RckTapedBad(st As RckState, line As String, out As List Of String, why As String) As RckState
+    RckTapeAdd(st, Concat(Append(Prepend(RckTapeMark() & line, out), RckWhyMark() & why), RckShow(st)))
+
+Def RckTapeMark() As String
+    "> "
+
+Def RckWhyMark() As String
+    "?: "
+
+Def RckTapeAdd(st As RckState, rows As List Of String) As RckState
+    With(st, RckTape = RckTapeKept(Concat(RckTape(st), rows)))
+
+Rem Bounded from the OLD end. The tape reads oldest first, so keeping the
+Rem last RckTapeCap rows means dropping from the front — and a single line
+Rem long enough to overrun the cap on its own still leaves the cap's worth
+Rem of itself rather than nothing.
+Def RckTapeKept(rows As List Of String) As List Of String
+    If Length(rows) <= RckTapeCap() Then
+        rows
+    Else
+        DropN(rows, Length(rows) - RckTapeCap())
 
 Rem ---- the user dictionary as text -------------------------------------
 Rem Split deliberately: the engine makes the lines and reads them back,

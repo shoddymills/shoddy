@@ -197,6 +197,10 @@ write-up on each one, or start at
       <a href="https://shoddymills.github.io/shoddy/mills/tally.html"><img src="docs/media/tally.svg" alt="tally: a spec file and the scatter plot it produces" width="150"></a><br>
       <b>tally</b><br><sub>statistics from a spec file</sub>
     </td>
+    <td align="left" valign="top">
+      <a href="https://shoddymills.github.io/shoddy/mills/halifax.html"><img src="docs/media/halifax.svg" alt="halifax: labelled stack rows above an indented traced cascade" width="150"></a><br>
+      <b>halifax</b><br><sub>a programmable RPN calculator</sub>
+    </td>
   </tr>
 </table>
 

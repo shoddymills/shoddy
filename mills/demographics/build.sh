@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Build / run the demographics mill (Unix: Linux / macOS / WSL).
-# Windows users: run this via Git Bash or WSL (same commands).
+# Windows users: use build.ps1 (same commands).
 #
 #   ./build.sh            build both programs into bin/
 #   ./build.sh build      same as above

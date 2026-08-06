@@ -55,7 +55,7 @@ function Invoke-Machines {
     # only if Shoddy.Machines.X.dll is already built — otherwise the
     # source is spliced in and its defs re-exported, which collides with
     # the real machine downstream (duplicate definition of ANY, etc.).
-    $files = @(Get-ChildItem machines/*.shoddy | Sort-Object Name)
+    $files = @(Get-ChildItem machines/*.shoddy, machines/seeds/*.shoddy | Sort-Object Name)
     $deps = @{}
     foreach ($f in $files) {
         $deps[$f.BaseName] = @(
@@ -102,8 +102,11 @@ function Invoke-Stage {
         -p:SatelliteResourceLanguages=en -p:DebugType=none
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     New-Item -ItemType Directory -Path (Join-Path $StageLib 'bin') -Force | Out-Null
+    New-Item -ItemType Directory -Path (Join-Path $StageLib 'seeds/bin') -Force | Out-Null
     Copy-Item machines/*.shoddy $StageLib
     Copy-Item machines/bin/*.dll (Join-Path $StageLib 'bin')
+    Copy-Item machines/seeds/*.shoddy (Join-Path $StageLib 'seeds')
+    Copy-Item machines/seeds/bin/*.dll (Join-Path $StageLib 'seeds/bin')
     # One timestamp across every staged DLL, newer than every staged
     # source, and identical between them. Copy stamps each file as it
     # goes - alphabetically - and a machine counts as stale when a DLL
@@ -111,7 +114,7 @@ function Invoke-Stage {
     # seq and str, all later in the alphabet) arrived looking stale and
     # rebuilt itself on first use, inside the installed extension.
     $stamp = Get-Date
-    Get-ChildItem (Join-Path $StageLib 'bin') -Filter *.dll |
+    Get-ChildItem (Join-Path $StageLib 'bin'), (Join-Path $StageLib 'seeds/bin') -Filter *.dll |
         ForEach-Object { $_.LastWriteTime = $stamp }
     # Roslyn, Silk.NET, GLFW and OpenAL Soft are redistributed in the
     # package, so their notices have to travel with it — LGPL-2.1 for
@@ -269,6 +272,7 @@ function Invoke-Clean {
     if (Test-Path bin) { Remove-Item -Recurse -Force bin }
     if (Test-Path artifacts) { Remove-Item -Recurse -Force artifacts }
     if (Test-Path machines/bin) { Remove-Item -Recurse -Force machines/bin }
+    if (Test-Path machines/seeds/bin) { Remove-Item -Recurse -Force machines/seeds/bin }
     foreach ($d in $StageMill, $StageLib) {
         if (Test-Path $d) { Remove-Item -Recurse -Force $d }
     }

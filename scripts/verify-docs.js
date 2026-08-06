@@ -40,15 +40,19 @@ const path = require("path");
 const root = path.resolve(__dirname, "..");
 
 // ---- ground truth: machine -> machines it includes ----
+// The reckoner seeds live one level deeper, in machines/seeds/, so both
+// directories are walked into the same flat machine-name space.
 const includes = {};
 const words = {};
-for (const f of fs.readdirSync(path.join(root, "machines"))) {
-  if (!f.endsWith(".shoddy")) continue;
-  const name = f.replace(".shoddy", "");
-  const txt = fs.readFileSync(path.join(root, "machines", f), "utf8");
-  includes[name] = [...txt.matchAll(/^Include "([a-z0-9-]+)\.shoddy"/gm)].map(m => m[1]);
-  words[name] = [...txt.matchAll(/^Def ([A-Za-z0-9]+)/gm)].map(m => m[1]);
-}
+const machineDirs = ["machines", path.join("machines", "seeds")];
+for (const dir of machineDirs)
+  for (const f of fs.readdirSync(path.join(root, dir))) {
+    if (!f.endsWith(".shoddy")) continue;
+    const name = f.replace(".shoddy", "");
+    const txt = fs.readFileSync(path.join(root, dir, f), "utf8");
+    includes[name] = [...txt.matchAll(/^Include "([a-z0-9-]+)\.shoddy"/gm)].map(m => m[1]);
+    words[name] = [...txt.matchAll(/^Def ([A-Za-z0-9]+)/gm)].map(m => m[1]);
+  }
 
 // ---- ground truth: machine -> machines that include it ----
 const usedByMachines = {};

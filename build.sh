@@ -52,7 +52,7 @@ machines() {
     # only if Shoddy.Machines.X.dll is already built — otherwise the
     # source is spliced in and its defs re-exported, which collides with
     # the real machine downstream (duplicate definition of ANY, etc.).
-    pending=$(echo machines/*.shoddy)
+    pending=$(echo machines/*.shoddy machines/seeds/*.shoddy)
     built=" "
     while [ -n "$pending" ]; do
         progress=
@@ -61,7 +61,7 @@ machines() {
             stem=$(basename "$m" .shoddy | tr 'A-Z' 'a-z')
             unmet=
             for d in $(sed -n 's/^[[:space:]]*Include[[:space:]]*"\(.*\)\.shoddy".*/\1/p' "$m" | tr 'A-Z' 'a-z'); do
-                [ -f "machines/$d.shoddy" ] || continue
+                [ -f "machines/$d.shoddy" ] || [ -f "machines/seeds/$d.shoddy" ] || continue
                 case "$built" in *" $d "*) ;; *) unmet=1 ;; esac
             done
             if [ -z "$unmet" ]; then
@@ -124,9 +124,11 @@ stage() {
     # ~5 MB of the package for messages the mill never surfaces.
     dotnet publish src/Shoddy.Mill -c Release -o "$STAGE_MILL" \
         -p:SatelliteResourceLanguages=en -p:DebugType=none
-    mkdir -p "$STAGE_LIB/bin"
+    mkdir -p "$STAGE_LIB/bin" "$STAGE_LIB/seeds/bin"
     cp machines/*.shoddy "$STAGE_LIB"
     cp machines/bin/*.dll "$STAGE_LIB/bin"
+    cp machines/seeds/*.shoddy "$STAGE_LIB/seeds"
+    cp machines/seeds/bin/*.dll "$STAGE_LIB/seeds/bin"
     # One timestamp across every staged DLL, newer than every staged
     # source. cp stamps them in the order it copies — alphabetical — and
     # a machine is stale when a DLL it depends on is newer than its own,
@@ -138,7 +140,7 @@ stage() {
     # each file, and those differ by a tick in the same alphabetical
     # order, which is all the staleness test compares.
     : > "$STAGE_LIB/bin/.stamp"
-    touch -r "$STAGE_LIB/bin/.stamp" "$STAGE_LIB"/bin/*.dll
+    touch -r "$STAGE_LIB/bin/.stamp" "$STAGE_LIB"/bin/*.dll "$STAGE_LIB"/seeds/bin/*.dll
     rm -f "$STAGE_LIB/bin/.stamp"
     # Roslyn, Silk.NET, GLFW and OpenAL Soft are redistributed in the
     # package, so their notices have to travel with it — LGPL-2.1 for
@@ -243,7 +245,7 @@ case "${1:-help}" in
         )
         ;;
     clean)
-        rm -rf bin artifacts machines/bin "$STAGE_MILL" "$STAGE_LIB"
+        rm -rf bin artifacts machines/bin machines/seeds/bin "$STAGE_MILL" "$STAGE_LIB"
         find src -type d \( -name bin -o -name obj \) -prune -exec rm -rf {} +
         echo "cleaned."
         ;;

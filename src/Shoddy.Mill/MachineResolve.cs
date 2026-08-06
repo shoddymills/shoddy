@@ -76,9 +76,20 @@ static class MachineResolve
                 System.Text.RegularExpressions.Regex.Match(
                     line, "^Include \"([A-Za-z0-9_.-]+\\.shoddy)\"");
             if (!m.Success) continue;
-            string depDll = MachineSet.DllPathFor(Path.Combine(dir, m.Groups[1].Value));
+            string depDll = DependencyDllFor(dir, m.Groups[1].Value);
             if (File.Exists(depDll) && File.GetLastWriteTimeUtc(depDll) > built) return true;
         }
         return false;
+    }
+
+    /// <summary>Where an Include's DLL would be, checked beside the
+    /// includer first (the common case) and one directory up otherwise — a
+    /// reckoner seed in machines/seeds/ including a machine that lives one
+    /// level up, in machines/ itself.</summary>
+    static string DependencyDllFor(string includerDir, string includedName)
+    {
+        string sibling = MachineSet.DllPathFor(Path.Combine(includerDir, includedName));
+        if (File.Exists(sibling)) return sibling;
+        return MachineSet.DllPathFor(Path.Combine(includerDir, "..", includedName));
     }
 }

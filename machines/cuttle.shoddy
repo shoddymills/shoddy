@@ -1,0 +1,603 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem cuttle.shoddy — Shoddy standard library: the runtime stack
+Rem
+Rem Shoddy's own stack exists only at weave time: Dup Swap Rot are
+Rem spellings inside a Def, not values a program can hold. This machine
+Rem reifies that model as a runtime value — a heterogeneous stack any
+Rem mill can thread through its loop, and the pure algebra over it.
+Rem The interpreter that evaluates RPN token streams against it is
+Rem reckoner.shoddy; this file knows nothing about tokens.
+Rem
+Rem CUTTLING is the finishing operation that folds a finished piece back
+Rem and forth into a layered pile — the last fold laid is the first
+Rem lifted, which is a last-in-first-out store described without
+Rem metaphor.
+Rem
+Rem NOTHING HERE ABORTS. Every popping word answers with a value: an
+Rem underflow, a bad level, a kind mismatch and a matrix of the wrong
+Rem shape are all returned, never raised, because a stack machine that
+Rem kills the session on underflow is unusable for the interactive
+Rem purpose it exists for. That is why MatAdd and MatMul are pre-flighted
+Rem here rather than called and hoped for: they Error, and an Error would
+Rem take the mill down with the user's stack, dictionary and registers.
+Rem
+Rem THE VALUE SET IS THE COUPLING. Every kind a mill can hold lives in
+Rem one declaration, so this machine is the one part a new domain edits:
+Rem a Cell case, a kind constant, an arm of CutShow, and an Include.
+Rem That is why it names Pair, Money and Matrix, and why a caller that
+Rem DESTRUCTURES one of those cells needs the owning machine included
+Rem too — the cell hands back a Money, and only money.shoddy has Cents.
+Rem Cases append, never insert: an old match keeps meaning what it meant.
+Rem
+Rem Pure throughout. Includes are bare, never As.
+Rem ==================================================================
+
+Include "seq.shoddy"
+Include "str.shoddy"
+Include "money.shoddy"
+Include "matrix.shoddy"
+
+Rem ---- the value set ---------------------------------------------------
+Rem Closed for v1 and grown by APPENDING a case. A quoted program is a
+Rem token list because there are no closures at the keyboard: a program
+Rem is text that can be printed back, saved, and re-read. A pair holds
+Rem two Cells, so "rate" 0.05 PAIR gives records on the stack.
+
+Type Cell = CutNum(CNum As Number) | CutStr(CText As String) | CutBool(CFlag As Boolean) | CutList(CItems As List Of Cell) | CutProg(CTokens As List Of String) | CutPair(CPair As Pair) | CutMoney(CMoney As Money) | CutMat(CMat As Matrix)
+
+Rem The stack itself. Top of the stack is the FRONT of the list, so a
+Rem push is a Prepend and the display order (x y z t, newest first) is
+Rem the storage order.
+
+Type Stack
+    CutCells As List Of Cell
+
+Rem ---- what a word answers ---------------------------------------------
+Rem Three shapes, one discipline: the failing case carries the state as
+Rem it was, so a shell that matches the error still has the user's stack.
+
+Type CutTake = CutTook(TookVal As Cell, TookRest As Stack) | CutTakeBad(TakeWhy As String, TakeStack As Stack)
+
+Type CutOut = CutDone(DoneStack As Stack) | CutOutBad(OutWhy As String, OutStack As Stack)
+
+Type CutCalc = CutGot(GotVal As Cell) | CutCalcBad(CalcWhy As String)
+
+Rem ---- building and inspecting -----------------------------------------
+
+Def CutNew() As Stack
+    Stack({ })
+
+Rem The cells in the order they would be TYPED — the last one ends up on
+Rem top. CutCells reads back the other way (top first), so the round trip
+Rem is CutOf(Reverse(CutCells(s))).
+Def CutOf(values As List Of Cell) As Stack
+    Fold(values, CutNew(), CutPush)
+
+Def CutPush(s As Stack, c As Cell) As Stack
+    Stack(Prepend(c, CutCells(s)))
+
+Def CutDepth(s As Stack) As Number
+    Length(CutCells(s))
+
+Def CutClear(s As Stack) As Stack
+    CutNew()
+
+Rem "SWAP needs 2, the stack holds 1" — the message every underflow makes.
+Def CutShort(word As String, need As Number, got As Number) As String
+    word & " needs " & Str(need) & ", the stack holds " & Str(got)
+
+Def CutPop(s As Stack) As CutTake
+    If CutDepth(s) < 1 Then
+        CutTakeBad(CutShort("POP", 1, CutDepth(s)), s)
+    Else
+        CutTook(First(CutCells(s)), Stack(Rest(CutCells(s))))
+
+Rem ---- the pure algebra -------------------------------------------------
+Rem Forth's shuffles, each answering rather than aborting when the stack
+Rem is too shallow for it.
+
+Def CutDup(s As Stack) As CutOut
+    If CutDepth(s) < 1 Then
+        CutOutBad(CutShort("DUP", 1, CutDepth(s)), s)
+    Else
+        CutDone(CutPush(s, First(CutCells(s))))
+
+Def CutDrop(s As Stack) As CutOut
+    If CutDepth(s) < 1 Then
+        CutOutBad(CutShort("DROP", 1, CutDepth(s)), s)
+    Else
+        CutDone(Stack(Rest(CutCells(s))))
+
+Def CutSwap(s As Stack) As CutOut
+    If CutDepth(s) < 2 Then
+        CutOutBad(CutShort("SWAP", 2, CutDepth(s)), s)
+    Else
+        Let xs = CutCells(s)
+        CutDone(Stack(Prepend(Nth(xs, 2), Prepend(First(xs), DropN(xs, 2)))))
+
+Def CutOver(s As Stack) As CutOut
+    If CutDepth(s) < 2 Then
+        CutOutBad(CutShort("OVER", 2, CutDepth(s)), s)
+    Else
+        CutDone(CutPush(s, Nth(CutCells(s), 2)))
+
+Def CutNip(s As Stack) As CutOut
+    If CutDepth(s) < 2 Then
+        CutOutBad(CutShort("NIP", 2, CutDepth(s)), s)
+    Else
+        Let xs = CutCells(s)
+        CutDone(Stack(Prepend(First(xs), DropN(xs, 2))))
+
+Def CutTuck(s As Stack) As CutOut
+    If CutDepth(s) < 2 Then
+        CutOutBad(CutShort("TUCK", 2, CutDepth(s)), s)
+    Else
+        Let xs = CutCells(s)
+        CutDone(Stack(Prepend(First(xs), Prepend(Nth(xs, 2), Prepend(First(xs), DropN(xs, 2))))))
+
+Rem ( a b c -- b c a ): the third cell down comes to the top, which is
+Rem ROLL at level 3 and is written as exactly that.
+Def CutRot(s As Stack) As CutOut
+    If CutDepth(s) < 3 Then
+        CutOutBad(CutShort("ROT", 3, CutDepth(s)), s)
+    Else
+        CutRoll(s, 3)
+
+Rem Levels are 1-based FROM THE TOP: level 1 is the top cell. A level
+Rem that is not a whole number of at least 1 is refused rather than
+Rem rounded, because 2.5 is a typo and answering it would hide one.
+Def CutLevel(word As String, n As Number) As String
+    word & " needs a level of 1 or more, got " & Str(n)
+
+Def CutBadLevel(n As Number) As Boolean
+    n < 1 Or n <> Floor(n)
+
+Rem ROLL moves the nth cell to the top; ROLL 2 is SWAP and ROLL 3 is ROT.
+Def CutRoll(s As Stack, n As Number) As CutOut
+    If CutBadLevel(n) Then
+        CutOutBad(CutLevel("ROLL", n), s)
+    Else
+        If CutDepth(s) < n Then
+            CutOutBad(CutShort("ROLL", n, CutDepth(s)), s)
+        Else
+            Let xs = CutCells(s)
+            CutDone(Stack(Prepend(Nth(xs, n), Concat(Taken(xs, n - 1), DropN(xs, n)))))
+
+Rem PICK copies the nth cell to the top; PICK 1 is DUP and PICK 2 is OVER.
+Def CutPick(s As Stack, n As Number) As CutOut
+    If CutBadLevel(n) Then
+        CutOutBad(CutLevel("PICK", n), s)
+    Else
+        If CutDepth(s) < n Then
+            CutOutBad(CutShort("PICK", n, CutDepth(s)), s)
+        Else
+            CutDone(CutPush(s, Nth(CutCells(s), n)))
+
+Rem ---- kinds -------------------------------------------------------------
+Rem One constant per case, so a shell tags a row without writing the
+Rem spelling out, and a mismatch message names both sides in the same
+Rem words the shell shows. CutKindUnknown is what an unmatched case
+Rem degrades to: a Cell case appended tomorrow reads as UNKNOWN in an
+Rem old match rather than breaking it.
+
+Def CutKindNumber() As String
+    "NUMBER"
+
+Def CutKindString() As String
+    "STRING"
+
+Def CutKindBoolean() As String
+    "BOOLEAN"
+
+Def CutKindList() As String
+    "LIST"
+
+Def CutKindProgram() As String
+    "PROGRAM"
+
+Def CutKindPair() As String
+    "PAIR"
+
+Def CutKindMoney() As String
+    "MONEY"
+
+Def CutKindMatrix() As String
+    "MATRIX"
+
+Def CutKindUnknown() As String
+    "UNKNOWN"
+
+Def CutKindOf(c As Cell) As String
+    Select Case c
+        Case CutNum(x)
+            CutKindNumber()
+        Case CutStr(t)
+            CutKindString()
+        Case CutBool(b)
+            CutKindBoolean()
+        Case CutList(xs)
+            CutKindList()
+        Case CutProg(ts)
+            CutKindProgram()
+        Case CutPair(p)
+            CutKindPair()
+        Case CutMoney(m)
+            CutKindMoney()
+        Case CutMat(m)
+            CutKindMatrix()
+        Case Else
+            CutKindUnknown()
+
+Rem ---- the display format ------------------------------------------------
+Rem Mode plus digits, held by the caller and handed in: this machine has
+Rem no state. STD is the default and the one a session starts in — a
+Rem whole number prints as a whole number and everything else to the
+Rem runtime's own ten significant digits. FIX/SCI/ENG are the three the
+Rem user sets, digits meaning decimal places in all three.
+
+Def CutModeStd() As String
+    "STD"
+
+Def CutModeFix() As String
+    "FIX"
+
+Def CutModeSci() As String
+    "SCI"
+
+Def CutModeEng() As String
+    "ENG"
+
+Type CutFmt
+    FmtMode   As String
+    FmtDigits As Number
+
+Def CutFmtStd() As CutFmt
+    CutFmt(CutModeStd(), 0)
+
+Rem THE FROZEN DISPLAY WIDTH: how many columns one cell's text may take
+Rem before an aggregate abbreviates. 76 is an 80-column line less the
+Rem "x: " label. It is a WIDTH and not an element count on purpose —
+Rem twenty-five small numbers are worth showing whole where three rows
+Rem of four are not, and only a width can tell those apart.
+Def CutBound() As Number
+    76
+
+Rem "... 157 more". ASCII, not the single-character ellipsis: the mill
+Rem reads a UTF-8 source into one character but writes it back as one
+Rem BYTE, so a saved or re-read session would lose it.
+Def CutMoreMark() As String
+    "... "
+
+Def CutMoreOf(n As Number) As String
+    CutMoreMark() & Str(n) & " more"
+
+Rem ---- rendering ---------------------------------------------------------
+Rem One path, so the line-oriented and row-oriented renders a shell may
+Rem ask for cannot disagree: both are built from CutShow.
+
+Rem The exponent SCI or ENG puts a number in — a multiple of step, so
+Rem step 1 is scientific and step 3 engineering.
+Def CutSciExp(x As Number, step As Number) As Number
+    Let e0 = Floor(Log10(Abs(x)))
+    e0 - Wrap(e0, step)
+
+Rem Rounding the mantissa can carry it up to the next decade (9.999 at
+Rem two places is 10.00, which is not scientific notation), and Log10 of
+Rem an exact power of ten can land a hair under. One step up fixes both.
+Def CutSciAt(x As Number, digits As Number, step As Number, e As Number) As String
+    Let d = Max(digits, 0)
+    Let m = x / 10 ^ e
+    If Abs(Round(m * 10 ^ d)) >= 10 ^ (step + d) Then
+        CutSciAt(x, digits, step, e + step)
+    Else
+        ToFixed(m, digits) & "E" & Ifte(e < 0, "-", "+") & PadZero(Abs(e), 2)
+
+Def CutSci(x As Number, digits As Number, step As Number) As String
+    If x = 0 Then
+        ToFixed(0, digits) & "E+00"
+    Else
+        CutSciAt(x, digits, step, CutSciExp(x, step))
+
+Def CutShowNum(x As Number, f As CutFmt) As String
+    Select Case FmtMode(f)
+        Case CutModeFix()
+            ToFixed(x, FmtDigits(f))
+        Case CutModeSci()
+            CutSci(x, FmtDigits(f), 1)
+        Case CutModeEng()
+            CutSci(x, FmtDigits(f), 3)
+        Case Else
+            Str(x)
+
+Rem How wide "{ a b c  ... n more }" comes out: 4 for the braces and
+Rem their inner spaces, the elements and their separators, and the tail
+Rem when there is one.
+Def CutRowWidth(inner As Number, k As Number, total As Number) As Number
+    4 + inner + Ifte(k >= total, 0, 2 + Len(CutMoreOf(total - k)))
+
+Rem How many elements fit inside the bound, greedily, always at least
+Rem one: a single element wider than the whole line is still shown.
+Def CutFitCount(left As List Of String, total As Number, k As Number, inner As Number) As Number
+    If IsEmpty(left) Then
+        Max(k, 1)
+    Else
+        Let w = inner + Ifte(k = 0, 0, 1) + Len(First(left))
+        If CutRowWidth(w, k + 1, total) > CutBound() Then
+            Max(k, 1)
+        Else
+            CutFitCount(Rest(left), total, k + 1, w)
+
+Rem The whole thing first, and only then a prefix of it. Fitting greedily
+Rem from the start would charge every step for a marker the finished line
+Rem may not carry: twenty-five primes come to 74 columns entire, but the
+Rem twenty-second of them plus "... 3 more" comes to more than 76, so a
+Rem walk that never tried the whole would abbreviate a list that fits.
+Def CutJoinFit(texts As List Of String, total As Number) As String
+    Let whole = "{ " & Join(texts, " ") & " }"
+    If Length(texts) >= total And Len(whole) <= CutBound() Then
+        whole
+    Else
+        CutJoinPart(texts, total)
+
+Def CutJoinPart(texts As List Of String, total As Number) As String
+    Let k = CutFitCount(texts, total, 0, 0)
+    Let head = Join(Taken(texts, k), " ")
+    If k >= total Then
+        "{ " & head & " }"
+    Else
+        "{ " & head & "  " & CutMoreOf(total - k) & " }"
+
+Rem Only the first CutBound() elements are ever rendered, however long
+Rem the list: no element can be narrower than one column, so nothing
+Rem past that could have fitted. A ten-thousand-element list costs the
+Rem same to display as a short one.
+Def CutShowList(xs As List Of Cell, f As CutFmt) As String
+    If IsEmpty(xs) Then
+        "{ }"
+    Else
+        CutJoinFit(Map(Taken(xs, CutBound()), Fn(c) => CutShow(c, f)), Length(xs))
+
+Def CutDims(m As Matrix) As String
+    Str(Rows(m)) & "x" & Str(Cols(m))
+
+Rem Dimensions always, and the rows too at small sizes — a 2x2 is worth
+Rem reading, a 40x40 is worth counting. Small means WHOLLY shown: a body
+Rem that had to abbreviate is a body that was not worth printing, and
+Rem since a matrix holds nothing but numbers the marker cannot be a cell.
+Def CutShowMat(m As Matrix, f As CutFmt) As String
+    Let head = CutDims(m)
+    Let body = CutShowList(Map(Range(1, Rows(m)), Fn(r) => CutList(Map(ToList(MatRow(m, r)), CutNum))), f)
+    If Instr(body, CutMoreMark()) = 0 And Len(head) + 1 + Len(body) <= CutBound() Then
+        head & " " & body
+    Else
+        head
+
+Def CutShowProg(ts As List Of String) As String
+    If IsEmpty(ts) Then
+        "[ ]"
+    Else
+        "[ " & Join(ts, " ") & " ]"
+
+Def CutShow(c As Cell, f As CutFmt) As String
+    Select Case c
+        Case CutNum(x)
+            CutShowNum(x, f)
+        Case CutStr(t)
+            Chr(34) & t & Chr(34)
+        Case CutBool(b)
+            Ifte(b, "True", "False")
+        Case CutList(xs)
+            CutShowList(xs, f)
+        Case CutProg(ts)
+            CutShowProg(ts)
+        Case CutPair(p)
+            "( " & CutShow(Fst(p), f) & " " & CutShow(Snd(p), f) & " )"
+        Case CutMoney(m)
+            MoneyFmt(m)
+        Case CutMat(m)
+            CutShowMat(m, f)
+        Case Else
+            "<" & CutKindUnknown() & ">"
+
+Rem ---- equality ----------------------------------------------------------
+Rem Structural, and never =: a List is a quotation and compares by
+Rem identity, so { 1 2 3 } = { 1 2 3 } is False in the language. Two
+Rem cells of different kinds are unequal rather than an error — asking
+Rem whether a number is a string is a fair question with a plain answer.
+
+Def CutFlatEq(xs As List Of t, ys As List Of t) As Boolean
+    If IsEmpty(xs) Then
+        IsEmpty(ys)
+    Else
+        If IsEmpty(ys) Then
+            False
+        Else
+            First(xs) = First(ys) And CutFlatEq(Rest(xs), Rest(ys))
+
+Def CutCellsEq(xs As List Of Cell, ys As List Of Cell) As Boolean
+    If IsEmpty(xs) Then
+        IsEmpty(ys)
+    Else
+        If IsEmpty(ys) Then
+            False
+        Else
+            CutEqual(First(xs), First(ys)) And CutCellsEq(Rest(xs), Rest(ys))
+
+Def CutMatEq(a As Matrix, b As Matrix) As Boolean
+    Rows(a) = Rows(b) And Cols(a) = Cols(b) And CutFlatEq(ToList(Cells(a)), ToList(Cells(b)))
+
+Def CutEqual(a As Cell, b As Cell) As Boolean
+    Select Case a
+        Case CutNum(x)
+            Select Case b
+                Case CutNum(y)
+                    x = y
+                Case Else
+                    False
+        Case CutStr(s)
+            Select Case b
+                Case CutStr(t)
+                    s = t
+                Case Else
+                    False
+        Case CutBool(p)
+            Select Case b
+                Case CutBool(q)
+                    p = q
+                Case Else
+                    False
+        Case CutList(xs)
+            Select Case b
+                Case CutList(ys)
+                    CutCellsEq(xs, ys)
+                Case Else
+                    False
+        Case CutProg(ss)
+            Select Case b
+                Case CutProg(ts)
+                    CutFlatEq(ss, ts)
+                Case Else
+                    False
+        Case CutPair(p)
+            Select Case b
+                Case CutPair(q)
+                    CutEqual(Fst(p), Fst(q)) And CutEqual(Snd(p), Snd(q))
+                Case Else
+                    False
+        Case CutMoney(m)
+            Select Case b
+                Case CutMoney(n)
+                    Cents(m) = Cents(n)
+                Case Else
+                    False
+        Case CutMat(m)
+            Select Case b
+                Case CutMat(n)
+                    CutMatEq(m, n)
+                Case Else
+                    False
+        Case Else
+            False
+
+Rem ---- arithmetic across the kinds ---------------------------------------
+Rem What one stack value type buys: money and matrices are first-class at
+Rem the keyboard rather than second-class. Numbers add, subtract and
+Rem multiply; money adds and subtracts exactly; matrices add and
+Rem multiply, and scale against a number; strings concatenate under +.
+Rem Everything else answers with both kinds named — including matrix
+Rem subtraction, which is deliberately not in the set.
+
+Def CutMismatch(op As String, a As Cell, b As Cell) As CutCalc
+    CutCalcBad(op & " is not defined for " & CutKindOf(a) & " and " & CutKindOf(b))
+
+Rem MatAdd Errors on a mismatch, so the shapes are checked before it is
+Rem called and never by it.
+Def CutMatAdd(p As Matrix, q As Matrix) As CutCalc
+    If Rows(p) <> Rows(q) Or Cols(p) <> Cols(q) Then
+        CutCalcBad("+ needs two matrices of one shape, got " & CutDims(p) & " and " & CutDims(q))
+    Else
+        CutGot(CutMat(MatAdd(p, q)))
+
+Rem The same pre-flight for MatMul, whose rule is the inner dimensions.
+Def CutMatMul(p As Matrix, q As Matrix) As CutCalc
+    If Cols(p) <> Rows(q) Then
+        CutCalcBad("* needs the columns of the first to match the rows of the second, got " & CutDims(p) & " and " & CutDims(q))
+    Else
+        CutGot(CutMat(MatMul(p, q)))
+
+Def CutAdd(a As Cell, b As Cell) As CutCalc
+    Select Case a
+        Case CutNum(x)
+            Select Case b
+                Case CutNum(y)
+                    CutGot(CutNum(x + y))
+                Case Else
+                    CutMismatch("+", a, b)
+        Case CutStr(s)
+            Select Case b
+                Case CutStr(t)
+                    CutGot(CutStr(s & t))
+                Case Else
+                    CutMismatch("+", a, b)
+        Case CutMoney(m)
+            Select Case b
+                Case CutMoney(n)
+                    CutGot(CutMoney(MoneyAdd(m, n)))
+                Case Else
+                    CutMismatch("+", a, b)
+        Case CutMat(p)
+            Select Case b
+                Case CutMat(q)
+                    CutMatAdd(p, q)
+                Case Else
+                    CutMismatch("+", a, b)
+        Case Else
+            CutMismatch("+", a, b)
+
+Def CutSub(a As Cell, b As Cell) As CutCalc
+    Select Case a
+        Case CutNum(x)
+            Select Case b
+                Case CutNum(y)
+                    CutGot(CutNum(x - y))
+                Case Else
+                    CutMismatch("-", a, b)
+        Case CutMoney(m)
+            Select Case b
+                Case CutMoney(n)
+                    CutGot(CutMoney(MoneySub(m, n)))
+                Case Else
+                    CutMismatch("-", a, b)
+        Case Else
+            CutMismatch("-", a, b)
+
+Def CutMul(a As Cell, b As Cell) As CutCalc
+    Select Case a
+        Case CutNum(x)
+            Select Case b
+                Case CutNum(y)
+                    CutGot(CutNum(x * y))
+                Case CutMat(q)
+                    CutGot(CutMat(MatScale(q, x)))
+                Case Else
+                    CutMismatch("*", a, b)
+        Case CutMat(p)
+            Select Case b
+                Case CutNum(y)
+                    CutGot(CutMat(MatScale(p, y)))
+                Case CutMat(q)
+                    CutMatMul(p, q)
+                Case Else
+                    CutMismatch("*", a, b)
+        Case Else
+            CutMismatch("*", a, b)
+
+Rem Ordering, for the comparison words a dictionary builds on top: one
+Rem word, since > is this with the arguments the other way round and the
+Rem two remaining spellings are its negations. Numbers, strings and money
+Rem order; nothing else does.
+Def CutLess(a As Cell, b As Cell) As CutCalc
+    Select Case a
+        Case CutNum(x)
+            Select Case b
+                Case CutNum(y)
+                    CutGot(CutBool(x < y))
+                Case Else
+                    CutMismatch("<", a, b)
+        Case CutStr(s)
+            Select Case b
+                Case CutStr(t)
+                    CutGot(CutBool(s < t))
+                Case Else
+                    CutMismatch("<", a, b)
+        Case CutMoney(m)
+            Select Case b
+                Case CutMoney(n)
+                    CutGot(CutBool(MoneyLt(m, n)))
+                Case Else
+                    CutMismatch("<", a, b)
+        Case Else
+            CutMismatch("<", a, b)

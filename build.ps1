@@ -182,7 +182,7 @@ function Invoke-Test {
 # and DELETE clears up after it.
 function Invoke-MachineSuites {
     Assert-Mill
-    foreach ($suite in 'csvtest', 'htmltest', 'jsontest', 'nettest', 'neuraltest',
+    foreach ($suite in 'csvtest', 'cuttletest', 'htmltest', 'jsontest', 'nettest', 'neuraltest',
                        'randomtest', 'shakertest', 'xmltest') {
         Write-Host "==> tst/$suite.shoddy"
         & $Mill run "tst/$suite.shoddy"

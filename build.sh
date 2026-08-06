@@ -185,6 +185,14 @@ case "${1:-help}" in
         # recombined — and it is also the only place the alg/eng bridge
         # can be exercised, since neither machine includes the other.
         "$MILL" run tst/alg.shoddy
+        # bool is the same case once more: it is arithmetic standing in for
+        # bits, so a wrong fold or a formula that overflows 2^53 before its
+        # Mod runs returns a plausible number rather than failing. Its suite
+        # is known answers worked by hand plus the identities - De Morgan
+        # both ways, Gray codes one bit apart, a minimised cover rebuilt and
+        # compared - which is the only way to test a minimal form whose
+        # spelling is not unique.
+        "$MILL" run tst/bool.shoddy
         # The net demo is the only end-to-end exercise of the socket words:
         # it stands up a server, connects a client to it and trades lines,
         # both ends in one process on loopback. --allow-net is required

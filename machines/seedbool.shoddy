@@ -1,0 +1,477 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem seedbool.shoddy — reckoner seed: bool.shoddy's binary layer
+Rem
+Rem HEX, BIN, INBASE, FROMBASE; BITAND, BITOR, BITXOR, BITNOT, SHL, SHR;
+Rem MASK, GETFIELD, BITAT, POPCOUNT; and the six logic gates the engine
+Rem core does not already own — NAND, NOR, XOR, XNOR, IMPLIES, IFF.
+Rem RckSeedBool(st) is the whole of this file's public surface: fold it
+Rem over a state and all twenty are in the dictionary.
+Rem
+Rem THE WIDEST SEED, because bool is the widest domain bridged: bases,
+Rem bit operations, masks and gates are four families that share nothing
+Rem but the value they work on, and a keyboard that has one of them and
+Rem not the others is a keyboard that cannot finish the job.
+Rem
+Rem EVERY BOOL* WORD ABORTS ON A BAD DOMAIN AND NOTHING KEYABLE MAY.
+Rem That is the whole work of this file. bool.shoddy is deliberately
+Rem strict — it refuses a negative, a fraction, a value that does not fit
+Rem its width, a width outside 1..53 — and every one of those refusals is
+Rem an Error, which would take the mill down with it. So each word below
+Rem asks the question bool would abort on FIRST, and answers a refusal
+Rem instead. R4.1, applied to a machine that guards itself thoroughly and
+Rem in the one way a reckoner cannot use.
+Rem
+Rem The guard helpers answer a REASON STRING, empty when there is
+Rem nothing wrong. A Result would carry a payload none of them has: the
+Rem question is only ever "may this proceed, and if not why not".
+Rem
+Rem NOT BRIDGED, each for its own reason:
+Rem
+Rem   * AND, OR, NOT. The engine core owns all three as Boolean words
+Rem     already. Bridging bool's would give two spellings for one idea,
+Rem     which is the rule seed-math applied to Rad and Deg. The six gates
+Rem     that ARE here are the ones the core lacks — and they have to be
+Rem     here, because A USER WORD TAKES EXACTLY ONE CELL, so a keyboard
+Rem     user cannot define a two-argument XOR for themselves.
+Rem
+Rem   * Truth tables and minimisation. BoolTruthTable answers a
+Rem     List Of BoolRow and BoolMinimise a List Of BoolTerm, and neither
+Rem     is a Cell — cuttle's value set has no case for either. Bridging
+Rem     them means inventing a stack representation for a product term,
+Rem     which is a design and not a bridge.
+Rem
+Rem   * BoolLowBit and BoolHighBit. They answer an Option, and None() at
+Rem     zero is an ORDINARY answer that a stack has nowhere to put. A
+Rem     word that refused on zero would contradict the contract bool
+Rem     itself draws, and POPCOUNT and BITAT answer the questions a
+Rem     keyboard actually asks.
+Rem
+Rem   * BoolCard. Its glyphs are UTF-8 and file I/O is Latin-1, so a card
+Rem     that reaches a tape or a saved session is a row of question
+Rem     marks. BIN is the render that survives being written down.
+Rem
+Rem   * The rotates, BoolShrA, the two's-complement family and the codes.
+Rem     Bridgeable, and deliberately left: each wants a width the
+Rem     keyboard must keep supplying, and a seed of forty words has
+Rem     stopped being a bridge and become a second dictionary. A mill
+Rem     that wants them registers them itself — RckReg is public, and
+Rem     that is the whole point of the seed pattern.
+Rem ==================================================================
+
+Include "bool.shoddy"
+Include "cuttle.shoddy"
+Include "reckoner.shoddy"
+Include "seq.shoddy"
+
+Rem ---- pulling several whole numbers at once ----------------------------
+Rem RckWholeArg already refuses a negative and a fraction, which is two
+Rem of bool's three domain rules; the third is the 53-bit ceiling, and it
+Rem is checked here because a value above it is no longer exactly itself
+Rem and every answer built from it would be plausible and wrong.
+
+Def BlWhole(word As String, c As Cell) As Result
+    Select Case RckWholeArg(word, c)
+        Case Ok(x)
+            BlUnderCeiling(word, x)
+        Case Err(w, at)
+            Err(w, at)
+        Case Else
+            Err(word & " did not answer", 0)
+
+Def BlUnderCeiling(word As String, x As Number) As Result
+    If x > 2 ^ BoolMaxWidth() - 1 Then
+        Err(word & " needs a whole number below 2^" & Str(BoolMaxWidth()) & ", got " & Str(x), 0)
+    Else
+        Ok(x)
+
+Rem Deepest first, stopping at the first argument that is not a whole
+Rem number — seed-math's MNums, over bool's stricter reader.
+Def BlWholes(word As String, vs As List Of Cell) As Result
+    BlWholesAt(word, vs, 1, { })
+
+Def BlWholesAt(word As String, vs As List Of Cell, k As Number, acc As List Of Number) As Result
+    If k > Length(vs) Then
+        Ok(acc)
+    Else
+        BlWholesNext(word, vs, k, acc, BlWhole(word, Nth(vs, k)))
+
+Def BlWholesNext(word As String, vs As List Of Cell, k As Number, acc As List Of Number, r As Result) As Result
+    Select Case r
+        Case Ok(x)
+            BlWholesAt(word, vs, k + 1, Append(acc, x))
+        Case Err(w, at)
+            Err(w, at)
+        Case Else
+            Err(word & " did not answer", 0)
+
+Rem ---- the reason strings ------------------------------------------------
+Rem Empty means "nothing wrong, go ahead". Each names the bound it is
+Rem enforcing rather than only that something was out of range, because
+Rem "1..53" is the fact a caller needs and "bad width" is not.
+
+Def BlWidthWhy(word As String, a As Number, w As Number) As String
+    If w < 1 Or w > BoolMaxWidth() Then
+        word & " needs a width from 1 to " & Str(BoolMaxWidth()) & ", got " & Str(w)
+    Else
+        If a >= 2 ^ w Then
+            word & " needs a value that fits " & Str(w) & " bits, and " & Str(a) & " does not"
+        Else
+            ""
+
+Def BlBaseWhy(word As String, b As Number) As String
+    If b < 2 Or b > 36 Then
+        word & " needs a base from 2 to 36, got " & Str(b)
+    Else
+        ""
+
+Def BlIdxWhy(word As String, k As Number) As String
+    If k > BoolMaxWidth() - 1 Then
+        word & " needs a bit index from 0 to " & Str(BoolMaxWidth() - 1) & ", got " & Str(k)
+    Else
+        ""
+
+Def BlCountWhy(word As String, n As Number) As String
+    If n > BoolMaxWidth() Then
+        word & " needs a bit count from 0 to " & Str(BoolMaxWidth()) & ", got " & Str(n)
+    Else
+        ""
+
+Def BlFieldWhy(word As String, hi As Number, lo As Number) As String
+    If BlIdxWhy(word, hi) <> "" Then
+        BlIdxWhy(word, hi)
+    Else
+        If BlIdxWhy(word, lo) <> "" Then
+            BlIdxWhy(word, lo)
+        Else
+            If hi < lo Then
+                word & " needs a high bit at or above the low bit, got " & Str(hi) & " and " & Str(lo)
+            Else
+                ""
+
+Def BlShiftWhy(word As String, n As Number) As String
+    If n > BoolMaxWidth() Then
+        word & " needs a shift from 0 to " & Str(BoolMaxWidth()) & ", got " & Str(n)
+    Else
+        ""
+
+Rem EVERY WORD BELOW TESTS ITS REASON WITH If/Then/Else AND NEVER Ifte.
+Rem Ifte is an ordinary call, so both of its arms are evaluated before it
+Rem chooses between them — handing it a bool word as one arm would run
+Rem exactly the abort the guard was written to prevent. If/Then/Else
+Rem compiles to two quotations and one Ifte over them, so only the chosen
+Rem arm runs. This is the single most dangerous line to "tidy up" in the
+Rem file.
+
+Rem ---- HEX, BIN ----------------------------------------------------------
+Rem Total once the domain is checked: every whole number below the ceiling
+Rem has a rendering in every base.
+
+Def BlSeedHex(st As RckState) As RckState
+    RckReg(st, "HEX", 1, RckPure(Fn(vs) => BlText("HEX", First(vs), BoolHex)), "( n -- s )", "n written in hexadecimal, uppercase.")
+
+Def BlSeedBin(st As RckState) As RckState
+    RckReg(st, "BIN", 1, RckPure(Fn(vs) => BlText("BIN", First(vs), BoolBinS)), "( n -- s )", "n written in binary.")
+
+Def BlText(word As String, c As Cell, f As [ Number -- String ]) As RckWork
+    Select Case BlWhole(word, c)
+        Case Ok(n)
+            RckVals({ CutStr(Call(f, n)) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Rem ---- INBASE, FROMBASE --------------------------------------------------
+Rem The general pair. FROMBASE reads text, so a bad digit is a fact about
+Rem the input rather than a bug: bool answers Result there and this turns
+Rem that into a refusal carrying the position, in seed-csv's shape.
+
+Def BlSeedInbase(st As RckState) As RckState
+    RckReg(st, "INBASE", 2, RckPure(Fn(vs) => BlInbase(vs)), "( n base -- s )", "n written in the given base, 2 to 36, uppercase letters past 9.")
+
+Def BlInbase(vs As List Of Cell) As RckWork
+    Select Case BlWholes("INBASE", vs)
+        Case Ok(ns)
+            BlInbaseAt(Nth(ns, 1), Nth(ns, 2))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("INBASE did not answer")
+
+Def BlInbaseAt(n As Number, b As Number) As RckWork
+    Let why = BlBaseWhy("INBASE", b)
+    If why = "" Then
+        RckVals({ CutStr(BoolInBase(n, b)) })
+    Else
+        RckWorkBad(why)
+
+Def BlSeedFrombase(st As RckState) As RckState
+    RckReg(st, "FROMBASE", 2, RckPure(Fn(vs) => BlFrombase(vs)), "( s base -- n )", "The digit string s read in the given base; refuses a digit the base does not have, naming its position.")
+
+Def BlFrombase(vs As List Of Cell) As RckWork
+    Select Case RckTextArg("FROMBASE", Nth(vs, 1))
+        Case Ok(s)
+            BlFrombaseAt(s, Nth(vs, 2))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("FROMBASE did not answer")
+
+Def BlFrombaseAt(s As String, c As Cell) As RckWork
+    Select Case BlWhole("FROMBASE", c)
+        Case Ok(b)
+            BlFrombaseOn(s, b)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("FROMBASE did not answer")
+
+Def BlFrombaseOn(s As String, b As Number) As RckWork
+    If BlBaseWhy("FROMBASE", b) <> "" Then
+        RckWorkBad(BlBaseWhy("FROMBASE", b))
+    Else
+        BlFrombaseRead(BoolFromBase(s, b))
+
+Def BlFrombaseRead(r As Result) As RckWork
+    Select Case r
+        Case Ok(n)
+            RckVals({ CutNum(n) })
+        Case Err(w, at)
+            RckWorkBad(BlWhyAt("FROMBASE", w, at))
+        Case Else
+            RckWorkBad("FROMBASE did not answer")
+
+Rem bool's own messages open with the BOOL* word that raised them, and at
+Rem the keyboard the word is FROMBASE. So the prefix up to the first colon
+Rem is REPLACED rather than repeated — "FROMBASE could not read it:
+Rem BOOLFROMBASE: ..." names two words for one refusal and neither of them
+Rem clearly. The rest of the message is bool's verbatim, because it is the
+Rem only place that knows which of the three failures it was: a digit the
+Rem base does not have, an empty string, or a string too long to read
+Rem exactly. Err carries no tag to tell them apart by.
+Def BlReword(word As String, why As String) As String
+    Let k = Instr(why, ": ")
+    If k = 0 Then
+        word & ": " & why
+    Else
+        word & Mid(why, k, Len(why))
+
+Def BlWhyAt(word As String, why As String, at As Number) As String
+    If at = 0 Then
+        BlReword(word, why)
+    Else
+        BlReword(word, why) & " at position " & Str(at)
+
+Rem ---- BITAND, BITOR, BITXOR ---------------------------------------------
+Rem The three width-free words, and the only three that need no bound
+Rem beyond the domain itself.
+
+Def BlSeedBitand(st As RckState) As RckState
+    RckReg(st, "BITAND", 2, RckPure(Fn(vs) => BlBits2("BITAND", vs, BoolBitAnd)), "( a b -- c )", "Bitwise AND. Needs no width.")
+
+Def BlSeedBitor(st As RckState) As RckState
+    RckReg(st, "BITOR", 2, RckPure(Fn(vs) => BlBits2("BITOR", vs, BoolBitOr)), "( a b -- c )", "Bitwise OR. Needs no width.")
+
+Def BlSeedBitxor(st As RckState) As RckState
+    RckReg(st, "BITXOR", 2, RckPure(Fn(vs) => BlBits2("BITXOR", vs, BoolBitXor)), "( a b -- c )", "Bitwise XOR. Needs no width.")
+
+Def BlBits2(word As String, vs As List Of Cell, f As [ Number Number -- Number ]) As RckWork
+    Select Case BlWholes(word, vs)
+        Case Ok(ns)
+            RckVals({ CutNum(Call(f, Nth(ns, 1), Nth(ns, 2))) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Rem ---- BITNOT ------------------------------------------------------------
+Rem Takes a width, because a complement without one has no answer.
+
+Def BlSeedBitnot(st As RckState) As RckState
+    RckReg(st, "BITNOT", 2, RckPure(Fn(vs) => BlBitnot(vs)), "( a width -- c )", "Bitwise NOT within the given width, 1 to 53.")
+
+Def BlBitnot(vs As List Of Cell) As RckWork
+    Select Case BlWholes("BITNOT", vs)
+        Case Ok(ns)
+            BlBitnotAt(Nth(ns, 1), Nth(ns, 2))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("BITNOT did not answer")
+
+Def BlBitnotAt(a As Number, w As Number) As RckWork
+    Let why = BlWidthWhy("BITNOT", a, w)
+    If why = "" Then
+        RckVals({ CutNum(BoolBitNot(a, w)) })
+    Else
+        RckWorkBad(why)
+
+Rem ---- SHL, SHR ----------------------------------------------------------
+Rem SHL takes a width and SHR does not, which is bool's own rule carried
+Rem to the keyboard: a logical right shift cannot produce a bit the input
+Rem did not have, so there is no end for its answer to depend on.
+
+Def BlSeedShl(st As RckState) As RckState
+    RckReg(st, "SHL", 3, RckPure(Fn(vs) => BlShl(vs)), "( a n width -- c )", "a shifted left n places within the given width; bits above it fall off.")
+
+Def BlShl(vs As List Of Cell) As RckWork
+    Select Case BlWholes("SHL", vs)
+        Case Ok(ns)
+            BlShlAt(Nth(ns, 1), Nth(ns, 2), Nth(ns, 3))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("SHL did not answer")
+
+Def BlShlAt(a As Number, n As Number, w As Number) As RckWork
+    Let why = BlShlWhy(a, n, w)
+    If why = "" Then
+        RckVals({ CutNum(BoolShl(a, n, w)) })
+    Else
+        RckWorkBad(why)
+
+Def BlShlWhy(a As Number, n As Number, w As Number) As String
+    If BlShiftWhy("SHL", n) <> "" Then
+        BlShiftWhy("SHL", n)
+    Else
+        BlWidthWhy("SHL", a, w)
+
+Def BlSeedShr(st As RckState) As RckState
+    RckReg(st, "SHR", 2, RckPure(Fn(vs) => BlShr(vs)), "( a n -- c )", "a shifted right n places, zeros coming in at the top. Needs no width.")
+
+Def BlShr(vs As List Of Cell) As RckWork
+    Select Case BlWholes("SHR", vs)
+        Case Ok(ns)
+            BlShrAt(Nth(ns, 1), Nth(ns, 2))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("SHR did not answer")
+
+Def BlShrAt(a As Number, n As Number) As RckWork
+    Let why = BlShiftWhy("SHR", n)
+    If why = "" Then
+        RckVals({ CutNum(BoolShr(a, n)) })
+    Else
+        RckWorkBad(why)
+
+Rem ---- MASK, GETFIELD, BITAT, POPCOUNT -----------------------------------
+
+Def BlSeedMask(st As RckState) As RckState
+    RckReg(st, "MASK", 1, RckPure(Fn(vs) => BlMask(First(vs))), "( n -- m )", "A mask with the low n bits set, n from 0 to 53.")
+
+Def BlMask(c As Cell) As RckWork
+    Select Case BlWhole("MASK", c)
+        Case Ok(n)
+            BlMaskAt(n)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("MASK did not answer")
+
+Def BlMaskAt(n As Number) As RckWork
+    Let why = BlCountWhy("MASK", n)
+    If why = "" Then
+        RckVals({ CutNum(BoolMask(n)) })
+    Else
+        RckWorkBad(why)
+
+Def BlSeedGetfield(st As RckState) As RckState
+    RckReg(st, "GETFIELD", 3, RckPure(Fn(vs) => BlGetfield(vs)), "( a hi lo -- v )", "Bits hi down to lo of a, inclusive and 0-based, shifted down to zero.")
+
+Def BlGetfield(vs As List Of Cell) As RckWork
+    Select Case BlWholes("GETFIELD", vs)
+        Case Ok(ns)
+            BlGetfieldAt(Nth(ns, 1), Nth(ns, 2), Nth(ns, 3))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("GETFIELD did not answer")
+
+Def BlGetfieldAt(a As Number, hi As Number, lo As Number) As RckWork
+    Let why = BlFieldWhy("GETFIELD", hi, lo)
+    If why = "" Then
+        RckVals({ CutNum(BoolGetField(a, hi, lo)) })
+    Else
+        RckWorkBad(why)
+
+Def BlSeedBitat(st As RckState) As RckState
+    RckReg(st, "BITAT", 2, RckPure(Fn(vs) => BlBitat(vs)), "( a k -- flag )", "Whether bit k of a is set. Answers a BOOLEAN, never 1 or 0.")
+
+Def BlBitat(vs As List Of Cell) As RckWork
+    Select Case BlWholes("BITAT", vs)
+        Case Ok(ns)
+            BlBitatAt(Nth(ns, 1), Nth(ns, 2))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("BITAT did not answer")
+
+Def BlBitatAt(a As Number, k As Number) As RckWork
+    Let why = BlIdxWhy("BITAT", k)
+    If why = "" Then
+        RckVals({ CutBool(BoolBitAt(a, k)) })
+    Else
+        RckWorkBad(why)
+
+Def BlSeedPopcount(st As RckState) As RckState
+    RckReg(st, "POPCOUNT", 1, RckPure(Fn(vs) => BlPopcount(First(vs))), "( a -- n )", "How many of a's bits are set.")
+
+Def BlPopcount(c As Cell) As RckWork
+    Select Case BlWhole("POPCOUNT", c)
+        Case Ok(a)
+            RckVals({ CutNum(BoolPopCount(a)) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("POPCOUNT did not answer")
+
+Rem ---- the six gates the core does not own -------------------------------
+Rem RckBool2 reads both arguments as BOOLEANs and names the kind it got
+Rem instead, so these are one line each. AND, OR and NOT are the engine
+Rem core's and are not redefined here.
+
+Def BlSeedNand(st As RckState) As RckState
+    RckReg(st, "NAND", 2, RckPure(Fn(vs) => RckBool2("NAND", vs, BoolNand)), "( p q -- r )", "NOT (p AND q).")
+
+Def BlSeedNor(st As RckState) As RckState
+    RckReg(st, "NOR", 2, RckPure(Fn(vs) => RckBool2("NOR", vs, BoolNor)), "( p q -- r )", "NOT (p OR q).")
+
+Def BlSeedXor(st As RckState) As RckState
+    RckReg(st, "XOR", 2, RckPure(Fn(vs) => RckBool2("XOR", vs, BoolXor)), "( p q -- r )", "True when exactly one of p and q is true.")
+
+Def BlSeedXnor(st As RckState) As RckState
+    RckReg(st, "XNOR", 2, RckPure(Fn(vs) => RckBool2("XNOR", vs, BoolXnor)), "( p q -- r )", "True when p and q agree.")
+
+Def BlSeedImplies(st As RckState) As RckState
+    RckReg(st, "IMPLIES", 2, RckPure(Fn(vs) => RckBool2("IMPLIES", vs, BoolImplies)), "( p q -- r )", "False on exactly one row: p true and q false.")
+
+Def BlSeedIff(st As RckState) As RckState
+    RckReg(st, "IFF", 2, RckPure(Fn(vs) => RckBool2("IFF", vs, BoolIff)), "( p q -- r )", "Material equivalence — the same answer as XNOR, under a logician's name.")
+
+Rem ---- the seed -----------------------------------------------------------
+
+Def RckSeedBool(st As RckState) As RckState
+    Let st1 = BlSeedHex(RckSeeding(st, "seed-bool"))
+    Let st2 = BlSeedBin(st1)
+    Let st3 = BlSeedInbase(st2)
+    Let st4 = BlSeedFrombase(st3)
+    Let st5 = BlSeedBitand(st4)
+    Let st6 = BlSeedBitor(st5)
+    Let st7 = BlSeedBitxor(st6)
+    Let st8 = BlSeedBitnot(st7)
+    Let st9 = BlSeedShl(st8)
+    Let st10 = BlSeedShr(st9)
+    Let st11 = BlSeedMask(st10)
+    Let st12 = BlSeedGetfield(st11)
+    Let st13 = BlSeedBitat(st12)
+    Let st14 = BlSeedPopcount(st13)
+    Let st15 = BlSeedNand(st14)
+    Let st16 = BlSeedNor(st15)
+    Let st17 = BlSeedXor(st16)
+    Let st18 = BlSeedXnor(st17)
+    Let st19 = BlSeedImplies(st18)
+    BlSeedIff(st19)

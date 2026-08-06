@@ -151,6 +151,14 @@ function Invoke-Test {
     # neither machine includes the other.
     & $Mill run tst/alg.shoddy
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    # bool is the same case once more: it is arithmetic standing in for bits,
+    # so a wrong fold or a formula that overflows 2^53 before its Mod runs
+    # returns a plausible number rather than failing. Its suite is known
+    # answers worked by hand plus the identities -- De Morgan both ways, Gray
+    # codes one bit apart, a minimised cover rebuilt and compared -- which is
+    # the only way to test a minimal form whose spelling is not unique.
+    & $Mill run tst/bool.shoddy
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     # The net demo is the only end-to-end exercise of the socket words: it
     # stands up a server, connects a client to it and trades lines, both
     # ends in one process on loopback. --allow-net is required because the

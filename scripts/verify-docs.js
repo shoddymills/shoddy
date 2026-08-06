@@ -56,7 +56,7 @@ for (const m of Object.keys(includes)) usedByMachines[m] = [];
 for (const [m, incs] of Object.entries(includes))
   for (const dep of incs) usedByMachines[dep].push(m);
 // Every reckoner seed includes both cuttle and reckoner, which would make
-// their usedby tables just the twelve seeds again - already listed, with
+// their usedby tables just the thirteen seeds again - already listed, with
 // more detail, in the "The Reckoner Seeds" section those two pages carry
 // instead. Strip seeds from just these two so the tables aren't a duplicate.
 usedByMachines["cuttle"] = usedByMachines["cuttle"].filter(m => !m.startsWith("seed"));

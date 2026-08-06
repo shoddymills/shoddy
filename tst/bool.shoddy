@@ -1,0 +1,482 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem bool.shoddy — test program for machines/bool.shoddy
+Rem
+Rem Assert-driven, in the fin.shoddy / eng.shoddy / lin.shoddy pattern:
+Rem it prints what it is doing, stops at the first failed assertion, and
+Rem ends with ALL ASSERTIONS PASSED when none fail. Offline — nothing
+Rem here touches a file, a socket or a window.
+Rem
+Rem Every number below is a known answer worked by hand, never a value
+Rem recorded from a run. That distinction is the whole point: a bit
+Rem library that is subtly wrong still returns numbers, and a suite built
+Rem from its own output would agree with it forever.
+Rem
+Rem HOW LIST-VALUED RESULTS ARE ASSERTED, because this is the trap most
+Rem likely to produce a green suite that proves nothing. A List is a
+Rem quotation and compares by REFERENCE IDENTITY, so { 2, 3 } = { 2, 3 }
+Rem is False; a record compares structurally only if every field does, so
+Rem BoolRow — which carries a List Of Boolean — does not compare with =
+Rem either. Therefore:
+Rem
+Rem   * List Of Number goes through ToArray, which DOES compare
+Rem     structurally: ToArray(BoolBitList(12)) = ToArray({ 2, 3 }).
+Rem   * List Of Boolean and BoolRow are asserted element-wise with Nth,
+Rem     on Inputs and Output.
+Rem   * Quotations are asserted with BoolEquiv, never with =.
+Rem   * Result and Option ARE compared with = directly, which is valid
+Rem     here because every payload this machine produces is a Number:
+Rem     BoolFromBase("ff", 16) = Ok(255) and BoolLowBit(0) = None().
+Rem   * BoolTerm and BoolField are all-scalar, so they compare with =.
+Rem
+Rem It includes bool.shoddy alone. Includes have not bled through since
+Rem v1.6.0, so seq's and str's words are not in scope here — AllTrue,
+Rem CoversM and InList below are this file's own, built on Fold.
+Rem
+Rem WHAT CANNOT BE TESTED HERE: the aborting half of every guard. Shoddy
+Rem has no catchable errors — Error throws and unwinds the program — so
+Rem asserting that a refusal happens would kill the suite rather than
+Rem fail an assertion. One per refusal class, each verified by hand and
+Rem named here instead:
+Rem
+Rem   BoolBitAnd(-1, 1)            negative
+Rem   BoolBitAt(1.5, 0)            not a whole number
+Rem   BoolBitNot(256, 8)           does not fit the width
+Rem   BoolBitNot(0, 54)            width above 53
+Rem   BoolShl(1, 1, 0)             width below 1
+Rem   BoolInBase(5, 37)            base outside 2..36
+Rem   BoolMaskFrom(4, 7)           high bit below low bit
+Rem   BoolSetField(0, 7, 4, 16)    value does not fit the field
+Rem   BoolUnsigned(128, 8)         not representable signed
+Rem   BoolSignExtend(255, 16, 8)   cannot widen downwards
+Rem   BoolLog2Floor(0)             zero has no logarithm
+Rem   BoolBcd(10 ^ 13)             above the packed-BCD ceiling
+Rem   BoolFromBitList({ 53 })      bit index above the ceiling
+Rem   BoolTruthTable(Or2, 13)      above BoolMaxVars()
+Rem   BoolRowInputs(8, 3)          row index out of range
+Rem   BoolTermText(t, { "A" })     name count mismatch
+Rem   BoolMinimiseWith({1}, {1}, 2)  a don't-care is also a minterm
+Rem
+Rem The two Result-returning words, BoolFromBase and BoolFromBcd, ARE
+Rem testable and are asserted on both arms including the At offset. That
+Rem is the argument for the Result/abort line being drawn where it is.
+Rem ==================================================================
+
+Include "../machines/bool.shoddy"
+
+Rem ---- this file's own helpers, on Fold alone -------------------------
+
+Def AllTrue(xs As List Of Boolean) As Boolean
+    Fold(xs, True, Fn(a, x) => a And x)
+
+Rem Does any term in the list cover this minterm? The covering property
+Rem is how minimisation is checked, since minimal forms are not unique.
+Def CoversM(terms As List Of BoolTerm, m As Number) As Boolean
+    Fold(terms, False, Fn(a, t) => a Or BoolTermCovers(t, m))
+
+Def InList(ms As List Of Number, m As Number) As Boolean
+    Fold(ms, False, Fn(a, x) => a Or (x = m))
+
+Rem ---- the Boolean functions the truth-table words are given ----------
+Rem Quotations, not strings: this machine has no expression parser and
+Rem wants none.
+
+Def And2(vs As List Of Boolean) As Boolean
+    BoolAnd(Nth(vs, 1), Nth(vs, 2))
+
+Def Or2(vs As List Of Boolean) As Boolean
+    BoolOr(Nth(vs, 1), Nth(vs, 2))
+
+Def Xor2(vs As List Of Boolean) As Boolean
+    BoolXor(Nth(vs, 1), Nth(vs, 2))
+
+Def Id1(vs As List Of Boolean) As Boolean
+    Nth(vs, 1)
+
+Rem The full-adder carry, AB + Cin(A xor B) — the standard worked example
+Rem for Quine-McCluskey, whose minterms are { 3, 5, 6, 7 } and whose
+Rem minimal form is three two-literal terms.
+Def Carry3(vs As List Of Boolean) As Boolean
+    BoolOr(BoolAnd(Nth(vs, 1), Nth(vs, 2)),
+           BoolAnd(Nth(vs, 3), BoolXor(Nth(vs, 1), Nth(vs, 2))))
+
+Def Main()
+    Print("--- CONSTANTS ---")
+    Assert(BoolBin() = 2, "THE BINARY RADIX")
+    Assert(BoolOct() = 8, "THE OCTAL RADIX")
+    Assert(BoolDec() = 10, "THE DECIMAL RADIX")
+    Assert(BoolHexR() = 16, "THE HEX RADIX - NOT BOOLHEX, WHICH IS THE FORMATTER")
+    Assert(BoolBits() = 32, "THE CONVENTIONAL DEFAULT WIDTH")
+    Assert(BoolMaxWidth() = 53, "THE ARITHMETIC CEILING")
+    Assert(BoolMaxVars() = 12, "THE TRUTH-TABLE REFUSAL")
+    Assert(Len(BoolDigits()) = 36, "THE DIGIT ALPHABET SPANS BASES 2 TO 36")
+
+    Print("--- BASES ---")
+    Assert(BoolInBase(255, 16) = "FF", "255 IN HEX")
+    Assert(BoolInBase(0, 16) = "0", "ZERO IS ZERO IN EVERY BASE")
+    Assert(BoolInBase(0, 2) = "0", "AND IN BINARY")
+    Assert(BoolInBase(255, 2) = "11111111", "255 IN BINARY")
+    Assert(BoolInBase(8, 8) = "10", "8 IN OCTAL")
+    Assert(BoolInBase(35, 36) = "Z", "THE LAST DIGIT OF BASE 36")
+    Assert(BoolInBase(1295, 36) = "ZZ", "AND TWO OF THEM")
+    Assert(BoolFromBase("ff", 16) = Ok(255), "READING IS CASE-INSENSITIVE")
+    Assert(BoolFromBase("FF", 16) = Ok(255), "IN BOTH DIRECTIONS")
+    Assert(BoolFromBase("11111111", 2) = Ok(255), "AND IN BINARY")
+    Assert(BoolFromBase(BoolInBase(12345, 2), 2) = Ok(12345), "ROUND TRIP THROUGH BASE 2")
+    Assert(BoolFromBase(BoolInBase(12345, 8), 8) = Ok(12345), "ROUND TRIP THROUGH BASE 8")
+    Assert(BoolFromBase(BoolInBase(12345, 16), 16) = Ok(12345), "ROUND TRIP THROUGH BASE 16")
+    Assert(BoolFromBase(BoolInBase(12345, 36), 36) = Ok(12345), "ROUND TRIP THROUGH BASE 36")
+
+    Rem Reading external text, so these are Err rather than an abort -
+    Rem which is exactly what makes them assertable at all.
+    Assert(BoolFromBase("1F", 2) = Err("BOOLFROMBASE: '1F' HAS NO DIGIT F IN BASE 2", 2),
+           "A DIGIT THE BASE DOES NOT HAVE, WITH ITS 1-BASED POSITION")
+    Assert(BoolFromBase("-1", 16) = Err("BOOLFROMBASE: '-1' HAS NO DIGIT - IN BASE 16", 1),
+           "A SIGN IS NOT A DIGIT, AND IT IS AT POSITION 1")
+    Assert(BoolFromBase("", 16) = Err("BOOLFROMBASE: THE EMPTY STRING IS NOT A NUMBER IN BASE 16", 0),
+           "THE EMPTY STRING HAS NO POSITION TO REPORT")
+    Assert(BoolFromBaseOr("zz", 2, 7) = 7, "THE FALLBACK ARM")
+    Assert(BoolFromBaseOr("ff", 16, 7) = 255, "AND THE ANSWER ARM")
+
+    Print("--- RENDERING ---")
+    Assert(BoolHex(255) = "FF", "THE HEX SHORTCUT")
+    Assert(BoolBinS(5) = "101", "THE BINARY SHORTCUT")
+    Assert(BoolOctS(8) = "10", "THE OCTAL SHORTCUT")
+    Assert(BoolBinW(5, 8) = "00000101", "ZERO-PADDED TO A BIT COUNT")
+    Assert(BoolHexW(255, 4) = "00FF", "ZERO-PADDED TO A DIGIT COUNT")
+    Assert(BoolHexW(65535, 2) = "FFFF", "PADDING NEVER TRUNCATES")
+    Rem The asymmetric case, which is the only one that proves grouping
+    Rem runs from the RIGHT: the short group leads.
+    Assert(BoolGrouped("110101100", 4, " ") = "1 1010 1100", "GROUPS FROM THE RIGHT")
+    Assert(BoolGrouped("1010", 4, " ") = "1010", "AN EXACT GROUP IS LEFT ALONE")
+    Rem 160 is 1010 0000, so holes at positions 1 and 3 from the left.
+    Assert(BoolCardWith(160, 8, "X", ".") = "X.X.....", "THE CARD ROW, IN GLYPHS A LATIN-1 FILE CAN HOLD")
+    Assert(BoolCardWith(0, 4, "X", ".") = "....", "AN UNPUNCHED CARD")
+    Assert(BoolCard(160, 8) = BoolCardWith(160, 8, "●", "○"), "BOOLCARD IS BOOLCARDWITH IN THE DEFAULT GLYPHS")
+
+    Print("--- BIT OPERATIONS ---")
+    Assert(BoolBitAnd(12, 10) = 8, "AND")
+    Assert(BoolBitOr(12, 10) = 14, "OR")
+    Assert(BoolBitXor(12, 10) = 6, "XOR")
+    Assert(BoolBitAnd(0, 0) = 0, "AND AT ZERO")
+    Assert(BoolBitOr(0, 0) = 0, "OR AT ZERO")
+    Assert(BoolBitXor(5, 5) = 0, "XOR OF A VALUE WITH ITSELF")
+    Rem Width-independent: the same answer whatever word they sit in.
+    Assert(BoolBitAnd(2 ^ 52, 2 ^ 52) = 2 ^ 52, "AND AT THE TOP OF THE RANGE")
+    Assert(BoolBitNot(0, 8) = 255, "NOT AT WIDTH 8")
+    Assert(BoolBitNot(255, 8) = 0, "AND BACK")
+    Assert(BoolBitNot(0, 32) = 4294967295, "NOT AT WIDTH 32")
+    Assert(BoolBitNot(0, 53) = 2 ^ 53 - 1, "NOT AT THE CEILING")
+    Assert(BoolBitNand(12, 10, 8) = 247, "NAND")
+    Assert(BoolBitNor(12, 10, 8) = 241, "NOR")
+    Assert(BoolBitXnor(12, 10, 8) = 249, "XNOR")
+
+    Print("--- DE MORGAN, ON BIT PATTERNS ---")
+    Rem This proves the fold is right and catches an off-by-one in the bit
+    Rem range that nothing else here will.
+    Assert(AllTrue(Map({ 0, 1, 12, 85, 170, 254, 255 },
+                       Fn(a) => AllTrue(Map({ 0, 10, 15, 128, 255 },
+                           Fn(b) => BoolBitNot(BoolBitAnd(a, b), 8) = BoolBitOr(BoolBitNot(a, 8), BoolBitNot(b, 8)))))),
+           "NOT (A AND B) IS NOT A OR NOT B, AT WIDTH 8")
+    Assert(AllTrue(Map({ 0, 1, 12, 85, 170, 254, 255 },
+                       Fn(a) => AllTrue(Map({ 0, 10, 15, 128, 255 },
+                           Fn(b) => BoolBitNot(BoolBitOr(a, b), 8) = BoolBitAnd(BoolBitNot(a, 8), BoolBitNot(b, 8)))))),
+           "AND THE DUAL")
+
+    Print("--- THE WIDTH-53 CEILING ---")
+    Rem These are the assertions that would catch the naive formulas: the
+    Rem product and the sum both pass 2 ^ 53 before a Mod could run.
+    Assert(BoolShl(1, 52, 53) = 2 ^ 52, "SHL TO THE TOP BIT OF A 53-BIT WORD")
+    Assert(BoolShl(1, 53, 53) = 0, "AND ONE PLACE FURTHER FALLS OFF")
+    Assert(BoolAddW(2 ^ 53 - 1, 1, 53) = 0, "THE WRAP AT THE CEILING")
+    Assert(BoolAddW(2 ^ 53 - 1, 2 ^ 53 - 1, 53) = 2 ^ 53 - 2, "AND THE WIDEST WRAP THERE IS")
+    Assert(BoolMulW(3, 2 ^ 51, 53) = 3 * 2 ^ 51, "A MULTIPLY THAT FITS STAYS EXACT")
+    Assert(BoolMulW(3, 2 ^ 52, 53) = 2 ^ 52, "AND ONE THAT DOES NOT WRAPS CORRECTLY")
+
+    Print("--- SHIFTS ---")
+    Assert(BoolShl(1, 7, 8) = 128, "SHL TO THE TOP OF A BYTE")
+    Assert(BoolShl(1, 8, 8) = 0, "AND OFF THE END")
+    Assert(BoolShl(3, 7, 8) = 128, "THE BIT THAT WOULD LAND OUTSIDE IS DROPPED, NOT WRAPPED")
+    Assert(BoolShr(255, 4) = 15, "LOGICAL SHR NEEDS NO WIDTH")
+    Assert(BoolShr(1, 1) = 0, "AND SHIFTS THE LAST BIT AWAY")
+    Rem Side by side, which is the point of there being two words.
+    Assert(BoolShrA(128, 1, 8) = 192, "ARITHMETIC SHR REPLICATES THE SIGN BIT")
+    Assert(BoolShr(128, 1) = 64, "WHERE LOGICAL SHR DOES NOT")
+    Assert(BoolShrA(64, 1, 8) = 32, "AND ON A POSITIVE VALUE THEY AGREE")
+    Assert(BoolShrA(255, 4, 8) = 255, "ALL ONES STAYS ALL ONES")
+    Assert(BoolShrA(128, 8, 8) = 255, "SHIFTED OUT ENTIRELY, A NEGATIVE IS ALL ONES")
+
+    Print("--- ROTATES ---")
+    Assert(BoolRotl(1, 32, 32) = 1, "A FULL TURN IS THE IDENTITY")
+    Assert(BoolRotl(128, 1, 8) = 1, "THE TOP BIT COMES ROUND TO THE BOTTOM")
+    Assert(BoolRotr(1, 1, 8) = 128, "AND BACK THE OTHER WAY")
+    Assert(BoolRotr(BoolRotl(37, 3, 8), 3, 8) = 37, "ROTATING BACK RESTORES THE VALUE")
+    Assert(BoolRotl(37, 0, 8) = 37, "ROTATING BY NOTHING CHANGES NOTHING")
+
+    Print("--- MASKS AND FIELDS ---")
+    Assert(BoolMask(8) = 255, "THE LOW EIGHT BITS")
+    Assert(BoolMask(0) = 0, "AND NO BITS AT ALL")
+    Assert(BoolMask(53) = 2 ^ 53 - 1, "AND THE WHOLE RANGE")
+    Assert(BoolMaskFrom(7, 4) = 240, "THE HIGH NIBBLE OF A BYTE")
+    Assert(BoolMaskFrom(0, 0) = 1, "A ONE-BIT FIELD")
+    Rem 171 is 1010 1011.
+    Assert(BoolGetField(171, 7, 4) = 10, "THE HIGH NIBBLE OF 171")
+    Assert(BoolGetField(171, 3, 0) = 11, "AND THE LOW ONE")
+    Assert(BoolSetField(0, 7, 4, 10) = 160, "WRITING A FIELD SHIFTS IT INTO PLACE")
+    Assert(BoolSetField(255, 3, 0, 0) = 240, "AND CLEARS WHAT WAS THERE")
+    Assert(BoolTest(171, 3), "ALL OF THE MASK'S BITS ARE SET")
+    Assert(BoolTest(171, 4) = False, "AND HERE THEY ARE NOT")
+    Assert(BoolTestAny(171, 12), "BUT ONE OF THEM IS")
+    Assert(BoolTestAny(171, 4) = False, "AND HERE NONE IS")
+    Assert(BoolSet(0, 5) = 5, "SET")
+    Assert(BoolClear(255, 5) = 250, "CLEAR")
+    Rem The pair, because toggle and clear agree on one of these and not
+    Rem the other - which is the only way to tell them apart.
+    Assert(BoolToggle(255, 5) = 250, "TOGGLE, WHERE THE BITS WERE SET")
+    Assert(BoolToggle(250, 5) = 255, "AND TOGGLE, WHERE THEY WERE NOT")
+
+    Print("--- DECODING A REGISTER ---")
+    Rem There are no hex literals in Shoddy, so the fixture is decimal
+    Rem with the binary in a Rem: 180 is 1011 0100. The last field is an
+    Rem OVERLAPPING view of the whole byte, which real datasheets carry.
+    Let fields = { BoolField("MODE", 7, 6), BoolField("COUNT", 5, 2),
+                   BoolField("FLAGS", 1, 0), BoolField("WHOLE", 7, 0) }
+    Assert(ToArray(BoolDecode(180, fields)) = ToArray({ 2, 13, 0, 180 }),
+           "EVERY FIELD OUT IN ONE CALL, OVERLAPS INCLUDED")
+    Assert(IsEmpty(BoolDecode(180, { })), "EMPTY LIST IN, EMPTY LIST OUT")
+    Assert(FName(Nth(fields, 2)) = "COUNT", "THE NAMES STAY WITH THE LAYOUT, NOT THE ANSWER")
+
+    Print("--- INSPECTION ---")
+    Assert(BoolPopCount(255) = 8, "POPCOUNT OF A FULL BYTE")
+    Assert(BoolPopCount(0) = 0, "AND OF NOTHING")
+    Assert(BoolPopCount(1) = 1, "AND OF ONE BIT")
+    Assert(BoolBitAt(12, 2), "BIT 2 OF 12 IS SET")
+    Assert(BoolBitAt(12, 0) = False, "AND BIT 0 IS NOT")
+    Assert(BoolLowBit(12) = Some(2), "THE LOWEST SET BIT")
+    Assert(BoolHighBit(12) = Some(3), "AND THE HIGHEST")
+    Rem The two assertions that retire the -1 sentinel.
+    Assert(BoolLowBit(0) = None(), "NO BITS SET IS AN ANSWER, NOT A FAILURE")
+    Assert(BoolHighBit(0) = None(), "AT BOTH ENDS")
+    Assert(BoolLog2Floor(12) = 3, "THE STRICT TWIN OF BOOLHIGHBIT")
+    Assert(BoolLog2Floor(1) = 0, "AND AT ONE")
+    Assert(BoolLeadZeros(12, 8) = 4, "LEADING ZEROS IN A BYTE")
+    Assert(BoolLeadZeros(0, 8) = 8, "AND ALL OF THEM WHEN THERE ARE NO BITS")
+    Assert(BoolLeadZeros(255, 8) = 0, "AND NONE WHEN THE TOP BIT IS SET")
+    Assert(BoolReverse(1, 8) = 128, "REVERSING A BYTE")
+    Assert(BoolReverse(128, 8) = 1, "AND BACK")
+    Assert(BoolReverse(1, 53) = 2 ^ 52, "AND AT THE FULL WIDTH")
+    Assert(BoolSetBit(0, 3, True) = 8, "SETTING ONE BIT")
+    Assert(BoolSetBit(255, 3, False) = 247, "AND CLEARING ONE")
+    Assert(ToArray(BoolBitList(12)) = ToArray({ 2, 3 }), "THE INDICES THAT ARE SET")
+    Assert(IsEmpty(BoolBitList(0)), "AND NONE FOR ZERO")
+    Assert(BoolFromBitList({ 2, 3 }) = 12, "AND BACK AGAIN")
+    Assert(BoolFromBitList({ 2, 2, 3 }) = 12, "DUPLICATES ARE IDEMPOTENT - SET SEMANTICS")
+    Assert(BoolFromBitList({ }) = 0, "AND THE EMPTY LIST IS ZERO")
+    Assert(BoolIsPow2(8), "8 IS A POWER OF TWO")
+    Assert(BoolIsPow2(1), "AND SO IS 1")
+    Assert(BoolIsPow2(0) = False, "ZERO IS NOT")
+    Assert(BoolIsPow2(12) = False, "AND NEITHER IS 12")
+    Assert(BoolNextPow2(0) = 1, "THE NEXT POWER OF TWO AT ZERO")
+    Assert(BoolNextPow2(1) = 1, "AT ONE, WHICH IS ALREADY ONE")
+    Assert(BoolNextPow2(5) = 8, "ABOVE FIVE")
+    Assert(BoolNextPow2(8) = 8, "AND AT A POWER OF TWO, WHICH IS ITSELF")
+
+    Print("--- TWO'S COMPLEMENT ---")
+    Assert(BoolSigned(255, 8) = 0 - 1, "ALL ONES IS MINUS ONE")
+    Assert(BoolSigned(128, 8) = 0 - 128, "THE MOST NEGATIVE BYTE")
+    Assert(BoolSigned(127, 8) = 127, "THE MOST POSITIVE ONE")
+    Assert(BoolSigned(0, 8) = 0, "AND ZERO")
+    Rem The one word whose input is allowed to be negative.
+    Assert(BoolUnsigned(0 - 1, 8) = 255, "MINUS ONE IS ALL ONES")
+    Assert(BoolUnsigned(0 - 128, 8) = 128, "AND THE MOST NEGATIVE BYTE IS REPRESENTABLE")
+    Assert(BoolUnsigned(127, 8) = 127, "A POSITIVE VALUE IS ITSELF")
+    Assert(AllTrue(Map({ 0, 1, 127, 128, 200, 255 },
+                       Fn(a) => BoolUnsigned(BoolSigned(a, 8), 8) = a)),
+           "SIGNED AND UNSIGNED ROUND-TRIP ACROSS THE WHOLE BYTE")
+    Assert(BoolSignExtend(255, 8, 16) = 65535, "SIGN EXTENSION FILLS WITH ONES")
+    Assert(BoolSignExtend(127, 8, 16) = 127, "AND LEAVES A POSITIVE ALONE")
+    Assert(BoolSignExtend(5, 8, 8) = 5, "WIDENING TO THE SAME WIDTH IS THE IDENTITY")
+    Assert(BoolNeg(1, 8) = 255, "NEGATING ONE")
+    Rem The case an implementation built on BoolBitNot plus one gets wrong.
+    Assert(BoolNeg(0, 8) = 0, "AND NEGATING ZERO GIVES ZERO")
+    Assert(BoolNeg(128, 8) = 128, "THE MOST NEGATIVE BYTE IS ITS OWN NEGATION")
+    Assert(BoolAddW(200, 100, 8) = 44, "A WRAPPING ADD")
+    Assert(BoolAddW(1, 2, 8) = 3, "AND ONE THAT DOES NOT WRAP")
+    Assert(BoolSubW(0, 1, 8) = 255, "A WRAPPING SUBTRACT")
+    Assert(BoolSubW(5, 3, 8) = 2, "AND ONE THAT DOES NOT")
+    Assert(BoolMulW(16, 16, 8) = 0, "A MULTIPLY THAT WRAPS TO NOTHING")
+    Assert(BoolMulW(3, 5, 8) = 15, "AND ONE THAT FITS")
+
+    Print("--- CARRY VERSUS OVERFLOW ---")
+    Rem All four, because either pair alone passes for an implementation
+    Rem that has conflated the two.
+    Assert(BoolOverflows(127, 1, 8), "127 + 1 OVERFLOWS SIGNED")
+    Assert(BoolCarries(127, 1, 8) = False, "BUT DOES NOT CARRY")
+    Assert(BoolCarries(255, 1, 8), "255 + 1 CARRIES")
+    Assert(BoolOverflows(255, 1, 8) = False, "BUT DOES NOT OVERFLOW SIGNED")
+
+    Print("--- CODES ---")
+    Assert(BoolGray(0) = 0, "GRAY CODE OF ZERO")
+    Assert(BoolGray(1) = 1, "OF ONE")
+    Assert(BoolGray(2) = 3, "OF TWO")
+    Assert(BoolGray(3) = 2, "AND OF THREE")
+    Assert(AllTrue(Map(Range(0, 255), Fn(n) => BoolFromGray(BoolGray(n)) = n)),
+           "GRAY CODE ROUND-TRIPS ACROSS THE WHOLE BYTE")
+    Rem The defining property, and a better test than any single value.
+    Assert(AllTrue(Map(Range(0, 254), Fn(k) => BoolHamming(BoolGray(k), BoolGray(k + 1)) = 1)),
+           "CONSECUTIVE GRAY CODES DIFFER IN EXACTLY ONE BIT")
+    Assert(BoolHamming(12, 10) = 2, "HAMMING DISTANCE")
+    Assert(BoolHamming(7, 7) = 0, "AND ZERO TO ITSELF")
+    Rem Side by side: they look like the same word and are not.
+    Assert(BoolParity(7), "PARITY IS TRUE WHEN THE SET-BIT COUNT IS ODD")
+    Assert(BoolParityBit(7) = 1, "AND THE EVEN-PARITY BIT IS THEN 1")
+    Assert(BoolParity(3) = False, "PARITY IS FALSE WHEN IT IS EVEN")
+    Assert(BoolParityBit(3) = 0, "AND THE EVEN-PARITY BIT IS THEN 0")
+    Assert(BoolBcd(1234) = 4660, "PACKED BCD, ONE NIBBLE PER DIGIT")
+    Assert(BoolBcd(0) = 0, "AND ZERO")
+    Assert(BoolFromBcd(4660) = Ok(1234), "AND BACK")
+    Assert(BoolFromBcd(BoolBcd(1234)) = Ok(1234), "THE ROUND TRIP")
+    Assert(BoolFromBcd(154) = Err("BOOLFROMBCD: '154' HAS THE NIBBLE 10, WHICH IS NOT A DECIMAL DIGIT", 1),
+           "A NIBBLE ABOVE 9 IS A FACT ABOUT THE INPUT, WITH ITS POSITION")
+    Assert(BoolFromBcdOr(154, 0) = 0, "THE FALLBACK ARM")
+    Assert(BoolFromBcdOr(4660, 0) = 1234, "AND THE ANSWER ARM")
+
+    Print("--- THE NINE GATES ---")
+    Rem Tedious and worth it: every truth-table result below rests on
+    Rem these. BoolImplies and BoolIff included, since they are the two
+    Rem nobody checks.
+    Assert(BoolAnd(True, True), "AND TT")
+    Assert(BoolAnd(True, False) = False, "AND TF")
+    Assert(BoolAnd(False, True) = False, "AND FT")
+    Assert(BoolAnd(False, False) = False, "AND FF")
+    Assert(BoolOr(True, True), "OR TT")
+    Assert(BoolOr(True, False), "OR TF")
+    Assert(BoolOr(False, True), "OR FT")
+    Assert(BoolOr(False, False) = False, "OR FF")
+    Assert(BoolNot(True) = False, "NOT T")
+    Assert(BoolNot(False), "NOT F")
+    Assert(BoolNand(True, True) = False, "NAND TT")
+    Assert(BoolNand(True, False), "NAND TF")
+    Assert(BoolNand(False, True), "NAND FT")
+    Assert(BoolNand(False, False), "NAND FF")
+    Assert(BoolNor(True, True) = False, "NOR TT")
+    Assert(BoolNor(True, False) = False, "NOR TF")
+    Assert(BoolNor(False, True) = False, "NOR FT")
+    Assert(BoolNor(False, False), "NOR FF")
+    Assert(BoolXor(True, True) = False, "XOR TT")
+    Assert(BoolXor(True, False), "XOR TF")
+    Assert(BoolXor(False, True), "XOR FT")
+    Assert(BoolXor(False, False) = False, "XOR FF")
+    Assert(BoolXnor(True, True), "XNOR TT")
+    Assert(BoolXnor(True, False) = False, "XNOR TF")
+    Assert(BoolXnor(False, True) = False, "XNOR FT")
+    Assert(BoolXnor(False, False), "XNOR FF")
+    Assert(BoolImplies(True, True), "IMPLIES TT")
+    Assert(BoolImplies(True, False) = False, "IMPLIES TF - THE ONLY FALSE ROW")
+    Assert(BoolImplies(False, True), "IMPLIES FT")
+    Assert(BoolImplies(False, False), "IMPLIES FF")
+    Assert(BoolIff(True, True), "IFF TT")
+    Assert(BoolIff(True, False) = False, "IFF TF")
+    Assert(BoolIff(False, True) = False, "IFF FT")
+    Assert(BoolIff(False, False), "IFF FF")
+
+    Print("--- ROW ORDER ---")
+    Rem If this is wrong then every minterm number in every test below is
+    Rem wrong too, and they will all still look reasonable.
+    Let r5 = BoolRowInputs(5, 3)
+    Assert(Length(r5) = 3, "A 3-VARIABLE ROW HAS THREE INPUTS")
+    Assert(Nth(r5, 1), "VARIABLE 1 IS THE MOST SIGNIFICANT BIT")
+    Assert(Nth(r5, 2) = False, "VARIABLE 2 IS THE MIDDLE BIT")
+    Assert(Nth(r5, 3), "VARIABLE 3 IS THE LEAST SIGNIFICANT BIT")
+    Assert(AllTrue(Map(BoolRowInputs(0, 3), Fn(b) => b = False)), "ROW 0 IS ALL FALSE")
+    Assert(AllTrue(BoolRowInputs(7, 3)), "AND ROW 7 IS ALL TRUE")
+    Assert(BoolRowIndex({ True, False, True }, 3) = 5, "AND THE INDEX COMES BACK")
+    Assert(AllTrue(Map(Range(0, 7), Fn(k) => BoolRowIndex(BoolRowInputs(k, 3), 3) = k)),
+           "ROW INDEX AND INPUT VECTOR ROUND-TRIP")
+
+    Print("--- TRUTH TABLES ---")
+    Let tx = BoolTruthTable(Xor2, 2)
+    Assert(Length(tx) = 4, "TWO VARIABLES MAKE FOUR ROWS")
+    Rem Asserted through Output, not by comparing rows: a BoolRow carries
+    Rem a List and so does not compare with =.
+    Assert(Output(Nth(tx, 1)) = False, "XOR OF FALSE FALSE")
+    Assert(Output(Nth(tx, 2)), "XOR OF FALSE TRUE")
+    Assert(Output(Nth(tx, 3)), "XOR OF TRUE FALSE")
+    Assert(Output(Nth(tx, 4)) = False, "XOR OF TRUE TRUE")
+    Assert(Nth(Inputs(Nth(tx, 2)), 1) = False, "ROW 2'S FIRST INPUT")
+    Assert(Nth(Inputs(Nth(tx, 2)), 2), "AND ITS SECOND")
+    Assert(ToArray(BoolMinterms(Or2, 2)) = ToArray({ 1, 2, 3 }), "OR IS TRUE ON THREE ROWS")
+    Assert(ToArray(BoolMaxterms(Or2, 2)) = ToArray({ 0 }), "AND FALSE ON ONE")
+    Assert(ToArray(BoolMinterms(Carry3, 3)) = ToArray({ 3, 5, 6, 7 }), "THE FULL-ADDER CARRY'S MINTERMS")
+    Assert(BoolIsTautology(Fn(vs) => BoolOr(Nth(vs, 1), BoolNot(Nth(vs, 1))), 1),
+           "P OR NOT P IS A TAUTOLOGY")
+    Assert(BoolIsContradiction(Fn(vs) => BoolAnd(Nth(vs, 1), BoolNot(Nth(vs, 1))), 1),
+           "AND P AND NOT P IS A CONTRADICTION")
+    Assert(BoolIsTautology(Or2, 2) = False, "OR IS NEITHER")
+    Assert(BoolIsContradiction(Or2, 2) = False, "IN EITHER DIRECTION")
+    Rem De Morgan again, this time as a Boolean identity rather than on
+    Rem bit patterns - and BoolEquiv is the only way to compare two
+    Rem quotations at all.
+    Assert(BoolEquiv(Fn(vs) => BoolNot(BoolAnd(Nth(vs, 1), Nth(vs, 2))),
+                     Fn(vs) => BoolOr(BoolNot(Nth(vs, 1)), BoolNot(Nth(vs, 2))), 2),
+           "NOT (P AND Q) IS EQUIVALENT TO NOT P OR NOT Q")
+    Assert(BoolEquiv(And2, Or2, 2) = False, "AND TWO FUNCTIONS THAT DIFFER ARE NOT EQUIVALENT")
+    Assert(BoolEquiv(BoolFromMinterms(BoolMinterms(Or2, 2), 2), Or2, 2),
+           "A FUNCTION REBUILT FROM ITS MINTERMS IS THE SAME FUNCTION")
+    Assert(BoolTableText(Id1, 1, { "A" }) = "A | OUT" & Chr(10) & "F | F" & Chr(10) & "T | T",
+           "THE TABLE AS TEXT")
+
+    Print("--- MINIMISATION, THE UNAMBIGUOUS CASES ---")
+    Rem Minimal forms are not unique in general, so only cases with one
+    Rem answer are asserted exactly.
+    Let full = BoolMinimise({ 0, 1, 2, 3 }, 2)
+    Assert(Length(full) = 1, "A FULL COVER IS ONE TERM")
+    Assert(BoolSopText(full, { "A", "B" }) = "1", "WITH EVERY VARIABLE DROPPED, WHICH IS THE CONSTANT 1")
+    Assert(BoolTermText(Nth(full, 1), { "A", "B" }) = "1", "AND THE TERM ITSELF READS 1")
+    Let oneb = BoolMinimise({ 1, 3 }, 2)
+    Assert(Length(oneb) = 1, "TWO ADJACENT MINTERMS MAKE ONE TERM")
+    Assert(BoolSopText(oneb, { "A", "B" }) = "B", "IN ONE VARIABLE")
+    Assert(ToArray(BoolTermMinterms(Nth(oneb, 1))) = ToArray({ 1, 3 }),
+           "AND IT COVERS EXACTLY THE TWO IT CAME FROM")
+    Assert(BoolTermCovers(Nth(oneb, 1), 1), "COVERS 1")
+    Assert(BoolTermCovers(Nth(oneb, 1), 3), "COVERS 3")
+    Assert(BoolTermCovers(Nth(oneb, 1), 0) = False, "AND NOT 0")
+    Assert(BoolTermCovers(Nth(oneb, 1), 2) = False, "AND NOT 2")
+    Assert(IsEmpty(BoolMinimise({ }, 2)), "THE EMPTY MINTERM SET GIVES NO TERMS")
+    Assert(BoolSopText({ }, { "A", "B" }) = "0", "AND THE EMPTY SUM READS 0")
+    Assert(BoolPosText({ }, { "A", "B" }) = "1", "WHILE THE EMPTY PRODUCT READS 1")
+
+    Print("--- MINIMISATION, BY PROPERTY ---")
+    Let cms = BoolMinterms(Carry3, 3)
+    Let cterms = BoolMinimise(cms, 3)
+    Assert(AllTrue(Map(cms, Fn(m) => CoversM(cterms, m))), "EVERY MINTERM IS COVERED")
+    Assert(AllTrue(Map(Range(0, 7), Fn(m) => Ifte(InList(cms, m), True, CoversM(cterms, m) = False))),
+           "AND NOTHING ELSE IS")
+    Assert(Length(cterms) <= Length(cms), "NO WORSE THAN THE CANONICAL FORM")
+    Rem The strongest test in the file: rebuild the function from the
+    Rem cover and compare it with the original over every row.
+    Assert(BoolEquiv(Fn(vs) => CoversM(cterms, BoolRowIndex(vs, 3)), Carry3, 3),
+           "THE MINIMISED COVER IS THE SAME FUNCTION IT CAME FROM")
+    Let cpis = BoolPrimeImplicants(cms, 3)
+    Assert(Length(cpis) = 3, "THE CARRY HAS THREE PRIME IMPLICANTS")
+    Assert(AllTrue(Map(cpis, Fn(t) => AllTrue(Map(BoolTermMinterms(t), Fn(m) => InList(cms, m))))),
+           "AND EVERY ONE OF THEM COVERS ONLY REAL MINTERMS")
+
+    Print("--- PRODUCT OF SUMS ---")
+    Rem The route is BoolMaxterms, not BoolMinterms: a minimised
+    Rem product-of-sums is the minimised sum-of-products of the
+    Rem COMPLEMENT, read through De Morgan.
+    Assert(BoolPosText(BoolMinimise(BoolMaxterms(And2, 2), 2), { "A", "B" }) = "(A)(B)",
+           "AND AS A PRODUCT OF SUMS")
+
+    Print("--- DON'T-CARES HELP ---")
+    Let without = BoolMinimise({ 0, 1, 2 }, 2)
+    Let with = BoolMinimiseWith({ 0, 1, 2 }, { 3 }, 2)
+    Assert(Length(with) <= Length(without), "A DON'T-CARE NEVER COSTS TERMS")
+    Assert(Length(with) = 1, "AND HERE IT SAVES ONE")
+    Assert(AllTrue(Map({ 0, 1, 2 }, Fn(m) => CoversM(with, m))), "WHILE STILL COVERING EVERY MINTERM")
+
+    Print("")
+    Print("ALL ASSERTIONS PASSED")

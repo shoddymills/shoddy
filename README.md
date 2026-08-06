@@ -222,11 +222,11 @@ batteries included. Full word references in
     <td width="20%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/buzzer.html"><img src="docs/media/icons/buzzer.svg" alt="buzzer" width="100%"></a><br><b>buzzer</b><br><sub>notes, MML tunes, three waves</sub></td>
     <td width="20%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/cuttle.html"><img src="docs/media/icons/cuttle.svg" alt="cuttle" width="100%"></a><br><b>cuttle</b><br><sub>a runtime stack, reified</sub></td>
     <td width="20%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/reckoner.html"><img src="docs/media/icons/reckoner.svg" alt="reckoner" width="100%"></a><br><b>reckoner</b><br><sub>RPN lines against a dictionary</sub></td>
-    <td width="20%"></td>
+    <td width="20%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/bool.html"><img src="docs/media/icons/bool.svg" alt="bool" width="100%"></a><br><b>bool</b><br><sub>bits, bases, truth tables</sub></td>
   </tr>
 </table>
 
-Twelve *reckoner seeds* bridge the rest of the standard library into that
+Thirteen *reckoner seeds* bridge the rest of the standard library into that
 engine; they have no bearing outside it, so they aren't tiled here — see
 [the seed list on reckoner's own page](https://shoddymills.github.io/shoddy/machines/reckoner.html#seeds).
 
@@ -254,7 +254,7 @@ is in [the heritage of the name](https://shoddymills.github.io/shoddy/heritage.h
 |-------|-------------------------------------------------------------|
 | `src/`| The .NET solution: `Shoddy.Runtime` · `Shoddy.Devil` (front-end) · `Shoddy.Mill` · `Shoddy.Compiler` · `Shoddy.Tests` |
 | `bin/`| Build output — the published `mill` toolchain lands here after `dotnet publish` (not committed; build it, then run `bin/mill`) |
-| `machines/`| Standard library (the machines): `seq` `str` `math` `matrix` `stats` `random` `neural` `money` `file` `recio` `dict` `isam` `net` `simplex` `mps` `clock` `vt100` `keys` `scribbler` `turtle` `plotter` `buzzer` |
+| `machines/`| Standard library (the machines): `seq` `str` `bool` `math` `matrix` `stats` `random` `neural` `money` `file` `recio` `dict` `isam` `net` `simplex` `mps` `clock` `vt100` `keys` `scribbler` `turtle` `plotter` `buzzer` |
 | `mills/`| Complete example programs (the mills), each with its own build wrapper: `mungo-caverns` (Colossal Cave Adventure) · `oregon` (overland-trail game, after MECC's 1971 original) · `pac-vt100` · `invaders` · `demographics` (neural income model, regression) · `iris` (neural species classifier, ~4s to train) · `simplex-from-mps` (LP solver) |
 | `docs/`| `index.html` (start here) · `guide.html` · `tutorials/` (three build-alongs) · `setup.html` (one-time machine setup) · `vscode.html` (editor) · `build.html` (the toolchain) · `stack.html` (the stack, traced) · `spec.html` · `quickref.html` · `errors.html` (every message and its cause) · `assistants.html` (grounding an AI) · `heritage.html` (the name) · `machines/` and `mills/` (one page each) |
 | `tst/`| `libtest.shoddy` (assertion suite) · `examples.shoddy` · `gradebook.shoddy` · `simplex.shoddy` · demos (`scribbler-` `turtle-` `plotter-` `buzzer-` `net-demo.shoddy`) · `golden/` (the constitution) |

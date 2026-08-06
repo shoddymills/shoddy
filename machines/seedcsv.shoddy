@@ -30,6 +30,10 @@ Rem CsvGetOr/CsvNumOr instead, exactly as csv.shoddy's own CsvWhere
 Rem already does, since a WHERE clause or a column scan that stopped at
 Rem the first ragged row would be less useful than one that treats a
 Rem missing cell as empty.
+Rem
+Rem CSVCOLUMN AND CSVCOLUMNNUMS NAME A COLUMN EITHER WAY — by header, or
+Rem by 1-based position. See CvHead below for why both, and why the
+Rem position resolves to a header rather than indexing rows itself.
 Rem ==================================================================
 
 Include "csv.shoddy"
@@ -201,64 +205,97 @@ Def CvCsvbody(vs As List Of Cell) As RckWork
         Case Else
             RckWorkBad("CSVBODY did not answer")
 
+Rem ---- naming a column ----------------------------------------------------
+Rem EITHER SPELLING NAMES A COLUMN, because each is the natural one
+Rem somewhere: a header when the file carries one worth reading, and a
+Rem 1-based position when it does not, when the header is noise, or when
+Rem the column is simply "the third one" — which is how the worked data
+Rem session reads it ("dat/sales.csv" CSVLOAD 3 CSVCOLUMNNUMS MEAN).
+Rem
+Rem The NUMBER form resolves to the header AT that position and then reads
+Rem by name like everything else in this seed, rather than indexing rows
+Rem directly. csv.shoddy's whole column API is name-based — CsvIndexOf
+Rem takes the first of a repeated header — so a second addressing scheme
+Rem that disagreed with it on a duplicated header would be worse than
+Rem inheriting the one route it already has.
+Rem
+Rem A position outside the header row is refused rather than clamped or
+Rem read as empty: 0 and 99 are both typos on a four-column file, and
+Rem answering them would hide one.
+
+Def CvHead(word As String, sh As CsvSheet, c As Cell) As Result
+    Select Case c
+        Case CutStr(t)
+            CvHeadNamed(word, sh, t)
+        Case CutNum(x)
+            CvHeadAt(word, sh, x)
+        Case Else
+            Err(RckKindWhy(word, "a STRING header or a NUMBER column", c), 0)
+
+Def CvHeadNamed(word As String, sh As CsvSheet, t As String) As Result
+    If CsvHas(sh, t) Then
+        Ok(t)
+    Else
+        Err(word & " found no column named '" & t & "'", 0)
+
+Def CvHeadAt(word As String, sh As CsvSheet, x As Number) As Result
+    If x < 1 Or x <> Floor(x) Or x > Length(CsvHeads(sh)) Then
+        Err(word & " needs a column from 1 to " & Str(Length(CsvHeads(sh))) & ", got " & Str(x), 0)
+    Else
+        Ok(Nth(CsvHeads(sh), x))
+
 Rem ---- CSVCOLUMN, CSVCOLUMNNUMS -------------------------------------------
-Rem Both refuse a column the header does not name; each row after that
-Rem goes through CsvGetOr/CsvNumOr rather than the strict CsvGet, so one
-Rem short row does not stop the scan.
+Rem Both refuse a column the header does not name and a position outside
+Rem it; each row after that goes through CsvGetOr/CsvNumOr rather than the
+Rem strict CsvGet, so one short row does not stop the scan.
 
 Def CvSeedCsvcolumn(st As RckState) As RckState
-    RckReg(st, "CSVCOLUMN", 2, RckPure(Fn(vs) => CvCsvcolumn(vs)), "( doc head -- list )", "The named column, top to bottom, as strings.")
+    RckReg(st, "CSVCOLUMN", 2, RckPure(Fn(vs) => CvCsvcolumn(vs)), "( doc col -- list )", "One column, top to bottom, as strings; col is a header name or a 1-based position.")
 
 Def CvCsvcolumn(vs As List Of Cell) As RckWork
     Select Case CvDoc("CSVCOLUMN", Nth(vs, 1))
         Case Ok(rows)
-            CvCsvcolumnAt(rows, Nth(vs, 2))
+            CvCsvcolumnAt(CsvSheetOf(rows), Nth(vs, 2))
         Case Err(w, at)
             RckWorkBad(w)
         Case Else
             RckWorkBad("CSVCOLUMN did not answer")
 
-Def CvCsvcolumnAt(rows As List Of List Of String, c As Cell) As RckWork
-    Select Case RckTextArg("CSVCOLUMN", c)
+Def CvCsvcolumnAt(sh As CsvSheet, c As Cell) As RckWork
+    Select Case CvHead("CSVCOLUMN", sh, c)
         Case Ok(head)
-            CvCsvcolumnOn(CsvSheetOf(rows), head)
+            CvCsvcolumnOn(sh, head)
         Case Err(w, at)
             RckWorkBad(w)
         Case Else
             RckWorkBad("CSVCOLUMN did not answer")
 
 Def CvCsvcolumnOn(sh As CsvSheet, head As String) As RckWork
-    If Not CsvHas(sh, head) Then
-        RckWorkBad("CSVCOLUMN found no column named '" & head & "'")
-    Else
-        RckVals({ CvCellRow(Map(CsvBody(sh), Fn(r) => CsvGetOr(sh, r, head, ""))) })
+    RckVals({ CvCellRow(Map(CsvBody(sh), Fn(r) => CsvGetOr(sh, r, head, ""))) })
 
 Def CvSeedCsvcolumnnums(st As RckState) As RckState
-    RckReg(st, "CSVCOLUMNNUMS", 2, RckPure(Fn(vs) => CvCsvcolumnnums(vs)), "( doc head -- list )", "The named column, top to bottom, read as numbers (0 for a missing or short row).")
+    RckReg(st, "CSVCOLUMNNUMS", 2, RckPure(Fn(vs) => CvCsvcolumnnums(vs)), "( doc col -- list )", "One column, top to bottom, read as numbers (0 for a missing or short row); col is a header name or a 1-based position.")
 
 Def CvCsvcolumnnums(vs As List Of Cell) As RckWork
     Select Case CvDoc("CSVCOLUMNNUMS", Nth(vs, 1))
         Case Ok(rows)
-            CvCsvcolumnnumsAt(rows, Nth(vs, 2))
+            CvCsvcolumnnumsAt(CsvSheetOf(rows), Nth(vs, 2))
         Case Err(w, at)
             RckWorkBad(w)
         Case Else
             RckWorkBad("CSVCOLUMNNUMS did not answer")
 
-Def CvCsvcolumnnumsAt(rows As List Of List Of String, c As Cell) As RckWork
-    Select Case RckTextArg("CSVCOLUMNNUMS", c)
+Def CvCsvcolumnnumsAt(sh As CsvSheet, c As Cell) As RckWork
+    Select Case CvHead("CSVCOLUMNNUMS", sh, c)
         Case Ok(head)
-            CvCsvcolumnnumsOn(CsvSheetOf(rows), head)
+            CvCsvcolumnnumsOn(sh, head)
         Case Err(w, at)
             RckWorkBad(w)
         Case Else
             RckWorkBad("CSVCOLUMNNUMS did not answer")
 
 Def CvCsvcolumnnumsOn(sh As CsvSheet, head As String) As RckWork
-    If Not CsvHas(sh, head) Then
-        RckWorkBad("CSVCOLUMNNUMS found no column named '" & head & "'")
-    Else
-        RckVals({ CutList(Map(CsvBody(sh), Fn(r) => CutNum(CsvNumOr(sh, r, head, 0)))) })
+    RckVals({ CutList(Map(CsvBody(sh), Fn(r) => CutNum(CsvNumOr(sh, r, head, 0)))) })
 
 Rem ---- CSVGET -----------------------------------------------------------
 Rem The strict half of the guard pair, kept strict: a refusal, naming

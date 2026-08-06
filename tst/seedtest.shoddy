@@ -15,9 +15,10 @@ Rem this file is for, is everything that only shows up once the REAL
 Rem seeds are in the dictionary: a guard written into an actual seed word
 Rem (T9's seed rows), abort-safety across real I/O — files, CSV, isam
 Rem (T15), the promise that no handle ever reaches the stack (T16), the
-Rem worked data session (T17, and Appendix A.3), and B.5's converting
-Rem bridge. Every guard below is walked exactly once, per the test
-Rem approach's "the guard list is the test list."
+Rem worked data session (T17, and Appendix A.3 entered exactly as the
+Rem appendix writes it), and B.5's converting bridge. Every guard below is
+Rem walked exactly once, per the test approach's "the guard list is the
+Rem test list."
 Rem
 Rem SURVIVAL IS PROVED BY THE NEXT LINE. Every abort-safety assertion
 Rem below is in two parts: the failing line answers a refusal (or, for
@@ -369,19 +370,37 @@ Def Main()
     Rem defaulted — the one guard CSVCOLUMN/CSVCOLUMNNUMS trade away on
     Rem purpose, in favour of a scan that does not stop at a ragged row.
     Assert(Refuses(s1, Q("S") & " RCL " & Q("S") & " RCL CSVBODY FIRST " & Q("Nope") & " CSVGET", "CSVGET found no column named 'Nope'"), "CSVGET ON A COLUMN THE HEADER DOES NOT NAME")
+    Rem CSVGET's other half: the header promises a column and the ROW stops
+    Rem short of it. Built on the stack rather than from a fixture, since a
+    Rem ragged document is two literals and needs no file.
+    Assert(Refuses(s1, "{ { " & Q("a") & " " & Q("b") & " } { " & Q("1") & " } } { " & Q("1") & " } " & Q("b") & " CSVGET", "CSVGET: the row stops short of column 'b'"), "AND ON A ROW THAT STOPS SHORT OF ONE IT DOES NAME")
     Assert(Refuses(s1, Q("S") & " RCL " & Q("Nope") & " CSVCOLUMN", "CSVCOLUMN found no column named 'Nope'"), "AND CSVCOLUMN, THE SAME WAY")
     Assert(Refuses(s1, Q("S") & " RCL " & Q("Nope") & " CSVCOLUMNNUMS", "CSVCOLUMNNUMS found no column named 'Nope'"), "AND CSVCOLUMNNUMS")
     Assert(Text(Ran(s1, Q("S") & " RCL " & Q("S") & " RCL CSVBODY FIRST " & Q("Region") & " CSVGET")) = Q("South"), "AND CSVGET STILL WORKS ON A COLUMN THAT IS THERE")
 
-    Print("--- Appendix A.3, adapted: the reckoner's own CSVCOLUMNNUMS takes a header name ---")
-    Rem The spec's illustrative session reads a positional "3 CSVCOLUMNNUMS";
-    Rem the seed actually shipped (R5's table, and seedcsv.shoddy) takes the
-    Rem column's header name instead, which is the settled API this golden
-    Rem session follows. The shape — load, describe, and a mistyped path
-    Rem that survives — is the same story the appendix tells.
+    Rem A column is named by header OR by 1-based position, and the two
+    Rem address the same column: Amount is the fixture's third. The
+    Rem positional form is what the worked data session keys, so it is the
+    Rem one the acceptance criterion runs on.
+    Print("--- either spelling names a column, and both name the same one ---")
+    Assert(Text(Ran(s1, Q("S") & " RCL 3 CSVCOLUMNNUMS " & Q("S") & " RCL " & Q("Amount") & " CSVCOLUMNNUMS =")) = "True", "3 CSVCOLUMNNUMS IS " & Q("AMOUNT") & " CSVCOLUMNNUMS")
+    Assert(Text(Ran(s1, Q("S") & " RCL 1 CSVCOLUMN " & Q("S") & " RCL " & Q("Date") & " CSVCOLUMN =")) = "True", "AND 1 CSVCOLUMN IS THE DATE COLUMN")
+    Rem Three refusals for the three ways a position can be wrong, and one
+    Rem for a cell that is neither spelling: 0 and 99 are off the end, 2.5
+    Rem is a typo, and answering any of them would hide one.
+    Assert(Refuses(s1, Q("S") & " RCL 0 CSVCOLUMNNUMS", "CSVCOLUMNNUMS needs a column from 1 to 4, got 0"), "A POSITION BELOW ONE IS REFUSED")
+    Assert(Refuses(s1, Q("S") & " RCL 99 CSVCOLUMN", "CSVCOLUMN needs a column from 1 to 4, got 99"), "AND ONE PAST THE LAST COLUMN")
+    Assert(Refuses(s1, Q("S") & " RCL 2.5 CSVCOLUMN", "CSVCOLUMN needs a column from 1 to 4, got 2.5"), "AND ONE THAT IS NOT WHOLE")
+    Assert(Refuses(s1, Q("S") & " RCL TRUE CSVCOLUMN", "CSVCOLUMN needs a STRING header or a NUMBER column, got BOOLEAN"), "AND A CELL THAT IS NEITHER SPELLING")
+
+    Print("--- Appendix A.3, the golden session, entered exactly as written ---")
+    Rem The appendix's own lines, positional column and all. Its printed
+    Rem figures are illustrative of a file this repository does not ship;
+    Rem the numbers here are asserted against stats.shoddy called directly
+    Rem on the committed fixture, which is the stronger check anyway.
     Let a1 = Ran(s0, Q(SalesPath()) & " CSVLOAD " & Q("S") & " STO")
     Assert(Text(Ran(a1, Q("S") & " RCL CSVWIDTH " & Q("S") & " RCL LENGTH")) = "251 | 4", "y: 4, x: 251")
-    Let a2 = Ran(a1, Q("S") & " RCL " & Q("Amount") & " CSVCOLUMNNUMS " & Q("C") & " STO")
+    Let a2 = Ran(a1, Q("S") & " RCL 3 CSVCOLUMNNUMS " & Q("C") & " STO")
     Assert(Near(TopNum(Ran(a2, Q("C") & " RCL MEAN")), Mean(amounts)), "y: THE MEAN")
     Assert(Near(TopNum(Ran(a2, Q("C") & " RCL STDEV")), StdDev(amounts)), "x: THE STANDARD DEVIATION")
     Assert(Near(TopNum(Ran(a2, Q("C") & " RCL 0.95 QUANTILE")), Quantile(amounts, 0.95)), "AND THE 95TH PERCENTILE")
@@ -392,6 +411,16 @@ Def Main()
     Assert(Bad(a3, Q("tst/csv/missing.csv") & " CSVLOAD"), "A MISTYPED PATH IS REFUSED")
     Assert(Text(Ran(a3, Q("tst/csv/missing.csv") & " CSVLOAD")) = Text(a3), "AND THE STACK IS EXACTLY AS IT WAS")
     Assert(Text(Ran(Ran(a3, Q("tst/csv/missing.csv") & " CSVLOAD"), "LENGTH")) = "250", "THE COLUMN IS STILL BANKED, AND THE SESSION CONTINUES")
+
+    Rem R2.9 at its shortest, and the acceptance criterion verbatim: load a
+    Rem delimited file, take a column, describe it — one line, from the
+    Rem entry line, with the path the only thing changed from the criterion
+    Rem as written. This is the assertion that separates a dictionary that
+    Rem can open a file from a pocket calculator.
+    Print("--- data in, answer out, in one line ---")
+    Let one = Ran(s0, Q(SalesPath()) & " CSVLOAD  3 CSVCOLUMNNUMS  MEAN")
+    Assert(Deep(one) = 1, "THE WHOLE SESSION LEAVES ONE CELL")
+    Assert(Near(TopNum(one), Mean(amounts)), "AND IT IS THE MEAN OF THE AMOUNT COLUMN")
 
     Print("")
     Print("ALL ASSERTIONS PASSED")

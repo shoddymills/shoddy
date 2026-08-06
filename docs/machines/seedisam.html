@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="reckoner seed: isam, whole-table words only — machines/seedisam.shoddy">
+<title>seedisam — A Reckoner Seed | Shoddy Machines</title>
+<link rel="stylesheet" href="../style.css">
+<link rel="icon" href="../favicon.svg" type="image/svg+xml">
+<link rel="alternate icon" href="../favicon.ico" sizes="48x48">
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+</head>
+<body>
+<div class="topbar"><div class="inner">
+  <div class="row">
+    <a class="phase" href="index.html"><img class="mark" src="../media/brand/shoddy-icon.svg" alt="" width="23" height="23">Shoddy · The Machines</a>
+    <span class="spacer"></span>
+    <nav class="docnav meta" aria-label="About"><a href="../heritage.html">Heritage</a><a href="../authorship.html">Authorship</a></nav>
+  </div>
+  <nav class="docnav main" aria-label="Documentation"><a href="../tutorials/index.html">Tutorials</a><a href="../guide.html">Guide</a><a href="../quickref.html">Reference</a><span class="here">Machines</span><a href="../mills/index.html">Mills</a><a href="../stack.html">Stack</a><a href="../spec.html">Spec</a><a href="../setup.html">Setup</a><a href="../vscode.html">VS Code</a><a href="../assistants.html">AI</a><a href="../build.html">Toolchain</a><a href="../errors.html">Errors</a></nav>
+</div></div>
+<div class="wrap">
+
+
+<header class="mast has-icon"><div><p class="eyebrow"><a href="index.html#runtime-stack">The Machines &middot; Runtime stack</a></p><h1>seedisam</h1><p class="kicker">A reckoner seed: isam, whole-table words only — machines/seedisam.shoddy</p></div><img class="micon" src="../media/icons/seedisam.svg" alt="the seedisam machine&#39;s icon"></header>
+<nav class="pagertop" aria-label="Machines, in catalog order"><a href="seedcsv.html">&larr; seedcsv</a><a href="index.html">All machines</a><a href="seedclock.html">seedclock &rarr;</a></nav>
+
+<h2 id="summary">Summary</h2>
+<p><code>seedisam</code> bridges <a href="isam.html">isam</a>'s whole-table
+words: <code>ISAMALL ISAMRANGE ISAMHAS ISAMGETOR ISAMCOUNT</code>. It does
+not, and cannot, register <code>ISAMOPEN</code>: a handle must never reach
+the stack, because a handle is a <code>NUMBER</code> capped at sixteen and
+shared with sockets, and <code>UNDO</code> after an open would restore the
+stack while leaving the handle open and now unreachable, since the number
+that named it is gone. There is no guarded form of "open a table from the
+entry line" that keeps that promise, so this seed does not offer one.</p>
+<p>Instead, <code>RckSeedIsamNum</code>/<code>RckSeedIsamStr</code> take an
+<strong>already-open</strong> <code>Isam</code> handle as their own
+argument — closed over inside the words they register, never pushed — the
+way a form field or an embedded scripting layer would seed the engine with
+a table its host already knows about.</p>
+
+<h2 id="why">Why It's Useful</h2>
+<p><strong>Two entry points, not one generic one.</strong>
+<a href="isam.html">isam.shoddy</a>'s keys must be <code>NUMBER</code>s or
+<code>STRING</code>s, and Shoddy has no way to ask a <code>Cell</code>
+which of the two it holds and hand back a value of the matching generic
+type — so a number-keyed table seeds through <code>RckSeedIsamNum</code>
+and a string-keyed one through <code>RckSeedIsamStr</code>. Both register
+the same five words. Records cross the bridge through a <code>cellOf</code>
+function the caller supplies, not a new stack case: isam's record type is
+the caller's own <code>Type</code>, unknown here exactly as it is unknown
+to <a href="isam.html">isam.shoddy</a> itself, and a <code>Pair</code>
+built field to field (as <a href="seedcsv.html">seedcsv</a>'s
+<code>CSVPAIRS</code> already does for a row) is the usual shape to hand
+back.</p>
+
+<h2 id="guide">User's Guide</h2>
+<pre><code>Let db  = IsamOpen("customers.dat", "customers.idx", KeyOf)
+Let st0 = RckSeedIsamNum(RckNew(), db, Fn(rec) => CutPair(Pair(CutNum(Id(rec)), CutStr(Name(rec)))))
+RckEval(st0, "ISAMCOUNT")                 ' x: however many records the table holds
+RckEval(st0, "100 200 ISAMRANGE")         ' x: the records with keys 100..200
+RckEval(st0, "999 " & Chr(34) & "none" & Chr(34) & " ISAMGETOR")   ' x: "none" unless key 999 exists</code></pre>
+
+<h2 id="words">Word Reference</h2>
+<p class="tag">The same five words for both key kinds; NUMBER-keyed via
+<code>RckSeedIsamNum</code>, STRING-keyed via <code>RckSeedIsamStr</code></p>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>ISAMALL ( -- list )</td><td>Every record in the table, key order.</td></tr>
+<tr><td>ISAMCOUNT ( -- n )</td><td>How many records the table holds.</td></tr>
+<tr><td>ISAMHAS ( k -- flag )</td><td>Whether the table has a record under key k.</td></tr>
+<tr><td>ISAMRANGE ( lo hi -- list )</td><td>The records with keys from lo to hi inclusive, key order.</td></tr>
+<tr><td>ISAMGETOR ( k dflt -- rec )</td><td>The record under key k, or dflt unchanged when there is none.</td></tr>
+</table>
+
+<h2 id="usedby">Who Uses It</h2>
+<p>No machine or mill includes it yet. A host seeds it directly by calling
+<code>RckSeedIsamNum</code> or <code>RckSeedIsamStr</code> with a table it
+has already opened.</p>
+
+<h2 id="uses">The Machines It Uses</h2>
+<table>
+<tr><th></th><th>Machine</th><th>Why</th></tr>
+<tr><td class="uicon"><a href="isam.html"><img src="../media/icons/isam.svg" alt=""></a></td><td><a href="isam.html">isam</a></td><td>The domain this seed bridges: <code>IsamAll</code>, <code>IsamCount</code>, <code>IsamHas</code>, <code>IsamRange</code> and <code>IsamGet</code> — never <code>IsamOpen</code>.</td></tr>
+<tr><td class="uicon"><a href="cuttle.html"><img src="../media/icons/cuttle.svg" alt=""></a></td><td><a href="cuttle.html">cuttle</a></td><td>The <code>Cell</code> type records cross the bridge as.</td></tr>
+<tr><td class="uicon"><a href="reckoner.html"><img src="../media/icons/reckoner.svg" alt=""></a></td><td><a href="reckoner.html">reckoner</a></td><td><code>RckReg</code>, <code>RckSeeding</code> and the argument readers every registered word is built from.</td></tr>
+</table>
+
+<nav class="pager" aria-label="Machines, in catalog order">
+  <a href="seedcsv.html"><span class="dir">&larr; Previous machine</span><span class="ttl">seedcsv</span></a>
+  <a class="next" href="seedclock.html"><span class="dir">Next machine &rarr;</span><span class="ttl">seedclock</span></a>
+</nav>
+<footer>Named for the shoddy mills of the West Riding: Useless Things Made
+Useful Through Skill (<a href="../heritage.html">the heritage of the name</a>).<br>
+&copy; 2026 Stephen Vincent Foster</footer>
+</div>
+</body>
+</html>

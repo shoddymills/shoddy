@@ -55,6 +55,12 @@ const usedByMachines = {};
 for (const m of Object.keys(includes)) usedByMachines[m] = [];
 for (const [m, incs] of Object.entries(includes))
   for (const dep of incs) usedByMachines[dep].push(m);
+// Every reckoner seed includes both cuttle and reckoner, which would make
+// their usedby tables just the twelve seeds again - already listed, with
+// more detail, in the "The Reckoner Seeds" section those two pages carry
+// instead. Strip seeds from just these two so the tables aren't a duplicate.
+usedByMachines["cuttle"] = usedByMachines["cuttle"].filter(m => !m.startsWith("seed"));
+usedByMachines["reckoner"] = usedByMachines["reckoner"].filter(m => !m.startsWith("seed"));
 
 // ---- ground truth: machine -> mills that call its words ----
 const usedByMills = {};
@@ -145,12 +151,18 @@ for (const m of Object.keys(includes).sort()) {
 }
 
 // ---- catalogs: nothing added to the tree may go unlisted ----
+// Exception: the reckoner seeds ("seed*"). They have no bearing outside
+// cuttle/reckoner, so they are deliberately not tiled in the general
+// catalogs - reckoner's own page lists all twelve instead. They still need
+// a page (the orphan check below still runs over every machine) and their
+// usedby/uses sections are still ground-truth-checked as normal.
 const machineNames = Object.keys(includes).sort();
+const catalogedNames = machineNames.filter(n => !n.startsWith("seed"));
 const read = f => fs.readFileSync(path.join(root, f), "utf8");
 const listings = [
-  ["machine", machineNames, "docs/machines/index.html", n => n + ".html"],
-  ["machine", machineNames, "docs/index.html", n => "machines/" + n + ".html"],
-  ["machine", machineNames, "README.md", n => "machines/" + n + ".html"],
+  ["machine", catalogedNames, "docs/machines/index.html", n => n + ".html"],
+  ["machine", catalogedNames, "docs/index.html", n => "machines/" + n + ".html"],
+  ["machine", catalogedNames, "README.md", n => "machines/" + n + ".html"],
   ["mill", mills, "docs/mills/index.html", n => n + ".html"],
   ["mill", mills, "docs/index.html", n => "mills/" + n + ".html"],
   ["mill", mills, "README.md", n => "mills/" + n + ".html"],

@@ -216,9 +216,16 @@ batteries included. Full word references in
     <td width="25%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/turtle.html"><img src="docs/media/icons/turtle.svg" alt="turtle" width="100%"></a><br><b>turtle</b><br><sub>purely functional turtles</sub></td>
     <td width="25%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/plotter.html"><img src="docs/media/icons/plotter.svg" alt="plotter" width="100%"></a><br><b>plotter</b><br><sub>statistical charts</sub></td>
     <td width="25%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/buzzer.html"><img src="docs/media/icons/buzzer.svg" alt="buzzer" width="100%"></a><br><b>buzzer</b><br><sub>notes, MML tunes, three waves</sub></td>
+    <td width="25%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/cuttle.html"><img src="docs/media/icons/cuttle.svg" alt="cuttle" width="100%"></a><br><b>cuttle</b><br><sub>a runtime stack, reified</sub></td>
+    <td width="25%" align="center" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/reckoner.html"><img src="docs/media/icons/reckoner.svg" alt="reckoner" width="100%"></a><br><b>reckoner</b><br><sub>RPN lines against a dictionary</sub></td>
+    <td width="25%"></td>
     <td width="25%"></td>
   </tr>
 </table>
+
+Twelve *reckoner seeds* bridge the rest of the standard library into that
+engine; they have no bearing outside it, so they aren't tiled here — see
+[the seed list on reckoner's own page](https://shoddymills.github.io/shoddy/machines/reckoner.html#seeds).
 
 ## The name
 

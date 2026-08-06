@@ -1,0 +1,1631 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem reckoner.shoddy — Shoddy standard library: the runtime engine
+Rem
+Rem An interpreter for whitespace-tokenized RPN lines, evaluated against
+Rem a dictionary of registered words over cuttle.shoddy's runtime stack.
+Rem It is general infrastructure and not a calculator: a formula read
+Rem from a spec file, an expression typed into a form field and an
+Rem embedded scripting layer are equally its callers, which is why it is
+Rem not named for the showpiece shell.
+Rem
+Rem A READY RECKONER was the printed table of pre-computed answers every
+Rem cloth merchant and mill clerk worked from to price a piece by length
+Rem and weight — the trade's calculating instrument before there were
+Rem calculators. "Reckon" is the plain regional word for compute besides.
+Rem
+Rem NOTHING KEYABLE ABORTS THE MILL. That is the load-bearing contract
+Rem and the reason every word here answers with a value: underflow, a
+Rem missing arity, an unknown word, a kind that has no arithmetic, a
+Rem divisor of zero, a domain a builtin would Error on. Losing the
+Rem stack, the dictionary, the registers and the tape is worse than any
+Rem wrong answer, so every guard is written before the builtin it
+Rem protects rather than after it.
+Rem
+Rem THE ENGINE PERFORMS NO EFFECT. It never reads, writes or prints. It
+Rem applies words whose bodies may, and that is a property of the WORD,
+Rem declared where the word is registered — RckPure or RckTouch — and
+Rem reported by HELP. Evaluation returns lines for a shell to print; the
+Rem engine never touches the terminal.
+Rem
+Rem IT KNOWS NO DOMAIN. There is no Include of stats, csv, file or any
+Rem other machine, and no word here names one. Every domain arrives
+Rem through RckReg as a seed file, which is what makes this machine
+Rem independent of any domain's timeline. What it does include is
+Rem cuttle, for the value set every seed must speak, and seq/str/dict
+Rem for the plumbing.
+Rem
+Rem THREE THINGS TO KNOW BEFORE READING THE EVALUATOR:
+Rem
+Rem   A SUB-EVALUATION GETS A FRESH STACK AND THREADS THE STATE. A
+Rem   { ... } literal, a combinator's program and a user word's body all
+Rem   run on a stack of their own, while registers, dictionary and modes
+Rem   thread through and their changes persist. Token lists have no
+Rem   closures, so STO before and RCL inside is the only way a program
+Rem   reaches a value that is not its element — that is the closure
+Rem   substitute, and it only works if the threading is guaranteed.
+Rem
+Rem   A USER WORD TAKES EXACTLY ONE CELL. Its fresh stack is seeded with
+Rem   the one cell it was applied to, and whatever it leaves is pushed
+Rem   back. RckDef carries no arity because there is nothing to carry:
+Rem   one element in, by the same rule that gives a MAP program its
+Rem   element, and a second argument is banked in a register first.
+Rem
+Rem   THE LINE IS THE TRANSACTION. A whole line evaluates or the state
+Rem   stands; the error case hands back the state exactly as it was, so
+Rem   a shell's loop never loses the user's stack. An effectful word that
+Rem   already wrote a file has still written it — UNDO restores a stack,
+Rem   not the world, and no REPL's undo ever promised otherwise.
+Rem
+Rem RECURSION IS IMPOSSIBLE, ON PURPOSE. A definition is validated
+Rem against the dictionary as it stands, so its body may name only words
+Rem that already exist and never the name being defined. The call graph
+Rem is therefore acyclic and nesting depth is bounded by what was typed,
+Rem which is how "nothing keyable aborts" survives contact with
+Rem : LOOP LOOP ; — the definition is refused rather than the mill lost
+Rem to a stack that never unwinds. Iteration is TIMES, MAP, FILTER and
+Rem FOLD, which is what the combinators are for.
+Rem ==================================================================
+
+Include "cuttle.shoddy"
+Include "seq.shoddy"
+Include "str.shoddy"
+Include "dict.shoddy"
+
+Rem ---- the marks the tokenizer and the evaluator agree on -------------
+Rem Ordinary tokens, separated by whitespace like everything else: there
+Rem is no second grammar and no self-delimiting character, so { 1 2 3 }
+Rem is four tokens and {1 2 3} is one word that does not exist.
+
+Def RckDefMark() As String
+    ":"
+
+Def RckEndMark() As String
+    ";"
+
+Def RckListOpen() As String
+    "{"
+
+Def RckListClose() As String
+    "}"
+
+Def RckProgOpen() As String
+    "["
+
+Def RckProgClose() As String
+    "]"
+
+Def RckQuoteMark() As String
+    Chr(34)
+
+Rem The two angle modes, and the two group labels the dictionary starts
+Rem out with. A seed names its own group through RckSeeding.
+
+Def RckDegrees() As String
+    "DEG"
+
+Def RckRadians() As String
+    "RAD"
+
+Def RckCoreName() As String
+    "core"
+
+Def RckUserName() As String
+    "user"
+
+Rem Fifty states of history, oldest dropped. A cap rather than a growing
+Rem tape because the tape is a convenience and a session is not a
+Rem transaction log.
+Def RckHistCap() As Number
+    50
+
+Rem How wide the WORDS listing packs its names.
+Def RckListWidth() As Number
+    68
+
+Rem ---- the types -------------------------------------------------------
+
+Rem What a registered primitive answers: the cells it leaves, deepest
+Rem first, or a refusal. Never an abort.
+Type RckWork = RckVals(WorkVals As List Of Cell) | RckWorkBad(WorkWhy As String)
+
+Rem WHAT A REGISTERED WORD IS. Four kinds, and the middle two are the
+Rem whole of the effect flag: a word cannot be registered without saying
+Rem whether it touches the world, because the constructor it is written
+Rem with is the declaration. RckReg therefore keeps the six parameters
+Rem the API states, and the flag rides where it cannot be forgotten.
+Rem
+Rem RckCore is the engine's own: dispatched by tag rather than by name,
+Rem so an alias registered over one keeps working, and reaching the
+Rem state is why they are not RckPure. They are all pure regardless —
+Rem the engine performs no effect.
+Type RckBody = RckCore(CoreTag As String) | RckPure(PureFn As [ List Of Cell -- RckWork ]) | RckTouch(TouchFn As [ List Of Cell -- RckWork ]) | RckUser(UserTokens As List Of String, UserTouch As Boolean)
+
+Rem A dictionary entry. The metadata is mandatory (R4.9) and the whole
+Rem reason HELP and WORDS can answer at all; a word without it is
+Rem undiscoverable at exactly the moment someone is exploring.
+Type RckEntry
+    WordName   As String
+    WordArity  As Number
+    WordBody   As RckBody
+    WordEffect As String
+    WordDesc   As String
+    WordSeed   As String
+
+Rem The whole of a session. Every keystroke produces a new one of these,
+Rem which is why UNDO is a consequence of the semantics rather than a
+Rem feature.
+Type RckState
+    RckStack As Stack
+    RckDict  As List Of RckEntry
+    RckRegs  As List Of Pair
+    RckFmt   As CutFmt
+    RckAngle As String
+    RckHist  As List Of Stack
+    RckLastX As Option
+    RckSeed  As String
+    RckDeep  As Number
+
+Rem What evaluating a line answers. Both cases carry output lines for the
+Rem shell to print, and the failing case carries the state as it was.
+Type RckLine = RckNext(NextState As RckState, NextOut As List Of String) | RckStop(StopState As RckState, StopWhy As String, StopOut As List Of String)
+
+Rem The same answer inside the evaluator, where a break carries no state
+Rem because there is no state a caller may keep: the line is the
+Rem transaction, and the state that stands is the one the line started
+Rem from.
+Type RckRun = RckWent(WentState As RckState, WentOut As List Of String) | RckBroke(BrokeWhy As String, BrokeOut As List Of String)
+
+Rem Pulling a word's arguments off the stack.
+Type RckTaken = RckHasArgs(ArgState As RckState, ArgVals As List Of Cell) | RckArgsBad(ArgWhy As String)
+
+Rem Scanning to a closing mark: what was inside, and what came after.
+Type RckSpan = RckSpanned(SpanIn As List Of String, SpanTail As List Of String) | RckSpanBad(SpanWhy As String)
+
+Rem The accumulator the combinators fold with. Carrying the break in the
+Rem accumulator rather than recursing is what keeps MAP over a
+Rem six-hundred element list from being six hundred Shoddy frames deep.
+Type RckFlow = RckFlowing(FlowState As RckState, FlowVals As List Of Cell, FlowOut As List Of String) | RckFlowBad(FlowWhy As String, FlowOut As List Of String)
+
+Rem One display row: what a graphical shell tags a line with. RckShow is
+Rem built from these, so the two renders cannot disagree.
+Type RckRow
+    RowLabel As String
+    RowKind  As String
+    RowText  As String
+
+Rem ---- building a state ------------------------------------------------
+
+Rem Empty of everything, RAD, STD. Radians because that is what the tree
+Rem speaks everywhere else and PI 2 / SIN should work before anything is
+Rem set; DEG is one word away and exists for entry, which is the only
+Rem thing it exists for.
+Def RckBare() As RckState
+    RckState(CutNew(), { }, { }, CutFmtStd(), RckRadians(), { }, None(), RckCoreName(), 0)
+
+Rem The engine core seeded. This is what a mill starts from, and what a
+Rem seed file is handed.
+Def RckNew() As RckState
+    Fold(RckCoreWords(), RckBare(), RckPut)
+
+Rem The group the next registrations land in. A seed opens with this and
+Rem the whole file lands under one heading in WORDS; forgetting it is
+Rem untidy rather than wrong, and puts the words under "core".
+Def RckSeeding(st As RckState, label As String) As RckState
+    With(st, RckSeed = label)
+
+Rem ---- the dictionary --------------------------------------------------
+
+Def RckPut(st As RckState, e As RckEntry) As RckState
+    With(st, RckDict = Append(RckWithout(RckDict(st), WordName(e)), e))
+
+Def RckWithout(d As List Of RckEntry, name As String) As List Of RckEntry
+    Filter(d, Fn(e) => WordName(e) <> name)
+
+Rem The registration API. Names fold to UPPER here and at lookup, as the
+Rem language itself does; the seed group comes from the state so the six
+Rem parameters stay the six the API states.
+Def RckReg(st As RckState, name As String, arity As Number, body As RckBody, effect As String, desc As String) As RckState
+    RckPut(st, RckEntry(Upper(name), arity, body, effect, desc, RckSeed(st)))
+
+Def RckUnreg(st As RckState, name As String) As RckState
+    With(st, RckDict = RckWithout(RckDict(st), Upper(name)))
+
+Rem Option, not an entry-or-sentinel: a dictionary miss is an ordinary
+Rem answer and the caller has to look at it.
+Def RckFind(st As RckState, name As String) As Option
+    RckFindIn(RckDict(st), Upper(name))
+
+Def RckFindIn(d As List Of RckEntry, name As String) As Option
+    If IsEmpty(d) Then
+        None()
+    Else
+        If WordName(First(d)) = name Then
+            Some(First(d))
+        Else
+            RckFindIn(Rest(d), name)
+
+Def RckKnows(st As RckState, name As String) As Boolean
+    Select Case RckFind(st, name)
+        Case Some(e)
+            True
+        Case Else
+            False
+
+Rem Whether a word touches the world. A user word's flag is the union of
+Rem the words its body names, worked out once at definition time — which
+Rem is what lets someone auditing a downloaded program see in one place
+Rem what it will do.
+Def RckTouches(e As RckEntry) As Boolean
+    Select Case WordBody(e)
+        Case RckTouch(f)
+            True
+        Case RckUser(ts, t)
+            t
+        Case Else
+            False
+
+Def RckIsUser(e As RckEntry) As Boolean
+    Select Case WordBody(e)
+        Case RckUser(ts, t)
+            True
+        Case Else
+            False
+
+Def RckTokensOf(e As RckEntry) As List Of String
+    Select Case WordBody(e)
+        Case RckUser(ts, t)
+            ts
+        Case Else
+            { }
+
+Rem ---- the tokenizer ---------------------------------------------------
+Rem Whitespace splits; a "..." string is one token and may hold spaces.
+Rem The quotes are KEPT in the token, so a token is exactly the text that
+Rem produced it: a saved definition re-reads to the same tokens, and
+Rem VIEW prints back what was typed. There are no escapes inside a
+Rem string — the first closing quote ends it — because a calculator
+Rem entry line is not a source file.
+
+Def RckTokens(line As String) As Result
+    RckScan(line, 1, "", { })
+
+Def RckScan(s As String, i As Number, cur As String, acc As List Of String) As Result
+    If i > Len(s) Then
+        Ok(RckFlush(cur, acc))
+    Else
+        If Mid(s, i, 1) = RckQuoteMark() Then
+            RckScanText(s, i + 1, "", RckFlush(cur, acc))
+        Else
+            If Asc(Mid(s, i, 1)) <= 32 Then
+                RckScan(s, i + 1, "", RckFlush(cur, acc))
+            Else
+                RckScan(s, i + 1, cur & Mid(s, i, 1), acc)
+
+Def RckScanText(s As String, i As Number, cur As String, acc As List Of String) As Result
+    If i > Len(s) Then
+        Err("unterminated string, there is no closing " & RckQuoteMark(), 0)
+    Else
+        If Mid(s, i, 1) = RckQuoteMark() Then
+            RckScan(s, i + 1, "", Append(acc, RckQuoteMark() & cur & RckQuoteMark()))
+        Else
+            RckScanText(s, i + 1, cur & Mid(s, i, 1), acc)
+
+Def RckFlush(cur As String, acc As List Of String) As List Of String
+    If cur = "" Then
+        acc
+    Else
+        Append(acc, cur)
+
+Def RckIsText(t As String) As Boolean
+    Len(t) >= 2 And Left(t, 1) = RckQuoteMark() And Right(t, 1) = RckQuoteMark()
+
+Def RckTextOf(t As String) As String
+    Mid(t, 2, Len(t) - 2)
+
+Rem ---- reading an argument ---------------------------------------------
+Rem Result, because these answer a question that has a reason: the caller
+Rem turns Err into a refusal and the whole line stands down. Every one of
+Rem them names the kind it got, since "MEAN needs a LIST, got STRING" is
+Rem the message that tells someone what they typed wrong.
+
+Def RckKindWhy(word As String, wanted As String, c As Cell) As String
+    word & " needs " & wanted & ", got " & CutKindOf(c)
+
+Def RckNumArg(word As String, c As Cell) As Result
+    Select Case c
+        Case CutNum(x)
+            Ok(x)
+        Case Else
+            Err(RckKindWhy(word, "a NUMBER", c), 0)
+
+Def RckWholeArg(word As String, c As Cell) As Result
+    Select Case c
+        Case CutNum(x)
+            If x < 0 Or x <> Floor(x) Then
+                Err(word & " needs a whole number of 0 or more, got " & Str(x), 0)
+            Else
+                Ok(x)
+        Case Else
+            Err(RckKindWhy(word, "a NUMBER", c), 0)
+
+Def RckTextArg(word As String, c As Cell) As Result
+    Select Case c
+        Case CutStr(t)
+            Ok(t)
+        Case Else
+            Err(RckKindWhy(word, "a STRING", c), 0)
+
+Def RckBoolArg(word As String, c As Cell) As Result
+    Select Case c
+        Case CutBool(b)
+            Ok(b)
+        Case Else
+            Err(RckKindWhy(word, "a BOOLEAN", c), 0)
+
+Def RckListArg(word As String, c As Cell) As Result
+    Select Case c
+        Case CutList(xs)
+            Ok(xs)
+        Case Else
+            Err(RckKindWhy(word, "a LIST", c), 0)
+
+Def RckProgArg(word As String, c As Cell) As Result
+    Select Case c
+        Case CutProg(ts)
+            Ok(ts)
+        Case Else
+            Err(RckKindWhy(word, "a PROGRAM", c), 0)
+
+Rem ---- lifting a plain function into a word ----------------------------
+Rem The guard is a parameter rather than a line inside each word, so a
+Rem domain rule is written once, beside the word it belongs to, and the
+Rem refusal reads in the same shape everywhere. Every builtin that would
+Rem Error on a bad domain is reached through one of these.
+
+Def RckAlways(x As Number) As Boolean
+    True
+
+Def RckAlways2(a As Number, b As Number) As Boolean
+    True
+
+Def RckNonZero(a As Number, b As Number) As Boolean
+    b <> 0
+
+Rem Math.Pow raises on a result that is not finite, and answers NaN for a
+Rem negative base under a fractional power, so both are refused before it
+Rem is reached. The magnitude test is in logarithms because that is the
+Rem only way to ask "would this overflow" without overflowing.
+Def RckPowOk(a As Number, b As Number) As Boolean
+    If a = 0 Then
+        b >= 0
+    Else
+        If a < 0 And b <> Floor(b) Then
+            False
+        Else
+            Abs(b) * Log10(Abs(a)) < 300
+
+Def RckUnit(x As Number) As Boolean
+    x >= 0 - 1 And x <= 1
+
+Def RckLift1(word As String, vs As List Of Cell, fits As [ Number -- Boolean ], why As String, f As [ Number -- Number ]) As RckWork
+    Select Case First(vs)
+        Case CutNum(x)
+            If Call(fits, x) Then
+                RckVals({ CutNum(Call(f, x)) })
+            Else
+                RckWorkBad(word & " " & why)
+        Case Else
+            RckWorkBad(RckKindWhy(word, "a NUMBER", First(vs)))
+
+Def RckLift2(word As String, vs As List Of Cell, fits As [ Number Number -- Boolean ], why As String, f As [ Number Number -- Number ]) As RckWork
+    Select Case Nth(vs, 1)
+        Case CutNum(a)
+            Select Case Nth(vs, 2)
+                Case CutNum(b)
+                    If Call(fits, a, b) Then
+                        RckVals({ CutNum(Call(f, a, b)) })
+                    Else
+                        RckWorkBad(word & " " & why)
+                Case Else
+                    RckWorkBad(RckKindWhy(word, "two NUMBERs", Nth(vs, 2)))
+        Case Else
+            RckWorkBad(RckKindWhy(word, "two NUMBERs", Nth(vs, 1)))
+
+Rem cuttle's arithmetic already answers rather than aborting; this is the
+Rem one line that turns its answer into a word's answer.
+Def RckCalc(c As CutCalc) As RckWork
+    Select Case c
+        Case CutGot(v)
+            RckVals({ v })
+        Case CutCalcBad(w)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("the arithmetic did not answer")
+
+Rem One ordering word underneath four spellings: > is < with the
+Rem arguments the other way round, and <= and >= are their negations.
+Def RckOrder(word As String, vs As List Of Cell, flip As Boolean, negate As Boolean) As RckWork
+    If flip Then
+        RckOrdered(word, CutLess(Nth(vs, 2), Nth(vs, 1)), negate)
+    Else
+        RckOrdered(word, CutLess(Nth(vs, 1), Nth(vs, 2)), negate)
+
+Def RckOrdered(word As String, c As CutCalc, negate As Boolean) As RckWork
+    Select Case c
+        Case CutGot(v)
+            Select Case v
+                Case CutBool(p)
+                    RckVals({ CutBool(Ifte(negate, Not p, p)) })
+                Case Else
+                    RckWorkBad(word & " did not answer with a BOOLEAN")
+        Case CutCalcBad(w)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Def RckBool1(word As String, vs As List Of Cell, f As [ Boolean -- Boolean ]) As RckWork
+    Select Case RckBoolArg(word, First(vs))
+        Case Ok(p)
+            RckVals({ CutBool(Call(f, p)) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Def RckBool2(word As String, vs As List Of Cell, f As [ Boolean Boolean -- Boolean ]) As RckWork
+    Select Case RckBoolArg(word, Nth(vs, 1))
+        Case Ok(p)
+            RckBool2On(word, p, Nth(vs, 2), f)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Def RckBool2On(word As String, p As Boolean, c As Cell, f As [ Boolean Boolean -- Boolean ]) As RckWork
+    Select Case RckBoolArg(word, c)
+        Case Ok(q)
+            RckVals({ CutBool(Call(f, p, q)) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Def RckJust(c As Cell) As RckWork
+    RckVals({ c })
+
+Rem ---- the engine core -------------------------------------------------
+Rem The words every mill gets before it seeds anything, in one table so
+Rem that "every entry appears exactly once" is a thing that can be read
+Rem rather than believed. Arithmetic, comparison and logic are ordinary
+Rem registered primitives — they need nothing but their arguments. The
+Rem rest are RckCore, dispatched by tag in RckCoreDo, because they reach
+Rem the stack, the registers, the modes, the history or the evaluator
+Rem itself, and none of those is an argument.
+Rem
+Rem What is deliberately NOT here: RANGE, LENGTH, CONCAT and the rest of
+Rem the sequence words, which belong to seed-seq; the trigonometry that
+Rem does not honour the angle mode; and anything that touches the world.
+
+Def RckCoreOf(name As String, arity As Number, body As RckBody, effect As String, desc As String) As RckEntry
+    RckEntry(name, arity, body, effect, desc, RckCoreName())
+
+Def RckCoreWords() As List Of RckEntry
+    Concat(RckCoreMath(), Concat(RckCoreTest(), Concat(RckCoreStack(), RckCoreRest())))
+
+Def RckCoreMath() As List Of RckEntry
+    { RckCoreOf("+", 2, RckPure(Fn(vs) => RckCalc(CutAdd(Nth(vs, 1), Nth(vs, 2)))), "( a b -- a+b )", "Add two cells: numbers, money, matrices of one shape, or strings joined."),
+      RckCoreOf("-", 2, RckPure(Fn(vs) => RckCalc(CutSub(Nth(vs, 1), Nth(vs, 2)))), "( a b -- a-b )", "Subtract: numbers, or money exact at the cent."),
+      RckCoreOf("*", 2, RckPure(Fn(vs) => RckCalc(CutMul(Nth(vs, 1), Nth(vs, 2)))), "( a b -- a*b )", "Multiply: numbers, matrices, or a matrix scaled by a number."),
+      RckCoreOf("/", 2, RckPure(Fn(vs) => RckLift2("/", vs, RckNonZero, "cannot divide by zero", /)), "( a b -- a/b )", "Divide one number by another."),
+      RckCoreOf("^", 2, RckPure(Fn(vs) => RckLift2("^", vs, RckPowOk, "cannot raise that base to that power", ^)), "( a b -- a^b )", "Raise a number to a power."),
+      RckCoreOf("MOD", 2, RckPure(Fn(vs) => RckLift2("MOD", vs, RckNonZero, "cannot take a remainder by zero", Mod)), "( a b -- r )", "Truncated remainder, which keeps the sign of a."),
+      RckCoreOf("WRAP", 2, RckPure(Fn(vs) => RckLift2("WRAP", vs, RckNonZero, "cannot wrap by zero", Wrap)), "( a b -- r )", "Floored modulo: the answer keeps the sign of b, so -340 256 WRAP is 172."),
+      RckCoreOf("ABS", 1, RckPure(Fn(vs) => RckLift1("ABS", vs, RckAlways, "", Abs)), "( x -- |x| )", "Magnitude, without the sign."),
+      RckCoreOf("SGN", 1, RckPure(Fn(vs) => RckLift1("SGN", vs, RckAlways, "", Sgn)), "( x -- s )", "The sign of a number: -1, 0 or 1."),
+      RckCoreOf("FLOOR", 1, RckPure(Fn(vs) => RckLift1("FLOOR", vs, RckAlways, "", Floor)), "( x -- n )", "The largest whole number no greater than x."),
+      RckCoreOf("CEIL", 1, RckPure(Fn(vs) => RckLift1("CEIL", vs, RckAlways, "", Ceil)), "( x -- n )", "The smallest whole number no less than x."),
+      RckCoreOf("ROUND", 1, RckPure(Fn(vs) => RckLift1("ROUND", vs, RckAlways, "", Round)), "( x -- n )", "Round to the nearest whole number, halves upward."),
+      RckCoreOf("MIN", 2, RckPure(Fn(vs) => RckLift2("MIN", vs, RckAlways2, "", Min)), "( a b -- m )", "The smaller of two numbers."),
+      RckCoreOf("MAX", 2, RckPure(Fn(vs) => RckLift2("MAX", vs, RckAlways2, "", Max)), "( a b -- m )", "The larger of two numbers."),
+      RckCoreOf("SQRT", 1, RckPure(Fn(vs) => RckLift1("SQRT", vs, >=(0), "has no answer below zero", Sqr)), "( x -- root )", "Square root; refuses a negative number."),
+      RckCoreOf("EXP", 1, RckPure(Fn(vs) => RckLift1("EXP", vs, <=(709), "would overflow above 709", Exp)), "( x -- e^x )", "The exponential of x."),
+      RckCoreOf("LN", 1, RckPure(Fn(vs) => RckLift1("LN", vs, >(0), "has no answer at or below zero", Log)), "( x -- ln x )", "Natural logarithm; refuses zero and below."),
+      RckCoreOf("LOG", 1, RckPure(Fn(vs) => RckLift1("LOG", vs, >(0), "has no answer at or below zero", Log10)), "( x -- log x )", "Logarithm base ten; refuses zero and below."),
+      RckCoreOf("PI", 0, RckPure(Fn(vs) => RckJust(CutNum(Pi()))), "( -- pi )", "The ratio of a circle to its diameter."),
+      RckCoreOf("E", 0, RckPure(Fn(vs) => RckJust(CutNum(Exp(1)))), "( -- e )", "The base of the natural logarithm.") }
+
+Def RckCoreTest() As List Of RckEntry
+    { RckCoreOf("=", 2, RckPure(Fn(vs) => RckJust(CutBool(CutEqual(Nth(vs, 1), Nth(vs, 2))))), "( a b -- flag )", "Whether two cells are equal, all the way down."),
+      RckCoreOf("<>", 2, RckPure(Fn(vs) => RckJust(CutBool(Not CutEqual(Nth(vs, 1), Nth(vs, 2))))), "( a b -- flag )", "Whether two cells differ."),
+      RckCoreOf("<", 2, RckPure(Fn(vs) => RckOrder("<", vs, False, False)), "( a b -- flag )", "Whether a orders before b; numbers, strings and money order."),
+      RckCoreOf(">", 2, RckPure(Fn(vs) => RckOrder(">", vs, True, False)), "( a b -- flag )", "Whether a orders after b."),
+      RckCoreOf("<=", 2, RckPure(Fn(vs) => RckOrder("<=", vs, True, True)), "( a b -- flag )", "Whether a does not order after b."),
+      RckCoreOf(">=", 2, RckPure(Fn(vs) => RckOrder(">=", vs, False, True)), "( a b -- flag )", "Whether a does not order before b."),
+      RckCoreOf("NOT", 1, RckPure(Fn(vs) => RckBool1("NOT", vs, Fn(p) => Not p)), "( flag -- flag )", "The other truth value."),
+      RckCoreOf("AND", 2, RckPure(Fn(vs) => RckBool2("AND", vs, Fn(p, q) => p And q)), "( a b -- flag )", "True when both are true."),
+      RckCoreOf("OR", 2, RckPure(Fn(vs) => RckBool2("OR", vs, Fn(p, q) => p Or q)), "( a b -- flag )", "True when either is true."),
+      RckCoreOf("TRUE", 0, RckPure(Fn(vs) => RckJust(CutBool(True))), "( -- flag )", "The true value."),
+      RckCoreOf("FALSE", 0, RckPure(Fn(vs) => RckJust(CutBool(False))), "( -- flag )", "The false value.") }
+
+Def RckCoreStack() As List Of RckEntry
+    { RckCoreOf("DUP", 0, RckCore("DUP"), "( x -- x x )", "Copy the top cell."),
+      RckCoreOf("DROP", 0, RckCore("DROP"), "( x -- )", "Discard the top cell."),
+      RckCoreOf("SWAP", 0, RckCore("SWAP"), "( x y -- y x )", "Exchange the top two cells."),
+      RckCoreOf("OVER", 0, RckCore("OVER"), "( x y -- x y x )", "Copy the second cell over the top."),
+      RckCoreOf("NIP", 0, RckCore("NIP"), "( x y -- y )", "Discard the second cell."),
+      RckCoreOf("TUCK", 0, RckCore("TUCK"), "( x y -- y x y )", "Copy the top cell under the second."),
+      RckCoreOf("ROT", 0, RckCore("ROT"), "( x y z -- y z x )", "Bring the third cell to the top."),
+      RckCoreOf("ROLL", 1, RckCore("ROLL"), "( n -- )", "Move the cell at level n to the top, counting from 1 at the top."),
+      RckCoreOf("PICK", 1, RckCore("PICK"), "( n -- x )", "Copy the cell at level n to the top."),
+      RckCoreOf("DEPTH", 0, RckCore("DEPTH"), "( -- n )", "How many cells the stack holds."),
+      RckCoreOf("CLEAR", 0, RckCore("CLEAR"), "( ... -- )", "Empty the stack."),
+      RckCoreOf("GATHER", 1, RckCore("GATHER"), "( x1 .. xn n -- list )", "Collect the n cells under the count into one list."),
+      RckCoreOf("UNPACK", 1, RckCore("UNPACK"), "( list -- x1 .. xn n )", "Spread a list onto the stack and push how many; UNPACK GATHER round-trips."),
+      RckCoreOf("LASTX", 0, RckCore("LASTX"), "( -- x )", "The top cell the last word to take one consumed.") }
+
+Def RckCoreRest() As List Of RckEntry
+    { RckCoreOf("STO", 2, RckCore("STO"), "( x name -- )", "Bank a cell in a named register."),
+      RckCoreOf("RCL", 1, RckCore("RCL"), "( name -- x )", "Fetch a cell from a named register."),
+      RckCoreOf("UNDO", 0, RckCore("UNDO"), "( -- )", "Put the stack back as the previous line found it."),
+      RckCoreOf("DEG", 0, RckCore("DEG"), "( -- )", "Read and write angles in degrees."),
+      RckCoreOf("RAD", 0, RckCore("RAD"), "( -- )", "Read and write angles in radians."),
+      RckCoreOf("FIX", 1, RckCore("FIX"), "( n -- )", "Show numbers to n decimal places."),
+      RckCoreOf("SCI", 1, RckCore("SCI"), "( n -- )", "Show numbers in scientific notation to n places."),
+      RckCoreOf("ENG", 1, RckCore("ENG"), "( n -- )", "Show numbers in engineering notation to n places."),
+      RckCoreOf("STD", 0, RckCore("STD"), "( -- )", "Show numbers at their own precision."),
+      RckCoreOf("SIN", 1, RckCore("SIN"), "( a -- x )", "Sine of an angle, in the current angle mode."),
+      RckCoreOf("COS", 1, RckCore("COS"), "( a -- x )", "Cosine of an angle, in the current angle mode."),
+      RckCoreOf("TAN", 1, RckCore("TAN"), "( a -- x )", "Tangent of an angle, in the current angle mode."),
+      RckCoreOf("ASIN", 1, RckCore("ASIN"), "( x -- a )", "The angle whose sine is x; refuses x outside -1 to 1."),
+      RckCoreOf("ACOS", 1, RckCore("ACOS"), "( x -- a )", "The angle whose cosine is x; refuses x outside -1 to 1."),
+      RckCoreOf("ATAN", 1, RckCore("ATAN"), "( x -- a )", "The angle whose tangent is x."),
+      RckCoreOf("ATAN2", 2, RckCore("ATAN2"), "( y x -- a )", "The angle of the point x y from the origin, in all four quadrants."),
+      RckCoreOf("IFT", 3, RckCore("IFT"), "( x flag prog -- y )", "Run prog on x when flag is true, otherwise leave x."),
+      RckCoreOf("IFTE", 4, RckCore("IFTE"), "( x flag then else -- y )", "Run one of two programs on x, chosen by flag."),
+      RckCoreOf("TIMES", 3, RckCore("TIMES"), "( x prog n -- y )", "Run prog on x n times over, each pass taking the last answer."),
+      RckCoreOf("MAP", 2, RckCore("MAP"), "( list prog -- list )", "Run prog on every element and collect the answers."),
+      RckCoreOf("FILTER", 2, RckCore("FILTER"), "( list prog -- list )", "Keep the elements prog answers True for."),
+      RckCoreOf("FOLD", 3, RckCore("FOLD"), "( list init prog -- x )", "Run prog over each element with a running answer, starting from init."),
+      RckCoreOf("HELP", 0, RckCore("HELP"), "( -- )", "Show what the word named next does; HELP MEAN, not " & Chr(34) & "MEAN" & Chr(34) & " HELP."),
+      RckCoreOf("VIEW", 0, RckCore("VIEW"), "( -- )", "Print the word named next back as it was defined."),
+      RckCoreOf("WORDS", 0, RckCore("WORDS"), "( -- )", "List every word in the dictionary, grouped by where it came from.") }
+
+Rem ---- the two renders, one truth --------------------------------------
+Rem RckRows is the render; RckShow is RckRows with the labels glued on.
+Rem Written the other way round they could disagree, and a shell would
+Rem have no way to tell which was right.
+
+Def RckLabel(k As Number) As String
+    Select Case k
+        Case 1
+            "x"
+        Case 2
+            "y"
+        Case 3
+            "z"
+        Case 4
+            "t"
+        Case Else
+            Str(k)
+
+Def RckRows(st As RckState) As List Of RckRow
+    RckRowsOf(CutCells(RckStack(st)), RckFmt(st))
+
+Rem Deepest first, so the top level is the LAST line printed and a shell
+Rem that appends to a scrolling terminal shows x nearest the prompt.
+Def RckRowsOf(cells As List Of Cell, f As CutFmt) As List Of RckRow
+    Map(Range(1, Length(cells)), Fn(i) => RckRowAt(cells, Length(cells) + 1 - i, f))
+
+Def RckRowAt(cells As List Of Cell, k As Number, f As CutFmt) As RckRow
+    RckRowOf(Nth(cells, k), RckLabel(k), f)
+
+Def RckRowOf(c As Cell, label As String, f As CutFmt) As RckRow
+    RckRow(label, CutKindOf(c), CutShow(c, f))
+
+Def RckShow(st As RckState) As List Of String
+    Map(RckRows(st), Fn(r) => RowLabel(r) & ": " & RowText(r))
+
+Rem ---- help and the word list ------------------------------------------
+
+Def RckHelp(st As RckState, name As String) As List Of String
+    Select Case RckFind(st, name)
+        Case Some(e)
+            RckHelpOf(e)
+        Case Else
+            { Upper(name) & " is not a word in this dictionary" }
+
+Def RckHelpOf(e As RckEntry) As List Of String
+    { WordName(e) & "  " & WordEffect(e), "    " & WordDesc(e), "    " & RckTouchLine(e) }
+
+Def RckTouchLine(e As RckEntry) As String
+    If RckTouches(e) Then
+        "touches the world"
+    Else
+        "touches nothing"
+
+Def RckView(st As RckState, name As String) As List Of String
+    Select Case RckFind(st, name)
+        Case Some(e)
+            RckViewOf(e)
+        Case Else
+            { Upper(name) & " is not a word in this dictionary" }
+
+Def RckViewOf(e As RckEntry) As List Of String
+    If RckIsUser(e) Then
+        { RckDefLine(e) }
+    Else
+        { WordName(e) & "  " & WordEffect(e), "    a built-in word: there is no program to view" }
+
+Def RckDefLine(e As RckEntry) As String
+    RckDefMark() & " " & WordName(e) & " " & Join(RckTokensOf(e), " ") & " " & RckEndMark()
+
+Rem Grouped by seed, in the order the seeds arrived, because that is the
+Rem order someone built the dictionary in and the order they will look
+Rem for a word in.
+Def RckWords(st As RckState) As List Of String
+    Flatten(Map(RckSeedsOf(st), Fn(g) => RckGroupOf(st, g)))
+
+Def RckSeedsOf(st As RckState) As List Of String
+    Fold(Map(RckDict(st), WordSeed), { }, Fn(a, g) => Ifte(Contains(a, g), a, Append(a, g)))
+
+Def RckGroupOf(st As RckState, g As String) As List Of String
+    RckHeaded("-- " & g & " --", RckNamesIn(RckDict(st), Fn(e) => WordSeed(e) = g))
+
+Rem The other grouping the same listing supports: what a program will do
+Rem to the world, in one place, without reading every word's help.
+Def RckWordsEffect(st As RckState) As List Of String
+    Concat(RckHeaded("-- touches nothing --", RckNamesIn(RckDict(st), Fn(e) => Not RckTouches(e))),
+           RckHeaded("-- touches the world --", RckNamesIn(RckDict(st), RckTouches)))
+
+Def RckNamesIn(d As List Of RckEntry, p As [ RckEntry -- Boolean ]) As List Of String
+    Map(Filter(d, p), WordName)
+
+Def RckHeaded(head As String, names As List Of String) As List Of String
+    Prepend(head, RckPacked(names, ""))
+
+Rem Greedy packing to RckListWidth columns: a dictionary of two hundred
+Rem words is a wall of text one name per line and a paragraph packed.
+Def RckPacked(names As List Of String, cur As String) As List Of String
+    If IsEmpty(names) Then
+        RckLastLine(cur)
+    Else
+        If cur = "" Then
+            RckPacked(Rest(names), First(names))
+        Else
+            If Len(cur) + 1 + Len(First(names)) > RckListWidth() Then
+                Prepend("  " & cur, RckPacked(names, ""))
+            Else
+                RckPacked(Rest(names), cur & " " & First(names))
+
+Def RckLastLine(cur As String) As List Of String
+    If cur = "" Then
+        { }
+    Else
+        { "  " & cur }
+
+Rem ---- the stack, as the evaluator moves it ----------------------------
+
+Def RckPushed(st As RckState, c As Cell) As RckState
+    With(st, RckStack = CutPush(RckStack(st), c))
+
+Def RckPushAll(st As RckState, cells As List Of Cell) As RckState
+    With(st, RckStack = Fold(cells, RckStack(st), CutPush))
+
+Rem A sub-evaluation's answer, brought home: everything the inner state
+Rem learned is kept, and the stack goes back to the caller's with the
+Rem cells handed over pushed onto it.
+Def RckKeep(outer As RckState, inner As RckState, cells As List Of Cell) As RckState
+    With(inner, RckStack = Fold(cells, RckStack(outer), CutPush), RckDeep = RckDeep(outer))
+
+Def RckSameBut(outer As RckState, inner As RckState) As RckState
+    With(inner, RckStack = RckStack(outer), RckDeep = RckDeep(outer))
+
+Rem Pull a word's arguments off, deepest first, and remember the top one
+Rem as LastX. Every word with an arity of one or more sets it, which is
+Rem the one rule that makes LASTX predictable: 3 4 + leaves 4 there.
+Def RckArgsOf(st As RckState, e As RckEntry) As RckTaken
+    RckArgsAt(st, WordName(e), WordArity(e))
+
+Def RckArgsAt(st As RckState, word As String, n As Number) As RckTaken
+    If CutDepth(RckStack(st)) < n Then
+        RckArgsBad(CutShort(word, n, CutDepth(RckStack(st))))
+    Else
+        RckHasArgs(RckMarked(With(st, RckStack = Stack(DropN(CutCells(RckStack(st)), n))), CutCells(RckStack(st)), n), Reverse(Taken(CutCells(RckStack(st)), n)))
+
+Def RckMarked(st As RckState, cells As List Of Cell, n As Number) As RckState
+    If n < 1 Then
+        st
+    Else
+        With(st, RckLastX = Some(First(cells)))
+
+Rem ---- scanning to a closing mark --------------------------------------
+
+Def RckUpTo(toks As List Of String, open As String, close As String) As RckSpan
+    RckUpFrom(toks, open, close, 0, { })
+
+Def RckUpFrom(toks As List Of String, open As String, close As String, deep As Number, acc As List Of String) As RckSpan
+    If IsEmpty(toks) Then
+        RckSpanBad("unterminated " & open)
+    Else
+        If First(toks) = close And deep = 0 Then
+            RckSpanned(Reverse(acc), Rest(toks))
+        Else
+            RckUpFrom(Rest(toks), open, close, deep + RckNesting(First(toks), open, close), Prepend(First(toks), acc))
+
+Def RckNesting(t As String, open As String, close As String) As Number
+    If t = open Then
+        1
+    Else
+        If t = close Then
+            0 - 1
+        Else
+            0
+
+Def RckCloseOf(open As String) As String
+    If open = RckListOpen() Then
+        RckListClose()
+    Else
+        RckProgClose()
+
+Rem ---- the evaluator ---------------------------------------------------
+Rem One token at a time, threading a state and the output lines a shell
+Rem will print. Everything that can go wrong comes back as RckBroke, and
+Rem RckEval turns that into the state the line started from.
+
+Def RckWalk(st As RckState, toks As List Of String, out As List Of String) As RckRun
+    If IsEmpty(toks) Then
+        RckWent(st, out)
+    Else
+        RckWalkOne(st, First(toks), Rest(toks), out)
+
+Def RckWalkOne(st As RckState, t As String, more As List Of String, out As List Of String) As RckRun
+    Select Case t
+        Case ":"
+            RckDefine(st, more, out)
+        Case "{"
+            RckDoList(st, more, out)
+        Case "["
+            RckDoProg(st, more, out)
+        Case "}", "]", ";"
+            RckBroke("unexpected " & t, out)
+        Case Else
+            RckAtom(st, t, more, out)
+
+Rem A token is a string, then a number, then a word — in that order, and
+Rem "a number" is exactly what Val would accept, IsNumeric being the
+Rem question Val answers. Val is strtod and takes a leading number off a
+Rem longer token, so 3X reads as 3 rather than as a word; that laxity is
+Rem the language's own and is inherited rather than corrected here, since
+Rem a dictionary name starting with a digit is not a name anyone writes.
+Def RckAtom(st As RckState, t As String, more As List Of String, out As List Of String) As RckRun
+    If RckIsText(t) Then
+        RckWalk(RckPushed(st, CutStr(RckTextOf(t))), more, out)
+    Else
+        If IsNumeric(t) Then
+            RckWalk(RckPushed(st, CutNum(Val(t))), more, out)
+        Else
+            RckNamed(st, Upper(t), more, out)
+
+Def RckNamed(st As RckState, name As String, more As List Of String, out As List Of String) As RckRun
+    Select Case RckFind(st, name)
+        Case Some(e)
+            RckApply(st, e, more, out)
+        Case Else
+            RckBroke("unknown word " & name, out)
+
+Rem HELP and VIEW read the word named NEXT rather than a string off the
+Rem stack, because HELP MEAN is what someone types and "MEAN" HELP is
+Rem what a language designer types. They are the only two words that
+Rem look at the token stream, and they are still ordinary entries, so
+Rem RckUnreg takes them away like anything else.
+Def RckApply(st As RckState, e As RckEntry, more As List Of String, out As List Of String) As RckRun
+    Select Case WordBody(e)
+        Case RckCore(tag)
+            If tag = "HELP" Or tag = "VIEW" Then
+                RckAsk(st, tag, more, out)
+            Else
+                RckWorked(st, e, more, out)
+        Case Else
+            RckWorked(st, e, more, out)
+
+Def RckAsk(st As RckState, tag As String, more As List Of String, out As List Of String) As RckRun
+    If IsEmpty(more) Then
+        RckBroke(tag & " needs the name of a word after it", out)
+    Else
+        RckWalk(st, Rest(more), Concat(out, RckAsked(st, tag, Upper(First(more)))))
+
+Def RckAsked(st As RckState, tag As String, name As String) As List Of String
+    If tag = "VIEW" Then
+        RckView(st, name)
+    Else
+        RckHelp(st, name)
+
+Rem Every other word: take its arguments, run it, walk on.
+Def RckWorked(st As RckState, e As RckEntry, more As List Of String, out As List Of String) As RckRun
+    Select Case RckArgsOf(st, e)
+        Case RckHasArgs(st1, args)
+            RckThen(RckRan(st1, e, args, out), more)
+        Case RckArgsBad(w)
+            RckBroke(w, out)
+        Case Else
+            RckBroke(WordName(e) & " could not take its arguments", out)
+
+Def RckThen(r As RckRun, more As List Of String) As RckRun
+    Select Case r
+        Case RckWent(st2, out2)
+            RckWalk(st2, more, out2)
+        Case RckBroke(w, out2)
+            RckBroke(w, out2)
+        Case Else
+            RckBroke("the word did not answer", { })
+
+Def RckRan(st As RckState, e As RckEntry, args As List Of Cell, out As List Of String) As RckRun
+    Select Case WordBody(e)
+        Case RckPure(f)
+            RckWorkDone(st, Call(f, args), out)
+        Case RckTouch(f)
+            RckWorkDone(st, Call(f, args), out)
+        Case RckUser(ts, touch)
+            RckRanUser(st, WordName(e), ts, args, out)
+        Case RckCore(tag)
+            RckCoreDo(st, tag, args, out)
+        Case Else
+            RckBroke(WordName(e) & " has no body", out)
+
+Def RckWorkDone(st As RckState, w As RckWork, out As List Of String) As RckRun
+    Select Case w
+        Case RckVals(vs)
+            RckWent(RckPushAll(st, vs), out)
+        Case RckWorkBad(why)
+            RckBroke(why, out)
+        Case Else
+            RckBroke("the word did not answer", out)
+
+Rem A user word: one cell in on a fresh stack, and whatever it leaves
+Rem pushed back onto the caller's. The state it changed on the way —
+Rem registers, dictionary, modes — comes back with it.
+Def RckRanUser(st As RckState, name As String, ts As List Of String, args As List Of Cell, out As List Of String) As RckRun
+    Select Case RckSub(st, args, ts, out)
+        Case RckWent(st2, out2)
+            RckWent(RckKeep(st, st2, Reverse(CutCells(RckStack(st2)))), out2)
+        Case RckBroke(w, out2)
+            RckBroke(w, out2)
+        Case Else
+            RckBroke(name & " did not answer", out)
+
+Rem The nesting count goes up here and comes back down in RckKeep and
+Rem RckSameBut, and the only thing it is read for is whether STO says
+Rem "ok:". A register banked inside a word is an implementation detail of
+Rem that word; banked from the entry line it is the answer to the line,
+Rem which is what the worked sessions show.
+Def RckSub(st As RckState, given As List Of Cell, toks As List Of String, out As List Of String) As RckRun
+    RckWalk(With(st, RckStack = CutOf(given), RckDeep = RckDeep(st) + 1), toks, out)
+
+Rem What a program must leave: exactly one cell. A program that leaves
+Rem none or two has been mistyped, and saying so beats quietly taking
+Rem the top one and losing the rest.
+Def RckOnly(word As String, st2 As RckState) As Result
+    If CutDepth(RckStack(st2)) = 1 Then
+        Ok(First(CutCells(RckStack(st2))))
+    Else
+        Err(word & " needs its program to leave one value, it left " & Str(CutDepth(RckStack(st2))), 0)
+
+Rem ---- the two literal forms -------------------------------------------
+
+Rem { ... } evaluates its tokens on a fresh sub-stack and pushes whatever
+Rem remains as ONE list. There is no second grammar inside the braces:
+Rem { 1 2 3 } is three cells collected, { 1 2 + } is { 3 }, and nesting
+Rem falls out of the rule rather than being another case in it.
+Def RckDoList(st As RckState, more As List Of String, out As List Of String) As RckRun
+    Select Case RckUpTo(more, RckListOpen(), RckListClose())
+        Case RckSpanned(inner, tail)
+            RckThen(RckListMade(st, inner, out), tail)
+        Case RckSpanBad(w)
+            RckBroke(w, out)
+        Case Else
+            RckBroke("the list did not scan", out)
+
+Def RckListMade(st As RckState, inner As List Of String, out As List Of String) As RckRun
+    Select Case RckSub(st, { }, inner, out)
+        Case RckWent(st2, out2)
+            RckWent(RckKeep(st, st2, { CutList(Reverse(CutCells(RckStack(st2)))) }), out2)
+        Case RckBroke(w, out2)
+            RckBroke(w, out2)
+        Case Else
+            RckBroke("the list did not answer", out)
+
+Rem [ ... ] is not evaluated: it becomes a program cell holding the
+Rem tokens as typed, which is what makes it printable, saveable and
+Rem re-readable, and what keeps closures out of the language entirely.
+Def RckDoProg(st As RckState, more As List Of String, out As List Of String) As RckRun
+    Select Case RckUpTo(more, RckProgOpen(), RckProgClose())
+        Case RckSpanned(inner, tail)
+            RckWalk(RckPushed(st, CutProg(inner)), tail, out)
+        Case RckSpanBad(w)
+            RckBroke(w, out)
+        Case Else
+            RckBroke("the program did not scan", out)
+
+Rem ---- defining a word -------------------------------------------------
+
+Def RckDefine(st As RckState, more As List Of String, out As List Of String) As RckRun
+    If IsEmpty(more) Then
+        RckBroke("a definition needs a name after " & RckDefMark(), out)
+    Else
+        RckDefineOn(st, First(more), Rest(more), out)
+
+Def RckDefineOn(st As RckState, name As String, more As List Of String, out As List Of String) As RckRun
+    Select Case RckUpTo(more, RckDefMark(), RckEndMark())
+        Case RckSpanned(body, tail)
+            RckThen(RckDefined(st, name, body, out), tail)
+        Case RckSpanBad(w)
+            RckBroke("a definition ends with " & RckEndMark() & ", and this one does not", out)
+        Case Else
+            RckBroke("the definition did not scan", out)
+
+Def RckDefined(st As RckState, name As String, body As List Of String, out As List Of String) As RckRun
+    Select Case RckDef(st, name, body)
+        Case RckNext(st2, out2)
+            RckWent(st2, Concat(out, out2))
+        Case RckStop(st2, w, out2)
+            RckBroke(w, out)
+        Case Else
+            RckBroke("the definition did not answer", out)
+
+Rem VALIDATED WHERE IT IS WRITTEN, not where it is first run. : BAD FROB ;
+Rem is refused now, naming FROB, because a dictionary that accepts a
+Rem definition and fails on it a week later is worse than one that
+Rem refuses it while the person who typed it is still looking.
+Def RckDef(st As RckState, name As String, toks As List Of String) As RckLine
+    RckDefWhen(st, Upper(name), toks, RckVetName(Upper(name)))
+
+Def RckDefWhen(st As RckState, name As String, toks As List Of String, bad As String) As RckLine
+    If bad <> "" Then
+        RckStop(st, bad, { })
+    Else
+        RckDefVetted(st, name, toks, RckVet(st, name, toks))
+
+Def RckDefVetted(st As RckState, name As String, toks As List Of String, why As String) As RckLine
+    If why <> "" Then
+        RckStop(st, why, { })
+    Else
+        RckNext(RckPut(st, RckUserEntry(st, name, toks)), { "ok: " & name & " defined" })
+
+Rem A user word's help is its own token listing, and its arity is one:
+Rem there is nothing to declare because there is nothing to choose.
+Def RckUserEntry(st As RckState, name As String, toks As List Of String) As RckEntry
+    RckEntry(name, 1, RckUser(toks, RckTouchy(st, toks)), "( x -- ... )", RckDefMark() & " " & name & " " & Join(toks, " ") & " " & RckEndMark(), RckUserName())
+
+Def RckTouchy(st As RckState, toks As List Of String) As Boolean
+    Any(toks, Fn(t) => RckTouchesName(st, t))
+
+Def RckTouchesName(st As RckState, t As String) As Boolean
+    Select Case RckFind(st, Upper(t))
+        Case Some(e)
+            RckTouches(e)
+        Case Else
+            False
+
+Def RckVetName(name As String) As String
+    If name = "" Then
+        "a definition needs a name"
+    Else
+        If RckIsMark(name) Or RckIsText(name) Or IsNumeric(name) Then
+            "a word cannot be called " & name
+        Else
+            ""
+
+Def RckIsMark(t As String) As Boolean
+    Contains({ ":", ";", "{", "}", "[", "]" }, t)
+
+Rem The body, word by word. Everything it names must already exist, and
+Rem the name being defined must not: an acyclic call graph is what makes
+Rem "nothing keyable aborts" true of : LOOP LOOP ; as well as of 1 0 /.
+Def RckVet(st As RckState, name As String, toks As List Of String) As String
+    If IsEmpty(toks) Then
+        ""
+    Else
+        RckVetOne(st, name, First(toks), Rest(toks))
+
+Def RckVetOne(st As RckState, name As String, t As String, more As List Of String) As String
+    Select Case t
+        Case ":", ";"
+            "a definition cannot hold another definition"
+        Case "{", "["
+            RckVetSpan(st, name, t, more)
+        Case "}", "]"
+            "unexpected " & t & " in the body of " & name
+        Case Else
+            RckVetWord(st, name, t, more)
+
+Def RckVetSpan(st As RckState, name As String, open As String, more As List Of String) As String
+    Select Case RckUpTo(more, open, RckCloseOf(open))
+        Case RckSpanned(inner, tail)
+            RckVetBoth(st, name, inner, tail)
+        Case RckSpanBad(w)
+            w & " in the body of " & name
+        Case Else
+            "the body of " & name & " did not scan"
+
+Def RckVetBoth(st As RckState, name As String, inner As List Of String, tail As List Of String) As String
+    If RckVet(st, name, inner) <> "" Then
+        RckVet(st, name, inner)
+    Else
+        RckVet(st, name, tail)
+
+Def RckVetWord(st As RckState, name As String, t As String, more As List Of String) As String
+    If RckIsText(t) Or IsNumeric(t) Then
+        RckVet(st, name, more)
+    Else
+        If Upper(t) = name Then
+            "a word cannot be defined in terms of itself: " & name
+        Else
+            If RckKnows(st, Upper(t)) Then
+                RckVet(st, name, more)
+            Else
+                "unknown word " & Upper(t)
+
+Rem ---- the core words that reach the state -----------------------------
+
+Def RckCoreDo(st As RckState, tag As String, args As List Of Cell, out As List Of String) As RckRun
+    Select Case tag
+        Case "DUP"
+            RckFromOut(st, CutDup(RckStack(st)), out)
+        Case "DROP"
+            RckFromOut(st, CutDrop(RckStack(st)), out)
+        Case "SWAP"
+            RckFromOut(st, CutSwap(RckStack(st)), out)
+        Case "OVER"
+            RckFromOut(st, CutOver(RckStack(st)), out)
+        Case "NIP"
+            RckFromOut(st, CutNip(RckStack(st)), out)
+        Case "TUCK"
+            RckFromOut(st, CutTuck(RckStack(st)), out)
+        Case "ROT"
+            RckFromOut(st, CutRot(RckStack(st)), out)
+        Case "ROLL"
+            RckLevel(st, "ROLL", args, out)
+        Case "PICK"
+            RckLevel(st, "PICK", args, out)
+        Case "DEPTH"
+            RckWent(RckPushed(st, CutNum(CutDepth(RckStack(st)))), out)
+        Case "CLEAR"
+            RckWent(With(st, RckStack = CutClear(RckStack(st))), out)
+        Case "GATHER"
+            RckGather(st, args, out)
+        Case "UNPACK"
+            RckUnpack(st, args, out)
+        Case "LASTX"
+            RckLastOf(st, out)
+        Case "STO"
+            RckSto(st, args, out)
+        Case "RCL"
+            RckRcl(st, args, out)
+        Case "UNDO"
+            RckUndo(st, out)
+        Case "DEG"
+            RckWent(With(st, RckAngle = RckDegrees()), out)
+        Case "RAD"
+            RckWent(With(st, RckAngle = RckRadians()), out)
+        Case "STD"
+            RckWent(With(st, RckFmt = CutFmtStd()), out)
+        Case "FIX"
+            RckDigits(st, "FIX", CutModeFix(), args, out)
+        Case "SCI"
+            RckDigits(st, "SCI", CutModeSci(), args, out)
+        Case "ENG"
+            RckDigits(st, "ENG", CutModeEng(), args, out)
+        Case "SIN"
+            RckTrigIn(st, "SIN", args, RckAlways, "", Sin, out)
+        Case "COS"
+            RckTrigIn(st, "COS", args, RckAlways, "", Cos, out)
+        Case "TAN"
+            RckTrigIn(st, "TAN", args, RckAlways, "", Tan, out)
+        Case "ASIN"
+            RckTrigOut(st, "ASIN", args, RckUnit, "has no answer outside -1 to 1", Asin, out)
+        Case "ACOS"
+            RckTrigOut(st, "ACOS", args, RckUnit, "has no answer outside -1 to 1", Acos, out)
+        Case "ATAN"
+            RckTrigOut(st, "ATAN", args, RckAlways, "", Atn, out)
+        Case "ATAN2"
+            RckAtan2(st, args, out)
+        Case "IFT"
+            RckIft(st, args, out)
+        Case "IFTE"
+            RckIfte(st, args, out)
+        Case "TIMES"
+            RckTimes(st, args, out)
+        Case "MAP"
+            RckMap(st, args, out)
+        Case "FILTER"
+            RckFilter(st, args, out)
+        Case "FOLD"
+            RckFold(st, args, out)
+        Case "WORDS"
+            RckWent(st, Concat(out, RckWords(st)))
+        Case Else
+            RckBroke("the engine has no word tagged " & tag, out)
+
+Rem cuttle's algebra already answers; this turns its answer into the
+Rem evaluator's. The refused stack it hands back is discarded because
+Rem the line, not the word, is the transaction.
+Def RckFromOut(st As RckState, o As CutOut, out As List Of String) As RckRun
+    Select Case o
+        Case CutDone(s2)
+            RckWent(With(st, RckStack = s2), out)
+        Case CutOutBad(w, s2)
+            RckBroke(w, out)
+        Case Else
+            RckBroke("the stack did not answer", out)
+
+Def RckLevel(st As RckState, word As String, args As List Of Cell, out As List Of String) As RckRun
+    Select Case RckNumArg(word, First(args))
+        Case Ok(n)
+            RckFromOut(st, RckLevelAt(st, word, n), out)
+        Case Err(w, at)
+            RckBroke(w, out)
+        Case Else
+            RckBroke(word & " did not answer", out)
+
+Def RckLevelAt(st As RckState, word As String, n As Number) As CutOut
+    If word = "ROLL" Then
+        CutRoll(RckStack(st), n)
+    Else
+        CutPick(RckStack(st), n)
+
+Rem GATHER and UNPACK are the two explicit crossings between a run of
+Rem cells and one aggregate cell. Everywhere else an aggregate occupies
+Rem exactly one level, however many elements it holds.
+Def RckGather(st As RckState, args As List Of Cell, out As List Of String) As RckRun
+    Select Case RckWholeArg("GATHER", First(args))
+        Case Ok(n)
+            RckGatherN(st, n, out)
+        Case Err(w, at)
+            RckBroke(w, out)
+        Case Else
+            RckBroke("GATHER did not answer", out)
+
+Def RckGatherN(st As RckState, n As Number, out As List Of String) As RckRun
+    If CutDepth(RckStack(st)) < n Then
+        RckBroke(CutShort("GATHER", n, CutDepth(RckStack(st))), out)
+    Else
+        RckWent(RckPushed(With(st, RckStack = Stack(DropN(CutCells(RckStack(st)), n))), CutList(Reverse(Taken(CutCells(RckStack(st)), n)))), out)
+
+Def RckUnpack(st As RckState, args As List Of Cell, out As List Of String) As RckRun
+    Select Case RckListArg("UNPACK", First(args))
+        Case Ok(xs)
+            RckWent(RckPushAll(st, Append(xs, CutNum(Length(xs)))), out)
+        Case Err(w, at)
+            RckBroke(w, out)
+        Case Else
+            RckBroke("UNPACK did not answer", out)
+
+Def RckLastOf(st As RckState, out As List Of String) As RckRun
+    Select Case RckLastX(st)
+        Case Some(c)
+            RckWent(RckPushed(st, c), out)
+        Case Else
+            RckBroke("LASTX has nothing yet: no word has taken an argument", out)
+
+Rem Registers are keyed by the string as typed. They hold data rather
+Rem than names, so they are NOT folded to upper the way dictionary words
+Rem are, and "n" and "N" are two registers.
+Def RckSto(st As RckState, args As List Of Cell, out As List Of String) As RckRun
+    Select Case RckTextArg("STO", Nth(args, 2))
+        Case Ok(k)
+            RckWent(With(st, RckRegs = DictPut(RckRegs(st), k, Nth(args, 1))), RckSaid(st, out, "ok: " & k))
+        Case Err(w, at)
+            RckBroke(w, out)
+        Case Else
+            RckBroke("STO did not answer", out)
+
+Def RckRcl(st As RckState, args As List Of Cell, out As List Of String) As RckRun
+    Select Case RckTextArg("RCL", First(args))
+        Case Ok(k)
+            RckRclAt(st, k, out)
+        Case Err(w, at)
+            RckBroke(w, out)
+        Case Else
+            RckBroke("RCL did not answer", out)
+
+Def RckSaid(st As RckState, out As List Of String, line As String) As List Of String
+    If RckDeep(st) = 0 Then
+        Append(out, line)
+    Else
+        out
+
+Def RckRclAt(st As RckState, k As String, out As List Of String) As RckRun
+    If DictHas(RckRegs(st), k) Then
+        RckWent(RckPushed(st, DictGet(RckRegs(st), k)), out)
+    Else
+        RckBroke("there is nothing in register " & k, out)
+
+Rem The history holds the stack each line STARTED from, newest first, and
+Rem the current line's entry is already on it by the time UNDO runs — so
+Rem going back one transaction means stepping over that entry to the one
+Rem beneath. A session one line old has nothing to go back to and says so.
+Def RckUndo(st As RckState, out As List Of String) As RckRun
+    If Length(RckHist(st)) < 2 Then
+        RckBroke("there is nothing to undo", out)
+    Else
+        RckWent(With(With(st, RckStack = Nth(RckHist(st), 2)), RckHist = DropN(RckHist(st), 2)), out)
+
+Def RckRemember(st As RckState) As RckState
+    With(st, RckHist = Taken(Prepend(RckStack(st), RckHist(st)), RckHistCap()))
+
+Def RckDigits(st As RckState, word As String, mode As String, args As List Of Cell, out As List Of String) As RckRun
+    Select Case RckWholeArg(word, First(args))
+        Case Ok(n)
+            RckDigitsAt(st, word, mode, n, out)
+        Case Err(w, at)
+            RckBroke(w, out)
+        Case Else
+            RckBroke(word & " did not answer", out)
+
+Def RckDigitsAt(st As RckState, word As String, mode As String, n As Number, out As List Of String) As RckRun
+    If n > 11 Then
+        RckBroke(word & " shows at most 11 places, not " & Str(n), out)
+    Else
+        RckWent(With(st, RckFmt = CutFmt(mode, n)), out)
+
+Rem ---- trigonometry, and the one mode there is -------------------------
+Rem The angle mode governs evaluation INSIDE the engine and travels no
+Rem further: a number leaving through RckShow carries no unit, because a
+Rem degree, a radian and a step length are all one numeric kind. It
+Rem exists for entry and only for entry — 30 SIN being 0.5 is the whole
+Rem reason a handheld has a DEG key. The tree's own answer to degrees
+Rem stays conversion, which is why no machine gains a mode from this and
+Rem why seed-math must not bridge Rad and Deg.
+
+Def RckInAngle(st As RckState, x As Number) As Number
+    If RckAngle(st) = RckDegrees() Then
+        x * Pi() / 180
+    Else
+        x
+
+Def RckOutAngle(st As RckState, x As Number) As Number
+    If RckAngle(st) = RckDegrees() Then
+        x * 180 / Pi()
+    Else
+        x
+
+Def RckTrigIn(st As RckState, word As String, args As List Of Cell, fits As [ Number -- Boolean ], why As String, f As [ Number -- Number ], out As List Of String) As RckRun
+    Select Case RckNumArg(word, First(args))
+        Case Ok(x)
+            RckTrigDone(st, word, x, RckInAngle(st, x), fits, why, f, False, out)
+        Case Err(w, at)
+            RckBroke(w, out)
+        Case Else
+            RckBroke(word & " did not answer", out)
+
+Def RckTrigOut(st As RckState, word As String, args As List Of Cell, fits As [ Number -- Boolean ], why As String, f As [ Number -- Number ], out As List Of String) As RckRun
+    Select Case RckNumArg(word, First(args))
+        Case Ok(x)
+            RckTrigDone(st, word, x, x, fits, why, f, True, out)
+        Case Err(w, at)
+            RckBroke(w, out)
+        Case Else
+            RckBroke(word & " did not answer", out)
+
+Def RckTrigDone(st As RckState, word As String, raw As Number, arg As Number, fits As [ Number -- Boolean ], why As String, f As [ Number -- Number ], back As Boolean, out As List Of String) As RckRun
+    If Not Call(fits, raw) Then
+        RckBroke(word & " " & why, out)
+    Else
+        RckWent(RckPushed(st, CutNum(RckTrigVal(st, arg, f, back))), out)
+
+Def RckTrigVal(st As RckState, arg As Number, f As [ Number -- Number ], back As Boolean) As Number
+    If back Then
+        RckOutAngle(st, Call(f, arg))
+    Else
+        Call(f, arg)
+
+Def RckAtan2(st As RckState, args As List Of Cell, out As List Of String) As RckRun
+    Select Case RckNumArg("ATAN2", Nth(args, 1))
+        Case Ok(y)
+            RckAtan2On(st, y, Nth(args, 2), out)
+        Case Err(w, at)
+            RckBroke(w, out)
+        Case Else
+            RckBroke("ATAN2 did not answer", out)
+
+Def RckAtan2On(st As RckState, y As Number, c As Cell, out As List Of String) As RckRun
+    Select Case RckNumArg("ATAN2", c)
+        Case Ok(x)
+            RckWent(RckPushed(st, CutNum(RckOutAngle(st, Atn2(y, x)))), out)
+        Case Err(w, at)
+            RckBroke(w, out)
+        Case Else
+            RckBroke("ATAN2 did not answer", out)
+
+Rem ---- the combinators -------------------------------------------------
+Rem They take quoted programs off the stack and run them through this
+Rem same evaluator, which is what keeps closures out of the language: a
+Rem bridged word that wanted a function is not bridged, because a token
+Rem list and a combinator cover the case instead.
+Rem
+Rem Every one of them seeds a fresh stack with the program's ELEMENT and
+Rem requires exactly one cell back. Anything else the program needs comes
+Rem out of a register, which is the whole of R4.17's rationale and the
+Rem reason a MAP program can call a user word that itself filters.
+
+Def RckIft(st As RckState, args As List Of Cell, out As List Of String) As RckRun
+    Select Case RckBoolArg("IFT", Nth(args, 2))
+        Case Ok(flag)
+            RckIftOn(st, flag, Nth(args, 1), Nth(args, 3), out)
+        Case Err(w, at)
+            RckBroke(w, out)
+        Case Else
+            RckBroke("IFT did not answer", out)
+
+Def RckIftOn(st As RckState, flag As Boolean, x As Cell, prog As Cell, out As List Of String) As RckRun
+    If flag Then
+        RckOneShot(st, "IFT", x, prog, out)
+    Else
+        RckWent(RckPushed(st, x), out)
+
+Def RckIfte(st As RckState, args As List Of Cell, out As List Of String) As RckRun
+    Select Case RckBoolArg("IFTE", Nth(args, 2))
+        Case Ok(flag)
+            RckOneShot(st, "IFTE", Nth(args, 1), Ifte(flag, Nth(args, 3), Nth(args, 4)), out)
+        Case Err(w, at)
+            RckBroke(w, out)
+        Case Else
+            RckBroke("IFTE did not answer", out)
+
+Rem One program, one cell in, one cell out — the shape IFT, IFTE and
+Rem every pass of TIMES, MAP, FILTER and FOLD are made of.
+Def RckOneShot(st As RckState, word As String, x As Cell, prog As Cell, out As List Of String) As RckRun
+    Select Case RckProgArg(word, prog)
+        Case Ok(ts)
+            RckShotAt(st, word, { x }, ts, out)
+        Case Err(w, at)
+            RckBroke(w, out)
+        Case Else
+            RckBroke(word & " did not answer", out)
+
+Def RckShotAt(st As RckState, word As String, given As List Of Cell, ts As List Of String, out As List Of String) As RckRun
+    Select Case RckSub(st, given, ts, out)
+        Case RckWent(st2, out2)
+            RckShotDone(st, word, st2, out2)
+        Case RckBroke(w, out2)
+            RckBroke(w, out2)
+        Case Else
+            RckBroke(word & " did not answer", out)
+
+Def RckShotDone(st As RckState, word As String, st2 As RckState, out As List Of String) As RckRun
+    Select Case RckOnly(word, st2)
+        Case Ok(v)
+            RckWent(RckKeep(st, st2, { v }), out)
+        Case Err(w, at)
+            RckBroke(w, out)
+        Case Else
+            RckBroke(word & " did not answer", out)
+
+Rem TIMES, MAP, FILTER and FOLD all fold a flow: the break travels in the
+Rem accumulator rather than in the call depth, so a six-hundred element
+Rem list costs six hundred iterations of a builtin Fold and no Shoddy
+Rem stack at all.
+
+Def RckFlowOf(st As RckState, vals As List Of Cell, out As List Of String) As RckFlow
+    RckFlowing(st, vals, out)
+
+Def RckMap(st As RckState, args As List Of Cell, out As List Of String) As RckRun
+    RckOverList(st, "MAP", args, out, False)
+
+Def RckFilter(st As RckState, args As List Of Cell, out As List Of String) As RckRun
+    RckOverList(st, "FILTER", args, out, True)
+
+Def RckOverList(st As RckState, word As String, args As List Of Cell, out As List Of String, keep As Boolean) As RckRun
+    Select Case RckListArg(word, Nth(args, 1))
+        Case Ok(xs)
+            RckOverProg(st, word, xs, Nth(args, 2), out, keep)
+        Case Err(w, at)
+            RckBroke(w, out)
+        Case Else
+            RckBroke(word & " did not answer", out)
+
+Def RckOverProg(st As RckState, word As String, xs As List Of Cell, prog As Cell, out As List Of String, keep As Boolean) As RckRun
+    Select Case RckProgArg(word, prog)
+        Case Ok(ts)
+            RckListed(st, word, Fold(xs, RckFlowOf(st, { }, out), Fn(a, x) => RckOverStep(a, x, word, ts, keep)))
+        Case Err(w, at)
+            RckBroke(w, out)
+        Case Else
+            RckBroke(word & " did not answer", out)
+
+Def RckOverStep(a As RckFlow, x As Cell, word As String, ts As List Of String, keep As Boolean) As RckFlow
+    Select Case a
+        Case RckFlowing(st, done, out)
+            RckOverRan(st, done, x, word, keep, RckSub(st, { x }, ts, out))
+        Case Else
+            a
+
+Def RckOverRan(st As RckState, done As List Of Cell, x As Cell, word As String, keep As Boolean, r As RckRun) As RckFlow
+    Select Case r
+        Case RckWent(st2, out2)
+            RckOverOne(st, done, x, word, keep, st2, out2)
+        Case RckBroke(w, out2)
+            RckFlowBad(w, out2)
+        Case Else
+            RckFlowBad(word & " did not answer", { })
+
+Def RckOverOne(st As RckState, done As List Of Cell, x As Cell, word As String, keep As Boolean, st2 As RckState, out As List Of String) As RckFlow
+    Select Case RckOnly(word, st2)
+        Case Ok(v)
+            RckOverKept(RckSameBut(st, st2), done, x, word, keep, v, out)
+        Case Err(w, at)
+            RckFlowBad(w, out)
+        Case Else
+            RckFlowBad(word & " did not answer", out)
+
+Rem MAP collects what the program answered; FILTER collects the element
+Rem the program answered True for, and insists the answer was a boolean.
+Def RckOverKept(st As RckState, done As List Of Cell, x As Cell, word As String, keep As Boolean, v As Cell, out As List Of String) As RckFlow
+    If Not keep Then
+        RckFlowing(st, Prepend(v, done), out)
+    Else
+        RckOverTest(st, done, x, v, out)
+
+Def RckOverTest(st As RckState, done As List Of Cell, x As Cell, v As Cell, out As List Of String) As RckFlow
+    Select Case RckBoolArg("FILTER", v)
+        Case Ok(p)
+            RckFlowing(st, Ifte(p, Prepend(x, done), done), out)
+        Case Err(w, at)
+            RckFlowBad(w, out)
+        Case Else
+            RckFlowBad("FILTER did not answer", out)
+
+Rem The collected cells come back reversed, since each pass prepended.
+Def RckListed(st As RckState, word As String, a As RckFlow) As RckRun
+    Select Case a
+        Case RckFlowing(st2, done, out)
+            RckWent(RckKeep(st, st2, { CutList(Reverse(done)) }), out)
+        Case RckFlowBad(w, out)
+            RckBroke(w, out)
+        Case Else
+            RckBroke(word & " did not answer", { })
+
+Def RckFold(st As RckState, args As List Of Cell, out As List Of String) As RckRun
+    Select Case RckListArg("FOLD", Nth(args, 1))
+        Case Ok(xs)
+            RckFoldProg(st, xs, Nth(args, 2), Nth(args, 3), out)
+        Case Err(w, at)
+            RckBroke(w, out)
+        Case Else
+            RckBroke("FOLD did not answer", out)
+
+Def RckFoldProg(st As RckState, xs As List Of Cell, init As Cell, prog As Cell, out As List Of String) As RckRun
+    Select Case RckProgArg("FOLD", prog)
+        Case Ok(ts)
+            RckOnlyOut(st, "FOLD", Fold(xs, RckFlowOf(st, { init }, out), Fn(a, x) => RckFoldStep(a, x, ts)))
+        Case Err(w, at)
+            RckBroke(w, out)
+        Case Else
+            RckBroke("FOLD did not answer", out)
+
+Def RckFoldStep(a As RckFlow, x As Cell, ts As List Of String) As RckFlow
+    Select Case a
+        Case RckFlowing(st, acc, out)
+            RckPassed(st, "FOLD", RckSub(st, { First(acc), x }, ts, out))
+        Case Else
+            a
+
+Def RckTimes(st As RckState, args As List Of Cell, out As List Of String) As RckRun
+    Select Case RckWholeArg("TIMES", Nth(args, 3))
+        Case Ok(n)
+            RckTimesProg(st, Nth(args, 1), Nth(args, 2), n, out)
+        Case Err(w, at)
+            RckBroke(w, out)
+        Case Else
+            RckBroke("TIMES did not answer", out)
+
+Def RckTimesProg(st As RckState, x As Cell, prog As Cell, n As Number, out As List Of String) As RckRun
+    Select Case RckProgArg("TIMES", prog)
+        Case Ok(ts)
+            RckOnlyOut(st, "TIMES", Fold(Range(1, n), RckFlowOf(st, { x }, out), Fn(a, k) => RckTimesStep(a, ts)))
+        Case Err(w, at)
+            RckBroke(w, out)
+        Case Else
+            RckBroke("TIMES did not answer", out)
+
+Def RckTimesStep(a As RckFlow, ts As List Of String) As RckFlow
+    Select Case a
+        Case RckFlowing(st, acc, out)
+            RckPassed(st, "TIMES", RckSub(st, { First(acc) }, ts, out))
+        Case Else
+            a
+
+Rem One pass of FOLD or TIMES: the running answer becomes the flow's one
+Rem carried cell, and the state it changed threads on.
+Def RckPassed(st As RckState, word As String, r As RckRun) As RckFlow
+    Select Case r
+        Case RckWent(st2, out2)
+            RckPassedOne(st, word, st2, out2)
+        Case RckBroke(w, out2)
+            RckFlowBad(w, out2)
+        Case Else
+            RckFlowBad(word & " did not answer", { })
+
+Def RckPassedOne(st As RckState, word As String, st2 As RckState, out As List Of String) As RckFlow
+    Select Case RckOnly(word, st2)
+        Case Ok(v)
+            RckFlowing(RckSameBut(st, st2), { v }, out)
+        Case Err(w, at)
+            RckFlowBad(w, out)
+        Case Else
+            RckFlowBad(word & " did not answer", out)
+
+Def RckOnlyOut(st As RckState, word As String, a As RckFlow) As RckRun
+    Select Case a
+        Case RckFlowing(st2, acc, out)
+            RckWent(RckKeep(st, st2, { First(acc) }), out)
+        Case RckFlowBad(w, out)
+            RckBroke(w, out)
+        Case Else
+            RckBroke(word & " did not answer", { })
+
+Rem ---- the line --------------------------------------------------------
+Rem Everything above works on tokens; this is the only door a shell needs.
+
+Def RckEval(st As RckState, line As String) As RckLine
+    Select Case RckTokens(line)
+        Case Ok(toks)
+            RckLineDone(st, RckWalk(RckRemember(st), toks, { }))
+        Case Err(w, at)
+            RckStop(st, w, { })
+        Case Else
+            RckStop(st, "the line did not read", { })
+
+Rem The error case hands back ST — the state as the line found it, with
+Rem no history entry and nothing the line managed to do before it failed.
+Def RckLineDone(st As RckState, r As RckRun) As RckLine
+    Select Case r
+        Case RckWent(st2, out)
+            RckNext(st2, out)
+        Case RckBroke(w, out)
+            RckStop(st, w, out)
+        Case Else
+            RckStop(st, "the line did not answer", { })
+
+Rem ---- the user dictionary as text -------------------------------------
+Rem Split deliberately: the engine makes the lines and reads them back,
+Rem and THE SHELL OWNS THE PATH. A config file beside the executable is
+Rem one host's convention; a hosted mill writes to a sandboxed app-data
+Rem path this machine could not know. Split this way, one engine serves
+Rem both.
+
+Def RckSave(st As RckState) As List Of String
+    Map(Filter(RckDict(st), RckIsUser), RckDefLine)
+
+Rem Load is evaluation, so a saved line is validated exactly as a typed
+Rem one is — and a malformed line refuses the WHOLE load, leaving the
+Rem dictionary as it was rather than half-populated.
+Def RckLoad(st As RckState, lines As List Of String) As RckLine
+    RckLoadOn(st, st, lines, { })
+
+Def RckLoadOn(orig As RckState, st As RckState, lines As List Of String, out As List Of String) As RckLine
+    If IsEmpty(lines) Then
+        RckNext(st, out)
+    Else
+        RckLoadLine(orig, st, First(lines), Rest(lines), out)
+
+Def RckLoadLine(orig As RckState, st As RckState, line As String, more As List Of String, out As List Of String) As RckLine
+    Select Case RckTokens(line)
+        Case Ok(toks)
+            RckLoadRan(orig, RckWalk(st, toks, out), more)
+        Case Err(w, at)
+            RckStop(orig, w, out)
+        Case Else
+            RckStop(orig, "the saved line did not read", out)
+
+Def RckLoadRan(orig As RckState, r As RckRun, more As List Of String) As RckLine
+    Select Case r
+        Case RckWent(st2, out2)
+            RckLoadOn(orig, st2, more, out2)
+        Case RckBroke(w, out2)
+            RckStop(orig, w, out2)
+        Case Else
+            RckStop(orig, "the saved line did not answer", { })

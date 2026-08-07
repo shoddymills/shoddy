@@ -26,33 +26,48 @@
 <nav class="pagertop" aria-label="Machines, in catalog order"><a href="seedcsv.html">&larr; seedcsv</a><a href="index.html">All machines</a><a href="seedclock.html">seedclock &rarr;</a></nav>
 
 <h2 id="summary">Summary</h2>
-<p><code>seedisam</code> bridges <a href="isam.html">isam</a>'s whole-table
-words: <code>ISAMALL ISAMRANGE ISAMHAS ISAMGETOR ISAMCOUNT</code>. It does
-not register <code>ISAMOPEN</code>: a handle must never reach
-the stack, because a handle is a <code>NUMBER</code> capped at sixteen and
-shared with sockets, and <code>UNDO</code> after an open would restore the
-stack while leaving the handle open and now unreachable, since the number
-that named it is gone.</p>
-<p>Instead, <code>RckSeedIsamNum</code>/<code>RckSeedIsamStr</code> take an
-<strong>already-open</strong> <code>Isam</code> handle as their own
-argument — closed over inside the words they register, never pushed — the
-way a form field or an embedded scripting layer would seed the engine with
-a table its host already knows about.</p>
-<p><strong>&ldquo;Cannot&rdquo; would now be too strong</strong>, and this
-page used to say it. <a href="reckoner.html">reckoner</a> holds resources
-by <em>name</em>, in a table <code>UNDO</code> does not touch, with
-<code>CLOSE</code> and <code>BOUND</code> over it — so opening a table from
-the entry line no longer breaks the rule on its own, and a future
-<code>ISAMOPEN</code> would bind rather than push.</p>
-<p><strong>What still stops it is the record layout</strong>, which is a
-different problem and was always the harder half. An <code>Isam</code>
-carries <code>Rd</code>, <code>Wr</code> and <code>KeyOf</code> — reader,
-writer and key functions over the <em>caller's</em> own <code>Type</code>,
-written in Shoddy and compiled in. A host program has them; a session has
-to be told a layout at the prompt, which means a schema cell and generic
-functions driven by it. Until that exists this seed stays as it is, and
-the reason it stays is worth keeping straight: it is the layout, not the
-handle.</p>
+<p><code>seedisam</code> bridges <a href="isam.html">isam</a>, and it has
+<strong>two entry points that register the same word names</strong>. A mill
+folds one or the other, never both, so a session learns one vocabulary.</p>
+<ul>
+<li><strong><code>RckSeedIsamNum</code> / <code>RckSeedIsamStr</code></strong>
+take a table the <em>host</em> has already opened — closed over inside the
+words they register, never pushed — the way a form field or an embedded
+scripting layer would seed the engine with a table it already knows about.
+Whole-table words only: <code>ISAMALL ISAMRANGE ISAMHAS ISAMGETOR
+ISAMCOUNT</code>.</li>
+<li><strong><code>RckSeedIsam</code></strong> takes nothing, and registers
+an <code>ISAMOPEN</code> that opens a table from a path, a schema and the
+name of its key — all typed at the prompt. This is what
+<a href="../mills/halifax.html">halifax</a> folds.</li>
+</ul>
+<p><strong>This page used to say <code>ISAMOPEN</code> could not
+exist</strong>, and the reason given was that a handle must never reach the
+stack: a handle is a <code>NUMBER</code>, <code>UNDO</code> restores the
+stack, and the number naming an open table would go with it. That was one
+of <em>two</em> problems, and naming them apart is what let both be
+solved.</p>
+<ul>
+<li><strong>The handle.</strong> <a href="reckoner.html">reckoner</a> now
+holds resources by <em>name</em>, in a table <code>UNDO</code> does not
+touch, with <code>CLOSE</code> and <code>BOUND</code> over it.
+<code>ISAMOPEN</code> binds rather than pushes, and nothing a session can
+type ever sees a number.</li>
+<li><strong>The record layout</strong>, which was always the harder half
+and had nothing to do with the rule. An <code>Isam</code> carries
+<code>Rd</code>, <code>Wr</code> and <code>KeyOf</code> — reader, writer and
+key functions over the <em>caller's</em> own <code>Type</code>, compiled in.
+A session has to be <em>told</em> a layout instead, which is what
+<a href="seedrecio.html">seedrecio</a>'s schema is. This seed borrows that
+schema rather than inventing a second one.</li>
+</ul>
+<p><strong>One place the types genuinely fight back.</strong>
+<a href="isam.html">isam</a> orders keys with a raw <code>&lt;</code>, so
+the key type is fixed when the program is compiled — while the schema that
+says whether it is a number or a string is data, read at run time. So both
+instantiations exist in the seed, held in one sum type, and every word
+branches once on which. It reads like duplication; it is the language
+stating a fact.</p>
 
 <h2 id="why">Why It's Useful</h2>
 <p><strong>Two entry points, not one generic one.</strong>
@@ -88,17 +103,50 @@ RckEval(st0, "999 " & Chr(34) & "none" & Chr(34) & " ISAMGETOR")   ' x: "none" u
 <tr><td>ISAMGETOR ( k dflt -- rec )</td><td>The record under key k, or dflt unchanged when there is none.</td></tr>
 </table>
 
+<h3>The session-opened half — <code>RckSeedIsam</code></h3>
+<p class="tag">Every word takes the <em>name</em> the table was opened under.
+A record is a list of values in schema order, as for
+<a href="seedrecio.html">RECGET</a>.</p>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>ISAMOPEN ( path schema key name -- )</td><td>Open an indexed table and keep it open under that name. The schema is a list of <code>{ name kind }</code> specs, and key names which field is the key. Makes the table if it is not there. <code>CLOSE</code> shuts it — one name, two files.</td></tr>
+<tr><td>ISAMCOUNT ( name -- n )</td><td>How many records the table holds.</td></tr>
+<tr><td>ISAMFIELDS ( name -- list )</td><td>The field names of that table's schema, in record order. The key is one of these.</td></tr>
+<tr><td>ISAMHAS ( name k -- flag )</td><td>Whether the table has a record under key k.</td></tr>
+<tr><td>ISAMGETOR ( name k dflt -- rec )</td><td>The record under key k, or dflt unchanged when there is none. There is no plain <code>ISAMGET</code>: <code>IsamGet</code> aborts on a missing key, and a bridged word may not end the session.</td></tr>
+<tr><td>ISAMALL ( name -- list )</td><td>Every record, in key order.</td></tr>
+<tr><td>ISAMRANGE ( name lo hi -- list )</td><td>Every record whose key lies from lo to hi, in key order.</td></tr>
+<tr><td>ISAMINSERT ( name rec -- )</td><td>Add rec. Refuses when that key is already there — <code>ISAMUPDATE</code> is the one that replaces.</td></tr>
+<tr><td>ISAMUPDATE ( name rec -- )</td><td>Replace the record with rec's key. Refuses when there is none.</td></tr>
+<tr><td>ISAMDELETE ( name k -- )</td><td>Remove the record under key k. Refuses when there is none.</td></tr>
+</table>
+<p class="note">Every one of those refusals is a pre-flight.
+<code>IsamInsert</code> aborts on a duplicate key and
+<code>IsamUpdate</code>, <code>IsamDelete</code> and <code>IsamGet</code>
+abort on a missing one, so <code>IsamHas</code> is asked first each time —
+which is the whole reason these words are reachable from a prompt at all.
+The key is checked against the schema's kind too: a string key handed to a
+number-keyed table would not fail, it would quietly look up record 0.</p>
+
 <h2 id="usedby">Who Uses It</h2>
-<p>No machine or mill includes it yet. A host seeds it directly by calling
-<code>RckSeedIsamNum</code> or <code>RckSeedIsamStr</code> with a table it
-has already opened.</p>
+<table>
+<tr><th></th><th>User</th><th>How</th></tr>
+<tr><td class="uicon"><a href="../mills/halifax.html"><img src="../media/icons/halifax.svg" alt=""></a></td><td><a href="../mills/halifax.html">halifax</a></td><td>The calculator's table words, through <code>RckSeedIsam</code> — a table the session opens for itself from a path, a schema and the name of its key.</td></tr>
+</table>
+<p>A host with a table of its own seeds the other half directly, by calling
+<code>RckSeedIsamNum</code> or <code>RckSeedIsamStr</code> with a handle it
+has already opened. A mill folds one entry point or the other, never both:
+the word names are shared on purpose, so a session learns one vocabulary.</p>
 
 <h2 id="uses">The Machines It Uses</h2>
 <table>
 <tr><th></th><th>Machine</th><th>Why</th></tr>
-<tr><td class="uicon"><a href="isam.html"><img src="../media/icons/isam.svg" alt=""></a></td><td><a href="isam.html">isam</a></td><td>The domain this seed bridges: <code>IsamAll</code>, <code>IsamCount</code>, <code>IsamHas</code>, <code>IsamRange</code> and <code>IsamGet</code> — never <code>IsamOpen</code>.</td></tr>
+<tr><td class="uicon"><a href="isam.html"><img src="../media/icons/isam.svg" alt=""></a></td><td><a href="isam.html">isam</a></td><td>The domain this seed bridges: <code>IsamAll</code>, <code>IsamCount</code>, <code>IsamHas</code>, <code>IsamRange</code>, <code>IsamInsert</code>, <code>IsamUpdate</code>, <code>IsamDelete</code> — and, in the session-opened half, <code>IsamOpen</code>.</td></tr>
 <tr><td class="uicon"><a href="cuttle.html"><img src="../media/icons/cuttle.svg" alt=""></a></td><td><a href="cuttle.html">cuttle</a></td><td>The <code>Cell</code> type records cross the bridge as.</td></tr>
-<tr><td class="uicon"><a href="reckoner.html"><img src="../media/icons/reckoner.svg" alt=""></a></td><td><a href="reckoner.html">reckoner</a></td><td><code>RckReg</code>, <code>RckSeeding</code> and the argument readers every registered word is built from.</td></tr>
+<tr><td class="uicon"><a href="reckoner.html"><img src="../media/icons/reckoner.svg" alt=""></a></td><td><a href="reckoner.html">reckoner</a></td><td><code>RckReg</code>, <code>RckSeeding</code> and the argument readers every registered word is built from — and the named-resource table, <code>RckBind</code> and <code>RckResOf</code>, that makes an open table reachable after <code>UNDO</code>.</td></tr>
+<tr><td class="uicon"><a href="seedrecio.html"><img src="../media/icons/seedrecio.svg" alt=""></a></td><td><a href="seedrecio.html">seedrecio</a></td><td>The schema language, and its reader, writer and row checks. One definition of what <code>{ "who" "str" 12 }</code> means, used by both record machines, so the two cannot drift apart.</td></tr>
+<tr><td class="uicon"><a href="seq.html"><img src="../media/icons/seq.svg" alt=""></a></td><td><a href="seq.html">seq</a></td><td>List plumbing under the schema and key lookups.</td></tr>
+<tr><td class="uicon"><a href="str.html"><img src="../media/icons/str.svg" alt=""></a></td><td><a href="str.html">str</a></td><td><code>Join</code>, so a key naming no field is refused with the field names there actually are.</td></tr>
 </table>
 
 <nav class="pager" aria-label="Machines, in catalog order">

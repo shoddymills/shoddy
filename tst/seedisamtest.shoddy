@@ -1,0 +1,231 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem seedisamtest.shoddy — test program for seedisam.shoddy's
+Rem session-opened half
+Rem
+Rem Assert-driven, in the cuttletest / reckonertest / seedtest pattern:
+Rem it prints what it is doing and stops the run at the first assertion
+Rem that fails, ending with ALL ASSERTIONS PASSED when it does not.
+Rem
+Rem WHICH HALF THIS IS. seedisam.shoddy has two entry points.
+Rem RckSeedIsamNum/RckSeedIsamStr take a table the HOST already opened
+Rem and are exercised by tst/seedtest.shoddy. RckSeedIsam — the one
+Rem tested here — takes nothing, and registers words that open a table
+Rem from a path and a schema typed at the prompt. That was the last
+Rem thing R3.5(b) was thought to rule out, and it turned out to be two
+Rem separate problems: the handle, answered by reckoner's named-resource
+Rem table, and the record layout, answered by seedrecio's schema.
+Rem
+Rem THE TYPING CASE IS THE INTERESTING ONE. isam orders keys with a raw
+Rem "<", so the key type is fixed when the program is compiled, while
+Rem the schema saying whether it is a NUMBER or a STRING is data read at
+Rem run time. Both instantiations exist in the seed and a sum type holds
+Rem either. Both are exercised below, on two tables open at once, which
+Rem is the assertion that the branch actually goes both ways.
+Rem
+Rem HANDLE LIFETIMES ARE REAL EVEN THOUGH STATES ARE NOT. An RckState is
+Rem immutable and a file handle is not, so a state kept from before a
+Rem CLOSE names a shut file. The suite therefore derives its states
+Rem LINEARLY and never reaches back past a close — and Refuses, which
+Rem evaluates its line three times, is used only on words that neither
+Rem open nor close anything.
+Rem
+Rem Fixtures: none committed. The suite writes and deletes its own,
+Rem beside the other suites' scratch files in tst/csv/.
+Rem
+Rem Run: bin\mill run tst\seedisamtest.shoddy      (from the repo root)
+Rem ==================================================================
+
+Include "../machines/cuttle.shoddy"
+Include "../machines/reckoner.shoddy"
+Include "../machines/seq.shoddy"
+Include "../machines/str.shoddy"
+Include "../machines/seeds/seedisam.shoddy"
+
+Rem ---- reading an answer ------------------------------------------------
+
+Def Ran(st As RckState, line As String) As RckState
+    Select Case RckEval(st, line)
+        Case RckNext(st2, out)
+            st2
+        Case RckStop(st2, why, out)
+            st2
+        Case Else
+            st
+
+Def Runs(st As RckState, lines As List Of String) As RckState
+    Fold(lines, st, Ran)
+
+Def Bad(st As RckState, line As String) As Boolean
+    Select Case RckEval(st, line)
+        Case RckStop(st2, why, out)
+            True
+        Case Else
+            False
+
+Def Why(st As RckState, line As String) As String
+    Select Case RckEval(st, line)
+        Case RckStop(st2, why, out)
+            why
+        Case Else
+            ""
+
+Def Text(st As RckState) As String
+    Join(Map(CutCells(RckStack(st)), Fn(c) => CutShow(c, RckFmt(st))), " | ")
+
+Def Q(s As String) As String
+    Chr(34) & s & Chr(34)
+
+Rem Safe only for lines that neither open nor close: it evaluates three
+Rem times, and a resource operation is not free to repeat.
+Def Refuses(st As RckState, line As String, why As String) As Boolean
+    Bad(st, line) And Instr(Why(st, line), why) > 0 And Text(Ran(st, line)) = Text(st) And Text(Ran(Ran(st, line), "1 1 +")) = Text(Ran(st, "1 1 +"))
+
+Rem ---- the fixtures -----------------------------------------------------
+
+Def NumPath() As String
+    "tst/csv/_seedisamtest_num.tmp"
+
+Def StrPath() As String
+    "tst/csv/_seedisamtest_str.tmp"
+
+Def Gone(p As String)
+    If FileExists(p) Then
+        DeleteFile(p)
+    If FileExists(p & ".idx") Then
+        DeleteFile(p & ".idx")
+
+Def Wipe()
+    Gone(NumPath())
+    Gone(StrPath())
+
+Rem A number key, and a string key, over the same two-field shape.
+Def Schema() As String
+    "{ { " & Q("id") & " " & Q("number") & " } { " & Q("who") & " " & Q("str") & " 12 } }"
+
+Def Main()
+    Wipe()
+    Let s0 = RckSeedIsam(RckNew())
+
+    Print("--- the seed is in the dictionary, grouped and documented ---")
+    Assert(RckKnows(s0, "ISAMOPEN") And RckKnows(s0, "ISAMINSERT") And RckKnows(s0, "ISAMRANGE"), "THE WORDS ARE THERE")
+    Assert(Contains(RckWords(s0), "-- seed-isam --"), "AND THEY HAVE A GROUP OF THEIR OWN")
+    Assert(All(RckDict(s0), Fn(e) => WordEffect(e) <> "" And WordDesc(e) <> ""), "NO WORD IS WITHOUT AN EFFECT LINE AND A DESCRIPTION")
+    Assert(All(RckDict(s0), Fn(e) => Length(RckHelp(s0, WordName(e))) = 3), "AND HELP ANSWERS FOR EVERY ONE OF THEM")
+    Assert(All(RckDict(s0), Fn(e) => Instr(Lower(WordEffect(e)), "handle") = 0), "NO WORD'S EFFECT STRING MENTIONS A HANDLE")
+    Rem There is no plain ISAMGET. isam's own IsamGet Errors on a missing
+    Rem key, and a bridged word that can end the session is the one thing
+    Rem a seed may not register — ISAMGETOR takes the answer instead.
+    Assert(Not RckKnows(s0, "ISAMGET"), "AND NO PLAIN ISAMGET, WHICH WOULD HAVE NOTHING TO ANSWER ON A MISSING KEY")
+    Assert(Not RckKnows(s0, "ISAMCLOSE"), "AND NO ISAMCLOSE — CLOSE IS THE CORE'S WORD AND THE ONLY ONE")
+
+    Print("--- a table opens from a path, a schema and the name of its key ---")
+    Let o1 = Ran(s0, Q(NumPath()) & " " & Schema() & " " & Q("id") & " " & Q("db") & " ISAMOPEN")
+    Assert(RckBoundTo(o1, "db"), "ISAMOPEN BINDS UNDER THE NAME IT WAS GIVEN")
+    Assert(Text(Ran(o1, "BOUND")) = "{ ( " & Q("db") & " " & Q("isam") & " ) }", "AND BOUND SHOWS IT AS A NAME/KIND PAIR")
+    Assert(Text(o1) = "", "AND LEFT NOTHING ON THE STACK — NO HANDLE, NOTHING")
+    Assert(Text(Ran(o1, Q("db") & " ISAMCOUNT")) = "0", "A NEW TABLE IS EMPTY")
+    Assert(Text(Ran(o1, Q("db") & " ISAMFIELDS")) = "{ " & Q("id") & " " & Q("who") & " }", "AND ISAMFIELDS ANSWERS THE SCHEMA'S NAMES IN ORDER")
+    Rem A table is TWO files and one name. The index is isam's business,
+    Rem and a session never learns it has one.
+    Assert(FileExists(NumPath()) And FileExists(NumPath() & ".idx"), "AND MADE BOTH FILES, WHICH THE SESSION SEES AS ONE NAME")
+
+    Print("--- records go in, and come back in KEY order rather than insertion order ---")
+    Let i1 = Ran(o1, Q("db") & " { 2 " & Q("ADA") & " } ISAMINSERT")
+    Let i2 = Ran(i1, Q("db") & " { 1 " & Q("GRACE") & " } ISAMINSERT")
+    Assert(Text(Ran(i2, Q("db") & " ISAMCOUNT")) = "2", "TWO RECORDS IN")
+    Assert(Text(Ran(i2, Q("db") & " ISAMALL")) = "{ { 1 " & Q("GRACE") & " } { 2 " & Q("ADA") & " } }", "AND ISAMALL ANSWERS THEM IN KEY ORDER, NOT THE ORDER THEY WENT IN")
+    Assert(Text(Ran(i2, Q("db") & " 1 " & Q("none") & " ISAMGETOR")) = "{ 1 " & Q("GRACE") & " }", "ISAMGETOR FINDS A KEY THAT IS THERE")
+    Assert(Text(Ran(i2, Q("db") & " 9 " & Q("none") & " ISAMGETOR")) = Q("none"), "AND ANSWERS THE DEFAULT UNCHANGED FOR ONE THAT IS NOT")
+    Assert(Text(Ran(i2, Q("db") & " 1 ISAMHAS")) = "True", "ISAMHAS SAYS SO TOO")
+    Assert(Text(Ran(i2, Q("db") & " 9 ISAMHAS")) = "False", "AND SAYS SO WHEN IT IS NOT")
+    Assert(Text(Ran(i2, Q("db") & " 1 1 ISAMRANGE")) = "{ { 1 " & Q("GRACE") & " } }", "ISAMRANGE OVER ONE KEY IS THAT ONE RECORD")
+    Assert(Text(Ran(i2, Q("db") & " 0 9 ISAMRANGE")) = "{ { 1 " & Q("GRACE") & " } { 2 " & Q("ADA") & " } }", "AND OVER THE WHOLE SPAN IS ALL OF THEM")
+
+    Print("--- update replaces, delete removes, and each refuses the other's case ---")
+    Let u1 = Ran(i2, Q("db") & " { 2 " & Q("LOVELACE") & " } ISAMUPDATE")
+    Assert(Text(Ran(u1, Q("db") & " 2 " & Q("none") & " ISAMGETOR")) = "{ 2 " & Q("LOVELACE") & " }", "ISAMUPDATE REPLACES THE RECORD UNDER THAT KEY")
+    Assert(Text(Ran(u1, Q("db") & " ISAMCOUNT")) = "2", "AND DOES NOT CHANGE HOW MANY THERE ARE")
+    Rem isam Errors on both of these rather than refusing, so the
+    Rem pre-flight is not a convenience — it is why the words are
+    Rem reachable at all.
+    Assert(Refuses(u1, Q("db") & " { 1 " & Q("X") & " } ISAMINSERT", "THERE IS ALREADY A RECORD UNDER THAT KEY"), "INSERTING OVER AN EXISTING KEY, POINTING AT ISAMUPDATE")
+    Assert(Refuses(u1, Q("db") & " { 7 " & Q("X") & " } ISAMUPDATE", "THERE IS NO RECORD UNDER THAT KEY"), "AND UPDATING A KEY THAT IS NOT THERE, POINTING BACK")
+    Assert(Refuses(u1, Q("db") & " 7 ISAMDELETE", "THERE IS NO RECORD UNDER THAT KEY"), "AND DELETING ONE THAT IS NOT THERE")
+    Assert(Text(Ran(u1, Q("db") & " ISAMCOUNT")) = "2", "AND NONE OF THOSE REFUSALS CHANGED THE TABLE")
+    Let d1 = Ran(u1, Q("db") & " 1 ISAMDELETE")
+    Assert(Text(Ran(d1, Q("db") & " ISAMCOUNT")) = "1", "ISAMDELETE REMOVES ONE")
+    Assert(Text(Ran(d1, Q("db") & " ISAMALL")) = "{ { 2 " & Q("LOVELACE") & " } }", "AND THE ONE IT REMOVED IS THE ONE THAT IS GONE")
+
+    Print("--- a row is checked against the schema, exactly as RECPUT checks one ---")
+    Assert(Refuses(d1, Q("db") & " { 3 } ISAMINSERT", "HAS 1 VALUES AND THE SCHEMA HAS 2"), "TOO FEW VALUES")
+    Assert(Refuses(d1, Q("db") & " { 3 " & Q("A") & " True } ISAMINSERT", "HAS 3 VALUES AND THE SCHEMA HAS 2"), "AND TOO MANY")
+    Assert(Refuses(d1, Q("db") & " { " & Q("no") & " " & Q("A") & " } ISAMINSERT", "FIELD 1 (id) WANTS A NUMBER"), "A STRING WHERE A NUMBER GOES, NAMING THE FIELD")
+    Assert(Refuses(d1, Q("db") & " { 3 " & Q("A NAME MUCH TOO LONG FOR IT") & " } ISAMINSERT", "HOLDS 12 BYTES AND THAT STRING IS 27"), "AND A STRING LONGER THAN ITS FIELD, WHICH PUTSTR WOULD ABORT ON")
+
+    Print("--- the key must be the kind the schema says, because a wrong one would find the wrong record ---")
+    Rem IskNumOf answers 0 for anything that is not a NUMBER, so an
+    Rem unchecked string key would not fail — it would silently look up
+    Rem record 0. That is the failure mode this guard exists for.
+    Assert(Refuses(d1, Q("db") & " " & Q("two") & " ISAMHAS", "THE KEY id IS A NUMBER, AND THAT IS NOT ONE"), "A STRING KEY ON A NUMBER-KEYED TABLE")
+    Assert(Refuses(d1, Q("db") & " " & Q("two") & " ISAMDELETE", "THE KEY id IS A NUMBER"), "AND THE SAME FROM ISAMDELETE")
+    Assert(Refuses(d1, Q("db") & " " & Q("a") & " " & Q("b") & " ISAMRANGE", "THE KEY id IS A NUMBER"), "AND FROM BOTH ENDS OF A RANGE")
+
+    Print("--- a name is a name: taken, unknown, or another machine's ---")
+    Assert(Refuses(d1, Q(StrPath()) & " " & Schema() & " " & Q("id") & " " & Q("db") & " ISAMOPEN", "THERE IS ALREADY SOMETHING OPEN CALLED db"), "OPENING OVER A NAME ALREADY BOUND")
+    Assert(Not FileExists(StrPath()), "AND THAT REFUSAL OPENED NOTHING")
+    Assert(Refuses(d1, Q("nope") & " ISAMCOUNT", "THERE IS NOTHING OPEN CALLED nope"), "A NAME THAT WAS NEVER BOUND")
+    Let mixed = RckBind(d1, "pen", "plotter", 0, CutNum(0), Fn() => True)
+    Assert(Refuses(mixed, Q("pen") & " ISAMCOUNT", "pen IS A PLOTTER, NOT A TABLE"), "AND A NAME BOUND BY ANOTHER KIND ENTIRELY")
+
+    Print("--- the schema and the key it names are read once, at ISAMOPEN ---")
+    Assert(Refuses(d1, Q(StrPath()) & " " & Schema() & " " & Q("nosuch") & " " & Q("x") & " ISAMOPEN", "NO FIELD IS CALLED nosuch"), "A KEY NAMING NO FIELD, LISTING THE ONES THERE ARE")
+    Assert(Refuses(d1, Q(StrPath()) & " { { " & Q("f") & " " & Q("bool") & " } } " & Q("f") & " " & Q("x") & " ISAMOPEN", "A KEY MUST BE A NUMBER OR A STRING"), "AND A BOOLEAN KEY, WHICH WOULD GIVE A TABLE THAT HOLDS TWO RECORDS")
+    Assert(Refuses(d1, Q(StrPath()) & " { } " & Q("f") & " " & Q("x") & " ISAMOPEN", "A SCHEMA MUST HAVE AT LEAST ONE FIELD"), "AND AN EMPTY SCHEMA, REFUSED BY SEEDRECIO'S OWN READER")
+    Assert(Not FileExists(StrPath()), "AND NOT ONE OF THOSE MADE A FILE")
+
+    Print("--- a STRING-keyed table, which is the other instantiation entirely ---")
+    Rem The branch the type system forces. Two tables open at once, keyed
+    Rem differently, proves the sum goes both ways rather than one way
+    Rem twice.
+    Let t1 = Ran(d1, Q(StrPath()) & " " & Schema() & " " & Q("who") & " " & Q("names") & " ISAMOPEN")
+    Assert(Length(RckBoundNames(t1)) = 2, "TWO TABLES ARE OPEN AT ONCE")
+    Let t2 = Ran(Ran(t1, Q("names") & " { 1 " & Q("ZOE") & " } ISAMINSERT"), Q("names") & " { 2 " & Q("ADA") & " } ISAMINSERT")
+    Assert(Text(Ran(t2, Q("names") & " ISAMALL")) = "{ { 2 " & Q("ADA") & " } { 1 " & Q("ZOE") & " } }", "AND THE STRING-KEYED ONE ORDERS BY ITS OWN KEY, NOT BY ID")
+    Assert(Text(Ran(t2, Q("names") & " " & Q("ADA") & " " & Q("none") & " ISAMGETOR")) = "{ 2 " & Q("ADA") & " }", "A STRING KEY FINDS ITS RECORD")
+    Assert(Refuses(t2, Q("names") & " 1 ISAMHAS", "THE KEY who IS A STRING, AND THAT IS NOT ONE"), "AND A NUMBER KEY ON IT IS REFUSED THE OTHER WAY ROUND")
+    Assert(Text(Ran(t2, Q("db") & " ISAMCOUNT")) = "1", "AND THE NUMBER-KEYED TABLE IS UNDISTURBED BESIDE IT")
+
+    Print("--- THE POINT OF ALL OF IT: UNDO cannot strand an open table ---")
+    Let v1 = Runs(t2, { "1", "2", "3" })
+    Assert(Text(v1) = "3 | 2 | 1", "WORK PILES UP ON THE STACK AS USUAL")
+    Let v2 = Runs(v1, { "UNDO", "UNDO", "UNDO" })
+    Assert(Text(v2) = Text(t2), "AND UNDO WINDS IT ALL THE WAY BACK")
+    Assert(RckBoundTo(v2, "db") And RckBoundTo(v2, "names"), "AND BOTH TABLES ARE STILL OPEN")
+    Assert(Text(Ran(v2, Q("names") & " ISAMCOUNT")) = "2", "AND STILL READABLE BY NAME, WITH THEIR RECORDS INTACT")
+
+    Print("--- CLOSE is the core's word, and one name shuts two files ---")
+    Let c1 = Ran(v2, Q("names") & " CLOSE")
+    Assert(Not RckBoundTo(c1, "names"), "CLOSE LETS THE NAME GO")
+    Assert(RckBoundTo(c1, "db"), "AND LEAVES THE OTHER TABLE ALONE")
+    Assert(Refuses(c1, Q("names") & " ISAMCOUNT", "THERE IS NOTHING OPEN CALLED names"), "AND THE WORDS SAY SO AFTERWARDS RATHER THAN READING A SHUT FILE")
+    Let c2 = Ran(c1, "CLOSEALL")
+    Assert(Text(c2) = "1", "CLOSEALL SHUTS WHAT IS LEFT AND SAYS HOW MANY")
+    Assert(IsEmpty(RckBoundNames(c2)), "AND NOTHING IS OPEN AFTERWARDS")
+    Assert(Text(Ran(c2, "CLEAR 6 7 *")) = "42", "AND THE SESSION GOES ON EVALUATING")
+
+    Print("--- and the records were really on disk all along ---")
+    Rem Re-opening a shut table finds what was written, which is the
+    Rem check no live handle can make of itself.
+    Rem CLOSEALL pushed its count, so the stack is cleared first — Text
+    Rem reads the WHOLE stack and the leftover would sit under the answer.
+    Let r1 = Ran(Ran(c2, "CLEAR"), Q(NumPath()) & " " & Schema() & " " & Q("id") & " " & Q("again") & " ISAMOPEN")
+    Assert(Text(Ran(r1, Q("again") & " ISAMALL")) = "{ { 2 " & Q("LOVELACE") & " } }", "A REOPENED TABLE HOLDS EXACTLY WHAT WAS LEFT IN IT")
+    Assert(Text(Ran(r1, Q("again") & " ISAMCOUNT")) = "1", "AND COUNTS THE ONE THAT SURVIVED THE DELETE")
+    Let r2 = Ran(r1, "CLOSEALL")
+
+    Wipe()
+    Print("")
+    Print("ALL ASSERTIONS PASSED")

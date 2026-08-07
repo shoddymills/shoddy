@@ -275,15 +275,16 @@ public sealed partial class Engine
 
     // ---- text files ----
 
-    /// <summary>The reason TRYREADFILE reports inside its Err, as a short
-    /// phrase from a closed set. A caller that could act differently on why
-    /// it failed is the whole test for Result over Option, so the phrase has
-    /// to distinguish the cases a mistyped entry line actually produces —
-    /// and it must not be the platform's exception text, which varies by OS
-    /// and by locale and would make a golden test unwritable. The directory
-    /// check is explicit rather than left to the exception: every platform
-    /// reports it as access denied, which is the one wrong answer here,
-    /// since a directory is exactly what FILEEXISTS also gets wrong.</summary>
+    /// <summary>The reason TRYREADFILE and TRYBOPEN report inside their Err,
+    /// as a short phrase from a closed set. A caller that could act
+    /// differently on why it failed is the whole test for Result over Option,
+    /// so the phrase has to distinguish the cases a mistyped entry line
+    /// actually produces — and it must not be the platform's exception text,
+    /// which varies by OS and by locale and would make a golden test
+    /// unwritable. The directory check is explicit rather than left to the
+    /// exception: every platform reports it as access denied, which is the
+    /// one wrong answer here, since a directory is exactly what FILEEXISTS
+    /// also gets wrong.</summary>
     static string ReadWhy(Exception e, string path) =>
         Directory.Exists(path) ? "IS A DIRECTORY"
         : e is FileNotFoundException or DirectoryNotFoundException ? "NO SUCH FILE"
@@ -672,6 +673,35 @@ public sealed partial class Engine
                 }
                 return true;
             }
+            case "TRYDELETEFILE":               // ( path -- ok )
+            {
+                // DELETEFILE with the failure reported rather than fatal, and
+                // the last of the aborting file words to get a guarded twin.
+                // FILEEXISTS cannot stand in for it: a file that exists can
+                // still be locked, read-only or a directory when the delete
+                // lands, and DELETEFILE then ends the run. Answers a Boolean
+                // rather than a Result because, unlike a read, there is no
+                // payload to carry back and nothing a caller would do
+                // differently per reason -- the file is gone or it is not.
+                //
+                // Deleting a path that was ALREADY absent answers False, not
+                // True, matching DELETEFILE's own view that a missing file is
+                // a failed delete. A caller who means "make sure it is gone"
+                // writes that as an ignored answer, which reads as the
+                // intention it is.
+                string path = PopStr(line, w);
+                try
+                {
+                    if (!File.Exists(path)) { PushBool(false); return true; }
+                    File.Delete(path);
+                    PushBool(true);
+                }
+                catch (Exception e) when (e is not ShoddyError)
+                {
+                    PushBool(false);
+                }
+                return true;
+            }
 
             /* binary random-access: handles are NUMBERs, positions are
              * 1-based bytes, GET/PUT advance. NUMBER = 8-byte native-endian
@@ -691,6 +721,57 @@ public sealed partial class Engine
                     throw Die(line, $"BOPEN: cannot open '{path}'");
                 }
                 PushNum(slot + 1);
+                return true;
+            }
+            case "TRYBOPEN":                    // ( path -- Result )
+            {
+                // BOPEN with the failure REPORTED rather than fatal, and with
+                // the OpenOrCreate wart removed: this opens an EXISTING file
+                // only. That distinction is the whole reason it exists.
+                // BOPEN's FileMode.OpenOrCreate means a failed READ leaves an
+                // empty file behind, so a caller that wanted to ask "is there
+                // a model at this path?" damages the answer by asking; and
+                // nothing can ask a file its size or its magic number without
+                // opening it first, so there was no way to pre-flight a
+                // binary read at all. Both halves are why the binary model
+                // formats could never be reached from a reckoner session.
+                //
+                // Answers the language's own Result, like TRYREADFILE and for
+                // the same reason: there is a payload on success (the handle)
+                // and reasons worth telling apart on failure. Err's At is 0 --
+                // a failure to open has no position in the file.
+                //
+                // The handle it carries is still a handle, and R3.5(b) still
+                // keeps it off a session's stack. What this changes is that a
+                // WORD can now open, check, read and close inside its own
+                // body without a bad file ending the run mid-way, which is
+                // what a seed needs and all it needs.
+                string path = PopStr(line, w);
+                int slot = Array.IndexOf(files, null);
+                if (slot < 0)
+                {
+                    Push(Value.OfRec(Prelude.Err, new[]
+                    {
+                        Value.OfStr($"CANNOT OPEN '{path}' (TOO MANY OPEN FILES)"),
+                        Value.OfNum(0),
+                    }));
+                    return true;
+                }
+                try
+                {
+                    files[slot] = new FileStream(path, FileMode.Open,
+                                                 FileAccess.ReadWrite);
+                }
+                catch (Exception e) when (e is not ShoddyError)
+                {
+                    Push(Value.OfRec(Prelude.Err, new[]
+                    {
+                        Value.OfStr($"CANNOT OPEN '{path}' ({ReadWhy(e, path)})"),
+                        Value.OfNum(0),
+                    }));
+                    return true;
+                }
+                Push(Value.OfRec(Prelude.Ok, new[] { Value.OfNum(slot + 1) }));
                 return true;
             }
             case "BCLOSE":                      // ( h -- )
@@ -1693,7 +1774,8 @@ public sealed partial class Engine
         "UPPER", "LOWER",
         "PRINT", "READFILE", "TRYREADFILE", "WRITEFILE", "APPENDFILE",
         "TRYWRITEFILE", "FILEEXISTS",
-        "DELETEFILE", "BOPEN", "BCLOSE", "SEEK", "BPOS", "BSIZE",
+        "DELETEFILE", "TRYDELETEFILE",
+        "BOPEN", "TRYBOPEN", "BCLOSE", "SEEK", "BPOS", "BSIZE",
         "PUTNUM", "GETNUM", "PUTBOOL", "GETBOOL", "PUTSTR", "GETSTR",
         "TCPCONNECT", "TCPLISTEN", "TCPACCEPT", "TCPSEND", "TCPRECV",
         "TCPEOF", "TCPPOLL", "TCPPEER", "TCPCLOSE", "TCPSECURE",

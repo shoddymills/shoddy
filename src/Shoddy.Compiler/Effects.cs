@@ -67,6 +67,7 @@ public static class Effects
         ["PUTSTR"] = new(3, 0), ["GETSTR"] = new(2, 1),
         // network (gated)
         ["TCPCONNECT"] = new(2, 1), ["TRYTCPCONNECT"] = new(2, 1),
+        ["TRYTCPREQUEST"] = new(4, 1),
         ["NETALLOWED"] = new(0, 1),
         ["TCPLISTEN"] = new(2, 1),
         ["TCPACCEPT"] = new(1, 1), ["TCPSEND"] = new(2, 0),

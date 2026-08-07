@@ -1,0 +1,137 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem seednettest.shoddy — test program for seednet.shoddy
+Rem
+Rem Assert-driven, in the cuttletest / reckonertest / seedtest pattern:
+Rem it prints what it is doing and stops the run at the first assertion
+Rem that fails, ending with ALL ASSERTIONS PASSED when it does not.
+Rem
+Rem IT DOES NOT NEED THE NETWORK, and that is deliberate rather than a
+Rem gap. The suite runs WITHOUT --allow-net, so NETALLOWED is False and
+Rem every fetch takes the refusal path — which is the branch most worth
+Rem asserting anyway, because it is the one that used to be an abort and
+Rem the whole reason this seed can exist. A test that reached out to the
+Rem web would fail on a machine with no web, and would be testing
+Rem somebody else's server besides.
+Rem
+Rem What IS asserted whatever the network is doing:
+Rem
+Rem   * every guard the seed invents, all of which are answered before
+Rem     anything is dialled — a URL with no host, a port that is not a
+Rem     number, a port outside 1..65535, an argument of the wrong kind;
+Rem   * NETBODY, which is pure string work on a reply and needs no
+Rem     network to have produced one;
+Rem   * that the refusal names the REMEDY, since "the network is off" is
+Rem     useless without "--allow-net".
+Rem
+Rem If the suite is ever run WITH --allow-net the fetch assertions relax
+Rem to "answered or refused, and the session lived", because what a real
+Rem host says is not this suite's business.
+Rem
+Rem Run: bin\mill run tst\seednettest.shoddy      (from the repo root)
+Rem ==================================================================
+
+Include "../machines/cuttle.shoddy"
+Include "../machines/reckoner.shoddy"
+Include "../machines/seq.shoddy"
+Include "../machines/str.shoddy"
+Include "../machines/seeds/seednet.shoddy"
+Include "../machines/seeds/seedbuiltin.shoddy"
+
+Rem ---- reading an answer ------------------------------------------------
+
+Def Ran(st As RckState, line As String) As RckState
+    Select Case RckEval(st, line)
+        Case RckNext(st2, out)
+            st2
+        Case RckStop(st2, why, out)
+            st2
+        Case Else
+            st
+
+Def Bad(st As RckState, line As String) As Boolean
+    Select Case RckEval(st, line)
+        Case RckStop(st2, why, out)
+            True
+        Case Else
+            False
+
+Def Why(st As RckState, line As String) As String
+    Select Case RckEval(st, line)
+        Case RckStop(st2, why, out)
+            why
+        Case Else
+            ""
+
+Def Text(st As RckState) As String
+    Join(Map(CutCells(RckStack(st)), Fn(c) => CutShow(c, RckFmt(st))), " | ")
+
+Def Q(s As String) As String
+    Chr(34) & s & Chr(34)
+
+Def Refuses(st As RckState, line As String, why As String) As Boolean
+    Bad(st, line) And Instr(Why(st, line), why) > 0 And Text(Ran(st, line)) = Text(st) And Text(Ran(Ran(st, line), "1 1 +")) = Text(Ran(st, "1 1 +"))
+
+Rem A CRLF reply and an LF one, built here rather than fetched, so
+Rem NETBODY is tested on both spellings of the blank line.
+Def CrlfReply() As String
+    "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\nthe body"
+
+Def LfReply() As String
+    "HTTP/1.1 200 OK\nContent-Type: text/plain\n\nthe body"
+
+Def Main()
+    Let s0 = RckSeedBuiltin(RckSeedNet(RckNew()))
+    Let g = Ran(s0, "1 2")
+
+    Print("--- the seed is in the dictionary, grouped and documented ---")
+    Assert(RckKnows(s0, "NETGET") And RckKnows(s0, "NETREQUEST") And RckKnows(s0, "NETBODY"), "THE WORDS ARE THERE")
+    Assert(Contains(RckWords(s0), "-- seed-net --"), "AND THEY HAVE A GROUP OF THEIR OWN")
+    Assert(All(RckDict(s0), Fn(e) => WordEffect(e) <> "" And WordDesc(e) <> ""), "NO WORD IS WITHOUT AN EFFECT LINE AND A DESCRIPTION")
+    Assert(All(RckDict(s0), Fn(e) => Length(RckHelp(s0, WordName(e))) = 3), "AND HELP ANSWERS FOR EVERY ONE OF THEM")
+    Rem A socket has no life between lines here — a request opens, talks
+    Rem and closes inside one word — so unlike recio or scribbler this
+    Rem seed binds nothing and needs no CLOSE.
+    Assert(All(RckDict(s0), Fn(e) => Instr(Lower(WordEffect(e)), "handle") = 0), "NO WORD'S EFFECT STRING MENTIONS A HANDLE")
+    Assert(IsEmpty(RckBoundNames(Ran(g, Q("example.com") & " NETGET"))), "AND A FETCH BINDS NOTHING, WHETHER IT WORKED OR NOT")
+    Rem The server half is absent on purpose: a server that cannot run a
+    Rem loop is not a server, and a reckoner line answers and ends.
+    Assert(Not RckKnows(s0, "NETLISTEN") And Not RckKnows(s0, "NETSERVE"), "AND THE SERVER HALF IS ABSENT, WHICH IS A DECISION AND NOT A GAP")
+
+    Print("--- NETALLOWED is the question the whole seed turns on ---")
+    Assert(RckKnows(s0, "NETALLOWED"), "IT IS A WORD — SEEDBUILTIN'S, NOT THIS SEED'S")
+    Assert(Text(Ran(s0, "NETALLOWED")) = "False", "AND THIS SUITE RUNS WITHOUT --ALLOW-NET, SO IT ANSWERS FALSE")
+
+    Print("--- with the network off, a fetch REFUSES and names the remedy ---")
+    Rem This is the branch that used to be an abort, and the reason
+    Rem TRYTCPREQUEST and NETALLOWED were built. "The network is off" is
+    Rem useless without "--allow-net", so the message carries it.
+    Assert(Refuses(g, Q("https://example.com/") & " NETGET", "THE NETWORK IS OFF"), "A FETCH WITH NO CAPABILITY REFUSES")
+    Assert(Instr(Why(g, Q("https://example.com/") & " NETGET"), "--allow-net") > 0, "AND SAYS HOW TO TURN IT ON")
+    Assert(Refuses(g, Q("example.com") & " 443 True " & Q("GET /\r\n\r\n") & " NETREQUEST", "THE NETWORK IS OFF"), "AND SO DOES THE RAW FORM")
+    Assert(Text(Ran(g, "1 1 +")) = "2 | 2 | 1", "AND THE SESSION IS EXACTLY AS IT WAS")
+
+    Print("--- every guard that is answered before anything is dialled ---")
+    Assert(Refuses(g, Q("https://") & " NETGET", "THERE IS NO HOST IN THAT URL"), "A URL WITH A SCHEME AND NOTHING ELSE")
+    Assert(Refuses(g, Q("http://") & " NETGET", "THERE IS NO HOST IN THAT URL"), "AND THE PLAIN ONE")
+    Assert(Refuses(g, Q("example.com:notaport") & " NETGET", "IS NOT A PORT NUMBER"), "A PORT THAT IS NOT A NUMBER, QUOTED BACK")
+    Assert(Refuses(g, "5 NETGET", "NETGET"), "A URL THAT IS NOT A STRING")
+    Assert(Refuses(g, Q("example.com") & " 99999 True " & Q("x") & " NETREQUEST", "THEY RUN FROM 1 TO 65535"), "A PORT PAST THE END OF THE RANGE")
+    Assert(Refuses(g, Q("example.com") & " 0 True " & Q("x") & " NETREQUEST", "THEY RUN FROM 1 TO 65535"), "AND PORT ZERO")
+    Assert(Refuses(g, Q("example.com") & " 443 " & Q("yes") & " " & Q("x") & " NETREQUEST", "True or False"), "A SECURE FLAG THAT IS NOT A BOOLEAN")
+    Assert(Refuses(g, Q("example.com") & " 443 True 5 NETREQUEST", "STRING to send"), "AND A MESSAGE THAT IS NOT A STRING")
+
+    Print("--- NETBODY is pure string work, and needs no network at all ---")
+    Assert(Text(Ran(s0, Q(CrlfReply()) & " NETBODY")) = Q("the body"), "THE BODY IS WHAT FOLLOWS THE BLANK LINE, CRLF STYLE")
+    Assert(Text(Ran(s0, Q(LfReply()) & " NETBODY")) = Q("the body"), "AND LF STYLE, WHICH IS WHAT THE WILD ACTUALLY SENDS")
+    Rem A string with no blank line comes back whole: somebody asking for
+    Rem the body of something that is not a reply is better served by the
+    Rem text than by nothing.
+    Assert(Text(Ran(s0, Q("no headers here") & " NETBODY")) = Q("no headers here"), "A STRING WITH NO HEADER BREAK COMES BACK WHOLE")
+    Assert(Text(Ran(s0, Q("") & " NETBODY")) = Q(""), "AND SO DOES AN EMPTY ONE")
+    Assert(Refuses(g, "5 NETBODY", "NETBODY"), "AND A NUMBER IS NOT A REPLY")
+
+    Print("")
+    Print("ALL ASSERTIONS PASSED")

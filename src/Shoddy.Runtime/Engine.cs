@@ -5,6 +5,7 @@ using System.Globalization;
 using System.Net;
 using System.Net.Security;
 using System.Net.Sockets;
+using System.Security.Authentication;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
 
@@ -27,8 +28,9 @@ public sealed partial class Engine
     // table is found again by an integer the binding carries. These three
     // slots-and-numbers words exist for that and nothing else; a program
     // uses the ordinary SCRIBBLER* family with the value in hand.
-    readonly Value[] scribs = new Value[16];
-    readonly bool[] scribUsed = new bool[16];
+    // A null slot IS the free slot, so there is no parallel "in use"
+    // array to fall out of step with this one.
+    readonly Value?[] scribs = new Value?[16];
     readonly Socket?[] socks = new Socket?[16];   // TCP: connected sockets and listeners share the table
     // The network is a gated capability — off unless the mill was armed
     // with --allow-net (which sets SHODDY_ALLOW_NET=1 in the environment,
@@ -351,10 +353,38 @@ public sealed partial class Engine
     int ScribSlot(double n, int line, string w)
     {
         int k = (int)n;
-        if (k < 1 || k > scribs.Length || !scribUsed[k - 1])
+        if (k < 1 || k > scribs.Length || scribs[k - 1] == null)
             throw Die(line, $"{w}: bad scribbler slot");
         return k - 1;
     }
+
+    /// <summary>Why a whole request failed, as a short phrase from a
+    /// closed set — never the platform's socket or TLS text, which varies
+    /// by OS and by locale and would make a golden test unwritable. The
+    /// TLS cases are told apart from the plain ones because they are the
+    /// two a caller can actually act on differently: a name that does not
+    /// match its certificate is a typo in the host, and a refused
+    /// connection is a port.</summary>
+    static string RequestWhy(Exception e) => RequestWhyOf(Unwrap(e));
+
+    /// <summary>ConnectAsync(...).Wait(...) and AuthenticateAsClientAsync
+    /// both surface their real fault inside an AggregateException, so the
+    /// phrase would be UNREACHABLE for everything without this. Nested
+    /// aggregates unwrap too — Flatten then take the first, since a single
+    /// awaited task has exactly one.</summary>
+    static Exception Unwrap(Exception e) =>
+        e is AggregateException ag && ag.Flatten().InnerExceptions.Count > 0
+            ? ag.Flatten().InnerExceptions[0]
+            : e;
+
+    static string RequestWhyOf(Exception e) =>
+        e is AuthenticationException ? "TLS HANDSHAKE FAILED (WRONG HOST NAME, OR AN UNTRUSTED CERTIFICATE)"
+        : e is SocketException se && se.SocketErrorCode == SocketError.TimedOut ? "TIMED OUT"
+        : e is SocketException sh && (sh.SocketErrorCode == SocketError.HostNotFound
+                                      || sh.SocketErrorCode == SocketError.NoData) ? "NO SUCH HOST"
+        : e is SocketException ? "REFUSED"
+        : e is IOException ? "THE CONNECTION BROKE PART WAY THROUGH"
+        : "UNREACHABLE";
 
     void PushConnErr(string host, int port, string why) =>
         Push(Value.OfRec(Prelude.Err, new[]
@@ -980,6 +1010,98 @@ public sealed partial class Engine
                 Push(Value.OfRec(Prelude.Ok, new[] { Value.OfNum(cslot + 1) }));
                 return true;
             }
+            case "TRYTCPREQUEST":               // ( host port secure msg -- Result )
+            {
+                // THE WHOLE CONVERSATION, GUARDED, AS ONE WORD: connect,
+                // optionally secure, send, read to end of reply, close.
+                // Ok(reply) or Err(why, 0), and no socket is ever visible.
+                //
+                // WHY A WHOLE OPERATION RATHER THAN GUARDED PARTS. The
+                // request/response shape needs five steps and TCPSEND and
+                // TCPRECV alone die eight ways between them on ordinary
+                // network faults — so a bridge built from guarded pieces
+                // would be a socket that has to be closed on each of a
+                // dozen error paths, and a leak on the one that was
+                // missed. Doing it here means the socket cannot outlive
+                // the word: every exit runs through the same close.
+                // TRYREADFILE settled the same question the same way,
+                // guarding the whole read rather than open/read/close.
+                //
+                // IT CANNOT HANG, which matters more at a prompt than in a
+                // program. net.shoddy's RecvAll polls until the peer
+                // closes and never returns against a keep-alive server;
+                // this is bounded by a read deadline and gives back what
+                // it has when the deadline passes.
+                string msg = PopStr(line, w);
+                bool secure = PopBool(line, w);
+                int rport = (int)PopNum(line, w);
+                string rhost = PopStr(line, w);
+                if (!netOK)
+                {
+                    PushConnErr(rhost, rport, "NETWORK IS DISABLED");
+                    return true;
+                }
+                Socket rsk = new(SocketType.Stream, ProtocolType.Tcp);
+                SslStream? rss = null;
+                try
+                {
+                    if (!rsk.ConnectAsync(rhost, rport).Wait(ConnectTimeoutMs))
+                    {
+                        PushConnErr(rhost, rport, "TIMED OUT");
+                        return true;
+                    }
+                    if (secure)
+                    {
+                        rss = new SslStream(new NetworkStream(rsk, ownsSocket: false), false,
+                            (sender, cert, chain, errors) =>
+                                tlsInsecure || errors == SslPolicyErrors.None);
+                        if (!rss.AuthenticateAsClientAsync(rhost).Wait(TlsHandshakeTimeoutMs))
+                        {
+                            PushConnErr(rhost, rport, "TLS HANDSHAKE TIMED OUT");
+                            return true;
+                        }
+                        rss.ReadTimeout = TlsReadTimeoutMs;
+                    }
+                    else
+                    {
+                        rsk.SendTimeout = ConnectTimeoutMs;
+                        rsk.ReceiveTimeout = TlsReadTimeoutMs;
+                    }
+                    byte[] outb = Bytes.GetBytes(msg);
+                    if (rss != null) rss.Write(outb, 0, outb.Length);
+                    else
+                    {
+                        int sent = 0;
+                        while (sent < outb.Length)
+                        {
+                            int n = rsk.Send(outb, sent, outb.Length - sent, SocketFlags.None);
+                            if (n <= 0) break;
+                            sent += n;
+                        }
+                    }
+                    var got = new MemoryStream();
+                    var buf = new byte[4096];
+                    while (true)
+                    {
+                        int n = rss != null ? rss.Read(buf, 0, buf.Length)
+                                            : rsk.Receive(buf, 0, buf.Length, SocketFlags.None);
+                        if (n <= 0) break;
+                        got.Write(buf, 0, n);
+                    }
+                    Push(Value.OfRec(Prelude.Ok, new[]
+                        { Value.OfStr(Bytes.GetString(got.ToArray())) }));
+                }
+                catch (Exception e) when (e is not ShoddyError)
+                {
+                    PushConnErr(rhost, rport, RequestWhy(e));
+                }
+                finally
+                {
+                    rss?.Dispose();
+                    try { rsk.Dispose(); } catch (Exception) { }
+                }
+                return true;
+            }
             case "TCPLISTEN":                   // ( host port -- h ), host is an IP literal
             {
                 RequireNet(line, w);
@@ -1601,7 +1723,7 @@ public sealed partial class Engine
                     PushErrAt($"CANNOT OPEN A WINDOW ({swid}x{shgt} IS SMALLER THAN 1x1)");
                     return true;
                 }
-                int sslot = Array.IndexOf(scribUsed, false);
+                int sslot = Array.IndexOf(scribs, null);
                 if (sslot < 0)
                 {
                     PushErrAt("CANNOT OPEN A WINDOW (TOO MANY OPEN SCRIBBLERS)");
@@ -1612,7 +1734,6 @@ public sealed partial class Engine
                 if (sh.Pixels.Length != swid * shgt * 4) sh.Pixels = new byte[swid * shgt * 4];
                 Interlocked.Increment(ref ScribblerRegistry.OpenCount);
                 scribs[sslot] = Value.OfScribbler(sh);
-                scribUsed[sslot] = true;
                 Push(Value.OfRec(Prelude.Ok, new[] { Value.OfNum(sslot + 1) }));
                 return true;
             }
@@ -1622,7 +1743,7 @@ public sealed partial class Engine
                 // and that is right: a seed only ever asks for a slot its
                 // own binding is holding, so reaching here with a bad one is
                 // a fault in the seed rather than a mistake at a prompt.
-                Push(scribs[ScribSlot(PopNum(line, w), line, w)]);
+                Push(scribs[ScribSlot(PopNum(line, w), line, w)]!);
                 return true;
             }
             case "SCRIBBLERSHUT":               // ( n -- ok )
@@ -1633,14 +1754,13 @@ public sealed partial class Engine
                 // is the ordinary shape of a double CLOSE and must not end
                 // the session.
                 int k = (int)PopNum(line, w);
-                if (k < 1 || k > scribs.Length || !scribUsed[k - 1])
+                if (k < 1 || k > scribs.Length || scribs[k - 1] == null)
                 {
                     PushBool(false);
                     return true;
                 }
-                ScribblerHandle done = scribs[k - 1].Scribbler!;
-                scribs[k - 1] = default;
-                scribUsed[k - 1] = false;
+                ScribblerHandle done = scribs[k - 1]!.Scribbler!;
+                scribs[k - 1] = null;
                 if (done.MarkClosed()) ScribblerRegistry.NoteClosed();
                 PushBool(true);
                 return true;
@@ -1943,7 +2063,7 @@ public sealed partial class Engine
         "DELETEFILE", "TRYDELETEFILE",
         "BOPEN", "TRYBOPEN", "BCLOSE", "SEEK", "BPOS", "BSIZE",
         "PUTNUM", "GETNUM", "PUTBOOL", "GETBOOL", "PUTSTR", "GETSTR",
-        "TCPCONNECT", "TRYTCPCONNECT", "NETALLOWED",
+        "TCPCONNECT", "TRYTCPCONNECT", "TRYTCPREQUEST", "NETALLOWED",
         "TCPLISTEN", "TCPACCEPT", "TCPSEND", "TCPRECV",
         "TCPEOF", "TCPPOLL", "TCPPEER", "TCPCLOSE", "TCPSECURE",
         "INPUT", "INPUTLINE", "INKEY", "ARGS",

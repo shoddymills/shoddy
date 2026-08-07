@@ -328,6 +328,17 @@ public sealed partial class Engine
             throw Die(line, $"{w}: network is disabled — run the mill with --allow-net");
     }
 
+    /// <summary>TRYTCPCONNECT's Err, in the shape TRYREADFILE and TRYBOPEN
+    /// already established: one sentence naming what could not be reached
+    /// and a reason from a closed set. At is 0 — a failure to connect has
+    /// no position in anything.</summary>
+    void PushConnErr(string host, int port, string why) =>
+        Push(Value.OfRec(Prelude.Err, new[]
+        {
+            Value.OfStr($"CANNOT REACH '{host}:{port}' ({why})"),
+            Value.OfNum(0),
+        }));
+
     /// <summary>All builtin words, dispatched by folded name.
     /// Returns true if the word was handled.</summary>
     public bool Builtin(string w, int line)
@@ -886,6 +897,63 @@ public sealed partial class Engine
                 }
                 socks[slot] = sk;
                 PushNum(slot + 1);
+                return true;
+            }
+            case "NETALLOWED":                  // ( -- bool )
+                // Whether the network capability is on, ASKED rather than
+                // discovered by dying. Every other TCP word begins with
+                // RequireNet, which aborts — so without this a bridged word
+                // could not tell "no network" from "no answer" except by
+                // ending the run, and a seed may not do that. It is
+                // deliberately NOT gated itself: the question has to stay
+                // askable when the answer is no.
+                PushBool(netOK);
+                return true;
+            case "TRYTCPCONNECT":               // ( host port -- Result )
+            {
+                // TCPCONNECT with every failure REPORTED rather than fatal.
+                // TCPCONNECT can die three ways — no capability, no free
+                // slot, no host — and a session mistyping a hostname is an
+                // ordinary thing rather than the end of a session. The
+                // reasons are a closed set of Shoddy's own, never the
+                // platform's socket text, for the reason TryReadFile's are.
+                //
+                // The handle it carries is still a handle, and R3.5(b) still
+                // keeps it off a session's stack. This exists so a WORD can
+                // connect, ask and close inside its own body, which is what
+                // a request/response bridge needs and all it needs.
+                int cport = (int)PopNum(line, w);
+                string chost = PopStr(line, w);
+                if (!netOK)
+                {
+                    PushConnErr(chost, cport, "NETWORK IS DISABLED");
+                    return true;
+                }
+                int cslot = Array.IndexOf(socks, null);
+                if (cslot < 0)
+                {
+                    PushConnErr(chost, cport, "TOO MANY OPEN SOCKETS");
+                    return true;
+                }
+                Socket csk = new(SocketType.Stream, ProtocolType.Tcp);
+                try
+                {
+                    if (!csk.ConnectAsync(chost, cport).Wait(ConnectTimeoutMs))
+                    {
+                        csk.Dispose();
+                        PushConnErr(chost, cport, "TIMED OUT");
+                        return true;
+                    }
+                    csk.Blocking = false;
+                }
+                catch (Exception e) when (e is not ShoddyError)
+                {
+                    csk.Dispose();
+                    PushConnErr(chost, cport, "NO SUCH HOST OR REFUSED");
+                    return true;
+                }
+                socks[cslot] = csk;
+                Push(Value.OfRec(Prelude.Ok, new[] { Value.OfNum(cslot + 1) }));
                 return true;
             }
             case "TCPLISTEN":                   // ( host port -- h ), host is an IP literal
@@ -1777,7 +1845,8 @@ public sealed partial class Engine
         "DELETEFILE", "TRYDELETEFILE",
         "BOPEN", "TRYBOPEN", "BCLOSE", "SEEK", "BPOS", "BSIZE",
         "PUTNUM", "GETNUM", "PUTBOOL", "GETBOOL", "PUTSTR", "GETSTR",
-        "TCPCONNECT", "TCPLISTEN", "TCPACCEPT", "TCPSEND", "TCPRECV",
+        "TCPCONNECT", "TRYTCPCONNECT", "NETALLOWED",
+        "TCPLISTEN", "TCPACCEPT", "TCPSEND", "TCPRECV",
         "TCPEOF", "TCPPOLL", "TCPPEER", "TCPCLOSE", "TCPSECURE",
         "INPUT", "INPUTLINE", "INKEY", "ARGS",
         "CALL", "IFTE", "MAP", "FILTER", "FOLD", "EACH", "TIMES", "RANGE",

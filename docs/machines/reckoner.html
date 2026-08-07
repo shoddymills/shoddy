@@ -206,6 +206,9 @@ evaluator itself</p>
 <tr><th>Word</th><th>Description</th></tr>
 <tr><td>STO ( x name -- )</td><td>Bank a cell in a named register.</td></tr>
 <tr><td>RCL ( name -- x )</td><td>Fetch a cell from a named register.</td></tr>
+<tr><td>CLOSE ( name -- )</td><td>Shut the resource opened under that name and let the name go.</td></tr>
+<tr><td>CLOSEALL ( -- n )</td><td>Shut everything that is open and push how many there were.</td></tr>
+<tr><td>BOUND ( -- list )</td><td>What is open right now: a list of name/kind pairs, empty when nothing is.</td></tr>
 <tr><td>UNDO ( -- )</td><td>Put the stack back as the previous line found it.</td></tr>
 <tr><td>REDO ( -- )</td><td>Put back the stack UNDO stepped away from; anything else you do clears it.</td></tr>
 <tr><td>DEG ( -- )</td><td>Read and write angles in degrees.</td></tr>
@@ -281,6 +284,45 @@ word is ever given.</p>
 <tr><td>RckShow(st)</td><td>Line-oriented text for a scrolling shell: <code>x: y: z: t:</code> labels, deepest first so <code>x</code> lands nearest the prompt. Complete on its own — <code>[ empty ]</code> for an empty stack, and <code>[ depth n ]</code> above the top four for one deeper than four.</td></tr>
 <tr><td>RckRows(st)</td><td>Structured rows (label, kind constant, text) for a graphical shell, one per cell however deep — the same formatting path as <code>RckShow</code>, so the two cannot disagree about a row. A graphical shell paints what it has room for and puts the depth in a status field.</td></tr>
 </table>
+
+<h3>Resources held by name</h3>
+<p>A handle must never reach the stack. The ground for that rule is
+specific: a handle is a Number, <code>UNDO</code> restores the stack, and
+the number naming an open file would go with it — leaving the file open
+and unreachable. That is a true account of a handle <em>on the stack</em>.
+It is not an account of a resource held anywhere else.</p>
+<p><code>RckUndone</code> rewrites <code>RckStack</code>,
+<code>RckHist</code> and <code>RckFore</code>, and nothing else. So a
+resource bound in the state under a <em>name</em> the session chose is
+still bound after any number of undos, exactly as a word defined on an
+earlier line is still defined. The name is the whole of the difference: it
+is not a value that can be dropped, overwritten or undone away, and
+<code>CLOSE</code> and <code>BOUND</code> can always reach what is open
+because the table — not the stack — is where openness lives.</p>
+<p><strong>The closer travels with the resource.</strong> The engine cannot
+know how to shut a recio file, an isam table or a plotter without depending
+on every machine that has one. So whatever opens it supplies a closer with
+the handle closed over inside, and the engine shuts everything the same way
+without knowing what any of it is — the shape
+<a href="isam.html">isam</a> already uses for its reader, writer and key
+functions. <code>ResKind</code> is for a session to read in
+<code>BOUND</code>, never for the engine to branch on; the moment it
+branched on a kind it would be back to depending on the machines.</p>
+<p>No handle appears anywhere in this. <code>BOUND</code> answers names and
+kinds, so there is no number a session could take away and use.</p>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>RckBind(st, name, kind, shut)</td><td>Bind a live resource under a name, with <code>shut</code> a <code>[ -- Boolean ]</code> that has the handle closed over inside it. What a machine's own <code>OPEN</code> word calls once it has one.</td></tr>
+<tr><td>RckBoundTo(st, name)</td><td>Whether anything is open under that name — the check an <code>OPEN</code> word makes before binding, so it can refuse in its own words.</td></tr>
+<tr><td>RckResOf(st, name)</td><td>The resource under that name, as a list that is empty when there is none.</td></tr>
+<tr><td>RckBoundNames(st)</td><td>Every name currently bound.</td></tr>
+<tr><td>RckUnbind(st, name)</td><td>Let a name go without calling its closer. <code>CLOSE</code> is the word that does both.</td></tr>
+</table>
+<p class="note">One thing the table cannot check: two names bound to the
+<em>same</em> handle. Closing both would shut it twice, and a second close
+on a returned handle aborts. A closer is an opaque function, and comparing
+two of them is not a question Shoddy can ask — so it belongs to whatever
+opens the resource, which hands out one binding per open.</p>
 
 <h2 id="seeds">The Reckoner Seeds</h2>
 <p>Files bridge the rest of the standard library into this engine

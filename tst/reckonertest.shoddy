@@ -393,6 +393,54 @@ Def Main()
     Let h3 = Runs(s0, { ": KEPT 1 + ;", "1" })
     Assert(RckKnows(Ran(h3, "UNDO"), "KEPT"), "UNDO RESTORES A STACK, NOT THE DICTIONARY")
 
+    Print("--- a named resource is not a stack value, so UNDO cannot strand it ---")
+    Rem THIS IS THE ASSERTION THE RESOURCE TABLE EXISTS FOR. R3.5(b)
+    Rem keeps handles off the stack, and its stated ground is that UNDO
+    Rem restores the stack while the NUMBER naming an open file goes with
+    Rem it — leaving the file open and unreachable. That is a true account
+    Rem of a handle on the stack and not of one held by name: the line
+    Rem above already proves UNDO leaves the dictionary alone, and
+    Rem RckUndone touches exactly RckStack, RckHist and RckFore. So the
+    Rem test is the direct one — wind the stack all the way back and ask
+    Rem whether the resource is still there.
+    Let rpath = "tst/csv/_reckonertest_res.tmp"
+    WriteFile(rpath, "")
+    Let fh = BOpen(rpath)
+    Let r1 = RckBind(s0, "db", "recio", Fn() => ShutHandle(fh))
+    Assert(RckBoundTo(r1, "db"), "A RESOURCE BINDS UNDER THE NAME IT WAS GIVEN")
+    Assert(Text(Ran(r1, "BOUND")) = "{ ( " & Q("db") & " " & Q("recio") & " ) }", "AND BOUND SHOWS IT AS A NAME/KIND PAIR")
+    Let r2 = Runs(r1, { "1", "2", "3" })
+    Assert(Text(r2) = "3 | 2 | 1", "WORK PILES UP ON THE STACK AS USUAL")
+    Let r3 = Runs(r2, { "UNDO", "UNDO", "UNDO" })
+    Assert(Text(r3) = "", "AND UNDO WINDS IT ALL THE WAY BACK TO EMPTY")
+    Assert(RckBoundTo(r3, "db"), "AND THE RESOURCE IS STILL BOUND, WHICH IS THE WHOLE POINT")
+    Assert(Text(Ran(r3, "BOUND")) = "{ ( " & Q("db") & " " & Q("recio") & " ) }", "AND STILL REACHABLE BY NAME AFTERWARDS")
+    Rem A handle never appears in any of this. BOUND answers names and
+    Rem kinds, so there is no number a session could take away and use.
+    Assert(Instr(Text(Ran(r3, "BOUND")), Str(fh)) = 0, "AND NO HANDLE NUMBER REACHED THE STACK AT ANY POINT")
+    Assert(Refuses(r3, Q("nope") & " CLOSE", "there is nothing open called nope"), "CLOSING WHAT IS NOT OPEN IS A REFUSAL, NOT AN ABORT")
+    Let r4 = Ran(r3, Q("db") & " CLOSE")
+    Assert(Not RckBoundTo(r4, "db"), "CLOSE LETS THE NAME GO")
+    Assert(Text(Ran(r4, "BOUND")) = "{ }", "AND BOUND IS EMPTY AGAIN")
+    Assert(Text(Ran(r4, "6 7 *")) = "42", "AND THE SESSION GOES ON EVALUATING")
+    Rem CLOSEALL over a table that is already empty is 0 rather than a
+    Rem refusal: "shut everything" is satisfied by there being nothing.
+    Assert(Text(Ran(r4, "CLOSEALL")) = "0", "CLOSEALL OVER NOTHING ANSWERS ZERO")
+    Let fh2 = BOpen(rpath)
+    Let r5 = RckBind(RckBind(s0, "a", "recio", Fn() => ShutHandle(fh2)), "b", "plotter", Fn() => True)
+    Assert(Length(RckBoundNames(r5)) = 2, "TWO RESOURCES BIND SIDE BY SIDE")
+    Rem CLOSEALL really shuts things, so it is run ONCE and both
+    Rem assertions read that one answer. Re-running it the way the pure
+    Rem assertions above are re-run would close the same handle twice,
+    Rem which aborts — a fault in the test rather than in the word, and
+    Rem the one place in this file where evaluating a line again is not
+    Rem free.
+    Let r6 = Ran(r5, "CLOSEALL")
+    Assert(Text(r6) = "2", "AND CLOSEALL ANSWERS HOW MANY THERE WERE")
+    Assert(IsEmpty(RckBoundNames(r6)), "AND SHUTS THE LOT")
+    If FileExists(rpath) Then
+        DeleteFile(rpath)
+
     Print("--- the user dictionary is text, and the shell owns the path ---")
     Let p1 = Runs(s0, { ": SQ DUP * ;", ": CUBE DUP DUP * * ;" })
     Assert(Lines(RckSave(p1)) = ": SQ DUP * ; / : CUBE DUP DUP * * ;", "SAVE WRITES ONE DEFINITION PER LINE")
@@ -628,6 +676,14 @@ Def Refuses(st As RckState, line As String, why As String) As Boolean
 
 Def TextAfter(st As RckState) As String
     Text(Ran(st, "1 1 +"))
+
+Rem A closer of the shape a machine's own OPEN word supplies: the handle
+Rem is closed over INSIDE it, so the core can shut the resource without
+Rem ever being told what a recio file is, and no number is anywhere a
+Rem session could reach. This test program stands in for that machine.
+Def ShutHandle(f As Number) As Boolean
+    BClose(f)
+    True
 
 Def Loaded(st As RckState, lines As List Of String) As RckState
     Select Case RckLoad(st, lines)

@@ -193,6 +193,36 @@ Rem from has to be banked somewhere or it is gone. RckTape and RckTrace
 Rem live here rather than in a shell because TAPE, CLEARTAPE, TRACE and
 Rem NOTRACE are dictionary words, and a dictionary word reaches the state
 Rem or it reaches nothing.
+Rem ---- a live resource, held by NAME ------------------------------------
+
+Rem R3.5(b) says a handle must never reach the stack, and its ground is
+Rem exactly this: a handle is a NUMBER, and UNDO restores the stack, so
+Rem the number that named an open file would be gone while the file
+Rem stayed open. That is a true account of a handle ON THE STACK. It is
+Rem not an account of a resource held anywhere else.
+Rem
+Rem RckUndone rewrites RckStack, RckHist and RckFore, and nothing else —
+Rem so a resource bound HERE, under a name the session chose, is still
+Rem bound after any number of undos. The name is the whole of the
+Rem difference: it is not a value that can be dropped, overwritten or
+Rem undone away, and CLOSE and BOUND can always reach what is open
+Rem because the table, not the stack, is where openness lives.
+Rem
+Rem THE CLOSER TRAVELS WITH THE RESOURCE. The core cannot know how to
+Rem shut a recio file, an isam table or a plotter — it would have to
+Rem depend on every machine that has one. So whatever opened it supplies
+Rem a closer that has the handle closed over inside it, and the core
+Rem shuts everything the same way without knowing what any of it is.
+Rem This is the same shape isam.shoddy already uses for Rd/Wr/KeyOf.
+Rem
+Rem ResKind is for the session to read in BOUND, never for the core to
+Rem branch on. The moment the core branches on a kind it is back to
+Rem depending on the machines.
+Type RckRes
+    ResName As String
+    ResKind As String
+    ResShut As [ -- Boolean ]
+
 Type RckState
     RckStack As Stack
     RckDict  As List Of RckEntry
@@ -206,6 +236,7 @@ Type RckState
     RckTrace As Boolean
     RckTape  As List Of String
     RckFore  As List Of Stack
+    RckOpen  As List Of RckRes
 
 Rem What evaluating a line answers. Both cases carry output lines for the
 Rem shell to print, and the failing case carries the state as it was.
@@ -242,7 +273,7 @@ Rem speaks everywhere else and PI 2 / SIN should work before anything is
 Rem set; DEG is one word away and exists for entry, which is the only
 Rem thing it exists for.
 Def RckBare() As RckState
-    RckState(CutNew(), { }, { }, CutFmtStd(), RckRadians(), { }, None(), RckCoreName(), 0, False, { }, { })
+    RckState(CutNew(), { }, { }, CutFmtStd(), RckRadians(), { }, None(), RckCoreName(), 0, False, { }, { }, { })
 
 Rem The engine core seeded. This is what a mill starts from, and what a
 Rem seed file is handed.
@@ -262,6 +293,60 @@ Def RckPut(st As RckState, e As RckEntry) As RckState
 
 Def RckWithout(d As List Of RckEntry, name As String) As List Of RckEntry
     Filter(d, Fn(e) => WordName(e) <> name)
+
+Rem ---- the open-resource table -----------------------------------------
+
+Rem The API a machine's own OPEN word uses once it has a live handle:
+Rem bind it under the name the session gave, and hand over a closer with
+Rem that handle closed over inside it. From then on the core owns
+Rem shutting it, and the session owns the name.
+Rem
+Rem THESE TAKE A TYPED HELPER RATHER THAN REACHING INTO AN RckRes INSIDE
+Rem A LAMBDA. Filter and Map pass their element as a generic t, and a
+Rem record accessor cannot resolve against a type that is not yet known
+Rem — it partially applies into a quotation instead and fails a long way
+Rem from the mistake. ResNameOf is the typed door in.
+Def ResNameOf(r As RckRes) As String
+    ResName(r)
+
+Def ResKindOf(r As RckRes) As String
+    ResKind(r)
+
+Def RckResOf(st As RckState, name As String) As List Of RckRes
+    Filter(RckOpen(st), Fn(r) => ResNameOf(r) = name)
+
+Def RckBoundTo(st As RckState, name As String) As Boolean
+    Not IsEmpty(RckResOf(st, name))
+
+Rem Binding over a name already bound would drop the old resource's
+Rem closer on the floor — the leak this table exists to prevent, with
+Rem an extra step. A caller checks RckBoundTo first and says so in its
+Rem own words; this one appends, because the check belongs where the
+Rem word's name can be put in the message.
+Rem
+Rem THE ONE THING THIS TABLE CANNOT CHECK is two names bound to the SAME
+Rem handle. Closing both would shut it twice, and a second BClose on a
+Rem handle already returned aborts. The core has no way to see it: a
+Rem closer is an opaque function and comparing two of them is not a
+Rem question Shoddy can ask. So it belongs to whatever opens the
+Rem resource — an OPEN word hands out one binding per open, and opening
+Rem the same path twice takes two handles, which is what the runtime
+Rem does anyway.
+Def RckBind(st As RckState, name As String, kind As String, shut As [ -- Boolean ]) As RckState
+    With(st, RckOpen = Append(RckOpen(st), RckRes(name, kind, shut)))
+
+Def RckUnbind(st As RckState, name As String) As RckState
+    With(st, RckOpen = Filter(RckOpen(st), Fn(r) => ResNameOf(r) <> name))
+
+Def RckBoundNames(st As RckState) As List Of String
+    Map(RckOpen(st), ResNameOf)
+
+Rem Calling the closer and keeping the state. The If has the same answer
+Rem either way on purpose: whether the resource reported a clean shut is
+Rem the CALLER's to report, and this one exists only to make the call
+Rem happen in a position where its answer can be looked at.
+Def RckShutting(r As RckRes) As Boolean
+    Call(ResShut(r))
 
 Rem The registration API. Names fold to UPPER here and at lookup, as the
 Rem language itself does; the seed group comes from the state so the six
@@ -608,6 +693,9 @@ Def RckCoreStack() As List Of RckEntry
 Def RckCoreRest() As List Of RckEntry
     { RckCoreOf("STO", 2, RckCore("STO"), "( x name -- )", "Bank a cell in a named register."),
       RckCoreOf("RCL", 1, RckCore("RCL"), "( name -- x )", "Fetch a cell from a named register."),
+      RckCoreOf("CLOSE", 1, RckCore("CLOSE"), "( name -- )", "Shut the resource opened under that name and let the name go."),
+      RckCoreOf("CLOSEALL", 0, RckCore("CLOSEALL"), "( -- n )", "Shut everything that is open and push how many there were."),
+      RckCoreOf("BOUND", 0, RckCore("BOUND"), "( -- list )", "What is open right now: a list of name/kind pairs, empty when nothing is."),
       RckCoreOf("UNDO", 0, RckCore("UNDO"), "( -- )", "Put the stack back as the previous line found it."),
       RckCoreOf("REDO", 0, RckCore("REDO"), "( -- )", "Put back the stack UNDO stepped away from; anything else you do clears it."),
       RckCoreOf("TRACE", 0, RckCore("TRACE"), "( -- )", "Show the stack after every token, indented where a program runs, until NOTRACE."),
@@ -1420,6 +1508,12 @@ Def RckCoreDo(st As RckState, tag As String, args As List Of Cell, out As List O
             RckSto(st, args, out)
         Case "RCL"
             RckRcl(st, args, out)
+        Case "CLOSE"
+            RckClose(st, args, out)
+        Case "CLOSEALL"
+            RckCloseAll(st, out)
+        Case "BOUND"
+            RckWent(RckPushed(st, CutList(Map(RckOpen(st), RckResCell))), out)
         Case "UNDO"
             RckUndo(st, out)
         Case "REDO"
@@ -1568,6 +1662,61 @@ Def RckRclAt(st As RckState, k As String, out As List Of String) As RckRun
         RckWent(RckPushed(st, DictGet(RckRegs(st), k)), out)
     Else
         RckBroke("there is nothing in register " & k, out)
+
+Rem ---- CLOSE, CLOSEALL, BOUND ------------------------------------------
+
+Rem A name/kind pair, which is all a session is shown of a resource.
+Rem The handle is deliberately not in here: putting it in a cell would
+Rem be putting it on the stack, which is the thing R3.5(b) forbids and
+Rem the reason this table holds names instead.
+Def RckResCell(r As RckRes) As Cell
+    CutPair(Pair(CutStr(ResNameOf(r)), CutStr(ResKindOf(r))))
+
+Def RckClose(st As RckState, args As List Of Cell, out As List Of String) As RckRun
+    Select Case RckTextArg("CLOSE", First(args))
+        Case Ok(k)
+            RckCloseAt(st, k, out)
+        Case Err(w, at)
+            RckBroke(w, out)
+        Case Else
+            RckBroke("CLOSE did not answer", out)
+
+Def RckCloseAt(st As RckState, k As String, out As List Of String) As RckRun
+    If Not RckBoundTo(st, k) Then
+        RckBroke("there is nothing open called " & k, out)
+    Else
+        RckClosed(st, k, First(RckResOf(st, k)), out)
+
+Rem THE NAME GOES WHATEVER THE CLOSER ANSWERS. A closer that reports
+Rem trouble has still had its one chance, and a name left bound to
+Rem something nobody can shut is worse than a name let go — the session
+Rem could neither retry it nor open another under it. So the trouble is
+Rem SAID and the name is released either way.
+Def RckClosed(st As RckState, k As String, r As RckRes, out As List Of String) As RckRun
+    If RckShutting(r) Then
+        RckWent(RckUnbind(st, k), RckSaid(st, out, "ok: closed " & k))
+    Else
+        RckWent(RckUnbind(st, k), RckSaid(st, out, "ok: let go of " & k & ", which did not shut cleanly"))
+
+Rem Answers how many there WERE, which is the useful number: after this
+Rem there are none, and BOUND would answer the empty list either way.
+Def RckCloseAll(st As RckState, out As List Of String) As RckRun
+    RckWent(RckPushed(RckShutAll(st), CutNum(Length(RckOpen(st)))), out)
+
+Def RckShutAll(st As RckState) As RckState
+    Fold(RckOpen(st), st, RckShutInto)
+
+Def RckShutInto(st As RckState, r As RckRes) As RckState
+    RckUnbind(RckKept(st, RckShutting(r)), ResNameOf(r))
+
+Rem The state, unchanged, once the closer has been called for its
+Rem effect. CLOSEALL reports a count rather than a per-resource verdict,
+Rem so the answer is taken and dropped here on purpose.
+Def RckKept(st As RckState, shut As Boolean) As RckState
+    If shut Then
+        st
+    Else
+        st
 
 Rem The history holds the stack each line STARTED from, newest first, and
 Rem the current line's entry is already on it by the time UNDO runs — so

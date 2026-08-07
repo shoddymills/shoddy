@@ -1,0 +1,194 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem seedvt100test.shoddy — test program for seedvt100.shoddy and
+Rem seedkeys.shoddy
+Rem
+Rem Assert-driven, in the cuttletest / reckonertest / seedtest pattern:
+Rem it prints what it is doing and stops the run at the first assertion
+Rem that fails, ending with ALL ASSERTIONS PASSED when it does not.
+Rem
+Rem TWO SEEDS IN ONE SUITE, because they were one mistake. Both machines
+Rem were listed in halifax-core.shoddy as unreachable "live resources" —
+Rem vt100 as "the terminal, which this shell already owns", keys as "raw
+Rem keystrokes, which InputLine already owns". Neither touches either.
+Rem vt100 builds escape-sequence STRINGS and its own header says
+Rem "nothing here writes to the screen"; keys folds a NUMBER into a key
+Rem name and includes nothing at all. The suite that proves a machine is
+Rem pure is the one that seeds it and gets answers back, so both are
+Rem proved together here.
+Rem
+Rem WHAT IS ACTUALLY WORTH ASSERTING for a seed over pure functions is
+Rem not that every one of ninety-odd constants is bridged — the
+Rem registration is table-driven, so they are bridged or none of them
+Rem is. It is that the TABLE agrees with the machine, that the words
+Rem which take numbers guard them, and that the two directions of the
+Rem VT100 protocol meet: a sequence this seed builds is a sequence its
+Rem own VTEVALKEY reads back.
+Rem
+Rem Fixtures: none. Nothing here opens anything.
+Rem
+Rem Run: bin\mill run tst\seedvt100test.shoddy      (from the repo root)
+Rem ==================================================================
+
+Include "../machines/cuttle.shoddy"
+Include "../machines/reckoner.shoddy"
+Include "../machines/seq.shoddy"
+Include "../machines/str.shoddy"
+Rem The machine itself, so the assertions can compare each bridged word
+Rem against the Def it was written from rather than against a second
+Rem copy of the escape sequence typed out here.
+Include "../machines/vt100.shoddy"
+Include "../machines/seeds/seedvt100.shoddy"
+Include "../machines/seeds/seedkeys.shoddy"
+
+Rem ---- reading an answer ------------------------------------------------
+
+Def Ran(st As RckState, line As String) As RckState
+    Select Case RckEval(st, line)
+        Case RckNext(st2, out)
+            st2
+        Case RckStop(st2, why, out)
+            st2
+        Case Else
+            st
+
+Def Bad(st As RckState, line As String) As Boolean
+    Select Case RckEval(st, line)
+        Case RckStop(st2, why, out)
+            True
+        Case Else
+            False
+
+Def Why(st As RckState, line As String) As String
+    Select Case RckEval(st, line)
+        Case RckStop(st2, why, out)
+            why
+        Case Else
+            ""
+
+Def Text(st As RckState) As String
+    Join(Map(CutCells(RckStack(st)), Fn(c) => CutShow(c, RckFmt(st))), " | ")
+
+Def Q(s As String) As String
+    Chr(34) & s & Chr(34)
+
+Def Refuses(st As RckState, line As String, why As String) As Boolean
+    Bad(st, line) And Instr(Why(st, line), why) > 0 And Text(Ran(st, line)) = Text(st) And Text(Ran(Ran(st, line), "1 1 +")) = Text(Ran(st, "1 1 +"))
+
+Rem The top of the stack as a plain string, so an escape sequence can be
+Rem compared against what the machine itself builds without CutShow's
+Rem quoting getting in the way.
+Def TopStr(st As RckState) As String
+    If CutDepth(RckStack(st)) < 1 Then
+        "<empty>"
+    Else
+        StrOf(First(CutCells(RckStack(st))))
+
+Def StrOf(c As Cell) As String
+    Select Case c
+        Case CutStr(s)
+            s
+        Case Else
+            "<not a string>"
+
+Def Main()
+    Let s0 = RckSeedKeys(RckSeedVt100(RckNew()))
+
+    Print("--- both seeds are in the dictionary, grouped and documented ---")
+    Assert(RckKnows(s0, "VTCLEARSCREEN") And RckKnows(s0, "VTCURSORPOS") And RckKnows(s0, "VTEVALKEY"), "THE VT100 WORDS ARE THERE")
+    Assert(RckKnows(s0, "KEYNAME") And RckKnows(s0, "KEYGLYPH") And RckKnows(s0, "KEYIS"), "AND SO ARE THE KEYS WORDS")
+    Assert(Contains(RckWords(s0), "-- seed-vt100 --"), "VT100 HAS A GROUP OF ITS OWN")
+    Assert(Contains(RckWords(s0), "-- seed-keys --"), "AND SO DOES KEYS")
+    Assert(All(RckDict(s0), Fn(e) => WordEffect(e) <> "" And WordDesc(e) <> ""), "NO WORD IS WITHOUT AN EFFECT LINE AND A DESCRIPTION")
+    Assert(All(RckDict(s0), Fn(e) => Length(RckHelp(s0, WordName(e))) = 3), "AND HELP ANSWERS FOR EVERY ONE OF THEM")
+    Rem NOTHING HERE TOUCHES THE WORLD, and that is the whole claim these
+    Rem two seeds rest on. Every word is RckPure: a machine that only
+    Rem builds strings cannot be doing anything else.
+    Assert(All(RckDict(s0), Fn(e) => Holds(RckHelp(s0, WordName(e)), "touches nothing")), "AND EVERY WORD IN BOTH SEEDS TOUCHES NOTHING, WHICH IS THE POINT")
+
+    Print("--- the constant table agrees with the machine it was written from ---")
+    Rem The registration is table-driven, so a wrong entry is the one
+    Rem failure mode: a name that answers some OTHER sequence. Each of
+    Rem these compares the word's answer against the machine's own Def.
+    Assert(TopStr(Ran(s0, "VTCLEARSCREEN")) = ClearScreen(), "VTCLEARSCREEN IS CLEARSCREEN")
+    Assert(TopStr(Ran(s0, "VTBOLD")) = Bold(), "VTBOLD IS BOLD")
+    Assert(TopStr(Ran(s0, "VTATTRSOFF")) = AttrsOff(), "VTATTRSOFF IS ATTRSOFF")
+    Assert(TopStr(Ran(s0, "VTCLEAREOL")) = ClearEol(), "VTCLEAREOL IS CLEAREOL")
+    Assert(TopStr(Ran(s0, "VTESC")) = Esc(), "VTESC IS THE BARE ESCAPE")
+    Assert(TopStr(Ran(s0, "VTCSI")) = Csi(), "AND VTCSI IS ESCAPE AND BRACKET")
+    Assert(TopStr(Ran(s0, "VTVT52HOME")) = Vt52CursorHome(), "AND THE VT52 HALF IS BRIDGED TOO")
+    Assert(TopStr(Ran(s0, "VTLED4ON")) = Led4On(), "AND THE KEYBOARD LEDS, WHICH ARE THE FAR END OF THE TABLE")
+    Rem No two words may answer the same sequence under different names,
+    Rem which is what a copy-paste slip in the table would look like.
+    Assert(TopStr(Ran(s0, "VTBOLD")) <> TopStr(Ran(s0, "VTBLINK")), "AND TWO DIFFERENT WORDS ARE TWO DIFFERENT SEQUENCES")
+
+    Print("--- a session joins them the way a program would ---")
+    Rem The core + joins two STRINGs, so a whole screenful of setup is
+    Rem one expression. This is what the seed is FOR.
+    Assert(TopStr(Ran(s0, "VTCLEARSCREEN VTBOLD + " & Q("HELLO") & " +")) = ClearScreen() & Bold() & "HELLO", "THREE PIECES JOIN INTO THE STRING A PROGRAM WOULD HAVE BUILT")
+
+    Print("--- the words that take numbers guard them ---")
+    Assert(TopStr(Ran(s0, "3 5 VTCURSORPOS")) = CursorPos(3, 5), "VTCURSORPOS IS CURSORPOS")
+    Assert(TopStr(Ran(s0, "2 VTCURSORUP")) = CursorUp(2), "AND VTCURSORUP IS CURSORUP")
+    Assert(TopStr(Ran(s0, "1 10 VTSCROLLREGION")) = SetScrollRegion(1, 10), "AND VTSCROLLREGION IS SETSCROLLREGION")
+    Let g = Ran(s0, "1 2")
+    Rem A VT100 counts from 1, and a 0 in the sequence is accepted by the
+    Rem terminal and does something other than what was meant — so it is
+    Rem refused here rather than built.
+    Assert(Refuses(g, "0 5 VTCURSORPOS", "ROWS AND COLUMNS COUNT FROM 1"), "ROW ZERO, WHICH THE TERMINAL WOULD ACT ON")
+    Assert(Refuses(g, "3 0 VTCURSORPOS", "ROWS AND COLUMNS COUNT FROM 1"), "AND COLUMN ZERO")
+    Assert(Refuses(g, "0 VTCURSORUP", "THE COUNT MUST BE 1 OR MORE"), "AND A MOVE OF NOTHING")
+    Assert(Refuses(g, "-2 VTCURSORDOWN", "VTCURSORDOWN"), "AND A NEGATIVE MOVE, WHICH RCKWHOLEARG REFUSES FIRST")
+    Assert(Refuses(g, "1.5 VTCURSORLEFT", "VTCURSORLEFT"), "AND A FRACTIONAL ONE")
+    Assert(Refuses(g, Q("x") & " 5 VTCURSORPOS", "VTCURSORPOS"), "AND A ROW THAT IS NOT A NUMBER AT ALL")
+    Rem The scrolling region is the one pair that is a RANGE rather than
+    Rem a point, so it has an ordering to get wrong.
+    Assert(Refuses(g, "10 1 VTSCROLLREGION", "THE TOP LINE MUST BE ABOVE THE BOTTOM ONE"), "A SCROLLING REGION UPSIDE DOWN")
+    Assert(Refuses(g, "5 5 VTSCROLLREGION", "THE TOP LINE MUST BE ABOVE THE BOTTOM ONE"), "AND ONE OF NO HEIGHT AT ALL")
+
+    Print("--- the two directions of the protocol meet ---")
+    Rem What this seed BUILDS, its own VTEVALKEY READS. That is the
+    Rem assertion that the bridge is a bridge and not two halves.
+    Assert(Text(Ran(s0, "VTESC " & Q("OP") & " + VTEVALKEY")) = Q("pf1"), "A SEQUENCE BUILT FROM VTESC IS READ BACK AS PF1")
+    Assert(Text(Ran(s0, "VTESC " & Q("A") & " + VTEVALKEY")) = Q("up"), "AND THE NORMAL-MODE ARROW AS UP")
+    Assert(Text(Ran(s0, "VTESC " & Q("OA") & " + VTEVALKEY")) = Q("up"), "AND THE APPLICATION-MODE ONE AS UP TOO, WHICH IS THE WHOLE POINT OF EVALKEY")
+    Assert(Text(Ran(s0, "VTESC " & Q("OD") & " + VTEVALKEY")) = Q("left"), "AND LEFT")
+    Assert(Text(Ran(s0, Q("5") & " VTEVALKEY")) = Q("5"), "A KEYPAD DIGIT ANSWERS ITSELF")
+    Assert(Text(Ran(s0, Q("not a sequence") & " VTEVALKEY")) = Q("unknown"), "AND ANYTHING UNRECOGNISED IS UNKNOWN RATHER THAN A REFUSAL")
+    Assert(Refuses(g, "5 VTEVALKEY", "VTEVALKEY"), "BUT A NUMBER IS NOT A RAW SEQUENCE AND IS REFUSED")
+
+    Print("--- keys: a code, named ---")
+    Assert(Text(Ran(s0, "262 KEYNAME")) = Q("left"), "262 IS THE LEFT ARROW")
+    Assert(Text(Ran(s0, "265 KEYNAME")) = Q("down"), "AND 265 THE DOWN ARROW")
+    Assert(Text(Ran(s0, "32 KEYNAME")) = Q("space"), "32 IS THE SPACE BAR")
+    Assert(Text(Ran(s0, "13 KEYNAME")) = Q("enter"), "13 IS ENTER")
+    Assert(Text(Ran(s0, "27 KEYNAME")) = Q("esc"), "27 IS ESC")
+    Rem A letter or digit answers its own glyph rather than "char",
+    Rem because "char" is an answer that makes the caller ask again.
+    Assert(Text(Ran(s0, "81 KEYNAME")) = Q("Q"), "AND A LETTER KEY ANSWERS ITS OWN GLYPH")
+    Assert(Text(Ran(s0, "55 KEYNAME")) = Q("7"), "AS DOES A DIGIT")
+    Assert(Text(Ran(s0, "9999 KEYNAME")) = Q("other"), "AND A CODE THE TABLE DOES NOT KNOW IS OTHER, WHICH IS AN ANSWER AND NOT A FAILURE")
+    Assert(Text(Ran(s0, "81 KEYGLYPH")) = Q("Q"), "KEYGLYPH ANSWERS THE GLYPH")
+    Assert(Text(Ran(s0, "262 KEYGLYPH")) = Q(""), "AND EMPTY FOR A NAMED KEY, WHICH IS WHERE KEYNAME EARNS ITS KEEP")
+    Rem Physical letter keys always report uppercase, so the comparison
+    Rem is deliberately case-insensitive.
+    Assert(Text(Ran(s0, "81 " & Q("q") & " KEYIS")) = "True", "KEYIS MATCHES A LOWERCASE LETTER AGAINST THE PHYSICAL KEY")
+    Assert(Text(Ran(s0, "81 " & Q("Q") & " KEYIS")) = "True", "AND AN UPPERCASE ONE")
+    Assert(Text(Ran(s0, "81 " & Q("z") & " KEYIS")) = "False", "AND SAYS SO WHEN IT IS A DIFFERENT KEY")
+    Assert(Refuses(g, "-1 KEYNAME", "KEYNAME"), "A NEGATIVE KEY CODE IS REFUSED RATHER THAN CALLED OTHER")
+    Assert(Refuses(g, "1.5 KEYNAME", "KEYNAME"), "AND A FRACTIONAL ONE")
+    Assert(Refuses(g, Q("left") & " KEYNAME", "KEYNAME"), "AND A NAME, WHICH IS THE ANSWER RATHER THAN THE QUESTION")
+
+    Print("--- and the session is exactly as it was ---")
+    Rem Nothing in either seed opens, writes or reads anything, so there
+    Rem is nothing to clean up and nothing to have leaked.
+    Assert(IsEmpty(RckBoundNames(Ran(s0, "VTCLEARSCREEN VTCURSORHOME + 262 KEYNAME"))), "NOTHING EITHER SEED DOES BINDS A RESOURCE")
+    Assert(Text(Ran(g, "1 1 +")) = "2 | 2 | 1", "AND THE STACK IS STILL THERE AND STILL EVALUATING")
+
+    Print("")
+    Print("ALL ASSERTIONS PASSED")
+
+Def Holds(lines As List Of String, sub As String) As Boolean
+    Any(lines, Fn(l) => Instr(l, sub) > 0)

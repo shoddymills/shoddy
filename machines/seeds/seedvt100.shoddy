@@ -1,0 +1,305 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem seedvt100.shoddy — reckoner seed: vt100.shoddy, escape sequences
+Rem as strings
+Rem
+Rem THIS SEED EXISTS BECAUSE A NOTE WAS WRONG. halifax-core.shoddy
+Rem listed vt100.shoddy among the machines a prompt could not reach,
+Rem under "the terminal, which this shell already owns. Two things
+Rem driving one screen is one thing driving it wrongly." That is a true
+Rem sentence about a machine that DRIVES a terminal, and vt100.shoddy is
+Rem not one. Its own header says so: "Pure — nothing here writes to the
+Rem screen." Every word below EvalKey BUILDS AND RETURNS A STRING. The
+Rem program does the printing, or does not.
+Rem
+Rem So the note confused building an escape sequence with emitting one.
+Rem There was never a rule in the way, and nothing here needs the
+Rem resource table, a guarded builtin or a capability: this is the most
+Rem ordinary kind of seed there is, a machine of pure functions over
+Rem STRINGs and NUMBERs.
+Rem
+Rem WHAT A SESSION DOES WITH THE STRING is its own business, and there
+Rem are two honest answers. It can join sequences with + and WRITEFILE
+Rem the result, which is how you build a banner, a terminal script or a
+Rem fixture. And halifax PRINTS what a line answers — so a string of
+Rem escapes will reach the terminal and take effect.
+Rem
+Rem THAT SECOND ONE IS WORTH SAYING PLAINLY: a session can scramble its
+Rem own display this way, and CLEARSCREEN will do exactly what it says.
+Rem That is not a leak and not a rule broken — it is the operator's own
+Rem terminal, doing what the operator asked, exactly as if they had
+Rem typed the escape by hand. The stack, the dictionary and the tape are
+Rem untouched, and CLEAR or a redraw puts the screen back.
+Rem
+Rem THE CONSTANTS ARE REGISTERED FROM A TABLE, not one RckReg line
+Rem apiece. Eighty-nine words that differ only in a name, a string and a
+Rem sentence are data, and writing them as data is what lets the list be
+Rem read down and checked against the VT100 reference in one pass. The
+Rem eight that take numbers and the one that reads a key are registered
+Rem by hand below, because each has a guard of its own.
+Rem
+Rem ESC AND CSI ARE BRIDGED TOO, deliberately. They are the building
+Rem blocks the rest is made of, and with them a session can assemble a
+Rem sequence this machine never named — which is better than a bridge
+Rem that only reaches the ninety-eight somebody thought of.
+Rem ==================================================================
+
+Include "vt100.shoddy"
+Include "cuttle.shoddy"
+Include "reckoner.shoddy"
+Include "seq.shoddy"
+
+Rem ---- a constant word, as data -----------------------------------------
+
+Type VtWord
+    VtName As String
+    VtText As String
+    VtDesc As String
+
+Def VsRegOne(st As RckState, v As VtWord) As RckState
+    RckReg(st, VtName(v), 0, RckPure(Fn(vs) => RckVals({ CutStr(VtText(v)) })), "( -- str )", VtDesc(v))
+
+Def VsRegAll(st As RckState, ws As List Of VtWord) As RckState
+    Fold(ws, st, VsRegOne)
+
+Rem ---- the constants, in the reference's own order -----------------------
+
+Rem Split across several Defs only because one list literal of the whole
+Rem table is a wall nobody can read; the grouping follows vt100.shoddy's
+Rem own section headings.
+
+Def VsBuilding() As List Of VtWord
+    { VtWord("VTESC", Esc(), "The bare escape character. With VTCSI, the building block every other sequence here is made of — join them with + to assemble one this machine does not name."),
+      VtWord("VTCSI", Csi(), "The Control Sequence Introducer, escape and [ — the opening of most VT100 sequences.") }
+
+Def VsModes() As List Of VtWord
+    { VtWord("VTNEWLINEMODE", SetNewlineMode(), "Set newline mode: a Return sends both carriage return and line feed."),
+      VtWord("VTLINEFEEDMODE", SetLinefeedMode(), "Set line feed mode: a Return sends carriage return alone."),
+      VtWord("VTCURSORKEYAPP", SetCursorKeyApp(), "Cursor keys send application-mode sequences, which VTEVALKEY tells apart from the normal ones."),
+      VtWord("VTCURSORKEYNORMAL", SetCursorKeyNormal(), "Cursor keys send the normal-mode sequences."),
+      VtWord("VT132COLS", Set132Cols(), "Switch the screen to 132 columns."),
+      VtWord("VT80COLS", Set80Cols(), "Switch the screen back to 80 columns."),
+      VtWord("VTSMOOTHSCROLL", SetSmoothScroll(), "Scroll smoothly rather than a whole line at a time."),
+      VtWord("VTJUMPSCROLL", SetJumpScroll(), "Scroll a whole line at a time."),
+      VtWord("VTREVERSESCREEN", SetReverseScreen(), "Dark characters on a light screen."),
+      VtWord("VTNORMALSCREEN", SetNormalScreen(), "Light characters on a dark screen, the usual way round."),
+      VtWord("VTORIGINRELATIVE", SetOriginRelative(), "Cursor positions are counted from the top of the scrolling region."),
+      VtWord("VTORIGINABSOLUTE", SetOriginAbsolute(), "Cursor positions are counted from the top of the screen."),
+      VtWord("VTAUTOWRAP", SetAutoWrap(), "Text past the right margin wraps to the next line."),
+      VtWord("VTNOAUTOWRAP", ResetAutoWrap(), "Text past the right margin overwrites the last column instead of wrapping."),
+      VtWord("VTAUTOREPEAT", SetAutoRepeat(), "A held key repeats."),
+      VtWord("VTNOAUTOREPEAT", ResetAutoRepeat(), "A held key does not repeat."),
+      VtWord("VTINTERLACE", SetInterlace(), "Interlaced scan."),
+      VtWord("VTNOINTERLACE", ResetInterlace(), "Non-interlaced scan."),
+      VtWord("VTVT52MODE", SetVt52Mode(), "Leave ANSI mode for VT52 compatibility mode, where the VT52 words below apply."),
+      VtWord("VTANSIMODE", SetAnsiMode(), "Return to ANSI mode from VT52 mode.") }
+
+Def VsKeypad() As List Of VtWord
+    { VtWord("VTALTKEYPAD", SetAltKeypad(), "Application keypad mode, which is what makes a keypad key tellable from the same digit on the top row."),
+      VtWord("VTNUMKEYPAD", SetNumKeypad(), "Numeric keypad mode, where a keypad digit sends the same byte as the main keyboard's.") }
+
+Def VsCharsets() As List Of VtWord
+    { VtWord("VTUKG0", SetUkG0(), "The UK character set as G0."),
+      VtWord("VTUKG1", SetUkG1(), "The UK character set as G1."),
+      VtWord("VTUSG0", SetUsG0(), "The US ASCII character set as G0."),
+      VtWord("VTUSG1", SetUsG1(), "The US ASCII character set as G1."),
+      VtWord("VTSPECIALG0", SetSpecialG0(), "The special graphics set as G0 — the line-drawing characters."),
+      VtWord("VTSPECIALG1", SetSpecialG1(), "The special graphics set as G1."),
+      VtWord("VTALTROMG0", SetAltRomG0(), "The alternate character ROM as G0."),
+      VtWord("VTALTROMG1", SetAltRomG1(), "The alternate character ROM as G1."),
+      VtWord("VTALTROMSPECIALG0", SetAltRomSpecialG0(), "The alternate ROM's special graphics as G0."),
+      VtWord("VTALTROMSPECIALG1", SetAltRomSpecialG1(), "The alternate ROM's special graphics as G1."),
+      VtWord("VTSHIFT2", SetShift2(), "Shift out: use G1 for the characters that follow."),
+      VtWord("VTSHIFT3", SetShift3(), "Shift in: use G0 for the characters that follow.") }
+
+Def VsAttrs() As List Of VtWord
+    { VtWord("VTATTRSOFF", AttrsOff(), "Turn every character attribute off — the one to end a sequence with, so what follows is plain."),
+      VtWord("VTBOLD", Bold(), "Bold, or increased intensity."),
+      VtWord("VTLOWINTENSITY", LowIntensity(), "Dim, or decreased intensity."),
+      VtWord("VTUNDERLINE", Underline(), "Underlined."),
+      VtWord("VTBLINK", Blink(), "Blinking."),
+      VtWord("VTREVERSEVIDEO", ReverseVideo(), "Foreground and background swapped."),
+      VtWord("VTINVISIBLE", Invisible(), "Invisible — written but not shown.") }
+
+Def VsCursor() As List Of VtWord
+    { VtWord("VTCURSORHOME", CursorHome(), "Put the cursor at the top left."),
+      VtWord("VTHVHOME", HvHome(), "Horizontal and vertical home — the top left, by the other sequence that means it."),
+      VtWord("VTINDEXDOWN", IndexDown(), "Move down one line, scrolling if at the bottom."),
+      VtWord("VTREVERSEINDEX", ReverseIndex(), "Move up one line, scrolling if at the top."),
+      VtWord("VTNEXTLINE", NextLine(), "Move to the start of the next line."),
+      VtWord("VTSAVECURSOR", SaveCursor(), "Remember where the cursor is."),
+      VtWord("VTRESTORECURSOR", RestoreCursor(), "Put the cursor back where VTSAVECURSOR left it.") }
+
+Def VsTabs() As List Of VtWord
+    { VtWord("VTTABSET", TabSet(), "Set a tab stop at the cursor's column."),
+      VtWord("VTTABCLEAR", TabClear(), "Clear the tab stop at the cursor's column."),
+      VtWord("VTTABCLEARALL", TabClearAll(), "Clear every tab stop.") }
+
+Def VsLines() As List Of VtWord
+    { VtWord("VTDOUBLEHEIGHTTOP", DoubleHeightTop(), "This line is the TOP half of a double-height line."),
+      VtWord("VTDOUBLEHEIGHTBOTTOM", DoubleHeightBottom(), "This line is the BOTTOM half of a double-height line — both halves carry the same text."),
+      VtWord("VTSINGLEWIDTHHEIGHT", SingleWidthHeight(), "This line is ordinary single width and height."),
+      VtWord("VTDOUBLEWIDTHHEIGHT", DoubleWidthHeight(), "This line is double width, single height.") }
+
+Def VsErasing() As List Of VtWord
+    { VtWord("VTCLEAREOL", ClearEol(), "Erase from the cursor to the end of the line."),
+      VtWord("VTCLEARBOL", ClearBol(), "Erase from the start of the line to the cursor."),
+      VtWord("VTCLEARLINE", ClearLine(), "Erase the whole line the cursor is on."),
+      VtWord("VTCLEAREOS", ClearEos(), "Erase from the cursor to the end of the screen."),
+      VtWord("VTCLEARBOS", ClearBos(), "Erase from the start of the screen to the cursor."),
+      VtWord("VTCLEARSCREEN", ClearScreen(), "Erase the whole screen. Answering this and letting the shell print it really does clear your terminal.") }
+
+Def VsStatus() As List Of VtWord
+    { VtWord("VTREQUESTSTATUS", RequestStatus(), "Ask the terminal for its status. The reply arrives as input, not as this word's answer."),
+      VtWord("VTREQUESTCURSORPOS", RequestCursorPos(), "Ask the terminal where the cursor is."),
+      VtWord("VTREQUESTTERMINALTYPE", RequestTerminalType(), "Ask the terminal what it is."),
+      VtWord("VTRESETTERMINAL", ResetTerminal(), "Reset the terminal to its power-up state.") }
+
+Def VsTests() As List Of VtWord
+    { VtWord("VTSCREENALIGNMENTTEST", ScreenAlignmentTest(), "Fill the screen with E, the classic alignment pattern."),
+      VtWord("VTTESTPOWERUP", TestPowerUp(), "Run the power-up confidence test."),
+      VtWord("VTTESTLOOPBACK", TestLoopback(), "Run the loopback confidence test."),
+      VtWord("VTTESTPOWERUPREPEAT", TestPowerUpRepeat(), "Run the power-up test, repeating."),
+      VtWord("VTTESTLOOPBACKREPEAT", TestLoopbackRepeat(), "Run the loopback test, repeating."),
+      VtWord("VTLEDSOFF", LedsOff(), "Turn every keyboard LED off."),
+      VtWord("VTLED1ON", Led1On(), "Turn keyboard LED 1 on."),
+      VtWord("VTLED2ON", Led2On(), "Turn keyboard LED 2 on."),
+      VtWord("VTLED3ON", Led3On(), "Turn keyboard LED 3 on."),
+      VtWord("VTLED4ON", Led4On(), "Turn keyboard LED 4 on.") }
+
+Def VsVt52() As List Of VtWord
+    { VtWord("VTVT52GRAPHICS", Vt52SetGraphics(), "VT52 mode: use the graphics character set."),
+      VtWord("VTVT52NOGRAPHICS", Vt52ResetGraphics(), "VT52 mode: back to the ordinary character set."),
+      VtWord("VTVT52UP", Vt52CursorUp(), "VT52 mode: cursor up one line."),
+      VtWord("VTVT52DOWN", Vt52CursorDown(), "VT52 mode: cursor down one line."),
+      VtWord("VTVT52RIGHT", Vt52CursorRight(), "VT52 mode: cursor right one column."),
+      VtWord("VTVT52LEFT", Vt52CursorLeft(), "VT52 mode: cursor left one column."),
+      VtWord("VTVT52HOME", Vt52CursorHome(), "VT52 mode: cursor to the top left."),
+      VtWord("VTVT52REVERSEINDEX", Vt52ReverseIndex(), "VT52 mode: up one line, scrolling if at the top."),
+      VtWord("VTVT52CLEAREOL", Vt52ClearEol(), "VT52 mode: erase to the end of the line."),
+      VtWord("VTVT52CLEAREOS", Vt52ClearEos(), "VT52 mode: erase to the end of the screen."),
+      VtWord("VTVT52IDENT", Vt52Ident(), "VT52 mode: ask the terminal to identify itself."),
+      VtWord("VTVT52IDENTRESPONSE", Vt52IdentResponse(), "VT52 mode: the reply a VT52 sends to that question.") }
+
+Def VsAllConsts() As List Of VtWord
+    Concat(Concat(Concat(VsBuilding(), VsModes()), Concat(VsKeypad(), VsCharsets())),
+           Concat(Concat(VsAttrs(), VsCursor()), Concat(Concat(VsTabs(), VsLines()),
+                  Concat(Concat(VsErasing(), VsStatus()), Concat(VsTests(), VsVt52())))))
+
+Rem ---- the words that take numbers --------------------------------------
+
+Rem A VT100 counts rows and columns from 1, and a count of lines to move
+Rem is a whole number of 1 or more. RckWholeArg refuses negatives and
+Rem fractions; 0 is refused here, because a sequence with a 0 in it is
+Rem accepted by the terminal and does something other than what the
+Rem caller meant.
+
+Def VsSeedMoves(st As RckState) As RckState
+    Let s1 = VsRegMove(st, "VTCURSORUP", CursorUp, "Move the cursor up n lines.")
+    Let s2 = VsRegMove(s1, "VTCURSORDOWN", CursorDown, "Move the cursor down n lines.")
+    Let s3 = VsRegMove(s2, "VTCURSORRIGHT", CursorRight, "Move the cursor right n columns.")
+    VsRegMove(s3, "VTCURSORLEFT", CursorLeft, "Move the cursor left n columns.")
+
+Def VsRegMove(st As RckState, name As String, f As [ Number -- String ], desc As String) As RckState
+    RckReg(st, name, 1, RckPure(Fn(vs) => VsMoveOf(name, vs, f)), "( n -- str )", desc)
+
+Def VsMoveOf(word As String, vs As List Of Cell, f As [ Number -- String ]) As RckWork
+    Select Case RckWholeArg(word, First(vs))
+        Case Ok(n)
+            VsMoveBy(word, n, f)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Def VsMoveBy(word As String, n As Number, f As [ Number -- String ]) As RckWork
+    If n < 1 Then
+        RckWorkBad(word & ": THE COUNT MUST BE 1 OR MORE")
+    Else
+        RckVals({ CutStr(Call(f, n)) })
+
+Def VsSeedPlaces(st As RckState) As RckState
+    Let s1 = VsRegPlace(st, "VTCURSORPOS", CursorPos, "The sequence that puts the cursor at row, col. Both count from 1.")
+    Let s2 = VsRegPlace(s1, "VTHVPOS", HvPos, "The same position, by the horizontal-and-vertical sequence rather than the cursor one.")
+    Let s3 = VsRegPlace(s2, "VTVT52POS", Vt52CursorPos, "VT52 mode: put the cursor at row, col.")
+    VsRegPlace(s3, "VTSCROLLREGION", SetScrollRegion, "Confine scrolling to the lines from top to bottom. Both count from 1, and top must be above bottom.")
+
+Def VsRegPlace(st As RckState, name As String, f As [ Number Number -- String ], desc As String) As RckState
+    RckReg(st, name, 2, RckPure(Fn(vs) => VsPlaceOf(name, vs, f)), "( a b -- str )", desc)
+
+Def VsPlaceOf(word As String, vs As List Of Cell, f As [ Number Number -- String ]) As RckWork
+    Select Case Pair(RckWholeArg(word, Nth(vs, 1)), RckWholeArg(word, Nth(vs, 2)))
+        Case Pair(Ok(a), Ok(b))
+            VsPlaceAt(word, a, b, f)
+        Case Else
+            RckWorkBad(word & " needs two whole numbers")
+
+Rem The ordering check is only asked of the scrolling region, because it
+Rem is the only one of the four where the two numbers are a RANGE rather
+Rem than a point, and a region whose top is below its bottom is a typo
+Rem the terminal would act on.
+Def VsPlaceAt(word As String, a As Number, b As Number, f As [ Number Number -- String ]) As RckWork
+    If a < 1 Or b < 1 Then
+        RckWorkBad(word & ": ROWS AND COLUMNS COUNT FROM 1")
+    Else
+        VsPlaceOrdered(word, a, b, f)
+
+Def VsPlaceOrdered(word As String, a As Number, b As Number, f As [ Number Number -- String ]) As RckWork
+    If word = "VTSCROLLREGION" And a >= b Then
+        RckWorkBad("VTSCROLLREGION: THE TOP LINE MUST BE ABOVE THE BOTTOM ONE")
+    Else
+        RckVals({ CutStr(Call(f, a, b)) })
+
+Rem ---- reading a keystroke back -----------------------------------------
+
+Rem The other direction, and the only word here that takes a string. Per
+Rem R4.16 there is no KEY cell, and a Vt100Key has eleven cases — so it
+Rem answers the key's NAME, which is what every caller of it wants: the
+Rem arrows and PF keys by name, a keypad key as its own character, and
+Rem anything unrecognised as "unknown".
+Def VsSeedEval(st As RckState) As RckState
+    RckReg(st, "VTEVALKEY", 1, RckPure(Fn(vs) => VsEvalOf(vs)), "( raw -- str )", "What escape sequence raw is, as a name: \"up\", \"down\", \"left\", \"right\", \"pf1\" to \"pf4\", \"enter\", the character itself for a keypad key, or \"unknown\". Both the application-mode and normal-mode forms are recognised.")
+
+Def VsEvalOf(vs As List Of Cell) As RckWork
+    Select Case RckTextArg("VTEVALKEY", First(vs))
+        Case Ok(raw)
+            RckVals({ CutStr(VsKeyName(EvalKey(raw))) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("VTEVALKEY did not answer")
+
+Def VsKeyName(k As Vt100Key) As String
+    Select Case k
+        Case KeyUp
+            "up"
+        Case KeyDown
+            "down"
+        Case KeyLeft
+            "left"
+        Case KeyRight
+            "right"
+        Case KeyPF1
+            "pf1"
+        Case KeyPF2
+            "pf2"
+        Case KeyPF3
+            "pf3"
+        Case KeyPF4
+            "pf4"
+        Case KeyEnter
+            "enter"
+        Case KeyPad(ch)
+            ch
+        Case Else
+            "unknown"
+
+Rem ---- the seed ----------------------------------------------------------
+
+Def RckSeedVt100(st As RckState) As RckState
+    Let s1 = VsRegAll(RckSeeding(st, "seed-vt100"), VsAllConsts())
+    Let s2 = VsSeedMoves(s1)
+    Let s3 = VsSeedPlaces(s2)
+    VsSeedEval(s3)

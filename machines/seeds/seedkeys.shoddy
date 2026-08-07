@@ -1,0 +1,110 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem seedkeys.shoddy — reckoner seed: keys.shoddy, key codes named
+Rem
+Rem THIS SEED EXISTS BECAUSE A NOTE WAS WRONG. halifax-core.shoddy
+Rem listed keys.shoddy among the machines a prompt could not reach,
+Rem under "raw keystrokes, which InputLine already owns" — the same
+Rem live-resource heading as the windows and the sockets. It is not one.
+Rem keys.shoddy reads no keyboard and owns no device: ClassifyKey takes
+Rem a NUMBER and answers which key that code stands for, and KeyGlyph
+Rem and IsKey are questions about that answer. The whole machine is a
+Rem lookup table. Whatever produced the code — a scribbler event, a log
+Rem file, a person typing 262 at a prompt — is somebody else's business.
+Rem
+Rem So there was never a rule in the way, only a misfiling, and what a
+Rem session gets is the plainly useful half: "what is key code 262?"
+Rem
+Rem GAMEKEY DOES NOT CROSS THE BRIDGE, and does not need to. Per R4.16
+Rem there is no KEY cell, and a Type with eleven cases would be a poor
+Rem one — every question a caller asks of a GameKey is answered by a
+Rem STRING or a BOOLEAN already. So the three words take the CODE and
+Rem answer those directly, and ClassifyKey stays inside.
+Rem
+Rem KEYNAME ANSWERS THE GLYPH FOR A LETTER OR DIGIT, and the key's name
+Rem otherwise. That is one word rather than two because it is one
+Rem question — "which key is this?" — and "char" would be an answer
+Rem that made the caller ask again.
+Rem ==================================================================
+
+Include "keys.shoddy"
+Include "cuttle.shoddy"
+Include "reckoner.shoddy"
+Include "seq.shoddy"
+
+Rem ---- naming a key ------------------------------------------------------
+
+Rem The named keys spell themselves; a letter or digit answers its own
+Rem glyph, so 65 is "A" and 262 is "left". Anything the table does not
+Rem know is "other", which is a real answer and not a failure: the
+Rem ScribblerKeys range is wider than the keys with names.
+Def KsName(k As GameKey) As String
+    Select Case k
+        Case ArrowLeft
+            "left"
+        Case ArrowRight
+            "right"
+        Case ArrowUp
+            "up"
+        Case ArrowDown
+            "down"
+        Case SpaceBar
+            "space"
+        Case EnterKey
+            "enter"
+        Case EscKey
+            "esc"
+        Case TabKey
+            "tab"
+        Case BackKey
+            "back"
+        Case Else
+            KsGlyphOr(k)
+
+Def KsGlyphOr(k As GameKey) As String
+    If KeyGlyph(k) = "" Then
+        "other"
+    Else
+        KeyGlyph(k)
+
+Rem ---- the words ---------------------------------------------------------
+
+Def KsSeedName(st As RckState) As RckState
+    Let s1 = RckReg(st, "KEYNAME", 1, RckPure(Fn(vs) => KsNameOf(vs)), "( code -- str )", "Which key a physical key code stands for: \"left\", \"right\", \"up\", \"down\", \"space\", \"enter\", \"esc\", \"tab\", \"back\", the glyph itself for a letter or digit, or \"other\".")
+    Let s2 = RckReg(s1, "KEYGLYPH", 1, RckPure(Fn(vs) => KsGlyphOf(vs)), "( code -- str )", "The character a letter or digit key stands for, and \"\" for every named key and anything unmapped. KEYNAME is the one that names the rest.")
+    RckReg(s2, "KEYIS", 2, RckPure(Fn(vs) => KsIsOf(vs)), "( code s -- flag )", "Whether that code is the letter or digit s. Case does not matter, because a physical letter key always reports uppercase.")
+
+Rem A key code is a whole number and nothing else. RckWholeArg refuses
+Rem negatives and fractions already, which is every way of mistyping one
+Rem that the table could otherwise answer "other" to and look right.
+Def KsNameOf(vs As List Of Cell) As RckWork
+    Select Case RckWholeArg("KEYNAME", First(vs))
+        Case Ok(code)
+            RckVals({ CutStr(KsName(ClassifyKey(code))) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("KEYNAME did not answer")
+
+Def KsGlyphOf(vs As List Of Cell) As RckWork
+    Select Case RckWholeArg("KEYGLYPH", First(vs))
+        Case Ok(code)
+            RckVals({ CutStr(KeyGlyph(ClassifyKey(code))) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("KEYGLYPH did not answer")
+
+Def KsIsOf(vs As List Of Cell) As RckWork
+    Select Case Pair(RckWholeArg("KEYIS", Nth(vs, 1)), RckTextArg("KEYIS", Nth(vs, 2)))
+        Case Pair(Ok(code), Ok(s))
+            RckVals({ CutBool(IsKey(ClassifyKey(code), s)) })
+        Case Else
+            RckWorkBad("KEYIS needs a key code and a STRING")
+
+Rem ---- the seed ----------------------------------------------------------
+
+Def RckSeedKeys(st As RckState) As RckState
+    KsSeedName(RckSeeding(st, "seed-keys"))

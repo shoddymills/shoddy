@@ -1,0 +1,284 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem seedneural.shoddy — reckoner seed: neural.shoddy, converting at
+Rem the bridge
+Rem
+Rem NEURALNEW, NEURALPREDICT, NEURALSCALERFIT and NEURALSCALERAPPLY —
+Rem build a small regression net, scale inputs and predict, entirely on
+Rem the stack. Per R4.16 there is no NETWORK cell at the keyboard: a Net
+Rem is a dict, the same LIST-of-PAIR shape seeddict.shoddy already
+Rem established — { ("w1" matrix) ("b1" list) ("w2" matrix) ("b2" list) }
+Rem — and a Scaler is { ("center" list) ("spread" list) }.
+Rem
+Rem NEURALNEW is RckTouch: it draws initial weights from Rnd, so two
+Rem calls with the same arguments do not answer the same net, exactly
+Rem as typing the same line twice at a calculator prompt need not.
+Rem
+Rem NOT BRIDGED: NEURALTRAIN. NetTrain(n, xs, ys, lr, batSize, epochs,
+Rem report) folds NetEpoch — which shuffles (random.shoddy) and steps —
+Rem over epochs, and calling it from a registered word here corrupts
+Rem the reckoner's own state the moment the fold runs for real (epochs
+Rem >= 1); epochs = 0, which skips the fold entirely, works fine. That
+Rem points at an interaction between a quotation invoked through Call
+Rem deep inside a dictionary word's own dispatch and the engine's state
+Rem threading, not at anything this seed's own conversions get wrong —
+Rem papering over a fault at that level, rather than reporting it, is
+Rem the wrong instinct. A net trained outside halifax still predicts
+Rem here once its weights are on the stack via NEURALNEW's own shape.
+Rem
+Rem ALSO NOT BRIDGED: the classification head (NetFit, Softmax, the
+Rem Plan record and momentum) and every file format (NetSave/NetLoad,
+Rem NetSaveBin/NetLoadBin, ModelSave/ModelLoad). The classifier is a
+Rem second, coherent training path deserving its own pass rather than a
+Rem rushed appendage to this one; the binary formats go through
+Rem BOpen/recio directly rather than TRYREADFILE/TRYWRITEFILE, and
+Rem ModelLoad Errors outright on a short or wrongly-tagged file, so
+Rem wrapping them safely is its own piece of work, not a smaller
+Rem version of this seed.
+Rem ==================================================================
+
+Include "neural.shoddy"
+Include "matrix.shoddy"
+Include "cuttle.shoddy"
+Include "reckoner.shoddy"
+Include "seq.shoddy"
+
+Rem ---- shared conversions -----------------------------------------------
+
+Def NsListNum(word As String, c As Cell) As Result
+    Select Case RckListArg(word, c)
+        Case Ok(xs)
+            NsNumsAt(word, xs, { })
+        Case Err(w, at)
+            Err(w, at)
+        Case Else
+            Err(word & " did not answer", 0)
+
+Def NsNumsAt(word As String, xs As List Of Cell, acc As List Of Number) As Result
+    If IsEmpty(xs) Then
+        Ok(acc)
+    Else
+        NsNumsNext(word, xs, acc, First(xs))
+
+Def NsNumsNext(word As String, xs As List Of Cell, acc As List Of Number, c As Cell) As Result
+    Select Case c
+        Case CutNum(x)
+            NsNumsAt(word, Rest(xs), Append(acc, x))
+        Case Else
+            Err(RckKindWhy(word, "a LIST of NUMBERs", c), 0)
+
+Rem A LIST cell of LIST-of-NUMBER cells: one training row per element.
+Def NsListOfLists(word As String, c As Cell) As Result
+    Select Case RckListArg(word, c)
+        Case Ok(xs)
+            NsListsAt(word, xs, { })
+        Case Err(w, at)
+            Err(w, at)
+        Case Else
+            Err(word & " did not answer", 0)
+
+Def NsListsAt(word As String, xs As List Of Cell, acc As List Of List Of Number) As Result
+    If IsEmpty(xs) Then
+        Ok(acc)
+    Else
+        NsListsNext(word, xs, acc, First(xs))
+
+Def NsListsNext(word As String, xs As List Of Cell, acc As List Of List Of Number, c As Cell) As Result
+    Select Case NsListNum(word, c)
+        Case Ok(row)
+            NsListsAt(word, Rest(xs), Append(acc, row))
+        Case Err(w, at)
+            Err(w, at)
+        Case Else
+            Err(word & " did not answer", 0)
+
+Def NsEntry(k As String, v As Cell) As Cell
+    CutPair(Pair(CutStr(k), v))
+
+Def NsListOf(ns As List Of Number) As Cell
+    CutList(Map(ns, CutNum))
+
+Def NsNetCell(n As Net) As Cell
+    CutList({ NsEntry("w1", CutMat(W1(n))), NsEntry("b1", NsListOf(ToList(B1(n)))), NsEntry("w2", CutMat(W2(n))), NsEntry("b2", NsListOf(ToList(B2(n)))) })
+
+Rem The other direction: a dict built by NsNetCell, read back positionally.
+Def NsNetOf(word As String, c As Cell) As Result
+    Select Case RckListArg(word, c)
+        Case Ok(fields)
+            NsNetFields(word, fields)
+        Case Err(w, at)
+            Err(w, at)
+        Case Else
+            Err(word & " did not answer", 0)
+
+Def NsNetFields(word As String, fields As List Of Cell) As Result
+    If Length(fields) <> 4 Then
+        Err(word & ": NOT A NET — USE NEURALNEW OR NEURALTRAIN'S OWN ANSWER", 0)
+    Else
+        NsNetVals(word, NsPairVal(Nth(fields, 1)), NsPairVal(Nth(fields, 2)), NsPairVal(Nth(fields, 3)), NsPairVal(Nth(fields, 4)))
+
+Def NsPairVal(entry As Cell) As Cell
+    Select Case entry
+        Case CutPair(p)
+            Snd(p)
+        Case Else
+            entry
+
+Def NsNetVals(word As String, w1c As Cell, b1c As Cell, w2c As Cell, b2c As Cell) As Result
+    Select Case Pair(w1c, w2c)
+        Case Pair(CutMat(w1), CutMat(w2))
+            NsNetBiases(word, w1, b1c, w2, b2c)
+        Case Else
+            Err(word & ": NOT A NET — USE NEURALNEW OR NEURALTRAIN'S OWN ANSWER", 0)
+
+Def NsNetBiases(word As String, w1 As Matrix, b1c As Cell, w2 As Matrix, b2c As Cell) As Result
+    Select Case Pair(NsListNum(word, b1c), NsListNum(word, b2c))
+        Case Pair(Ok(b1), Ok(b2))
+            Ok(Net(w1, ToArray(b1), w2, ToArray(b2)))
+        Case Else
+            Err(word & ": NOT A NET — USE NEURALNEW OR NEURALTRAIN'S OWN ANSWER", 0)
+
+Def NsScalerCell(s As Scaler) As Cell
+    CutList({ NsEntry("center", NsListOf(ToList(Center(s)))), NsEntry("spread", NsListOf(ToList(Spread(s)))) })
+
+Def NsScalerOf(word As String, c As Cell) As Result
+    Select Case RckListArg(word, c)
+        Case Ok(fields)
+            NsScalerFields(word, fields)
+        Case Err(w, at)
+            Err(w, at)
+        Case Else
+            Err(word & " did not answer", 0)
+
+Def NsScalerFields(word As String, fields As List Of Cell) As Result
+    If Length(fields) <> 2 Then
+        Err(word & ": NOT A SCALER — USE NEURALSCALERFIT'S OWN ANSWER", 0)
+    Else
+        NsScalerVals(word, NsPairVal(Nth(fields, 1)), NsPairVal(Nth(fields, 2)))
+
+Def NsScalerVals(word As String, centerC As Cell, spreadC As Cell) As Result
+    Select Case Pair(NsListNum(word, centerC), NsListNum(word, spreadC))
+        Case Pair(Ok(center), Ok(spread))
+            Ok(Scaler(ToArray(center), ToArray(spread)))
+        Case Else
+            Err(word & ": NOT A SCALER — USE NEURALSCALERFIT'S OWN ANSWER", 0)
+
+Rem ---- NEURALNEW ------------------------------------------------------
+
+Def NsSeedNew(st As RckState) As RckState
+    RckReg(st, "NEURALNEW", 3, RckTouch(Fn(vs) => NsNew(vs)), "( ni nh no -- net )", "A new net: ni inputs, nh hidden units, no outputs, small random weights. Refuses unless all three are whole numbers of 1 or more.")
+
+Def NsNew(vs As List Of Cell) As RckWork
+    Select Case NsListNum("NEURALNEW", CutList(vs))
+        Case Ok(ns)
+            NsNewAt(Nth(ns, 1), Nth(ns, 2), Nth(ns, 3))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("NEURALNEW did not answer")
+
+Def NsNewAt(ni As Number, nh As Number, no As Number) As RckWork
+    If ni < 1 Or nh < 1 Or no < 1 Or ni <> Floor(ni) Or nh <> Floor(nh) Or no <> Floor(no) Then
+        RckWorkBad("NEURALNEW: NI, NH AND NO MUST ALL BE WHOLE NUMBERS OF 1 OR MORE")
+    Else
+        RckVals({ NsNetCell(NetNew(ni, nh, no)) })
+
+Rem ---- NEURALPREDICT ----------------------------------------------------
+
+Def NsSeedPredict(st As RckState) As RckState
+    RckReg(st, "NEURALPREDICT", 2, RckPure(Fn(vs) => NsPredict(vs)), "( net x -- y )", "The net's scalar output for input x.")
+
+Def NsPredict(vs As List Of Cell) As RckWork
+    Select Case NsNetOf("NEURALPREDICT", First(vs))
+        Case Ok(n)
+            NsPredictX(n, Nth(vs, 2))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("NEURALPREDICT did not answer")
+
+Def NsPredictX(n As Net, xc As Cell) As RckWork
+    Select Case NsListNum("NEURALPREDICT", xc)
+        Case Ok(x)
+            NsPredictShaped(n, x)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("NEURALPREDICT did not answer")
+
+Def NsPredictShaped(n As Net, x As List Of Number) As RckWork
+    If Length(x) <> Cols(W1(n)) Then
+        RckWorkBad("NEURALPREDICT: X HAS " & Str(Length(x)) & " ENTRIES, THE NET WANTS " & Str(Cols(W1(n))))
+    Else
+        RckVals({ CutNum(NetOut(n, ToArray(x))) })
+
+Rem ---- NEURALTRAIN: not bridged -----------------------------------------
+Rem NetTrain(n, xs, ys, lr, batSize, epochs, report) folds NetEpoch,
+Rem which shuffles (random.shoddy) and steps, over epochs — calling it
+Rem from inside a registered word here corrupts the reckoner's own
+Rem state the moment the fold runs for real (epochs >= 1); epochs = 0,
+Rem which skips the fold entirely, works. That points at an
+Rem interaction between a quotation invoked through Call deep inside a
+Rem dictionary word's own dispatch and the engine's state threading,
+Rem not at anything this seed's own conversions get wrong — pushing a
+Rem seed to paper over a fault at that level, rather than report it, is
+Rem the wrong instinct. NEURALNEW, NEURALPREDICT, NEURALSCALERFIT and
+Rem NEURALSCALERAPPLY are all confirmed safe; training a net built or
+Rem loaded outside halifax and predicting with it here still works.
+
+Rem ---- NEURALSCALERFIT, NEURALSCALERAPPLY --------------------------------
+
+Def NsSeedScalerfit(st As RckState) As RckState
+    RckReg(st, "NEURALSCALERFIT", 1, RckPure(Fn(vs) => NsScalerfit(vs)), "( xs -- scaler )", "A scaler that centres and spreads xs's columns to mean 0: a dict with center and spread. Refuses on an empty list.")
+
+Def NsScalerfit(vs As List Of Cell) As RckWork
+    Select Case NsListOfLists("NEURALSCALERFIT", First(vs))
+        Case Ok(xs)
+            NsScalerfitAt(xs)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("NEURALSCALERFIT did not answer")
+
+Def NsScalerfitAt(xs As List Of List Of Number) As RckWork
+    If IsEmpty(xs) Then
+        RckWorkBad("NEURALSCALERFIT: THE LIST IS EMPTY")
+    Else
+        RckVals({ NsScalerCell(ScalerFit(ToArray(Map(xs, ToArray)))) })
+
+Def NsSeedScalerapply(st As RckState) As RckState
+    RckReg(st, "NEURALSCALERAPPLY", 2, RckPure(Fn(vs) => NsScalerapply(vs)), "( scaler x -- x2 )", "x, centred and scaled by scaler. Refuses unless x has as many entries as the scaler was fitted with.")
+
+Def NsScalerapply(vs As List Of Cell) As RckWork
+    Select Case NsScalerOf("NEURALSCALERAPPLY", First(vs))
+        Case Ok(s)
+            NsScalerapplyX(s, Nth(vs, 2))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("NEURALSCALERAPPLY did not answer")
+
+Def NsScalerapplyX(s As Scaler, xc As Cell) As RckWork
+    Select Case NsListNum("NEURALSCALERAPPLY", xc)
+        Case Ok(x)
+            NsScalerapplyShaped(s, x)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("NEURALSCALERAPPLY did not answer")
+
+Def NsScalerapplyShaped(s As Scaler, x As List Of Number) As RckWork
+    If Length(x) <> Length(ToList(Center(s))) Then
+        RckWorkBad("NEURALSCALERAPPLY: X HAS " & Str(Length(x)) & " ENTRIES, THE SCALER WANTS " & Str(Length(ToList(Center(s)))))
+    Else
+        RckVals({ NsListOf(ToList(ScalerApply(s, ToArray(x)))) })
+
+Rem ---- the seed -----------------------------------------------------------
+
+Def RckSeedNeural(st As RckState) As RckState
+    Let s1 = NsSeedNew(st)
+    Let s2 = NsSeedPredict(s1)
+    Let s3 = NsSeedScalerfit(s2)
+    NsSeedScalerapply(s3)

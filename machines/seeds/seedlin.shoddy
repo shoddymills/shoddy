@@ -1,0 +1,531 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem seedlin.shoddy — reckoner seed: lin.shoddy, converting at the
+Rem bridge
+Rem
+Rem Determinants, inverses, linear systems, echelon forms and rank, the
+Rem LU/QR/Cholesky factorisations, characteristic polynomials,
+Rem eigenvalues and the vector words. Per R4.16 there is no FACTOR cell
+Rem at the keyboard: LinLu, LinQr and LinEigen are each a dict, the
+Rem same LIST-of-PAIR shape seeddict.shoddy already established —
+Rem { ("l" m)("u" m)("p" m)("psign" n) }, { ("q" m)("r" m) } and
+Rem { ("values" list)("vectors" m) } respectively. A vector is a LIST,
+Rem exactly as everywhere else; lin.shoddy's own Array Of Number is
+Rem converted at the edge with ToArray/ToList.
+Rem
+Rem ONLY THE NAMED PUBLIC SURFACE IS HERE. lin.shoddy's own banner
+Rem draws the line — determinants, inverses, systems, echelon forms and
+Rem rank, the three factorisations, char. polynomial and eigenvalues,
+Rem and the vector words — and the Go/Cell-suffixed single-step
+Rem functions beneath every one of those are elimination internals, not
+Rem vocabulary meant for a prompt.
+Rem
+Rem LINADJ, LININV, LINSOLVE and LINCHOL pre-flight the exact condition
+Rem each Errors on — not square, singular (|det| too small), not
+Rem symmetric — using the same LinIsSquare/LinDet/LinIsSym lin.shoddy
+Rem itself answers with, and refuse instead.
+Rem ==================================================================
+
+Include "lin.shoddy"
+Include "matrix.shoddy"
+Include "cuttle.shoddy"
+Include "reckoner.shoddy"
+Include "seq.shoddy"
+
+Rem ---- shared conversions -----------------------------------------------
+
+Def LnListNum(word As String, c As Cell) As Result
+    Select Case RckListArg(word, c)
+        Case Ok(xs)
+            LnNumsAt(word, xs, { })
+        Case Err(w, at)
+            Err(w, at)
+        Case Else
+            Err(word & " did not answer", 0)
+
+Def LnNumsAt(word As String, xs As List Of Cell, acc As List Of Number) As Result
+    If IsEmpty(xs) Then
+        Ok(acc)
+    Else
+        LnNumsNext(word, xs, acc, First(xs))
+
+Def LnNumsNext(word As String, xs As List Of Cell, acc As List Of Number, c As Cell) As Result
+    Select Case c
+        Case CutNum(x)
+            LnNumsAt(word, Rest(xs), Append(acc, x))
+        Case Else
+            Err(RckKindWhy(word, "a LIST of NUMBERs", c), 0)
+
+Def LnEntry(k As String, v As Cell) As Cell
+    CutPair(Pair(CutStr(k), v))
+
+Def LnListOf(ns As List Of Number) As Cell
+    CutList(Map(ns, CutNum))
+
+Rem ---- LU, QR, EIGEN as dicts --------------------------------------------
+
+Def LnLuCell(lu As LinLu) As Cell
+    CutList({ LnEntry("l", CutMat(LFactor(lu))), LnEntry("u", CutMat(UFactor(lu))), LnEntry("p", CutMat(Perm(lu))), LnEntry("psign", CutNum(PSign(lu))) })
+
+Def LnQrCell(qr As LinQr) As Cell
+    CutList({ LnEntry("q", CutMat(QFactor(qr))), LnEntry("r", CutMat(RFactor(qr))) })
+
+Def LnEigenCell(e As LinEigen) As Cell
+    CutList({ LnEntry("values", LnListOf(Values(e))), LnEntry("vectors", CutMat(Vectors(e))) })
+
+Rem ---- one-matrix words --------------------------------------------------
+Rem Each written out explicitly rather than through a shared
+Rem quotation-taking helper: a quotation captured as a parameter and
+Rem carried across RckReg's own registration closure is not a pattern
+Rem any other seed in this file uses, and it is not one this file
+Rem trusts either.
+
+Def LnSeedTrace(st As RckState) As RckState
+    RckReg(st, "LINTRACE", 1, RckPure(Fn(vs) => LnTrace(vs)), "( m -- n )", "The sum of the diagonal.")
+
+Def LnTrace(vs As List Of Cell) As RckWork
+    Select Case First(vs)
+        Case CutMat(m)
+            RckVals({ CutNum(LinTrace(m)) })
+        Case Else
+            RckWorkBad(RckKindWhy("LINTRACE", "a MATRIX", First(vs)))
+
+Def LnSeedNorm(st As RckState) As RckState
+    RckReg(st, "LINNORM", 1, RckPure(Fn(vs) => LnNorm(vs)), "( m -- n )", "The Frobenius norm: the square root of the sum of every entry squared.")
+
+Def LnNorm(vs As List Of Cell) As RckWork
+    Select Case First(vs)
+        Case CutMat(m)
+            RckVals({ CutNum(LinNorm(m)) })
+        Case Else
+            RckWorkBad(RckKindWhy("LINNORM", "a MATRIX", First(vs)))
+
+Def LnSeedMaxabs(st As RckState) As RckState
+    RckReg(st, "LINMAXABS", 1, RckPure(Fn(vs) => LnMaxabs(vs)), "( m -- n )", "The largest absolute value of any entry.")
+
+Def LnMaxabs(vs As List Of Cell) As RckWork
+    Select Case First(vs)
+        Case CutMat(m)
+            RckVals({ CutNum(LinMaxAbs(m)) })
+        Case Else
+            RckWorkBad(RckKindWhy("LINMAXABS", "a MATRIX", First(vs)))
+
+Def LnSeedIssquare(st As RckState) As RckState
+    RckReg(st, "LINISSQUARE", 1, RckPure(Fn(vs) => LnIssquare(vs)), "( m -- flag )", "Whether m has as many rows as columns.")
+
+Def LnIssquare(vs As List Of Cell) As RckWork
+    Select Case First(vs)
+        Case CutMat(m)
+            RckVals({ CutBool(LinIsSquare(m)) })
+        Case Else
+            RckWorkBad(RckKindWhy("LINISSQUARE", "a MATRIX", First(vs)))
+
+Def LnSeedRef(st As RckState) As RckState
+    RckReg(st, "LINREF", 1, RckPure(Fn(vs) => LnRef(vs)), "( m -- m2 )", "Row echelon form, by Gaussian elimination with partial pivoting.")
+
+Def LnRef(vs As List Of Cell) As RckWork
+    Select Case First(vs)
+        Case CutMat(m)
+            RckVals({ CutMat(LinRef(m)) })
+        Case Else
+            RckWorkBad(RckKindWhy("LINREF", "a MATRIX", First(vs)))
+
+Def LnSeedRref(st As RckState) As RckState
+    RckReg(st, "LINRREF", 1, RckPure(Fn(vs) => LnRref(vs)), "( m -- m2 )", "Reduced row echelon form.")
+
+Def LnRref(vs As List Of Cell) As RckWork
+    Select Case First(vs)
+        Case CutMat(m)
+            RckVals({ CutMat(LinRref(m)) })
+        Case Else
+            RckWorkBad(RckKindWhy("LINRREF", "a MATRIX", First(vs)))
+
+Def LnSeedRank(st As RckState) As RckState
+    RckReg(st, "LINRANK", 1, RckPure(Fn(vs) => LnRank(vs)), "( m -- n )", "The number of nonzero rows in the row echelon form.")
+
+Def LnRank(vs As List Of Cell) As RckWork
+    Select Case First(vs)
+        Case CutMat(m)
+            RckVals({ CutNum(LinRank(m)) })
+        Case Else
+            RckWorkBad(RckKindWhy("LINRANK", "a MATRIX", First(vs)))
+
+Def LnSeedDet(st As RckState) As RckState
+    RckReg(st, "LINDET", 1, RckPure(Fn(vs) => LnDet(vs)), "( m -- n )", "The determinant, refusing if m is not square.")
+
+Def LnDet(vs As List Of Cell) As RckWork
+    Select Case First(vs)
+        Case CutMat(m)
+            LnDetOf(m)
+        Case Else
+            RckWorkBad(RckKindWhy("LINDET", "a MATRIX", First(vs)))
+
+Def LnDetOf(m As Matrix) As RckWork
+    If Not LinIsSquare(m) Then
+        RckWorkBad("LINDET: NEEDS A SQUARE MATRIX")
+    Else
+        RckVals({ CutNum(LinDet(m)) })
+
+Def LnSeedAdj(st As RckState) As RckState
+    RckReg(st, "LINADJ", 1, RckPure(Fn(vs) => LnAdj(vs)), "( m -- m2 )", "The adjugate (classical adjoint): the transpose of the cofactor matrix. Refuses if m is not square.")
+
+Def LnAdj(vs As List Of Cell) As RckWork
+    Select Case First(vs)
+        Case CutMat(m)
+            LnAdjOf(m)
+        Case Else
+            RckWorkBad(RckKindWhy("LINADJ", "a MATRIX", First(vs)))
+
+Def LnAdjOf(m As Matrix) As RckWork
+    If Not LinIsSquare(m) Then
+        RckWorkBad("LINADJ: NEEDS A SQUARE MATRIX")
+    Else
+        RckVals({ CutMat(LinAdj(m)) })
+
+Def LnSeedInv(st As RckState) As RckState
+    RckReg(st, "LININV", 1, RckPure(Fn(vs) => LnInv(vs)), "( m -- m2 )", "The inverse. Refuses if m is not square or is singular.")
+
+Def LnInv(vs As List Of Cell) As RckWork
+    Select Case First(vs)
+        Case CutMat(m)
+            LnInvOf(m)
+        Case Else
+            RckWorkBad(RckKindWhy("LININV", "a MATRIX", First(vs)))
+
+Def LnInvOf(m As Matrix) As RckWork
+    If Not LinIsSquare(m) Then
+        RckWorkBad("LININV: NEEDS A SQUARE MATRIX")
+    Else
+        If Abs(LinDet(m)) <= 0.000000000001 Then
+            RckWorkBad("LININV: MATRIX IS SINGULAR - IT HAS NO INVERSE")
+        Else
+            RckVals({ CutMat(LinInv(m)) })
+
+Def LnSeedChol(st As RckState) As RckState
+    RckReg(st, "LINCHOL", 1, RckPure(Fn(vs) => LnChol(vs)), "( m -- m2 )", "The Cholesky factor L, where m = L * Transp(L). Refuses if m is not symmetric.")
+
+Def LnChol(vs As List Of Cell) As RckWork
+    Select Case First(vs)
+        Case CutMat(m)
+            LnCholOf(m)
+        Case Else
+            RckWorkBad(RckKindWhy("LINCHOL", "a MATRIX", First(vs)))
+
+Def LnCholOf(m As Matrix) As RckWork
+    If Not LinIsSym(m, 0.000000001) Then
+        RckWorkBad("LINCHOL: NEEDS A SYMMETRIC MATRIX")
+    Else
+        RckVals({ CutMat(LinChol(m)) })
+
+Def LnSeedLuof(st As RckState) As RckState
+    RckReg(st, "LINLUOF", 1, RckPure(Fn(vs) => LnLuof(vs)), "( m -- lu )", "P A = L U: a dict with l, u, p and psign (the sign of P's determinant).")
+
+Def LnLuof(vs As List Of Cell) As RckWork
+    Select Case First(vs)
+        Case CutMat(m)
+            RckVals({ LnLuCell(LinLuOf(m)) })
+        Case Else
+            RckWorkBad(RckKindWhy("LINLUOF", "a MATRIX", First(vs)))
+
+Def LnSeedQrof(st As RckState) As RckState
+    RckReg(st, "LINQROF", 1, RckPure(Fn(vs) => LnQrof(vs)), "( m -- qr )", "A = Q R via Gram-Schmidt: a dict with q and r.")
+
+Def LnQrof(vs As List Of Cell) As RckWork
+    Select Case First(vs)
+        Case CutMat(m)
+            RckVals({ LnQrCell(LinQrOf(m)) })
+        Case Else
+            RckWorkBad(RckKindWhy("LINQROF", "a MATRIX", First(vs)))
+
+Def LnSeedCharpoly(st As RckState) As RckState
+    RckReg(st, "LINCHARPOLY", 1, RckPure(Fn(vs) => LnCharpoly(vs)), "( m -- list )", "The characteristic polynomial's coefficients, highest power first.")
+
+Def LnCharpoly(vs As List Of Cell) As RckWork
+    Select Case First(vs)
+        Case CutMat(m)
+            RckVals({ LnListOf(LinCharPoly(m)) })
+        Case Else
+            RckWorkBad(RckKindWhy("LINCHARPOLY", "a MATRIX", First(vs)))
+
+Def LnSeedEigvals(st As RckState) As RckState
+    RckReg(st, "LINEIGVALS", 1, RckPure(Fn(vs) => LnEigvals(vs)), "( m -- list )", "The real eigenvalues found by bracketing sign changes — short of Rows(m) means some were missed (a complex pair, a repeated root).")
+
+Def LnEigvals(vs As List Of Cell) As RckWork
+    Select Case First(vs)
+        Case CutMat(m)
+            RckVals({ LnListOf(LinEigVals(m)) })
+        Case Else
+            RckWorkBad(RckKindWhy("LINEIGVALS", "a MATRIX", First(vs)))
+
+Def LnSeedEigsym(st As RckState) As RckState
+    RckReg(st, "LINEIGSYM", 1, RckPure(Fn(vs) => LnEigsym(vs)), "( m -- eigen )", "The complete eigendecomposition of a symmetric matrix: a dict with values and vectors (vectors is a matrix, the k-th eigenvalue's eigenvector as its k-th column).")
+
+Def LnEigsym(vs As List Of Cell) As RckWork
+    Select Case First(vs)
+        Case CutMat(m)
+            RckVals({ LnEigenCell(LinEigSym(m)) })
+        Case Else
+            RckWorkBad(RckKindWhy("LINEIGSYM", "a MATRIX", First(vs)))
+
+Rem ---- LININV/LINSOLVE-style words needing more than one argument ------
+
+Def LnSeedIssym(st As RckState) As RckState
+    RckReg(st, "LINISSYM", 2, RckPure(Fn(vs) => LnIssym(vs)), "( m tol -- flag )", "Whether m equals its own transpose within tol.")
+
+Def LnIssym(vs As List Of Cell) As RckWork
+    Select Case RckNumArg("LINISSYM", Nth(vs, 2))
+        Case Ok(tol)
+            LnIssymAt(First(vs), tol)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("LINISSYM did not answer")
+
+Def LnIssymAt(c As Cell, tol As Number) As RckWork
+    Select Case c
+        Case CutMat(m)
+            RckVals({ CutBool(LinIsSym(m, tol)) })
+        Case Else
+            RckWorkBad(RckKindWhy("LINISSYM", "a MATRIX", c))
+
+Def LnSeedSwaprows(st As RckState) As RckState
+    RckReg(st, "LINSWAPROWS", 3, RckPure(Fn(vs) => LnSwaprows(vs)), "( m i j -- m2 )", "m with rows i and j exchanged.")
+
+Def LnSwaprows(vs As List Of Cell) As RckWork
+    Select Case Pair(RckNumArg("LINSWAPROWS", Nth(vs, 2)), RckNumArg("LINSWAPROWS", Nth(vs, 3)))
+        Case Pair(Ok(i), Ok(j))
+            LnSwaprowsAt(First(vs), i, j)
+        Case Else
+            RckWorkBad("LINSWAPROWS did not answer")
+
+Def LnSwaprowsAt(c As Cell, i As Number, j As Number) As RckWork
+    Select Case c
+        Case CutMat(m)
+            RckVals({ CutMat(LinSwapRows(m, i, j)) })
+        Case Else
+            RckWorkBad(RckKindWhy("LINSWAPROWS", "a MATRIX", c))
+
+Def LnSeedScalerow(st As RckState) As RckState
+    RckReg(st, "LINSCALEROW", 3, RckPure(Fn(vs) => LnScalerow(vs)), "( m p k -- m2 )", "m with row p multiplied by k.")
+
+Def LnScalerow(vs As List Of Cell) As RckWork
+    Select Case Pair(RckNumArg("LINSCALEROW", Nth(vs, 2)), RckNumArg("LINSCALEROW", Nth(vs, 3)))
+        Case Pair(Ok(p), Ok(k))
+            LnScalerowAt(First(vs), p, k)
+        Case Else
+            RckWorkBad("LINSCALEROW did not answer")
+
+Def LnScalerowAt(c As Cell, p As Number, k As Number) As RckWork
+    Select Case c
+        Case CutMat(m)
+            RckVals({ CutMat(LinScaleRow(m, p, k)) })
+        Case Else
+            RckWorkBad(RckKindWhy("LINSCALEROW", "a MATRIX", c))
+
+Def LnSeedScalecol(st As RckState) As RckState
+    RckReg(st, "LINSCALECOL", 3, RckPure(Fn(vs) => LnScalecol(vs)), "( m p k -- m2 )", "m with column p multiplied by k.")
+
+Def LnScalecol(vs As List Of Cell) As RckWork
+    Select Case Pair(RckNumArg("LINSCALECOL", Nth(vs, 2)), RckNumArg("LINSCALECOL", Nth(vs, 3)))
+        Case Pair(Ok(p), Ok(k))
+            LnScalecolAt(First(vs), p, k)
+        Case Else
+            RckWorkBad("LINSCALECOL did not answer")
+
+Def LnScalecolAt(c As Cell, p As Number, k As Number) As RckWork
+    Select Case c
+        Case CutMat(m)
+            RckVals({ CutMat(LinScaleCol(m, p, k)) })
+        Case Else
+            RckWorkBad(RckKindWhy("LINSCALECOL", "a MATRIX", c))
+
+Def LnSeedCols(st As RckState) As RckState
+    RckReg(st, "LINCOLS", 3, RckPure(Fn(vs) => LnCols(vs)), "( m lo hi -- m2 )", "Columns lo through hi of m, inclusive.")
+
+Def LnCols(vs As List Of Cell) As RckWork
+    Select Case Pair(RckNumArg("LINCOLS", Nth(vs, 2)), RckNumArg("LINCOLS", Nth(vs, 3)))
+        Case Pair(Ok(lo), Ok(hi))
+            LnColsAt(First(vs), lo, hi)
+        Case Else
+            RckWorkBad("LINCOLS did not answer")
+
+Def LnColsAt(c As Cell, lo As Number, hi As Number) As RckWork
+    Select Case c
+        Case CutMat(m)
+            RckVals({ CutMat(LinCols(m, lo, hi)) })
+        Case Else
+            RckWorkBad(RckKindWhy("LINCOLS", "a MATRIX", c))
+
+Def LnSeedAug(st As RckState) As RckState
+    RckReg(st, "LINAUG", 2, RckPure(Fn(vs) => LnAug(vs)), "( a b -- m )", "a and b side by side — the augmented matrix [a | b]. Same row count required.")
+
+Def LnAug(vs As List Of Cell) As RckWork
+    Select Case First(vs)
+        Case CutMat(a)
+            LnAugB(a, Nth(vs, 2))
+        Case Else
+            RckWorkBad(RckKindWhy("LINAUG", "a MATRIX", First(vs)))
+
+Def LnAugB(a As Matrix, bc As Cell) As RckWork
+    Select Case bc
+        Case CutMat(b)
+            LnAugShaped(a, b)
+        Case Else
+            RckWorkBad(RckKindWhy("LINAUG", "a MATRIX", bc))
+
+Def LnAugShaped(a As Matrix, b As Matrix) As RckWork
+    If Rows(a) <> Rows(b) Then
+        RckWorkBad("LINAUG: SAME ROW COUNT REQUIRED")
+    Else
+        RckVals({ CutMat(LinAug(a, b)) })
+
+Def LnSeedSolve(st As RckState) As RckState
+    RckReg(st, "LINSOLVE", 2, RckPure(Fn(vs) => LnSolve(vs)), "( a b -- x )", "Solves a x = b for x. Refuses if a is not square, b is the wrong length, or a is singular.")
+
+Def LnSolve(vs As List Of Cell) As RckWork
+    Select Case LnListNum("LINSOLVE", Nth(vs, 2))
+        Case Ok(b)
+            LnSolveA(First(vs), b)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("LINSOLVE did not answer")
+
+Def LnSolveA(c As Cell, b As List Of Number) As RckWork
+    Select Case c
+        Case CutMat(a)
+            LnSolveShaped(a, b)
+        Case Else
+            RckWorkBad(RckKindWhy("LINSOLVE", "a MATRIX", c))
+
+Def LnSolveShaped(a As Matrix, b As List Of Number) As RckWork
+    If Not LinIsSquare(a) Then
+        RckWorkBad("LINSOLVE: NEEDS A SQUARE MATRIX")
+    Else
+        If Length(b) <> Rows(a) Then
+            RckWorkBad("LINSOLVE: THE RIGHT-HAND SIDE IS THE WRONG LENGTH")
+        Else
+            If Abs(LinDet(a)) <= 0.000000000001 Then
+                RckWorkBad("LINSOLVE: MATRIX IS SINGULAR - NO UNIQUE SOLUTION")
+            Else
+                RckVals({ LnListOf(ToList(LinSolve(a, ToArray(b)))) })
+
+Def LnSeedPow(st As RckState) As RckState
+    RckReg(st, "LINPOW", 2, RckPure(Fn(vs) => LnPow(vs)), "( m n -- m2 )", "m raised to the whole power n — square-and-multiply. A negative n inverts first.")
+
+Def LnPow(vs As List Of Cell) As RckWork
+    Select Case RckWholeArg("LINPOW", Nth(vs, 2))
+        Case Ok(n)
+            LnPowAt(First(vs), n)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("LINPOW did not answer")
+
+Def LnPowAt(c As Cell, n As Number) As RckWork
+    Select Case c
+        Case CutMat(m)
+            LnPowShaped(m, n)
+        Case Else
+            RckWorkBad(RckKindWhy("LINPOW", "a MATRIX", c))
+
+Def LnPowShaped(m As Matrix, n As Number) As RckWork
+    If Not LinIsSquare(m) Then
+        RckWorkBad("LINPOW: NEEDS A SQUARE MATRIX")
+    Else
+        If n < 0 And Abs(LinDet(m)) <= 0.000000000001 Then
+            RckWorkBad("LINPOW: MATRIX IS SINGULAR - IT HAS NO INVERSE FOR A NEGATIVE POWER")
+        Else
+            RckVals({ CutMat(LinPow(m, n)) })
+
+Rem ---- the vector words --------------------------------------------------
+
+Def LnSeedVnorm(st As RckState) As RckState
+    RckReg(st, "LINVNORM", 1, RckPure(Fn(vs) => LnVnorm(vs)), "( v -- n )", "The Euclidean length of v.")
+
+Def LnVnorm(vs As List Of Cell) As RckWork
+    Select Case LnListNum("LINVNORM", First(vs))
+        Case Ok(v)
+            RckVals({ CutNum(LinVNorm(ToArray(v))) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("LINVNORM did not answer")
+
+Def LnSeedVunit(st As RckState) As RckState
+    RckReg(st, "LINVUNIT", 1, RckPure(Fn(vs) => LnVunit(vs)), "( v -- v2 )", "v scaled to length 1. Refuses on the zero vector.")
+
+Def LnVunit(vs As List Of Cell) As RckWork
+    Select Case LnListNum("LINVUNIT", First(vs))
+        Case Ok(v)
+            LnVunitShaped(v)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("LINVUNIT did not answer")
+
+Def LnVunitShaped(v As List Of Number) As RckWork
+    If LinVNorm(ToArray(v)) <= 0.000000000001 Then
+        RckWorkBad("LINVUNIT: THE ZERO VECTOR HAS NO DIRECTION")
+    Else
+        RckVals({ LnListOf(ToList(LinVUnit(ToArray(v)))) })
+
+Def LnSeedCross(st As RckState) As RckState
+    RckReg(st, "LINCROSS", 2, RckPure(Fn(vs) => LnCross(vs)), "( u v -- w )", "The 3-D cross product. Refuses unless both are length 3.")
+
+Def LnCross(vs As List Of Cell) As RckWork
+    Select Case LnListNum("LINCROSS", First(vs))
+        Case Ok(u)
+            LnCrossV(u, Nth(vs, 2))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("LINCROSS did not answer")
+
+Def LnCrossV(u As List Of Number, vc As Cell) As RckWork
+    Select Case LnListNum("LINCROSS", vc)
+        Case Ok(v)
+            LnCrossShaped(u, v)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("LINCROSS did not answer")
+
+Def LnCrossShaped(u As List Of Number, v As List Of Number) As RckWork
+    If Length(u) <> 3 Or Length(v) <> 3 Then
+        RckWorkBad("LINCROSS: BOTH VECTORS MUST BE LENGTH 3")
+    Else
+        RckVals({ LnListOf(ToList(LinCross(ToArray(u), ToArray(v)))) })
+
+Rem ---- the seed -----------------------------------------------------------
+
+Def RckSeedLin(st As RckState) As RckState
+    Let s1 = LnSeedTrace(st)
+    Let s2 = LnSeedNorm(s1)
+    Let s3 = LnSeedMaxabs(s2)
+    Let s4 = LnSeedIssquare(s3)
+    Let s5 = LnSeedIssym(s4)
+    Let s6 = LnSeedRef(s5)
+    Let s7 = LnSeedRref(s6)
+    Let s8 = LnSeedRank(s7)
+    Let s9 = LnSeedDet(s8)
+    Let s10 = LnSeedAdj(s9)
+    Let s11 = LnSeedInv(s10)
+    Let s12 = LnSeedChol(s11)
+    Let s13 = LnSeedLuof(s12)
+    Let s14 = LnSeedQrof(s13)
+    Let s15 = LnSeedCharpoly(s14)
+    Let s16 = LnSeedEigvals(s15)
+    Let s17 = LnSeedEigsym(s16)
+    Let s18 = LnSeedSwaprows(s17)
+    Let s19 = LnSeedScalerow(s18)
+    Let s20 = LnSeedScalecol(s19)
+    Let s21 = LnSeedCols(s20)
+    Let s22 = LnSeedAug(s21)
+    Let s23 = LnSeedSolve(s22)
+    Let s24 = LnSeedPow(s23)
+    Let s25 = LnSeedVnorm(s24)
+    Let s26 = LnSeedVunit(s25)
+    LnSeedCross(s26)

@@ -1,0 +1,114 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem seedhtml.shoddy — reckoner seed: html.shoddy, converting at the
+Rem bridge
+Rem
+Rem HTMLPARSE, HTMLTEXT, HTMLPRETTY, HTMLLOAD and HTMLSAVE. html.shoddy
+Rem answers the same Xml tree xml.shoddy does — its own reader just
+Rem accepts tag soup xml.shoddy's would refuse, and its own writer
+Rem knows which elements are void and which are raw-text. The bridge
+Rem is therefore the same one: seedxml.shoddy's XcOfXml/XcToXml,
+Rem Included rather than copied, so an element from either machine is
+Rem the same { "elem" tag attrs kids } shape at the keyboard.
+Rem
+Rem HTMLLOAD and HTMLSAVE go through TRYREADFILE/TRYWRITEFILE rather
+Rem than html.shoddy's own HtmlLoad/HtmlSave, which are built on the
+Rem aborting ReadFile/WriteFile (R3.5(a)). HTMLPARSE reads through
+Rem HtmlRead, the total half of HtmlParse, for the same reason.
+Rem ==================================================================
+
+Include "html.shoddy"
+Include "xml.shoddy"
+Include "cuttle.shoddy"
+Include "reckoner.shoddy"
+Include "seedxml.shoddy"
+
+Rem ---- HTMLPARSE ------------------------------------------------------
+
+Def HsSeedHtmlparse(st As RckState) As RckState
+    RckReg(st, "HTMLPARSE", 1, RckPure(Fn(vs) => HsHtmlparse(vs)), "( str -- doc )", "The string, parsed as (tolerant) HTML — an element is { \"elem\" tag attrs kids }, attrs a dict.")
+
+Def HsHtmlparse(vs As List Of Cell) As RckWork
+    Select Case RckTextArg("HTMLPARSE", First(vs))
+        Case Ok(s)
+            HsHtmlparseRead(HtmlRead(s))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("HTMLPARSE did not answer")
+
+Def HsHtmlparseRead(r As XRead) As RckWork
+    Select Case r
+        Case XOk(tree)
+            RckVals({ XcToXml(tree) })
+        Case XErr(why, at)
+            RckWorkBad("HTMLPARSE: " & why & " AT " & Str(at))
+        Case Else
+            RckWorkBad("HTMLPARSE did not answer")
+
+Rem ---- HTMLTEXT -----------------------------------------------------------
+
+Def HsSeedHtmltext(st As RckState) As RckState
+    RckReg(st, "HTMLTEXT", 1, RckPure(Fn(vs) => RckVals({ CutStr(HtmlText(XcOfXml(First(vs)))) })), "( doc -- str )", "The value, written out as HTML text.")
+
+Rem ---- HTMLPRETTY -----------------------------------------------------------
+
+Def HsSeedHtmlpretty(st As RckState) As RckState
+    RckReg(st, "HTMLPRETTY", 2, RckPure(Fn(vs) => HsHtmlpretty(vs)), "( doc n -- str )", "The value, written out as HTML text indented n spaces per level.")
+
+Def HsHtmlpretty(vs As List Of Cell) As RckWork
+    Select Case RckWholeArg("HTMLPRETTY", Nth(vs, 2))
+        Case Ok(n)
+            RckVals({ CutStr(HtmlPretty(XcOfXml(Nth(vs, 1)), n)) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("HTMLPRETTY did not answer")
+
+Rem ---- HTMLLOAD -------------------------------------------------------------
+
+Def HsSeedHtmlload(st As RckState) As RckState
+    RckReg(st, "HTMLLOAD", 1, RckTouch(Fn(vs) => HsHtmlload(vs)), "( path -- doc )", "The file, read and parsed as HTML — a refusal names why it could not be, whether that is the file or the syntax.")
+
+Def HsHtmlload(vs As List Of Cell) As RckWork
+    Select Case RckTextArg("HTMLLOAD", First(vs))
+        Case Ok(path)
+            HsHtmlloadRead(TryReadFile(path))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("HTMLLOAD did not answer")
+
+Def HsHtmlloadRead(r As Result) As RckWork
+    Select Case r
+        Case Ok(text)
+            HsHtmlparseRead(HtmlRead(text))
+        Case Err(w, at)
+            RckWorkBad("HTMLLOAD: cannot read the file")
+        Case Else
+            RckWorkBad("HTMLLOAD: cannot read the file")
+
+Rem ---- HTMLSAVE -------------------------------------------------------------
+
+Def HsSeedHtmlsave(st As RckState) As RckState
+    RckReg(st, "HTMLSAVE", 2, RckTouch(Fn(vs) => HsHtmlsave(vs)), "( path doc -- ok )", "Write the value to path as HTML text; True on success.")
+
+Def HsHtmlsave(vs As List Of Cell) As RckWork
+    Select Case RckTextArg("HTMLSAVE", Nth(vs, 1))
+        Case Ok(path)
+            RckVals({ CutBool(TryWriteFile(path, HtmlText(XcOfXml(Nth(vs, 2))))) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("HTMLSAVE did not answer")
+
+Rem ---- the seed -----------------------------------------------------------
+
+Def RckSeedHtml(st As RckState) As RckState
+    Let s1 = HsSeedHtmlparse(st)
+    Let s2 = HsSeedHtmltext(s1)
+    Let s3 = HsSeedHtmlpretty(s2)
+    Let s4 = HsSeedHtmlload(s3)
+    HsSeedHtmlsave(s4)

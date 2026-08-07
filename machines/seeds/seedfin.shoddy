@@ -1,0 +1,778 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem seedfin.shoddy — reckoner seed: fin.shoddy, converting at the
+Rem bridge
+Rem
+Rem Rates, time value of money, growth, statistics, budgeting, loan
+Rem amortization and payoff, NPV/IRR/payback, CAGR/ROI, dollar-cost
+Rem averaging, margin and markup, break-even, payroll, and
+Rem depreciation. Per R4.16 there is no RECORD cell at the keyboard:
+Rem every Fin* record fin.shoddy returns is a dict here, the same
+Rem LIST-of-PAIR shape seeddict.shoddy already established, one entry
+Rem per field, named for the field — FinGrowth becomes
+Rem { ("interest" n) ("total" n) }, FinAmort becomes
+Rem { ("principal" n) ("interest" n) ("balance" n) }, and so on.
+Rem
+Rem NOT BRIDGED: FinDate and everything built on it — FinSerial,
+Rem FinFromSerial, FinDateAdd, FinDaysInMonth, FinDateAddMonths,
+Rem FinDays360, FinDateDiff, FinYearFrac, FinCouponsBefore,
+Rem FinLastCoupon, FinAccrued, FinBondPrice, FinYtm and FinMdur. That
+Rem is a whole second subsystem — a calendar and a bond pricer built on
+Rem it — coherent enough to deserve its own pass rather than a rushed
+Rem half of one, not a machine this seed is unable to reach.
+Rem ==================================================================
+
+Include "fin.shoddy"
+Include "cuttle.shoddy"
+Include "reckoner.shoddy"
+Include "seq.shoddy"
+
+Rem ---- shared conversions -----------------------------------------------
+
+Def FsListNum(word As String, c As Cell) As Result
+    Select Case RckListArg(word, c)
+        Case Ok(xs)
+            FsNumsAt(word, xs, { })
+        Case Err(w, at)
+            Err(w, at)
+        Case Else
+            Err(word & " did not answer", 0)
+
+Def FsNumsAt(word As String, xs As List Of Cell, acc As List Of Number) As Result
+    If IsEmpty(xs) Then
+        Ok(acc)
+    Else
+        FsNumsNext(word, xs, acc, First(xs))
+
+Def FsNumsNext(word As String, xs As List Of Cell, acc As List Of Number, c As Cell) As Result
+    Select Case c
+        Case CutNum(x)
+            FsNumsAt(word, Rest(xs), Append(acc, x))
+        Case Else
+            Err(RckKindWhy(word, "a LIST of NUMBERs", c), 0)
+
+Def FsEntry(k As String, v As Cell) As Cell
+    CutPair(Pair(CutStr(k), v))
+
+Def FsListOf(ns As List Of Number) As Cell
+    CutList(Map(ns, CutNum))
+
+Def FsGrowthCell(g As FinGrowth) As Cell
+    CutList({ FsEntry("interest", CutNum(Interest(g))), FsEntry("total", CutNum(Total(g))) })
+
+Def FsStatCell(s As FinStat) As Cell
+    CutList({ FsEntry("avg", CutNum(Avg(s))), FsEntry("sd", CutNum(Sd(s))), FsEntry("total", CutNum(Total(s))) })
+
+Def FsAmortCell(a As FinAmort) As Cell
+    CutList({ FsEntry("principal", CutNum(Principal(a))), FsEntry("interest", CutNum(Interest(a))), FsEntry("balance", CutNum(Balance(a))) })
+
+Def FsPayoffCell(p As FinPayoff) As Cell
+    CutList({ FsEntry("periods", CutNum(Periods(p))), FsEntry("interest", CutNum(Interest(p))) })
+
+Def FsBudgetCell(b As FinBudget) As Cell
+    CutList({ FsEntry("net", CutNum(Net(b))), FsEntry("savingsrate", CutNum(SavingsRate(b))) })
+
+Def FsDcaCell(d As FinDca) As Cell
+    CutList({ FsEntry("dca", CutNum(Dca(d))), FsEntry("lump", CutNum(Lump(d))) })
+
+Def FsReturnsCell(r As FinReturns) As Cell
+    CutList({ FsEntry("avgreturn", CutNum(AvgReturn(r))), FsEntry("sd", CutNum(Sd(r))) })
+
+Def FsBreakEvenCell(b As FinBreakEven) As Cell
+    CutList({ FsEntry("units", CutNum(Units(b))), FsEntry("margin", CutNum(Margin(b))) })
+
+Def FsPayrollCell(p As FinPayroll) As Cell
+    CutList({ FsEntry("net", CutNum(Net(p))), FsEntry("withheld", CutNum(Withheld(p))) })
+
+Def FsDepCell(d As FinDep) As Cell
+    CutList({ FsEntry("amount", CutNum(Amount(d))), FsEntry("book", CutNum(Book(d))), FsEntry("method", CutNum(Method(d))) })
+
+Def FsFitCell(f As FinFit) As Cell
+    CutList({ FsEntry("intercept", CutNum(Intercept(f))), FsEntry("slope", CutNum(Slope(f))), FsEntry("rfit", CutNum(RFit(f))) })
+
+Rem ---- rates and conversion ---------------------------------------------
+
+Def FsSeedRates(st As RckState) As RckState
+    Let s1 = RckReg(st, "FINPCT", 1, RckPure(Fn(vs) => FsN1("FINPCT", First(vs), FinPct)), "( p -- r )", "p percent as a rate: 5 -> 0.05.")
+    Let s2 = RckReg(s1, "FINASPCT", 1, RckPure(Fn(vs) => FsN1("FINASPCT", First(vs), FinAsPct)), "( r -- p )", "A rate as percent: 0.05 -> 5.")
+    Let s3 = RckReg(s2, "FINEFF", 2, RckPure(Fn(vs) => FsN2("FINEFF", vs, FinEff)), "( nom m -- eff )", "The effective annual rate from a nominal rate compounded m times a year.")
+    Let s4 = RckReg(s3, "FINNOM", 2, RckPure(Fn(vs) => FsN2("FINNOM", vs, FinNom)), "( eff m -- nom )", "The nominal rate that compounds m times a year to eff.")
+    Let s5 = RckReg(s4, "FINRULE72", 1, RckPure(Fn(vs) => FsN1("FINRULE72", First(vs), FinRule72)), "( rate -- years )", "The Rule of 72 estimate of years to double.")
+    Let s6 = RckReg(s5, "FINREAL", 2, RckPure(Fn(vs) => FsN2("FINREAL", vs, FinReal)), "( nominal inflation -- real )", "The inflation-adjusted rate.")
+    Let s7 = RckReg(s6, "FINPCTCHG", 2, RckPure(Fn(vs) => FsN2("FINPCTCHG", vs, FinPctChg)), "( old new -- pct )", "Percent change from old to new.")
+    Let s8 = RckReg(s7, "FINTOBPS", 1, RckPure(Fn(vs) => FsN1("FINTOBPS", First(vs), FinToBps)), "( pct -- bps )", "Percent to basis points.")
+    RckReg(s8, "FINFROMBPS", 1, RckPure(Fn(vs) => FsN1("FINFROMBPS", First(vs), FinFromBps)), "( bps -- pct )", "Basis points to percent.")
+
+Def FsN1(word As String, c As Cell, f As [ Number -- Number ]) As RckWork
+    Select Case RckNumArg(word, c)
+        Case Ok(x)
+            RckVals({ CutNum(Call(f, x)) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Def FsN2(word As String, vs As List Of Cell, f As [ Number Number -- Number ]) As RckWork
+    Select Case Pair(RckNumArg(word, Nth(vs, 1)), RckNumArg(word, Nth(vs, 2)))
+        Case Pair(Ok(a), Ok(b))
+            RckVals({ CutNum(Call(f, a, b)) })
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Def FsN3(word As String, vs As List Of Cell, f As [ Number Number Number -- Number ]) As RckWork
+    Select Case FsListNum(word, CutList(vs))
+        Case Ok(ns)
+            RckVals({ CutNum(Call(f, Nth(ns, 1), Nth(ns, 2), Nth(ns, 3))) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Def FsN4(word As String, vs As List Of Cell, f As [ Number Number Number Number -- Number ]) As RckWork
+    Select Case FsListNum(word, CutList(vs))
+        Case Ok(ns)
+            RckVals({ CutNum(Call(f, Nth(ns, 1), Nth(ns, 2), Nth(ns, 3), Nth(ns, 4))) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Rem ---- time value of money ------------------------------------------------
+
+Def FsSeedTvm(st As RckState) As RckState
+    Let s1 = RckReg(st, "FINPV", 3, RckPure(Fn(vs) => FsN3("FINPV", vs, FinPv)), "( fv rate n -- pv )", "Present value of a future sum.")
+    Let s2 = RckReg(s1, "FINFV", 3, RckPure(Fn(vs) => FsN3("FINFV", vs, FinFv)), "( pv rate n -- fv )", "Future value of a present sum.")
+    Let s3 = RckReg(s2, "FINPVANN", 3, RckPure(Fn(vs) => FsN3("FINPVANN", vs, FinPvAnn)), "( pmt rate n -- pv )", "Present value of an ordinary annuity.")
+    Let s4 = RckReg(s3, "FINFVANN", 3, RckPure(Fn(vs) => FsN3("FINFVANN", vs, FinFvAnn)), "( pmt rate n -- fv )", "Future value of an ordinary annuity.")
+    Let s5 = RckReg(s4, "FINPVANNDUE", 3, RckPure(Fn(vs) => FsN3("FINPVANNDUE", vs, FinPvAnnDue)), "( pmt rate n -- pv )", "Present value of an annuity due (payments at the start of each period).")
+    Let s6 = RckReg(s5, "FINFVANNDUE", 3, RckPure(Fn(vs) => FsN3("FINFVANNDUE", vs, FinFvAnnDue)), "( pmt rate n -- fv )", "Future value of an annuity due.")
+    Let s7 = RckReg(s6, "FINPMT", 4, RckPure(Fn(vs) => FsN4("FINPMT", vs, FinPmt)), "( pv fv rate n -- pmt )", "The level payment that carries pv to fv over n periods.")
+    Let s8 = RckReg(s7, "FINPMTDUE", 4, RckPure(Fn(vs) => FsN4("FINPMTDUE", vs, FinPmtDue)), "( pv fv rate n -- pmt )", "FINPMT for an annuity due.")
+    Let s9 = RckReg(s8, "FINNPER", 4, RckPure(Fn(vs) => FsNper(vs)), "( pv fv pmt rate -- n )", "The number of periods to carry pv to fv at a level payment. Refuses when it never gets there.")
+    Let s10 = RckReg(s9, "FINSIMPLE", 3, RckPure(Fn(vs) => FsSimple(vs)), "( principal rate years -- growth )", "Simple interest: a dict with interest and total.")
+    RckReg(s10, "FINCOMPOUND", 4, RckPure(Fn(vs) => FsCompound(vs)), "( principal rate m years -- growth )", "Compound interest, m compounds a year: a dict with interest and total.")
+
+Def FsNper(vs As List Of Cell) As RckWork
+    Select Case FsListNum("FINNPER", CutList(vs))
+        Case Ok(ns)
+            FsNperAt(Nth(ns, 1), Nth(ns, 2), Nth(ns, 3), Nth(ns, 4))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("FINNPER did not answer")
+
+Rem FinNper itself Errors when rate <> 0 and pmt <= pv * rate — the
+Rem payment does not even cover the first period's interest, so the
+Rem balance can never reach fv. Checked here, refused instead.
+Def FsNperAt(pv As Number, fv As Number, pmt As Number, rate As Number) As RckWork
+    If rate <= -1 Then
+        RckWorkBad("FINNPER: RATE MUST BE GREATER THAN -1")
+    Else
+        If rate <> 0 And pmt <= pv * rate Then
+            RckWorkBad("FINNPER: PAYMENT NEVER CLEARS THE INTEREST")
+        Else
+            RckVals({ CutNum(FinNper(pv, fv, pmt, rate)) })
+
+Def FsSimple(vs As List Of Cell) As RckWork
+    Select Case FsListNum("FINSIMPLE", CutList(vs))
+        Case Ok(ns)
+            RckVals({ FsGrowthCell(FinSimple(Nth(ns, 1), Nth(ns, 2), Nth(ns, 3))) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("FINSIMPLE did not answer")
+
+Def FsCompound(vs As List Of Cell) As RckWork
+    Select Case FsListNum("FINCOMPOUND", CutList(vs))
+        Case Ok(ns)
+            RckVals({ FsGrowthCell(FinCompound(Nth(ns, 1), Nth(ns, 2), Nth(ns, 3), Nth(ns, 4))) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("FINCOMPOUND did not answer")
+
+Rem ---- statistics -----------------------------------------------------
+
+Def FsSeedStats(st As RckState) As RckState
+    Let s1 = RckReg(st, "FINSUM", 1, RckPure(Fn(vs) => FsL1("FINSUM", First(vs), FinSum)), "( list -- n )", "The sum.")
+    Let s2 = RckReg(s1, "FINSMEAN", 1, RckPure(Fn(vs) => FsL1G("FINSMEAN", First(vs), FinMean)), "( list -- n )", "The mean. Refuses on an empty list.")
+    Let s3 = RckReg(s2, "FINSTDDEV", 1, RckPure(Fn(vs) => FsL1G2("FINSTDDEV", First(vs), FinStdDev)), "( list -- n )", "The sample standard deviation. Refuses on fewer than 2 values.")
+    Let s4 = RckReg(s3, "FINSTDDEVP", 1, RckPure(Fn(vs) => FsL1G("FINSTDDEVP", First(vs), FinStdDevP)), "( list -- n )", "The population standard deviation. Refuses on an empty list.")
+    Let s5 = RckReg(s4, "FINSVAR", 1, RckPure(Fn(vs) => FsL1G2("FINSVAR", First(vs), FinVar)), "( list -- n )", "The sample variance. Refuses on fewer than 2 values.")
+    Let s6 = RckReg(s5, "FINVARP", 1, RckPure(Fn(vs) => FsL1G("FINVARP", First(vs), FinVarP)), "( list -- n )", "The population variance. Refuses on an empty list.")
+    Let s7 = RckReg(s6, "FINSMEDIAN", 1, RckPure(Fn(vs) => FsL1G("FINSMEDIAN", First(vs), FinMedian)), "( list -- n )", "The median. Refuses on an empty list.")
+    Let s8 = RckReg(s7, "FINSQUANTILE", 2, RckPure(Fn(vs) => FsQuantile(vs)), "( list p -- n )", "The p-quantile (p in [0, 1]).")
+    Let s9 = RckReg(s8, "FINSMIN", 1, RckPure(Fn(vs) => FsL1G("FINSMIN", First(vs), FinMinimum)), "( list -- n )", "The minimum. Refuses on an empty list.")
+    Let s10 = RckReg(s9, "FINSMAX", 1, RckPure(Fn(vs) => FsL1G("FINSMAX", First(vs), FinMaximum)), "( list -- n )", "The maximum. Refuses on an empty list.")
+    Let s11 = RckReg(s10, "FINSRANGE", 1, RckPure(Fn(vs) => FsL1G("FINSRANGE", First(vs), FinRangeOf)), "( list -- n )", "Maximum minus minimum. Refuses on an empty list.")
+    Let s12 = RckReg(s11, "FINSKEWNESS", 1, RckPure(Fn(vs) => FsL1G2("FINSKEWNESS", First(vs), FinSkewness)), "( list -- n )", "The sample skewness. Refuses on fewer than 2 values.")
+    Let s13 = RckReg(s12, "FINKURTOSIS", 1, RckPure(Fn(vs) => FsL1G2("FINKURTOSIS", First(vs), FinKurtosis)), "( list -- n )", "The excess kurtosis. Refuses on fewer than 2 values.")
+    Let s14 = RckReg(s13, "FINWEIGHTEDMEAN", 2, RckPure(Fn(vs) => FsL2("FINWEIGHTEDMEAN", vs, FinWeightedMean)), "( xs ws -- n )", "The mean of xs weighted by ws. Same length required.")
+    Let s15 = RckReg(s14, "FINGEOMEAN", 1, RckPure(Fn(vs) => FsL1G("FINGEOMEAN", First(vs), FinGeoMean)), "( list -- n )", "The geometric mean. Refuses on an empty list or a non-positive value.")
+    Let s16 = RckReg(s15, "FINCORREL", 2, RckPure(Fn(vs) => FsL2("FINCORREL", vs, FinCorrel)), "( xs ys -- n )", "The Pearson correlation. Same length required.")
+    Let s17 = RckReg(s16, "FINCOV", 2, RckPure(Fn(vs) => FsL2("FINCOV", vs, FinCov)), "( xs ys -- n )", "The sample covariance. Same length required.")
+    Let s18 = RckReg(s17, "FINSPEARMAN", 2, RckPure(Fn(vs) => FsL2("FINSPEARMAN", vs, FinSpearman)), "( xs ys -- n )", "The Spearman rank correlation. Same length required.")
+    Let s19 = RckReg(s18, "FINNORMP", 3, RckPure(Fn(vs) => FsN3("FINNORMP", vs, FinNormP)), "( x mean sd -- p )", "The normal cumulative distribution at x.")
+    Let s20 = RckReg(s19, "FINTDIST", 2, RckPure(Fn(vs) => FsN2("FINTDIST", vs, FinTDist)), "( t df -- p )", "Student's t cumulative distribution.")
+    RckReg(s20, "FINSTAT1", 1, RckPure(Fn(vs) => FsStat1(vs)), "( list -- stat )", "avg, sd and total together, one pass: a dict.")
+
+Def FsL1(word As String, c As Cell, f As [ List Of Number -- Number ]) As RckWork
+    Select Case FsListNum(word, c)
+        Case Ok(xs)
+            RckVals({ CutNum(Call(f, xs)) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Def FsL1G(word As String, c As Cell, f As [ List Of Number -- Number ]) As RckWork
+    Select Case FsListNum(word, c)
+        Case Ok(xs)
+            FsL1GAt(word, xs, f)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Def FsL1GAt(word As String, xs As List Of Number, f As [ List Of Number -- Number ]) As RckWork
+    If IsEmpty(xs) Then
+        RckWorkBad(word & ": THE LIST IS EMPTY")
+    Else
+        RckVals({ CutNum(Call(f, xs)) })
+
+Def FsL1G2(word As String, c As Cell, f As [ List Of Number -- Number ]) As RckWork
+    Select Case FsListNum(word, c)
+        Case Ok(xs)
+            FsL1G2At(word, xs, f)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Def FsL1G2At(word As String, xs As List Of Number, f As [ List Of Number -- Number ]) As RckWork
+    If Length(xs) < 2 Then
+        RckWorkBad(word & ": NEEDS AT LEAST 2 VALUES")
+    Else
+        RckVals({ CutNum(Call(f, xs)) })
+
+Def FsL2(word As String, vs As List Of Cell, f As [ List Of Number List Of Number -- Number ]) As RckWork
+    Select Case FsListNum(word, First(vs))
+        Case Ok(xs)
+            FsL2With(word, xs, Nth(vs, 2), f)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Def FsL2With(word As String, xs As List Of Number, yc As Cell, f As [ List Of Number List Of Number -- Number ]) As RckWork
+    Select Case FsListNum(word, yc)
+        Case Ok(ys)
+            FsL2At(word, xs, ys, f)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Def FsL2At(word As String, xs As List Of Number, ys As List Of Number, f As [ List Of Number List Of Number -- Number ]) As RckWork
+    If Length(xs) <> Length(ys) Then
+        RckWorkBad(word & ": BOTH LISTS MUST BE THE SAME LENGTH")
+    Else
+        RckVals({ CutNum(Call(f, xs, ys)) })
+
+Def FsQuantile(vs As List Of Cell) As RckWork
+    Select Case FsListNum("FINSQUANTILE", First(vs))
+        Case Ok(xs)
+            FsQuantileP(xs, Nth(vs, 2))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("FINSQUANTILE did not answer")
+
+Def FsQuantileP(xs As List Of Number, pc As Cell) As RckWork
+    Select Case RckNumArg("FINSQUANTILE", pc)
+        Case Ok(p)
+            FsQuantileAt(xs, p)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("FINSQUANTILE did not answer")
+
+Def FsQuantileAt(xs As List Of Number, p As Number) As RckWork
+    If IsEmpty(xs) Then
+        RckWorkBad("FINSQUANTILE: THE LIST IS EMPTY")
+    Else
+        If p < 0 Or p > 1 Then
+            RckWorkBad("FINSQUANTILE: P MUST BE BETWEEN 0 AND 1")
+        Else
+            RckVals({ CutNum(FinQuantile(xs, p)) })
+
+Def FsStat1(vs As List Of Cell) As RckWork
+    Select Case FsListNum("FINSTAT1", First(vs))
+        Case Ok(xs)
+            FsStat1At(xs)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("FINSTAT1 did not answer")
+
+Def FsStat1At(xs As List Of Number) As RckWork
+    If IsEmpty(xs) Then
+        RckWorkBad("FINSTAT1: THE LIST IS EMPTY")
+    Else
+        RckVals({ FsStatCell(FinStat1(xs)) })
+
+Rem ---- budgeting, saving and investing ------------------------------
+
+Def FsSeedBudget(st As RckState) As RckState
+    Let s1 = RckReg(st, "FINGOALPMT", 4, RckPure(Fn(vs) => FsN4("FINGOALPMT", vs, FinGoalPmt)), "( targetfv pv rate n -- pmt )", "The level payment that reaches targetfv.")
+    Let s2 = RckReg(s1, "FINRETIRE", 5, RckPure(Fn(vs) => FsRetire(vs)), "( start contribution peryear rate years -- fv )", "A savings projection: a starting balance plus regular contributions, compounded at the contribution frequency.")
+    Let s3 = RckReg(s2, "FINNETWORTH", 2, RckPure(Fn(vs) => FsL2Plain("FINNETWORTH", vs, FinNetWorth)), "( assets liabilities -- n )", "Total assets minus total liabilities.")
+    Let s4 = RckReg(s3, "FINBUDGETOF", 2, RckPure(Fn(vs) => FsBudgetof(vs)), "( income expenses -- budget )", "A dict with net and savingsrate.")
+    RckReg(s4, "FINDCAOF", 3, RckPure(Fn(vs) => FsDcaof(vs)), "( total intervals prices -- dca )", "Dollar-cost averaging against a lump sum: a dict with dca and lump.")
+
+Def FsRetire(vs As List Of Cell) As RckWork
+    Select Case FsListNum("FINRETIRE", CutList(vs))
+        Case Ok(ns)
+            RckVals({ CutNum(FinRetire(Nth(ns, 1), Nth(ns, 2), Nth(ns, 3), Nth(ns, 4), Nth(ns, 5))) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("FINRETIRE did not answer")
+
+Def FsL2Plain(word As String, vs As List Of Cell, f As [ List Of Number List Of Number -- Number ]) As RckWork
+    Select Case FsListNum(word, First(vs))
+        Case Ok(a)
+            FsL2PlainWith(word, a, Nth(vs, 2), f)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Def FsL2PlainWith(word As String, a As List Of Number, bc As Cell, f As [ List Of Number List Of Number -- Number ]) As RckWork
+    Select Case FsListNum(word, bc)
+        Case Ok(b)
+            RckVals({ CutNum(Call(f, a, b)) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Def FsBudgetof(vs As List Of Cell) As RckWork
+    Select Case FsListNum("FINBUDGETOF", First(vs))
+        Case Ok(income)
+            FsBudgetofWith(income, Nth(vs, 2))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("FINBUDGETOF did not answer")
+
+Def FsBudgetofWith(income As List Of Number, expensesC As Cell) As RckWork
+    Select Case FsListNum("FINBUDGETOF", expensesC)
+        Case Ok(expenses)
+            RckVals({ FsBudgetCell(FinBudgetOf(income, expenses)) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("FINBUDGETOF did not answer")
+
+Def FsDcaof(vs As List Of Cell) As RckWork
+    Select Case Pair(RckNumArg("FINDCAOF", Nth(vs, 1)), RckWholeArg("FINDCAOF", Nth(vs, 2)))
+        Case Pair(Ok(total), Ok(intervals))
+            FsDcaofPrices(total, intervals, Nth(vs, 3))
+        Case Else
+            RckWorkBad("FINDCAOF did not answer")
+
+Def FsDcaofPrices(total As Number, intervals As Number, pricesC As Cell) As RckWork
+    Select Case FsListNum("FINDCAOF", pricesC)
+        Case Ok(prices)
+            RckVals({ FsDcaCell(FinDcaOf(total, intervals, prices)) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("FINDCAOF did not answer")
+
+Rem ---- loans: amortization and payoff ------------------------------------
+
+Def FsSeedLoans(st As RckState) As RckState
+    Let s1 = RckReg(st, "FINBALANCE", 4, RckPure(Fn(vs) => FsN4("FINBALANCE", vs, FinBalance)), "( pv rate pmt k -- balance )", "The balance remaining after k payments.")
+    Let s2 = RckReg(s1, "FINAMORTAT", 4, RckPure(Fn(vs) => FsAmortat(vs)), "( pv rate pmt k -- amort )", "Payment k's split of principal and interest, and the balance after: a dict.")
+    Let s3 = RckReg(s2, "FINSCHEDULE", 4, RckPure(Fn(vs) => FsSchedule(vs)), "( pv rate n pmt -- list )", "The full amortization schedule, one dict per payment.")
+    Let s4 = RckReg(s3, "FINEXTRAPAYOFF", 4, RckPure(Fn(vs) => FsExtrapayoff(vs)), "( pv rate pmt extra -- payoff )", "Payoff with an extra amount added to every payment: a dict with periods and interest.")
+    Let s5 = RckReg(s4, "FINCARDPAYOFF", 3, RckPure(Fn(vs) => FsCardpayoff(vs)), "( balance apr pmt -- payoff )", "A credit card paid off at a fixed payment: a dict with periods and interest. Refuses if the payment never covers the interest.")
+    RckReg(s5, "FINCARDMINPAYOFF", 3, RckPure(Fn(vs) => FsCardminpayoff(vs)), "( balance apr minrate -- payoff )", "Paid off at a percent-of-balance minimum payment: a dict with periods and interest. Refuses if the minimum never exceeds the periodic interest rate.")
+
+Def FsAmortat(vs As List Of Cell) As RckWork
+    Select Case FsListNum("FINAMORTAT", CutList(vs))
+        Case Ok(ns)
+            RckVals({ FsAmortCell(FinAmortAt(Nth(ns, 1), Nth(ns, 2), Nth(ns, 3), Nth(ns, 4))) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("FINAMORTAT did not answer")
+
+Def FsSchedule(vs As List Of Cell) As RckWork
+    Select Case FsListNum("FINSCHEDULE", CutList(vs))
+        Case Ok(ns)
+            FsScheduleAt(Nth(ns, 1), Nth(ns, 2), Nth(ns, 3), Nth(ns, 4))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("FINSCHEDULE did not answer")
+
+Def FsScheduleAt(pv As Number, rate As Number, n As Number, pmt As Number) As RckWork
+    If n < 1 Then
+        RckWorkBad("FINSCHEDULE: NEEDS N >= 1")
+    Else
+        RckVals({ CutList(Map(FinSchedule(pv, rate, n, pmt), FsAmortCell)) })
+
+Rem FinExtraPayoff calls FinNper twice, which Errors when pmt does not
+Rem clear the interest (see FINNPER above); the base payment (without
+Rem extra) is the binding case.
+Def FsExtrapayoff(vs As List Of Cell) As RckWork
+    Select Case FsListNum("FINEXTRAPAYOFF", CutList(vs))
+        Case Ok(ns)
+            FsExtrapayoffAt(Nth(ns, 1), Nth(ns, 2), Nth(ns, 3), Nth(ns, 4))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("FINEXTRAPAYOFF did not answer")
+
+Def FsExtrapayoffAt(pv As Number, rate As Number, pmt As Number, extra As Number) As RckWork
+    If rate <> 0 And pmt <= pv * rate Then
+        RckWorkBad("FINEXTRAPAYOFF: PAYMENT NEVER CLEARS THE INTEREST")
+    Else
+        RckVals({ FsPayoffCell(FinExtraPayoff(pv, rate, pmt, extra)) })
+
+Def FsCardpayoff(vs As List Of Cell) As RckWork
+    Select Case FsListNum("FINCARDPAYOFF", CutList(vs))
+        Case Ok(ns)
+            FsCardpayoffAt(Nth(ns, 1), Nth(ns, 2), Nth(ns, 3))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("FINCARDPAYOFF did not answer")
+
+Def FsCardpayoffAt(balance As Number, apr As Number, pmt As Number) As RckWork
+    If pmt <= balance * apr / 12 Then
+        RckWorkBad("FINCARDPAYOFF: THE PAYMENT NEVER COVERS THE INTEREST")
+    Else
+        RckVals({ FsPayoffCell(FinCardPayoff(balance, apr, pmt)) })
+
+Rem FinCardMinPayoff simulates up to 1200 months and Errors past that.
+Rem Whether it clears within that horizon depends on the balance, not
+Rem just the rates, so this guards the one condition that makes
+Rem non-payoff certain rather than merely possible: a minimum rate at
+Rem or below the periodic interest rate can never reduce a large
+Rem balance at all.
+Def FsCardminpayoff(vs As List Of Cell) As RckWork
+    Select Case FsListNum("FINCARDMINPAYOFF", CutList(vs))
+        Case Ok(ns)
+            FsCardminpayoffAt(Nth(ns, 1), Nth(ns, 2), Nth(ns, 3))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("FINCARDMINPAYOFF did not answer")
+
+Def FsCardminpayoffAt(balance As Number, apr As Number, minRate As Number) As RckWork
+    If minRate <= apr / 12 Then
+        RckWorkBad("FINCARDMINPAYOFF: MINIMUM NEVER CLEARS THE INTEREST")
+    Else
+        RckVals({ FsPayoffCell(FinCardMinPayoff(balance, apr, minRate)) })
+
+Rem ---- capital budgeting: NPV, IRR, payback --------------------------
+
+Def FsSeedCapital(st As RckState) As RckState
+    Let s1 = RckReg(st, "FINNPV", 3, RckPure(Fn(vs) => FsNpv(vs)), "( outlay cfs rate -- n )", "Net present value: -outlay plus the discounted cash flows.")
+    Let s2 = RckReg(s1, "FINNPVOF", 2, RckPure(Fn(vs) => FsCfsRate("FINNPVOF", vs, FinNpvOf)), "( cfs rate -- n )", "The present value of the cash flows alone, no outlay subtracted.")
+    Let s3 = RckReg(s2, "FINIRR", 1, RckPure(Fn(vs) => FsIrr(vs)), "( cfs -- rate )", "The internal rate of return. Refuses when none is found in a wide bracket.")
+    Let s4 = RckReg(s3, "FINNFV", 2, RckPure(Fn(vs) => FsCfsRate("FINNFV", vs, FinNfv)), "( cfs rate -- n )", "The net future value: every cash flow compounded to the final period.")
+    Let s5 = RckReg(s4, "FINMIRR", 3, RckPure(Fn(vs) => FsMirr(vs)), "( cfs financerate reinvestrate -- rate )", "The modified internal rate of return.")
+    Let s6 = RckReg(s5, "FINPAYBACK", 2, RckPure(Fn(vs) => FsCfsPlain("FINPAYBACK", vs, FinPayback)), "( outlay cfs -- periods )", "The simple payback period. Refuses if the outlay is never recovered.")
+    RckReg(s6, "FINPAYBACKDISC", 3, RckPure(Fn(vs) => FsPaybackdisc(vs)), "( outlay cfs rate -- periods )", "The discounted payback period. Refuses if the outlay is never recovered.")
+
+Def FsNpv(vs As List Of Cell) As RckWork
+    Select Case RckNumArg("FINNPV", Nth(vs, 1))
+        Case Ok(outlay)
+            FsNpvCfs(outlay, Nth(vs, 2), Nth(vs, 3))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("FINNPV did not answer")
+
+Def FsNpvCfs(outlay As Number, cfsC As Cell, rateC As Cell) As RckWork
+    Select Case FsListNum("FINNPV", cfsC)
+        Case Ok(cfs)
+            FsNpvRate(outlay, cfs, rateC)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("FINNPV did not answer")
+
+Def FsNpvRate(outlay As Number, cfs As List Of Number, rateC As Cell) As RckWork
+    Select Case RckNumArg("FINNPV", rateC)
+        Case Ok(rate)
+            RckVals({ CutNum(FinNpv(outlay, cfs, rate)) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("FINNPV did not answer")
+
+Def FsCfsRate(word As String, vs As List Of Cell, f As [ List Of Number Number -- Number ]) As RckWork
+    Select Case FsListNum(word, First(vs))
+        Case Ok(cfs)
+            FsCfsRateAt(word, cfs, Nth(vs, 2), f)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Def FsCfsRateAt(word As String, cfs As List Of Number, rateC As Cell, f As [ List Of Number Number -- Number ]) As RckWork
+    Select Case RckNumArg(word, rateC)
+        Case Ok(rate)
+            RckVals({ CutNum(Call(f, cfs, rate)) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Def FsCfsPlain(word As String, vs As List Of Cell, f As [ Number List Of Number -- Number ]) As RckWork
+    Select Case RckNumArg(word, First(vs))
+        Case Ok(outlay)
+            FsCfsPlainWith(word, outlay, Nth(vs, 2), f)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Def FsCfsPlainWith(word As String, outlay As Number, cfsC As Cell, f As [ Number List Of Number -- Number ]) As RckWork
+    Select Case FsListNum(word, cfsC)
+        Case Ok(cfs)
+            FsCfsPlainAt(word, outlay, cfs, f)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Rem FinPayback answers -1 when the outlay is never recovered (its own
+Rem "no payback within the series" sentinel); this refuses instead so a
+Rem missing payback reads as a refusal, not a nonsense negative period.
+Def FsCfsPlainAt(word As String, outlay As Number, cfs As List Of Number, f As [ Number List Of Number -- Number ]) As RckWork
+    Let n = Call(f, outlay, cfs)
+    If n < 0 Then
+        RckWorkBad(word & ": THE OUTLAY IS NEVER RECOVERED")
+    Else
+        RckVals({ CutNum(n) })
+
+Def FsIrr(vs As List Of Cell) As RckWork
+    Select Case FsListNum("FINIRR", First(vs))
+        Case Ok(cfs)
+            FsIrrAt(cfs)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("FINIRR did not answer")
+
+Rem FinIrr itself Errors when the bracket -0.9999..10 shows no sign
+Rem change; the same test, checked here first, turns that abort into a
+Rem refusal.
+Def FsIrrAt(cfs As List Of Number) As RckWork
+    If FinNpvOf(cfs, -0.9999) * FinNpvOf(cfs, 10) > 0 Then
+        RckWorkBad("FINIRR: NO SIGN CHANGE IN -0.9999..10 - NO RATE TO FIND")
+    Else
+        RckVals({ CutNum(FinIrr(cfs)) })
+
+Def FsMirr(vs As List Of Cell) As RckWork
+    Select Case FsListNum("FINMIRR", First(vs))
+        Case Ok(cfs)
+            FsMirrRates(cfs, Nth(vs, 2), Nth(vs, 3))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("FINMIRR did not answer")
+
+Def FsMirrRates(cfs As List Of Number, financeC As Cell, reinvestC As Cell) As RckWork
+    Select Case Pair(RckNumArg("FINMIRR", financeC), RckNumArg("FINMIRR", reinvestC))
+        Case Pair(Ok(financeRate), Ok(reinvestRate))
+            FsMirrShaped(cfs, financeRate, reinvestRate)
+        Case Else
+            RckWorkBad("FINMIRR did not answer")
+
+Rem FinMirr itself Errors when there is no negative cash flow to
+Rem discount (pvNeg = 0) — nothing to finance, so no rate answers.
+Def FsMirrShaped(cfs As List Of Number, financeRate As Number, reinvestRate As Number) As RckWork
+    If Not Any(cfs, Fn(c) => c < 0) Then
+        RckWorkBad("FINMIRR: NO NEGATIVE CASH FLOW TO FINANCE")
+    Else
+        RckVals({ CutNum(FinMirr(cfs, financeRate, reinvestRate)) })
+
+Def FsPaybackdisc(vs As List Of Cell) As RckWork
+    Select Case RckNumArg("FINPAYBACKDISC", Nth(vs, 1))
+        Case Ok(outlay)
+            FsPaybackdiscCfs(outlay, Nth(vs, 2), Nth(vs, 3))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("FINPAYBACKDISC did not answer")
+
+Def FsPaybackdiscCfs(outlay As Number, cfsC As Cell, rateC As Cell) As RckWork
+    Select Case FsListNum("FINPAYBACKDISC", cfsC)
+        Case Ok(cfs)
+            FsPaybackdiscRate(outlay, cfs, rateC)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("FINPAYBACKDISC did not answer")
+
+Def FsPaybackdiscRate(outlay As Number, cfs As List Of Number, rateC As Cell) As RckWork
+    Select Case RckNumArg("FINPAYBACKDISC", rateC)
+        Case Ok(rate)
+            FsPaybackdiscAt(outlay, cfs, rate)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("FINPAYBACKDISC did not answer")
+
+Def FsPaybackdiscAt(outlay As Number, cfs As List Of Number, rate As Number) As RckWork
+    Let n = FinPaybackDisc(outlay, cfs, rate)
+    If n < 0 Then
+        RckWorkBad("FINPAYBACKDISC: THE OUTLAY IS NEVER RECOVERED")
+    Else
+        RckVals({ CutNum(n) })
+
+Rem ---- growth measures, margin, break-even, payroll, depreciation ----
+
+Def FsSeedMisc(st As RckState) As RckState
+    Let s1 = RckReg(st, "FINCAGR", 3, RckPure(Fn(vs) => FsN3("FINCAGR", vs, FinCagr)), "( begin end years -- rate )", "Compound annual growth rate.")
+    Let s2 = RckReg(s1, "FINROI", 2, RckPure(Fn(vs) => FsN2("FINROI", vs, FinRoi)), "( initial final -- pct )", "Return on investment, as a percent.")
+    Let s3 = RckReg(s2, "FINRSTAT", 1, RckPure(Fn(vs) => FsRstat(vs)), "( returns -- dict )", "A series' average return and standard deviation: a dict with avgreturn and sd. Refuses on fewer than 2 values.")
+    Let s4 = RckReg(s3, "FINYIELD", 2, RckPure(Fn(vs) => FsN2("FINYIELD", vs, FinYield)), "( annualdividend price -- pct )", "Dividend yield.")
+    Let s5 = RckReg(s4, "FINDIVGROWTH", 1, RckPure(Fn(vs) => FsL1G2("FINDIVGROWTH", First(vs), FinDivGrowth)), "( series -- rate )", "The compound growth rate of a dividend series. Refuses on fewer than 2 values.")
+    Let s6 = RckReg(s5, "FINMARGINOF", 2, RckPure(Fn(vs) => FsN2("FINMARGINOF", vs, FinMarginOf)), "( cost sell -- pct )", "Gross margin as a percent of sell.")
+    Let s7 = RckReg(s6, "FINMARKUPOF", 2, RckPure(Fn(vs) => FsN2("FINMARKUPOF", vs, FinMarkupOf)), "( cost sell -- pct )", "Markup as a percent of cost.")
+    Let s8 = RckReg(s7, "FINSELLFROMMARGIN", 2, RckPure(Fn(vs) => FsN2("FINSELLFROMMARGIN", vs, FinSellFromMargin)), "( cost margin -- sell )", "The sell price that gives cost the target margin.")
+    Let s9 = RckReg(s8, "FINCOSTFROMMARGIN", 2, RckPure(Fn(vs) => FsN2("FINCOSTFROMMARGIN", vs, FinCostFromMargin)), "( sell margin -- cost )", "The cost that gives sell the target margin.")
+    Let s10 = RckReg(s9, "FINBREAKEVENOF", 4, RckPure(Fn(vs) => FsBreakevenof(vs)), "( fixedcosts varcost price targetprofit -- breakeven )", "A dict with units (to reach targetprofit, 0 for plain break-even) and margin. Refuses unless price exceeds varcost.")
+    Let s11 = RckReg(s10, "FINPAYROLLOF", 2, RckPure(Fn(vs) => FsPayrollof(vs)), "( gross rates -- payroll )", "A dict with net and withheld.")
+    Let s12 = RckReg(s11, "FINSL", 3, RckPure(Fn(vs) => FsN3("FINSL", vs, FinSl)), "( cost salvage life -- n )", "The straight-line depreciation per period.")
+    Let s13 = RckReg(s12, "FINSLBOOK", 3, RckPure(Fn(vs) => FsSlbook(vs)), "( cost salvage life -- list )", "The book value at the end of every period, straight-line.")
+    Let s14 = RckReg(s13, "FINSYD", 4, RckPure(Fn(vs) => FsSyd(vs)), "( cost salvage life period -- dep )", "Sum-of-years-digits depreciation for one period: a dict with amount, book and method.")
+    Let s15 = RckReg(s14, "FINDB", 4, RckPure(Fn(vs) => FsDb(vs)), "( cost salvage life period -- n )", "Declining-balance depreciation for one period.")
+    Let s16 = RckReg(s15, "FINFACT", 1, RckPure(Fn(vs) => FsGuardWhole1N("FINFACT", First(vs), FinFact)), "( n -- n! )", "The factorial. Refuses unless n >= 0.")
+    Let s17 = RckReg(s16, "FINCOMB", 2, RckPure(Fn(vs) => FsCombperm(vs, "FINCOMB", FinComb)), "( n r -- count )", "n choose r.")
+    RckReg(s17, "FINPERM", 2, RckPure(Fn(vs) => FsCombperm(vs, "FINPERM", FinPerm)), "( n r -- count )", "The number of ways to arrange r of n, order mattering.")
+
+Def FsGuardWhole1N(word As String, c As Cell, f As [ Number -- Number ]) As RckWork
+    Select Case RckWholeArg(word, c)
+        Case Ok(n)
+            FsGuardWhole1NAt(word, n, f)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Def FsGuardWhole1NAt(word As String, n As Number, f As [ Number -- Number ]) As RckWork
+    If n < 0 Then
+        RckWorkBad(word & ": NEEDS N >= 0")
+    Else
+        RckVals({ CutNum(Call(f, n)) })
+
+Def FsCombperm(vs As List Of Cell, word As String, f As [ Number Number -- Number ]) As RckWork
+    Select Case Pair(RckWholeArg(word, Nth(vs, 1)), RckWholeArg(word, Nth(vs, 2)))
+        Case Pair(Ok(n), Ok(r))
+            FsCombpermAt(word, n, r, f)
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Def FsCombpermAt(word As String, n As Number, r As Number, f As [ Number Number -- Number ]) As RckWork
+    If n < 0 Or r < 0 Or r > n Then
+        RckWorkBad(word & ": NEEDS 0 <= R <= N")
+    Else
+        RckVals({ CutNum(Call(f, n, r)) })
+
+Def FsRstat(vs As List Of Cell) As RckWork
+    Select Case FsListNum("FINRSTAT", First(vs))
+        Case Ok(returns)
+            FsRstatAt(returns)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("FINRSTAT did not answer")
+
+Def FsRstatAt(returns As List Of Number) As RckWork
+    If Length(returns) < 2 Then
+        RckWorkBad("FINRSTAT: NEEDS AT LEAST 2 VALUES")
+    Else
+        RckVals({ FsReturnsCell(FinRStat(returns)) })
+
+Def FsBreakevenof(vs As List Of Cell) As RckWork
+    Select Case FsListNum("FINBREAKEVENOF", CutList(vs))
+        Case Ok(ns)
+            FsBreakevenofAt(Nth(ns, 1), Nth(ns, 2), Nth(ns, 3), Nth(ns, 4))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("FINBREAKEVENOF did not answer")
+
+Def FsBreakevenofAt(fixedCosts As Number, varCost As Number, price As Number, targetProfit As Number) As RckWork
+    If price <= varCost Then
+        RckWorkBad("FINBREAKEVENOF: PRICE DOES NOT COVER THE VARIABLE COST")
+    Else
+        RckVals({ FsBreakEvenCell(FinBreakEvenOf(fixedCosts, varCost, price, targetProfit)) })
+
+Def FsPayrollof(vs As List Of Cell) As RckWork
+    Select Case RckNumArg("FINPAYROLLOF", Nth(vs, 1))
+        Case Ok(gross)
+            FsPayrollofRates(gross, Nth(vs, 2))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("FINPAYROLLOF did not answer")
+
+Def FsPayrollofRates(gross As Number, ratesC As Cell) As RckWork
+    Select Case FsListNum("FINPAYROLLOF", ratesC)
+        Case Ok(rates)
+            RckVals({ FsPayrollCell(FinPayrollOf(gross, rates)) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("FINPAYROLLOF did not answer")
+
+Def FsSlbook(vs As List Of Cell) As RckWork
+    Select Case FsListNum("FINSLBOOK", CutList(vs))
+        Case Ok(ns)
+            RckVals({ FsListOf(FinSlBook(Nth(ns, 1), Nth(ns, 2), Nth(ns, 3))) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("FINSLBOOK did not answer")
+
+Def FsSyd(vs As List Of Cell) As RckWork
+    Select Case FsListNum("FINSYD", CutList(vs))
+        Case Ok(ns)
+            RckVals({ FsDepCell(FinSyd(Nth(ns, 1), Nth(ns, 2), Nth(ns, 3), Nth(ns, 4))) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("FINSYD did not answer")
+
+Def FsDb(vs As List Of Cell) As RckWork
+    Select Case FsListNum("FINDB", CutList(vs))
+        Case Ok(ns)
+            RckVals({ CutNum(FinDb(Nth(ns, 1), Nth(ns, 2), Nth(ns, 3), Nth(ns, 4))) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("FINDB did not answer")
+
+Rem ---- the seed -----------------------------------------------------------
+
+Def RckSeedFin(st As RckState) As RckState
+    Let s1 = FsSeedRates(st)
+    Let s2 = FsSeedTvm(s1)
+    Let s3 = FsSeedStats(s2)
+    Let s4 = FsSeedBudget(s3)
+    Let s5 = FsSeedLoans(s4)
+    Let s6 = FsSeedCapital(s5)
+    FsSeedMisc(s6)

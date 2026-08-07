@@ -1,0 +1,274 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem seedxml.shoddy — reckoner seed: xml.shoddy, converting at the
+Rem bridge
+Rem
+Rem XMLPARSE, XMLTEXT, XMLPRETTY, XMLLOAD and XMLSAVE. Per R4.16 there
+Rem is no TREE cell at the keyboard: an Xml node converts to a tagged
+Rem LIST — { "elem" tag attrs kids }, { "comment" text } and so on, one
+Rem shape per Xml case — except XText, which is exactly as much as a
+Rem STRING already is and travels as one. XcOfXml/XcToXml are the
+Rem whole bridge, and seedhtml.shoddy Includes this file to reuse them
+Rem rather than duplicate the tree shape for a second machine that
+Rem answers the same Xml type.
+Rem
+Rem AN ELEMENT'S ATTRIBUTES ARE A DICT, the same LIST-of-PAIR shape
+Rem seeddict.shoddy already established — DGET/DHAS/DKEYS read an
+Rem element's attrs unchanged.
+Rem
+Rem XMLLOAD and XMLSAVE go through TRYREADFILE/TRYWRITEFILE rather than
+Rem xml.shoddy's own XmlLoad/XmlSave, which are built on the aborting
+Rem ReadFile/WriteFile (R3.5(a)). XMLPARSE reads through XmlRead, the
+Rem total half of XmlParse, for the same reason.
+Rem ==================================================================
+
+Include "xml.shoddy"
+Include "cuttle.shoddy"
+Include "reckoner.shoddy"
+Include "seq.shoddy"
+
+Rem ---- Xml <-> Cell, at the bridge -------------------------------------
+
+Rem Total: every Xml case has a cell shape, XText's the plainest of all.
+Def XcToXml(x As Xml) As Cell
+    Select Case x
+        Case XText(t)
+            CutStr(t)
+        Case XDocument(ns)
+            CutList({ CutStr("document"), CutList(Map(ns, XcToXml)) })
+        Case XComment(b)
+            CutList({ CutStr("comment"), CutStr(b) })
+        Case XCData(r)
+            CutList({ CutStr("cdata"), CutStr(r) })
+        Case XDoctype(dtd)
+            CutList({ CutStr("doctype"), CutStr(dtd) })
+        Case XPI(t, dat)
+            CutList({ CutStr("pi"), CutStr(t), CutStr(dat) })
+        Case XElem(tag, attrs, kids)
+            CutList({ CutStr("elem"), CutStr(tag), CutList(Map(attrs, XcAttrOf)), CutList(Map(kids, XcToXml)) })
+        Case Else
+            CutStr("")
+
+Def XcAttrOf(p As Pair) As Cell
+    CutPair(Pair(CutStr(Fst(p)), CutStr(Snd(p))))
+
+Rem The other direction. A malformed tagged list — the wrong length, a
+Rem kind this bridge does not know — reads back as an empty text node
+Rem rather than refusing: XMLTEXT and XMLPRETTY are RckPure and R3.5(a)
+Rem means neither can abort on a hand-built list that got the shape
+Rem wrong, so the least surprising total answer is silence, not a tree
+Rem missing its writer entirely.
+Def XcOfXml(c As Cell) As Xml
+    Select Case c
+        Case CutStr(t)
+            XText(t)
+        Case CutList(xs)
+            XcOfList(xs)
+        Case Else
+            XText("")
+
+Def XcOfList(xs As List Of Cell) As Xml
+    If IsEmpty(xs) Then
+        XText("")
+    Else
+        XcOfKinded(First(xs), Rest(xs))
+
+Def XcOfKinded(kind As Cell, rest As List Of Cell) As Xml
+    Select Case kind
+        Case CutStr(k)
+            XcOfNamed(k, rest)
+        Case Else
+            XText("")
+
+Def XcOfNamed(k As String, rest As List Of Cell) As Xml
+    If k = "document" Then
+        XcOfDocument(rest)
+    Else
+        If k = "comment" Then
+            XcOfComment(rest)
+        Else
+            If k = "cdata" Then
+                XcOfCdata(rest)
+            Else
+                If k = "doctype" Then
+                    XcOfDoctype(rest)
+                Else
+                    If k = "pi" Then
+                        XcOfPi(rest)
+                    Else
+                        If k = "elem" Then
+                            XcOfElem(rest)
+                        Else
+                            XText("")
+
+Def XcOfDocument(rest As List Of Cell) As Xml
+    Select Case First(rest)
+        Case CutList(ns)
+            XDocument(Map(ns, XcOfXml))
+        Case Else
+            XText("")
+
+Def XcOfComment(rest As List Of Cell) As Xml
+    Select Case First(rest)
+        Case CutStr(b)
+            XComment(b)
+        Case Else
+            XText("")
+
+Def XcOfCdata(rest As List Of Cell) As Xml
+    Select Case First(rest)
+        Case CutStr(r)
+            XCData(r)
+        Case Else
+            XText("")
+
+Def XcOfDoctype(rest As List Of Cell) As Xml
+    Select Case First(rest)
+        Case CutStr(dtd)
+            XDoctype(dtd)
+        Case Else
+            XText("")
+
+Def XcOfPi(rest As List Of Cell) As Xml
+    If Length(rest) < 2 Then
+        XText("")
+    Else
+        XcOfPiVals(Nth(rest, 1), Nth(rest, 2))
+
+Def XcOfPiVals(t As Cell, dat As Cell) As Xml
+    Select Case Pair(t, dat)
+        Case Pair(CutStr(ts), CutStr(ds))
+            XPI(ts, ds)
+        Case Else
+            XText("")
+
+Def XcOfElem(rest As List Of Cell) As Xml
+    If Length(rest) < 3 Then
+        XText("")
+    Else
+        XcOfElemVals(Nth(rest, 1), Nth(rest, 2), Nth(rest, 3))
+
+Def XcOfElemVals(tag As Cell, attrs As Cell, kids As Cell) As Xml
+    Select Case tag
+        Case CutStr(ts)
+            XcOfElemAttrs(ts, attrs, kids)
+        Case Else
+            XText("")
+
+Def XcOfElemAttrs(tag As String, attrs As Cell, kids As Cell) As Xml
+    Select Case attrs
+        Case CutList(al)
+            XcOfElemKids(tag, Map(al, XcAttrPair), kids)
+        Case Else
+            XText("")
+
+Def XcAttrPair(c As Cell) As Pair
+    Select Case c
+        Case CutPair(p)
+            XcAttrPairOf(Fst(p), Snd(p))
+        Case Else
+            Pair("", "")
+
+Def XcAttrPairOf(k As Cell, v As Cell) As Pair
+    Select Case Pair(k, v)
+        Case Pair(CutStr(ks), CutStr(vs))
+            Pair(ks, vs)
+        Case Else
+            Pair("", "")
+
+Def XcOfElemKids(tag As String, attrs As List Of Pair, kids As Cell) As Xml
+    Select Case kids
+        Case CutList(kl)
+            XElem(tag, attrs, Map(kl, XcOfXml))
+        Case Else
+            XText("")
+
+Rem ---- XMLPARSE -----------------------------------------------------------
+
+Def XsSeedXmlparse(st As RckState) As RckState
+    RckReg(st, "XMLPARSE", 1, RckPure(Fn(vs) => XsXmlparse(vs)), "( str -- doc )", "The string, parsed as XML — an element is { \"elem\" tag attrs kids }, attrs a dict.")
+
+Def XsXmlparse(vs As List Of Cell) As RckWork
+    Select Case RckTextArg("XMLPARSE", First(vs))
+        Case Ok(s)
+            XsXmlparseRead(XmlRead(s))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("XMLPARSE did not answer")
+
+Def XsXmlparseRead(r As XRead) As RckWork
+    Select Case r
+        Case XOk(tree)
+            RckVals({ XcToXml(tree) })
+        Case XErr(why, at)
+            RckWorkBad("XMLPARSE: " & why & " AT " & Str(at))
+        Case Else
+            RckWorkBad("XMLPARSE did not answer")
+
+Rem ---- XMLTEXT ------------------------------------------------------------
+
+Def XsSeedXmltext(st As RckState) As RckState
+    RckReg(st, "XMLTEXT", 1, RckPure(Fn(vs) => RckVals({ CutStr(XmlText(XcOfXml(First(vs)))) })), "( doc -- str )", "The value, written out as XML text.")
+
+Rem ---- XMLPRETTY ------------------------------------------------------------
+
+Def XsSeedXmlpretty(st As RckState) As RckState
+    RckReg(st, "XMLPRETTY", 2, RckPure(Fn(vs) => XsXmlpretty(vs)), "( doc n -- str )", "The value, written out as XML text indented n spaces per level.")
+
+Def XsXmlpretty(vs As List Of Cell) As RckWork
+    Select Case RckWholeArg("XMLPRETTY", Nth(vs, 2))
+        Case Ok(n)
+            RckVals({ CutStr(XmlPretty(XcOfXml(Nth(vs, 1)), n)) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("XMLPRETTY did not answer")
+
+Rem ---- XMLLOAD --------------------------------------------------------------
+
+Def XsSeedXmlload(st As RckState) As RckState
+    RckReg(st, "XMLLOAD", 1, RckTouch(Fn(vs) => XsXmlload(vs)), "( path -- doc )", "The file, read and parsed as XML — a refusal names why it could not be, whether that is the file or the syntax.")
+
+Def XsXmlload(vs As List Of Cell) As RckWork
+    Select Case RckTextArg("XMLLOAD", First(vs))
+        Case Ok(path)
+            XsXmlloadRead(TryReadFile(path))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("XMLLOAD did not answer")
+
+Def XsXmlloadRead(r As Result) As RckWork
+    Select Case r
+        Case Ok(text)
+            XsXmlparseRead(XmlRead(text))
+        Case Err(w, at)
+            RckWorkBad("XMLLOAD: cannot read the file")
+        Case Else
+            RckWorkBad("XMLLOAD: cannot read the file")
+
+Rem ---- XMLSAVE --------------------------------------------------------------
+
+Def XsSeedXmlsave(st As RckState) As RckState
+    RckReg(st, "XMLSAVE", 2, RckTouch(Fn(vs) => XsXmlsave(vs)), "( path doc -- ok )", "Write the value to path as XML text; True on success.")
+
+Def XsXmlsave(vs As List Of Cell) As RckWork
+    Select Case RckTextArg("XMLSAVE", Nth(vs, 1))
+        Case Ok(path)
+            RckVals({ CutBool(TryWriteFile(path, XmlText(XcOfXml(Nth(vs, 2))))) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("XMLSAVE did not answer")
+
+Rem ---- the seed -----------------------------------------------------------
+
+Def RckSeedXml(st As RckState) As RckState
+    Let s1 = XsSeedXmlparse(st)
+    Let s2 = XsSeedXmltext(s1)
+    Let s3 = XsSeedXmlpretty(s2)
+    Let s4 = XsSeedXmlload(s3)
+    XsSeedXmlsave(s4)

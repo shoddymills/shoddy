@@ -1,0 +1,187 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem seedsimplex.shoddy — reckoner seed: simplex.shoddy, converting at
+Rem the bridge
+Rem
+Rem LPPROBLEM and LPSOLVE. Per R4.16 there is no PROBLEM or SOLUTION
+Rem cell at the keyboard: both are dicts, the same LIST-of-PAIR shape
+Rem seeddict.shoddy already established, so DGET "status" answers a
+Rem solution's status and DGET "x" its variables without this seed
+Rem naming a word for either.
+Rem
+Rem   { ("costs" list) ("a" matrix) ("rhs" list) } LPSOLVE
+Rem     -> { ("status" s) ("x" list) ("cost" n) ("dualprices" list)
+Rem          ("reduced" list) ("iterations" n) }
+Rem
+Rem LPPROBLEM checks Costs against A's column count and Rhs against A's
+Rem row count before building anything — Optimize is total over a
+Rem well-formed Problem (no Error in simplex.shoddy at all), and a
+Rem mismatched one is exactly the malformed input R3.5(a) means this
+Rem seed should refuse rather than hand onward.
+Rem
+Rem NOT BRIDGED: mps.shoddy's own file/text parsing. ParseMps and
+Rem LoadMps Error at a dozen different malformed-input points (an
+Rem unsupported section, a bad row sense, more than one objective row)
+Rem and mps.shoddy offers no total counterpart the way json.shoddy's
+Rem JsonRead or xml.shoddy's XmlRead do — there is nothing here to
+Rem pre-flight against, so wrapping them would be a seed that can abort
+Rem the session on a malformed file, which is the one thing every other
+Rem seed in this file exists to rule out. A Problem built from LPPROBLEM
+Rem is the safe way onto this stack.
+Rem ==================================================================
+
+Include "simplex.shoddy"
+Include "matrix.shoddy"
+Include "cuttle.shoddy"
+Include "reckoner.shoddy"
+Include "seq.shoddy"
+
+Rem ---- a LIST cell as List Of Number ----------------------------------
+
+Def LpListNum(word As String, c As Cell) As Result
+    Select Case RckListArg(word, c)
+        Case Ok(xs)
+            LpNumsAt(word, xs, { })
+        Case Err(w, at)
+            Err(w, at)
+        Case Else
+            Err(word & " did not answer", 0)
+
+Def LpNumsAt(word As String, xs As List Of Cell, acc As List Of Number) As Result
+    If IsEmpty(xs) Then
+        Ok(acc)
+    Else
+        LpNumsNext(word, xs, acc, First(xs))
+
+Def LpNumsNext(word As String, xs As List Of Cell, acc As List Of Number, c As Cell) As Result
+    Select Case c
+        Case CutNum(x)
+            LpNumsAt(word, Rest(xs), Append(acc, x))
+        Case Else
+            Err(RckKindWhy(word, "a LIST of NUMBERs", c), 0)
+
+Rem ---- LPPROBLEM ------------------------------------------------------
+
+Def LpSeedLpproblem(st As RckState) As RckState
+    RckReg(st, "LPPROBLEM", 3, RckPure(Fn(vs) => LpLpproblem(vs)), "( costs a rhs -- problem )", "A linear program: minimize costs . x s.t. a x >= rhs, x >= 0. Refuses if costs or rhs do not match a's shape.")
+
+Def LpLpproblem(vs As List Of Cell) As RckWork
+    Select Case LpListNum("LPPROBLEM", Nth(vs, 1))
+        Case Ok(costs)
+            LpLpproblemA(costs, Nth(vs, 2), Nth(vs, 3))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("LPPROBLEM did not answer")
+
+Def LpLpproblemA(costs As List Of Number, aCell As Cell, rhsCell As Cell) As RckWork
+    Select Case aCell
+        Case CutMat(a)
+            LpLpproblemRhs(costs, a, rhsCell)
+        Case Else
+            RckWorkBad(RckKindWhy("LPPROBLEM", "a MATRIX", aCell))
+
+Def LpLpproblemRhs(costs As List Of Number, a As Matrix, rhsCell As Cell) As RckWork
+    Select Case LpListNum("LPPROBLEM", rhsCell)
+        Case Ok(rhs)
+            LpLpproblemShaped(costs, a, rhs)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("LPPROBLEM did not answer")
+
+Def LpLpproblemShaped(costs As List Of Number, a As Matrix, rhs As List Of Number) As RckWork
+    If Length(costs) <> Cols(a) Then
+        RckWorkBad("LPPROBLEM: COSTS HAS " & Str(Length(costs)) & " ENTRIES, A HAS " & Str(Cols(a)) & " COLUMNS")
+    Else
+        If Length(rhs) <> Rows(a) Then
+            RckWorkBad("LPPROBLEM: RHS HAS " & Str(Length(rhs)) & " ENTRIES, A HAS " & Str(Rows(a)) & " ROWS")
+        Else
+            RckVals({ LpProblemCell(costs, a, rhs) })
+
+Def LpProblemCell(costs As List Of Number, a As Matrix, rhs As List Of Number) As Cell
+    CutList({ LpEntry("costs", CutList(Map(costs, CutNum))), LpEntry("a", CutMat(a)), LpEntry("rhs", CutList(Map(rhs, CutNum))) })
+
+Def LpEntry(k As String, v As Cell) As Cell
+    CutPair(Pair(CutStr(k), v))
+
+Rem ---- LPSOLVE ----------------------------------------------------------
+
+Def LpSeedLpsolve(st As RckState) As RckState
+    RckReg(st, "LPSOLVE", 1, RckPure(Fn(vs) => LpLpsolve(vs)), "( problem -- solution )", "The optimum: minimize costs . x s.t. a x >= rhs, x >= 0. status is OPTIMAL, UNBOUNDED, INFEASIBLE or MAXITER.")
+
+Def LpLpsolve(vs As List Of Cell) As RckWork
+    Select Case RckListArg("LPSOLVE", First(vs))
+        Case Ok(members)
+            LpLpsolveDict(members)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("LPSOLVE did not answer")
+
+Rem members is a LIST of CutPair cells, seeddict's own shape — not the
+Rem raw List Of Pair dict.shoddy's DictGet reads, so this walks it by
+Rem hand rather than calling that.
+Def LpFind(members As List Of Cell, key As String) As Cell
+    If IsEmpty(members) Then
+        CutBool(False)
+    Else
+        LpFindAt(members, key, First(members))
+
+Def LpFindAt(members As List Of Cell, key As String, c As Cell) As Cell
+    Select Case c
+        Case CutPair(p)
+            LpFindKeyed(members, key, Fst(p), Snd(p))
+        Case Else
+            LpFind(Rest(members), key)
+
+Def LpFindKeyed(members As List Of Cell, key As String, k As Cell, v As Cell) As Cell
+    Select Case k
+        Case CutStr(ks)
+            If ks = key Then
+                v
+            Else
+                LpFind(Rest(members), key)
+        Case Else
+            LpFind(Rest(members), key)
+
+Def LpLpsolveDict(members As List Of Cell) As RckWork
+    Select Case Pair(LpFind(members, "costs"), Pair(LpFind(members, "a"), LpFind(members, "rhs")))
+        Case Pair(CutList(costsC), Pair(CutMat(a), CutList(rhsC)))
+            LpLpsolveTyped(costsC, a, rhsC)
+        Case Else
+            RckWorkBad("LPSOLVE: NOT A PROBLEM — BUILD ONE WITH LPPROBLEM")
+
+Def LpLpsolveTyped(costsC As List Of Cell, a As Matrix, rhsC As List Of Cell) As RckWork
+    Select Case LpListNum("LPSOLVE", CutList(costsC))
+        Case Ok(costs)
+            LpLpsolveRhs(costs, a, rhsC)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("LPSOLVE did not answer")
+
+Def LpLpsolveRhs(costs As List Of Number, a As Matrix, rhsC As List Of Cell) As RckWork
+    Select Case LpListNum("LPSOLVE", CutList(rhsC))
+        Case Ok(rhs)
+            RckVals({ LpSolutionCell(Optimize(Problem(ToArray(costs), a, ToArray(rhs)))) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("LPSOLVE did not answer")
+
+Def LpSolutionCell(sol As Solution) As Cell
+    CutList({ LpEntry("status", CutStr(Status(sol))),
+              LpEntry("x", CutList(Map(ToList(X(sol)), CutNum))),
+              LpEntry("cost", CutNum(Cost(sol))),
+              LpEntry("dualprices", CutList(Map(ToList(DualPrices(sol)), CutNum))),
+              LpEntry("reduced", CutList(Map(ToList(Reduced(sol)), CutNum))),
+              LpEntry("iterations", CutNum(Iterations(sol))) })
+
+Rem ---- the seed -----------------------------------------------------------
+
+Def RckSeedSimplex(st As RckState) As RckState
+    Let s1 = LpSeedLpproblem(st)
+    LpSeedLpsolve(s1)

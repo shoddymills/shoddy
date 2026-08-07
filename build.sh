@@ -109,6 +109,8 @@ machine_suites() {
     "$MILL" --no-window run tst/seedscribblertest.shoddy </dev/null
     echo "==> tst/seedturtletest.shoddy"
     "$MILL" --no-window run tst/seedturtletest.shoddy </dev/null
+    echo "==> tst/seedplottertest.shoddy"
+    "$MILL" --no-window run tst/seedplottertest.shoddy </dev/null
     echo "==> tst/isamtest.shoddy"
     "$MILL" run tst/isamtest.shoddy </dev/null
     echo "==> tst/isamdump.shoddy"

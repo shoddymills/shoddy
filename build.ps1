@@ -219,6 +219,9 @@ function Invoke-MachineSuites {
     Write-Host '==> tst/seedturtletest.shoddy'
     & $Mill --no-window run tst/seedturtletest.shoddy
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    Write-Host '==> tst/seedplottertest.shoddy'
+    & $Mill --no-window run tst/seedplottertest.shoddy
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     Write-Host '==> tst/isamtest.shoddy'
     & $Mill run tst/isamtest.shoddy
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

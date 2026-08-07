@@ -1,0 +1,198 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem seedplottertest.shoddy — test program for seedplotter.shoddy
+Rem
+Rem Assert-driven, in the cuttletest / reckonertest / seedtest pattern:
+Rem it prints what it is doing and stops the run at the first assertion
+Rem that fails, ending with ALL ASSERTIONS PASSED when it does not.
+Rem
+Rem WHAT IS WORTH ASSERTING HERE is not the shape of a bar — a PNG shows
+Rem that and the eye judges it better than any assertion could. It is
+Rem THE GUARD LIST, because plotter aborts in seven places and only
+Rem states three of them. Every one of the seven is walked below, and
+Rem four of them are faults the machine never announces:
+Rem
+Rem   * Minimum and Maximum of an EMPTY list have no answer, and every
+Rem     chart reaches for one or both;
+Rem   * BarChart divides by the number of values, so an empty set
+Rem     divides by zero;
+Rem   * BarChart and PieChart index labels by a value's position, so
+Rem     fewer labels than values reads past the end;
+Rem   * Zip stops at the shorter list, so a scatter of mismatched
+Rem     lengths would draw PART of the data — a wrong chart rather than
+Rem     a refused one, which is the outcome worth the most trouble.
+Rem
+Rem A guard list that covered only the three plotter names would leave a
+Rem session four ways to lose its work, so the four unnamed ones are
+Rem asserted as carefully as the three named.
+Rem
+Rem IT RUNS EITHER WAY, as the scribbler and turtle suites do: whether a
+Rem window can be made depends on how the mill was started and whether
+Rem there is a display, so the suite asks and asserts whichever half.
+Rem
+Rem Run: bin\mill --no-window run tst\seedplottertest.shoddy
+Rem ==================================================================
+
+Include "../machines/cuttle.shoddy"
+Include "../machines/reckoner.shoddy"
+Include "../machines/seq.shoddy"
+Include "../machines/str.shoddy"
+Include "../machines/seeds/seedplotter.shoddy"
+
+Rem ---- reading an answer ------------------------------------------------
+
+Def Ran(st As RckState, line As String) As RckState
+    Select Case RckEval(st, line)
+        Case RckNext(st2, out)
+            st2
+        Case RckStop(st2, why, out)
+            st2
+        Case Else
+            st
+
+Def Runs(st As RckState, lines As List Of String) As RckState
+    Fold(lines, st, Ran)
+
+Def Bad(st As RckState, line As String) As Boolean
+    Select Case RckEval(st, line)
+        Case RckStop(st2, why, out)
+            True
+        Case Else
+            False
+
+Def Why(st As RckState, line As String) As String
+    Select Case RckEval(st, line)
+        Case RckStop(st2, why, out)
+            why
+        Case Else
+            ""
+
+Def Text(st As RckState) As String
+    Join(Map(CutCells(RckStack(st)), Fn(c) => CutShow(c, RckFmt(st))), " | ")
+
+Def Q(s As String) As String
+    Chr(34) & s & Chr(34)
+
+Def Refuses(st As RckState, line As String, why As String) As Boolean
+    Bad(st, line) And Instr(Why(st, line), why) > 0 And Text(Ran(st, line)) = Text(st) And Text(Ran(Ran(st, line), "1 1 +")) = Text(Ran(st, "1 1 +"))
+
+Def PngPath() As String
+    "tst/csv/_seedplottertest.png"
+
+Def Wipe()
+    If FileExists(PngPath()) Then
+        DeleteFile(PngPath())
+
+Def Labels() As String
+    "{ " & Q("Mon") & " " & Q("Tue") & " " & Q("Wed") & " }"
+
+Def Values() As String
+    "{ 12 19 7 }"
+
+Def Xs() As String
+    "{ 3 1 4 1 5 9 2 6 }"
+
+Def Main()
+    Wipe()
+    Let s0 = RckSeedPlotter(RckNew())
+    Let g = Ran(s0, "1 2")
+
+    Print("--- the seed is in the dictionary, grouped and documented ---")
+    Assert(RckKnows(s0, "PLOTOPEN") And RckKnows(s0, "PLOTBAR") And RckKnows(s0, "PLOTHISTOGRAM"), "THE WORDS ARE THERE")
+    Assert(Contains(RckWords(s0), "-- seed-plotter --"), "AND THEY HAVE A GROUP OF THEIR OWN")
+    Assert(All(RckDict(s0), Fn(e) => WordEffect(e) <> "" And WordDesc(e) <> ""), "NO WORD IS WITHOUT AN EFFECT LINE AND A DESCRIPTION")
+    Assert(All(RckDict(s0), Fn(e) => Length(RckHelp(s0, WordName(e))) = 3), "AND HELP ANSWERS FOR EVERY ONE OF THEM")
+    Assert(All(RckDict(s0), Fn(e) => Instr(Lower(WordEffect(e)), "handle") = 0), "NO WORD'S EFFECT STRING MENTIONS A HANDLE")
+    Rem Every chart draws its own axes, so a session that could draw them
+    Rem separately could only draw them twice.
+    Assert(Not RckKnows(s0, "PLOTAXES"), "AND THERE IS NO PLOTAXES — EVERY CHART DRAWS ITS OWN")
+    Assert(Not RckKnows(s0, "PLOTCLOSE"), "AND NO PLOTCLOSE — CLOSE IS THE CORE'S WORD AND THE ONLY ONE")
+
+    Print("--- the guards answered before anything is opened ---")
+    Rem The margins are fixed, so a window smaller than them has no plot
+    Rem area at all and every bar comes out at a negative width.
+    Assert(Refuses(g, "10 10 " & Q("x") & " PLOTOPEN", "A CHART NEEDS AT LEAST"), "A WINDOW SMALLER THAN ITS OWN MARGINS")
+    Assert(Refuses(g, "-5 480 " & Q("x") & " PLOTOPEN", "PLOTOPEN"), "AND A NEGATIVE SIZE")
+    Assert(Refuses(g, Q("nope") & " " & Xs() & " 5 PLOTHISTOGRAM", "THERE IS NOTHING OPEN CALLED nope"), "A NAME THAT WAS NEVER BOUND")
+    Let mixed = RckBind(g, "db", "recio", 0, CutNum(0), Fn() => True)
+    Assert(Refuses(mixed, Q("db") & " PLOTBLIT", "db IS A RECIO, NOT A PLOT"), "AND A NAME BOUND BY ANOTHER KIND ENTIRELY")
+
+    Let opened = Ran(s0, "640 480 " & Q("p") & " PLOTOPEN")
+    If RckBoundTo(opened, "p") Then
+        Charting(opened)
+    Else
+        NoDisplay(s0, opened)
+
+    Wipe()
+    Print("")
+    Print("ALL ASSERTIONS PASSED")
+
+Def NoDisplay(s0 As RckState, opened As RckState)
+    Print("--- no window backend here, so the REFUSAL is what is asserted ---")
+    Assert(Bad(s0, "640 480 " & Q("p") & " PLOTOPEN"), "OPENING WITH NO BACKEND REFUSES")
+    Assert(Instr(Why(s0, "640 480 " & Q("p") & " PLOTOPEN"), "CANNOT OPEN A WINDOW") > 0, "AND SAYS SO IN WORDS")
+    Assert(Text(Ran(opened, "6 7 *")) = "42", "AND THE SESSION IS STILL RUNNING")
+    Assert(IsEmpty(RckBoundNames(opened)), "AND NOTHING WAS LEFT BOUND BY THE ATTEMPT")
+
+Def Charting(o1 As RckState)
+    Print("--- a chart window opens, and every chart draws on it ---")
+    Assert(Text(Ran(o1, "BOUND")) = "{ ( " & Q("p") & " " & Q("plotter") & " ) }", "BOUND SHOWS IT AS A NAME/KIND PAIR")
+    Assert(Text(o1) = "", "AND PLOTOPEN LEFT NOTHING ON THE STACK")
+    Rem Each chart word answers nothing: the session holds a name, not a
+    Rem surface, so there is nothing to drop.
+    Assert(Text(Ran(o1, Q("p") & " " & Labels() & " " & Values() & " PLOTBAR")) = "", "PLOTBAR DRAWS AND ANSWERS NOTHING")
+    Assert(Not Bad(o1, Q("p") & " " & Labels() & " " & Values() & " PLOTPIE"), "AND SO DOES PLOTPIE")
+    Assert(Not Bad(o1, Q("p") & " " & Xs() & " 4 PLOTHISTOGRAM"), "AND PLOTHISTOGRAM")
+    Assert(Not Bad(o1, Q("p") & " " & Xs() & " PLOTBOX"), "AND PLOTBOX")
+    Assert(Not Bad(o1, Q("p") & " " & Xs() & " " & Xs() & " PLOTSCATTER"), "AND PLOTSCATTER")
+    Assert(Not Bad(o1, Q("p") & " " & Q("Bales carded") & " PLOTTITLE"), "AND PLOTTITLE")
+
+    Print("--- the three refusals plotter names ---")
+    Assert(Refuses(o1, Q("p") & " " & Xs() & " 0 PLOTHISTOGRAM", "AT LEAST ONE BIN"), "A HISTOGRAM WITH NO BINS")
+    Assert(Refuses(o1, Q("p") & " " & Labels() & " { 1 -2 3 } PLOTBAR", "MUST BE 0 OR MORE"), "A BAR CHART WITH A NEGATIVE VALUE")
+    Assert(Refuses(o1, Q("p") & " " & Labels() & " { 1 0 3 } PLOTPIE", "MUST BE ABOVE 0"), "AND A PIE WITH A SLICE OF NOTHING")
+
+    Print("--- and the four it does NOT name, which are the dangerous ones ---")
+    Rem Minimum and Maximum of an empty list have no answer.
+    Assert(Refuses(o1, Q("p") & " { } 4 PLOTHISTOGRAM", "THERE ARE NO NUMBERS TO PLOT"), "A HISTOGRAM OF NOTHING, WHICH WOULD TAKE THE MAXIMUM OF AN EMPTY LIST")
+    Assert(Refuses(o1, Q("p") & " { } PLOTBOX", "THERE ARE NO NUMBERS TO PLOT"), "AND A BOX PLOT OF NOTHING")
+    Assert(Refuses(o1, Q("p") & " { } { } PLOTSCATTER", "THERE ARE NO NUMBERS TO PLOT"), "AND A SCATTER OF NOTHING")
+    Rem An empty bar chart divides by the number of values.
+    Assert(Refuses(o1, Q("p") & " { } { } PLOTBAR", "THERE ARE NO VALUES TO PLOT"), "AND A BAR CHART OF NOTHING, WHICH WOULD DIVIDE BY ZERO")
+    Rem Fewer labels than values indexes past the end of the labels.
+    Assert(Refuses(o1, Q("p") & " { " & Q("a") & " } { 1 2 3 } PLOTBAR", "1 LABELS AND 3 VALUES"), "FEWER LABELS THAN VALUES, NAMING BOTH COUNTS")
+    Assert(Refuses(o1, Q("p") & " " & Labels() & " { 1 2 } PLOTPIE", "3 LABELS AND 2 VALUES"), "AND MORE LABELS THAN VALUES")
+    Rem Zip stops at the shorter list, so this would plot PART of the
+    Rem data and look like a chart — the worst outcome of the seven.
+    Assert(Refuses(o1, Q("p") & " { 1 2 3 } { 1 2 } PLOTSCATTER", "3 X VALUES AND 2 Y VALUES"), "AND A SCATTER THAT DOES NOT PAIR UP, WHICH WOULD OTHERWISE DRAW HALF THE DATA")
+
+    Print("--- argument kinds ---")
+    Assert(Refuses(o1, Q("p") & " " & Q("notalist") & " 4 PLOTHISTOGRAM", "PLOTHISTOGRAM"), "DATA THAT IS NOT A LIST")
+    Assert(Refuses(o1, Q("p") & " { 1 " & Q("two") & " 3 } 4 PLOTHISTOGRAM", "NUMBER"), "A LIST WITH SOMETHING THAT IS NOT A NUMBER IN IT")
+    Assert(Refuses(o1, Q("p") & " { 1 2 3 } " & Values() & " PLOTBAR", "STRING"), "AND LABELS THAT ARE NOT STRINGS")
+
+    Print("--- saving ---")
+    Let drawn = Runs(o1, { Q("p") & " " & Labels() & " " & Values() & " PLOTBAR",
+                           Q("p") & " " & Q("Bales carded this week") & " PLOTTITLE",
+                           Q("p") & " PLOTBLIT" })
+    Let p1 = Ran(drawn, Q("p") & " " & Q(PngPath()) & " PLOTSAVE")
+    Assert(Text(p1) = "True", "PLOTSAVE ANSWERS TRUE ON A PATH IT CAN WRITE")
+    Assert(Left(ReadFile(PngPath()), 4) = Chr(137) & "PNG", "AND WRITES A PNG, BY ITS OWN MAGIC NUMBER")
+    Rem A 640 by 480 chart with five colours in it is not a few hundred
+    Rem bytes; an empty white rectangle would be.
+    Assert(Len(ReadFile(PngPath())) > 1000, "AND THERE IS A CHART IN IT, NOT A BLANK RECTANGLE")
+    Assert(Text(Ran(drawn, Q("p") & " " & Q("tst/csv/no/such/dir/x.png") & " PLOTSAVE")) = "False", "AND AN UNWRITABLE PATH ANSWERS FALSE RATHER THAN ABORTING")
+
+    Print("--- UNDO cannot strand a chart window ---")
+    Let u1 = Runs(p1, { "DROP", "1", "2", "3" })
+    Let u2 = Runs(u1, { "UNDO", "UNDO", "UNDO" })
+    Assert(RckBoundTo(u2, "p"), "AFTER UNDOING ALL OF IT THE WINDOW IS STILL OPEN")
+    Assert(Not Bad(u2, Q("p") & " " & Xs() & " PLOTBOX"), "AND STILL DRAWABLE BY NAME")
+
+    Print("--- CLOSE is the core's word ---")
+    Let c1 = Ran(u2, Q("p") & " CLOSE")
+    Assert(Not RckBoundTo(c1, "p"), "CLOSE LETS THE NAME GO")
+    Assert(Refuses(c1, Q("p") & " PLOTBLIT", "THERE IS NOTHING OPEN CALLED p"), "AND THE WORDS SAY SO AFTERWARDS")
+    Assert(Text(Ran(c1, "CLEAR 6 7 *")) = "42", "AND THE SESSION GOES ON EVALUATING")

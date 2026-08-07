@@ -1,0 +1,433 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem seedplotter.shoddy — reckoner seed: plotter.shoddy, a chart from
+Rem the numbers you already have on the stack
+Rem
+Rem A session that has just computed a column of numbers is one word
+Rem away from a histogram of them. That is the whole case for this seed:
+Rem every other charting story starts with "now write a program".
+Rem
+Rem THE SIMPLEST OF THE RESOURCE SEEDS, and worth saying why. plotter's
+Rem words take and return a SCRIBBLER — it has no state of its own at
+Rem all, no position like a turtle's and no layout remembered between
+Rem calls. So the binding is a scribbler slot and nothing else, exactly
+Rem as seedscribbler's is, and RckUpdated never comes into it.
+Rem
+Rem ---- THE THREE ABORTS, AND THE FOUR THE MACHINE DOES NOT NAME -----
+Rem
+Rem plotter Errors three times: a histogram with no bins, a bar chart
+Rem with a negative value, a pie chart with a value that is not
+Rem positive. Each is pre-flighted here.
+Rem
+Rem It also aborts in four places it does not announce, and those are
+Rem the ones worth finding before a session does. Minimum and Maximum of
+Rem an EMPTY list have no answer, so every chart needs data; BarChart
+Rem divides by the number of values, so an empty one divides by zero;
+Rem and BarChart and PieChart both index labels by the value's position,
+Rem so fewer labels than values reads past the end. A guard list that
+Rem only covered the stated three would leave a session four ways to
+Rem lose its work.
+Rem
+Rem ---- WHAT A CHART IS FOR, HERE ------------------------------------
+Rem
+Rem Each chart word draws onto the window and answers NOTHING, in the
+Rem shape seedscribbler and seedturtle set: the session holds a name,
+Rem not a surface, so there is nothing to drop. PLOTBLIT shows it and
+Rem PLOTSAVE writes a PNG — and a session that has drawn and seen
+Rem nothing has forgotten PLOTBLIT.
+Rem
+Rem THE CHARTS DRAW THEIR OWN AXES, so there is no PLOTAXES word: every
+Rem one of the five calls DrawAxes itself, and a session that could draw
+Rem axes separately could only draw them twice.
+Rem ==================================================================
+
+Include "plotter.shoddy"
+Include "cuttle.shoddy"
+Include "reckoner.shoddy"
+Include "seq.shoddy"
+
+Def PsKindName() As String
+    "plotter"
+
+Rem ---- finding the plot a word was named --------------------------------
+
+Def PsFound(word As String, st As RckState, c As Cell) As Result
+    Select Case RckTextArg(word, c)
+        Case Ok(nm)
+            PsFoundAt(word, st, nm)
+        Case Err(w, at)
+            Err(w, at)
+        Case Else
+            Err(word & " did not answer", 0)
+
+Def PsFoundAt(word As String, st As RckState, nm As String) As Result
+    If Not RckBoundTo(st, nm) Then
+        Err(word & ": THERE IS NOTHING OPEN CALLED " & nm, 0)
+    Else
+        PsFoundKind(word, First(RckResOf(st, nm)), nm)
+
+Def PsFoundKind(word As String, r As RckRes, nm As String) As Result
+    If ResKindOf(r) <> PsKindName() Then
+        Err(word & ": " & nm & " IS A " & Upper(ResKindOf(r)) & ", NOT A PLOT", 0)
+    Else
+        Ok(r)
+
+Def PsWindow(r As RckRes) As Scribbler
+    ScribblerOf(ResHandOf(r))
+
+Rem ---- PLOTOPEN ----------------------------------------------------------
+
+Def PsSeedOpen(st As RckState) As RckState
+    Let s1 = RckReg(st, "PLOTOPEN", 3, RckPureOver(Fn(s, vs) => PsOpen(s, vs)), "( w h name -- )", "Open a w by h chart window, white, and keep it under that name. CLOSE shuts it; BOUND lists what is open. 640 by 480 is a comfortable size.")
+    Let s2 = RckReg(s1, "PLOTTITLE", 2, RckPureOver(Fn(s, vs) => PsTitle(s, vs)), "( name s -- )", "Write s across the top of the chart.")
+    Let s3 = RckReg(s2, "PLOTBLIT", 1, RckPureOver(Fn(s, vs) => PsBlit(s, vs)), "( name -- )", "Show what has been drawn. A chart nobody can see is one nobody blitted.")
+    RckReg(s3, "PLOTSAVE", 2, RckPureOver(Fn(s, vs) => PsSave(s, vs)), "( name path -- ok )", "Write the chart to a PNG file; True on success, False on a path it cannot write.")
+
+Def PsOpen(st As RckState, vs As List Of Cell) As RckWork
+    Select Case Pair(RckWholeArg("PLOTOPEN", Nth(vs, 1)), RckWholeArg("PLOTOPEN", Nth(vs, 2)))
+        Case Pair(Ok(wid), Ok(hgt))
+            PsOpenNamed(st, wid, hgt, Nth(vs, 3))
+        Case Else
+            RckWorkBad("PLOTOPEN needs a width, a height and a name")
+
+Def PsOpenNamed(st As RckState, wid As Number, hgt As Number, nc As Cell) As RckWork
+    Select Case RckTextArg("PLOTOPEN", nc)
+        Case Ok(nm)
+            PsOpenFree(st, wid, hgt, nm)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("PLOTOPEN did not answer")
+
+Def PsOpenFree(st As RckState, wid As Number, hgt As Number, nm As String) As RckWork
+    If RckBoundTo(st, nm) Then
+        RckWorkBad("PLOTOPEN: THERE IS ALREADY SOMETHING OPEN CALLED " & nm)
+    Else
+        PsOpenSized(wid, hgt, nm)
+
+Rem The margins are fixed — 60 left, 40 top and so on — so a window much
+Rem smaller than them has no plot area at all and every bar is drawn at a
+Rem negative width. Refused with the smallest that works rather than left
+Rem to come out as a blank rectangle.
+Def PsOpenSized(wid As Number, hgt As Number, nm As String) As RckWork
+    If wid < PsLeastWide() Or hgt < PsLeastTall() Then
+        RckWorkBad("PLOTOPEN: A CHART NEEDS AT LEAST " & Str(PsLeastWide()) & " BY " & Str(PsLeastTall()) & " — THE MARGINS TAKE THE REST")
+    Else
+        PsOpenAt(wid, hgt, nm)
+
+Rem The margins plus a plot area worth having. MarginLeft and the rest
+Rem are plotter's own, so this moves with them.
+Def PsLeastWide() As Number
+    MarginLeft() + MarginRight() + 40
+
+Def PsLeastTall() As Number
+    MarginTop() + MarginBottom() + 40
+
+Rem NewPlot goes through the ABORTING ScribblerOpen, so the window is
+Rem opened through the guarded one and the white fill — the other half
+Rem of what NewPlot does — is done here.
+Def PsOpenAt(wid As Number, hgt As Number, nm As String) As RckWork
+    Select Case TryScribblerOpen(wid, hgt)
+        Case Ok(slot)
+            PsOpenFilled(slot, nm, ScribblerFill(ScribblerOf(slot), 255, 255, 255))
+        Case Err(w, at)
+            RckWorkBad("PLOTOPEN: " & w)
+        Case Else
+            RckWorkBad("PLOTOPEN did not answer")
+
+Def PsOpenFilled(slot As Number, nm As String, sc As Scribbler) As RckWork
+    RckOpened(nm, PsKindName(), slot, CutNum(0), Fn() => ScribblerShut(slot))
+
+Rem ---- the words that are not charts -------------------------------------
+
+Def PsTitle(st As RckState, vs As List Of Cell) As RckWork
+    Select Case Pair(PsFound("PLOTTITLE", st, Nth(vs, 1)), RckTextArg("PLOTTITLE", Nth(vs, 2)))
+        Case Pair(Ok(r), Ok(s))
+            PsDrew(PlotTitle(PsWindow(r), s))
+        Case Else
+            RckWorkBad("PLOTTITLE needs a name and a STRING")
+
+Def PsBlit(st As RckState, vs As List Of Cell) As RckWork
+    Select Case PsFound("PLOTBLIT", st, First(vs))
+        Case Ok(r)
+            PsDrew(ScribblerBlit(PsWindow(r)))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("PLOTBLIT did not answer")
+
+Rem Every chart word ends here: the surface was mutated in place, so the
+Rem Scribbler the machine threads back has nowhere to go and the session
+Rem gets nothing rather than something to DROP.
+Def PsDrew(sc As Scribbler) As RckWork
+    RckVals({ })
+
+Def PsSave(st As RckState, vs As List Of Cell) As RckWork
+    Select Case Pair(PsFound("PLOTSAVE", st, Nth(vs, 1)), RckTextArg("PLOTSAVE", Nth(vs, 2)))
+        Case Pair(Ok(r), Ok(path))
+            PsSaveTo(r, path)
+        Case Else
+            RckWorkBad("PLOTSAVE needs a name and a path")
+
+Def PsSaveTo(r As RckRes, path As String) As RckWork
+    If Not TryWriteFile(path, "") Then
+        RckVals({ CutBool(False) })
+    Else
+        PsSaved(ScribblerSave(PsWindow(r), path))
+
+Def PsSaved(sc As Scribbler) As RckWork
+    RckVals({ CutBool(True) })
+
+Rem ---- reading a list of numbers off the stack ---------------------------
+
+Def PsNums(word As String, c As Cell) As Result
+    Select Case RckListArg(word, c)
+        Case Ok(xs)
+            PsNumsAt(word, xs, { })
+        Case Err(w, at)
+            Err(w, at)
+        Case Else
+            Err(word & " did not answer", 0)
+
+Def PsNumsAt(word As String, xs As List Of Cell, acc As List Of Number) As Result
+    If IsEmpty(xs) Then
+        Ok(acc)
+    Else
+        PsNumsNext(word, xs, acc, First(xs))
+
+Def PsNumsNext(word As String, xs As List Of Cell, acc As List Of Number, c As Cell) As Result
+    Select Case c
+        Case CutNum(x)
+            PsNumsAt(word, Rest(xs), Append(acc, x))
+        Case Else
+            Err(RckKindWhy(word, "a LIST of NUMBERs", c), 0)
+
+Def PsStrs(word As String, c As Cell) As Result
+    Select Case RckListArg(word, c)
+        Case Ok(xs)
+            PsStrsAt(word, xs, { })
+        Case Err(w, at)
+            Err(w, at)
+        Case Else
+            Err(word & " did not answer", 0)
+
+Def PsStrsAt(word As String, xs As List Of Cell, acc As List Of String) As Result
+    If IsEmpty(xs) Then
+        Ok(acc)
+    Else
+        PsStrsNext(word, xs, acc, First(xs))
+
+Def PsStrsNext(word As String, xs As List Of Cell, acc As List Of String, c As Cell) As Result
+    Select Case c
+        Case CutStr(s)
+            PsStrsAt(word, Rest(xs), Append(acc, s), )
+        Case Else
+            Err(RckKindWhy(word, "a LIST of STRINGs", c), 0)
+
+Rem Minimum and Maximum of an empty list have no answer, and every chart
+Rem reaches for one or both. This is the guard plotter does not state and
+Rem the one a session would meet first.
+Def PsWhyEmpty(word As String, xs As List Of Number) As String
+    If IsEmpty(xs) Then
+        word & ": THERE ARE NO NUMBERS TO PLOT"
+    Else
+        ""
+
+Rem ---- PLOTHISTOGRAM ------------------------------------------------------
+
+Def PsSeedCharts(st As RckState) As RckState
+    Let s1 = RckReg(st, "PLOTHISTOGRAM", 3, RckPureOver(Fn(s, vs) => PsHist(s, vs)), "( name xs bins -- )", "Draw a histogram of xs in that many bins, with axes and labels. Refuses on no numbers or fewer than one bin.")
+    Let s2 = RckReg(s1, "PLOTSCATTER", 3, RckPureOver(Fn(s, vs) => PsScatter(s, vs)), "( name xs ys -- )", "Draw xs against ys as points, with axes and labels. Refuses unless the two lists are the same length and neither is empty.")
+    Let s3 = RckReg(s2, "PLOTBOX", 2, RckPureOver(Fn(s, vs) => PsBox(s, vs)), "( name xs -- )", "Draw a box plot of xs: quartiles, median, whiskers to 1.5 times the inter-quartile range, and outliers as dots.")
+    Let s4 = RckReg(s3, "PLOTBAR", 3, RckPureOver(Fn(s, vs) => PsBar(s, vs)), "( name labels values -- )", "Draw a bar chart. Refuses unless there is one label per value and every value is 0 or more.")
+    RckReg(s4, "PLOTPIE", 3, RckPureOver(Fn(s, vs) => PsPie(s, vs)), "( name labels values -- )", "Draw a pie chart with a legend. Refuses unless there is one label per value and every value is above 0 — a slice of nothing has no angle.")
+
+Def PsHist(st As RckState, vs As List Of Cell) As RckWork
+    Select Case Pair(PsFound("PLOTHISTOGRAM", st, Nth(vs, 1)), PsNums("PLOTHISTOGRAM", Nth(vs, 2)))
+        Case Pair(Ok(r), Ok(xs))
+            PsHistBins(r, xs, Nth(vs, 3))
+        Case Else
+            PsWhyPair("PLOTHISTOGRAM", st, vs)
+
+Def PsHistBins(r As RckRes, xs As List Of Number, bc As Cell) As RckWork
+    Select Case RckWholeArg("PLOTHISTOGRAM", bc)
+        Case Ok(n)
+            PsHistSound(r, xs, n)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("PLOTHISTOGRAM did not answer")
+
+Def PsHistSound(r As RckRes, xs As List Of Number, n As Number) As RckWork
+    If PsWhyEmpty("PLOTHISTOGRAM", xs) <> "" Then
+        RckWorkBad(PsWhyEmpty("PLOTHISTOGRAM", xs))
+    Else
+        PsHistBinned(r, xs, n)
+
+Def PsHistBinned(r As RckRes, xs As List Of Number, n As Number) As RckWork
+    If n < 1 Then
+        RckWorkBad("PLOTHISTOGRAM: A HISTOGRAM NEEDS AT LEAST ONE BIN")
+    Else
+        PsDrew(Histogram(PsWindow(r), xs, n))
+
+Rem ---- PLOTSCATTER ---------------------------------------------------------
+
+Def PsScatter(st As RckState, vs As List Of Cell) As RckWork
+    Select Case Pair(PsFound("PLOTSCATTER", st, Nth(vs, 1)), PsNums("PLOTSCATTER", Nth(vs, 2)))
+        Case Pair(Ok(r), Ok(xs))
+            PsScatterYs(r, xs, PsNums("PLOTSCATTER", Nth(vs, 3)))
+        Case Else
+            PsWhyPair("PLOTSCATTER", st, vs)
+
+Def PsScatterYs(r As RckRes, xs As List Of Number, ys As Result) As RckWork
+    Select Case ys
+        Case Ok(yy)
+            PsScatterPaired(r, xs, yy)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("PLOTSCATTER did not answer")
+
+Rem Zip stops at the shorter list, so unequal lengths would silently plot
+Rem part of the data — a wrong chart rather than a refused one, which is
+Rem the outcome worth the most trouble to prevent.
+Def PsScatterPaired(r As RckRes, xs As List Of Number, ys As List Of Number) As RckWork
+    If PsWhyEmpty("PLOTSCATTER", xs) <> "" Then
+        RckWorkBad(PsWhyEmpty("PLOTSCATTER", xs))
+    Else
+        PsScatterSized(r, xs, ys)
+
+Def PsScatterSized(r As RckRes, xs As List Of Number, ys As List Of Number) As RckWork
+    If Length(xs) <> Length(ys) Then
+        RckWorkBad("PLOTSCATTER: " & Str(Length(xs)) & " X VALUES AND " & Str(Length(ys)) & " Y VALUES — THEY MUST PAIR UP")
+    Else
+        PsDrew(ScatterPlot(PsWindow(r), xs, ys))
+
+Rem ---- PLOTBOX -------------------------------------------------------------
+
+Def PsBox(st As RckState, vs As List Of Cell) As RckWork
+    Select Case Pair(PsFound("PLOTBOX", st, Nth(vs, 1)), PsNums("PLOTBOX", Nth(vs, 2)))
+        Case Pair(Ok(r), Ok(xs))
+            PsBoxSound(r, xs)
+        Case Else
+            PsWhyPair("PLOTBOX", st, vs)
+
+Def PsBoxSound(r As RckRes, xs As List Of Number) As RckWork
+    If PsWhyEmpty("PLOTBOX", xs) <> "" Then
+        RckWorkBad(PsWhyEmpty("PLOTBOX", xs))
+    Else
+        PsDrew(BoxPlot(PsWindow(r), xs))
+
+Rem ---- PLOTBAR and PLOTPIE -------------------------------------------------
+
+Def PsBar(st As RckState, vs As List Of Cell) As RckWork
+    Select Case Pair(PsFound("PLOTBAR", st, Nth(vs, 1)), PsStrs("PLOTBAR", Nth(vs, 2)))
+        Case Pair(Ok(r), Ok(ls))
+            PsBarVals(r, ls, PsNums("PLOTBAR", Nth(vs, 3)))
+        Case Else
+            PsWhyLabelled("PLOTBAR", st, vs)
+
+Def PsBarVals(r As RckRes, ls As List Of String, ns As Result) As RckWork
+    Select Case ns
+        Case Ok(xs)
+            PsBarChecked(r, ls, xs, PsWhyLabels("PLOTBAR", ls, xs))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("PLOTBAR did not answer")
+
+Def PsBarChecked(r As RckRes, ls As List Of String, xs As List Of Number, why As String) As RckWork
+    If why <> "" Then
+        RckWorkBad(why)
+    Else
+        PsBarSigned(r, ls, xs)
+
+Def PsBarSigned(r As RckRes, ls As List Of String, xs As List Of Number) As RckWork
+    If Any(xs, Fn(x) => x < 0) Then
+        RckWorkBad("PLOTBAR: EVERY VALUE MUST BE 0 OR MORE — A BAR BELOW THE AXIS HAS NOWHERE TO GO")
+    Else
+        PsDrew(BarChart(PsWindow(r), ls, xs))
+
+Def PsPie(st As RckState, vs As List Of Cell) As RckWork
+    Select Case Pair(PsFound("PLOTPIE", st, Nth(vs, 1)), PsStrs("PLOTPIE", Nth(vs, 2)))
+        Case Pair(Ok(r), Ok(ls))
+            PsPieVals(r, ls, PsNums("PLOTPIE", Nth(vs, 3)))
+        Case Else
+            PsWhyLabelled("PLOTPIE", st, vs)
+
+Def PsPieVals(r As RckRes, ls As List Of String, ns As Result) As RckWork
+    Select Case ns
+        Case Ok(xs)
+            PsPieChecked(r, ls, xs, PsWhyLabels("PLOTPIE", ls, xs))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("PLOTPIE did not answer")
+
+Def PsPieChecked(r As RckRes, ls As List Of String, xs As List Of Number, why As String) As RckWork
+    If why <> "" Then
+        RckWorkBad(why)
+    Else
+        PsPieSigned(r, ls, xs)
+
+Def PsPieSigned(r As RckRes, ls As List Of String, xs As List Of Number) As RckWork
+    If Any(xs, Fn(x) => x <= 0) Then
+        RckWorkBad("PLOTPIE: EVERY VALUE MUST BE ABOVE 0 — A SLICE OF NOTHING HAS NO ANGLE")
+    Else
+        PsDrew(PieChart(PsWindow(r), ls, xs))
+
+Rem The two guards a labelled chart needs and plotter states neither of:
+Rem an empty set divides by zero on its way to the bar width, and fewer
+Rem labels than values indexes past the end of the labels.
+Def PsWhyLabels(word As String, ls As List Of String, xs As List Of Number) As String
+    If IsEmpty(xs) Then
+        word & ": THERE ARE NO VALUES TO PLOT"
+    Else
+        PsWhyPaired(word, ls, xs)
+
+Def PsWhyPaired(word As String, ls As List Of String, xs As List Of Number) As String
+    If Length(ls) <> Length(xs) Then
+        word & ": " & Str(Length(ls)) & " LABELS AND " & Str(Length(xs)) & " VALUES — THERE MUST BE ONE LABEL EACH"
+    Else
+        ""
+
+Rem ---- saying which argument was wrong ------------------------------------
+
+Rem A Pair match that failed says nothing about WHICH half failed, so the
+Rem name is asked again on its own and its answer preferred: a mistyped
+Rem name is the likeliest mistake and the one worth naming first.
+Def PsWhyPair(word As String, st As RckState, vs As List Of Cell) As RckWork
+    Select Case PsFound(word, st, Nth(vs, 1))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            PsWhyNums(word, PsNums(word, Nth(vs, 2)))
+
+Def PsWhyNums(word As String, r As Result) As RckWork
+    Select Case r
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad(word & " needs a name and a LIST of NUMBERs")
+
+Def PsWhyLabelled(word As String, st As RckState, vs As List Of Cell) As RckWork
+    Select Case PsFound(word, st, Nth(vs, 1))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            PsWhyStrs(word, PsStrs(word, Nth(vs, 2)))
+
+Def PsWhyStrs(word As String, r As Result) As RckWork
+    Select Case r
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad(word & " needs a name, a LIST of STRINGs and a LIST of NUMBERs")
+
+Rem ---- the seed ------------------------------------------------------------
+
+Def RckSeedPlotter(st As RckState) As RckState
+    Let s1 = PsSeedOpen(RckSeeding(st, "seed-plotter"))
+    PsSeedCharts(s1)

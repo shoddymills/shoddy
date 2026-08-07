@@ -8,13 +8,17 @@
 #   ./build.ps1 build            weave the program into bin/
 #   ./build.ps1 clean            remove bin/
 #
-# run and capture are LIVE: they launch from wherever you actually typed
-# .\build.ps1, not from this directory. SPEC defaults to this mill's own
-# files/grades.spec if you don't give one; a SPEC you do name resolves
-# against your own shell, same as any ordinary file argument would.
-# Paths INSIDE a spec (data.file, window.capture) are relative to
-# wherever the spec itself resolved from - the shipped default spec
-# names files/... to match sitting beside it.
+# EVERY TARGET RUNS FROM THIS DIRECTORY, which is how every other mill
+# works and what makes tally usable by somebody sitting in this folder.
+# SPEC defaults to files/grades.spec and a SPEC you name resolves the
+# same way, so .\build.ps1 run files\marks.spec does what it reads like
+# from here.
+#
+# Paths INSIDE a spec - data.file, window.capture - are resolved by
+# tally against the current directory, so the shipped specs name
+# files/... to match. That is the same rule demographics and iris use for
+# their dat/... paths, and the reason all three work wherever you invoke
+# the script from.
 #
 # capture passes --no-window, which opens every scribbler hidden and stops
 # windows outliving the program. Pair it with window.show = no in the spec:
@@ -32,7 +36,6 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$OrigLocation = Get-Location
 
 # Push rather than Set. Set-Location changes the SESSION's directory, not a
 # scope's, so a mill script run from the repo root - which is how
@@ -44,27 +47,23 @@ try {
     $MillDir = $PSScriptRoot
     . (Join-Path $MillDir '../../scripts/mill-common.ps1')
 
-    $SpecPath = if ($Spec) { $Spec } else { Join-Path $MillDir 'files/grades.spec' }
+    $SpecPath = if ($Spec) { $Spec } else { 'files/grades.spec' }
 
     switch ($Command) {
         'run' {
             Assert-Mill
-            Invoke-Live $OrigLocation { & $Mill run (Join-Path $MillDir 'tally.shoddy') $SpecPath }
+            & $Mill run tally.shoddy $SpecPath
             exit $LASTEXITCODE
         }
         'capture' {
             Assert-Mill
-            Invoke-Live $OrigLocation { & $Mill run --no-window (Join-Path $MillDir 'tally.shoddy') $SpecPath }
+            & $Mill run --no-window tally.shoddy $SpecPath
             exit $LASTEXITCODE
         }
         'test' {
-            # test.shoddy's own fixtureDir is repo-root-relative
-            # (mills/tally/files/), not mill-relative, so this one runs
-            # from the repo root rather than staying pinned to this
-            # directory. $null on the pipeline is this shell's
-            # `< /dev/null`.
+            # $null on the pipeline is this shell's `< /dev/null`.
             Assert-Mill
-            Invoke-Live $Repo { $null | & $Mill run mills/tally/test.shoddy }
+            $null | & $Mill run test.shoddy
             exit $LASTEXITCODE
         }
         'build' {

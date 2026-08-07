@@ -25,12 +25,8 @@ case "${1:-run}" in
         "$MILL" run --allow-net weather-glass.shoddy "${2:-63011}"
         ;;
     test)
-        # test.shoddy's own fixtureDir is repo-root-relative
-        # (mills/weather-glass/files/), not mill-relative, so this one
-        # runs from the repo root rather than staying pinned to this
-        # directory.
         ensure_mill
-        run_from_repo "$MILL" run mills/weather-glass/test.shoddy < /dev/null
+        "$MILL" run test.shoddy < /dev/null
         ;;
     build)
         weave_and_move weather-glass.shoddy

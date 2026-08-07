@@ -40,13 +40,9 @@ try {
             exit $LASTEXITCODE
         }
         'test' {
-            # test.shoddy's own fixtureDir is repo-root-relative
-            # (mills/weather-glass/files/), not mill-relative, so this
-            # one runs from the repo root rather than staying pinned to
-            # this directory. $null on the pipeline is this shell's
-            # `< /dev/null`.
+            # $null on the pipeline is this shell's `< /dev/null`.
             Assert-Mill
-            Invoke-Live $Repo { $null | & $Mill run mills/weather-glass/test.shoddy }
+            $null | & $Mill run test.shoddy
             exit $LASTEXITCODE
         }
         'build' {

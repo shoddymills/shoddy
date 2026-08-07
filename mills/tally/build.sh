@@ -8,13 +8,17 @@
 #   ./build.sh build            weave the program into bin/
 #   ./build.sh clean            remove bin/
 #
-# run and capture are LIVE: they launch from wherever you actually typed
-# ./build.sh, not from this directory. SPEC defaults to this mill's own
-# files/grades.spec if you don't give one; a SPEC you do name resolves
-# against your own shell, same as any ordinary file argument would.
-# Paths INSIDE a spec (data.file, window.capture) are relative to
-# wherever the spec itself resolved from — the shipped default spec
-# names files/... to match sitting beside it.
+# EVERY TARGET RUNS FROM THIS DIRECTORY, which is how every other mill
+# works and what makes tally usable by somebody sitting in this folder.
+# SPEC defaults to files/grades.spec and a SPEC you name resolves the
+# same way, so ./build.sh run files/marks.spec does what it reads like
+# from here.
+#
+# Paths INSIDE a spec — data.file, window.capture — are resolved by
+# tally against the current directory, so the shipped specs name
+# files/... to match. That is the same rule demographics and iris use for
+# their dat/... paths, and the reason all three work wherever you invoke
+# the script from.
 #
 # capture passes --no-window, which opens every scribbler hidden and stops
 # windows outliving the program. Pair it with window.show = no in the spec:
@@ -26,27 +30,23 @@
 # between a file's text and a finished report is pure, which is the whole
 # reason tally-core.shoddy and tally.shoddy are separate files.
 set -euo pipefail
-ORIG_DIR=$(pwd)
 cd "$(dirname "$0")"
 . ../../scripts/mill-common.sh
 
-SPEC=${2:-$MILL_DIR/files/grades.spec}
+SPEC=${2:-files/grades.spec}
 
 case "${1:-run}" in
     run)
         ensure_mill
-        run_live "$MILL" run "$MILL_DIR/tally.shoddy" "$SPEC"
+        "$MILL" run tally.shoddy "$SPEC"
         ;;
     capture)
         ensure_mill
-        run_live "$MILL" run --no-window "$MILL_DIR/tally.shoddy" "$SPEC"
+        "$MILL" run --no-window tally.shoddy "$SPEC"
         ;;
     test)
-        # test.shoddy's own fixtureDir is repo-root-relative
-        # (mills/tally/files/), not mill-relative, so this one runs from
-        # the repo root rather than staying pinned to this directory.
         ensure_mill
-        run_from_repo "$MILL" run mills/tally/test.shoddy < /dev/null
+        "$MILL" run test.shoddy < /dev/null
         ;;
     build)
         weave_and_move tally.shoddy

@@ -1,11 +1,12 @@
 # tally spec - the shape of the final marks, and who sat where
 #
-#     ./build.sh capture mills/tally/files/marks.spec
+#     ./build.sh capture files/marks.spec
 #
-# Paths are relative to the directory the mill is run from; build.sh
-# runs from the repo root.
+# Paths are relative to the directory the mill is run from; both build
+# wrappers run from this mill's folder, so files/... names what sits
+# beside this spec.
 
-data.file      = mills/tally/files/grades.csv
+data.file      = files/grades.csv
 
 # Two derived columns, each one verb and its arguments - never an
 # expression. TOTAL is the two papers added; SHARE is that as a
@@ -24,5 +25,5 @@ chart.bins     = 6
 chart.title    = DISTRIBUTION OF FINAL MARKS
 
 window.size    = 480 320
-window.capture = mills/tally/files/marks.png
+window.capture = files/marks.png
 window.show    = no

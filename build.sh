@@ -94,8 +94,8 @@ machines() {
 machine_suites() {
     ensure_mill
     for suite in csvtest cuttletest htmltest jsontest nettest neuraltest \
-                 randomtest reckonertest seedtest seedengtest seedfintest \
-                 seedneuraltest seedsimplextest shakertest xmltest; do
+                 randomtest reckonertest seedtest seedbuiltintest seedengtest \
+                 seedfintest seedneuraltest seedsimplextest shakertest xmltest; do
         echo "==> tst/$suite.shoddy"
         "$MILL" run "tst/$suite.shoddy" </dev/null
     done

@@ -1,0 +1,273 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem seedbuiltintest.shoddy — test program for seedbuiltin.shoddy
+Rem
+Rem Assert-driven, in the cuttletest / reckonertest / seedtest pattern:
+Rem it prints what it is doing and stops the run at the first assertion
+Rem that fails, ending with ALL ASSERTIONS PASSED when it does not.
+Rem
+Rem THIS SUITE IS ALMOST ENTIRELY GUARDS, because so is the seed. A
+Rem builtin already speaks in numbers, strings and lists, so nothing is
+Rem converted at this bridge; what is added is the question each builtin
+Rem does not ask itself, and the guard list is the test list as
+Rem everywhere else.
+Rem
+Rem TWO KINDS OF GUARD, AND THE SECOND IS THE REASON FOR THE FILE. Some
+Rem builtins ABORT — ASC of the empty string, NTH past the end, GAMMAP
+Rem on a non-positive A — and refusing instead is the ordinary R3.5(a)
+Rem work. The dangerous ones do NOT abort and answer something wrong:
+Rem
+Rem   VAL answers 0 for text that is not a number.
+Rem   CHR wraps a code above 65535 round to some other character.
+Rem   LEFT, RIGHT and MID truncate a fractional count.
+Rem
+Rem Each of those has a test below that would PASS if the guard were
+Rem removed and the wrong answer allowed through, so each is asserted on
+Rem the refusal and not merely on the value.
+Rem
+Rem A COMPANION FILE. tst/builtinsurfacetest.shoddy asserts the other
+Rem half of the story — that these thirty-two are exactly the builtins
+Rem left over once the core, the other seeds and the six exclusion rules
+Rem have had their say, and that nothing in the runtime's dispatch is
+Rem unaccounted for. This one asserts that they work.
+Rem
+Rem Fixtures: none committed. The file tests write and delete their own.
+Rem
+Rem Run: bin\mill run tst\seedbuiltintest.shoddy   (from the repo root)
+Rem ==================================================================
+
+Include "../machines/cuttle.shoddy"
+Include "../machines/reckoner.shoddy"
+Include "../machines/seq.shoddy"
+Include "../machines/str.shoddy"
+Include "../machines/seeds/seedbuiltin.shoddy"
+
+Rem ---- reading an answer ------------------------------------------------
+
+Def Ran(st As RckState, line As String) As RckState
+    Select Case RckEval(st, line)
+        Case RckNext(st2, out)
+            st2
+        Case RckStop(st2, why, out)
+            st2
+        Case Else
+            st
+
+Def Bad(st As RckState, line As String) As Boolean
+    Select Case RckEval(st, line)
+        Case RckStop(st2, why, out)
+            True
+        Case Else
+            False
+
+Def Why(st As RckState, line As String) As String
+    Select Case RckEval(st, line)
+        Case RckStop(st2, why, out)
+            why
+        Case Else
+            ""
+
+Def Text(st As RckState) As String
+    Join(Map(CutCells(RckStack(st)), Fn(c) => CutShow(c, RckFmt(st))), " | ")
+
+Def Deep(st As RckState) As Number
+    CutDepth(RckStack(st))
+
+Def TopNum(st As RckState) As Number
+    If Deep(st) < 1 Then
+        0 - 999999
+    Else
+        NumOf(First(CutCells(RckStack(st))))
+
+Def NumOf(c As Cell) As Number
+    Select Case c
+        Case CutNum(x)
+            x
+        Case Else
+            0 - 999999
+
+Def Near(a As Number, b As Number) As Boolean
+    Abs(a - b) <= 0.0001
+
+Def Q(s As String) As String
+    Chr(34) & s & Chr(34)
+
+Def Refuses(st As RckState, line As String, why As String) As Boolean
+    Bad(st, line) And Instr(Why(st, line), why) > 0 And Text(Ran(st, line)) = Text(st) And Text(Ran(Ran(st, line), "1 1 +")) = Text(Ran(st, "1 1 +"))
+
+Def Holds(lines As List Of String, sub As String) As Boolean
+    Any(lines, Fn(l) => Instr(l, sub) > 0)
+
+Def TmpPath() As String
+    "tst/csv/_seedbuiltintest.tmp"
+
+Def Wipe()
+    If FileExists(TmpPath()) Then
+        DeleteFile(TmpPath())
+
+Def Main()
+    Wipe()
+    Let s0 = RckSeedBuiltin(RckNew())
+    Let g = Ran(s0, "1 2")
+
+    Print("--- the seed is in the dictionary, grouped and documented ---")
+    Assert(RckKnows(s0, "LEN") And RckKnows(s0, "VAL") And RckKnows(s0, "CALL"), "THE WORDS ARE THERE")
+    Assert(Contains(RckWords(s0), "-- builtin --"), "AND WORDS GIVES THEM A GROUP OF THEIR OWN")
+    Assert(All(RckDict(s0), Fn(e) => WordEffect(e) <> "" And WordDesc(e) <> ""), "NO WORD IS WITHOUT AN EFFECT LINE AND A DESCRIPTION")
+    Assert(All(RckDict(s0), Fn(e) => Length(RckHelp(s0, WordName(e))) = 3), "AND HELP ANSWERS FOR EVERY ONE OF THEM")
+    Rem The file words and the two that read the world around them are the
+    Rem only effects here; arithmetic on a cell already on the stack is not.
+    Assert(Holds(RckHelp(s0, "READFILE"), "touches the world"), "READING A FILE TOUCHES THE WORLD")
+    Assert(Holds(RckHelp(s0, "CLOCK"), "touches the world"), "AND SO DOES ASKING THE TIME")
+    Assert(Holds(RckHelp(s0, "LEN"), "touches nothing"), "WHILE MEASURING A STRING ON THE STACK DOES NOT")
+    Assert(Holds(RckHelp(s0, "CALL"), "touches nothing"), "AND NEITHER DOES CALL, WHICH ANSWERS FOR ITSELF AS MAP DOES")
+    Assert(All(RckDict(s0), Fn(e) => Instr(Lower(WordEffect(e)), "handle") = 0), "NO WORD'S EFFECT STRING MENTIONS A HANDLE")
+
+    Print("--- text: the words a session cannot do without ---")
+    Assert(TopNum(Ran(s0, Q("hello") & " LEN")) = 5, "LEN COUNTS CHARACTERS")
+    Assert(TopNum(Ran(s0, Q("") & " LEN")) = 0, "AND THE EMPTY STRING HAS NONE")
+    Assert(Text(Ran(s0, Q("hello") & " 2 LEFT")) = Q("he"), "LEFT")
+    Assert(Text(Ran(s0, Q("hello") & " 2 RIGHT")) = Q("lo"), "RIGHT")
+    Assert(Text(Ran(s0, Q("hello") & " 2 3 MID")) = Q("ell"), "MID COUNTS FROM 1")
+    Rem The clamping is kept deliberately: asking for more than is there
+    Rem answers what is there, which is what a substring should do.
+    Assert(Text(Ran(s0, Q("hi") & " 99 LEFT")) = Q("hi"), "AND ASKING FOR MORE THAN IS THERE ANSWERS WHAT IS THERE")
+    Assert(Text(Ran(s0, Q("hi") & " 9 3 MID")) = Q(""), "AND A START PAST THE END ANSWERS NOTHING, NOT A REFUSAL")
+    Assert(TopNum(Ran(s0, Q("hello") & " " & Q("ll") & " INSTR")) = 3, "INSTR FINDS A SUBSTRING, COUNTING FROM 1")
+    Assert(TopNum(Ran(s0, Q("hello") & " " & Q("z") & " INSTR")) = 0, "AND ANSWERS 0 FOR ONE THAT IS NOT THERE")
+    Assert(Text(Ran(s0, "65 CHR")) = Q("A"), "CHR")
+    Assert(Text(Ran(s0, "0 CHR")) = Q(""), "AND CODE 0 IS THE EMPTY STRING, AS THE RUNTIME DEFINES IT")
+    Assert(TopNum(Ran(s0, Q("A") & " ASC")) = 65, "ASC")
+    Assert(Text(Ran(s0, "3.5 STR")) = Q("3.5"), "STR")
+    Assert(TopNum(Ran(s0, Q("3.5") & " VAL")) = 3.5, "VAL READS A NUMBER")
+    Assert(TopNum(Ran(s0, Q("nope") & " 9 VALOR")) = 9, "AND VALOR ANSWERS THE FALLBACK WHERE VAL WOULD REFUSE")
+    Assert(TopNum(Ran(s0, Q("7") & " 9 VALOR")) = 7, "AND THE NUMBER WHERE THERE IS ONE")
+    Assert(Text(Ran(s0, Q("3.5") & " ISNUMERIC")) = "True", "ISNUMERIC")
+    Assert(Text(Ran(s0, Q("nope") & " ISNUMERIC")) = "False", "AND ON TEXT THAT IS NOT A NUMBER")
+
+    Print("--- the three builtins that answer WRONG rather than aborting ---")
+    Rem Each of these would pass with the guard removed, quietly. That is
+    Rem the whole reason this seed exists, so each is asserted on the
+    Rem refusal rather than on a value.
+    Assert(Refuses(g, Q("twelve") & " VAL", "IS NOT A NUMBER"), "VAL ON TEXT THAT IS NOT A NUMBER, WHICH STRTOD WOULD HAVE READ AS 0")
+    Assert(Refuses(g, Q("") & " VAL", "IS NOT A NUMBER"), "AND ON THE EMPTY STRING")
+    Rem WHERE THE GUARD STOPS, and it stops here on purpose. ISNUMERIC is
+    Rem "would VAL succeed", not "is this wholly a number", so a leading
+    Rem number with something stuck to it passes it and answers the
+    Rem leading number. That is strtod's laxity and it is the LANGUAGE's:
+    Rem reckoner's own tokenizer inherits it rather than correcting it, so
+    Rem 3X on an entry line is 3 too, and a seed that disagreed with the
+    Rem tokenizer about what a number is would be worse than the laxity.
+    Rem Asserted, so the behaviour is stated rather than assumed.
+    Assert(TopNum(Ran(s0, Q("3kg") & " VAL")) = 3, "WHILE A NUMBER WITH A UNIT STUCK TO IT ANSWERS THE NUMBER, AS THE TOKENIZER ALSO DOES")
+    Assert(Text(Ran(s0, Q("3kg") & " ISNUMERIC")) = "True", "BECAUSE ISNUMERIC ASKS WHETHER VAL WOULD SUCCEED, NOT WHETHER THE WHOLE STRING IS A NUMBER")
+    Assert(Refuses(g, "65536 CHR", "WOULD WRAP"), "CHR PAST THE 16-BIT CEILING, WHERE THE CODE WRAPS ROUND SILENTLY")
+    Assert(Refuses(g, Q("hello") & " 2.5 LEFT", "needs a whole number"), "A FRACTIONAL CHARACTER COUNT, WHICH THE BUILTIN TRUNCATES")
+    Assert(Refuses(g, Q("hello") & " 2.5 RIGHT", "needs a whole number"), "AND THE SAME FROM THE OTHER END")
+    Assert(Refuses(g, Q("hello") & " 1.5 3 MID", "needs a whole number"), "AND A FRACTIONAL START")
+    Assert(Refuses(g, Q("hello") & " 1 2.5 MID", "needs a whole number"), "AND A FRACTIONAL LENGTH")
+    Rem And VALOR is deliberately NOT guarded: a caller who supplied a
+    Rem fallback has already said what unreadable text should answer.
+    Assert(Not Bad(s0, Q("twelve") & " 0 VALOR"), "WHILE VALOR TAKES THE SAME TEXT WITHOUT COMPLAINT")
+
+    Print("--- text: the aborts, refused ---")
+    Assert(Refuses(g, Q("") & " ASC", "THE EMPTY STRING HAS NO FIRST CHARACTER"), "ASC OF THE EMPTY STRING")
+    Assert(Refuses(g, "3 LEN", "needs a STRING"), "LEN OF SOMETHING THAT IS NOT TEXT")
+    Assert(Refuses(g, "3 ASC", "needs a STRING"), "AND ASC OF ONE")
+
+    Print("--- numbers ---")
+    Assert(TopNum(Ran(s0, "5 NEGATE")) = 0 - 5, "NEGATE")
+    Assert(TopNum(Ran(s0, "-5 NEGATE")) = 5, "AND BACK AGAIN")
+    Assert(Near(TopNum(Ran(s0, "1 ATN")), 0.7853981634), "ATN")
+    Assert(Near(TopNum(Ran(s0, "1 1 ATN2")), 0.7853981634), "ATN2 IN THE FIRST QUADRANT")
+    Rem The quadrant is the whole reason ATN2 exists beside ATN: the ratio
+    Rem is the same and the angle is not.
+    Assert(Near(TopNum(Ran(s0, "-1 -1 ATN2")), 0 - 2.3561944902), "AND IN THE THIRD, WHERE ATN ALONE CANNOT TELL")
+    Assert(TopNum(Ran(s0, "0 TANH")) = 0, "TANH AT ZERO")
+    Assert(TopNum(Ran(s0, "1000 TANH")) = 1, "AND SATURATED AT ONE RATHER THAN OVERFLOWING")
+    Assert(TopNum(Ran(s0, "0 ERF")) = 0, "ERF IS ODD, SO IT IS ZERO AT ZERO")
+    Assert(Near(TopNum(Ran(s0, "1 1 GAMMAP")), 0.6321205588), "GAMMAP")
+    Assert(Near(TopNum(Ran(s0, "1 1 0.5 BETAI")), 0.5), "BETAI")
+
+    Print("--- the number guards, each an abort in the runtime ---")
+    Assert(Refuses(g, "0 1 GAMMAP", "A MUST BE POSITIVE"), "GAMMAP WITH A OF ZERO")
+    Assert(Refuses(g, "-1 1 GAMMAP", "A MUST BE POSITIVE"), "AND A NEGATIVE ONE")
+    Assert(Refuses(g, "1 -1 GAMMAP", "X MUST NOT BE NEGATIVE"), "AND A NEGATIVE X")
+    Assert(Refuses(g, "0 1 0.5 BETAI", "A AND B MUST BOTH BE POSITIVE"), "BETAI WITH A OF ZERO")
+    Assert(Refuses(g, "1 0 0.5 BETAI", "A AND B MUST BOTH BE POSITIVE"), "AND B OF ZERO")
+    Assert(Refuses(g, "1 1 1.5 BETAI", "X MUST BE BETWEEN 0 AND 1"), "AND AN X ABOVE ONE")
+    Assert(Refuses(g, "1 1 -0.5 BETAI", "X MUST BE BETWEEN 0 AND 1"), "AND ONE BELOW ZERO")
+
+    Print("--- lists ---")
+    Assert(Text(Ran(s0, "{ 10 20 30 } 2 NTH")) = "20", "NTH COUNTS FROM 1")
+    Assert(Text(Ran(s0, "{ 10 20 30 } 2 99 SETNTH")) = "{ 10 99 30 }", "SETNTH REPLACES ONE ELEMENT")
+    Assert(Text(Ran(s0, "{ } ISEMPTY")) = "True", "ISEMPTY ON NOTHING")
+    Assert(Text(Ran(s0, "{ 1 } ISEMPTY")) = "False", "AND ON SOMETHING")
+    Assert(Text(Ran(s0, "1 { 2 3 } PREPEND")) = "{ 1 2 3 }", "PREPEND PUTS A VALUE ON THE FRONT")
+    Rem The builtin builds an ARRAY and there is no ARRAY cell at the
+    Rem keyboard, so this answers the LIST that means the same thing.
+    Assert(Text(Ran(s0, "3 0 DIM")) = "{ 0 0 0 }", "DIM ANSWERS A LIST, NOT AN ARRAY")
+    Assert(Text(Ran(s0, "0 0 DIM")) = "{ }", "AND A SIZE OF ZERO IS THE EMPTY LIST, NOT A REFUSAL")
+    Assert(Refuses(g, "{ 10 20 } 3 NTH", "THERE IS NO ELEMENT 3 — THE LIST HOLDS 2"), "NTH PAST THE END, NAMING WHAT WAS THERE")
+    Assert(Refuses(g, "{ 10 20 } 0 NTH", "THERE IS NO ELEMENT 0"), "AND BEFORE THE FIRST")
+    Assert(Refuses(g, "{ } 1 NTH", "THE LIST HOLDS 0"), "AND OF AN EMPTY LIST")
+    Assert(Refuses(g, "{ 10 20 } 3 9 SETNTH", "THERE IS NO ELEMENT 3"), "SETNTH PAST THE END")
+    Assert(Refuses(g, "-1 0 DIM", "whole number of 0 or more"), "A LIST OF NEGATIVE LENGTH")
+
+    Print("--- CALL, the one word here that is not a builtin wrapped ---")
+    Assert(TopNum(Ran(s0, "5 [ DUP * ] CALL")) = 25, "CALL RUNS A PROGRAM ON ONE CELL")
+    Assert(Text(Ran(s0, Q("ab") & " [ LEN ] CALL")) = "2", "AND THE CELL NEED NOT BE A NUMBER")
+    Rem The reason RckProgOn takes the state: a program has to see the
+    Rem session it was typed in, or [ SQ ] is an unknown word.
+    Let u = Ran(s0, ": SQ DUP * ;")
+    Assert(TopNum(Ran(u, "7 [ SQ ] CALL")) = 49, "AND MAY NAME A WORD DEFINED A LINE EARLIER")
+    Assert(Refuses(g, "5 3 CALL", "needs a PROGRAM"), "CALL WITHOUT A PROGRAM")
+    Assert(Refuses(g, "5 [ NOSUCHWORD ] CALL", "unknown word NOSUCHWORD"), "AND WITH ONE THAT WILL NOT RUN, REPORTED IN THE ENGINE'S OWN WORDS")
+    Assert(Refuses(g, "5 [ DUP ] CALL", "leave one value, it left 2"), "AND WITH ONE THAT LEAVES TWO CELLS")
+
+    Print("--- ERROR and ASSERT, inverted into refusals ---")
+    Rem Both exist to end the run. Turning that into a refusal is the
+    Rem whole of what this layer does, so both are tested on the refusal
+    Rem AND on the session surviving it.
+    Assert(Refuses(g, Q("nope") & " ERROR", "nope"), "ERROR REFUSES WITH THE REASON IT WAS GIVEN")
+    Assert(Refuses(g, "FALSE " & Q("that was false") & " ASSERT", "that was false"), "ASSERT REFUSES ON A FALSE FLAG")
+    Assert(Not Bad(s0, "TRUE " & Q("fine") & " ASSERT"), "AND DOES NOTHING AT ALL ON A TRUE ONE")
+    Assert(Deep(Ran(s0, "TRUE " & Q("fine") & " ASSERT")) = 0, "LEAVING NOTHING BEHIND WHEN IT PASSES")
+    Assert(Refuses(g, "3 " & Q("x") & " ASSERT", "needs a BOOLEAN"), "AND REFUSES A FLAG THAT IS NOT ONE")
+
+    Print("--- the session around it ---")
+    Assert(Deep(Ran(s0, "ARGS")) = 1, "ARGS ANSWERS ONE CELL")
+    Rem The field count is proved with this seed's OWN words rather than
+    Rem with LENGTH, which is seed-seq's and is not in this suite's
+    Rem dictionary — NTH's refusal names the length it found, so asking
+    Rem for one past the end states the count and checks it at once.
+    Assert(Not Bad(s0, "CLOCK 7 NTH"), "CLOCK HAS A SEVENTH FIELD")
+    Assert(Refuses(g, "CLOCK 8 NTH", "THE LIST HOLDS 7"), "AND NOT AN EIGHTH, SO IT ANSWERS SEVEN")
+    Assert(Deep(Ran(s0, "0 SLEEP")) = 0, "SLEEP ANSWERS NOTHING")
+    Assert(Not Bad(s0, "-5 SLEEP"), "AND A NEGATIVE WAIT IS NO WAIT, NOT A REFUSAL")
+
+    Print("--- whole files, over the guarded builtins ---")
+    Assert(Text(Ran(s0, Q(TmpPath()) & " " & Q("one") & " WRITEFILE")) = "True", "WRITEFILE ANSWERS TRUE ON A PATH IT CAN WRITE")
+    Let w = Ran(s0, Q(TmpPath()) & " " & Q("one") & " WRITEFILE DROP")
+    Assert(Text(Ran(w, Q(TmpPath()) & " READFILE")) = Q("one"), "AND READFILE READS BACK EXACTLY WHAT WAS WRITTEN")
+    Let a = Ran(w, Q(TmpPath()) & " " & Q("two") & " APPENDFILE DROP")
+    Assert(Text(Ran(a, Q(TmpPath()) & " READFILE")) = Q("onetwo"), "APPENDFILE ADDS TO THE END RATHER THAN REPLACING")
+    Rem READFILE is the whole-file word and does not split; READLINES is
+    Rem seedfile's, and the two are deliberately different words.
+    Assert(Refuses(g, Q("tst/csv/does-not-exist.tmp") & " READFILE", "CANNOT READ"), "A PATH THAT IS NOT THERE")
+    Assert(Refuses(g, Q("tst/csv") & " READFILE", "CANNOT READ"), "AND A DIRECTORY")
+    Assert(Text(Ran(w, Q("tst/csv/no/such/dir/x.tmp") & " " & Q("s") & " WRITEFILE")) = "False", "AN UNWRITABLE PATH ANSWERS FALSE RATHER THAN ABORTING")
+    Assert(Text(Ran(Ran(w, Q("tst/csv/no/such/dir/x.tmp") & " " & Q("s") & " WRITEFILE"), "DROP 1 1 +")) = "2", "AND THE SESSION SURVIVES IT")
+    Rem APPENDFILE to a path that is not there makes it, since what it
+    Rem reads first is nothing.
+    Wipe()
+    Assert(Text(Ran(s0, Q(TmpPath()) & " " & Q("fresh") & " APPENDFILE")) = "True", "APPENDFILE MAKES A FILE THAT IS NOT THERE YET")
+    Wipe()
+
+    Print("--- nothing above cost the session anything ---")
+    Assert(Text(Ran(g, "1 1 +")) = "2 | 2 | 1", "THE STACK IS STILL THERE AND STILL EVALUATING")
+
+    Print("")
+    Print("ALL ASSERTIONS PASSED")

@@ -109,7 +109,20 @@ Type Rule
     RuleNames As List Of String
 
 Def Excluded() As List Of Rule
-    { RuleHandle(), RuleSocket(), RuleDevice(), RuleEffect(), RuleNoCell(), RuleSpelled() }
+    { RuleHandle(), RuleSocket(), RuleDevice(), RuleEffect(), RuleNoCell(), RuleNoTry(), RuleSpelled() }
+
+Rem Aborts on a failure nothing can ask about first, and has no guarded
+Rem twin to be rebuilt over. READFILE, WRITEFILE and APPENDFILE are the
+Rem contrast that makes this a rule rather than an excuse: all three
+Rem abort too, and all three ARE seeded, because TRYREADFILE and
+Rem TRYWRITEFILE exist to rebuild them on. There is no TRYDELETEFILE.
+Rem FILEEXISTS narrows the window and does not close it — a file that
+Rem exists can still be locked or unreadable when the delete lands, and
+Rem then the session is gone. seedfile.shoddy reached the same
+Rem conclusion first: it registers FILEEXISTS and not DELETEFILE.
+Def RuleNoTry() As Rule
+    Rule("aborts on a failure it cannot pre-flight, with no guarded twin to build on",
+         { "DELETEFILE" })
 
 Rem R3.5(b), the rule that has already kept isam, recio and the binary
 Rem model formats out: a handle is a NUMBER capped at sixteen and shared
@@ -186,14 +199,18 @@ Def RuleSpelled() As Rule
     Rule("already in the dictionary under the name it chose",
          { "SQR", "LOG10", "&", "RND", "SORT" })
 
-Rem ---- what is left, which is what a builtin seed would be for -------
+Rem ---- what was left, and is now seedbuiltin's --------------------------
 
-Rem Ground truth, so that a collision is a FAILURE and not a quietly
-Rem shorter list next time this runs. Thirty-three words: the ones a
-Rem session cannot reach today and that nothing above rules out.
-Def FreeWanted() As List Of String
+Rem These thirty-two were the free list — neither claimed nor excluded —
+Rem and seedbuiltin.shoddy is what was written against it. So the
+Rem assertion has moved on with them: it is no longer "these are free"
+Rem but "these are exactly what the builtin seed registers, and nothing
+Rem is free any more". That is the stronger claim of the two, because it
+Rem fails in both directions — a name dropped from the seed, and a name
+Rem added to it that this file has not been told about.
+Def SeededHere() As List Of String
     { "APPENDFILE", "ARGS", "ASC", "ASSERT", "ATN", "ATN2", "BETAI",
-      "CALL", "CHR", "CLOCK", "DELETEFILE", "DIM", "ERF", "ERROR", "GAMMAP",
+      "CALL", "CHR", "CLOCK", "DIM", "ERF", "ERROR", "GAMMAP",
       "INSTR", "ISEMPTY", "ISNUMERIC", "LEFT", "LEN", "MID", "NEGATE", "NTH",
       "PREPEND", "READFILE", "RIGHT", "SETNTH", "SLEEP", "STR",
       "TANH", "VAL", "VALOR", "WRITEFILE" }
@@ -264,28 +281,37 @@ Def Main()
     Assert(NoneKnown(st, RuleNoCell()), "NOR THE ONES WITH NO CELL TO ANSWER WITH")
     Assert(NoneKnown(st, RuleSpelled()), "NOR A SECOND SPELLING OF A WORD THE DICTIONARY ALREADY HAS")
 
-    Print("--- the three parts cover the whole surface, once each ---")
+    Print("--- the two parts cover the whole surface, once each ---")
     Assert(Length(claimed) + Length(excl) + Length(free) = Length(surface), "CLAIMED PLUS EXCLUDED PLUS FREE IS THE WHOLE DISPATCH, WITH NOTHING COUNTED TWICE")
     Print("  " & Str(Length(surface)) & " builtins = " & Str(Length(claimed)) & " claimed + " & Str(Length(excl)) & " excluded + " & Str(Length(free)) & " free")
+    Rem The whole point of the exercise, in one line: there is no third
+    Rem part any more. Every builtin the runtime dispatches is either a
+    Rem word a session can type or a name with a stated reason for not
+    Rem being one.
+    Assert(IsEmpty(free), "NOTHING IS UNACCOUNTED FOR — " & Join(free, " "))
 
-    Print("--- and the free list is exactly what is written down ---")
-    Rem This is the collision test. A future seed that registers LEN, or
-    Rem VAL, or SORT, shortens the computed free list, and the two stop
-    Rem agreeing — here, by name, rather than wherever the word that
-    Rem quietly lost its registration is next used.
-    Assert(IsEmpty(Missing(free, FreeWanted())), "NOTHING BECAME FREE THAT WAS NOT EXPECTED TO BE — " & Join(Missing(free, FreeWanted()), " "))
-    Assert(IsEmpty(Missing(FreeWanted(), free)), "AND NOTHING EXPECTED TO BE FREE WAS CLAIMED OR EXCLUDED BEHIND ITS BACK — " & Join(Missing(FreeWanted(), free), " "))
-    Assert(Same(free, FreeWanted()), "SO THE FREE LIST IS EXACTLY THE ONE THIS FILE STATES")
+    Print("--- and seedbuiltin registers exactly the list it was written from ---")
+    Rem This is the collision test, and it now runs in both directions
+    Rem against the seed itself rather than against a gap. A word dropped
+    Rem from seedbuiltin, a word added to it, or a word of its stolen by
+    Rem some later seed all show up here, by name.
+    Assert(IsEmpty(Missing(Seeded(st), SeededHere())), "SEEDBUILTIN REGISTERS NOTHING THIS FILE HAS NOT BEEN TOLD ABOUT — " & Join(Missing(Seeded(st), SeededHere()), " "))
+    Assert(IsEmpty(Missing(SeededHere(), Seeded(st))), "AND NOTHING THIS FILE EXPECTS OF IT HAS GONE MISSING — " & Join(Missing(SeededHere(), Seeded(st)), " "))
+    Assert(Same(Seeded(st), SeededHere()), "SO THE SEED AND THE LIST AGREE EXACTLY")
+    Rem And every one of them is a BUILTIN, not a word the seed invented:
+    Rem seedbuiltin bridges the runtime, so a name of its own would mean
+    Rem it had grown a domain.
+    Assert(IsEmpty(Missing(Seeded(st), surface)), "AND EVERY WORD IT REGISTERS IS A BUILTIN, NOT ONE IT INVENTED — " & Join(Missing(Seeded(st), surface), " "))
 
-    Print("--- the free list, which is a builtin seed's whole work ---")
-    Show("free", free)
+    Print("--- what a session can now reach ---")
+    Show("seeded by seedbuiltin", Seeded(st))
 
     Print("--- spot checks, so the partition is not merely self-consistent ---")
     Rem If HxFresh were somehow empty these assertions all pass and mean
     Rem nothing, so a few names are checked against what they must be.
     Assert(Contains(claimed, "DUP") And Contains(claimed, "+") And Contains(claimed, "MAP"), "THE CORE'S OWN WORDS COUNT AS CLAIMED")
     Assert(Contains(claimed, "FILEEXISTS"), "AND A BUILTIN A SEED REGISTERED COUNTS TOO")
-    Assert(Contains(free, "LEN") And Contains(free, "VAL") And Contains(free, "NTH"), "WHILE THE COMMONEST GAPS ARE GENUINELY GAPS")
+    Assert(Contains(claimed, "LEN") And Contains(claimed, "VAL") And Contains(claimed, "NTH"), "AND THE COMMONEST GAPS ARE GAPS NO LONGER")
     Assert(Not RckKnows(st, "BOPEN"), "AND BOPEN IS STILL NOT A WORD IN THIS DICTIONARY")
     Assert(Length(claimed) > 40, "THE DICTIONARY IS REALLY THERE — WELL PAST FORTY BUILTINS ARE REACHABLE")
 
@@ -295,3 +321,13 @@ Def Main()
 Rem Every name under one rule, absent from the dictionary.
 Def NoneKnown(st As RckState, r As Rule) As Boolean
     All(RuleNames(r), Fn(n) => Not RckKnows(st, n))
+
+Rem What seedbuiltin actually put in the dictionary, read back out of it
+Rem by the group name RckSeeding gave them. Read rather than declared, so
+Rem the comparison above is against the seed and not against a second
+Rem copy of the seed's intentions.
+Def Seeded(st As RckState) As List Of String
+    Map(Filter(RckDict(st), BiGroup), WordName)
+
+Def BiGroup(e As RckEntry) As Boolean
+    WordSeed(e) = "builtin"

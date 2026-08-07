@@ -1,0 +1,287 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem builtinsurfacetest.shoddy — every builtin the runtime dispatches,
+Rem accounted for against the seeded dictionary
+Rem
+Rem Assert-driven, in the cuttletest / reckonertest / seedtest pattern:
+Rem it prints what it is doing and stops the run at the first assertion
+Rem that fails, ending with ALL ASSERTIONS PASSED when it does not.
+Rem
+Rem WHAT THIS IS FOR. The reckoner's dictionary and the runtime's
+Rem builtins are two different surfaces, and nothing until now compared
+Rem them. A builtin is reachable from a prompt only if the core or some
+Rem seed registered a word for it, and 148 builtins against a 565-word
+Rem dictionary is not a comparison anybody makes by eye. So it is made
+Rem here, once, and it partitions the whole surface three ways:
+Rem
+Rem   CLAIMED  — the core or a seed already registers this name.
+Rem   EXCLUDED — deliberately absent, and the rule that excludes it is
+Rem              named beside it below.
+Rem   FREE     — neither, so this is what a builtin seed would be for.
+Rem
+Rem THE PARTITION IS THE TEST. Every name is in exactly one of the
+Rem three, the three add up to the whole surface, and both of the
+Rem interesting halves are asserted rather than printed: an EXCLUDED
+Rem name must NOT be in the dictionary (a rule that says "never seed
+Rem this" is worth nothing unless something checks), and the FREE set
+Rem must be exactly what is written down. Steal a builtin name in some
+Rem future seed and this file fails and names it.
+Rem
+Rem WHY IT IS WORTH HAVING BEFORE THE SEED IT IS FOR. Writing a seed
+Rem over three dozen of the commonest names in the language — LEN, VAL,
+Rem NTH, SORT, STR — is exactly the work where a silent collision is
+Rem easy and expensive: a word registered over one another seed already
+Rem owns simply replaces it, and the seed whose word vanished is the one
+Rem that breaks, somewhere else, later. Settling the free list first
+Rem makes that seed mechanical to write.
+Rem
+Rem THE DICTIONARY IT COMPARES AGAINST is halifax's, because halifax is
+Rem the mill that folds in every seed there is, so its dictionary is the
+Rem largest one the tree can build. The single exception is seedisam,
+Rem which no mill can fold without a table handle to close over — and
+Rem which registers no name that is also a builtin, so it changes
+Rem nothing here.
+Rem
+Rem GROUND TRUTH, AND WHERE IT CAME FROM. Builtins() below is the
+Rem dispatch in src/Shoddy.Runtime/Engine.cs, which is the only place
+Rem the list exists. It is copied rather than derived because Shoddy
+Rem cannot read its own runtime's source; the cost is that a builtin
+Rem added there and not here is invisible, and the answer to that is
+Rem that adding a builtin is a runtime change and this file is part of
+Rem what a runtime change touches.
+Rem
+Rem Run: bin\mill run tst\builtinsurfacetest.shoddy   (from the repo root)
+Rem ==================================================================
+
+Include "../machines/reckoner.shoddy"
+Include "../machines/seq.shoddy"
+Include "../machines/str.shoddy"
+Include "../mills/halifax/halifax-core.shoddy"
+
+Rem ---- the runtime's whole dispatch, in one place ----------------------
+
+Rem Split across several Defs only because one list literal of 148
+Rem strings is a wall nobody can read; the grouping is alphabetical
+Rem convenience and carries no meaning.
+Def Builtins() As List Of String
+    Concat(Concat(BuiltinsA(), BuiltinsB()), Concat(BuiltinsC(), BuiltinsD()))
+
+Def BuiltinsA() As List Of String
+    { "&", "*", "+", "-", "/", "<", "<=", "<>", "=", ">", ">=",
+      "ABS", "ACOS", "AND", "APPENDFILE", "ARGS", "ASC", "ASIN", "ASSERT",
+      "ATN", "ATN2", "BCLOSE", "BETAI", "BOPEN", "BPOS", "BSIZE", "CALL",
+      "CEIL", "CHR", "CLOCK", "CONCAT", "COS", "DELETEFILE", "DEPTH", "DIM",
+      "DROP", "DUP", "EACH", "ERF", "ERROR", "EXP" }
+
+Def BuiltinsB() As List Of String
+    { "FALSE", "FILEEXISTS", "FILTER", "FIRST", "FIX", "FLOOR", "FOLD",
+      "GAMMAP", "GETBOOL", "GETNUM", "GETSTR", "IFTE", "INKEY", "INPUT",
+      "INPUTLINE", "INSTR", "ISEMPTY", "ISNUMERIC", "LEFT", "LEN", "LENGTH",
+      "LOG", "LOG10", "LOWER", "MAP", "MAX", "MID", "MIN", "MOD", "NEGATE",
+      "NIP", "NOT", "NOTEOFF", "NOTEON", "NTH", "OR", "OVER", "PI" }
+
+Def BuiltinsC() As List Of String
+    { "PREPEND", "PRINT", "PUTBOOL", "PUTNUM", "PUTSTR", "RANGE", "READFILE",
+      "REST", "REVERSE", "RIGHT", "RND", "ROT", "ROUND",
+      "SCRIBBLERBLIT", "SCRIBBLERCLOSE", "SCRIBBLERFILL", "SCRIBBLERGETPIXEL",
+      "SCRIBBLERHEIGHT", "SCRIBBLEROPEN", "SCRIBBLERPIXEL", "SCRIBBLERPLACE",
+      "SCRIBBLERPOLL", "SCRIBBLERSAVE", "SCRIBBLERSETINTERVAL", "SCRIBBLERTEXT",
+      "SCRIBBLERTITLE", "SCRIBBLERWAIT", "SCRIBBLERWIDTH",
+      "SEED", "SEEK", "SETNTH", "SGN", "SIN", "SLEEP", "SORT" }
+
+Def BuiltinsD() As List Of String
+    { "SOUND", "SOUNDGAIN", "SOUNDQUEUE", "SOUNDSTOP", "SOUNDWAVE", "SQR",
+      "STR", "SWAP", "TAN", "TANH", "TCPACCEPT", "TCPCLOSE", "TCPCONNECT",
+      "TCPEOF", "TCPLISTEN", "TCPPEER", "TCPPOLL", "TCPRECV", "TCPSECURE",
+      "TCPSEND", "TICKS", "TIMES", "TOARRAY", "TOLIST", "TRUE", "TRYREADFILE",
+      "TRYWRITEFILE", "TUCK", "UPPER", "VAL", "VALOR", "WRAP", "WRITEFILE", "^" }
+
+Rem ---- what is deliberately absent, and the rule that decides --------
+
+Rem A rule and the names it covers. The rule travels WITH the names
+Rem rather than in a comment above them, so a name cannot be added to
+Rem the excluded list without saying under which rule — which is the
+Rem whole difference between a decision and an omission.
+Type Rule
+    RuleWhy   As String
+    RuleNames As List Of String
+
+Def Excluded() As List Of Rule
+    { RuleHandle(), RuleSocket(), RuleDevice(), RuleEffect(), RuleNoCell(), RuleSpelled() }
+
+Rem R3.5(b), the rule that has already kept isam, recio and the binary
+Rem model formats out: a handle is a NUMBER capped at sixteen and shared
+Rem across kinds, so an UNDO after opening one restores the stack while
+Rem leaving the resource open and now unreachable.
+Def RuleHandle() As Rule
+    Rule("a handle would reach the stack (R3.5(b))",
+         { "BOPEN", "BCLOSE", "SEEK", "BPOS", "BSIZE",
+           "PUTNUM", "GETNUM", "PUTBOOL", "GETBOOL", "PUTSTR", "GETSTR" })
+
+Rem The same rule, plus a capability the mill has to be started with:
+Rem --allow-net is not something a session can obtain half way through.
+Def RuleSocket() As Rule
+    Rule("a socket handle, and a capability a running session cannot obtain",
+         { "TCPCONNECT", "TCPLISTEN", "TCPACCEPT", "TCPSECURE", "TCPSEND",
+           "TCPRECV", "TCPEOF", "TCPPOLL", "TCPPEER", "TCPCLOSE" })
+
+Rem A live window or a sound device. Same category as turtle, plotter
+Rem and buzzer, which halifax-core.shoddy already records as unseedable.
+Def RuleDevice() As Rule
+    Rule("a live window or sound device the shell has no source for",
+         { "SCRIBBLEROPEN", "SCRIBBLERPIXEL", "SCRIBBLERFILL", "SCRIBBLERTEXT",
+           "SCRIBBLERGETPIXEL", "SCRIBBLERWIDTH", "SCRIBBLERHEIGHT",
+           "SCRIBBLERBLIT", "SCRIBBLERCLOSE", "SCRIBBLERTITLE", "SCRIBBLERSAVE",
+           "SCRIBBLERPLACE", "SCRIBBLERPOLL", "SCRIBBLERWAIT",
+           "SCRIBBLERSETINTERVAL",
+           "SOUND", "NOTEON", "NOTEOFF", "SOUNDQUEUE", "SOUNDSTOP",
+           "SOUNDGAIN", "SOUNDWAVE" })
+
+Rem R3.2: the engine performs no effect, and evaluation answers LINES
+Rem for a shell to print. A PRINT word registered as RckTouch would
+Rem write outside the transaction — the tape would not record it,
+Rem TAPESAVE would lose it, and the screen and the tape would disagree,
+Rem which is the one thing the single-render rule exists to prevent.
+Rem Reading is the shell's for the matching reason: it owns the prompt,
+Rem and a word that blocks for input mid-line would be a second thing
+Rem reading the same keyboard.
+Def RuleEffect() As Rule
+    Rule("the engine performs no effect, and the shell owns the terminal (R3.2)",
+         { "PRINT", "INPUT", "INPUTLINE", "INKEY" })
+
+Rem R4.16: there is no ARRAY cell and no RESULT cell at the keyboard, so
+Rem these four have nothing to answer WITH. TOARRAY and TOLIST would be
+Rem the identity. TRYREADFILE and TRYWRITEFILE answer a Result, which is
+Rem not a Cell — their guarding is what READFILE and WRITEFILE would be
+Rem registered OVER, exactly as seedfile.shoddy already builds READLINES
+Rem on TryReadFile rather than registering TryReadFile itself. EACH
+Rem sequences effects and there are none to sequence, so it is MAP and a
+Rem DROP, which the dictionary already has both of.
+Def RuleNoCell() As Rule
+    Rule("no cell to answer with, or nothing left to do once effects are gone (R4.16)",
+         { "TOARRAY", "TOLIST", "TRYREADFILE", "TRYWRITEFILE", "EACH" })
+
+Rem Already reachable under the name the dictionary chose, and a seed
+Rem that registered a second spelling would be a seed that made HELP
+Rem answer twice. The precedent is seedmath leaving RAD to the core and
+Rem seedbool leaving AND and NOT to it.
+Rem
+Rem NOTE the two logarithms, which are crossed: the builtin LOG is the
+Rem natural one and the dictionary spells that LN, while the dictionary
+Rem word LOG is base ten and is the builtin LOG10. Both are reachable;
+Rem only the names moved.
+Def RuleSpelled() As Rule
+    Rule("already in the dictionary under the name it chose",
+         { "SQR", "LOG10" })
+
+Rem ---- what is left, which is what a builtin seed would be for -------
+
+Rem Ground truth, so that a collision is a FAILURE and not a quietly
+Rem shorter list next time this runs. Thirty-six words: the ones a
+Rem session cannot reach today and that nothing above rules out.
+Def FreeWanted() As List Of String
+    { "&", "APPENDFILE", "ARGS", "ASC", "ASSERT", "ATN", "ATN2", "BETAI",
+      "CALL", "CHR", "CLOCK", "DELETEFILE", "DIM", "ERF", "ERROR", "GAMMAP",
+      "INSTR", "ISEMPTY", "ISNUMERIC", "LEFT", "LEN", "MID", "NEGATE", "NTH",
+      "PREPEND", "READFILE", "RIGHT", "RND", "SETNTH", "SLEEP", "SORT", "STR",
+      "TANH", "VAL", "VALOR", "WRITEFILE" }
+
+Rem ---- set plumbing ---------------------------------------------------
+
+Rem Both of these take a Rule by name rather than reaching into one
+Rem inside a lambda: All and Map pass their element as a generic t, and
+Rem a record accessor cannot resolve against a type that is not yet
+Rem known — it partially applies into a quotation instead, and fails a
+Rem long way from the mistake, exactly as fin.shoddy warns about Mod.
+Def NameOk(nm As String) As Boolean
+    (nm <> "") And (Upper(nm) = nm)
+
+Def RuleNamesOf(r As Rule) As List Of String
+    RuleNames(r)
+
+Def RuleOk(r As Rule) As Boolean
+    (RuleWhy(r) <> "") And (Not IsEmpty(RuleNames(r)))
+
+Def ExcludedNames() As List Of String
+    Flatten(Map(Excluded(), RuleNamesOf))
+
+Def Missing(xs As List Of String, ys As List Of String) As List Of String
+    Filter(xs, Fn(n) => Not Contains(ys, n))
+
+Rem Two lists hold the same names when neither has one the other lacks
+Rem and neither repeats. Order is not meaning here, so it is not tested.
+Def Same(xs As List Of String, ys As List Of String) As Boolean
+    IsEmpty(Missing(xs, ys)) And IsEmpty(Missing(ys, xs)) And Length(xs) = Length(ys)
+
+Def Dupes(xs As List Of String) As List Of String
+    Filter(xs, Fn(n) => CountIf(xs, Fn(m) => m = n) > 1)
+
+Def Show(what As String, xs As List Of String)
+    Print("  " & what & " (" & Str(Length(xs)) & ")")
+    If Not IsEmpty(xs) Then
+        Print("    " & Join(xs, " "))
+
+Def Main()
+    Let st = HxFresh()
+    Let surface = Builtins()
+    Let excl = ExcludedNames()
+    Let claimed = Filter(surface, Fn(nm) => RckKnows(st, nm))
+    Let free = Missing(Missing(surface, claimed), excl)
+
+    Print("--- the ground truth is well formed before it is used ---")
+    Assert(IsEmpty(Dupes(surface)), "NO BUILTIN IS LISTED TWICE")
+    Assert(IsEmpty(Dupes(excl)), "AND NO EXCLUDED NAME IS COVERED BY TWO RULES")
+    Assert(All(surface, NameOk), "EVERY BUILTIN IS NAMED IN UPPER CASE, AS THE DICTIONARY MATCHES THEM")
+    Assert(All(Excluded(), RuleOk), "EVERY EXCLUSION RULE HAS A REASON AND AT LEAST ONE NAME UNDER IT")
+    Rem A stale exclusion is worse than none: it reads as a decision
+    Rem about a builtin that no longer exists.
+    Assert(IsEmpty(Missing(excl, surface)), "AND EVERY EXCLUDED NAME IS STILL A BUILTIN — " & Join(Missing(excl, surface), " "))
+
+    Print("--- an excluded builtin is absent, which is the point of excluding it ---")
+    Rem The load-bearing assertion, and it runs BEFORE the count below
+    Rem rather than after. A name that is both excluded and in the
+    Rem dictionary breaks the partition too — it is counted twice — so
+    Rem the arithmetic would catch it either way, and say only that the
+    Rem numbers do not add up. These six say WHICH RULE was broken, which
+    Rem is the whole difference between a failure and a diagnosis, so
+    Rem they are asked first.
+    Assert(NoneKnown(st, RuleHandle()), "NO HANDLE WORD REACHED THE DICTIONARY")
+    Assert(NoneKnown(st, RuleSocket()), "NOR ANY SOCKET WORD")
+    Assert(NoneKnown(st, RuleDevice()), "NOR ANY WINDOW OR SOUND WORD")
+    Assert(NoneKnown(st, RuleEffect()), "NOR PRINT AND THE THREE WAYS OF READING")
+    Assert(NoneKnown(st, RuleNoCell()), "NOR THE ONES WITH NO CELL TO ANSWER WITH")
+    Assert(NoneKnown(st, RuleSpelled()), "NOR A SECOND SPELLING OF A WORD THE DICTIONARY ALREADY HAS")
+
+    Print("--- the three parts cover the whole surface, once each ---")
+    Assert(Length(claimed) + Length(excl) + Length(free) = Length(surface), "CLAIMED PLUS EXCLUDED PLUS FREE IS THE WHOLE DISPATCH, WITH NOTHING COUNTED TWICE")
+    Print("  " & Str(Length(surface)) & " builtins = " & Str(Length(claimed)) & " claimed + " & Str(Length(excl)) & " excluded + " & Str(Length(free)) & " free")
+
+    Print("--- and the free list is exactly what is written down ---")
+    Rem This is the collision test. A future seed that registers LEN, or
+    Rem VAL, or SORT, shortens the computed free list, and the two stop
+    Rem agreeing — here, by name, rather than wherever the word that
+    Rem quietly lost its registration is next used.
+    Assert(IsEmpty(Missing(free, FreeWanted())), "NOTHING BECAME FREE THAT WAS NOT EXPECTED TO BE — " & Join(Missing(free, FreeWanted()), " "))
+    Assert(IsEmpty(Missing(FreeWanted(), free)), "AND NOTHING EXPECTED TO BE FREE WAS CLAIMED OR EXCLUDED BEHIND ITS BACK — " & Join(Missing(FreeWanted(), free), " "))
+    Assert(Same(free, FreeWanted()), "SO THE FREE LIST IS EXACTLY THE ONE THIS FILE STATES")
+
+    Print("--- the free list, which is a builtin seed's whole work ---")
+    Show("free", free)
+
+    Print("--- spot checks, so the partition is not merely self-consistent ---")
+    Rem If HxFresh were somehow empty these assertions all pass and mean
+    Rem nothing, so a few names are checked against what they must be.
+    Assert(Contains(claimed, "DUP") And Contains(claimed, "+") And Contains(claimed, "MAP"), "THE CORE'S OWN WORDS COUNT AS CLAIMED")
+    Assert(Contains(claimed, "FILEEXISTS"), "AND A BUILTIN A SEED REGISTERED COUNTS TOO")
+    Assert(Contains(free, "LEN") And Contains(free, "VAL") And Contains(free, "NTH"), "WHILE THE COMMONEST GAPS ARE GENUINELY GAPS")
+    Assert(Not RckKnows(st, "BOPEN"), "AND BOPEN IS STILL NOT A WORD IN THIS DICTIONARY")
+    Assert(Length(claimed) > 40, "THE DICTIONARY IS REALLY THERE — WELL PAST FORTY BUILTINS ARE REACHABLE")
+
+    Print("")
+    Print("ALL ASSERTIONS PASSED")
+
+Rem Every name under one rule, absent from the dictionary.
+Def NoneKnown(st As RckState, r As Rule) As Boolean
+    All(RuleNames(r), Fn(n) => Not RckKnows(st, n))

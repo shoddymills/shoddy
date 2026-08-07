@@ -170,6 +170,13 @@ case "${1:-help}" in
         dotnet test src/Shoddy.Tests
         ensure_mill
         "$MILL" run tst/libtest.shoddy
+        # Not a machine suite: it compares the RUNTIME's builtin dispatch
+        # against the seeded dictionary, and fails if a builtin is
+        # reachable that a stated rule says must not be, or if a future
+        # seed quietly claims a name the builtin seed's work list expects
+        # to be free. Runs here, before the machine suites, because a
+        # collision it catches is one they would report somewhere else.
+        "$MILL" run tst/builtinsurfacetest.shoddy
         # fin's arithmetic is the kind that produces a plausible wrong
         # answer rather than an error, so its known-answer suite runs in
         # CI beside the golden files rather than by hand.

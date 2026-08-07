@@ -62,9 +62,8 @@ Include "str.shoddy"
 Rem ---- the two words -----------------------------------------------------
 
 Def NsSeedGet(st As RckState) As RckState
-    Let s1 = RckReg(st, "NETGET", 1, RckTouch(Fn(vs) => NsGet(vs)), "( url -- str )", "Fetch a URL and answer the whole reply, headers and all. http:// and https:// both work, and a bare host is taken as https. NETBODY drops the headers. Refuses, rather than aborting, when the mill has no --allow-net or the host cannot be reached.")
-    Let s2 = RckReg(s1, "NETREQUEST", 4, RckTouch(Fn(vs) => NsRequest(vs)), "( host port secure msg -- str )", "Send msg to host on that port, with TLS when secure is True, and answer the whole reply. The raw form NETGET is built on, for a protocol that is not HTTP.")
-    RckReg(s2, "NETBODY", 1, RckPure(Fn(vs) => NsBody(vs)), "( str -- str )", "The body of an HTTP reply — everything after the blank line that ends the headers. The whole string back when there is no such line.")
+    Let s1 = RckReg(st, "NETGET", 1, RckTouch(Fn(vs) => NsGet(vs)), "( url -- str )", "Fetch a URL and answer the whole reply, headers and all. http:// and https:// both work, and a bare host is taken as https. HTTPBODY, seedhttps's, drops the headers. Refuses, rather than aborting, when the mill has no --allow-net or the host cannot be reached.")
+    RckReg(s1, "NETREQUEST", 4, RckTouch(Fn(vs) => NsRequest(vs)), "( host port secure msg -- str )", "Send msg to host on that port, with TLS when secure is True, and answer the whole reply. The raw form NETGET is built on, for a protocol that is not HTTP.")
 
 Rem ---- NETGET ------------------------------------------------------------
 
@@ -180,36 +179,13 @@ Def NsAnswered(word As String, r As Result) As RckWork
         Case Else
             RckWorkBad(word & " did not answer")
 
-Rem ---- NETBODY -----------------------------------------------------------
-
-Rem An HTTP reply is headers, a blank line, then the body. The blank line
-Rem is CRLFCRLF by the standard and LFLF in the wild, so both are looked
-Rem for and the earlier one wins — a reply with neither is handed back
-Rem whole, because a caller who asked for the body of something that is
-Rem not a reply is better served by the text than by an empty string.
-Def NsBody(vs As List Of Cell) As RckWork
-    Select Case RckTextArg("NETBODY", First(vs))
-        Case Ok(s)
-            RckVals({ CutStr(NsBodyOf(s)) })
-        Case Err(w, at)
-            RckWorkBad(w)
-        Case Else
-            RckWorkBad("NETBODY did not answer")
-
-Def NsBodyOf(s As String) As String
-    NsBodyAt(s, NsFirstOf(Instr(s, "\r\n\r\n"), 4, Instr(s, "\n\n"), 2))
-
-Def NsFirstOf(a As Number, alen As Number, b As Number, blen As Number) As Pair
-    If a > 0 And (b = 0 Or a <= b) Then
-        Pair(a, alen)
-    Else
-        Pair(b, blen)
-
-Def NsBodyAt(s As String, found As Pair) As String
-    If Fst(found) = 0 Then
-        s
-    Else
-        Mid(s, Fst(found) + Snd(found), Len(s))
+Rem THERE WAS A NETBODY HERE, and seedhttps.shoddy is where it went. It
+Rem split a reply at the blank line, which is what HTTPBODY does — and
+Rem HTTPBODY is https.shoddy's own, so it does it properly. Keeping both
+Rem would have been a second spelling of a word the dictionary already
+Rem had, which is the thing seedbuiltin's own rules exist to prevent. A
+Rem mill that wants replies taken apart folds seedhttps; this seed
+Rem fetches the text.
 
 Rem ---- the seed ----------------------------------------------------------
 

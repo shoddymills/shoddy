@@ -21,10 +21,13 @@ Rem
 Rem   * every guard the seed invents, all of which are answered before
 Rem     anything is dialled — a URL with no host, a port that is not a
 Rem     number, a port outside 1..65535, an argument of the wrong kind;
-Rem   * NETBODY, which is pure string work on a reply and needs no
-Rem     network to have produced one;
 Rem   * that the refusal names the REMEDY, since "the network is off" is
 Rem     useless without "--allow-net".
+Rem
+Rem TAKING A REPLY APART IS SEEDHTTPS'S, not this seed's, and its suite
+Rem covers it. There was a NETBODY here until https.shoddy's own HTTPBODY
+Rem was bridged, and two words splitting a reply at the blank line would
+Rem have been the second spelling seedbuiltin's rules exist to prevent.
 Rem
 Rem If the suite is ever run WITH --allow-net the fetch assertions relax
 Rem to "answered or refused, and the session lived", because what a real
@@ -74,20 +77,13 @@ Def Q(s As String) As String
 Def Refuses(st As RckState, line As String, why As String) As Boolean
     Bad(st, line) And Instr(Why(st, line), why) > 0 And Text(Ran(st, line)) = Text(st) And Text(Ran(Ran(st, line), "1 1 +")) = Text(Ran(st, "1 1 +"))
 
-Rem A CRLF reply and an LF one, built here rather than fetched, so
-Rem NETBODY is tested on both spellings of the blank line.
-Def CrlfReply() As String
-    "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\nthe body"
-
-Def LfReply() As String
-    "HTTP/1.1 200 OK\nContent-Type: text/plain\n\nthe body"
-
 Def Main()
     Let s0 = RckSeedBuiltin(RckSeedNet(RckNew()))
     Let g = Ran(s0, "1 2")
 
     Print("--- the seed is in the dictionary, grouped and documented ---")
-    Assert(RckKnows(s0, "NETGET") And RckKnows(s0, "NETREQUEST") And RckKnows(s0, "NETBODY"), "THE WORDS ARE THERE")
+    Assert(RckKnows(s0, "NETGET") And RckKnows(s0, "NETREQUEST"), "THE WORDS ARE THERE")
+    Assert(Not RckKnows(s0, "NETBODY"), "AND TAKING A REPLY APART IS SEEDHTTPS'S JOB, NOT A SECOND SPELLING HERE")
     Assert(Contains(RckWords(s0), "-- seed-net --"), "AND THEY HAVE A GROUP OF THEIR OWN")
     Assert(All(RckDict(s0), Fn(e) => WordEffect(e) <> "" And WordDesc(e) <> ""), "NO WORD IS WITHOUT AN EFFECT LINE AND A DESCRIPTION")
     Assert(All(RckDict(s0), Fn(e) => Length(RckHelp(s0, WordName(e))) = 3), "AND HELP ANSWERS FOR EVERY ONE OF THEM")
@@ -122,16 +118,6 @@ Def Main()
     Assert(Refuses(g, Q("example.com") & " 0 True " & Q("x") & " NETREQUEST", "THEY RUN FROM 1 TO 65535"), "AND PORT ZERO")
     Assert(Refuses(g, Q("example.com") & " 443 " & Q("yes") & " " & Q("x") & " NETREQUEST", "True or False"), "A SECURE FLAG THAT IS NOT A BOOLEAN")
     Assert(Refuses(g, Q("example.com") & " 443 True 5 NETREQUEST", "STRING to send"), "AND A MESSAGE THAT IS NOT A STRING")
-
-    Print("--- NETBODY is pure string work, and needs no network at all ---")
-    Assert(Text(Ran(s0, Q(CrlfReply()) & " NETBODY")) = Q("the body"), "THE BODY IS WHAT FOLLOWS THE BLANK LINE, CRLF STYLE")
-    Assert(Text(Ran(s0, Q(LfReply()) & " NETBODY")) = Q("the body"), "AND LF STYLE, WHICH IS WHAT THE WILD ACTUALLY SENDS")
-    Rem A string with no blank line comes back whole: somebody asking for
-    Rem the body of something that is not a reply is better served by the
-    Rem text than by nothing.
-    Assert(Text(Ran(s0, Q("no headers here") & " NETBODY")) = Q("no headers here"), "A STRING WITH NO HEADER BREAK COMES BACK WHOLE")
-    Assert(Text(Ran(s0, Q("") & " NETBODY")) = Q(""), "AND SO DOES AN EMPTY ONE")
-    Assert(Refuses(g, "5 NETBODY", "NETBODY"), "AND A NUMBER IS NOT A REPLY")
 
     Print("")
     Print("ALL ASSERTIONS PASSED")

@@ -58,17 +58,45 @@ Def MidiFreq(midi As Number) As Number
 
 Rem "C4" -> 60, "F#3" -> 54, "Bb5" -> 82. Scientific pitch: C4 is middle
 Rem C. Letters A-G, "#" sharp, "b" flat, octave digit 0-8 required.
-Def NoteMidi(name As String) As Number
-    Let u = Upper(name)
+Rem THE GUARDED TWIN, and the aborting one defined over it. This is the
+Rem shape TryReadFile and ReadFile have in the runtime, brought up to a
+Rem machine for the first time — and it is here because a MACHINE is
+Rem where this parse lives, so a guarded builtin could not have helped.
+Rem
+Rem Everything that can be malformed is decided in the Try form, and
+Rem NoteMidi is that answer with the Err turned back into the abort it
+Rem always was. So there is ONE set of rules rather than a parser and a
+Rem validator that can drift apart, and a caller who would rather be
+Rem told than killed has somewhere to go.
+Def TryNoteMidi(name As String) As Result
+    TryNoteAt(name, Upper(name))
+
+Def TryNoteAt(name As String, u As String) As Result
     If Len(u) < 2 Or Instr("ABCDEFG", Mid(u, 1, 1)) = 0 Then
-        Error("NOTEMIDI: BAD NOTE NAME '" & name & "'")
+        Err(NoteWhy(name), 0)
     Else
-        Let acc = MmlAccVal(u, 2, "#B")
-        Let ka = 2 + MmlAccLen(u, 2, "#B")
-        If Len(u) <> ka Or Instr("012345678", Mid(u, ka, 1)) = 0 Then
-            Error("NOTEMIDI: BAD NOTE NAME '" & name & "'")
-        Else
-            12 * (Val(Mid(u, ka, 1)) + 1) + MmlBase(Mid(u, 1, 1)) + acc
+        TryNoteOct(name, u, 2 + MmlAccLen(u, 2, "#B"))
+
+Def TryNoteOct(name As String, u As String, ka As Number) As Result
+    If Len(u) <> ka Or Instr("012345678", Mid(u, ka, 1)) = 0 Then
+        Err(NoteWhy(name), 0)
+    Else
+        Ok(12 * (Val(Mid(u, ka, 1)) + 1) + MmlBase(Mid(u, 1, 1)) + MmlAccVal(u, 2, "#B"))
+
+Def NoteWhy(name As String) As String
+    "NOTEMIDI: BAD NOTE NAME '" & name & "'"
+
+Def NoteMidi(name As String) As Number
+    NoteMidiOr(TryNoteMidi(name))
+
+Def NoteMidiOr(r As Result) As Number
+    Select Case r
+        Case Ok(m)
+            m
+        Case Err(w, at)
+            Error(w)
+        Case Else
+            Error("NOTEMIDI: THE NAME DID NOT ANSWER")
 
 Def NoteFreq(name As String) As Number
     MidiFreq(NoteMidi(name))
@@ -89,8 +117,20 @@ Rem string raises naming the offending position. GW-BASIC's MN/ML/MS
 Rem articulation modes, Nn, and per-note volume are left for later.
 
 Rem PURE: parse MML to a note list, no I/O.
-Def MmlNotes(mml As String) As List Of BuzzerNote
+Def TryMmlNotes(mml As String) As Result
     MmlRun(Upper(mml), 1, 4, 4, 120)
+
+Def MmlNotes(mml As String) As List Of BuzzerNote
+    MmlNotesOr(TryMmlNotes(mml))
+
+Def MmlNotesOr(r As Result) As List Of BuzzerNote
+    Select Case r
+        Case Ok(ns)
+            ns
+        Case Err(w, at)
+            Error(w)
+        Case Else
+            Error("MML: THE PARSE DID NOT ANSWER")
 
 Rem Queue every note of an MML string onto channel ch. Fire-and-forget.
 Def Play(ch As Number, mml As String)
@@ -104,43 +144,120 @@ Def PlayNotes(ch As Number, notes As List Of BuzzerNote)
 
 Rem ---- the parser (internal; s is already uppercased) ------------------
 
-Def MmlRun(s As String, k As Number, oct As Number, dlen As Number, tempo As Number) As List Of BuzzerNote
+Rem THE PARSE THREADS A Result, and MmlNotes is that answer with the Err
+Rem turned back into the abort it always was. Every recursive step
+Rem unwraps what came back and passes a failure straight out, so the
+Rem five ways an MML string can be malformed each have exactly one
+Rem statement of what is wrong and where — no second walk to drift.
+Rem
+Rem It reads longer than the aborting version did, and all of the extra
+Rem is unwrapping. That is what threading a failure through a recursive
+Rem descent costs in a language with no exceptions, and it buys a
+Rem parser a session can be handed without the session being at risk.
+Def MmlRun(s As String, k As Number, oct As Number, dlen As Number, tempo As Number) As Result
     If k > Len(s) Then
-        { }
+        Ok({ })
     Else
         If Mid(s, k, 1) = " " Or Mid(s, k, 1) = Chr(9) Then
             MmlRun(s, k + 1, oct, dlen, tempo)
         Else
             MmlCmd(Mid(s, k, 1), s, k, oct, dlen, tempo)
 
-Def MmlCmd(c As String, s As String, k As Number, oct As Number, dlen As Number, tempo As Number) As List Of BuzzerNote
+Def MmlCmd(c As String, s As String, k As Number, oct As Number, dlen As Number, tempo As Number) As Result
     Select Case c
         Case "T"
-            MmlRun(s, MmlDigitEnd(s, k + 1), oct, dlen, MmlArg(s, k, "T"))
+            MmlWithTempo(s, k, oct, dlen, MmlArg(s, k, "T"))
         Case "L"
-            MmlRun(s, MmlDigitEnd(s, k + 1), oct, MmlArg(s, k, "L"), tempo)
+            MmlWithLen(s, k, oct, tempo, MmlArg(s, k, "L"))
         Case "O"
-            MmlRun(s, MmlDigitEnd(s, k + 1), MmlMustOct(MmlArg(s, k, "O") - 1, k), dlen, tempo)
+            MmlWithOctArg(s, k, dlen, tempo, MmlArg(s, k, "O"))
         Case "<"
-            MmlRun(s, k + 1, MmlMustOct(oct - 1, k), dlen, tempo)
+            MmlWithOct(s, k + 1, dlen, tempo, MmlMustOct(oct - 1, k))
         Case ">"
-            MmlRun(s, k + 1, MmlMustOct(oct + 1, k), dlen, tempo)
+            MmlWithOct(s, k + 1, dlen, tempo, MmlMustOct(oct + 1, k))
         Case "P", "R"
             MmlStep(s, k, k + 1, 0, oct, dlen, tempo)
         Case ","
-            Prepend(BuzzerNote(0, MmlMs(tempo, 4, 0)), MmlRun(s, k + 1, oct, dlen, tempo))
+            MmlOnto(BuzzerNote(0, MmlMs(tempo, 4, 0)), MmlRun(s, k + 1, oct, dlen, tempo))
         Case "A", "B", "C", "D", "E", "F", "G"
             MmlStep(s, k, k + 1 + MmlAccLen(s, k + 1, "#+-"), 12 * (oct + 1) + MmlBase(c) + MmlAccVal(s, k + 1, "#+-"), oct, dlen, tempo)
         Case Else
-            Error("MML: UNEXPECTED '" & c & "' AT POSITION " & Str(k))
+            Err("MML: UNEXPECTED '" & c & "' AT POSITION " & Str(k), k)
+
+Rem The four commands that carry a number: each takes the argument's
+Rem Result, and either goes on with it or hands the failure straight
+Rem out. Written apart rather than as one because each puts its number
+Rem in a different place.
+Def MmlWithTempo(s As String, k As Number, oct As Number, dlen As Number, r As Result) As Result
+    Select Case r
+        Case Ok(t)
+            MmlRun(s, MmlDigitEnd(s, k + 1), oct, dlen, t)
+        Case Err(w, at)
+            Err(w, at)
+        Case Else
+            MmlBroke()
+
+Def MmlWithLen(s As String, k As Number, oct As Number, tempo As Number, r As Result) As Result
+    Select Case r
+        Case Ok(n)
+            MmlRun(s, MmlDigitEnd(s, k + 1), oct, n, tempo)
+        Case Err(w, at)
+            Err(w, at)
+        Case Else
+            MmlBroke()
+
+Rem O takes its argument AND then has to be in range, so it unwraps
+Rem twice — the argument first, the octave it implies second.
+Def MmlWithOctArg(s As String, k As Number, dlen As Number, tempo As Number, r As Result) As Result
+    Select Case r
+        Case Ok(o)
+            MmlWithOct(s, MmlDigitEnd(s, k + 1), dlen, tempo, MmlMustOct(o - 1, k))
+        Case Err(w, at)
+            Err(w, at)
+        Case Else
+            MmlBroke()
+
+Def MmlWithOct(s As String, k As Number, dlen As Number, tempo As Number, r As Result) As Result
+    Select Case r
+        Case Ok(o)
+            MmlRun(s, k, o, dlen, tempo)
+        Case Err(w, at)
+            Err(w, at)
+        Case Else
+            MmlBroke()
 
 Rem One note (midi > 0) or rest (midi 0) starting at k, its optional
 Rem length digits starting at kl: read length and dot, emit, carry on.
-Def MmlStep(s As String, k As Number, kl As Number, midi As Number, oct As Number, dlen As Number, tempo As Number) As List Of BuzzerNote
-    Let ke = MmlDigitEnd(s, kl)
-    Let n = MmlLenAt(s, kl, ke, dlen, k)
-    Let dots = MmlDots(s, ke)
-    Prepend(BuzzerNote(MmlPitch(midi), MmlMs(tempo, n, dots)), MmlRun(s, ke + dots, oct, dlen, tempo))
+Def MmlStep(s As String, k As Number, kl As Number, midi As Number, oct As Number, dlen As Number, tempo As Number) As Result
+    MmlStepLen(s, k, MmlDigitEnd(s, kl), midi, oct, dlen, tempo, MmlLenAt(s, kl, MmlDigitEnd(s, kl), dlen, k))
+
+Def MmlStepLen(s As String, k As Number, ke As Number, midi As Number, oct As Number, dlen As Number, tempo As Number, r As Result) As Result
+    Select Case r
+        Case Ok(n)
+            MmlOnto(BuzzerNote(MmlPitch(midi), MmlMs(tempo, n, MmlDots(s, ke))),
+                    MmlRun(s, ke + MmlDots(s, ke), oct, dlen, tempo))
+        Case Err(w, at)
+            Err(w, at)
+        Case Else
+            MmlBroke()
+
+Rem A note in front of whatever the rest of the string came to — or that
+Rem failure, unchanged. This is where the list is actually built, and the
+Rem only place it is.
+Def MmlOnto(n As BuzzerNote, rest As Result) As Result
+    Select Case rest
+        Case Ok(ns)
+            Ok(Prepend(n, ns))
+        Case Err(w, at)
+            Err(w, at)
+        Case Else
+            MmlBroke()
+
+Rem The Case Else every unwrap above needs and none of them can reach: a
+Rem Result is Ok or Err and there is no third. Stated once rather than
+Rem eight times, so the eight read as the two cases they are.
+Def MmlBroke() As Result
+    Err("MML: THE PARSE DID NOT ANSWER", 0)
 
 Def MmlPitch(midi As Number) As Number
     If midi = 0 Then
@@ -151,35 +268,40 @@ Def MmlPitch(midi As Number) As Number
 Def MmlMs(tempo As Number, n As Number, dots As Number) As Number
     (4 * 60000 / tempo) / n * (1 + dots * 0.5)
 
-Def MmlLenAt(s As String, kl As Number, ke As Number, dlen As Number, k As Number) As Number
+Def MmlLenAt(s As String, kl As Number, ke As Number, dlen As Number, k As Number) As Result
     If ke = kl Then
-        dlen
+        Ok(dlen)
     Else
         If Val(Mid(s, kl, ke - kl)) < 1 Then
-            Error("MML: BAD LENGTH AT POSITION " & Str(k))
+            Err("MML: BAD LENGTH AT POSITION " & Str(k), k)
         Else
-            Val(Mid(s, kl, ke - kl))
+            Ok(Val(Mid(s, kl, ke - kl)))
 
 Rem A command's required numeric argument (T, L, O), validated >= 1 —
 Rem O is passed shifted by one so O0 survives the check.
-Def MmlArg(s As String, k As Number, what As String) As Number
-    Let e = MmlDigitEnd(s, k + 1)
-    If e = k + 1 Then
-        Error("MML: " & what & " NEEDS A NUMBER AT POSITION " & Str(k))
-    Else
-        If what = "O" Then
-            Val(Mid(s, k + 1, e - k - 1)) + 1
-        Else
-            If Val(Mid(s, k + 1, e - k - 1)) < 1 Then
-                Error("MML: " & what & " MUST BE AT LEAST 1 AT POSITION " & Str(k))
-            Else
-                Val(Mid(s, k + 1, e - k - 1))
+Def MmlArg(s As String, k As Number, what As String) As Result
+    MmlArgAt(s, k, what, MmlDigitEnd(s, k + 1))
 
-Def MmlMustOct(oct As Number, k As Number) As Number
-    If oct < 0 Or oct > 8 Then
-        Error("MML: OCTAVE OUT OF RANGE 0-8 AT POSITION " & Str(k))
+Def MmlArgAt(s As String, k As Number, what As String, e As Number) As Result
+    If e = k + 1 Then
+        Err("MML: " & what & " NEEDS A NUMBER AT POSITION " & Str(k), k)
     Else
-        oct
+        MmlArgVal(s, k, what, Val(Mid(s, k + 1, e - k - 1)))
+
+Def MmlArgVal(s As String, k As Number, what As String, v As Number) As Result
+    If what = "O" Then
+        Ok(v + 1)
+    Else
+        If v < 1 Then
+            Err("MML: " & what & " MUST BE AT LEAST 1 AT POSITION " & Str(k), k)
+        Else
+            Ok(v)
+
+Def MmlMustOct(oct As Number, k As Number) As Result
+    If oct < 0 Or oct > 8 Then
+        Err("MML: OCTAVE OUT OF RANGE 0-8 AT POSITION " & Str(k), k)
+    Else
+        Ok(oct)
 
 Def MmlBase(c As String) As Number
     Select Case c

@@ -96,7 +96,7 @@ machine_suites() {
     for suite in csvtest cuttletest htmltest jsontest nettest neuraltest \
                  randomtest reckonertest seedtest seedbuiltintest seedengtest \
                  seedfintest seedisamtest seedneuraltest seedreciotest \
-                 seednettest seedsimplextest seedvt100test \
+                 seedbuzzertest seednettest seedsimplextest seedvt100test \
                  shakertest xmltest; do
         echo "==> tst/$suite.shoddy"
         "$MILL" run "tst/$suite.shoddy" </dev/null

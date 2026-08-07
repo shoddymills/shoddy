@@ -103,7 +103,7 @@ public static class Effects
         ["SCRIBBLERSAVE"] = new(2, 1), ["SCRIBBLERPLACE"] = new(3, 1),
         // sound
         ["SOUND"] = new(2, 0), ["NOTEON"] = new(2, 0), ["NOTEOFF"] = new(1, 0),
-        ["SOUNDQUEUE"] = new(3, 0), ["SOUNDSTOP"] = new(1, 0),
+        ["SOUNDQUEUE"] = new(3, 0), ["SOUNDQUEUED"] = new(1, 1), ["SOUNDSTOP"] = new(1, 0),
         ["SOUNDGAIN"] = new(2, 0), ["SOUNDWAVE"] = new(2, 0),
     };
 }

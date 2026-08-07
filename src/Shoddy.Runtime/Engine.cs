@@ -1973,6 +1973,20 @@ public sealed partial class Engine
                 BuzzerRegistry.Queue?.Invoke(ch, freq, ms);
                 return true;
             }
+            case "SOUNDQUEUED":                 // ( ch -- ms )
+            {
+                // How far ahead this channel is already queued, in
+                // milliseconds, and 0 once it has drained. The cap above is
+                // the only sound fault that CANNOT be pre-flighted from
+                // Shoddy without it: a caller can measure the score it is
+                // about to queue, and had no way at all to measure what was
+                // already in front of it. The message on that abort tells
+                // you to "feed long scores incrementally", which is the one
+                // thing this makes possible.
+                int qch = PopBuzzerChannel(line, w, "SoundQueued");
+                PushNum(Math.Max(0, buzzQueueEnd[qch] - Ticker.Now));
+                return true;
+            }
             case "SOUNDSTOP":                   // ( ch -- ) release held note, flush queue
             {
                 int ch = PopBuzzerChannel(line, w, "SoundStop");
@@ -2077,8 +2091,8 @@ public sealed partial class Engine
         "SCRIBBLERGETPIXEL", "SCRIBBLERWIDTH", "SCRIBBLERHEIGHT",
         "SCRIBBLERBLIT", "SCRIBBLERCLOSE", "SCRIBBLERTITLE", "SCRIBBLERPOLL",
         "SCRIBBLERWAIT", "SCRIBBLERSETINTERVAL", "SCRIBBLERSAVE", "SCRIBBLERPLACE",
-        "SOUND", "NOTEON", "NOTEOFF", "SOUNDQUEUE", "SOUNDSTOP", "SOUNDGAIN",
-        "SOUNDWAVE",
+        "SOUND", "NOTEON", "NOTEOFF", "SOUNDQUEUE", "SOUNDQUEUED",
+        "SOUNDSTOP", "SOUNDGAIN", "SOUNDWAVE",
     };
 
     // ---- special functions ----------------------------------------------

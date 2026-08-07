@@ -204,7 +204,7 @@ function Invoke-MachineSuites {
     Assert-Mill
     foreach ($suite in 'csvtest', 'cuttletest', 'htmltest', 'jsontest', 'nettest', 'neuraltest',
                        'randomtest', 'reckonertest', 'seedtest', 'seedbuiltintest', 'seedengtest',
-                       'seedfintest', 'seedisamtest', 'seedneuraltest', 'seednettest', 'seedreciotest', 'seedsimplextest', 'seedvt100test', 'shakertest',
+                       'seedbuzzertest', 'seedfintest', 'seedisamtest', 'seedneuraltest', 'seednettest', 'seedreciotest', 'seedsimplextest', 'seedvt100test', 'shakertest',
                        'xmltest') {
         Write-Host "==> tst/$suite.shoddy"
         & $Mill run "tst/$suite.shoddy"

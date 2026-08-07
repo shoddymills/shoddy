@@ -210,6 +210,12 @@ function Invoke-MachineSuites {
         & $Mill run "tst/$suite.shoddy"
         if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     }
+    # --no-window: this one really opens a scribbler, and a suite that
+    # threw a window at you mid-run would be a suite nobody ran. Hidden
+    # windows draw, blit and save exactly as visible ones do.
+    Write-Host '==> tst/seedscribblertest.shoddy'
+    & $Mill --no-window run tst/seedscribblertest.shoddy
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     Write-Host '==> tst/isamtest.shoddy'
     & $Mill run tst/isamtest.shoddy
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

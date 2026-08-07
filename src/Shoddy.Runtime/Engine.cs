@@ -20,6 +20,15 @@ public sealed partial class Engine
 {
     readonly List<Value> Stk = new();
     readonly FileStream?[] files = new FileStream?[16];
+    // Scribblers reached by SLOT NUMBER rather than as a value on the
+    // stack. A SCRIBBLER is its own Value kind, so unlike a file or a
+    // socket it cannot be carried by a number — which is exactly what a
+    // reckoner seed needs, since a resource held in reckoner's named
+    // table is found again by an integer the binding carries. These three
+    // slots-and-numbers words exist for that and nothing else; a program
+    // uses the ordinary SCRIBBLER* family with the value in hand.
+    readonly Value[] scribs = new Value[16];
+    readonly bool[] scribUsed = new bool[16];
     readonly Socket?[] socks = new Socket?[16];   // TCP: connected sockets and listeners share the table
     // The network is a gated capability — off unless the mill was armed
     // with --allow-net (which sets SHODDY_ALLOW_NET=1 in the environment,
@@ -332,6 +341,21 @@ public sealed partial class Engine
     /// already established: one sentence naming what could not be reached
     /// and a reason from a closed set. At is 0 — a failure to connect has
     /// no position in anything.</summary>
+    /// <summary>An Err carrying one sentence and no position, for the
+    /// guarded words whose failure has nowhere in anything to point at.</summary>
+    void PushErrAt(string why) =>
+        Push(Value.OfRec(Prelude.Err, new[] { Value.OfStr(why), Value.OfNum(0) }));
+
+    /// <summary>The slot a scribbler number names, or death. Only a seed
+    /// holding its own binding reaches this.</summary>
+    int ScribSlot(double n, int line, string w)
+    {
+        int k = (int)n;
+        if (k < 1 || k > scribs.Length || !scribUsed[k - 1])
+            throw Die(line, $"{w}: bad scribbler slot");
+        return k - 1;
+    }
+
     void PushConnErr(string host, int port, string why) =>
         Push(Value.OfRec(Prelude.Err, new[]
         {
@@ -1547,6 +1571,80 @@ public sealed partial class Engine
                 Push(Value.OfScribbler(h));
                 return true;
             }
+            case "TRYSCRIBBLEROPEN":            // ( width height -- Result )
+            {
+                // SCRIBBLEROPEN with its two deaths reported rather than
+                // fatal — no window backend, and a size below 1x1 — and
+                // answering a SLOT NUMBER instead of the scribbler itself.
+                //
+                // The slot is the whole point. A SCRIBBLER is its own Value
+                // kind, so a reckoner seed cannot keep one in the named
+                // resource table the way it keeps a file handle; it can keep
+                // an integer. SCRIBBLEROF turns the integer back into the
+                // window and SCRIBBLERSHUT lets it go, so the seed holds a
+                // number and the ordinary drawing words do the work.
+                //
+                // Window creation itself is left to throw: it is marshalled
+                // to the main thread and rethrown here, and a failure at
+                // that point is a broken display rather than a mistyped
+                // argument. The two things a CALLER can get wrong are the
+                // ones reported.
+                int shgt = (int)PopNum(line, w), swid = (int)PopNum(line, w);
+                Func<int, int, ScribblerHandle>? make = ScribblerRegistry.CreateScribbler;
+                if (make == null)
+                {
+                    PushErrAt("CANNOT OPEN A WINDOW (THERE IS NO WINDOW BACKEND — THIS NEEDS `mill run`)");
+                    return true;
+                }
+                if (swid < 1 || shgt < 1)
+                {
+                    PushErrAt($"CANNOT OPEN A WINDOW ({swid}x{shgt} IS SMALLER THAN 1x1)");
+                    return true;
+                }
+                int sslot = Array.IndexOf(scribUsed, false);
+                if (sslot < 0)
+                {
+                    PushErrAt("CANNOT OPEN A WINDOW (TOO MANY OPEN SCRIBBLERS)");
+                    return true;
+                }
+                ScribblerHandle sh = make(swid, shgt);   // blocks until it exists
+                sh.Width = swid; sh.Height = shgt;
+                if (sh.Pixels.Length != swid * shgt * 4) sh.Pixels = new byte[swid * shgt * 4];
+                Interlocked.Increment(ref ScribblerRegistry.OpenCount);
+                scribs[sslot] = Value.OfScribbler(sh);
+                scribUsed[sslot] = true;
+                Push(Value.OfRec(Prelude.Ok, new[] { Value.OfNum(sslot + 1) }));
+                return true;
+            }
+            case "SCRIBBLEROF":                 // ( n -- scribbler )
+            {
+                // The window a slot names. Dies on a slot that is not open,
+                // and that is right: a seed only ever asks for a slot its
+                // own binding is holding, so reaching here with a bad one is
+                // a fault in the seed rather than a mistake at a prompt.
+                Push(scribs[ScribSlot(PopNum(line, w), line, w)]);
+                return true;
+            }
+            case "SCRIBBLERSHUT":               // ( n -- ok )
+            {
+                // Close the window a slot names and free the slot. Answers a
+                // Boolean because it is what a resource closer answers, and
+                // False for a slot that was already let go — closing twice
+                // is the ordinary shape of a double CLOSE and must not end
+                // the session.
+                int k = (int)PopNum(line, w);
+                if (k < 1 || k > scribs.Length || !scribUsed[k - 1])
+                {
+                    PushBool(false);
+                    return true;
+                }
+                ScribblerHandle done = scribs[k - 1].Scribbler!;
+                scribs[k - 1] = default;
+                scribUsed[k - 1] = false;
+                if (done.MarkClosed()) ScribblerRegistry.NoteClosed();
+                PushBool(true);
+                return true;
+            }
             case "SCRIBBLERPIXEL":              // ( scribbler x y r g b -- scribbler )
             {
                 byte b = Chan(PopNum(line, w)), g = Chan(PopNum(line, w)), r = Chan(PopNum(line, w));
@@ -1854,7 +1952,8 @@ public sealed partial class Engine
         "ISEMPTY", "FIRST", "NTH", "SETNTH", "DIM", "TOARRAY", "TOLIST",
         "REST", "PREPEND",
         "TICKS", "SLEEP", "CLOCK",
-        "SCRIBBLEROPEN", "SCRIBBLERPIXEL", "SCRIBBLERFILL", "SCRIBBLERTEXT",
+        "SCRIBBLEROPEN", "TRYSCRIBBLEROPEN", "SCRIBBLEROF", "SCRIBBLERSHUT",
+        "SCRIBBLERPIXEL", "SCRIBBLERFILL", "SCRIBBLERTEXT",
         "SCRIBBLERGETPIXEL", "SCRIBBLERWIDTH", "SCRIBBLERHEIGHT",
         "SCRIBBLERBLIT", "SCRIBBLERCLOSE", "SCRIBBLERTITLE", "SCRIBBLERPOLL",
         "SCRIBBLERWAIT", "SCRIBBLERSETINTERVAL", "SCRIBBLERSAVE", "SCRIBBLERPLACE",

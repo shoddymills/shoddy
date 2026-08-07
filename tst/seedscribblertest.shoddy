@@ -1,0 +1,192 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem seedscribblertest.shoddy — test program for seedscribbler.shoddy
+Rem
+Rem Assert-driven, in the cuttletest / reckonertest / seedtest pattern:
+Rem it prints what it is doing and stops the run at the first assertion
+Rem that fails, ending with ALL ASSERTIONS PASSED when it does not.
+Rem
+Rem IT RUNS EITHER WAY, and that is the design rather than a hedge.
+Rem Whether a window can be made depends on how the mill was started and
+Rem on whether the machine has a display at all — `mill run` has a
+Rem backend, a woven binary and the debugger do not, and a headless CI
+Rem box may have neither. So the suite ASKS, and asserts whichever half
+Rem it got:
+Rem
+Rem   * a window opened — the drawing words are walked, a PNG is written
+Rem     and read back, and the window survives UNDO;
+Rem   * no window — the refusal is asserted to name the reason and leave
+Rem     the session running, which is the whole point of TRYSCRIBBLEROPEN.
+Rem
+Rem Every guard that does not need a window is asserted in both cases,
+Rem because a refusal about a size or a name is answered before anything
+Rem is opened.
+Rem
+Rem Run with --no-window so a dev machine does not get a window thrown at
+Rem it mid-suite; drawing, blitting and SCRIBSAVE behave exactly as they
+Rem would on screen, which is what makes the PNG assertion meaningful.
+Rem
+Rem Run: bin\mill --no-window run tst\seedscribblertest.shoddy
+Rem ==================================================================
+
+Include "../machines/cuttle.shoddy"
+Include "../machines/reckoner.shoddy"
+Include "../machines/seq.shoddy"
+Include "../machines/str.shoddy"
+Include "../machines/seeds/seedscribbler.shoddy"
+
+Rem ---- reading an answer ------------------------------------------------
+
+Def Ran(st As RckState, line As String) As RckState
+    Select Case RckEval(st, line)
+        Case RckNext(st2, out)
+            st2
+        Case RckStop(st2, why, out)
+            st2
+        Case Else
+            st
+
+Def Runs(st As RckState, lines As List Of String) As RckState
+    Fold(lines, st, Ran)
+
+Def Bad(st As RckState, line As String) As Boolean
+    Select Case RckEval(st, line)
+        Case RckStop(st2, why, out)
+            True
+        Case Else
+            False
+
+Def Why(st As RckState, line As String) As String
+    Select Case RckEval(st, line)
+        Case RckStop(st2, why, out)
+            why
+        Case Else
+            ""
+
+Def Text(st As RckState) As String
+    Join(Map(CutCells(RckStack(st)), Fn(c) => CutShow(c, RckFmt(st))), " | ")
+
+Def Q(s As String) As String
+    Chr(34) & s & Chr(34)
+
+Rem Safe only for lines that neither open nor close: it evaluates the
+Rem line three times, and a window is not free to open twice.
+Def Refuses(st As RckState, line As String, why As String) As Boolean
+    Bad(st, line) And Instr(Why(st, line), why) > 0 And Text(Ran(st, line)) = Text(st) And Text(Ran(Ran(st, line), "1 1 +")) = Text(Ran(st, "1 1 +"))
+
+Def PngPath() As String
+    "tst/csv/_seedscribblertest.png"
+
+Def Wipe()
+    If FileExists(PngPath()) Then
+        DeleteFile(PngPath())
+
+Def OpenLine() As String
+    "200 120 " & Q("w") & " SCRIBOPEN"
+
+Def Main()
+    Wipe()
+    Let s0 = RckSeedScribbler(RckNew())
+    Let g = Ran(s0, "1 2")
+
+    Print("--- the seed is in the dictionary, grouped and documented ---")
+    Assert(RckKnows(s0, "SCRIBOPEN") And RckKnows(s0, "SCRIBPIXEL") And RckKnows(s0, "SCRIBBLIT"), "THE WORDS ARE THERE")
+    Assert(Contains(RckWords(s0), "-- seed-scribbler --"), "AND THEY HAVE A GROUP OF THEIR OWN")
+    Assert(All(RckDict(s0), Fn(e) => WordEffect(e) <> "" And WordDesc(e) <> ""), "NO WORD IS WITHOUT AN EFFECT LINE AND A DESCRIPTION")
+    Assert(All(RckDict(s0), Fn(e) => Length(RckHelp(s0, WordName(e))) = 3), "AND HELP ANSWERS FOR EVERY ONE OF THEM")
+    Assert(All(RckDict(s0), Fn(e) => Instr(Lower(WordEffect(e)), "handle") = 0), "NO WORD'S EFFECT STRING MENTIONS A HANDLE")
+    Rem The event words are left out on purpose: a reckoner line is a
+    Rem transaction that answers and ends, and a word that blocked for
+    Rem the next event would hold the session inside one line.
+    Assert(Not RckKnows(s0, "SCRIBPOLL") And Not RckKnows(s0, "SCRIBWAIT"), "AND THE EVENT WORDS ARE ABSENT, WHICH IS A DECISION AND NOT A GAP")
+    Assert(Not RckKnows(s0, "SCRIBCLOSE"), "AND THERE IS NO SCRIBCLOSE — CLOSE IS THE CORE'S WORD AND THE ONLY ONE")
+
+    Print("--- the guards that are answered before anything is opened ---")
+    Assert(Refuses(g, "0 120 " & Q("x") & " SCRIBOPEN", "AT LEAST 1 BY 1"), "A WINDOW OF NO WIDTH")
+    Assert(Refuses(g, "200 0 " & Q("x") & " SCRIBOPEN", "AT LEAST 1 BY 1"), "AND ONE OF NO HEIGHT")
+    Assert(Refuses(g, "-5 120 " & Q("x") & " SCRIBOPEN", "SCRIBOPEN"), "AND A NEGATIVE SIZE, WHICH RCKWHOLEARG REFUSES FIRST")
+    Assert(Refuses(g, Q("wide") & " 120 " & Q("x") & " SCRIBOPEN", "SCRIBOPEN"), "AND A SIZE THAT IS NOT A NUMBER")
+    Assert(Refuses(g, Q("nope") & " SCRIBWIDTH", "THERE IS NOTHING OPEN CALLED nope"), "A NAME THAT WAS NEVER BOUND")
+    Assert(Refuses(g, Q("nope") & " SCRIBBLIT", "THERE IS NOTHING OPEN CALLED nope"), "AND THE SAME FROM A DRAWING WORD")
+    Let mixed = RckBind(g, "db", "recio", 0, CutNum(0), Fn() => True)
+    Assert(Refuses(mixed, Q("db") & " SCRIBBLIT", "db IS A RECIO, NOT A WINDOW"), "AND A NAME BOUND BY ANOTHER KIND ENTIRELY")
+
+    Rem ---- and now the half that depends on there being a display ----
+    Let opened = Ran(s0, OpenLine())
+    If RckBoundTo(opened, "w") Then
+        Drawing(opened)
+    Else
+        NoDisplay(s0, opened)
+
+    Wipe()
+    Print("")
+    Print("ALL ASSERTIONS PASSED")
+
+Rem ---- no window backend, which is a report and not a death ------------
+
+Def NoDisplay(s0 As RckState, opened As RckState)
+    Print("--- no window backend here, so the REFUSAL is what is asserted ---")
+    Rem This is the branch TRYSCRIBBLEROPEN exists for. SCRIBBLEROPEN
+    Rem would have ended the run; the session has to be told instead.
+    Assert(Bad(s0, OpenLine()), "OPENING A WINDOW WITH NO BACKEND REFUSES")
+    Assert(Instr(Why(s0, OpenLine()), "CANNOT OPEN A WINDOW") > 0, "AND SAYS SO IN WORDS")
+    Assert(Text(Ran(opened, "6 7 *")) = "42", "AND THE SESSION IS STILL RUNNING, WHICH IS THE WHOLE POINT")
+    Assert(IsEmpty(RckBoundNames(opened)), "AND NOTHING WAS LEFT BOUND BY THE ATTEMPT")
+
+Rem ---- a window, drawn on -----------------------------------------------
+
+Def Drawing(o1 As RckState)
+    Print("--- a window opened, and the session can draw on it ---")
+    Assert(Text(Ran(o1, "BOUND")) = "{ ( " & Q("w") & " " & Q("scribbler") & " ) }", "BOUND SHOWS IT AS A NAME/KIND PAIR")
+    Assert(Text(o1) = "", "AND SCRIBOPEN LEFT NOTHING ON THE STACK — NO WINDOW, NO SLOT, NOTHING")
+    Assert(Text(Ran(o1, Q("w") & " SCRIBWIDTH")) = "200", "SCRIBWIDTH IS THE WIDTH IT WAS ASKED FOR")
+    Assert(Text(Ran(o1, Q("w") & " SCRIBHEIGHT")) = "120", "AND SCRIBHEIGHT THE HEIGHT")
+    Rem The drawing words answer NOTHING, unlike the builtins they call,
+    Rem which thread the window through for chaining.
+    Let d1 = Ran(o1, Q("w") & " 10 40 90 SCRIBFILL")
+    Assert(Text(d1) = "", "SCRIBFILL ANSWERS NOTHING — THERE IS NO WINDOW TO DROP")
+    Assert(Text(Ran(d1, Q("w") & " 5 5 SCRIBGETPIXEL")) = "{ 10 40 90 }", "AND THE FILL REALLY REACHED THE PIXELS")
+    Let d2 = Ran(d1, Q("w") & " 60 70 255 80 80 SCRIBPIXEL")
+    Assert(Text(Ran(d2, Q("w") & " 60 70 SCRIBGETPIXEL")) = "{ 255 80 80 }", "SCRIBPIXEL SETS THE ONE IT NAMES")
+    Assert(Text(Ran(d2, Q("w") & " 61 70 SCRIBGETPIXEL")) = "{ 10 40 90 }", "AND NOT THE ONE BESIDE IT")
+    Let d3 = Ran(d2, Q("w") & " 20 20 2 255 220 90 " & Q("SHODDY") & " SCRIBTEXT")
+    Assert(Not Bad(d2, Q("w") & " 20 20 2 255 220 90 " & Q("SHODDY") & " SCRIBTEXT"), "SCRIBTEXT DRAWS, SCALE AND ALL")
+    Assert(Text(Ran(d3, Q("w") & " SCRIBBLIT")) = "", "AND SCRIBBLIT SHOWS THE LOT")
+
+    Print("--- the guards that need a window to be open ---")
+    Assert(Refuses(d3, Q("w") & " 20 20 0 255 220 90 " & Q("X") & " SCRIBTEXT", "SCALE MUST BE 1 OR MORE"), "A SCALE OF NOTHING")
+    Assert(Refuses(d3, Q("w") & " " & Q("x") & " 70 255 80 80 SCRIBPIXEL", "NUMBER"), "A COORDINATE THAT IS NOT A NUMBER")
+    Assert(Refuses(d3, Q("w") & " 10 " & Q("g") & " 90 SCRIBFILL", "NUMBER"), "AND A COLOUR THAT IS NOT ONE")
+    Assert(Refuses(d3, "200 120 " & Q("w") & " SCRIBOPEN", "THERE IS ALREADY SOMETHING OPEN CALLED w"), "AND OPENING OVER A NAME ALREADY BOUND")
+
+    Print("--- saving, which is the one drawing word that answers ---")
+    Let p1 = Ran(d3, Q("w") & " " & Q(PngPath()) & " SCRIBSAVE")
+    Assert(Text(p1) = "True", "SCRIBSAVE ANSWERS TRUE ON A PATH IT CAN WRITE")
+    Assert(FileExists(PngPath()), "AND THE FILE IS THERE")
+    Rem The first eight bytes of any PNG. This is the assertion that the
+    Rem window really held an image rather than that a word did not
+    Rem refuse.
+    Assert(Left(ReadFile(PngPath()), 4) = Chr(137) & "PNG", "AND IT IS A PNG, BY ITS OWN MAGIC NUMBER")
+    Assert(Len(ReadFile(PngPath())) > 100, "AND HAS AN IMAGE IN IT RATHER THAN A HEADER ALONE")
+    Rem An unwritable path answers False rather than refusing, the shape
+    Rem NEURALSAVE and RECOPEN already set.
+    Assert(Text(Ran(d3, Q("w") & " " & Q("tst/csv/no/such/dir/x.png") & " SCRIBSAVE")) = "False", "AND AN UNWRITABLE PATH ANSWERS FALSE RATHER THAN ABORTING")
+
+    Print("--- THE POINT OF ALL OF IT: UNDO cannot strand a window ---")
+    Let u1 = Runs(p1, { "DROP", "1", "2", "3" })
+    Assert(Text(u1) = "3 | 2 | 1", "WORK PILES UP ON THE STACK AS USUAL")
+    Let u2 = Runs(u1, { "UNDO", "UNDO", "UNDO" })
+    Assert(RckBoundTo(u2, "w"), "AND AFTER UNDOING ALL OF IT THE WINDOW IS STILL OPEN")
+    Assert(Text(Ran(u2, Q("w") & " SCRIBWIDTH")) = "200", "AND STILL REACHABLE BY NAME")
+    Rem UNDO restores a STACK. It does not un-draw a picture, and the
+    Rem pixel set before the undos is still the colour it was set to.
+    Assert(Text(Ran(u2, Q("w") & " 60 70 SCRIBGETPIXEL")) = "{ 255 80 80 }", "AND UNDO DID NOT UN-DRAW WHAT WAS DRAWN")
+
+    Print("--- CLOSE is the core's word, and it shuts the window ---")
+    Let c1 = Ran(u2, Q("w") & " CLOSE")
+    Assert(Not RckBoundTo(c1, "w"), "CLOSE LETS THE NAME GO")
+    Assert(Text(Ran(c1, "BOUND")) = "{ }", "AND BOUND IS EMPTY AGAIN")
+    Assert(Refuses(c1, Q("w") & " SCRIBWIDTH", "THERE IS NOTHING OPEN CALLED w"), "AND THE WORDS SAY SO AFTERWARDS RATHER THAN DRAWING ON A SHUT WINDOW")
+    Assert(Text(Ran(c1, "CLEAR 6 7 *")) = "42", "AND THE SESSION GOES ON EVALUATING")

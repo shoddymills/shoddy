@@ -1,0 +1,342 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem seedscribbler.shoddy — reckoner seed: scribbler.shoddy, a window
+Rem held by NAME
+Rem
+Rem A SESSION CAN DRAW. That sentence was refused for a long time on
+Rem grounds that turned out to be three different things wearing one
+Rem coat, and it is worth separating them because each was answered
+Rem differently.
+Rem
+Rem   THE HANDLE. R3.5(b): a live resource must not reach the stack,
+Rem   because UNDO restores the stack and the thing naming the window
+Rem   would go with it. Answered by reckoner's named-resource table —
+Rem   SCRIBOPEN binds under a name the session chose, and nothing ever
+Rem   pushes the window.
+Rem
+Rem   THE MAIN THREAD. A window has to be created and pumped on the
+Rem   process's main thread, and a shell's read loop looked like it
+Rem   owned that. It does not: the mill already runs the Shoddy program
+Rem   on a BACKGROUND thread and keeps the main one pumping windows, so
+Rem   a window opened halfway through a session is the supported path
+Rem   and stays live while the prompt waits. Nothing had to change.
+Rem
+Rem   THE ABORTS. R3.5(a): SCRIBBLEROPEN dies when there is no window
+Rem   backend, which is every way of running a program except `mill
+Rem   run`. That one DID need the runtime: TRYSCRIBBLEROPEN reports it
+Rem   instead, so a session in a woven binary or under the debugger is
+Rem   told rather than ended.
+Rem
+Rem A SLOT, NOT A VALUE, and this is the one place scribbler differs
+Rem from recio. A file handle is a NUMBER, so RECOPEN can put it
+Rem straight in the binding. A SCRIBBLER is its own value kind and the
+Rem binding has no room for one — so TRYSCRIBBLEROPEN answers a slot
+Rem number, SCRIBBLEROF turns that back into the window, and
+Rem SCRIBBLERSHUT lets it go. The seed holds an integer and the ordinary
+Rem drawing builtins do the work, untouched.
+Rem
+Rem THE WORDS ARE SCRIB*, NOT SCRIBBLER*. The builtins keep their names
+Rem and stay out of the dictionary — a session's SCRIBPIXEL takes a NAME
+Rem where the builtin takes a window, so they are different words and a
+Rem shared spelling would be a lie about which one you had.
+Rem
+Rem WHAT IS NOT HERE. The event words — SCRIBBLERPOLL, SCRIBBLERWAIT,
+Rem SCRIBBLERSETINTERVAL — are left out on purpose and not forgotten.
+Rem They exist for a frame loop, and a reckoner line is a transaction
+Rem that answers and ends; a word that blocked for the next event would
+Rem hold the session inside one line with no way back. Reading the mouse
+Rem from a calculator prompt is a different design and not this one.
+Rem ==================================================================
+
+Include "scribbler.shoddy"
+Include "cuttle.shoddy"
+Include "reckoner.shoddy"
+Include "seq.shoddy"
+
+Def ScKindName() As String
+    "scribbler"
+
+Rem ---- finding the window a word was named ------------------------------
+
+Def ScFound(word As String, st As RckState, c As Cell) As Result
+    Select Case RckTextArg(word, c)
+        Case Ok(nm)
+            ScFoundAt(word, st, nm)
+        Case Err(w, at)
+            Err(w, at)
+        Case Else
+            Err(word & " did not answer", 0)
+
+Def ScFoundAt(word As String, st As RckState, nm As String) As Result
+    If Not RckBoundTo(st, nm) Then
+        Err(word & ": THERE IS NOTHING OPEN CALLED " & nm, 0)
+    Else
+        ScFoundKind(word, First(RckResOf(st, nm)), nm)
+
+Def ScFoundKind(word As String, r As RckRes, nm As String) As Result
+    If ResKindOf(r) <> ScKindName() Then
+        Err(word & ": " & nm & " IS A " & Upper(ResKindOf(r)) & ", NOT A WINDOW", 0)
+    Else
+        Ok(r)
+
+Rem The slot the binding carries, turned back into the window itself.
+Rem SCRIBBLEROF dies on a slot that is not open, and cannot be reached
+Rem with one: the binding only exists while the window does, and CLOSE
+Rem unbinds and shuts in the same breath.
+Def ScWindow(r As RckRes) As Scribbler
+    ScribblerOf(ResHandOf(r))
+
+Rem ---- SCRIBOPEN --------------------------------------------------------
+
+Def ScSeedOpen(st As RckState) As RckState
+    RckReg(st, "SCRIBOPEN", 3, RckPureOver(Fn(s, vs) => ScOpen(s, vs)), "( w h name -- )", "Open a drawing window w by h pixels and keep it open under that name. CLOSE shuts it; BOUND lists what is open. Needs a mill started with `mill run` — anything else has no window backend and is told so.")
+
+Def ScOpen(st As RckState, vs As List Of Cell) As RckWork
+    Select Case Pair(RckWholeArg("SCRIBOPEN", Nth(vs, 1)), RckWholeArg("SCRIBOPEN", Nth(vs, 2)))
+        Case Pair(Ok(wid), Ok(hgt))
+            ScOpenNamed(st, wid, hgt, Nth(vs, 3))
+        Case Else
+            RckWorkBad("SCRIBOPEN needs a width, a height and a name")
+
+Def ScOpenNamed(st As RckState, wid As Number, hgt As Number, nc As Cell) As RckWork
+    Select Case RckTextArg("SCRIBOPEN", nc)
+        Case Ok(nm)
+            ScOpenFree(st, wid, hgt, nm)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("SCRIBOPEN did not answer")
+
+Def ScOpenFree(st As RckState, wid As Number, hgt As Number, nm As String) As RckWork
+    If RckBoundTo(st, nm) Then
+        RckWorkBad("SCRIBOPEN: THERE IS ALREADY SOMETHING OPEN CALLED " & nm)
+    Else
+        ScOpenSized(wid, hgt, nm)
+
+Rem A window bigger than any screen is not refused — that is the window
+Rem manager's business — but a size of nothing is, because the runtime
+Rem would refuse it anyway and this way the message names the word the
+Rem session typed.
+Def ScOpenSized(wid As Number, hgt As Number, nm As String) As RckWork
+    If wid < 1 Or hgt < 1 Then
+        RckWorkBad("SCRIBOPEN: A WINDOW MUST BE AT LEAST 1 BY 1")
+    Else
+        ScOpenAt(wid, hgt, nm)
+
+Def ScOpenAt(wid As Number, hgt As Number, nm As String) As RckWork
+    Select Case TryScribblerOpen(wid, hgt)
+        Case Ok(slot)
+            RckOpened(nm, ScKindName(), slot, CutList({ CutNum(wid), CutNum(hgt) }), Fn() => ScribblerShut(slot))
+        Case Err(w, at)
+            RckWorkBad("SCRIBOPEN: " & w)
+        Case Else
+            RckWorkBad("SCRIBOPEN did not answer")
+
+Rem ---- what a window can be asked ---------------------------------------
+
+Def ScSeedAsk(st As RckState) As RckState
+    Let s1 = RckReg(st, "SCRIBWIDTH", 1, RckPureOver(Fn(s, vs) => ScAsk("SCRIBWIDTH", s, vs, ScribblerWidth)), "( name -- n )", "How many pixels wide that window is.")
+    Let s2 = RckReg(s1, "SCRIBHEIGHT", 1, RckPureOver(Fn(s, vs) => ScAsk("SCRIBHEIGHT", s, vs, ScribblerHeight)), "( name -- n )", "How many pixels tall that window is.")
+    RckReg(s2, "SCRIBTITLE", 2, RckPureOver(Fn(s, vs) => ScTitle(s, vs)), "( name s -- )", "Put s in that window's title bar.")
+
+Def ScAsk(word As String, st As RckState, vs As List Of Cell, f As [ Scribbler -- Number ]) As RckWork
+    Select Case ScFound(word, st, First(vs))
+        Case Ok(r)
+            RckVals({ CutNum(Call(f, ScWindow(r))) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Def ScTitle(st As RckState, vs As List Of Cell) As RckWork
+    Select Case Pair(ScFound("SCRIBTITLE", st, Nth(vs, 1)), RckTextArg("SCRIBTITLE", Nth(vs, 2)))
+        Case Pair(Ok(r), Ok(s))
+            ScTitled(r, s)
+        Case Else
+            RckWorkBad("SCRIBTITLE needs a name and a STRING")
+
+Rem EVERY DRAWING BUILTIN THREADS THE WINDOW BACK, so a program can
+Rem chain one into the next. A registered word answers cells, not a
+Rem window, so the thread has to end somewhere — it ends here. ScDrew
+Rem takes the window the builtin handed back and answers nothing, which
+Rem is what the session should see: the drawing happened, and there is
+Rem no handle to drop.
+Def ScDrew(sc As Scribbler) As RckWork
+    RckVals({ })
+
+Def ScTitled(r As RckRes, s As String) As RckWork
+    ScDrew(ScribblerTitle(ScWindow(r), s))
+
+Rem ---- drawing ----------------------------------------------------------
+
+Rem The drawing words answer NOTHING rather than the window, which is
+Rem where they part company with the builtins. A builtin threads the
+Rem scribbler through so a program can chain; a session has the name and
+Rem would only have to DROP what came back.
+
+Def ScSeedDraw(st As RckState) As RckState
+    Let s1 = RckReg(st, "SCRIBPIXEL", 6, RckPureOver(Fn(s, vs) => ScPixel(s, vs)), "( name x y r g b -- )", "Set one pixel. Coordinates count from 0 and are clamped to the window; colours are 0 to 255.")
+    Let s2 = RckReg(s1, "SCRIBFILL", 4, RckPureOver(Fn(s, vs) => ScFill(s, vs)), "( name r g b -- )", "Fill the whole window with one colour.")
+    Let s3 = RckReg(s2, "SCRIBTEXT", 8, RckPureOver(Fn(s, vs) => ScText(s, vs)), "( name x y scale r g b s -- )", "Draw the string s at x, y in the built-in 8x8 font, scale times its own size. A scale of 1 is eight pixels tall.")
+    Let s4 = RckReg(s3, "SCRIBGETPIXEL", 3, RckPureOver(Fn(s, vs) => ScGetPixel(s, vs)), "( name x y -- list )", "The colour at x, y as a list of red, green and blue.")
+    Let s5 = RckReg(s4, "SCRIBBLIT", 1, RckPureOver(Fn(s, vs) => ScBlit(s, vs)), "( name -- )", "Show what has been drawn. Nothing appears until this is called, which is what makes a whole picture arrive at once.")
+    RckReg(s5, "SCRIBSAVE", 2, RckPureOver(Fn(s, vs) => ScSave(s, vs)), "( name path -- ok )", "Write the window to a PNG file; True on success. The one drawing word that answers something.")
+
+Rem Every one of these reads its numbers first and touches the window
+Rem only once nothing can refuse — a half-drawn shape is not an error
+Rem the runtime would report, so the check has to be complete first.
+Def ScPixel(st As RckState, vs As List Of Cell) As RckWork
+    Select Case ScFound("SCRIBPIXEL", st, Nth(vs, 1))
+        Case Ok(r)
+            ScPixelAt(r, ScNums("SCRIBPIXEL", Rest(vs)))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("SCRIBPIXEL did not answer")
+
+Def ScPixelAt(r As RckRes, ns As Result) As RckWork
+    Select Case ns
+        Case Ok(xs)
+            ScPixelDrawn(r, Nth(xs, 1), Nth(xs, 2), Nth(xs, 3), Nth(xs, 4), Nth(xs, 5))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("SCRIBPIXEL did not answer")
+
+Def ScPixelDrawn(r As RckRes, x As Number, y As Number, cr As Number, cg As Number, cb As Number) As RckWork
+    ScDrew(ScribblerPixel(ScWindow(r), x, y, cr, cg, cb))
+
+Def ScFill(st As RckState, vs As List Of Cell) As RckWork
+    Select Case ScFound("SCRIBFILL", st, Nth(vs, 1))
+        Case Ok(r)
+            ScFillAt(r, ScNums("SCRIBFILL", Rest(vs)))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("SCRIBFILL did not answer")
+
+Def ScFillAt(r As RckRes, ns As Result) As RckWork
+    Select Case ns
+        Case Ok(xs)
+            ScFillDrawn(r, Nth(xs, 1), Nth(xs, 2), Nth(xs, 3))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("SCRIBFILL did not answer")
+
+Def ScFillDrawn(r As RckRes, cr As Number, cg As Number, cb As Number) As RckWork
+    ScDrew(ScribblerFill(ScWindow(r), cr, cg, cb))
+
+Rem The builtin's own order is ( scribbler x y scale r g b text ), and
+Rem the seed keeps it: SCALE is a real argument — the 8x8 font is tiny
+Rem at 1 — and putting the STRING last is what lets a session type the
+Rem numbers as a run and the words at the end.
+Def ScText(st As RckState, vs As List Of Cell) As RckWork
+    Select Case ScFound("SCRIBTEXT", st, Nth(vs, 1))
+        Case Ok(r)
+            ScTextArgs(r, ScNums("SCRIBTEXT", { Nth(vs, 2), Nth(vs, 3), Nth(vs, 4), Nth(vs, 5), Nth(vs, 6), Nth(vs, 7) }), Nth(vs, 8))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("SCRIBTEXT did not answer")
+
+Def ScTextArgs(r As RckRes, ns As Result, sc As Cell) As RckWork
+    Select Case Pair(ns, RckTextArg("SCRIBTEXT", sc))
+        Case Pair(Ok(xs), Ok(s))
+            ScTextSized(r, xs, s)
+        Case Else
+            RckWorkBad("SCRIBTEXT needs a name, x, y, a scale, three colours and a STRING")
+
+Def ScTextSized(r As RckRes, xs As List Of Number, s As String) As RckWork
+    If Nth(xs, 3) < 1 Then
+        RckWorkBad("SCRIBTEXT: THE SCALE MUST BE 1 OR MORE — 1 IS THE 8x8 FONT AT ITS OWN SIZE")
+    Else
+        ScTextDrawn(r, Nth(xs, 1), Nth(xs, 2), Nth(xs, 3), Nth(xs, 4), Nth(xs, 5), Nth(xs, 6), s)
+
+Def ScTextDrawn(r As RckRes, x As Number, y As Number, scale As Number, cr As Number, cg As Number, cb As Number, s As String) As RckWork
+    ScDrew(ScribblerText(ScWindow(r), x, y, scale, cr, cg, cb, s))
+
+Def ScGetPixel(st As RckState, vs As List Of Cell) As RckWork
+    Select Case ScFound("SCRIBGETPIXEL", st, Nth(vs, 1))
+        Case Ok(r)
+            ScGetAt(r, ScNums("SCRIBGETPIXEL", Rest(vs)))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("SCRIBGETPIXEL did not answer")
+
+Def ScGetAt(r As RckRes, ns As Result) As RckWork
+    Select Case ns
+        Case Ok(xs)
+            ScGotAt(r, Nth(xs, 1), Nth(xs, 2))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("SCRIBGETPIXEL did not answer")
+
+Def ScGotAt(r As RckRes, x As Number, y As Number) As RckWork
+    RckVals({ CutList(Map(ToList(ScribblerGetPixel(ScWindow(r), x, y)), CutNum)) })
+
+Def ScBlit(st As RckState, vs As List Of Cell) As RckWork
+    Select Case ScFound("SCRIBBLIT", st, First(vs))
+        Case Ok(r)
+            ScBlitted(r)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("SCRIBBLIT did not answer")
+
+Def ScBlitted(r As RckRes) As RckWork
+    ScDrew(ScribblerBlit(ScWindow(r)))
+
+Def ScSave(st As RckState, vs As List Of Cell) As RckWork
+    Select Case Pair(ScFound("SCRIBSAVE", st, Nth(vs, 1)), RckTextArg("SCRIBSAVE", Nth(vs, 2)))
+        Case Pair(Ok(r), Ok(path))
+            ScSaved(r, path)
+        Case Else
+            RckWorkBad("SCRIBSAVE needs a name and a path")
+
+Rem SCRIBBLERSAVE aborts on a path it cannot write, and there is no
+Rem guarded twin — so the path is pre-flighted with TRYWRITEFILE, which
+Rem both asks the question and leaves the file for the PNG to replace.
+Def ScSaved(r As RckRes, path As String) As RckWork
+    If Not TryWriteFile(path, "") Then
+        RckVals({ CutBool(False) })
+    Else
+        ScSavedTo(r, path)
+
+Def ScSavedTo(r As RckRes, path As String) As RckWork
+    ScSavedOk(ScribblerSave(ScWindow(r), path))
+
+Def ScSavedOk(sc As Scribbler) As RckWork
+    RckVals({ CutBool(True) })
+
+Rem ---- reading a list of numbers off the stack --------------------------
+
+Rem Every drawing word takes some run of plain numbers, and each is
+Rem refused whole rather than field by field, because a half-checked
+Rem argument list would let the first two of five be drawn with.
+Def ScNums(word As String, cs As List Of Cell) As Result
+    ScNumsAt(word, cs, { })
+
+Def ScNumsAt(word As String, cs As List Of Cell, acc As List Of Number) As Result
+    If IsEmpty(cs) Then
+        Ok(acc)
+    Else
+        ScNumsNext(word, cs, acc, First(cs))
+
+Def ScNumsNext(word As String, cs As List Of Cell, acc As List Of Number, c As Cell) As Result
+    Select Case c
+        Case CutNum(x)
+            ScNumsAt(word, Rest(cs), Append(acc, x))
+        Case Else
+            Err(RckKindWhy(word, "NUMBERs", c), 0)
+
+Rem ---- the seed ----------------------------------------------------------
+
+Def RckSeedScribbler(st As RckState) As RckState
+    Let s1 = ScSeedOpen(RckSeeding(st, "seed-scribbler"))
+    Let s2 = ScSeedAsk(s1)
+    ScSeedDraw(s2)

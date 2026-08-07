@@ -91,7 +91,8 @@ public static class Effects
         // time
         ["TICKS"] = new(0, 1), ["SLEEP"] = new(1, 0), ["CLOCK"] = new(0, 1),
         // scribbler
-        ["SCRIBBLEROPEN"] = new(2, 1), ["SCRIBBLERPIXEL"] = new(6, 1),
+        ["SCRIBBLEROPEN"] = new(2, 1), ["TRYSCRIBBLEROPEN"] = new(2, 1),
+        ["SCRIBBLEROF"] = new(1, 1), ["SCRIBBLERSHUT"] = new(1, 1), ["SCRIBBLERPIXEL"] = new(6, 1),
         ["SCRIBBLERFILL"] = new(4, 1), ["SCRIBBLERTEXT"] = new(8, 1),
         ["SCRIBBLERGETPIXEL"] = new(3, 1), ["SCRIBBLERWIDTH"] = new(1, 1),
         ["SCRIBBLERHEIGHT"] = new(1, 1), ["SCRIBBLERBLIT"] = new(1, 1),

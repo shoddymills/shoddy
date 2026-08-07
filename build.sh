@@ -101,6 +101,12 @@ machine_suites() {
         echo "==> tst/$suite.shoddy"
         "$MILL" run "tst/$suite.shoddy" </dev/null
     done
+    # --no-window: this one really opens a scribbler, and a suite that
+    # threw a window at you mid-run would be a suite nobody ran. Hidden
+    # windows draw, blit and save exactly as visible ones do, so the PNG
+    # the suite writes and reads back is the real thing.
+    echo "==> tst/seedscribblertest.shoddy"
+    "$MILL" --no-window run tst/seedscribblertest.shoddy </dev/null
     echo "==> tst/isamtest.shoddy"
     "$MILL" run tst/isamtest.shoddy </dev/null
     echo "==> tst/isamdump.shoddy"

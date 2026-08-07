@@ -28,13 +28,17 @@ Rem guard of their own in eng.shoddy — each is a plain division by a
 Rem trig or hyperbolic function that can be zero — so this seed adds
 Rem the one they are missing, per R3.5(a).
 Rem
-Rem NOT BRIDGED: EngDeriv, EngDeriv2, EngIntegrate, EngSumOf, EngProdOf,
-Rem EngZeroOf, EngMinOf, EngMaxOf and EngNewtonOf all take a
-Rem [ Number -- Number ] quotation as an ARGUMENT — a function value,
-Rem not a stack cell — and nothing in reckoner.shoddy converts a
-Rem CutProg cell into one. Bridging these needs that conversion built
-Rem first; wrapping them without it is not a smaller version of the
-Rem same seed, it is a different piece of work.
+Rem THE CALCULUS WORDS TAKE A PROGRAM. EngDeriv, EngDeriv2,
+Rem EngIntegrate, EngSumOf, EngProdOf, EngZeroOf, EngMinOf and EngMaxOf
+Rem each want a [ Number -- Number ] — a function value, not a stack
+Rem cell — and what a session can put on the stack is a PROGRAM:
+Rem [ DUP * ]. reckoner.shoddy's RckProgFn/RckProgTry pair converts one
+Rem into the other and RckPureOver is the body kind that hands a
+Rem registered word the state a program has to be run against; both were
+Rem built for this and are general rather than eng's. See the calculus
+Rem section at the foot of this file for how the 0 that a total
+Rem [ Number -- Number ] must answer on a bad program is kept out of
+Rem every answer, and for why ENGNEWTONOF alone is still not bridged.
 Rem ==================================================================
 
 Include "eng.shoddy"
@@ -1341,6 +1345,228 @@ Def EsCommas(vs As List Of Cell) As RckWork
         Case Else
             RckWorkBad("ENGCOMMAS did not answer")
 
+Rem ---- numeric calculus, over a program cell ----------------------------
+Rem
+Rem THE WORDS THAT TAKE A FUNCTION. eng.shoddy's derivative, integrator,
+Rem range sum and product, and its two bracketed solvers all take a
+Rem [ Number -- Number ] and Call it. What a session has to give is a
+Rem PROGRAM cell — [ DUP * ] — and reckoner.shoddy's RckProgFn is what
+Rem turns one into the other, closed over the whole session, so a program
+Rem may name a word defined a line earlier and may RCL a register.
+Rem
+Rem HOW THE 0 IS KEPT OUT OF THE ANSWER. RckProgFn is total and has to
+Rem be: a [ Number -- Number ] has nowhere to put a refusal, so where the
+Rem program will not evaluate it answers 0 — a wrong number, which is the
+Rem one thing a seed exists to prevent. So no word here hands a machine a
+Rem program it has not first run, through RckProgTry, at the points the
+Rem machine is going to use:
+Rem
+Rem   * ENGDERIV, ENGDERIV2, ENGINTEGRATE, ENGSUMOF and ENGPRODOF sample
+Rem     at EXACTLY the points their formula evaluates — a central
+Rem     difference's two, a second difference's three, a Simpson rule's
+Rem     nodes, a range's integers. For these five the check is complete
+Rem     and no 0 can reach the answer.
+Rem
+Rem   * ENGZEROOF, ENGMINOF and ENGMAXOF choose their points as they go,
+Rem     but bisection and golden section both stay strictly inside the
+Rem     bracket they were given, so this samples that bracket evenly —
+Rem     EsProbes() points, endpoints included. A program defined across
+Rem     the bracket is therefore safe; a program with a hole between two
+Rem     samples can still contribute a 0 at that hole, and no finite
+Rem     sample of a real interval can promise otherwise. Saying so is the
+Rem     alternative to pretending, and the mill survives it either way.
+Rem
+Rem   The cost is that a checked point is evaluated twice, once to ask
+Rem   and once to answer. At a calculator's scale that is the right trade
+Rem   against a silent 0.
+Rem
+Rem NOT BRIDGED: ENGNEWTONOF. EngNewtonGo Errors outright when the
+Rem derivative goes to zero under it, and that is not a condition
+Rem anything can pre-flight — it depends on the iterate the search
+Rem reaches, which depends on every step before it. R3.5(a) does not
+Rem allow a bridged word that can abort the session, so it is left out
+Rem rather than wrapped and hoped for. eng.shoddy says the same thing in
+Rem its own words: Newton here is "unbracketed and therefore unguarded",
+Rem and ENGZEROOF is the safer word. ENGZEROOF is bridged.
+
+Def EsProbes() As Number
+    21
+
+Def EsSeedCalc(st As RckState) As RckState
+    Let s1 = RckReg(st, "ENGDERIV", 2, RckPureOver(Fn(sst, vs) => EsDeriv(sst, vs)), "( prog x -- y )", "The first derivative of the program at x, by central difference. Accurate to about eight digits.")
+    Let s2 = RckReg(s1, "ENGDERIV2", 2, RckPureOver(Fn(sst, vs) => EsDeriv2(sst, vs)), "( prog x -- y )", "The second derivative at x. Accurate to about four digits — a second difference cancels most of them away.")
+    Let s3 = RckReg(s2, "ENGINTEGRATE", 4, RckPureOver(Fn(sst, vs) => EsIntegrate(sst, vs)), "( prog a b n -- y )", "The integral from a to b by composite Simpson over n intervals. Refuses unless n is even and 2 or more.")
+    Let s4 = RckReg(s3, "ENGSUMOF", 3, RckPureOver(Fn(sst, vs) => EsSumOf(sst, vs)), "( prog lo hi -- y )", "The program summed over the whole numbers lo to hi.")
+    Let s5 = RckReg(s4, "ENGPRODOF", 3, RckPureOver(Fn(sst, vs) => EsProdOf(sst, vs)), "( prog lo hi -- y )", "The program multiplied over the whole numbers lo to hi.")
+    Let s6 = RckReg(s5, "ENGZEROOF", 3, RckPureOver(Fn(sst, vs) => EsZeroOf(sst, vs)), "( prog lo hi -- x )", "A root of the program between lo and hi, by bisection. Refuses unless the program changes sign across the bracket.")
+    Let s7 = RckReg(s6, "ENGMINOF", 3, RckPureOver(Fn(sst, vs) => EsMinOf(sst, vs)), "( prog lo hi -- x )", "Where the program is least between lo and hi, by golden section. Wants one minimum in the bracket; given two it finds one and does not say which.")
+    RckReg(s7, "ENGMAXOF", 3, RckPureOver(Fn(sst, vs) => EsMaxOf(sst, vs)), "( prog lo hi -- x )", "Where the program is greatest between lo and hi. The same search, and the same one-maximum caveat.")
+
+Rem ---- reading the arguments -------------------------------------------
+
+Rem Every word here is ( prog then numbers ), so the program comes off
+Rem first and the rest arrive as a list of numbers.
+Def EsProgAnd(word As String, vs As List Of Cell, f As [ List Of String List Of Number -- RckWork ]) As RckWork
+    Select Case RckProgArg(word, First(vs))
+        Case Ok(ts)
+            EsProgNums(word, ts, Rest(vs), f)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Def EsProgNums(word As String, ts As List Of String, rest As List Of Cell, f As [ List Of String List Of Number -- RckWork ]) As RckWork
+    Select Case EsListNum(word, CutList(rest))
+        Case Ok(ns)
+            Call(f, ts, ns)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Rem ---- the pre-flight ---------------------------------------------------
+
+Rem The program run at every point in xs, answering the first refusal it
+Rem meets or "" when there is none. Written over Map and Filter rather
+Rem than as a recursion, because a Simpson rule with a large n would put
+Rem one Shoddy frame per node on the stack, and a builtin Fold puts none.
+Def EsWhyAt(word As String, st As RckState, ts As List Of String, xs As List Of Number) As String
+    EsFirstWhy(Filter(Map(xs, Fn(x) => EsWhyOf(word, st, ts, x)), Fn(w) => w <> ""))
+
+Def EsWhyOf(word As String, st As RckState, ts As List Of String, x As Number) As String
+    Select Case RckProgTry(word, st, ts, x)
+        Case Ok(y)
+            ""
+        Case Err(w, at)
+            w
+        Case Else
+            word & " did not answer"
+
+Def EsFirstWhy(ws As List Of String) As String
+    If IsEmpty(ws) Then
+        ""
+    Else
+        First(ws)
+
+Rem EsProbes() points across [lo, hi], endpoints included — what the two
+Rem bracketed searches are checked over, since neither ever leaves the
+Rem bracket it was handed.
+Def EsSpread(lo As Number, hi As Number) As List Of Number
+    Map(Range(0, EsProbes() - 1), Fn(k) => lo + (hi - lo) * k / (EsProbes() - 1))
+
+Rem ---- the derivatives --------------------------------------------------
+
+Rem EngStep is eng.shoddy's own scaling of h to the size of x, and the
+Rem two scale factors below are the ones EngDeriv and EngDeriv2 use. They
+Rem are named here rather than repeated as literals so the points sampled
+Rem and the points evaluated cannot drift apart.
+Def EsDerivStep() As Number
+    0.0000001
+
+Def EsDeriv2Step() As Number
+    0.0001
+
+Def EsDeriv(st As RckState, vs As List Of Cell) As RckWork
+    EsProgAnd("ENGDERIV", vs, Fn(ts, ns) => EsDerivAt(st, ts, Nth(ns, 1)))
+
+Def EsDerivAt(st As RckState, ts As List Of String, x As Number) As RckWork
+    EsRan("ENGDERIV", st, ts, { x - EngStep(x, EsDerivStep()), x + EngStep(x, EsDerivStep()) }, Fn(f) => CutNum(EngDeriv(f, x)))
+
+Def EsDeriv2(st As RckState, vs As List Of Cell) As RckWork
+    EsProgAnd("ENGDERIV2", vs, Fn(ts, ns) => EsDeriv2At(st, ts, Nth(ns, 1)))
+
+Def EsDeriv2At(st As RckState, ts As List Of String, x As Number) As RckWork
+    EsRan("ENGDERIV2", st, ts, { x - EngStep(x, EsDeriv2Step()), x, x + EngStep(x, EsDeriv2Step()) }, Fn(f) => CutNum(EngDeriv2(f, x)))
+
+Rem The one shape all eight share: check the points, then hand the
+Rem machine a function it is now known to be safe over.
+Def EsRan(word As String, st As RckState, ts As List Of String, xs As List Of Number, f As [ [ Number -- Number ] -- Cell ]) As RckWork
+    If EsWhyAt(word, st, ts, xs) <> "" Then
+        RckWorkBad(EsWhyAt(word, st, ts, xs))
+    Else
+        RckVals({ Call(f, RckProgFn(st, ts)) })
+
+Rem ---- the integral -----------------------------------------------------
+
+Def EsIntegrate(st As RckState, vs As List Of Cell) As RckWork
+    EsProgAnd("ENGINTEGRATE", vs, Fn(ts, ns) => EsIntegrateAt(st, ts, Nth(ns, 1), Nth(ns, 2), Nth(ns, 3)))
+
+Rem EngIntegrate itself Errors unless n is even and at least 2 — an odd n
+Rem applies Simpson's alternating weights to the wrong nodes, which is
+Rem why it refuses rather than quietly answering a trapezoid. The same
+Rem test, asked first.
+Def EsIntegrateAt(st As RckState, ts As List Of String, a As Number, b As Number, n As Number) As RckWork
+    If n < 2 Or n <> Floor(n) Or n Mod 2 <> 0 Then
+        RckWorkBad("ENGINTEGRATE: N MUST BE AN EVEN WHOLE NUMBER OF 2 OR MORE")
+    Else
+        EsRan("ENGINTEGRATE", st, ts, EsNodes(a, b, n), Fn(f) => CutNum(EngIntegrate(f, a, b, n)))
+
+Rem Simpson's own nodes: both ends and the n-1 interior points.
+Def EsNodes(a As Number, b As Number, n As Number) As List Of Number
+    Concat({ a, b }, Map(Range(1, n - 1), Fn(i) => a + (b - a) / n * i))
+
+Rem ---- the range sum and product ----------------------------------------
+
+Def EsSumOf(st As RckState, vs As List Of Cell) As RckWork
+    EsOverRange("ENGSUMOF", st, vs, Fn(f, lo, hi) => CutNum(EngSumOf(f, lo, hi)))
+
+Def EsProdOf(st As RckState, vs As List Of Cell) As RckWork
+    EsOverRange("ENGPRODOF", st, vs, Fn(f, lo, hi) => CutNum(EngProdOf(f, lo, hi)))
+
+Rem Range walks whole steps, so a fractional bound would silently visit
+Rem points nobody asked for and stop somewhere unexpected. Both bounds
+Rem are checked; lo above hi is an EMPTY range rather than an error, and
+Rem answers the empty sum 0 or the empty product 1, which is what those
+Rem two are.
+Def EsOverRange(word As String, st As RckState, vs As List Of Cell, f As [ [ Number -- Number ] Number Number -- Cell ]) As RckWork
+    EsProgAnd(word, vs, Fn(ts, ns) => EsOverRangeAt(word, st, ts, Nth(ns, 1), Nth(ns, 2), f))
+
+Def EsOverRangeAt(word As String, st As RckState, ts As List Of String, lo As Number, hi As Number, f As [ [ Number -- Number ] Number Number -- Cell ]) As RckWork
+    If lo <> Floor(lo) Or hi <> Floor(hi) Then
+        RckWorkBad(word & ": LO AND HI MUST BOTH BE WHOLE NUMBERS")
+    Else
+        EsRan(word, st, ts, Range(lo, hi), Fn(g) => Call(f, g, lo, hi))
+
+Rem ---- the bracketed searches -------------------------------------------
+
+Def EsZeroOf(st As RckState, vs As List Of Cell) As RckWork
+    EsBracket("ENGZEROOF", st, vs, Fn(f, lo, hi) => EsZeroBracket(f, lo, hi))
+
+Def EsMinOf(st As RckState, vs As List Of Cell) As RckWork
+    EsBracket("ENGMINOF", st, vs, Fn(f, lo, hi) => RckVals({ CutNum(EngMinOf(f, lo, hi)) }))
+
+Def EsMaxOf(st As RckState, vs As List Of Cell) As RckWork
+    EsBracket("ENGMAXOF", st, vs, Fn(f, lo, hi) => RckVals({ CutNum(EngMaxOf(f, lo, hi)) }))
+
+Rem A bracket with its ends the same way round is the one thing all
+Rem three need and none of them checks: golden section on an inverted
+Rem bracket walks outwards, and bisection on a zero-width one answers
+Rem the point it was given whether or not it is a root.
+Def EsBracket(word As String, st As RckState, vs As List Of Cell, f As [ [ Number -- Number ] Number Number -- RckWork ]) As RckWork
+    EsProgAnd(word, vs, Fn(ts, ns) => EsBracketAt(word, st, ts, Nth(ns, 1), Nth(ns, 2), f))
+
+Def EsBracketAt(word As String, st As RckState, ts As List Of String, lo As Number, hi As Number, f As [ [ Number -- Number ] Number Number -- RckWork ]) As RckWork
+    If lo >= hi Then
+        RckWorkBad(word & ": LO MUST BE BELOW HI")
+    Else
+        EsBracketRan(word, st, ts, lo, hi, f)
+
+Def EsBracketRan(word As String, st As RckState, ts As List Of String, lo As Number, hi As Number, f As [ [ Number -- Number ] Number Number -- RckWork ]) As RckWork
+    If EsWhyAt(word, st, ts, EsSpread(lo, hi)) <> "" Then
+        RckWorkBad(EsWhyAt(word, st, ts, EsSpread(lo, hi)))
+    Else
+        Call(f, RckProgFn(st, ts), lo, hi)
+
+Rem EngZeroOf itself Errors when the bracket shows no sign change —
+Rem bisection without one converges happily on an endpoint and answers a
+Rem number that is not a root, which its own comment calls the worst
+Rem failure the machine could offer. The same test, asked here first.
+Def EsZeroBracket(f As [ Number -- Number ], lo As Number, hi As Number) As RckWork
+    If Call(f, lo) * Call(f, hi) > 0 Then
+        RckWorkBad("ENGZEROOF: THE PROGRAM DOES NOT CHANGE SIGN ACROSS THAT BRACKET, SO THERE IS NO ROOT TO FIND IN IT")
+    Else
+        RckVals({ CutNum(EngZeroOf(f, lo, hi)) })
+
 Rem ---- the seed -----------------------------------------------------------
 
 Def RckSeedEng(st As RckState) As RckState
@@ -1358,4 +1584,5 @@ Def RckSeedEng(st As RckState) As RckState
     Let s12 = EsSeedSeqs(s11)
     Let s13 = EsSeedUnits(s12)
     Let s14 = EsSeedConsts(s13)
-    EsSeedMisc(s14)
+    Let s15 = EsSeedMisc(s14)
+    EsSeedCalc(s15)

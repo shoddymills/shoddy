@@ -1,0 +1,284 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem seedneuraltest.shoddy — test program for seedneural.shoddy
+Rem
+Rem Assert-driven, in the cuttletest / reckonertest / seedtest pattern:
+Rem it prints what it is doing and stops the run at the first assertion
+Rem that fails, ending with ALL ASSERTIONS PASSED when it does not.
+Rem
+Rem WHY THIS SUITE EXISTS AT ALL. seedneural's first pass left both
+Rem training paths out, the regression one on a reported fault in the
+Rem engine: folding NetTrain's epoch loop from inside a registered word
+Rem was said to corrupt the reckoner's own state once epochs reached 1.
+Rem There is no such fault. The first section below is the test that
+Rem would have settled it — five hundred epochs through a dictionary
+Rem word's dispatch, a net that learns to a stated bound, and a further
+Rem line that still evaluates afterwards — and it is written first
+Rem because "the report was wrong" is a claim that has to be standing
+Rem assertion rather than a comment somebody once wrote.
+Rem
+Rem THE GUARD LIST IS THE TEST LIST, as everywhere else: every refusal
+Rem seedneural.shoddy invents is walked exactly once, and each is walked
+Rem in the two-part shape the seed suite established — the line refuses
+Rem for the stated reason with the state as it was, AND a further line
+Rem evaluates afterwards, because "the mill did not die" is the actual
+Rem contract and only the second half proves it.
+Rem
+Rem SEEDED, SO THE BOUNDS ARE CLAIMS AND NOT COIN FLIPS. NEURALNEW draws
+Rem from Rnd and NEURALTRAIN shuffles every epoch, so the suite calls
+Rem the Seed builtin first and every figure below is reproducible. The
+Rem bounds are still generous — this is a test that training works, not
+Rem a benchmark of how well.
+Rem
+Rem Fixtures: none committed. The two file tests write and delete their
+Rem own, beside the other suites' scratch files in tst/csv/.
+Rem
+Rem Run: bin\mill run tst\seedneuraltest.shoddy      (from the repo root)
+Rem ==================================================================
+
+Include "../machines/cuttle.shoddy"
+Include "../machines/reckoner.shoddy"
+Include "../machines/seq.shoddy"
+Include "../machines/str.shoddy"
+Include "../machines/file.shoddy"
+Include "../machines/seeds/seedneural.shoddy"
+Include "../machines/seeds/seeddict.shoddy"
+
+Rem ---- reading an answer ------------------------------------------------
+Rem The same shapes seedtest.shoddy reads with, repeated here rather than
+Rem shared, in the house pattern of each test file standing alone.
+
+Def Ran(st As RckState, line As String) As RckState
+    Select Case RckEval(st, line)
+        Case RckNext(st2, out)
+            st2
+        Case RckStop(st2, why, out)
+            st2
+        Case Else
+            st
+
+Def Runs(st As RckState, lines As List Of String) As RckState
+    Fold(lines, st, Ran)
+
+Def Bad(st As RckState, line As String) As Boolean
+    Select Case RckEval(st, line)
+        Case RckStop(st2, why, out)
+            True
+        Case Else
+            False
+
+Def Why(st As RckState, line As String) As String
+    Select Case RckEval(st, line)
+        Case RckStop(st2, why, out)
+            why
+        Case Else
+            ""
+
+Def Text(st As RckState) As String
+    Join(Map(CutCells(RckStack(st)), Fn(c) => CutShow(c, RckFmt(st))), " | ")
+
+Def Deep(st As RckState) As Number
+    CutDepth(RckStack(st))
+
+Def TopNum(st As RckState) As Number
+    If Deep(st) < 1 Then
+        0 - 999999
+    Else
+        NumOf(First(CutCells(RckStack(st))))
+
+Def NumOf(c As Cell) As Number
+    Select Case c
+        Case CutNum(x)
+            x
+        Case Else
+            0 - 999999
+
+Def Tol() As Number
+    0.0001
+
+Def Near(a As Number, b As Number) As Boolean
+    Abs(a - b) <= Tol()
+
+Def Q(s As String) As String
+    Chr(34) & s & Chr(34)
+
+Rem The two-part abort-safety assertion: the line answers for the stated
+Rem reason with the state as it was, AND a further line evaluates
+Rem afterwards. Only the second half proves the mill lived.
+Def Refuses(st As RckState, line As String, why As String) As Boolean
+    Bad(st, line) And Instr(Why(st, line), why) > 0 And Text(Ran(st, line)) = Text(st) And Text(Ran(Ran(st, line), "1 1 +")) = Text(Ran(st, "1 1 +"))
+
+Rem ---- the data ---------------------------------------------------------
+
+Rem y = 2x + 1 over five rows, the line tst/neuraltest.shoddy fits
+Rem directly, entered here the way someone would type it.
+Def LineXs() As String
+    "{ { 0 } { 0.25 } { 0.5 } { 0.75 } { 1 } }"
+
+Def LineYs() As String
+    "{ 1 1.5 2 2.5 3 }"
+
+Rem Two classes either side of x = 0.5, with one-hot targets — the
+Rem smallest thing that is genuinely a classification and not a
+Rem regression wearing a hat.
+Def ClassXs() As String
+    "{ { 0 } { 0.2 } { 0.4 } { 0.6 } { 0.8 } { 1 } }"
+
+Def ClassYs() As String
+    "{ { 1 0 } { 1 0 } { 1 0 } { 0 1 } { 0 1 } { 0 1 } }"
+
+Def TmpPath() As String
+    "tst/csv/_seedneuraltest.tmp"
+
+Def JunkPath() As String
+    "tst/csv/_seedneuraltest_junk.tmp"
+
+Def Wipe()
+    If FileExists(TmpPath()) Then
+        DeleteFile(TmpPath())
+    If FileExists(JunkPath()) Then
+        DeleteFile(JunkPath())
+
+Def Main()
+    Seed(1)
+    Wipe()
+    Rem seed-dict alongside, because a net, a scaler and a plan are all
+    Rem dicts and DGET is how a session reads one field back out — the
+    Rem shape seedneural.shoddy's header points at rather than a second
+    Rem spelling of its own.
+    Let s0 = RckSeedDict(RckSeedNeural(RckNew()))
+
+    Print("--- the seed is in the dictionary, and every word carries its metadata ---")
+    Assert(RckKnows(s0, "NEURALTRAIN"), "NEURALTRAIN IS A WORD")
+    Assert(RckKnows(s0, "NEURALFIT"), "AND SO IS NEURALFIT")
+    Assert(All(RckDict(s0), Fn(e) => WordEffect(e) <> "" And WordDesc(e) <> ""), "NO WORD IS WITHOUT AN EFFECT LINE AND A DESCRIPTION")
+    Assert(All(RckDict(s0), Fn(e) => Length(RckHelp(s0, WordName(e))) = 3), "AND HELP ANSWERS FOR EVERY ONE OF THEM")
+    Rem Both training words shuffle and both constructors draw from Rnd,
+    Rem so all four have to be declared as touching the world; the
+    Rem scorers and the softmax family are arithmetic and must not be.
+    Assert(Holds(RckHelp(s0, "NEURALTRAIN"), "touches the world"), "TRAINING SHUFFLES, SO IT TOUCHES THE WORLD")
+    Assert(Holds(RckHelp(s0, "NEURALFIT"), "touches the world"), "AND SO DOES THE OTHER TRAINING PATH")
+    Assert(Holds(RckHelp(s0, "NEURALNEW"), "touches the world"), "AND DRAWING RANDOM WEIGHTS")
+    Assert(Holds(RckHelp(s0, "NEURALMSE"), "touches nothing"), "WHILE SCORING A NET AGAINST DATA ON THE STACK DOES NOT")
+    Assert(Holds(RckHelp(s0, "NEURALSOFTMAX"), "touches nothing"), "AND NEITHER DOES SOFTMAX")
+    Assert(All(RckDict(s0), Fn(e) => Instr(Lower(WordEffect(e)), "handle") = 0), "NO WORD'S EFFECT STRING MENTIONS A HANDLE")
+
+    Print("--- the epoch loop runs from inside a dictionary word, and nothing is corrupted ---")
+    Let t0 = Ran(s0, "1 5 1 NEURALNEW " & Q("N") & " STO")
+    Rem The case the deferral report named: epochs well past 1, so the
+    Rem fold runs for real, five hundred times, each pass shuffling.
+    Let t1 = Ran(t0, Q("N") & " RCL " & LineXs() & " " & LineYs() & " 0.1 5 500 NEURALTRAIN " & Q("T") & " STO")
+    Assert(Not Bad(t0, Q("N") & " RCL " & LineXs() & " " & LineYs() & " 0.1 5 500 NEURALTRAIN"), "FIVE HUNDRED EPOCHS ANSWER RATHER THAN REFUSE")
+    Assert(TopNum(Ran(t1, Q("T") & " RCL " & LineXs() & " " & LineYs() & " NEURALMSE")) < 0.01, "AND THE NET LEARNED THE LINE, TO AN MSE UNDER 0.01")
+    Assert(TopNum(Ran(t1, Q("T") & " RCL { 0.5 } NEURALPREDICT")) > 1.8, "AND PREDICTS ABOVE 1.8 AT X = 0.5, WHERE THE TRUTH IS 2")
+    Assert(TopNum(Ran(t1, Q("T") & " RCL { 0.5 } NEURALPREDICT")) < 2.2, "AND BELOW 2.2")
+    Assert(Text(Ran(t1, "1 1 +")) = "2", "AND THE SESSION GOES ON EVALUATING AFTERWARDS")
+    Assert(Length(RckDict(t1)) = Length(RckDict(s0)), "THE DICTIONARY IS THE SIZE IT WAS")
+    Assert(RckDeep(t1) = 0, "THE NESTING COUNT CAME BACK TO ZERO")
+    Assert(Text(Ran(t1, "UNDO")) = Text(t0), "AND UNDO STEPS BACK OVER THE TRAINING LINE INTACT")
+    Rem Zero epochs is the case that always worked, kept as the control:
+    Rem it must answer the net it was given, unchanged.
+    Assert(TopNum(Ran(t1, Q("T") & " RCL " & LineXs() & " " & LineYs() & " 0.1 5 0 NEURALTRAIN " & LineXs() & " " & LineYs() & " NEURALMSE")) = TopNum(Ran(t1, Q("T") & " RCL " & LineXs() & " " & LineYs() & " NEURALMSE")), "AND ZERO EPOCHS LEAVES THE NET EXACTLY AS IT WAS")
+    Assert(TopNum(Ran(t1, "100 SEED " & Q("N") & " RCL " & LineXs() & " " & LineYs() & " 0.1 5 50 NEURALTRAIN " & LineXs() & " " & LineYs() & " NEURALMSE")) = TopNum(Ran(t1, "100 SEED " & Q("N") & " RCL " & LineXs() & " " & LineYs() & " 0.1 5 50 NEURALTRAIN " & LineXs() & " " & LineYs() & " NEURALMSE")), "AND SEED MAKES A TRAINING RUN REPRODUCIBLE FROM THE ENTRY LINE")
+
+    Print("--- NEURALTRAIN's guards, every one of them once ---")
+    Let g = Ran(t0, "1 2")
+    Assert(Refuses(g, Q("N") & " RCL { } { } 0.1 1 5 NEURALTRAIN", "NEURALTRAIN: THERE ARE NO ROWS TO WORK ON"), "NOTHING TO TRAIN ON")
+    Assert(Refuses(g, Q("N") & " RCL " & LineXs() & " { 1 2 } 0.1 1 5 NEURALTRAIN", "5 ROWS AND 2 TARGETS"), "ROWS AND TARGETS THAT DO NOT PAIR UP")
+    Assert(Refuses(g, Q("N") & " RCL { { 0 1 } } { 1 } 0.1 1 5 NEURALTRAIN", "EVERY ROW MUST HAVE 1 ENTRIES"), "A ROW WIDER THAN THE NET'S INPUT LAYER")
+    Assert(Refuses(g, Q("N") & " RCL " & LineXs() & " " & LineYs() & " 0.1 9 5 NEURALTRAIN", "BATCH MUST BE A WHOLE NUMBER FROM 1 TO 5"), "A BATCH BIGGER THAN THE ROW COUNT, WHICH WOULD SILENTLY TRAIN ON NOTHING")
+    Assert(Refuses(g, Q("N") & " RCL " & LineXs() & " " & LineYs() & " 0.1 0 5 NEURALTRAIN", "BATCH MUST BE A WHOLE NUMBER FROM 1 TO 5"), "AND A BATCH OF ZERO, WHICH WOULD DIVIDE BY IT")
+    Assert(Refuses(g, Q("N") & " RCL " & LineXs() & " " & LineYs() & " 0.1 5 2.5 NEURALTRAIN", "EPOCHS MUST BE A WHOLE NUMBER OF 0 OR MORE"), "A FRACTIONAL EPOCH COUNT")
+    Assert(Refuses(g, Q("N") & " RCL " & LineXs() & " " & LineYs() & " 0.1 5 -1 NEURALTRAIN", "EPOCHS MUST BE A WHOLE NUMBER OF 0 OR MORE"), "AND A NEGATIVE ONE")
+    Let wide = Ran(s0, "1 5 3 NEURALNEW " & Q("W") & " STO 1 2")
+    Assert(Refuses(wide, Q("W") & " RCL " & LineXs() & " " & LineYs() & " 0.1 5 5 NEURALTRAIN", "USE NEURALFIT"), "SINGLE-NUMBER TARGETS AGAINST A MULTI-OUTPUT NET, WHICH VSUB WOULD ABORT ON")
+    Assert(Refuses(g, "{ 1 2 } " & LineXs() & " " & LineYs() & " 0.1 5 5 NEURALTRAIN", "NOT A NET"), "AND A FIRST ARGUMENT THAT IS NOT A NET AT ALL")
+
+    Print("--- a plan is five hyperparameters as one cell ---")
+    Assert(Text(Ran(s0, "0.1 0.9 5 200 NEURALREGRESSPLAN " & Q("task") & " DGET")) = Q("regress"), "A REGRESS PLAN NAMES ITS HEAD IN WORDS")
+    Assert(Text(Ran(s0, "0.1 0.9 5 200 NEURALCLASSPLAN " & Q("task") & " DGET")) = Q("classify"), "AND SO DOES A CLASSIFY PLAN")
+    Assert(Text(Ran(s0, "0.1 0.9 5 200 NEURALCLASSPLAN " & Q("moment") & " DGET")) = "0.9", "AND THE MOMENTUM IS READ BACK BY NAME")
+    Assert(Refuses(g, "0.1 0.9 0 200 NEURALCLASSPLAN", "BATCH MUST BE A WHOLE NUMBER OF 1 OR MORE"), "A PLAN WITH A BATCH OF ZERO")
+    Assert(Refuses(g, "0.1 0.9 2.5 200 NEURALCLASSPLAN", "BATCH MUST BE A WHOLE NUMBER OF 1 OR MORE"), "AND A FRACTIONAL BATCH")
+    Assert(Refuses(g, "0.1 0.9 5 -1 NEURALREGRESSPLAN", "EPOCHS MUST BE A WHOLE NUMBER OF 0 OR MORE"), "AND A NEGATIVE EPOCH COUNT")
+
+    Print("--- NEURALFIT: the classification head, momentum and all ---")
+    Let c0 = Runs(s0, { "1 6 2 NEURALNEWSCALED " & Q("C") & " STO", "0.5 0.9 6 400 NEURALCLASSPLAN " & Q("P") & " STO" })
+    Let c1 = Ran(c0, Q("C") & " RCL " & Q("P") & " RCL " & ClassXs() & " " & ClassYs() & " NEURALFIT " & Q("F") & " STO")
+    Assert(TopNum(Ran(c1, Q("F") & " RCL " & ClassXs() & " " & ClassYs() & " NEURALCLASSACCURACY")) = 1, "THE CLASSIFIER GETS EVERY TRAINING ROW RIGHT")
+    Assert(TopNum(Ran(c1, Q("F") & " RCL " & ClassXs() & " " & ClassYs() & " NEURALLOGLOSS")) < 0.1, "AND ITS CROSS-ENTROPY IS UNDER 0.1")
+    Assert(TopNum(Ran(c1, Q("F") & " RCL { 0.1 } NEURALCLASSOF")) = 1, "A LOW X PICKS THE FIRST CLASS")
+    Assert(TopNum(Ran(c1, Q("F") & " RCL { 0.9 } NEURALCLASSOF")) = 2, "AND A HIGH X THE SECOND")
+    Assert(Near(TopNum(Ran(c1, Q("F") & " RCL { 0.9 } NEURALPROBS 0 [ + ] FOLD")), 1), "AND THE PROBABILITIES SUM TO ONE")
+    Assert(Text(Ran(c1, "1 1 +")) = "2", "AND THE SESSION GOES ON AFTER THIS TRAINING PATH TOO")
+    Rem The regress head through the same word, with each target in a
+    Rem one-entry list: NetFit with no momentum is NetTrain, which is the
+    Rem identity neural.shoddy's own suite asserts bit-for-bit.
+    Let r1 = Ran(t0, Q("N") & " RCL 0.1 0 5 500 NEURALREGRESSPLAN " & LineXs() & " { { 1 } { 1.5 } { 2 } { 2.5 } { 3 } } NEURALFIT " & Q("R") & " STO")
+    Assert(TopNum(Ran(r1, Q("R") & " RCL " & LineXs() & " " & LineYs() & " NEURALMSE")) < 0.01, "A REGRESS PLAN THROUGH NEURALFIT LEARNS THE SAME LINE")
+
+    Print("--- NEURALFIT's guards ---")
+    Assert(Refuses(g, Q("N") & " RCL { 1 2 3 } " & ClassXs() & " " & ClassYs() & " NEURALFIT", "NOT A PLAN"), "A SECOND ARGUMENT THAT IS NOT A PLAN")
+    Assert(Refuses(g, Q("N") & " RCL { ( " & Q("task") & " " & Q("guess") & " ) ( " & Q("rate") & " 1 ) ( " & Q("moment") & " 0 ) ( " & Q("batch") & " 1 ) ( " & Q("epochs") & " 1 ) } " & ClassXs() & " " & ClassYs() & " NEURALFIT", "NOT A PLAN"), "AND A PLAN-SHAPED DICT NAMING A HEAD THAT DOES NOT EXIST")
+    Let c2 = Ran(c0, "1 2")
+    Assert(Refuses(c2, Q("C") & " RCL " & Q("P") & " RCL " & ClassXs() & " { { 1 } { 0 } { 1 } { 0 } { 1 } { 0 } } NEURALFIT", "EVERY TARGET MUST HAVE 2 ENTRIES"), "A TARGET NARROWER THAN THE NET'S OUTPUT LAYER")
+    Assert(Refuses(c2, Q("C") & " RCL " & Q("P") & " RCL { } { } NEURALFIT", "THERE ARE NO ROWS TO WORK ON"), "AND NOTHING TO FIT AT ALL")
+
+    Print("--- reading a classifier's answer ---")
+    Assert(Near(TopNum(Ran(s0, "{ 1 2 3 } NEURALSOFTMAX 0 [ + ] FOLD")), 1), "SOFTMAX SUMS TO ONE")
+    Assert(Text(Ran(s0, "{ 0 0 } NEURALSOFTMAX")) = "{ 0.5 0.5 }", "AND SPLITS TWO EQUAL SCORES EVENLY")
+    Assert(Text(Ran(s0, "{ 4 9 2 } NEURALARGMAX")) = "2", "ARGMAX IS THE 1-BASED POSITION OF THE LARGEST")
+    Assert(Text(Ran(s0, "2 4 NEURALONEHOT")) = "{ 0 1 0 0 }", "AND A ONE-HOT IS A 1 IN THAT POSITION")
+    Assert(Refuses(g, "{ } NEURALSOFTMAX", "NEURALSOFTMAX: THE LIST IS EMPTY"), "SOFTMAX OF AN EMPTY LIST, WHICH TAKES NTH(ZS, 1)")
+    Assert(Refuses(g, "{ } NEURALARGMAX", "NEURALARGMAX: THE LIST IS EMPTY"), "AND ARGMAX OF ONE")
+    Assert(Refuses(g, "5 4 NEURALONEHOT", "NEEDS A CLASS FROM 1 TO N"), "A CLASS PAST THE LAST ONE, WHICH WOULD BE ALL ZEROS")
+    Assert(Refuses(g, "0 4 NEURALONEHOT", "NEEDS A CLASS FROM 1 TO N"), "AND ONE BELOW THE FIRST")
+    Assert(Refuses(g, Q("N") & " RCL { 1 2 } NEURALPROBS", "X HAS 2 ENTRIES, THE NET WANTS 1"), "PROBS FOR AN X THE NET CANNOT TAKE")
+    Assert(Refuses(g, Q("N") & " RCL { 1 2 } NEURALCLASSOF", "X HAS 2 ENTRIES, THE NET WANTS 1"), "AND CLASSOF FOR ONE")
+    Assert(Refuses(g, Q("N") & " RCL { 1 2 } NEURALPREDICT", "X HAS 2 ENTRIES, THE NET WANTS 1"), "AND PREDICT, WHICH ASKS THE SAME QUESTION")
+
+    Print("--- scoring, and the two heads' scorers refusing each other's data ---")
+    Assert(TopNum(Ran(t1, Q("T") & " RCL " & LineXs() & " " & LineYs() & " 0.1 NEURALACCURACY")) = 1, "EVERY ROW IS WITHIN TEN PERCENT")
+    Assert(Refuses(g, Q("N") & " RCL " & LineXs() & " { 1 2 } NEURALMSE", "5 ROWS AND 2 TARGETS"), "MSE OVER ROWS AND TARGETS THAT DO NOT PAIR UP")
+    Assert(Refuses(g, Q("N") & " RCL { } { } NEURALMSE", "THERE ARE NO ROWS TO WORK ON"), "AND OVER NOTHING, WHICH WOULD DIVIDE BY ZERO")
+    Assert(Refuses(wide, Q("W") & " RCL " & LineXs() & " " & LineYs() & " NEURALMSE", "USE NEURALFIT"), "MSE AGAINST A MULTI-OUTPUT NET")
+    Assert(Refuses(c2, Q("C") & " RCL " & ClassXs() & " { { 1 } { 0 } { 1 } { 0 } { 1 } { 0 } } NEURALLOGLOSS", "EVERY TARGET MUST HAVE 2 ENTRIES"), "AND CROSS-ENTROPY AGAINST TARGETS OF THE WRONG WIDTH")
+
+    Print("--- the text weight file, over the guarded builtins ---")
+    Assert(Text(Ran(t1, Q("T") & " RCL " & Q(TmpPath()) & " NEURALSAVE")) = "True", "NEURALSAVE ANSWERS TRUE ON A PATH IT CAN WRITE")
+    Let saved = Ran(t1, Q("T") & " RCL " & Q(TmpPath()) & " NEURALSAVE DROP")
+    Assert(Length(ReadLines(TmpPath())) = 16, "AND WROTE ONE LINE PER WEIGHT — 1*5 + 5 + 5*1 + 1")
+    Rem Str writes 10 significant digits, so the round trip reproduces a
+    Rem prediction to about 1e-10 relative and not to the last bit; Near's
+    Rem 1e-4 is far inside that.
+    Assert(Near(TopNum(Ran(saved, Q(TmpPath()) & " 1 5 1 NEURALLOAD { 0.5 } NEURALPREDICT")), TopNum(Ran(saved, Q("T") & " RCL { 0.5 } NEURALPREDICT"))), "AND LOADING IT BACK PREDICTS WHAT THE NET IN HAND DOES")
+    Assert(Refuses(Ran(saved, "1 2"), Q(TmpPath()) & " 1 4 1 NEURALLOAD", "HOLDS 16 WEIGHTS, AND 1-4-1 NEEDS 13"), "A FILE READ AT THE WRONG ARCHITECTURE, NAMING BOTH COUNTS")
+    Assert(Refuses(g, Q("tst/csv/does-not-exist.tmp") & " 1 5 1 NEURALLOAD", "CANNOT READ"), "A PATH THAT IS NOT THERE")
+    Assert(Refuses(g, Q("tst/csv") & " 1 5 1 NEURALLOAD", "CANNOT READ"), "AND A DIRECTORY")
+    Rem Val is strtod and answers 0 for anything it cannot read, so
+    Rem without the IsNumeric pass a file of prose would load as a net of
+    Rem zeros — a wrong answer rather than a refusal, which is the one
+    Rem outcome the seeds exist to prevent.
+    WriteLines(JunkPath(), { "1", "not a number", "3" })
+    Assert(Refuses(g, Q(JunkPath()) & " 1 5 1 NEURALLOAD", "HAS A LINE IN IT THAT IS NOT A NUMBER"), "A FILE WITH A LINE THAT IS NOT A NUMBER")
+    Assert(Refuses(g, Q(TmpPath()) & " 0 5 1 NEURALLOAD", "WHOLE NUMBERS OF 1 OR MORE"), "AND AN ARCHITECTURE THAT IS NOT ONE")
+    Rem WRITELINES' own shape: an unwritable path is False, not a refusal,
+    Rem because answering whether it wrote is the honest report and the
+    Rem mill has to survive either way.
+    Assert(Text(Ran(saved, Q("T") & " RCL " & Q("tst/csv/no/such/dir/w.tmp") & " NEURALSAVE")) = "False", "AND SAVING TO A DIRECTORY THAT DOES NOT EXIST ANSWERS FALSE RATHER THAN ABORTING")
+    Assert(Text(Ran(Ran(saved, Q("T") & " RCL " & Q("tst/csv/no/such/dir/w.tmp") & " NEURALSAVE"), "DROP 1 1 +")) = "2", "AND THE SESSION SURVIVES IT")
+    Wipe()
+
+    Print("--- the scaler, unchanged, still pairs with both paths ---")
+    Assert(Text(Ran(s0, "{ { 1 } { 3 } } NEURALSCALERFIT " & Q("center") & " DGET")) = "{ 2 }", "NEURALSCALERFIT CENTRES ON THE MEAN")
+    Assert(Refuses(g, "{ } NEURALSCALERFIT", "THE LIST IS EMPTY"), "AND REFUSES AN EMPTY ONE")
+
+    Print("")
+    Print("ALL ASSERTIONS PASSED")
+
+Rem ---- one more shared shape ------------------------------------------
+
+Def Holds(lines As List Of String, sub As String) As Boolean
+    Any(lines, Fn(l) => Instr(l, sub) > 0)

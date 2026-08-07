@@ -37,6 +37,8 @@ cell at the keyboard: <code>EngComplex(re, im)</code> is a PAIR
 <code>EngConst</code> are each a dict, the same LIST-of-PAIR shape
 <a href="seeddict.html">seeddict</a> already established, one entry per
 field.</p>
+
+<h2 id="why">Why It's Useful</h2>
 <p>Every guard here matches one eng.shoddy itself states or needs.
 <code>ENGASEC</code>/<code>ENGACSC</code>/<code>ENGACOSH</code>/<code>ENGATANH</code>/<code>ENGASECH</code>/<code>ENGACOTH</code>/<code>ENGNTHROOT</code>
 pre-flight the exact condition each already Errors on;
@@ -44,12 +46,58 @@ pre-flight the exact condition each already Errors on;
 have no guard of their own in eng.shoddy — each is a plain division by a
 trig or hyperbolic function that can be zero — so this seed adds the one
 they are missing.</p>
-<p><strong>Not bridged:</strong> <code>EngDeriv</code>, <code>EngDeriv2</code>,
-<code>EngIntegrate</code>, <code>EngSumOf</code>, <code>EngProdOf</code>,
-<code>EngZeroOf</code>, <code>EngMinOf</code>, <code>EngMaxOf</code> and
-<code>EngNewtonOf</code> all take a <code>[ Number -- Number ]</code>
-quotation as an argument rather than a stack cell — bridging these needs a
-CutProg-to-quotation conversion built first.</p>
+<h3>The calculus words take a program</h3>
+<p>eng's derivative, integrator, range sum and product, and its two
+bracketed searches each want a <code>[ Number -- Number ]</code> — a
+function value, not a stack cell. What a session can put on the stack is a
+<em>program</em>: <code>[ DUP * ]</code>. Two things in
+<a href="reckoner.html">reckoner</a> close that gap, and both were built for
+this and are general rather than eng's: <code>RckProgFn</code>, which turns a
+program cell into a function of one number, and <code>RckPureOver</code>, a
+body kind that hands a registered word the state its program has to be run
+against.</p>
+<p>That state matters more than it sounds. A program is run against the
+<em>whole session</em> — so <code>[ SQ ] 3 ENGDERIV</code> works with
+<code>SQ</code> defined a line earlier, and a program may <code>RCL</code> a
+register, which is the documented way a program reaches a value that is not
+its element. What the program <em>changes</em> is discarded: a solver calling
+it two hundred times must not leave two hundred dictionaries behind.</p>
+
+<h3>How the zero is kept out of the answer</h3>
+<p><code>RckProgFn</code> is total and has to be, because a
+<code>[ Number -- Number ]</code> has nowhere to put a refusal: where the
+program will not evaluate, it answers <strong>0</strong>. That is a wrong
+number, which is the one thing a seed exists to prevent — so no word here
+hands the machine a program it has not first run, at the points the machine
+is going to use.</p>
+<ul>
+<li><code>ENGDERIV</code>, <code>ENGDERIV2</code>,
+<code>ENGINTEGRATE</code>, <code>ENGSUMOF</code> and <code>ENGPRODOF</code>
+sample at <em>exactly</em> the points their formula evaluates — a central
+difference's two, a second difference's three, a Simpson rule's nodes, a
+range's integers. For these five the check is complete and no 0 can reach
+the answer.</li>
+<li><code>ENGZEROOF</code>, <code>ENGMINOF</code> and <code>ENGMAXOF</code>
+choose their points as they go, but bisection and golden section both stay
+strictly inside the bracket they were given, so the seed samples that bracket
+evenly, endpoints included. A program defined across the bracket is safe; a
+program with a hole between two samples can still contribute a 0 at that
+hole, and no finite sample of a real interval can promise otherwise. Saying
+so is the alternative to pretending.</li>
+</ul>
+<p>The cost is that a checked point is evaluated twice, once to ask and once
+to answer. At a calculator's scale that is the right trade against a silent
+zero.</p>
+
+<p><strong>Not bridged:</strong> <code>ENGNEWTONOF</code>, and only that
+one. Newton's method here aborts outright when the derivative goes to zero
+under it, and that is not a condition anything can pre-flight — it depends
+on the iterate the search reaches, which depends on every step before it.
+R3.5(a) does not allow a bridged word that can abort the session, so it is
+left out rather than wrapped and hoped for. eng says the same thing in its
+own words: Newton there is "unbracketed and therefore unguarded", and
+<code>ENGZEROOF</code> is the safer word. <code>ENGZEROOF</code> is
+bridged.</p>
 
 <h2 id="words">Word Reference</h2>
 <table>
@@ -69,7 +117,57 @@ CutProg-to-quotation conversion built first.</p>
 <tr><td>Units</td><td><code>ENGMETRE ENGKILOMETRE ENGCENTIMETRE ENGMILLIMETRE ENGINCH ENGFOOT ENGYARD ENGMILE ENGNAUTICALMILE ENGKILOGRAM ENGGRAM ENGTONNE ENGPOUND ENGOUNCE ENGSTONE ENGSECOND ENGMINUTE ENGHOUR ENGDAY ENGKELVIN ENGCELSIUS ENGFAHRENHEIT ENGPASCAL ENGKILOPASCAL ENGBAR ENGPSI ENGATM ENGJOULE ENGKILOJOULE ENGCALORIE ENGKWH ENGBTU ENGWATT ENGKILOWATT ENGHORSEPOWER ENGLITRE ENGMILLILITRE ENGCUBICMETRE ENGGALLONUK ENGGALLONUS ENGMPS ENGKPH ENGMPH ENGKNOT ENGTOBASE ENGFROMBASE ENGCONVERT</code></td></tr>
 <tr><td>Physical constants</td><td><code>ENGLIGHTSPEED ENGPLANCK ENGGRAVITATION ENGSTDGRAVITY ENGELECTRONCHARGE ENGELECTRONMASS ENGPROTONMASS ENGAVOGADRO ENGBOLTZMANN ENGGASCONSTANT ENGSTEFANBOLTZMANN ENGFARADAY ENGVACUUMPERMITTIVITY ENGVACUUMPERMEABILITY ENGE ENGTAU</code></td></tr>
 <tr><td>Rounding, remapping, formatting</td><td><code>ENGROUNDTO ENGFRACOF ENGCLAMP ENGLERP ENGINVLERP ENGREMAP ENGSMOOTHSTEP ENGSIGN ENGNEAR ENGSIGFIG ENGSCI ENGCOMMAS</code></td></tr>
+<tr><td>Numeric calculus, over a program</td><td><code>ENGDERIV ENGDERIV2 ENGINTEGRATE ENGSUMOF ENGPRODOF ENGZEROOF ENGMINOF ENGMAXOF</code></td></tr>
 </table>
+
+<p>The calculus words in full, since each takes an argument no other word in
+this seed does:</p>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>ENGDERIV ( prog x -- y )</td><td>The first derivative of the program at x, by central difference. Accurate to about eight digits.</td></tr>
+<tr><td>ENGDERIV2 ( prog x -- y )</td><td>The second derivative at x. Accurate to about four digits — a second difference cancels most of them away.</td></tr>
+<tr><td>ENGINTEGRATE ( prog a b n -- y )</td><td>The integral from a to b by composite Simpson over n intervals. Refuses unless n is even and 2 or more.</td></tr>
+<tr><td>ENGSUMOF ( prog lo hi -- y )</td><td>The program summed over the whole numbers lo to hi.</td></tr>
+<tr><td>ENGPRODOF ( prog lo hi -- y )</td><td>The program multiplied over the whole numbers lo to hi.</td></tr>
+<tr><td>ENGZEROOF ( prog lo hi -- x )</td><td>A root of the program between lo and hi, by bisection. Refuses unless the program changes sign across the bracket.</td></tr>
+<tr><td>ENGMINOF ( prog lo hi -- x )</td><td>Where the program is least between lo and hi, by golden section. Wants one minimum in the bracket; given two it finds one and does not say which.</td></tr>
+<tr><td>ENGMAXOF ( prog lo hi -- x )</td><td>Where the program is greatest between lo and hi. The same search, and the same one-maximum caveat.</td></tr>
+</table>
+
+<h2 id="guide">User's Guide</h2>
+<p>The derivative of x&sup2; at 3, the integral of x&sup2; from 0 to 3, the
+square root of 2 found as a root, and a program naming a word defined a line
+earlier:</p>
+<pre><code>&gt; [ DUP * ] 3 ENGDERIV
+x: 5.999999999
+&gt; [ DUP * ] 0 3 100 ENGINTEGRATE
+x: 9
+&gt; [ ] 1 10 ENGSUMOF
+x: 55
+&gt; [ DUP * 2 - ] 0 2 ENGZEROOF
+x: 1.414213562
+&gt; [ 1 - DUP * ] -3 4 ENGMINOF
+x: 1
+&gt; CLEAR : SQ DUP * ;
+ok: SQ defined
+[ empty ]
+&gt; [ SQ ] 3 ENGDERIV
+x: 5.999999999</code></pre>
+<p>And the refusals, each of which would otherwise have been a confident
+wrong number rather than an error:</p>
+<pre><code>&gt; [ NOSUCHWORD ] 0 3 100 ENGINTEGRATE
+?: unknown word NOSUCHWORD
+&gt; [ DUP ] 3 ENGDERIV
+?: ENGDERIV needs its program to leave one value, it left 2
+&gt; [ LN ] -1 2 ENGZEROOF
+?: LN has no answer at or below zero
+&gt; [ DUP * ] 0 3 7 ENGINTEGRATE
+?: ENGINTEGRATE: N MUST BE AN EVEN WHOLE NUMBER OF 2 OR MORE
+&gt; [ DUP * 2 + ] 0 2 ENGZEROOF
+?: ENGZEROOF: THE PROGRAM DOES NOT CHANGE SIGN ACROSS THAT BRACKET, SO THERE IS NO ROOT TO FIND IN IT</code></pre>
+<p>The first of those is the one worth pausing on. Without the pre-flight it
+would have answered <code>0</code> — the integral of a function that does not
+exist, computed to full precision.</p>
 
 <h2 id="usedby">Who Uses It</h2>
 <table>

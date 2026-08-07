@@ -21,22 +21,25 @@ Rem well-formed Problem (no Error in simplex.shoddy at all), and a
 Rem mismatched one is exactly the malformed input R3.5(a) means this
 Rem seed should refuse rather than hand onward.
 Rem
-Rem NOT BRIDGED: mps.shoddy's own file/text parsing. ParseMps and
-Rem LoadMps Error at a dozen different malformed-input points (an
-Rem unsupported section, a bad row sense, more than one objective row)
-Rem and mps.shoddy offers no total counterpart the way json.shoddy's
-Rem JsonRead or xml.shoddy's XmlRead do — there is nothing here to
-Rem pre-flight against, so wrapping them would be a seed that can abort
-Rem the session on a malformed file, which is the one thing every other
-Rem seed in this file exists to rule out. A Problem built from LPPROBLEM
-Rem is the safe way onto this stack.
+Rem AND MPS FILES: MPSPARSE, MPSPARSEZERO, MPSLOAD, MPSLOADZERO and
+Rem MPSNAMES, all answering the same problem dict LPSOLVE reads. An
+Rem earlier pass left these out because ParseMps and LoadMps Error at a
+Rem dozen malformed-input points and mps.shoddy offers no total
+Rem counterpart the way json.shoddy's JsonRead or xml.shoddy's XmlRead
+Rem do — there was nothing to pre-flight against. So this seed builds
+Rem the missing counterpart: MpsWhy, a total walk of the same lines
+Rem that answers the first thing wrong as prose. See the MPS section at
+Rem the foot of this file for what that costs and what holds the two
+Rem scanners together.
 Rem ==================================================================
 
 Include "simplex.shoddy"
+Include "mps.shoddy"
 Include "matrix.shoddy"
 Include "cuttle.shoddy"
 Include "reckoner.shoddy"
 Include "seq.shoddy"
+Include "str.shoddy"
 
 Rem ---- a LIST cell as List Of Number ----------------------------------
 
@@ -180,8 +183,282 @@ Def LpSolutionCell(sol As Solution) As Cell
               LpEntry("reduced", CutList(Map(ToList(Reduced(sol)), CutNum))),
               LpEntry("iterations", CutNum(Iterations(sol))) })
 
+Rem ---- MPS files ---------------------------------------------------------
+Rem
+Rem MPSPARSE, MPSPARSEZERO, MPSLOAD, MPSLOADZERO and MPSNAMES. An MPS
+Rem file is how a linear program actually arrives — from a modelling
+Rem tool, a textbook, a colleague — and a session that can only build a
+Rem Problem by typing its matrix out by hand is a session that cannot
+Rem read the thing anybody would hand it.
+Rem
+Rem WHY THIS NEEDED A VALIDATOR AND NOT A WRAPPER. Every other bridged
+Rem word in the tree is guarded by asking the machine's own question
+Rem first: FINIRR checks the bracket FinIrr would Error on, ENGINTEGRATE
+Rem checks the N EngIntegrate would Error on. mps.shoddy cannot be
+Rem guarded that way, and that is exactly what an earlier pass recorded
+Rem here as the reason to leave it out. Its dozen aborts are scattered
+Rem through a Fold over the lines — an unsupported section, a bad row
+Rem sense, a second objective row, an integer marker, a COLUMNS line of
+Rem the wrong width — and there is no one question to ask before it that
+Rem answers "will this parse".
+Rem
+Rem So the question is answered by walking the lines and finding out.
+Rem MpsWhy below is a TOTAL reader: it folds the same lines, in the same
+Rem sections, applying the same rules, and answers the first thing wrong
+Rem as prose, or "" when there is nothing. Only then is ParseMps called,
+Rem on text now known to parse.
+Rem
+Rem THAT IS A SECOND SCANNER, AND THE DRIFT IS THE COST. If mps.shoddy
+Rem grows a section, this has to learn it or a file it now accepts is
+Rem refused here. Two things hold them together: the tokenizer is not
+Rem copied — Fields is mps.shoddy's own word, called here — and every
+Rem branch below names the mps.shoddy line it mirrors. It is still a
+Rem cost, and the alternative was a word that aborts the session on a
+Rem malformed file, which is the one thing this whole layer rules out.
+Rem
+Rem IT ALSO CATCHES WHAT MPS.SHODDY DOES NOT. Val is strtod and answers
+Rem 0 for anything it cannot read, so a COLUMNS or RHS field of prose
+Rem parses silently as a zero coefficient — a different linear program,
+Rem solved confidently. Every numeric field is checked with IsNumeric
+Rem here, which is the question Val does not ask.
+
+Def LpMpsSkip() As String
+    "SKIP"
+
+Rem What the walk carries: the section it is in, how many objective and
+Rem constraint rows it has seen, how many COLUMNS entries, and the first
+Rem thing wrong. Once ChkWhy is set every later line passes through
+Rem untouched, so the reason reported is the FIRST one — reading a file
+Rem top to bottom is how someone will fix it.
+Type LpChk
+    ChkSec  As String
+    ChkObjs As Number
+    ChkRows As Number
+    ChkEnts As Number
+    ChkZero As Boolean
+    ChkWhy  As String
+
+Def LpChkNew(zeroLower As Boolean) As LpChk
+    LpChk("", 0, 0, 0, zeroLower, "")
+
+Def LpBad(c As LpChk, why As String) As LpChk
+    With(c, ChkWhy = why)
+
+Rem The whole walk, and then the three things that can only be known
+Rem once it is over: an objective row, at least one constraint, and at
+Rem least one variable. AssembleProblem Errors on the first of those and
+Rem builds a matrix with no rows or no columns for the other two, which
+Rem Optimize has nothing to do with.
+Def MpsWhy(text As String, zeroLower As Boolean) As String
+    LpChkEnd(Fold(Split(text, Chr(10)), LpChkNew(zeroLower), LpChkStep))
+
+Def LpChkEnd(c As LpChk) As String
+    If ChkWhy(c) <> "" Then
+        ChkWhy(c)
+    Else
+        LpChkWhole(c)
+
+Def LpChkWhole(c As LpChk) As String
+    If ChkObjs(c) = 0 Then
+        "MPS: THERE IS NO OBJECTIVE (N) ROW"
+    Else
+        LpChkSized(c)
+
+Def LpChkSized(c As LpChk) As String
+    If ChkRows(c) = 0 Then
+        "MPS: THERE ARE NO CONSTRAINT (G, L OR E) ROWS"
+    Else
+        If ChkEnts(c) = 0 Then
+            "MPS: THERE IS NO COLUMNS SECTION, SO THE PROBLEM HAS NO VARIABLES"
+        Else
+            ""
+
+Rem Mirrors mps.shoddy's Step: a blank line and a * comment are skipped,
+Rem a line starting in column 1 is a section header, and anything
+Rem indented is data for the section in force.
+Def LpChkStep(c As LpChk, line As String) As LpChk
+    If ChkWhy(c) <> "" Then
+        c
+    Else
+        LpChkLine(c, line, Fields(line))
+
+Def LpChkLine(c As LpChk, line As String, toks As List Of String) As LpChk
+    If IsEmpty(toks) Or StartsWith(First(toks), "*") Then
+        c
+    Else
+        If Not (StartsWith(line, " ") Or StartsWith(line, Chr(9))) Then
+            LpChkHeader(c, First(toks))
+        Else
+            LpChkData(c, toks)
+
+Rem Mirrors Header. BOUNDS is the one section whose answer depends on
+Rem which word was typed: MPSPARSEZERO forces x >= 0 on every variable
+Rem and skips it, MPSPARSE will not guess.
+Def LpChkHeader(c As LpChk, w As String) As LpChk
+    Select Case Upper(w)
+        Case "NAME", "ENDATA"
+            With(c, ChkSec = "")
+        Case "ROWS", "COLUMNS", "RHS", "OBJSENSE"
+            With(c, ChkSec = Upper(w))
+        Case "BOUNDS"
+            LpChkBounds(c)
+        Case "RANGES"
+            LpBad(c, "MPS: RANGES SECTION NOT SUPPORTED")
+        Case Else
+            LpBad(c, "MPS: UNKNOWN SECTION " & w)
+
+Def LpChkBounds(c As LpChk) As LpChk
+    If ChkZero(c) Then
+        With(c, ChkSec = LpMpsSkip())
+    Else
+        LpBad(c, "MPS: BOUNDS SECTION NOT SUPPORTED — USE MPSPARSEZERO OR MPSLOADZERO TO FORCE X >= 0 ON EVERY VARIABLE")
+
+Def LpChkData(c As LpChk, toks As List Of String) As LpChk
+    Select Case ChkSec(c)
+        Case "ROWS"
+            LpChkRow(c, toks)
+        Case "COLUMNS"
+            LpChkCol(c, toks)
+        Case "RHS"
+            LpChkRhs(c, toks)
+        Case "OBJSENSE"
+            LpChkSense(c, toks)
+        Case Else
+            c
+
+Rem Mirrors RowLine, plus the width check RowLine does not make: it
+Rem reads Nth(toks, 2) unconditionally, so a ROWS line of one field
+Rem indexes past the end.
+Def LpChkRow(c As LpChk, toks As List Of String) As LpChk
+    If Length(toks) < 2 Then
+        LpBad(c, "MPS: A ROWS LINE NEEDS A SENSE AND A NAME, AND THIS ONE HAS " & Str(Length(toks)) & " FIELD")
+    Else
+        LpChkSenseOf(c, Upper(First(toks)))
+
+Def LpChkSenseOf(c As LpChk, sense As String) As LpChk
+    Select Case sense
+        Case "N"
+            LpChkObj(c)
+        Case "G", "L", "E"
+            With(c, ChkRows = ChkRows(c) + 1)
+        Case Else
+            LpBad(c, "MPS: BAD ROW SENSE " & sense & " — A ROW IS N, G, L OR E")
+
+Def LpChkObj(c As LpChk) As LpChk
+    If ChkObjs(c) > 0 Then
+        LpBad(c, "MPS: MULTIPLE OBJECTIVE ROWS")
+    Else
+        With(c, ChkObjs = ChkObjs(c) + 1)
+
+Rem Mirrors ColLine, plus IsNumeric on the value fields. ColLine reads
+Rem them through Val, which answers 0 for text — a coefficient silently
+Rem dropped from the program rather than a file refused.
+Def LpChkCol(c As LpChk, toks As List Of String) As LpChk
+    If Contains(toks, "'MARKER'") Then
+        LpBad(c, "MPS: INTEGER MARKERS NOT SUPPORTED — EVERY VARIABLE HERE IS CONTINUOUS")
+    Else
+        LpChkColWide(c, toks)
+
+Def LpChkColWide(c As LpChk, toks As List Of String) As LpChk
+    If Length(toks) = 3 Then
+        LpChkNums(With(c, ChkEnts = ChkEnts(c) + 1), "COLUMNS", { Nth(toks, 3) })
+    Else
+        If Length(toks) = 5 Then
+            LpChkNums(With(c, ChkEnts = ChkEnts(c) + 2), "COLUMNS", { Nth(toks, 3), Nth(toks, 5) })
+        Else
+            LpBad(c, "MPS: A COLUMNS LINE HAS A NAME AND ONE OR TWO ROW/VALUE PAIRS — 3 OR 5 FIELDS, NOT " & Str(Length(toks)))
+
+Rem Mirrors RhsLine: an even field count means the set name was left
+Rem out, an odd one means it is there and is dropped. Either way what is
+Rem left is row/value pairs, and every value is checked.
+Def LpChkRhs(c As LpChk, toks As List Of String) As LpChk
+    LpChkNums(c, "RHS", LpEverySecond(Ifte(Length(toks) Mod 2 = 0, toks, Rest(toks))))
+
+Def LpEverySecond(toks As List Of String) As List Of String
+    Map(Range(1, Length(toks) / 2), Fn(k) => Nth(toks, k * 2))
+
+Def LpChkNums(c As LpChk, sec As String, vals As List Of String) As LpChk
+    If All(vals, IsNumeric) Then
+        c
+    Else
+        LpBad(c, "MPS: A " & sec & " LINE HAS " & First(Filter(vals, Fn(v) => Not IsNumeric(v))) & " WHERE A NUMBER SHOULD BE")
+
+Def LpChkSense(c As LpChk, toks As List Of String) As LpChk
+    If Upper(First(toks)) = "MIN" Or Upper(First(toks)) = "MINIMIZE" Then
+        c
+    Else
+        LpBad(c, "MPS: ONLY MINIMIZE IS SUPPORTED, AND THIS FILE ASKS FOR " & Upper(First(toks)))
+
+Rem ---- the five words ---------------------------------------------------
+
+Def LpSeedMps(st As RckState) As RckState
+    Let s1 = RckReg(st, "MPSPARSE", 1, RckPure(Fn(vs) => LpMpsText("MPSPARSE", vs, False)), "( text -- problem )", "MPS text as a problem, normalised to a x >= rhs. Refuses, naming the first line at fault, rather than reading a file it does not fully understand.")
+    Let s2 = RckReg(s1, "MPSPARSEZERO", 1, RckPure(Fn(vs) => LpMpsText("MPSPARSEZERO", vs, True)), "( text -- problem )", "The same, forcing x >= 0 on every variable so a BOUNDS section is skipped instead of refused.")
+    Let s3 = RckReg(s2, "MPSLOAD", 1, RckTouch(Fn(vs) => LpMpsFile("MPSLOAD", vs, False)), "( path -- problem )", "Read an MPS file and parse it, the guarded way throughout.")
+    Let s4 = RckReg(s3, "MPSLOADZERO", 1, RckTouch(Fn(vs) => LpMpsFile("MPSLOADZERO", vs, True)), "( path -- problem )", "The same, forcing x >= 0 on every variable.")
+    RckReg(s4, "MPSNAMES", 1, RckPure(Fn(vs) => LpMpsNames(vs)), "( text -- dict )", "What the problem's columns and rows were called: a dict with vars and cons. An E row appears as its NAME+ and NAME- pair, matching how it was split.")
+
+Def LpMpsText(word As String, vs As List Of Cell, zeroLower As Boolean) As RckWork
+    Select Case RckTextArg(word, First(vs))
+        Case Ok(text)
+            LpMpsChecked(word, text, zeroLower, Fn(t) => LpMpsProblemCell(t, zeroLower))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Rem Read through TRYREADFILE rather than mps.shoddy's own LoadMps, for
+Rem the reason seedfile.shoddy gives: LoadMps is ReadFile underneath and
+Rem ReadFile aborts on a path that is not there.
+Def LpMpsFile(word As String, vs As List Of Cell, zeroLower As Boolean) As RckWork
+    Select Case RckTextArg(word, First(vs))
+        Case Ok(path)
+            LpMpsRead(word, TryReadFile(path), zeroLower)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Def LpMpsRead(word As String, r As Result, zeroLower As Boolean) As RckWork
+    Select Case r
+        Case Ok(text)
+            LpMpsChecked(word, text, zeroLower, Fn(t) => LpMpsProblemCell(t, zeroLower))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Rem The one gate: nothing reaches ParseMps that MpsWhy has not passed.
+Def LpMpsChecked(word As String, text As String, zeroLower As Boolean, f As [ String -- Cell ]) As RckWork
+    If MpsWhy(text, zeroLower) <> "" Then
+        RckWorkBad(MpsWhy(text, zeroLower))
+    Else
+        RckVals({ Call(f, text) })
+
+Def LpMpsProblemCell(text As String, zeroLower As Boolean) As Cell
+    LpProblemOfMps(ParseMpsB(text, zeroLower))
+
+Def LpProblemOfMps(p As Problem) As Cell
+    LpProblemCell(ToList(Costs(p)), A(p), ToList(Rhs(p)))
+
+Rem MPSNAMES reads BOUNDS the forgiving way, because a caller asking
+Rem what the columns are called is asking about the file rather than
+Rem about a program they are going to solve.
+Def LpMpsNames(vs As List Of Cell) As RckWork
+    Select Case RckTextArg("MPSNAMES", First(vs))
+        Case Ok(text)
+            LpMpsChecked("MPSNAMES", text, True, Fn(t) => LpNamesCell(ParseMpsModel(t, True)))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("MPSNAMES did not answer")
+
+Def LpNamesCell(m As MpsModel) As Cell
+    CutList({ LpEntry("vars", CutList(Map(VarNames(m), CutStr))), LpEntry("cons", CutList(Map(ConNames(m), CutStr))) })
+
 Rem ---- the seed -----------------------------------------------------------
 
 Def RckSeedSimplex(st As RckState) As RckState
     Let s1 = LpSeedLpproblem(st)
-    LpSeedLpsolve(s1)
+    Let s2 = LpSeedLpsolve(s1)
+    LpSeedMps(s2)

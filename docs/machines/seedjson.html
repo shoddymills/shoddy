@@ -39,6 +39,48 @@ both convert to the same empty LIST, and so both write back out as
 <code>[]</code>. JSON's own type tells them apart; nothing on this stack
 does.</p>
 
+<h2 id="why">Why It's Useful</h2>
+<p>json.shoddy's own reader already answers a <code>Result</code> rather
+than aborting on bad syntax, so the guard this seed adds is not the parse —
+it is everything around it. A path that is not there, a directory handed
+where a file was meant, an unwritable destination: each of those is a
+refusal or an honest <code>False</code>, because <code>JSONLOAD</code> and
+<code>JSONSAVE</code> go through <code>TRYREADFILE</code> and
+<code>TRYWRITEFILE</code> rather than the aborting whole-file builtins.</p>
+<p>The bigger thing it buys is that a parsed object needs no words of its
+own. Because an object lands as the same LIST-of-PAIR shape
+<a href="seeddict.html">seeddict</a> established, the dictionary a session
+already knows reads it: <code>DGET</code> pulls a field,
+<code>DKEYS</code> lists them, <code>MAP</code> and <code>FILTER</code> walk
+an array. A seed that invented <code>JSONGET</code> would have added a
+second spelling of a word that was already there.</p>
+
+<h2 id="guide">User's Guide</h2>
+<p>An array is a LIST, so the combinators the session already has need no
+help from this seed:</p>
+<pre><code>&gt; "[1,2,3,4]" JSONPARSE [ DUP * ] MAP JSONTEXT
+x: "[1,4,9,16]"</code></pre>
+<p><strong>An object has to come from a file, not from the entry line.</strong>
+The reckoner's tokenizer has no escape inside a string literal, so there is
+no way to type a <code>"</code> within one — and every key in a JSON object
+is quoted. <code>JSONLOAD</code> is therefore the way an object reaches the
+stack, and from there it is an ordinary dict:</p>
+<pre><code>&gt; "mill.json" JSONLOAD "D" STO
+[ empty ]
+&gt; "D" RCL "looms" DGET
+x: 12
+&gt; "D" RCL DKEYS
+x: { "name" "looms" }
+&gt; "D" RCL 2 JSONPRETTY "out.json" SWAP JSONSAVE
+x: True</code></pre>
+<p>And the two refusals, which come from different places and say so — the
+first is json.shoddy's own reader reporting where the syntax went wrong, the
+second is the guarded read:</p>
+<pre><code>&gt; "{oops" JSONPARSE
+?: JSONPARSE: EXPECTED A QUOTED KEY IN AN OBJECT AT 2
+&gt; "no/such/file.json" JSONLOAD
+?: JSONLOAD: cannot read the file</code></pre>
+
 <h2 id="words">Word Reference</h2>
 <table>
 <tr><th>Word</th><th>Description</th></tr>

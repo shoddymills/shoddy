@@ -148,17 +148,28 @@ Rem What a registered primitive answers: the cells it leaves, deepest
 Rem first, or a refusal. Never an abort.
 Type RckWork = RckVals(WorkVals As List Of Cell) | RckWorkBad(WorkWhy As String)
 
-Rem WHAT A REGISTERED WORD IS. Four kinds, and the middle two are the
-Rem whole of the effect flag: a word cannot be registered without saying
-Rem whether it touches the world, because the constructor it is written
-Rem with is the declaration. RckReg therefore keeps the six parameters
-Rem the API states, and the flag rides where it cannot be forgotten.
+Rem WHAT A REGISTERED WORD IS. Five kinds, and the constructor a word is
+Rem written with IS its effect declaration: a word cannot be registered
+Rem without saying whether it touches the world. RckReg therefore keeps
+Rem the six parameters the API states, and the flag rides where it cannot
+Rem be forgotten.
 Rem
 Rem RckCore is the engine's own: dispatched by tag rather than by name,
 Rem so an alias registered over one keeps working, and reaching the
 Rem state is why they are not RckPure. They are all pure regardless —
 Rem the engine performs no effect.
-Type RckBody = RckCore(CoreTag As String) | RckPure(PureFn As [ List Of Cell -- RckWork ]) | RckTouch(TouchFn As [ List Of Cell -- RckWork ]) | RckUser(UserTokens As List Of String, UserTouch As Boolean)
+Rem
+Rem RckPureOver is RckPure PLUS the state, and exists for one reason: a
+Rem word whose argument is a [ ... ] program has to be able to RUN it,
+Rem and running one needs the dictionary, the registers and the modes it
+Rem was typed against. MAP, FILTER, FOLD and TIMES have always had that
+Rem because they are RckCore and the core is dispatched with the state in
+Rem hand; RckPureOver is the same reach, opened to a seed, so a machine
+Rem whose words take a function — a numeric derivative, an integrator, a
+Rem root finder — can be bridged at all. The word is still declared
+Rem PURE, exactly as MAP is: what the program does is the program's, and
+Rem a combinator answers for itself.
+Type RckBody = RckCore(CoreTag As String) | RckPure(PureFn As [ List Of Cell -- RckWork ]) | RckTouch(TouchFn As [ List Of Cell -- RckWork ]) | RckPureOver(OverFn As [ RckState List Of Cell -- RckWork ]) | RckUser(UserTokens As List Of String, UserTouch As Boolean)
 
 Rem A dictionary entry. The metadata is mandatory (R4.9) and the whole
 Rem reason HELP and WORDS can answer at all; a word without it is
@@ -1050,6 +1061,8 @@ Def RckRan(st As RckState, e As RckEntry, args As List Of Cell, out As List Of S
             RckDidWord(st, e, RckWorkDone(st, Call(f, args), out))
         Case RckTouch(f)
             RckDidWord(st, e, RckWorkDone(st, Call(f, args), out))
+        Case RckPureOver(f)
+            RckDidWord(st, e, RckWorkDone(st, Call(f, st, args), out))
         Case RckUser(ts, touch)
             RckRanUser(st, WordName(e), ts, args, out)
         Case RckCore(tag)
@@ -1123,6 +1136,89 @@ Def RckOnly(word As String, st2 As RckState) As Result
         Ok(First(CutCells(RckStack(st2))))
     Else
         Err(word & " needs its program to leave one value, it left " & Str(CutDepth(RckStack(st2))), 0)
+
+Rem ---- a program cell as a function of one number -----------------------
+Rem
+Rem WHAT THIS IS FOR. A machine whose word takes a quotation — eng's
+Rem numeric derivative, its integrator, its root finders — wants a
+Rem [ Number -- Number ] to Call. What the entry line supplies is a
+Rem CutProg: a list of tokens, which is a thing to EVALUATE and not a
+Rem thing to call. These two make one out of the other, and they are here
+Rem rather than in a seed because nothing about them is a domain: they
+Rem are the evaluator, pointed at one cell and asked for one number.
+Rem
+Rem TWO FORMS, AND THE PAIRING IS THE WHOLE DESIGN.
+Rem
+Rem   RckProgTry is the honest one and answers a Result. The program runs
+Rem   on a fresh stack with x on it — the same sub-evaluation a
+Rem   combinator's program gets — and is refused for the engine's own
+Rem   reason if it will not evaluate, does not leave exactly one cell, or
+Rem   leaves a cell that is not a NUMBER.
+Rem
+Rem   RckProgFn is the one a machine can actually accept, and it is TOTAL
+Rem   because a [ Number -- Number ] has nowhere to put a refusal:
+Rem   wherever RckProgTry would refuse, this answers 0. THAT IS A WRONG
+Rem   NUMBER AND NOT A REFUSAL, which is why the two are published
+Rem   together — the only safe way to hand RckProgFn to a machine is to
+Rem   have asked RckProgTry first at every point the machine will
+Rem   evaluate. A caller that knows its sample points ahead of time (a
+Rem   Simpson rule, a sum over a range) can check all of them and be
+Rem   exactly right; one that chooses them adaptively (a bisection, a
+Rem   golden section) can check the bracket it will stay inside, which is
+Rem   where the guarantee stops. Neither can abort the mill either way:
+Rem   the worst RckProgFn does is answer 0.
+Rem
+Rem WHAT THE PROGRAM CAN SEE is the caller's whole session — the
+Rem dictionary including anything the user has defined, the registers,
+Rem the angle mode. That is why the state is a parameter and why a word
+Rem taking a program is RckPureOver: [ SQ ] with SQ defined a line
+Rem earlier has to work, and "STO before, RCL inside" is the documented
+Rem way a program reaches a value that is not its element.
+Rem
+Rem WHAT THE PROGRAM CHANGES IS DISCARDED. A sub-evaluation normally
+Rem threads its state home, but a function a solver calls two hundred
+Rem times cannot leave two hundred dictionaries behind, and a derivative
+Rem that quietly redefined a word would be a derivative nobody could
+Rem read. So this is the one sub-evaluation whose state does not come
+Rem back: it answers a number and nothing else.
+
+Def RckProgFn(st As RckState, ts As List Of String) As [ Number -- Number ]
+    Fn(x) => RckProgOr0(st, ts, x)
+
+Def RckProgOr0(st As RckState, ts As List Of String, x As Number) As Number
+    Select Case RckProgTry(RckProgOpen(), st, ts, x)
+        Case Ok(y)
+            y
+        Case Else
+            0
+
+Def RckProgTry(word As String, st As RckState, ts As List Of String, x As Number) As Result
+    RckProgRan(word, RckSub(st, { CutNum(x) }, ts, { }))
+
+Def RckProgRan(word As String, r As RckRun) As Result
+    Select Case r
+        Case RckWent(st2, out)
+            RckProgOne(word, st2)
+        Case RckBroke(w, out)
+            Err(w, 0)
+        Case Else
+            Err(word & ": the program did not answer", 0)
+
+Def RckProgOne(word As String, st2 As RckState) As Result
+    Select Case RckOnly(word, st2)
+        Case Ok(c)
+            RckProgNum(word, c)
+        Case Err(w, at)
+            Err(w, at)
+        Case Else
+            Err(word & ": the program did not answer", 0)
+
+Def RckProgNum(word As String, c As Cell) As Result
+    Select Case c
+        Case CutNum(y)
+            Ok(y)
+        Case Else
+            Err(RckKindWhy(word, "a program leaving one NUMBER", c), 0)
 
 Rem ---- the two literal forms -------------------------------------------
 

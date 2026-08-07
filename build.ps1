@@ -194,7 +194,8 @@ function Invoke-Test {
 function Invoke-MachineSuites {
     Assert-Mill
     foreach ($suite in 'csvtest', 'cuttletest', 'htmltest', 'jsontest', 'nettest', 'neuraltest',
-                       'randomtest', 'reckonertest', 'seedtest', 'shakertest', 'xmltest') {
+                       'randomtest', 'reckonertest', 'seedtest', 'seedengtest', 'seedfintest',
+                       'seedneuraltest', 'seedsimplextest', 'shakertest', 'xmltest') {
         Write-Host "==> tst/$suite.shoddy"
         & $Mill run "tst/$suite.shoddy"
         if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

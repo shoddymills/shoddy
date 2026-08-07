@@ -15,19 +15,24 @@ Rem per field, named for the field — FinGrowth becomes
 Rem { ("interest" n) ("total" n) }, FinAmort becomes
 Rem { ("principal" n) ("interest" n) ("balance" n) }, and so on.
 Rem
-Rem NOT BRIDGED: FinDate and everything built on it — FinSerial,
-Rem FinFromSerial, FinDateAdd, FinDaysInMonth, FinDateAddMonths,
-Rem FinDays360, FinDateDiff, FinYearFrac, FinCouponsBefore,
-Rem FinLastCoupon, FinAccrued, FinBondPrice, FinYtm and FinMdur. That
-Rem is a whole second subsystem — a calendar and a bond pricer built on
-Rem it — coherent enough to deserve its own pass rather than a rushed
-Rem half of one, not a machine this seed is unable to reach.
+Rem AND THE CALENDAR, AND THE BOND PRICER STANDING ON IT: FinDate,
+Rem FinSerial, FinFromSerial, FinDateAdd, FinDaysInMonth,
+Rem FinDateAddMonths, FinDays360, FinDateDiff, FinYearFrac,
+Rem FinCouponsBefore, FinLastCoupon, FinAccrued, FinBondPrice, FinYtm
+Rem and FinMdur. That is a second subsystem rather than more of the
+Rem first, which is why it has a section of its own at the foot of this
+Rem file and its own account of why each guard is there. A FinDate is a
+Rem dict like every other record here — { ("yr" n) ("mon" n) ("day" n) }
+Rem — and the day-count bases and coupon frequencies are registered as
+Rem zero-argument words, so a session names FIN360 and FINSEMI rather
+Rem than remembering that they are 1 and 2.
 Rem ==================================================================
 
 Include "fin.shoddy"
 Include "cuttle.shoddy"
 Include "reckoner.shoddy"
 Include "seq.shoddy"
+Include "str.shoddy"
 
 Rem ---- shared conversions -----------------------------------------------
 
@@ -766,6 +771,460 @@ Def FsDb(vs As List Of Cell) As RckWork
         Case Else
             RckWorkBad("FINDB did not answer")
 
+Rem ---- the calendar, and the bond pricer standing on it -----------------
+Rem
+Rem A DATE IS A DICT, like every other record here:
+Rem { ("yr" n) ("mon" n) ("day" n) }, built by FINDATE and read back by
+Rem FINDATESHOW as "2025-01-31". FINDATEOF parses that same spelling, so
+Rem a date can be typed either way round and a tape reads as prose.
+Rem
+Rem THE BASIS AND THE FREQUENCY ARE WORDS, not numbers to remember.
+Rem fin.shoddy spells them as zero-argument Defs because Shoddy has no
+Rem enum; the same choice here means a session reads
+Rem "SETTLE MAT 0.05 P FINSEMI FIN360 FINYTM" rather than "... 2 1 ...",
+Rem and a mistyped basis is an unknown word instead of a wrong answer.
+Rem
+Rem WHY THE DATE IS VALIDATED AT ALL. FinSerial is pure integer
+Rem arithmetic over Yr/Mon/Day and has no opinion about whether the date
+Rem exists: FinDate(2025, 2, 30) serializes perfectly happily to the 2nd
+Rem of March, and FinDate(2025, 13, 1) to January 2026. Neither aborts,
+Rem so neither would ever be noticed — a wrong ANSWER rather than a
+Rem refusal, which is the one outcome these seeds exist to prevent. So
+Rem FINDATE checks the calendar, and every word that takes a date checks
+Rem it again on the way in, since a dict can also arrive hand-built.
+Rem
+Rem THE SAME REASONING SETS THE OTHER GUARDS. FinYearFrac falls through
+Rem to ACT/365.25 for any basis it does not recognise, so an unknown
+Rem basis is refused rather than silently treated as one. FinLastCoupon
+Rem steps back by 12/freq MONTHS, so a frequency that does not divide 12
+Rem walks the wrong calendar. FinBondPrice raises (1 + yld/freq) to a
+Rem power, so a yield at or below -freq is a zero or negative base. And
+Rem FinYtm Errors outright when no yield in 0..2 prices the bond — the
+Rem one abort in this subsystem, and the same shape FINIRR already
+Rem guards: the test asked here first, and refused instead.
+
+Rem A whole number that may be NEGATIVE, which RckWholeArg is not: its
+Rem whole numbers start at zero, and every offset in a calendar runs both
+Rem ways. Days back, months back, and a serial before 1970-01-01 are all
+Rem ordinary questions, so they get a reader that allows the sign and
+Rem still refuses a fraction.
+Def FsStepArg(word As String, c As Cell) As Result
+    Select Case c
+        Case CutNum(x)
+            FsStepWhole(word, x)
+        Case Else
+            Err(RckKindWhy(word, "a NUMBER", c), 0)
+
+Def FsStepWhole(word As String, x As Number) As Result
+    If x <> Floor(x) Then
+        Err(word & " needs a whole number, got " & Str(x), 0)
+    Else
+        Ok(x)
+
+Def FsDateCell(d As FinDate) As Cell
+    CutList({ FsEntry("yr", CutNum(Yr(d))), FsEntry("mon", CutNum(Mon(d))), FsEntry("day", CutNum(Day(d))) })
+
+Def FsDateWhy(word As String) As String
+    word & ": NOT A DATE — USE FINDATE, OR FINDATEOF ON " & RckQuoteMark() & "YYYY-MM-DD" & RckQuoteMark()
+
+Def FsDateOf(word As String, c As Cell) As Result
+    Select Case RckListArg(word, c)
+        Case Ok(fields)
+            FsDateFields(word, fields)
+        Case Err(w, at)
+            Err(w, at)
+        Case Else
+            Err(word & " did not answer", 0)
+
+Def FsDateFields(word As String, fields As List Of Cell) As Result
+    If Length(fields) <> 3 Then
+        Err(FsDateWhy(word), 0)
+    Else
+        FsDateNums(word, Map(fields, FsPairVal))
+
+Def FsPairVal(entry As Cell) As Cell
+    Select Case entry
+        Case CutPair(p)
+            Snd(p)
+        Case Else
+            entry
+
+Def FsDateNums(word As String, vals As List Of Cell) As Result
+    Select Case FsListNum(word, CutList(vals))
+        Case Ok(ns)
+            FsDateMade(word, Nth(ns, 1), Nth(ns, 2), Nth(ns, 3))
+        Case Err(w, at)
+            Err(FsDateWhy(word), 0)
+        Case Else
+            Err(word & " did not answer", 0)
+
+Rem The one calendar check, used by FINDATE on the way in and by every
+Rem date-taking word on a dict that may have been built by hand.
+Def FsDateMade(word As String, y As Number, m As Number, d As Number) As Result
+    If y <> Floor(y) Or m <> Floor(m) Or d <> Floor(d) Then
+        Err(word & ": A YEAR, MONTH AND DAY MUST ALL BE WHOLE NUMBERS", 0)
+    Else
+        FsDateReal(word, y, m, d)
+
+Def FsDateReal(word As String, y As Number, m As Number, d As Number) As Result
+    If m < 1 Or m > 12 Then
+        Err(word & ": THERE IS NO MONTH " & Str(m), 0)
+    Else
+        FsDateDay(word, y, m, d)
+
+Def FsDateDay(word As String, y As Number, m As Number, d As Number) As Result
+    If d < 1 Or d > FinDaysInMonth(y, m) Then
+        Err(word & ": " & Str(m) & "/" & Str(y) & " HAS " & Str(FinDaysInMonth(y, m)) & " DAYS, SO THERE IS NO DAY " & Str(d), 0)
+    Else
+        Ok(FinDate(y, m, d))
+
+Rem ---- the basis and frequency words ------------------------------------
+
+Def FsSeedConsts(st As RckState) As RckState
+    Let s1 = RckReg(st, "FINACTUAL", 0, RckPure(Fn(vs) => RckVals({ CutNum(FinActual()) })), "( -- basis )", "The actual/365.25 day-count basis, for FINDATEDIFF, FINYEARFRAC and the bond words.")
+    Let s2 = RckReg(s1, "FIN360", 0, RckPure(Fn(vs) => RckVals({ CutNum(Fin360()) })), "( -- basis )", "The NASD 30/360 day-count basis, where every month is 30 days and every year 360.")
+    Let s3 = RckReg(s2, "FIN365", 0, RckPure(Fn(vs) => RckVals({ CutNum(Fin365()) })), "( -- basis )", "The actual/365 day-count basis.")
+    Let s4 = RckReg(s3, "FINANNUAL", 0, RckPure(Fn(vs) => RckVals({ CutNum(FinAnnual()) })), "( -- freq )", "One coupon a year.")
+    Let s5 = RckReg(s4, "FINSEMI", 0, RckPure(Fn(vs) => RckVals({ CutNum(FinSemi()) })), "( -- freq )", "Two coupons a year, which is what most bonds pay.")
+    RckReg(s5, "FINQUARTERLY", 0, RckPure(Fn(vs) => RckVals({ CutNum(4) })), "( -- freq )", "Four coupons a year.")
+
+Rem A basis fin.shoddy does not know is not an error there — FinYearFrac
+Rem falls through to actual/365.25 — so an unrecognised one would be a
+Rem quietly different answer. Named here, refused here.
+Def FsWhyBasis(word As String, basis As Number) As String
+    If basis <> FinActual() And basis <> Fin360() And basis <> Fin365() Then
+        word & ": THAT IS NOT A DAY-COUNT BASIS — USE FINACTUAL, FIN360 OR FIN365"
+    Else
+        ""
+
+Rem FinLastCoupon steps back by 12 / freq whole months, so a frequency
+Rem that does not divide 12 lands between months and prices a bond that
+Rem does not exist.
+Def FsWhyFreq(word As String, freq As Number) As String
+    If freq < 1 Or freq <> Floor(freq) Or 12 Mod freq <> 0 Then
+        word & ": A COUPON FREQUENCY MUST DIVIDE 12 EVENLY — USE FINANNUAL, FINSEMI, FINQUARTERLY, OR 6 OR 12"
+    Else
+        ""
+
+Rem ---- the calendar words -----------------------------------------------
+
+Def FsSeedDates(st As RckState) As RckState
+    Let s1 = RckReg(st, "FINDATE", 3, RckPure(Fn(vs) => FsDate(vs)), "( y m d -- date )", "A date as a dict: yr, mon, day. Refuses anything the calendar does not have, such as the 30th of February.")
+    Let s2 = RckReg(s1, "FINDATESHOW", 1, RckPure(Fn(vs) => FsDateshow(vs)), "( date -- str )", "A date written out as " & RckQuoteMark() & "YYYY-MM-DD" & RckQuoteMark() & ".")
+    Let s3 = RckReg(s2, "FINDATEOF", 1, RckPure(Fn(vs) => FsFromtext(vs)), "( str -- date )", "The other way: " & RckQuoteMark() & "2025-01-31" & RckQuoteMark() & " read back into a date.")
+    Let s4 = RckReg(s3, "FINISLEAP", 1, RckPure(Fn(vs) => FsIsleap(vs)), "( y -- flag )", "Whether a year is a leap year, century rules included.")
+    Let s5 = RckReg(s4, "FINDAYSINMONTH", 2, RckPure(Fn(vs) => FsDaysinmonth(vs)), "( y m -- n )", "How many days that month has in that year.")
+    Let s6 = RckReg(s5, "FINSERIAL", 1, RckPure(Fn(vs) => FsSerial(vs)), "( date -- n )", "A date as a day number, counting from 1970-01-01 — the form to subtract two dates with.")
+    Let s7 = RckReg(s6, "FINFROMSERIAL", 1, RckPure(Fn(vs) => FsFromserial(vs)), "( n -- date )", "A day number back into a date.")
+    Let s8 = RckReg(s7, "FINDATEADD", 2, RckPure(Fn(vs) => FsDateadd(vs)), "( date days -- date )", "The date that many days later; a negative count goes back.")
+    Let s9 = RckReg(s8, "FINDATEADDMONTHS", 2, RckPure(Fn(vs) => FsDateaddmonths(vs)), "( date months -- date )", "That many months later, clamped to month end: one month after 31 January is 28 February.")
+    Let s10 = RckReg(s9, "FINDAYS360", 2, RckPure(Fn(vs) => FsDays360(vs)), "( a b -- n )", "Days from a to b on the NASD 30/360 rule.")
+    Let s11 = RckReg(s10, "FINDATEDIFF", 3, RckPure(Fn(vs) => FsDatediff(vs)), "( a b basis -- n )", "Days from a to b, counted on the given basis.")
+    RckReg(s11, "FINYEARFRAC", 3, RckPure(Fn(vs) => FsYearfrac(vs)), "( a b basis -- n )", "The fraction of a year from a to b on the given basis.")
+
+Def FsDate(vs As List Of Cell) As RckWork
+    Select Case FsListNum("FINDATE", CutList(vs))
+        Case Ok(ns)
+            FsDateAt(Nth(ns, 1), Nth(ns, 2), Nth(ns, 3))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("FINDATE did not answer")
+
+Def FsDateAt(y As Number, m As Number, d As Number) As RckWork
+    Select Case FsDateMade("FINDATE", y, m, d)
+        Case Ok(dt)
+            RckVals({ FsDateCell(dt) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("FINDATE did not answer")
+
+Rem The one shape most of the calendar words have: one date in, one cell
+Rem out, with the date validated on the way through.
+Def FsOnDate(word As String, c As Cell, f As [ FinDate -- Cell ]) As RckWork
+    Select Case FsDateOf(word, c)
+        Case Ok(dt)
+            RckVals({ Call(f, dt) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Def FsDateshow(vs As List Of Cell) As RckWork
+    FsOnDate("FINDATESHOW", First(vs), Fn(d) => CutStr(FsShown(d)))
+
+Def FsShown(d As FinDate) As String
+    PadZero(Yr(d), 4) & "-" & PadZero(Mon(d), 2) & "-" & PadZero(Day(d), 2)
+
+Def FsSerial(vs As List Of Cell) As RckWork
+    FsOnDate("FINSERIAL", First(vs), Fn(d) => CutNum(FinSerial(d)))
+
+Rem "YYYY-MM-DD" and nothing else: three fields, each all digits, and
+Rem then the same calendar check FINDATE makes. A lax parse here would
+Rem put the wrong date on the stack rather than refuse, which is the
+Rem whole failure this seed is for.
+Def FsFromtext(vs As List Of Cell) As RckWork
+    Select Case RckTextArg("FINDATEOF", First(vs))
+        Case Ok(s)
+            FsFromtextParts(s, Split(s, "-"))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("FINDATEOF did not answer")
+
+Def FsFromtextParts(s As String, parts As List Of String) As RckWork
+    If Length(parts) <> 3 Or Not All(parts, FsAllDigits) Then
+        RckWorkBad("FINDATEOF: " & RckQuoteMark() & s & RckQuoteMark() & " IS NOT A DATE — IT WANTS YYYY-MM-DD")
+    Else
+        FsFromtextAt(Val(Nth(parts, 1)), Val(Nth(parts, 2)), Val(Nth(parts, 3)))
+
+Def FsAllDigits(s As String) As Boolean
+    s <> "" And All(Map(Range(1, Len(s)), Fn(k) => Mid(s, k, 1)), Fn(c) => Instr("0123456789", c) > 0)
+
+Def FsFromtextAt(y As Number, m As Number, d As Number) As RckWork
+    Select Case FsDateMade("FINDATEOF", y, m, d)
+        Case Ok(dt)
+            RckVals({ FsDateCell(dt) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("FINDATEOF did not answer")
+
+Def FsIsleap(vs As List Of Cell) As RckWork
+    Select Case FsStepArg("FINISLEAP", First(vs))
+        Case Ok(y)
+            RckVals({ CutBool(FinIsLeap(y)) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("FINISLEAP did not answer")
+
+Def FsDaysinmonth(vs As List Of Cell) As RckWork
+    Select Case Pair(FsStepArg("FINDAYSINMONTH", Nth(vs, 1)), FsStepArg("FINDAYSINMONTH", Nth(vs, 2)))
+        Case Pair(Ok(y), Ok(m))
+            FsDaysinmonthAt(y, m)
+        Case Else
+            RckWorkBad("FINDAYSINMONTH did not answer")
+
+Def FsDaysinmonthAt(y As Number, m As Number) As RckWork
+    If m < 1 Or m > 12 Then
+        RckWorkBad("FINDAYSINMONTH: THERE IS NO MONTH " & Str(m))
+    Else
+        RckVals({ CutNum(FinDaysInMonth(y, m)) })
+
+Def FsFromserial(vs As List Of Cell) As RckWork
+    Select Case FsStepArg("FINFROMSERIAL", First(vs))
+        Case Ok(n)
+            RckVals({ FsDateCell(FinFromSerial(n)) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("FINFROMSERIAL did not answer")
+
+Def FsDateadd(vs As List Of Cell) As RckWork
+    FsDateAndWhole("FINDATEADD", vs, Fn(d, n) => FsDateCell(FinDateAdd(d, n)))
+
+Def FsDateaddmonths(vs As List Of Cell) As RckWork
+    FsDateAndWhole("FINDATEADDMONTHS", vs, Fn(d, n) => FsDateCell(FinDateAddMonths(d, n)))
+
+Rem A fractional step would run through Fix and land somewhere nobody
+Rem asked for, so both offsets have to be whole.
+Def FsDateAndWhole(word As String, vs As List Of Cell, f As [ FinDate Number -- Cell ]) As RckWork
+    Select Case FsDateOf(word, Nth(vs, 1))
+        Case Ok(d)
+            FsDateAndWholeAt(word, d, Nth(vs, 2), f)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Def FsDateAndWholeAt(word As String, d As FinDate, c As Cell, f As [ FinDate Number -- Cell ]) As RckWork
+    Select Case FsStepArg(word, c)
+        Case Ok(n)
+            RckVals({ Call(f, d, n) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Def FsDays360(vs As List Of Cell) As RckWork
+    FsOnTwoDates("FINDAYS360", vs, Fn(a, b) => RckVals({ CutNum(FinDays360(a, b)) }))
+
+Def FsDatediff(vs As List Of Cell) As RckWork
+    FsOnTwoDates("FINDATEDIFF", vs, Fn(a, b) => FsBasisThen("FINDATEDIFF", vs, Fn(basis) => CutNum(FinDateDiff(a, b, basis))))
+
+Def FsYearfrac(vs As List Of Cell) As RckWork
+    FsOnTwoDates("FINYEARFRAC", vs, Fn(a, b) => FsBasisThen("FINYEARFRAC", vs, Fn(basis) => CutNum(FinYearFrac(a, b, basis))))
+
+Def FsOnTwoDates(word As String, vs As List Of Cell, f As [ FinDate FinDate -- RckWork ]) As RckWork
+    Select Case FsDateOf(word, Nth(vs, 1))
+        Case Ok(a)
+            FsOnTwoDatesAt(word, a, Nth(vs, 2), f)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Def FsOnTwoDatesAt(word As String, a As FinDate, c As Cell, f As [ FinDate FinDate -- RckWork ]) As RckWork
+    Select Case FsDateOf(word, c)
+        Case Ok(b)
+            Call(f, a, b)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Rem The basis is always the last argument, so it is read off the end.
+Def FsBasisThen(word As String, vs As List Of Cell, f As [ Number -- Cell ]) As RckWork
+    Select Case RckNumArg(word, Last(vs))
+        Case Ok(basis)
+            FsBasisAt(word, basis, f)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Def FsBasisAt(word As String, basis As Number, f As [ Number -- Cell ]) As RckWork
+    If FsWhyBasis(word, basis) <> "" Then
+        RckWorkBad(FsWhyBasis(word, basis))
+    Else
+        RckVals({ Call(f, basis) })
+
+Rem ---- the bonds ---------------------------------------------------------
+
+Def FsSeedBonds(st As RckState) As RckState
+    Let s1 = RckReg(st, "FINCOUPONSBEFORE", 3, RckPure(Fn(vs) => FsCouponsbefore(vs)), "( settle maturity freq -- n )", "How many coupons are still to come between settlement and maturity.")
+    Let s2 = RckReg(s1, "FINLASTCOUPON", 3, RckPure(Fn(vs) => FsLastcoupon(vs)), "( settle maturity freq -- date )", "The coupon date on or before settlement — what FINACCRUED accrues from.")
+    Let s3 = RckReg(s2, "FINACCRUED", 5, RckPure(Fn(vs) => FsAccrued(vs)), "( settle lastcoupon coupon freq basis -- n )", "Interest earned since the last coupon and not yet paid, per 100 of face. coupon is a rate: 0.05 for a five percent bond.")
+    Let s4 = RckReg(s3, "FINBONDPRICE", 6, RckPure(Fn(vs) => FsBondprice(vs)), "( settle maturity coupon yld freq basis -- price )", "The clean price per 100 of face — accrued interest excluded, which is what a quoted price means. FINACCRUED is the rest of it.")
+    Let s5 = RckReg(s4, "FINYTM", 6, RckPure(Fn(vs) => FsYtm(vs)), "( settle maturity coupon price freq basis -- yield )", "The yield to maturity that prices the bond at price. Refuses when no yield between 0 and 2 does.")
+    RckReg(s5, "FINMDUR", 5, RckPure(Fn(vs) => FsMdur(vs)), "( settle maturity coupon yld freq -- years )", "Modified duration in years: roughly how much the price moves for a one-point move in yield.")
+
+Rem Every bond word starts the same way — two dates and then numbers —
+Rem so the reading is done once and each word says what to do with what
+Rem came out. settle must come BEFORE maturity: FinCouponsBefore would
+Rem otherwise answer zero or fewer coupons, and the price walk would run
+Rem over an empty range and answer the redemption alone.
+Def FsBond(word As String, vs As List Of Cell, f As [ FinDate FinDate List Of Number -- RckWork ]) As RckWork
+    FsOnTwoDates(word, vs, Fn(a, b) => FsBondOrdered(word, a, b, DropN(vs, 2), f))
+
+Def FsBondOrdered(word As String, a As FinDate, b As FinDate, rest As List Of Cell, f As [ FinDate FinDate List Of Number -- RckWork ]) As RckWork
+    If FinSerial(a) >= FinSerial(b) Then
+        RckWorkBad(word & ": SETTLEMENT MUST FALL BEFORE MATURITY")
+    Else
+        FsBondNums(word, a, b, rest, f)
+
+Def FsBondNums(word As String, a As FinDate, b As FinDate, rest As List Of Cell, f As [ FinDate FinDate List Of Number -- RckWork ]) As RckWork
+    Select Case FsListNum(word, CutList(rest))
+        Case Ok(ns)
+            Call(f, a, b, ns)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Def FsCouponsbefore(vs As List Of Cell) As RckWork
+    FsBond("FINCOUPONSBEFORE", vs, Fn(s, m, ns) => FsFreqThen("FINCOUPONSBEFORE", Nth(ns, 1), Fn(freq) => CutNum(FinCouponsBefore(s, m, freq))))
+
+Def FsLastcoupon(vs As List Of Cell) As RckWork
+    FsBond("FINLASTCOUPON", vs, Fn(s, m, ns) => FsFreqThen("FINLASTCOUPON", Nth(ns, 1), Fn(freq) => FsDateCell(FinLastCoupon(s, m, freq))))
+
+Def FsFreqThen(word As String, freq As Number, f As [ Number -- Cell ]) As RckWork
+    If FsWhyFreq(word, freq) <> "" Then
+        RckWorkBad(FsWhyFreq(word, freq))
+    Else
+        RckVals({ Call(f, freq) })
+
+Rem ( settle lastcoupon coupon freq basis -- n ). The two dates here are
+Rem the other way round from the rest — accrual runs from the last coupon
+Rem forward to settlement — so this one does not use FsBond's ordering
+Rem check, and asks its own.
+Def FsAccrued(vs As List Of Cell) As RckWork
+    FsOnTwoDates("FINACCRUED", vs, Fn(s, lc) => FsAccruedNums(s, lc, DropN(vs, 2)))
+
+Def FsAccruedNums(settle As FinDate, lastCoupon As FinDate, rest As List Of Cell) As RckWork
+    Select Case FsListNum("FINACCRUED", CutList(rest))
+        Case Ok(ns)
+            FsAccruedAt(settle, lastCoupon, Nth(ns, 1), Nth(ns, 2), Nth(ns, 3))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("FINACCRUED did not answer")
+
+Def FsAccruedAt(settle As FinDate, lastCoupon As FinDate, coupon As Number, freq As Number, basis As Number) As RckWork
+    If FsWhyFreq("FINACCRUED", freq) & FsWhyBasis("FINACCRUED", basis) <> "" Then
+        RckWorkBad(FsWhyFreq("FINACCRUED", freq) & FsWhyBasis("FINACCRUED", basis))
+    Else
+        FsAccruedOrdered(settle, lastCoupon, coupon, freq, basis)
+
+Def FsAccruedOrdered(settle As FinDate, lastCoupon As FinDate, coupon As Number, freq As Number, basis As Number) As RckWork
+    If FinSerial(lastCoupon) > FinSerial(settle) Then
+        RckWorkBad("FINACCRUED: THE LAST COUPON MUST FALL ON OR BEFORE SETTLEMENT")
+    Else
+        RckVals({ CutNum(FinAccrued(settle, lastCoupon, coupon, freq, basis)) })
+
+Def FsBondprice(vs As List Of Cell) As RckWork
+    FsBond("FINBONDPRICE", vs, Fn(s, m, ns) => FsBondpriceAt(s, m, Nth(ns, 1), Nth(ns, 2), Nth(ns, 3), Nth(ns, 4)))
+
+Rem (1 + yld/freq) is the discount base raised to every coupon's power,
+Rem so a yield at or below -freq makes it zero or negative — a division
+Rem by zero, or a fractional power of a negative, neither of which is a
+Rem price.
+Def FsBondpriceAt(settle As FinDate, maturity As FinDate, coupon As Number, yld As Number, freq As Number, basis As Number) As RckWork
+    If FsWhyBond("FINBONDPRICE", yld, freq, basis) <> "" Then
+        RckWorkBad(FsWhyBond("FINBONDPRICE", yld, freq, basis))
+    Else
+        RckVals({ CutNum(FinBondPrice(settle, maturity, coupon, yld, freq, basis)) })
+
+Def FsWhyBond(word As String, yld As Number, freq As Number, basis As Number) As String
+    If FsWhyFreq(word, freq) & FsWhyBasis(word, basis) <> "" Then
+        FsWhyFreq(word, freq) & FsWhyBasis(word, basis)
+    Else
+        FsWhyYield(word, yld, freq)
+
+Def FsWhyYield(word As String, yld As Number, freq As Number) As String
+    If yld <= 0 - freq Then
+        word & ": A YIELD AT OR BELOW MINUS THE COUPON FREQUENCY HAS NO DISCOUNT FACTOR"
+    Else
+        ""
+
+Def FsYtm(vs As List Of Cell) As RckWork
+    FsBond("FINYTM", vs, Fn(s, m, ns) => FsYtmAt(s, m, Nth(ns, 1), Nth(ns, 2), Nth(ns, 3), Nth(ns, 4)))
+
+Rem FinYtm itself Errors when the bracket 0..2 shows no sign change; the
+Rem same test, run here first, turns that abort into a refusal — exactly
+Rem what FINIRR already does for the internal rate of return.
+Def FsYtmAt(settle As FinDate, maturity As FinDate, coupon As Number, price As Number, freq As Number, basis As Number) As RckWork
+    If FsWhyBond("FINYTM", 0, freq, basis) <> "" Then
+        RckWorkBad(FsWhyBond("FINYTM", 0, freq, basis))
+    Else
+        FsYtmBracket(settle, maturity, coupon, price, freq, basis)
+
+Def FsYtmBracket(settle As FinDate, maturity As FinDate, coupon As Number, price As Number, freq As Number, basis As Number) As RckWork
+    If (FinBondPrice(settle, maturity, coupon, 0, freq, basis) - price) * (FinBondPrice(settle, maturity, coupon, 2, freq, basis) - price) > 0 Then
+        RckWorkBad("FINYTM: NO YIELD BETWEEN 0 AND 2 PRICES THIS BOND AT " & Str(price))
+    Else
+        RckVals({ CutNum(FinYtm(settle, maturity, coupon, price, freq, basis)) })
+
+Def FsMdur(vs As List Of Cell) As RckWork
+    FsBond("FINMDUR", vs, Fn(s, m, ns) => FsMdurAt(s, m, Nth(ns, 1), Nth(ns, 2), Nth(ns, 3)))
+
+Rem FinMdur divides by the price it computes, so a bond priced at zero
+Rem would divide by it. FIN360 is the basis FinMdur uses internally, so
+Rem that is the basis the price is checked at.
+Def FsMdurAt(settle As FinDate, maturity As FinDate, coupon As Number, yld As Number, freq As Number) As RckWork
+    If FsWhyBond("FINMDUR", yld, freq, Fin360()) <> "" Then
+        RckWorkBad(FsWhyBond("FINMDUR", yld, freq, Fin360()))
+    Else
+        FsMdurPriced(settle, maturity, coupon, yld, freq)
+
+Def FsMdurPriced(settle As FinDate, maturity As FinDate, coupon As Number, yld As Number, freq As Number) As RckWork
+    If FinBondPrice(settle, maturity, coupon, yld, freq, Fin360()) = 0 Then
+        RckWorkBad("FINMDUR: THAT BOND PRICES AT ZERO, SO IT HAS NO DURATION")
+    Else
+        RckVals({ CutNum(FinMdur(settle, maturity, coupon, yld, freq)) })
+
 Rem ---- the seed -----------------------------------------------------------
 
 Def RckSeedFin(st As RckState) As RckState
@@ -775,4 +1234,7 @@ Def RckSeedFin(st As RckState) As RckState
     Let s4 = FsSeedBudget(s3)
     Let s5 = FsSeedLoans(s4)
     Let s6 = FsSeedCapital(s5)
-    FsSeedMisc(s6)
+    Let s7 = FsSeedMisc(s6)
+    Let s8 = FsSeedConsts(s7)
+    Let s9 = FsSeedDates(s8)
+    FsSeedBonds(s9)

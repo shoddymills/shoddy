@@ -1,0 +1,213 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem seedengtest.shoddy — test program for seedeng.shoddy's calculus
+Rem words, and for the engine bridge underneath them
+Rem
+Rem Assert-driven, in the cuttletest / reckonertest / seedtest pattern:
+Rem it prints what it is doing and stops the run at the first assertion
+Rem that fails, ending with ALL ASSERTIONS PASSED when it does not.
+Rem
+Rem WHAT IS GRADED HERE, and what is not. seedeng.shoddy's several
+Rem hundred arithmetic words are eng.shoddy's own known-answer suite's
+Rem business (tst/eng.shoddy) plus the conversions each wraps. What is
+Rem graded here is the part that was deferred and has just been built:
+Rem the eight words that take a PROGRAM rather than a number, and the
+Rem two pieces of reckoner.shoddy they stand on —
+Rem
+Rem   * RckPureOver, the body kind that hands a registered word the state
+Rem     its program has to be run against, and
+Rem   * RckProgFn / RckProgTry, which turn a [ ... ] cell into a
+Rem     [ Number -- Number ] and say honestly when they cannot.
+Rem
+Rem THE PAIRING IS THE THING TO TEST. RckProgFn is total and answers 0
+Rem where the program will not evaluate, so the whole safety of the eight
+Rem words is that RckProgTry was asked first at every point the machine
+Rem is going to use. Two sections below exist only for that: one proves
+Rem a bad program is refused rather than silently integrated as zero, and
+Rem one proves a program can still see the session it was typed in —
+Rem a word defined a line earlier, a register stored a line earlier —
+Rem because a bridge that cannot do that is not worth the engine change.
+Rem
+Rem Every refusal is walked in the seed suite's two-part shape: the line
+Rem refuses for the stated reason with the state as it was, AND a further
+Rem line evaluates afterwards. Only the second half proves the mill
+Rem lived.
+Rem
+Rem Run: bin\mill run tst\seedengtest.shoddy      (from the repo root)
+Rem ==================================================================
+
+Include "../machines/cuttle.shoddy"
+Include "../machines/reckoner.shoddy"
+Include "../machines/seq.shoddy"
+Include "../machines/str.shoddy"
+Include "../machines/seeds/seedeng.shoddy"
+
+Rem ---- reading an answer ------------------------------------------------
+
+Def Ran(st As RckState, line As String) As RckState
+    Select Case RckEval(st, line)
+        Case RckNext(st2, out)
+            st2
+        Case RckStop(st2, why, out)
+            st2
+        Case Else
+            st
+
+Def Runs(st As RckState, lines As List Of String) As RckState
+    Fold(lines, st, Ran)
+
+Def Bad(st As RckState, line As String) As Boolean
+    Select Case RckEval(st, line)
+        Case RckStop(st2, why, out)
+            True
+        Case Else
+            False
+
+Def Why(st As RckState, line As String) As String
+    Select Case RckEval(st, line)
+        Case RckStop(st2, why, out)
+            why
+        Case Else
+            ""
+
+Def Text(st As RckState) As String
+    Join(Map(CutCells(RckStack(st)), Fn(c) => CutShow(c, RckFmt(st))), " | ")
+
+Def Deep(st As RckState) As Number
+    CutDepth(RckStack(st))
+
+Def TopNum(st As RckState) As Number
+    If Deep(st) < 1 Then
+        0 - 999999
+    Else
+        NumOf(First(CutCells(RckStack(st))))
+
+Def NumOf(c As Cell) As Number
+    Select Case c
+        Case CutNum(x)
+            x
+        Case Else
+            0 - 999999
+
+Rem A numeric derivative is accurate to about eight digits and a second
+Rem difference to about four, so the tolerance here is the machine's own
+Rem stated accuracy rather than an exactness nothing promises.
+Def Tol() As Number
+    0.0001
+
+Def Near(a As Number, b As Number) As Boolean
+    Abs(a - b) <= Tol()
+
+Def Got(st As RckState, line As String) As Number
+    TopNum(Ran(st, line))
+
+Def Q(s As String) As String
+    Chr(34) & s & Chr(34)
+
+Def Refuses(st As RckState, line As String, why As String) As Boolean
+    Bad(st, line) And Instr(Why(st, line), why) > 0 And Text(Ran(st, line)) = Text(st) And Text(Ran(Ran(st, line), "1 1 +")) = Text(Ran(st, "1 1 +"))
+
+Def Holds(lines As List Of String, sub As String) As Boolean
+    Any(lines, Fn(l) => Instr(l, sub) > 0)
+
+Def Main()
+    Let s0 = RckSeedEng(RckNew())
+    Let g = Ran(s0, "1 2")
+
+    Print("--- the eight words are registered, pure, and carry their metadata ---")
+    Assert(RckKnows(s0, "ENGDERIV") And RckKnows(s0, "ENGDERIV2"), "THE TWO DERIVATIVES ARE WORDS")
+    Assert(RckKnows(s0, "ENGINTEGRATE") And RckKnows(s0, "ENGSUMOF") And RckKnows(s0, "ENGPRODOF"), "AND THE INTEGRAL, THE SUM AND THE PRODUCT")
+    Assert(RckKnows(s0, "ENGZEROOF") And RckKnows(s0, "ENGMINOF") And RckKnows(s0, "ENGMAXOF"), "AND THE THREE BRACKETED SEARCHES")
+    Rem R3.5(a): ENGNEWTONOF can abort under its own derivative going to
+    Rem zero and nothing can pre-flight that, so it is absent ON PURPOSE.
+    Rem An assertion, not a comment, because "we left it out deliberately"
+    Rem is exactly the kind of decision a later pass quietly undoes.
+    Assert(Not RckKnows(s0, "ENGNEWTONOF"), "AND ENGNEWTONOF IS DELIBERATELY NOT ONE OF THEM")
+    Assert(Holds(RckHelp(s0, "ENGDERIV"), "touches nothing"), "A WORD THAT RUNS A PROGRAM STILL ANSWERS FOR ITSELF, AS MAP DOES")
+    Assert(All(RckDict(s0), Fn(e) => WordEffect(e) <> "" And WordDesc(e) <> ""), "NO WORD IS WITHOUT AN EFFECT LINE AND A DESCRIPTION")
+    Assert(All(RckDict(s0), Fn(e) => Length(RckHelp(s0, WordName(e))) = 3), "AND HELP ANSWERS FOR EVERY ONE OF THEM")
+
+    Print("--- the derivatives, against derivatives known by hand ---")
+    Assert(Near(Got(s0, "[ DUP * ] 3 ENGDERIV"), 6), "D/DX OF X^2 AT 3 IS 6")
+    Assert(Near(Got(s0, "[ DUP DUP * * ] 2 ENGDERIV"), 12), "D/DX OF X^3 AT 2 IS 12")
+    Assert(Near(Got(s0, "[ SIN ] 0 ENGDERIV"), 1), "D/DX OF SIN AT 0 IS 1, IN RADIANS")
+    Assert(Near(Got(s0, "[ EXP ] 0 ENGDERIV"), 1), "AND OF EXP AT 0 IS 1")
+    Assert(Near(Got(s0, "[ ] 3 ENGDERIV"), 1), "THE EMPTY PROGRAM IS THE IDENTITY, WHOSE DERIVATIVE IS 1")
+    Assert(Near(Got(s0, "[ DUP DUP * * ] 2 ENGDERIV2"), 12), "AND THE SECOND DERIVATIVE OF X^3 AT 2 IS 12")
+    Assert(Near(Got(s0, "[ DUP * ] 5 ENGDERIV2"), 2), "AND OF X^2 ANYWHERE IS 2")
+
+    Print("--- the integral, the range sum and the range product ---")
+    Assert(Near(Got(s0, "[ DUP * ] 0 3 100 ENGINTEGRATE"), 9), "THE INTEGRAL OF X^2 FROM 0 TO 3 IS 9")
+    Assert(Near(Got(s0, "[ ] 0 2 2 ENGINTEGRATE"), 2), "AND SIMPSON IS EXACT ON A LINE AT THE SMALLEST EVEN N")
+    Assert(Near(Got(s0, "[ SIN ] 0 PI 100 ENGINTEGRATE"), 2), "AND THE INTEGRAL OF SIN OVER HALF A TURN IS 2")
+    Assert(Got(s0, "[ ] 1 10 ENGSUMOF") = 55, "THE WHOLE NUMBERS 1 TO 10 SUM TO 55")
+    Assert(Got(s0, "[ DUP * ] 1 4 ENGSUMOF") = 30, "AND THEIR SQUARES TO 4 SUM TO 30")
+    Assert(Got(s0, "[ ] 1 5 ENGPRODOF") = 120, "AND 1 TO 5 MULTIPLY TO 5 FACTORIAL")
+    Rem lo above hi is an empty range, not an error, and the empty sum and
+    Rem the empty product are the identities of their operations.
+    Assert(Got(s0, "[ ] 5 1 ENGSUMOF") = 0, "AN EMPTY RANGE SUMS TO 0")
+    Assert(Got(s0, "[ ] 5 1 ENGPRODOF") = 1, "AND MULTIPLIES TO 1")
+
+    Print("--- the bracketed searches ---")
+    Assert(Near(Got(s0, "[ DUP * 2 - ] 0 2 ENGZEROOF"), Sqr(2)), "THE ROOT OF X^2 - 2 IN [0,2] IS THE SQUARE ROOT OF 2")
+    Assert(Near(Got(s0, "[ 1 - ] -5 5 ENGZEROOF"), 1), "AND OF X - 1 IS 1")
+    Assert(Near(Got(s0, "[ 1 - DUP * ] -3 4 ENGMINOF"), 1), "(X-1)^2 IS LEAST AT 1")
+    Assert(Near(Got(s0, "[ DUP * 0 SWAP - ] -3 4 ENGMAXOF"), 0), "AND -X^2 IS GREATEST AT 0")
+
+    Print("--- the program is run against the WHOLE session, not a fresh one ---")
+    Rem The reason RckPureOver exists. A program that cannot name a word
+    Rem the user defined, or read a register they stored, is a program
+    Rem nobody would type twice.
+    Let u = Ran(s0, ": SQ DUP * ;")
+    Assert(Near(Got(u, "[ SQ ] 3 ENGDERIV"), 6), "A PROGRAM MAY NAME A WORD DEFINED A LINE EARLIER")
+    Let r = Ran(s0, "5 " & Q("K") & " STO")
+    Assert(Near(Got(r, "[ " & Q("K") & " RCL * ] 1 ENGDERIV"), 5), "AND MAY RCL A REGISTER STORED A LINE EARLIER")
+    Rem And what the program changes does NOT come home: a solver calling
+    Rem it two hundred times must not leave two hundred registers behind.
+    Let w = Ran(s0, "[ DUP * 9 " & Q("Z") & " STO ] 0 4 ENGMINOF")
+    Assert(Bad(w, Q("Z") & " RCL"), "WHILE A REGISTER STORED INSIDE THE PROGRAM DOES NOT SURVIVE IT")
+    Assert(Length(RckDict(Ran(s0, "[ DUP * ] 3 ENGDERIV"))) = Length(RckDict(s0)), "AND THE DICTIONARY COMES BACK THE SIZE IT WAS")
+
+    Print("--- a bad program is refused, never silently taken as zero ---")
+    Rem This is the section the whole design turns on. RckProgFn answers 0
+    Rem where the program will not evaluate, so if the pre-flight were
+    Rem missing each of these would return a confident wrong number
+    Rem instead of refusing — [ NOSUCHWORD ] 0 3 100 ENGINTEGRATE would be
+    Rem 0, not an error.
+    Assert(Refuses(g, "[ NOSUCHWORD ] 3 ENGDERIV", "unknown word NOSUCHWORD"), "A PROGRAM NAMING A WORD THAT DOES NOT EXIST")
+    Assert(Refuses(g, "[ NOSUCHWORD ] 0 3 100 ENGINTEGRATE", "unknown word NOSUCHWORD"), "AND THE SAME UNDER THE INTEGRAL, WHERE THE SILENT ANSWER WOULD HAVE BEEN 0")
+    Assert(Refuses(g, "[ NOSUCHWORD ] 1 10 ENGSUMOF", "unknown word NOSUCHWORD"), "AND UNDER THE RANGE SUM")
+    Assert(Refuses(g, "[ NOSUCHWORD ] 0 2 ENGZEROOF", "unknown word NOSUCHWORD"), "AND UNDER THE BRACKETED SEARCH")
+    Assert(Refuses(g, "[ DUP ] 3 ENGDERIV", "needs its program to leave one value, it left 2"), "A PROGRAM THAT LEAVES TWO CELLS")
+    Assert(Refuses(g, "[ DROP ] 3 ENGDERIV", "needs its program to leave one value, it left 0"), "AND ONE THAT LEAVES NONE")
+    Assert(Refuses(g, "[ DROP " & Q("x") & " ] 3 ENGDERIV", "a program leaving one NUMBER"), "AND ONE THAT LEAVES SOMETHING THAT IS NOT A NUMBER")
+    Assert(Refuses(g, "3 3 ENGDERIV", "needs a PROGRAM, got NUMBER"), "AND AN ARGUMENT THAT IS NOT A PROGRAM AT ALL")
+    Rem A program that is fine at some points and refuses at others: LN is
+    Rem undefined at and below zero, so a bracket straddling it is caught
+    Rem by the sample rather than quietly weighted with zeros.
+    Assert(Refuses(g, "[ LN ] -1 2 ENGZEROOF", "LN has no answer at or below zero"), "AND ONE THAT REFUSES ONLY ON PART OF THE BRACKET IT WAS GIVEN")
+    Assert(Refuses(g, "[ 1 0 / ] 0 2 ENGMINOF", "cannot divide by zero"), "AND ONE THAT REFUSES BY ARITHMETIC RATHER THAN BY NAME")
+    Rem The engine's own refusals travel out unchanged, so the reason a
+    Rem session reads is the reason the token gave, not a seed's paraphrase
+    Rem of it.
+    Assert(Why(g, "[ NOSUCHWORD ] 3 ENGDERIV") = "unknown word NOSUCHWORD", "AND THE REASON IS THE ENGINE'S OWN WORDS, NOT A PARAPHRASE")
+
+    Print("--- the guards on the numbers, as against the program ---")
+    Assert(Refuses(g, "[ DUP * ] 0 3 7 ENGINTEGRATE", "N MUST BE AN EVEN WHOLE NUMBER OF 2 OR MORE"), "SIMPSON WITH AN ODD N, WHICH WOULD WEIGHT THE WRONG NODES")
+    Assert(Refuses(g, "[ DUP * ] 0 3 0 ENGINTEGRATE", "N MUST BE AN EVEN WHOLE NUMBER OF 2 OR MORE"), "AND WITH NO INTERVALS AT ALL, WHICH WOULD DIVIDE BY THEM")
+    Assert(Refuses(g, "[ DUP * ] 0 3 4.5 ENGINTEGRATE", "N MUST BE AN EVEN WHOLE NUMBER OF 2 OR MORE"), "AND WITH A FRACTIONAL COUNT OF THEM")
+    Assert(Refuses(g, "[ ] 1 2.5 ENGSUMOF", "LO AND HI MUST BOTH BE WHOLE NUMBERS"), "A RANGE WITH A FRACTIONAL END, WHICH RANGE WOULD WALK PAST")
+    Assert(Refuses(g, "[ ] 1.5 5 ENGPRODOF", "LO AND HI MUST BOTH BE WHOLE NUMBERS"), "AND ONE WITH A FRACTIONAL START")
+    Assert(Refuses(g, "[ DUP * 2 + ] 0 2 ENGZEROOF", "DOES NOT CHANGE SIGN ACROSS THAT BRACKET"), "BISECTION ON A BRACKET WITH NO ROOT IN IT, WHICH WOULD ANSWER AN ENDPOINT")
+    Assert(Refuses(g, "[ DUP * ] 4 1 ENGMINOF", "LO MUST BE BELOW HI"), "AND GOLDEN SECTION ON AN INVERTED BRACKET, WHICH WOULD WALK OUTWARDS")
+    Assert(Refuses(g, "[ DUP * ] 2 2 ENGZEROOF", "LO MUST BE BELOW HI"), "AND EITHER ON A BRACKET OF NO WIDTH")
+
+    Print("--- nothing above cost the session anything ---")
+    Rem Top of stack first, as CutCells renders it: the 2 the sum just
+    Rem made, then the 2 and the 1 that were under it all along.
+    Assert(Text(Ran(g, "1 1 +")) = "2 | 2 | 1", "THE STACK IS STILL THERE AND STILL EVALUATING")
+
+    Print("")
+    Print("ALL ASSERTIONS PASSED")

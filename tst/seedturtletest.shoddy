@@ -1,0 +1,217 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem seedturtletest.shoddy — test program for seedturtle.shoddy
+Rem
+Rem Assert-driven, in the cuttletest / reckonertest / seedtest pattern:
+Rem it prints what it is doing and stops the run at the first assertion
+Rem that fails, ending with ALL ASSERTIONS PASSED when it does not.
+Rem
+Rem WHAT IS ACTUALLY UNDER TEST is not that a line got drawn — a PNG
+Rem proves that and the eye proves it better. It is that the turtle's
+Rem STATE survives being taken apart and put back together on every
+Rem word, which is what RckUpdated exists for and what no earlier seed
+Rem needed. A recio file keeps its state in the file; a turtle keeps its
+Rem in seven numbers that have to go into the binding and come back out
+Rem intact, once per step.
+Rem
+Rem SO THE ASSERTIONS ARE GEOMETRIC. A closed polygon returns the turtle
+Rem to exactly where it started, facing the way it started — four sides
+Rem and four right turns, three sides and three 120s. That is a strong
+Rem check on the round trip: any field lost, rounded or transposed on
+Rem the way through the binding shows up as a turtle that does not come
+Rem home.
+Rem
+Rem IT RUNS EITHER WAY, as the scribbler suite does: whether a window
+Rem can be made depends on how the mill was started and whether there is
+Rem a display, so the suite asks and asserts whichever half it got.
+Rem
+Rem Run with --no-window so a dev machine does not get a window thrown
+Rem at it mid-suite.
+Rem
+Rem Run: bin\mill --no-window run tst\seedturtletest.shoddy
+Rem ==================================================================
+
+Include "../machines/cuttle.shoddy"
+Include "../machines/reckoner.shoddy"
+Include "../machines/seq.shoddy"
+Include "../machines/str.shoddy"
+Include "../machines/seeds/seedturtle.shoddy"
+
+Rem ---- reading an answer ------------------------------------------------
+
+Def Ran(st As RckState, line As String) As RckState
+    Select Case RckEval(st, line)
+        Case RckNext(st2, out)
+            st2
+        Case RckStop(st2, why, out)
+            st2
+        Case Else
+            st
+
+Def Runs(st As RckState, lines As List Of String) As RckState
+    Fold(lines, st, Ran)
+
+Def Bad(st As RckState, line As String) As Boolean
+    Select Case RckEval(st, line)
+        Case RckStop(st2, why, out)
+            True
+        Case Else
+            False
+
+Def Why(st As RckState, line As String) As String
+    Select Case RckEval(st, line)
+        Case RckStop(st2, why, out)
+            why
+        Case Else
+            ""
+
+Def Text(st As RckState) As String
+    Join(Map(CutCells(RckStack(st)), Fn(c) => CutShow(c, RckFmt(st))), " | ")
+
+Def Q(s As String) As String
+    Chr(34) & s & Chr(34)
+
+Rem Safe only for lines that neither open nor close, and — here — that do
+Rem not MOVE the turtle either: it runs the line three times, and three
+Rem steps forward is not one.
+Def Refuses(st As RckState, line As String, why As String) As Boolean
+    Bad(st, line) And Instr(Why(st, line), why) > 0 And Text(Ran(st, line)) = Text(st) And Text(Ran(Ran(st, line), "1 1 +")) = Text(Ran(st, "1 1 +"))
+
+Def PngPath() As String
+    "tst/csv/_seedturtletest.png"
+
+Def Wipe()
+    If FileExists(PngPath()) Then
+        DeleteFile(PngPath())
+
+Rem Where the turtle is, as three numbers, read out of the binding
+Rem rather than off the stack so the assertions can do arithmetic.
+Def Where(st As RckState, nm As String) As List Of Number
+    WhereOf(First(RckResOf(st, nm)))
+
+Def WhereOf(r As RckRes) As List Of Number
+    { TsNumAt(ResDataOf(r), 1), TsNumAt(ResDataOf(r), 2), TsNumAt(ResDataOf(r), 3) }
+
+Def Near(a As Number, b As Number) As Boolean
+    Abs(a - b) <= 0.000001
+
+Def AtSame(a As List Of Number, b As List Of Number) As Boolean
+    Near(Nth(a, 1), Nth(b, 1)) And Near(Nth(a, 2), Nth(b, 2))
+
+Rem One side of a polygon: forward, then turn.
+Def Side(st As RckState, deg As Number) As RckState
+    Ran(Ran(st, Q("t") & " 70 TURTLEFORWARD"), Q("t") & " " & Str(deg) & " TURTLERIGHT")
+
+Def Poly(st As RckState, sides As Number) As RckState
+    Fold(Range(1, sides), st, Fn(s, k) => Side(s, 360 / sides))
+
+Def Main()
+    Wipe()
+    Let s0 = RckSeedTurtle(RckNew())
+    Let g = Ran(s0, "1 2")
+
+    Print("--- the seed is in the dictionary, grouped and documented ---")
+    Assert(RckKnows(s0, "TURTLEOPEN") And RckKnows(s0, "TURTLEFORWARD") And RckKnows(s0, "TURTLERIGHT"), "THE WORDS ARE THERE")
+    Assert(Contains(RckWords(s0), "-- seed-turtle --"), "AND THEY HAVE A GROUP OF THEIR OWN")
+    Assert(All(RckDict(s0), Fn(e) => WordEffect(e) <> "" And WordDesc(e) <> ""), "NO WORD IS WITHOUT AN EFFECT LINE AND A DESCRIPTION")
+    Assert(All(RckDict(s0), Fn(e) => Length(RckHelp(s0, WordName(e))) = 3), "AND HELP ANSWERS FOR EVERY ONE OF THEM")
+    Assert(All(RckDict(s0), Fn(e) => Instr(Lower(WordEffect(e)), "handle") = 0), "NO WORD'S EFFECT STRING MENTIONS A HANDLE")
+    Assert(Not RckKnows(s0, "TURTLECLOSE"), "AND THERE IS NO TURTLECLOSE — CLOSE IS THE CORE'S WORD AND THE ONLY ONE")
+
+    Print("--- the guards that are answered before anything is opened ---")
+    Assert(Refuses(g, "0 240 " & Q("x") & " TURTLEOPEN", "AT LEAST 1 BY 1"), "A WINDOW OF NO WIDTH")
+    Assert(Refuses(g, "-5 240 " & Q("x") & " TURTLEOPEN", "TURTLEOPEN"), "AND A NEGATIVE SIZE")
+    Assert(Refuses(g, Q("nope") & " 10 TURTLEFORWARD", "THERE IS NOTHING OPEN CALLED nope"), "A NAME THAT WAS NEVER BOUND")
+    Assert(Refuses(g, Q("nope") & " TURTLEWHERE", "THERE IS NOTHING OPEN CALLED nope"), "AND THE SAME FROM A READING WORD")
+    Let mixed = RckBind(g, "db", "recio", 0, CutNum(0), Fn() => True)
+    Assert(Refuses(mixed, Q("db") & " 10 TURTLEFORWARD", "db IS A RECIO, NOT A TURTLE"), "AND A NAME BOUND BY ANOTHER KIND ENTIRELY")
+
+    Let opened = Ran(s0, "240 240 " & Q("t") & " TURTLEOPEN")
+    If RckBoundTo(opened, "t") Then
+        Drawing(opened)
+    Else
+        NoDisplay(s0, opened)
+
+    Wipe()
+    Print("")
+    Print("ALL ASSERTIONS PASSED")
+
+Def NoDisplay(s0 As RckState, opened As RckState)
+    Print("--- no window backend here, so the REFUSAL is what is asserted ---")
+    Assert(Bad(s0, "240 240 " & Q("t") & " TURTLEOPEN"), "OPENING WITH NO BACKEND REFUSES")
+    Assert(Instr(Why(s0, "240 240 " & Q("t") & " TURTLEOPEN"), "CANNOT OPEN A WINDOW") > 0, "AND SAYS SO IN WORDS")
+    Assert(Text(Ran(opened, "6 7 *")) = "42", "AND THE SESSION IS STILL RUNNING")
+    Assert(IsEmpty(RckBoundNames(opened)), "AND NOTHING WAS LEFT BOUND BY THE ATTEMPT")
+
+Def Drawing(o1 As RckState)
+    Print("--- a turtle opens at the centre, facing up, pen down ---")
+    Assert(Text(Ran(o1, "BOUND")) = "{ ( " & Q("t") & " " & Q("turtle") & " ) }", "BOUND SHOWS IT AS A NAME/KIND PAIR")
+    Assert(Text(o1) = "", "AND TURTLEOPEN LEFT NOTHING ON THE STACK")
+    Assert(Text(Ran(o1, Q("t") & " TURTLEWHERE")) = "{ 120 120 0 }", "IT STARTS AT THE CENTRE OF A 240 BY 240 WINDOW, FACING UP")
+
+    Print("--- THE POINT OF THIS SEED: state survives every round trip ---")
+    Rem A turtle is the first resource whose state is Shoddy's own rather
+    Rem than the operating system's, so every word takes seven numbers
+    Rem out of the binding and puts seven back. A closed polygon is the
+    Rem check: anything lost, rounded or transposed on the way through
+    Rem shows up as a turtle that does not come home.
+    Let sq = Poly(o1, 4)
+    Assert(AtSame(Where(sq, "t"), Where(o1, "t")), "FOUR SIDES AND FOUR RIGHT ANGLES BRING IT BACK TO WHERE IT STARTED")
+    Rem 0 rather than 360: turtle.shoddy wraps a heading into 0..360, so
+    Rem a full circle reads as no turn at all — which is the right answer
+    Rem and worth pinning, since it is the kind of thing a rewrite breaks.
+    Assert(Near(Nth(Where(sq, "t"), 3), 0), "AND FACING THE WAY IT STARTED, THE FULL CIRCLE HAVING WRAPPED TO 0")
+    Let tri = Poly(o1, 3)
+    Assert(AtSame(Where(tri, "t"), Where(o1, "t")), "AND A TRIANGLE OF 120s COMES HOME TOO, WHICH IS NOT A RIGHT-ANGLE COINCIDENCE")
+    Rem One step is not a round trip, so it must actually MOVE — a seed
+    Rem that dropped the update would pass every closed-polygon test
+    Rem above by never moving at all.
+    Let one = Ran(o1, Q("t") & " 70 TURTLEFORWARD")
+    Assert(Near(Nth(Where(one, "t"), 2), 50), "ONE STEP FORWARD OF 70 FROM y=120 FACING UP LANDS AT y=50")
+    Assert(Near(Nth(Where(one, "t"), 1), 120), "AND DOES NOT MOVE SIDEWAYS")
+    Assert(Not AtSame(Where(one, "t"), Where(o1, "t")), "SO THE UPDATE REALLY HAPPENED, WHICH THE POLYGONS ALONE WOULD NOT PROVE")
+
+    Print("--- turning, placing and the pen ---")
+    Assert(Near(Nth(Where(Ran(o1, Q("t") & " 90 TURTLERIGHT"), "t"), 3), 90), "TURNING RIGHT 90 FACES RIGHT")
+    Rem Left 90 from 0 is 270, not -90 — the same wrap, from the other
+    Rem side, and the reason a heading is always a compass bearing.
+    Assert(Near(Nth(Where(Ran(o1, Q("t") & " 90 TURTLELEFT"), "t"), 3), 270), "AND LEFT 90 THE OTHER WAY, WRAPPING TO 270 RATHER THAN GOING NEGATIVE")
+    Assert(Near(Nth(Where(Ran(o1, Q("t") & " 45 TURTLESETHEADING"), "t"), 3), 45), "SETHEADING FACES AN ABSOLUTE ANGLE")
+    Let put = Ran(o1, Q("t") & " 10 20 TURTLEGOTO")
+    Assert(AtSame(Where(put, "t"), { 10, 20 }), "GOTO PUTS IT WHERE IT IS TOLD")
+    Assert(AtSame(Where(Ran(put, Q("t") & " TURTLEHOME"), "t"), { 120, 120 }), "AND HOME BRINGS IT BACK TO THE CENTRE")
+    Rem The pen is state like any other, and lifting it must survive the
+    Rem round trip or a PENUP would draw anyway.
+    Let up = Ran(o1, Q("t") & " TURTLEPENUP")
+    Assert(Not TsPenOf(ResDataOf(First(RckResOf(up, "t")))), "PENUP LIFTS THE PEN, AND THE BINDING REMEMBERS")
+    Assert(TsPenOf(ResDataOf(First(RckResOf(Ran(up, Q("t") & " TURTLEPENDOWN"), "t")))), "AND PENDOWN PUTS IT BACK")
+
+    Print("--- the guards that need a turtle to be open ---")
+    Assert(Refuses(o1, Q("t") & " " & Q("far") & " TURTLEFORWARD", "NOT A NUMBER OF STEPS OR DEGREES"), "A DISTANCE THAT IS NOT A NUMBER")
+    Assert(Refuses(o1, Q("t") & " " & Q("x") & " 20 TURTLEGOTO", "NUMBER"), "A COORDINATE THAT IS NOT ONE")
+    Assert(Refuses(o1, Q("t") & " 255 " & Q("g") & " 0 TURTLESETPEN", "NUMBER"), "AND A COLOUR THAT IS NOT ONE")
+    Assert(Refuses(o1, "240 240 " & Q("t") & " TURTLEOPEN", "THERE IS ALREADY SOMETHING OPEN CALLED t"), "AND OPENING OVER A NAME ALREADY BOUND")
+
+    Print("--- saving ---")
+    Let drawn = Ran(Poly(o1, 4), Q("t") & " TURTLEBLIT")
+    Let p1 = Ran(drawn, Q("t") & " " & Q(PngPath()) & " TURTLESAVE")
+    Assert(Text(p1) = "True", "TURTLESAVE ANSWERS TRUE ON A PATH IT CAN WRITE")
+    Assert(Left(ReadFile(PngPath()), 4) = Chr(137) & "PNG", "AND WRITES A PNG, BY ITS OWN MAGIC NUMBER")
+    Assert(Text(Ran(drawn, Q("t") & " " & Q("tst/csv/no/such/dir/x.png") & " TURTLESAVE")) = "False", "AND AN UNWRITABLE PATH ANSWERS FALSE RATHER THAN ABORTING")
+
+    Print("--- UNDO cannot strand a turtle, nor un-walk it ---")
+    Let u1 = Runs(p1, { "DROP", "1", "2", "3" })
+    Let u2 = Runs(u1, { "UNDO", "UNDO", "UNDO" })
+    Assert(RckBoundTo(u2, "t"), "AFTER UNDOING ALL OF IT THE TURTLE IS STILL OPEN")
+    Rem UNDO restores a STACK. The turtle's position lives in the
+    Rem resource table, which UNDO does not touch, so it stays where the
+    Rem walking left it.
+    Assert(AtSame(Where(u2, "t"), Where(drawn, "t")), "AND STANDS WHERE THE WALKING LEFT IT, NOT WHERE IT STARTED")
+
+    Print("--- CLOSE is the core's word ---")
+    Let c1 = Ran(u2, Q("t") & " CLOSE")
+    Assert(Not RckBoundTo(c1, "t"), "CLOSE LETS THE NAME GO")
+    Assert(Refuses(c1, Q("t") & " 10 TURTLEFORWARD", "THERE IS NOTHING OPEN CALLED t"), "AND THE WORDS SAY SO AFTERWARDS")
+    Assert(Text(Ran(c1, "CLEAR 6 7 *")) = "42", "AND THE SESSION GOES ON EVALUATING")

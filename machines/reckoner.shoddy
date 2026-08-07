@@ -160,7 +160,21 @@ Rem what RckPureOver is for — because by the time this reaches the core
 Rem the resource is already live. RckWorkDone shuts what it is handed
 Rem rather than leaking it if the name turns out to be taken, but that is
 Rem a backstop and not the design.
-Type RckWork = RckVals(WorkVals As List Of Cell) | RckWorkBad(WorkWhy As String) | RckOpened(OpenName As String, OpenKind As String, OpenHand As Number, OpenData As Cell, OpenShut As [ -- Boolean ])
+Rem RckUpdated is RckOpened's other half, and the resource model is not
+Rem complete without it. A recio file, an isam table and a window all
+Rem keep their state where the operating system does, so a word reads
+Rem the binding and never writes it. A TURTLE does not: its position,
+Rem heading and pen live in Shoddy, and every step changes them. Without
+Rem a way to say "the thing under this name has moved", such a resource
+Rem could be opened and read but never advanced.
+Rem
+Rem It carries VALUES as well, because a word that moves the turtle and
+Rem answers where it is now is one word, not two.
+Rem
+Rem The name must already be bound — this REPLACES a binding's data and
+Rem does not create one, so it cannot be used to smuggle a resource in
+Rem without a closer.
+Type RckWork = RckVals(WorkVals As List Of Cell) | RckWorkBad(WorkWhy As String) | RckOpened(OpenName As String, OpenKind As String, OpenHand As Number, OpenData As Cell, OpenShut As [ -- Boolean ]) | RckUpdated(UpName As String, UpData As Cell, UpVals As List Of Cell)
 
 Rem WHAT A REGISTERED WORD IS. Five kinds, and the constructor a word is
 Rem written with IS its effect declaration: a word cannot be registered
@@ -1227,8 +1241,30 @@ Def RckWorkDone(st As RckState, w As RckWork, out As List Of String) As RckRun
             RckBroke(why, out)
         Case RckOpened(nm, kind, hand, data, shut)
             RckWorkBound(st, nm, kind, hand, data, shut, out)
+        Case RckUpdated(nm, data, vs)
+            RckWorkMoved(st, nm, data, vs, out)
         Case Else
             RckBroke("the word did not answer", out)
+
+Rem Replacing a bound resource's data. The name has to be bound already:
+Rem this is not a second way to open something, and a binding conjured
+Rem here would have no closer.
+Def RckWorkMoved(st As RckState, nm As String, data As Cell, vs As List Of Cell, out As List Of String) As RckRun
+    If Not RckBoundTo(st, nm) Then
+        RckBroke("there is nothing open called " & nm, out)
+    Else
+        RckWent(RckPushAll(RckRedata(st, nm, data), vs), out)
+
+Rem The handle, the kind and the closer are kept exactly as they were —
+Rem only the machine's own description of the resource moves on.
+Def RckRedata(st As RckState, nm As String, data As Cell) As RckState
+    With(st, RckOpen = Map(RckOpen(st), Fn(r) => RckRedataOne(r, nm, data)))
+
+Def RckRedataOne(r As RckRes, nm As String, data As Cell) As RckRes
+    If ResNameOf(r) = nm Then
+        RckRes(ResNameOf(r), ResKindOf(r), ResHandOf(r), data, ResShut(r))
+    Else
+        r
 
 Def RckWorkBound(st As RckState, nm As String, kind As String, hand As Number, data As Cell, shut As [ -- Boolean ], out As List Of String) As RckRun
     If RckBoundTo(st, nm) Then

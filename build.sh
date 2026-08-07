@@ -107,6 +107,8 @@ machine_suites() {
     # the suite writes and reads back is the real thing.
     echo "==> tst/seedscribblertest.shoddy"
     "$MILL" --no-window run tst/seedscribblertest.shoddy </dev/null
+    echo "==> tst/seedturtletest.shoddy"
+    "$MILL" --no-window run tst/seedturtletest.shoddy </dev/null
     echo "==> tst/isamtest.shoddy"
     "$MILL" run tst/isamtest.shoddy </dev/null
     echo "==> tst/isamdump.shoddy"

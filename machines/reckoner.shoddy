@@ -146,7 +146,21 @@ Rem ---- the types -------------------------------------------------------
 
 Rem What a registered primitive answers: the cells it leaves, deepest
 Rem first, or a refusal. Never an abort.
-Type RckWork = RckVals(WorkVals As List Of Cell) | RckWorkBad(WorkWhy As String)
+Rem RckOpened is the ONE state change a registered word may ask for, and
+Rem it is deliberately not a state. A word answers VALUES, which is what
+Rem keeps a seed from rewriting the dictionary, the registers or the tape
+Rem on its way past — so "I have opened something, take it" cannot be
+Rem expressed as "here is a new state" without handing every seed that
+Rem power for the sake of one. Instead the word describes what it opened
+Rem and the CORE binds it, which also keeps the table's invariants in the
+Rem one file that owns them.
+Rem
+Rem The word must check RckBoundTo BEFORE it opens anything — that is
+Rem what RckPureOver is for — because by the time this reaches the core
+Rem the resource is already live. RckWorkDone shuts what it is handed
+Rem rather than leaking it if the name turns out to be taken, but that is
+Rem a backstop and not the design.
+Type RckWork = RckVals(WorkVals As List Of Cell) | RckWorkBad(WorkWhy As String) | RckOpened(OpenName As String, OpenKind As String, OpenHand As Number, OpenData As Cell, OpenShut As [ -- Boolean ])
 
 Rem WHAT A REGISTERED WORD IS. Five kinds, and the constructor a word is
 Rem written with IS its effect declaration: a word cannot be registered
@@ -218,9 +232,27 @@ Rem
 Rem ResKind is for the session to read in BOUND, never for the core to
 Rem branch on. The moment the core branches on a kind it is back to
 Rem depending on the machines.
+Rem
+Rem ResHand AND ResData ARE THE MACHINE'S, and the core only carries
+Rem them. A registered word is registered ONCE, long before anything is
+Rem opened, so it cannot close over a handle the way seedisam's words
+Rem close over an already-open table — it is handed a name at the prompt
+Rem and has to find the resource from that. ResHand is what it opened
+Rem (a file handle, a table handle) and ResData is how it should be read
+Rem (recio's field layout, say), both put there by the machine's own
+Rem OPEN word and meaningless to anything else.
+Rem
+Rem YES, THAT IS A HANDLE HELD IN THE STATE, and it is the point rather
+Rem than a leak. R3.5(b) is about the STACK: a handle there is lost when
+Rem UNDO restores the stack, and nothing can shut what nothing can name.
+Rem Here it is reachable by name and unreachable by value — BOUND is
+Rem built from ResName and ResKind alone, and no word anywhere pushes
+Rem ResHand. That invariant is asserted in reckonertest.
 Type RckRes
     ResName As String
     ResKind As String
+    ResHand As Number
+    ResData As Cell
     ResShut As [ -- Boolean ]
 
 Type RckState
@@ -312,6 +344,12 @@ Def ResNameOf(r As RckRes) As String
 Def ResKindOf(r As RckRes) As String
     ResKind(r)
 
+Def ResHandOf(r As RckRes) As Number
+    ResHand(r)
+
+Def ResDataOf(r As RckRes) As Cell
+    ResData(r)
+
 Def RckResOf(st As RckState, name As String) As List Of RckRes
     Filter(RckOpen(st), Fn(r) => ResNameOf(r) = name)
 
@@ -332,8 +370,8 @@ Rem question Shoddy can ask. So it belongs to whatever opens the
 Rem resource — an OPEN word hands out one binding per open, and opening
 Rem the same path twice takes two handles, which is what the runtime
 Rem does anyway.
-Def RckBind(st As RckState, name As String, kind As String, shut As [ -- Boolean ]) As RckState
-    With(st, RckOpen = Append(RckOpen(st), RckRes(name, kind, shut)))
+Def RckBind(st As RckState, name As String, kind As String, hand As Number, data As Cell, shut As [ -- Boolean ]) As RckState
+    With(st, RckOpen = Append(RckOpen(st), RckRes(name, kind, hand, data, shut)))
 
 Def RckUnbind(st As RckState, name As String) As RckState
     With(st, RckOpen = Filter(RckOpen(st), Fn(r) => ResNameOf(r) <> name))
@@ -1187,8 +1225,26 @@ Def RckWorkDone(st As RckState, w As RckWork, out As List Of String) As RckRun
             RckWent(RckPushAll(st, vs), out)
         Case RckWorkBad(why)
             RckBroke(why, out)
+        Case RckOpened(nm, kind, hand, data, shut)
+            RckWorkBound(st, nm, kind, hand, data, shut, out)
         Case Else
             RckBroke("the word did not answer", out)
+
+Def RckWorkBound(st As RckState, nm As String, kind As String, hand As Number, data As Cell, shut As [ -- Boolean ], out As List Of String) As RckRun
+    If RckBoundTo(st, nm) Then
+        RckShutSpare(st, nm, shut, out)
+    Else
+        RckWent(RckBind(st, nm, kind, hand, data, shut), RckSaid(st, out, "ok: opened " & nm))
+
+Rem The word opened the resource BEFORE it answered, so refusing the
+Rem bind has to shut what it was handed. Leaving it open would leak the
+Rem exact thing this table exists to keep hold of, and leak it on the
+Rem error path, where nobody would look.
+Def RckShutSpare(st As RckState, nm As String, shut As [ -- Boolean ], out As List Of String) As RckRun
+    If Call(shut) Then
+        RckBroke("there is already something open called " & nm, out)
+    Else
+        RckBroke("there is already something open called " & nm & ", and the one just opened did not shut cleanly", out)
 
 Rem A user word: one cell in on a fresh stack, and whatever it leaves
 Rem pushed back onto the caller's. The state it changed on the way —

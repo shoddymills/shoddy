@@ -1,0 +1,261 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem seedreciotest.shoddy — test program for seedrecio.shoddy
+Rem
+Rem Assert-driven, in the cuttletest / reckonertest / seedtest pattern:
+Rem it prints what it is doing and stops the run at the first assertion
+Rem that fails, ending with ALL ASSERTIONS PASSED when it does not.
+Rem
+Rem WHAT IS ACTUALLY UNDER TEST. seedrecio is the first seed that opens
+Rem something and keeps it open across lines, so the suite has two
+Rem halves that other seed suites do not need:
+Rem
+Rem   * THE RESOURCE HALF — that a file opened at the prompt survives
+Rem     UNDO, that CLOSE and BOUND (reckoner's own words, not this
+Rem     seed's) reach it, and that no handle number is ever on the
+Rem     stack. reckonertest asserts this over a hand-bound resource;
+Rem     here it is asserted over one a SESSION opened by typing.
+Rem   * THE LAYOUT HALF — that a schema typed at a prompt drives the
+Rem     generic reader and writer correctly, and that every way of
+Rem     mistyping one is a refusal naming the field.
+Rem
+Rem THE GUARD LIST IS THE TEST LIST, as everywhere else: every refusal
+Rem seedrecio.shoddy invents is walked exactly once, in the two-part
+Rem shape the seed suites established — the line refuses for the stated
+Rem reason with the state as it was, AND a further line evaluates
+Rem afterwards, because "the mill did not die" is the actual contract.
+Rem
+Rem WHERE THAT SHAPE DOES NOT APPLY, and it is worth naming: Refuses
+Rem runs the same line more than once, which is free for a word that
+Rem answers and not free for one that OPENS or CLOSES something. Those
+Rem are asserted by running the line once and reading the state after.
+Rem
+Rem Fixtures: none committed. The suite writes and deletes its own,
+Rem beside the other suites' scratch files in tst/csv/.
+Rem
+Rem Run: bin\mill run tst\seedreciotest.shoddy      (from the repo root)
+Rem ==================================================================
+
+Include "../machines/cuttle.shoddy"
+Include "../machines/reckoner.shoddy"
+Include "../machines/seq.shoddy"
+Include "../machines/str.shoddy"
+Include "../machines/seeds/seedrecio.shoddy"
+
+Rem ---- reading an answer ------------------------------------------------
+Rem The same shapes seedtest.shoddy reads with, repeated here rather than
+Rem shared, in the house pattern of each test file standing alone.
+
+Def Ran(st As RckState, line As String) As RckState
+    Select Case RckEval(st, line)
+        Case RckNext(st2, out)
+            st2
+        Case RckStop(st2, why, out)
+            st2
+        Case Else
+            st
+
+Def Runs(st As RckState, lines As List Of String) As RckState
+    Fold(lines, st, Ran)
+
+Def Bad(st As RckState, line As String) As Boolean
+    Select Case RckEval(st, line)
+        Case RckStop(st2, why, out)
+            True
+        Case Else
+            False
+
+Def Why(st As RckState, line As String) As String
+    Select Case RckEval(st, line)
+        Case RckStop(st2, why, out)
+            why
+        Case Else
+            ""
+
+Def Text(st As RckState) As String
+    Join(Map(CutCells(RckStack(st)), Fn(c) => CutShow(c, RckFmt(st))), " | ")
+
+Def Q(s As String) As String
+    Chr(34) & s & Chr(34)
+
+Rem The two-part abort-safety assertion. Safe only for lines that do not
+Rem open or close anything, because it evaluates the line three times.
+Def Refuses(st As RckState, line As String, why As String) As Boolean
+    Bad(st, line) And Instr(Why(st, line), why) > 0 And Text(Ran(st, line)) = Text(st) And Text(Ran(Ran(st, line), "1 1 +")) = Text(Ran(st, "1 1 +"))
+
+Rem ---- the fixture ------------------------------------------------------
+
+Def TmpPath() As String
+    "tst/csv/_seedreciotest.tmp"
+
+Def OtherPath() As String
+    "tst/csv/_seedreciotest_other.tmp"
+
+Def JunkPath() As String
+    "tst/csv/_seedreciotest_junk.tmp"
+
+Def Wipe()
+    If FileExists(TmpPath()) Then
+        DeleteFile(TmpPath())
+    If FileExists(OtherPath()) Then
+        DeleteFile(OtherPath())
+    If FileExists(JunkPath()) Then
+        DeleteFile(JunkPath())
+
+Rem One of each kind, so the record exercises all three transfers and
+Rem the sizes add up to something worth checking: 8 + 12 + 1 = 21.
+Def Schema() As String
+    "{ { " & Q("id") & " " & Q("number") & " } { " & Q("who") & " " & Q("str") & " 12 } { " & Q("paid") & " " & Q("bool") & " } }"
+
+Def RecSize() As Number
+    21
+
+Def Opened(st As RckState, path As String, nm As String) As RckState
+    Ran(st, Q(path) & " " & Schema() & " " & Q(nm) & " RECOPEN")
+
+Def ByteLen(path As String) As Number
+    Len(ReadFile(path))
+
+Def Main()
+    Wipe()
+    Let s0 = RckSeedRecio(RckNew())
+
+    Print("--- the seed is in the dictionary, grouped and documented ---")
+    Assert(RckKnows(s0, "RECOPEN") And RckKnows(s0, "RECGET") And RckKnows(s0, "RECAPPEND"), "THE WORDS ARE THERE")
+    Assert(Contains(RckWords(s0), "-- seed-recio --"), "AND THEY HAVE A GROUP OF THEIR OWN")
+    Assert(All(RckDict(s0), Fn(e) => WordEffect(e) <> "" And WordDesc(e) <> ""), "NO WORD IS WITHOUT AN EFFECT LINE AND A DESCRIPTION")
+    Assert(All(RckDict(s0), Fn(e) => Length(RckHelp(s0, WordName(e))) = 3), "AND HELP ANSWERS FOR EVERY ONE OF THEM")
+    Rem The effect strings say "name", never "handle": what a session
+    Rem holds is a string it chose, and the vocabulary has to say so.
+    Assert(All(RckDict(s0), Fn(e) => Instr(Lower(WordEffect(e)), "handle") = 0), "NO WORD'S EFFECT STRING MENTIONS A HANDLE")
+    Rem There is no RECCLOSE. One way to shut a resource is the whole
+    Rem reason reckoner's table is uniform, and a second spelling here
+    Rem would be a seed disagreeing with the core about who owns closing.
+    Assert(Not RckKnows(s0, "RECCLOSE"), "AND THERE IS NO RECCLOSE — CLOSE IS THE CORE'S WORD AND THE ONLY ONE")
+
+    Print("--- opening makes the file, and binds it under the name given ---")
+    Let o1 = Opened(s0, TmpPath(), "db")
+    Assert(RckBoundTo(o1, "db"), "RECOPEN ANSWERS, AND BINDS UNDER THE NAME IT WAS GIVEN")
+    Assert(FileExists(TmpPath()), "AND MADE THE FILE, SINCE A NEW LEDGER IS AN ORDINARY THING TO WANT")
+    Rem The same PATH twice, under two different names, is refused by the
+    Rem runtime rather than by this seed — an open file is not shared for
+    Rem writing — and the point is that it arrives as a refusal naming
+    Rem the path instead of as a dead mill. Asserted from o1, where the
+    Rem first open is genuinely still held.
+    Assert(Refuses(o1, Q(TmpPath()) & " " & Schema() & " " & Q("second") & " RECOPEN", "CANNOT OPEN"), "AND THE SAME FILE OPENED AGAIN UNDER A SECOND NAME REFUSES")
+    Assert(Not RckBoundTo(Ran(o1, Q(TmpPath()) & " " & Schema() & " " & Q("second") & " RECOPEN"), "second"), "AND BINDS NOTHING WHEN IT DOES")
+    Assert(Text(Ran(o1, "BOUND")) = "{ ( " & Q("db") & " " & Q("recio") & " ) }", "AND BOUND SHOWS IT AS A NAME/KIND PAIR")
+    Assert(Text(Ran(o1, Q("db") & " RECCOUNT")) = "0", "A NEW FILE HOLDS NO RECORDS")
+    Assert(Text(Ran(o1, Q("db") & " RECFIELDS")) = "{ " & Q("id") & " " & Q("who") & " " & Q("paid") & " }", "AND RECFIELDS ANSWERS THE SCHEMA'S NAMES IN ORDER")
+    Assert(Text(o1) = "", "AND RECOPEN LEFT NOTHING ON THE STACK — NO HANDLE, NOTHING")
+
+    Print("--- writing and reading a record, all three kinds ---")
+    Let a1 = Ran(o1, Q("db") & " { 1 " & Q("GRACE") & " True } RECAPPEND")
+    Assert(Text(a1) = "1", "RECAPPEND ANSWERS THE RECORD NUMBER IT BECAME")
+    Let a2 = Ran(Ran(a1, "DROP"), Q("db") & " { 2 " & Q("ADA") & " False } RECAPPEND DROP")
+    Rem RECCOUNT is BSize over the record size, so this is a real
+    Rem measurement of the file and not a tally the seed keeps. The
+    Rem on-disk byte length is checked at the end, once the file is shut
+    Rem and something other than the seed can open it.
+    Assert(Text(Ran(a2, Q("db") & " RECCOUNT")) = "2", "AND THE COUNT FOLLOWS THE FILE")
+    Assert(Text(Ran(a2, Q("db") & " 1 RECGET")) = "{ 1 " & Q("GRACE") & " True }", "RECGET READS THE FIRST ROW BACK EXACTLY")
+    Assert(Text(Ran(a2, Q("db") & " 2 RECGET")) = "{ 2 " & Q("ADA") & " False }", "AND THE SECOND, INCLUDING A FALSE THAT IS NOT AN EMPTY FIELD")
+    Assert(Text(Ran(a2, Q("db") & " RECALL")) = "{ { 1 " & Q("GRACE") & " True } { 2 " & Q("ADA") & " False } }", "AND RECALL READS THE WHOLE FILE IN FILE ORDER")
+    Rem The two assertions above are also the padding test: "GRACE" is
+    Rem five bytes in a twelve-byte field, so it goes out zero-padded and
+    Rem has to come back stripped. Were it not, those comparisons would
+    Rem be against a string with seven NULs on the end. There is no
+    Rem separate NTH assertion because NTH is seedbuiltin's word and this
+    Rem suite seeds only its own.
+
+    Print("--- RECPUT replaces in place, and may extend by exactly one ---")
+    Let p1 = Ran(a2, Q("db") & " 1 { 9 " & Q("HOPPER") & " False } RECPUT")
+    Assert(Text(Ran(p1, Q("db") & " 1 RECGET")) = "{ 9 " & Q("HOPPER") & " False }", "RECPUT OVERWRITES THE RECORD IT NAMES")
+    Assert(Text(Ran(p1, Q("db") & " RECCOUNT")) = "2", "AND DOES NOT CHANGE HOW MANY THERE ARE")
+    Let p2 = Ran(p1, Q("db") & " 3 { 3 " & Q("TURING") & " True } RECPUT")
+    Assert(Text(Ran(p2, Q("db") & " RECCOUNT")) = "3", "WRITING ONE PAST THE END ADDS A RECORD")
+    Rem Seek can go anywhere, so a write past that would leave a hole of
+    Rem undefined bytes reading back as garbage — a wrong answer, which
+    Rem is worse than a refusal.
+    Assert(Refuses(p2, Q("db") & " 9 { 1 " & Q("X") & " True } RECPUT", "WOULD LEAVE A HOLE"), "AND ANYTHING FURTHER IS REFUSED, NAMING THE FURTHEST WRITE ALLOWED")
+    Assert(Refuses(p2, Q("db") & " 0 { 1 " & Q("X") & " True } RECPUT", "WOULD LEAVE A HOLE"), "AS IS RECORD ZERO, SINCE RECORDS NUMBER FROM ONE")
+
+    Print("--- every read is pre-flighted, because a Get past the end aborts ---")
+    Assert(Refuses(p2, Q("db") & " 4 RECGET", "THERE IS NO RECORD 4 — THE FILE HOLDS 3"), "A RECORD PAST THE END, NAMING BOTH NUMBERS")
+    Assert(Refuses(p2, Q("db") & " 0 RECGET", "THERE IS NO RECORD 0"), "AND RECORD ZERO")
+    Assert(Refuses(p2, Q("db") & " -1 RECGET", "RECGET"), "AND A NEGATIVE ONE, WHICH RCKWHOLEARG REFUSES FIRST")
+
+    Print("--- a row is checked against the schema BEFORE any of it is written ---")
+    Rem A record half-written is a record corrupted, and PutStr aborts on
+    Rem an over-long string, so the whole row is validated first.
+    Assert(Refuses(p2, Q("db") & " { 1 " & Q("A") & " } RECAPPEND", "HAS 2 VALUES AND THE SCHEMA HAS 3"), "TOO FEW VALUES, NAMING BOTH COUNTS")
+    Assert(Refuses(p2, Q("db") & " { 1 " & Q("A") & " True 4 } RECAPPEND", "HAS 4 VALUES AND THE SCHEMA HAS 3"), "AND TOO MANY")
+    Assert(Refuses(p2, Q("db") & " { " & Q("no") & " " & Q("A") & " True } RECAPPEND", "FIELD 1 (id) WANTS A NUMBER"), "A STRING WHERE A NUMBER GOES, NAMING THE FIELD")
+    Assert(Refuses(p2, Q("db") & " { 1 5 True } RECAPPEND", "FIELD 2 (who) WANTS A STRING"), "A NUMBER WHERE A STRING GOES")
+    Assert(Refuses(p2, Q("db") & " { 1 " & Q("A") & " 7 } RECAPPEND", "FIELD 3 (paid) WANTS TRUE OR FALSE"), "AND A NUMBER WHERE A BOOLEAN GOES")
+    Rem THE ONE THAT WOULD OTHERWISE END THE SESSION: PutStr aborts
+    Rem rather than truncating, so an over-long string has to be caught
+    Rem here or not at all.
+    Assert(Refuses(p2, Q("db") & " { 1 " & Q("A NAME MUCH TOO LONG FOR IT") & " True } RECAPPEND", "HOLDS 12 BYTES AND THAT STRING IS 27"), "A STRING LONGER THAN ITS FIELD, NAMING BOTH LENGTHS")
+    Assert(Text(Ran(p2, Q("db") & " RECCOUNT")) = "3", "AND NONE OF THOSE REFUSALS WROTE ANYTHING")
+
+    Print("--- a schema is read once, at RECOPEN, and every way of mistyping it refuses ---")
+    Assert(Refuses(p2, Q(OtherPath()) & " { } " & Q("x") & " RECOPEN", "A SCHEMA MUST HAVE AT LEAST ONE FIELD"), "AN EMPTY SCHEMA")
+    Assert(Refuses(p2, Q(OtherPath()) & " { { " & Q("a") & " } } " & Q("x") & " RECOPEN", "FIELD 1 MUST BE"), "A SPEC WITH ONLY A NAME")
+    Assert(Refuses(p2, Q(OtherPath()) & " { { " & Q("a") & " " & Q("money") & " } } " & Q("x") & " RECOPEN", "HAS KIND \"money\""), "AN UNKNOWN KIND, QUOTED BACK")
+    Assert(Refuses(p2, Q(OtherPath()) & " { { " & Q("a") & " " & Q("str") & " } } " & Q("x") & " RECOPEN", "IS A STRING AND NEEDS A WIDTH"), "A STRING FIELD WITH NO WIDTH")
+    Assert(Refuses(p2, Q(OtherPath()) & " { { " & Q("a") & " " & Q("number") & " 8 } } " & Q("x") & " RECOPEN", "TAKES NO WIDTH"), "AND A NUMBER FIELD GIVEN ONE, WHICH IS A MISUNDERSTANDING AND NOT AN EXTRA")
+    Assert(Refuses(p2, Q(OtherPath()) & " { { " & Q("a") & " " & Q("str") & " 0 } } " & Q("x") & " RECOPEN", "NEEDS A WIDTH OF 1 BYTE OR MORE"), "AND A ZERO-WIDTH STRING, WHICH WOULD MAKE EVERY WRITE FATAL")
+    Assert(Not FileExists(OtherPath()), "AND NOT ONE OF THOSE REFUSALS MADE A FILE")
+
+    Print("--- a name is a name: taken, unknown, or another machine's ---")
+    Assert(Refuses(p2, Q(OtherPath()) & " " & Schema() & " " & Q("db") & " RECOPEN", "THERE IS ALREADY SOMETHING OPEN CALLED db"), "OPENING OVER A NAME ALREADY BOUND")
+    Assert(Not FileExists(OtherPath()), "AND THAT REFUSAL DID NOT OPEN THE SECOND FILE EITHER")
+    Assert(Refuses(p2, Q("nope") & " RECCOUNT", "THERE IS NOTHING OPEN CALLED nope"), "A NAME THAT WAS NEVER BOUND")
+    Assert(Refuses(p2, Q("nope") & " RECALL", "THERE IS NOTHING OPEN CALLED nope"), "AND THE SAME FROM ANOTHER WORD")
+    Rem A name some other machine bound is not this seed's to read, and
+    Rem the kind is what tells them apart.
+    Let mixed = RckBind(p2, "pen", "plotter", 0, CutNum(0), Fn() => True)
+    Assert(Refuses(mixed, Q("pen") & " RECCOUNT", "pen IS A PLOTTER, NOT A RECORD FILE"), "AND A NAME BOUND BY ANOTHER KIND ENTIRELY")
+
+    Print("--- a file whose length is not a whole number of records is refused at OPEN ---")
+    Rem It is a fact about the file and the schema together, so the
+    Rem moment they first meet is the earliest honest place to say it.
+    WriteFile(JunkPath(), "not a record file")
+    Assert(Refuses(p2, Q(JunkPath()) & " " & Schema() & " " & Q("j") & " RECOPEN", "IS NOT A WHOLE NUMBER OF 21-BYTE RECORDS"), "A RAGGED FILE, NAMING ITS LENGTH AND THE RECORD SIZE")
+    Assert(Not RckBoundTo(Ran(p2, Q(JunkPath()) & " " & Schema() & " " & Q("j") & " RECOPEN"), "j"), "AND NOTHING WAS LEFT BOUND BY IT")
+
+    Print("--- THE POINT OF ALL OF IT: UNDO cannot strand what a session opened ---")
+    Rem reckonertest asserts this over a hand-bound resource. Here the
+    Rem session opened it by typing, wrote to it, and undoes the lot.
+    Let u1 = Runs(p2, { "1", "2", "3" })
+    Assert(Text(u1) = "3 | 2 | 1", "WORK PILES UP ON THE STACK AS USUAL")
+    Let u2 = Runs(u1, { "UNDO", "UNDO", "UNDO" })
+    Assert(RckBoundTo(u2, "db"), "AND AFTER UNDOING ALL OF IT THE FILE IS STILL OPEN")
+    Rem UNDO restores a STACK. It does not un-write a file, and the
+    Rem count coming back as 3 rather than 0 is that said plainly.
+    Assert(Text(Ran(u2, Q("db") & " RECCOUNT")) = "3", "AND STILL READABLE BY NAME, WITH EVERY RECORD IT WROTE STILL IN IT")
+
+    Print("--- CLOSE is the core's word, and it reaches this seed's resource ---")
+    Rem Run once, not through Refuses: closing really closes, and a
+    Rem second BClose on a returned handle aborts.
+    Let c1 = Ran(u2, Q("db") & " CLOSE")
+    Assert(Not RckBoundTo(c1, "db"), "CLOSE LETS THE NAME GO")
+    Assert(Text(Ran(c1, "BOUND")) = "{ }", "AND BOUND IS EMPTY AGAIN")
+    Rem NOW the file can be measured from outside, which is the check
+    Rem RECCOUNT cannot make of itself: three records of 8 + 12 + 1
+    Rem bytes, so the schema arithmetic and the file agree.
+    Assert(ByteLen(TmpPath()) = 3 * RecSize(), "AND THE SHUT FILE IS THREE RECORDS OF 8 + 12 + 1 BYTES ON DISK")
+    Assert(Refuses(c1, Q("db") & " RECCOUNT", "THERE IS NOTHING OPEN CALLED db"), "AND THE WORDS SAY SO AFTERWARDS RATHER THAN READING A SHUT FILE")
+    Assert(Text(Ran(c1, "6 7 *")) = "42", "AND THE SESSION GOES ON EVALUATING")
+    Rem Re-opening the same path is an ordinary thing to do, and the
+    Rem records are still there because the file outlived the binding.
+    Let c2 = Opened(c1, TmpPath(), "again")
+    Assert(Text(Ran(c2, Q("again") & " RECCOUNT")) = "3", "AND RE-OPENING THE SAME FILE FINDS ITS RECORDS WHERE THEY WERE")
+    Assert(Text(Ran(c2, "CLOSEALL")) = "1", "CLOSEALL SHUTS WHAT IS LEFT AND SAYS HOW MANY")
+
+    Wipe()
+    Print("")
+    Print("ALL ASSERTIONS PASSED")

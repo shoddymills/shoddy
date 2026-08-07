@@ -1,0 +1,725 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem seedrecio.shoddy — reckoner seed: recio.shoddy, over a resource
+Rem held by NAME
+Rem
+Rem THE FIRST SEED TO OPEN SOMETHING. Every other seed in this directory
+Rem takes values off the stack and puts values back; this one opens a
+Rem file, keeps it open across lines, and shuts it when told. That was
+Rem impossible until reckoner.shoddy grew a table of named resources —
+Rem R3.5(b) kept handles off the stack because UNDO restores the stack
+Rem and the number naming an open file would go with it. A NAME cannot
+Rem be dropped, overwritten or undone away, so RECOPEN binds one and
+Rem nothing ever pushes the handle.
+Rem
+Rem WHAT A SESSION HOLDS is therefore a string. "sales" RECCOUNT asks
+Rem the file bound under "sales" how many records it has; CLOSE and
+Rem BOUND are reckoner's own words and work here without this seed
+Rem saying anything about them. There is no RECCLOSE, deliberately: one
+Rem way to shut a resource is the whole reason the table is uniform.
+Rem
+Rem ---- THE LAYOUT PROBLEM, AND THE SHAPE OF THE ANSWER ---------------
+Rem
+Rem recio.shoddy asks for a record SIZE and a reader/writer pair over
+Rem the caller's own Type:
+Rem
+Rem     Def rdstudent(f As Number) As Student
+Rem         Student(GetStr(f, 12), GetNum(f))
+Rem
+Rem A host program writes those and compiles them in. A session cannot:
+Rem there is no Type at a prompt and no way to write a Def there that
+Rem the compiler has already seen. So this seed supplies ONE generic
+Rem reader and ONE generic writer, and drives them from a SCHEMA the
+Rem session types — a list of field specs:
+Rem
+Rem     { { "id" "number" } { "name" "str" 12 } { "paid" "bool" } }
+Rem
+Rem Three kinds, because three are what the runtime transfers: NUMBER is
+Rem eight bytes, BOOL is one, and STR is a fixed zero-padded field whose
+Rem width the spec carries. The record size is the sum, computed once at
+Rem RECOPEN and kept with the binding, so no later word can disagree
+Rem with the file about it.
+Rem
+Rem A RECORD IS A PLAIN LIST, in schema order — { 3 "GRACE" True } —
+Rem and not a dict. A dict would be truer to the schema and worse to
+Rem type: a session that has to build { ("id" 3) ("name" "GRACE") } to
+Rem write one row will not write many. The names live in the schema,
+Rem RECFIELDS answers them, and a session that wants a dict has
+Rem seeddict's own words to make one.
+Rem
+Rem ---- WHY EVERY READ IS PRE-FLIGHTED --------------------------------
+Rem
+Rem GetNum, GetBool and GetStr all ABORT past the end of the file, and
+Rem R3.5(a) does not allow a bridged word that can abort the session. So
+Rem no read happens until the record number has been checked against
+Rem RECCOUNT, which is BSize divided by the record size. A file whose
+Rem length is not a whole number of records is refused at RECOPEN rather
+Rem than at the first read, because that is a fact about the file and
+Rem the earliest honest place to say so.
+Rem
+Rem THE FIELD LOOPS ARE EXPLICIT RECURSION rather than Map, because the
+Rem transfers are SEQUENTIAL — each Get advances the position — and Map
+Rem promises an answer per element, not an order to compute them in.
+Rem Reading three fields is three effects that must happen in the order
+Rem the schema lists them, so they are written as a fold that cannot be
+Rem read any other way.
+Rem ==================================================================
+
+Include "recio.shoddy"
+Include "cuttle.shoddy"
+Include "reckoner.shoddy"
+Include "seq.shoddy"
+
+Rem ---- the schema -------------------------------------------------------
+
+Rem One field: what it is called, which of the three kinds it is, and
+Rem how many bytes it takes. Width is derived for NUMBER and BOOL and
+Rem typed for STR, but it is stored for all three so the size
+Rem arithmetic has one shape.
+Type RecField
+    FldName  As String
+    FldKind  As String
+    FldWidth As Number
+
+Def RfName(x As RecField) As String
+    FldName(x)
+
+Def RfWidth(x As RecField) As Number
+    FldWidth(x)
+
+Def RcNumKind() As String
+    "number"
+
+Def RcStrKind() As String
+    "str"
+
+Def RcBoolKind() As String
+    "bool"
+
+Def RcKindWidth(kind As String) As Number
+    If kind = RcNumKind() Then
+        8
+    Else
+        If kind = RcBoolKind() Then
+            1
+        Else
+            0
+
+Rem ---- reading a schema off the stack -----------------------------------
+
+Rem The whole schema, or the first thing wrong with it. Every refusal
+Rem names the field by POSITION as well as by what was wrong, because a
+Rem session that mistyped one spec in a list of six needs to be told
+Rem which one.
+Def RcSchemaOf(word As String, c As Cell) As Result
+    Select Case RckListArg(word, c)
+        Case Ok(specs)
+            RcSchemaAt(word, specs, { }, 1)
+        Case Err(w, at)
+            Err(w, at)
+        Case Else
+            Err(word & " did not answer", 0)
+
+Def RcSchemaAt(word As String, specs As List Of Cell, acc As List Of RecField, k As Number) As Result
+    If IsEmpty(specs) Then
+        RcSchemaDone(word, acc)
+    Else
+        RcSchemaNext(word, specs, acc, k, RcFieldOf(word, First(specs), k))
+
+Def RcSchemaDone(word As String, acc As List Of RecField) As Result
+    If IsEmpty(acc) Then
+        Err(word & ": A SCHEMA MUST HAVE AT LEAST ONE FIELD", 0)
+    Else
+        Ok(acc)
+
+Def RcSchemaNext(word As String, specs As List Of Cell, acc As List Of RecField, k As Number, r As Result) As Result
+    Select Case r
+        Case Ok(f)
+            RcSchemaAt(word, Rest(specs), Append(acc, f), k + 1)
+        Case Err(w, at)
+            Err(w, at)
+        Case Else
+            Err(word & " did not answer", 0)
+
+Def RcFieldWhy(word As String, k As Number) As String
+    word & ": FIELD " & Str(k) & " MUST BE { name kind } OR { name \"" & RcStrKind() & "\" width }"
+
+Def RcFieldOf(word As String, c As Cell, k As Number) As Result
+    Select Case RckListArg(word, c)
+        Case Ok(parts)
+            RcFieldParts(word, parts, k)
+        Case Err(w, at)
+            Err(RcFieldWhy(word, k), 0)
+        Case Else
+            Err(word & " did not answer", 0)
+
+Def RcFieldParts(word As String, parts As List Of Cell, k As Number) As Result
+    If Length(parts) < 2 Or Length(parts) > 3 Then
+        Err(RcFieldWhy(word, k), 0)
+    Else
+        RcFieldNamed(word, parts, k)
+
+Def RcFieldNamed(word As String, parts As List Of Cell, k As Number) As Result
+    Select Case Pair(Nth(parts, 1), Nth(parts, 2))
+        Case Pair(CutStr(nm), CutStr(kind))
+            RcFieldKind(word, nm, Lower(kind), parts, k)
+        Case Else
+            Err(RcFieldWhy(word, k), 0)
+
+Rem A STR field carries its own width and is the only kind that may; a
+Rem NUMBER or BOOL given one is refused rather than ignored, because a
+Rem width on those is a misunderstanding worth naming and not a
+Rem harmless extra.
+Def RcFieldKind(word As String, nm As String, kind As String, parts As List Of Cell, k As Number) As Result
+    If kind = RcStrKind() Then
+        RcFieldStr(word, nm, parts, k)
+    Else
+        RcFieldFixed(word, nm, kind, parts, k)
+
+Def RcFieldFixed(word As String, nm As String, kind As String, parts As List Of Cell, k As Number) As Result
+    If kind <> RcNumKind() And kind <> RcBoolKind() Then
+        Err(word & ": FIELD " & Str(k) & " (" & nm & ") HAS KIND \"" & kind & "\" — IT MUST BE \"" & RcNumKind() & "\", \"" & RcStrKind() & "\" OR \"" & RcBoolKind() & "\"", 0)
+    Else
+        RcFieldPlain(word, nm, kind, parts, k)
+
+Def RcFieldPlain(word As String, nm As String, kind As String, parts As List Of Cell, k As Number) As Result
+    If Length(parts) <> 2 Then
+        Err(word & ": FIELD " & Str(k) & " (" & nm & ") IS A " & Upper(kind) & " AND TAKES NO WIDTH — ONLY A \"" & RcStrKind() & "\" DOES", 0)
+    Else
+        Ok(RecField(nm, kind, RcKindWidth(kind)))
+
+Def RcFieldStr(word As String, nm As String, parts As List Of Cell, k As Number) As Result
+    If Length(parts) <> 3 Then
+        Err(word & ": FIELD " & Str(k) & " (" & nm & ") IS A STRING AND NEEDS A WIDTH IN BYTES", 0)
+    Else
+        RcFieldWide(word, nm, Nth(parts, 3), k)
+
+Def RcFieldWide(word As String, nm As String, wc As Cell, k As Number) As Result
+    Select Case RckWholeArg(word, wc)
+        Case Ok(w)
+            RcFieldSized(word, nm, w, k)
+        Case Err(w, at)
+            Err(word & ": FIELD " & Str(k) & " (" & nm & ") NEEDS A WHOLE WIDTH IN BYTES", 0)
+        Case Else
+            Err(word & " did not answer", 0)
+
+Rem PutStr aborts on a string longer than its field, so a width of 0
+Rem would make every write of a non-empty string fatal. Refused here,
+Rem where the schema is being read, rather than at the first write.
+Def RcFieldSized(word As String, nm As String, w As Number, k As Number) As Result
+    If w < 1 Then
+        Err(word & ": FIELD " & Str(k) & " (" & nm & ") NEEDS A WIDTH OF 1 BYTE OR MORE", 0)
+    Else
+        Ok(RecField(nm, RcStrKind(), w))
+
+Rem ---- the schema, kept with the binding --------------------------------
+
+Rem The schema goes into the resource's own data cell so that a word
+Rem registered long before any open can find it from the name it is
+Rem handed. It is stored as the SPEC LIST the session typed rather than
+Rem as a List Of RecField, because a Cell is what the table carries and
+Rem re-reading it is cheap next to the file access that follows.
+Def RcKindName() As String
+    "recio"
+
+Def RcSize(fs As List Of RecField) As Number
+    Fold(Map(fs, RfWidth), 0, +)
+
+Def RcNames(fs As List Of RecField) As List Of String
+    Map(fs, RfName)
+
+Rem ---- finding the resource a word was named ----------------------------
+
+Rem Every word below starts here: a name off the stack, the binding it
+Rem refers to, and its schema read back. A name that is not bound is a
+Rem refusal naming the name, which is the mistake a session actually
+Rem makes — a typo, or a CLOSE it forgot it had done.
+Def RcResult(word As String, st As RckState, c As Cell) As Result
+    Select Case RckTextArg(word, c)
+        Case Ok(nm)
+            RcResAt(word, st, nm)
+        Case Err(w, at)
+            Err(w, at)
+        Case Else
+            Err(word & " did not answer", 0)
+
+Def RcResAt(word As String, st As RckState, nm As String) As Result
+    If Not RckBoundTo(st, nm) Then
+        Err(word & ": THERE IS NOTHING OPEN CALLED " & nm, 0)
+    Else
+        RcResKind(word, First(RckResOf(st, nm)), nm)
+
+Rem A name bound by some OTHER machine is not this seed's to read. The
+Rem kind is what tells them apart, and saying so beats reading a
+Rem plotter's data cell as a record layout.
+Def RcResKind(word As String, r As RckRes, nm As String) As Result
+    If ResKindOf(r) <> RcKindName() Then
+        Err(word & ": " & nm & " IS A " & Upper(ResKindOf(r)) & ", NOT A RECORD FILE", 0)
+    Else
+        Ok(r)
+
+Rem ---- RECOPEN ----------------------------------------------------------
+
+Rem RECOPEN is RckPureOver — the state as well as the arguments —
+Rem because it has to answer TWO questions before it opens anything: is
+Rem this name already taken, and is the file readable. Checking the name
+Rem first is what stops the ordinary mistake (opening twice under one
+Rem name) from costing a handle: reckoner's own backstop would shut the
+Rem spare, but a word that never opens it is better than one that opens
+Rem and closes it.
+Def RcSeedOpen(st As RckState) As RckState
+    RckReg(st, "RECOPEN", 3, RckPureOver(Fn(s, vs) => RcOpen(s, vs)), "( path schema name -- )", "Open a binary record file and keep it open under that name. The schema is a list of { name kind } specs, kind being \"number\" or \"bool\", or \"str\" with a width: { { \"id\" \"number\" } { \"who\" \"str\" 12 } }. CLOSE shuts it; BOUND lists what is open.")
+
+Def RcOpen(st As RckState, vs As List Of Cell) As RckWork
+    Select Case Pair(RckTextArg("RECOPEN", Nth(vs, 1)), RckTextArg("RECOPEN", Nth(vs, 3)))
+        Case Pair(Ok(path), Ok(nm))
+            RcOpenFree(st, path, Nth(vs, 2), nm)
+        Case Else
+            RckWorkBad("RECOPEN needs a path, a schema and a name")
+
+Def RcOpenFree(st As RckState, path As String, sc As Cell, nm As String) As RckWork
+    If RckBoundTo(st, nm) Then
+        RckWorkBad("RECOPEN: THERE IS ALREADY SOMETHING OPEN CALLED " & nm)
+    Else
+        RcOpenSchema(path, sc, nm)
+
+Def RcOpenSchema(path As String, sc As Cell, nm As String) As RckWork
+    Select Case RcSchemaOf("RECOPEN", sc)
+        Case Ok(fs)
+            RcOpenMade(path, sc, nm, fs)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("RECOPEN did not answer")
+
+Rem A record file is made if it is not there, because "open a new
+Rem ledger" is an ordinary thing to want and an empty file is a valid
+Rem one — RECCOUNT answers 0. TryWriteFile is the guarded create, and
+Rem it only runs when the path is genuinely absent, so an existing file
+Rem is never truncated by opening it.
+Def RcOpenMade(path As String, sc As Cell, nm As String, fs As List Of RecField) As RckWork
+    If Not FileExists(path) And Not TryWriteFile(path, "") Then
+        RckWorkBad("RECOPEN: CANNOT MAKE '" & path & "'")
+    Else
+        RcOpenAt(path, sc, nm, fs)
+
+Def RcOpenAt(path As String, sc As Cell, nm As String, fs As List Of RecField) As RckWork
+    Select Case TryBOpen(path)
+        Case Ok(f)
+            RcOpenWhole(f, path, sc, nm, RcSize(fs))
+        Case Err(w, at)
+            RckWorkBad("RECOPEN: " & w)
+        Case Else
+            RckWorkBad("RECOPEN did not answer")
+
+Rem A file whose length is not a whole number of records is refused
+Rem HERE, with the handle shut on the way out, rather than at the first
+Rem read. It is a fact about the file and the schema together, so the
+Rem moment they first meet is the earliest honest place to say it — and
+Rem a session that opened the wrong schema on the right file finds out
+Rem before it has written anything.
+Def RcOpenWhole(f As Number, path As String, sc As Cell, nm As String, size As Number) As RckWork
+    If BSize(f) - size * Floor(BSize(f) / size) <> 0 Then
+        RcOpenRagged(f, path, size, BSize(f))
+    Else
+        RckOpened(nm, RcKindName(), f, sc, Fn() => RcShut(f))
+
+Def RcOpenRagged(f As Number, path As String, size As Number, bytes As Number) As RckWork
+    RcOpenSaid(RcShut(f), "RECOPEN: '" & path & "' IS " & Str(bytes) & " BYTES, WHICH IS NOT A WHOLE NUMBER OF " & Str(size) & "-BYTE RECORDS")
+
+Rem The close happens for its effect and its answer is not the report;
+Rem the report is the reason the file was refused.
+Def RcOpenSaid(shut As Boolean, why As String) As RckWork
+    If shut Then
+        RckWorkBad(why)
+    Else
+        RckWorkBad(why)
+
+Def RcShut(f As Number) As Boolean
+    BClose(f)
+    True
+
+Rem ---- the words that read and write, all over a bound name -------------
+
+Def RcSeedCount(st As RckState) As RckState
+    RckReg(st, "RECCOUNT", 1, RckPureOver(Fn(s, vs) => RcCount(s, vs)), "( name -- n )", "How many records the file bound under that name holds.")
+
+Def RcCount(st As RckState, vs As List Of Cell) As RckWork
+    Select Case RcResult("RECCOUNT", st, First(vs))
+        Case Ok(r)
+            RckVals({ CutNum(RcRecs(r)) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("RECCOUNT did not answer")
+
+Def RcSeedFields(st As RckState) As RckState
+    RckReg(st, "RECFIELDS", 1, RckPureOver(Fn(s, vs) => RcFields(s, vs)), "( name -- list )", "The field names of that file's schema, in the order a record lists them.")
+
+Def RcFields(st As RckState, vs As List Of Cell) As RckWork
+    Select Case RcResult("RECFIELDS", st, First(vs))
+        Case Ok(r)
+            RcFieldsOf(r)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("RECFIELDS did not answer")
+
+Def RcFieldsOf(r As RckRes) As RckWork
+    Select Case RcSchemaOf("RECFIELDS", ResDataOf(r))
+        Case Ok(fs)
+            RckVals({ CutList(Map(RcNames(fs), CutStr)) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("RECFIELDS did not answer")
+
+Rem The record count, from the handle and the schema the binding
+Rem carries. Read rather than remembered, so a file the session has
+Rem appended to answers its new length and not the one it opened with.
+Def RcRecs(r As RckRes) As Number
+    RcRecsAt(ResHandOf(r), RcSizeOf(r))
+
+Def RcRecsAt(f As Number, size As Number) As Number
+    Floor(BSize(f) / size)
+
+Def RcSizeOf(r As RckRes) As Number
+    RcSizeOr(RcSchemaOf("RECIO", ResDataOf(r)))
+
+Rem The schema was validated at RECOPEN and stored as the session typed
+Rem it, so this cannot fail — but it is read through a Result all the
+Rem same, and a 1 rather than a 0 on the impossible branch, because a
+Rem size of 0 would divide by zero and a wrong count is quieter than a
+Rem dead mill.
+Def RcSizeOr(r As Result) As Number
+    Select Case r
+        Case Ok(fs)
+            RcSize(fs)
+        Case Else
+            1
+
+Def RcSchemaFor(word As String, r As RckRes) As Result
+    RcSchemaOf(word, ResDataOf(r))
+
+Rem ---- RECGET, RECALL ---------------------------------------------------
+
+Def RcSeedGet(st As RckState) As RckState
+    RckReg(st, "RECGET", 2, RckPureOver(Fn(s, vs) => RcGet(s, vs)), "( name k -- rec )", "Record k of that file, as a list of values in schema order. Records number from 1; RECCOUNT is how many there are.")
+
+Def RcGet(st As RckState, vs As List Of Cell) As RckWork
+    Select Case RcResult("RECGET", st, Nth(vs, 1))
+        Case Ok(r)
+            RcGetAt(r, Nth(vs, 2))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("RECGET did not answer")
+
+Def RcGetAt(r As RckRes, kc As Cell) As RckWork
+    Select Case RckWholeArg("RECGET", kc)
+        Case Ok(k)
+            RcGetWithin(r, k)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("RECGET did not answer")
+
+Rem THE PRE-FLIGHT. Every Get aborts past the end of the file, so the
+Rem record number is checked against the count before a single byte is
+Rem read. RckWholeArg refuses negatives already, so 0 is the only low
+Rem end left to catch.
+Def RcGetWithin(r As RckRes, k As Number) As RckWork
+    If k < 1 Or k > RcRecs(r) Then
+        RckWorkBad("RECGET: THERE IS NO RECORD " & Str(k) & " — THE FILE HOLDS " & Str(RcRecs(r)))
+    Else
+        RcGetRead(r, k, RcSchemaFor("RECGET", r))
+
+Def RcGetRead(r As RckRes, k As Number, sc As Result) As RckWork
+    Select Case sc
+        Case Ok(fs)
+            RckVals({ RcReadRec(ResHandOf(r), k, RcSize(fs), fs) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("RECGET did not answer")
+
+Def RcSeedAll(st As RckState) As RckState
+    RckReg(st, "RECALL", 1, RckPureOver(Fn(s, vs) => RcAll(s, vs)), "( name -- list )", "Every record in that file, in file order, each one a list of values in schema order.")
+
+Def RcAll(st As RckState, vs As List Of Cell) As RckWork
+    Select Case RcResult("RECALL", st, First(vs))
+        Case Ok(r)
+            RcAllOf(r, RcSchemaFor("RECALL", r))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("RECALL did not answer")
+
+Def RcAllOf(r As RckRes, sc As Result) As RckWork
+    Select Case sc
+        Case Ok(fs)
+            RckVals({ CutList(RcAllAt(ResHandOf(r), RcSize(fs), fs, RcRecs(r), 1, { })) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("RECALL did not answer")
+
+Rem Explicit recursion rather than Map over Range, for the same reason
+Rem the field loop below is: every record read moves the file position,
+Rem so the order they are read in is the answer and not an incidental.
+Def RcAllAt(f As Number, size As Number, fs As List Of RecField, n As Number, k As Number, acc As List Of Cell) As List Of Cell
+    If k > n Then
+        acc
+    Else
+        RcAllAt(f, size, fs, n, k + 1, Append(acc, RcReadRec(f, k, size, fs)))
+
+Rem ---- RECPUT, RECAPPEND ------------------------------------------------
+
+Def RcSeedPut(st As RckState) As RckState
+    RckReg(st, "RECPUT", 3, RckPureOver(Fn(s, vs) => RcPut(s, vs)), "( name k rec -- )", "Write rec as record k, replacing what was there. rec is a list of values in schema order. k may be one past the end, which adds a record; anything beyond that is refused.")
+
+Def RcPut(st As RckState, vs As List Of Cell) As RckWork
+    Select Case RcResult("RECPUT", st, Nth(vs, 1))
+        Case Ok(r)
+            RcPutAt(r, Nth(vs, 2), Nth(vs, 3))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("RECPUT did not answer")
+
+Def RcPutAt(r As RckRes, kc As Cell, rec As Cell) As RckWork
+    Select Case RckWholeArg("RECPUT", kc)
+        Case Ok(k)
+            RcPutWithin(r, k, rec)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("RECPUT did not answer")
+
+Rem One past the end is allowed and anything further is not. Seek can
+Rem go anywhere, so writing record 900 of a 3-record file would leave a
+Rem hole of undefined bytes that reads back as garbage rather than as
+Rem an error — a wrong answer, which is worse than a refusal.
+Def RcPutWithin(r As RckRes, k As Number, rec As Cell) As RckWork
+    If k < 1 Or k > RcRecs(r) + 1 Then
+        RckWorkBad("RECPUT: RECORD " & Str(k) & " WOULD LEAVE A HOLE — THE FILE HOLDS " & Str(RcRecs(r)) & ", SO " & Str(RcRecs(r) + 1) & " IS THE FURTHEST YOU CAN WRITE")
+    Else
+        RcPutTyped(r, k, rec, RcSchemaFor("RECPUT", r))
+
+Def RcPutTyped(r As RckRes, k As Number, rec As Cell, sc As Result) As RckWork
+    Select Case sc
+        Case Ok(fs)
+            RcPutChecked("RECPUT", r, k, RckListArg("RECPUT", rec), fs)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("RECPUT did not answer")
+
+Def RcPutChecked(word As String, r As RckRes, k As Number, vals As Result, fs As List Of RecField) As RckWork
+    Select Case vals
+        Case Ok(xs)
+            RcPutMatched(word, r, k, xs, fs)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Rem EVERY VALUE IS CHECKED AGAINST ITS FIELD BEFORE ANY OF THEM IS
+Rem WRITTEN. A record half-written is a record corrupted, and PutStr
+Rem aborts on an over-long string — so the whole row is validated first
+Rem and the transfer only starts once nothing can refuse.
+Def RcPutMatched(word As String, r As RckRes, k As Number, xs As List Of Cell, fs As List Of RecField) As RckWork
+    If Length(xs) <> Length(fs) Then
+        RckWorkBad(word & ": THE RECORD HAS " & Str(Length(xs)) & " VALUES AND THE SCHEMA HAS " & Str(Length(fs)) & " FIELDS")
+    Else
+        RcPutSound(word, r, k, xs, fs, RcWhyRow(word, xs, fs, 1))
+
+Def RcPutSound(word As String, r As RckRes, k As Number, xs As List Of Cell, fs As List Of RecField, why As String) As RckWork
+    If why <> "" Then
+        RckWorkBad(why)
+    Else
+        RcPutWrote(word, r, k, xs, fs)
+
+Def RcPutWrote(word As String, r As RckRes, k As Number, xs As List Of Cell, fs As List Of RecField) As RckWork
+    RcWroteRec(ResHandOf(r), k, RcSize(fs), fs, xs)
+    RckVals({ })
+
+Def RcSeedAppend(st As RckState) As RckState
+    RckReg(st, "RECAPPEND", 2, RckPureOver(Fn(s, vs) => RcAppend(s, vs)), "( name rec -- k )", "Add rec to the end of that file and push the record number it became.")
+
+Def RcAppend(st As RckState, vs As List Of Cell) As RckWork
+    Select Case RcResult("RECAPPEND", st, Nth(vs, 1))
+        Case Ok(r)
+            RcAppendAt(r, Nth(vs, 2))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("RECAPPEND did not answer")
+
+Def RcAppendAt(r As RckRes, rec As Cell) As RckWork
+    RcAppendTyped(r, RcRecs(r) + 1, rec, RcSchemaFor("RECAPPEND", r))
+
+Def RcAppendTyped(r As RckRes, k As Number, rec As Cell, sc As Result) As RckWork
+    Select Case sc
+        Case Ok(fs)
+            RcAppendChecked(r, k, RckListArg("RECAPPEND", rec), fs)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("RECAPPEND did not answer")
+
+Def RcAppendChecked(r As RckRes, k As Number, vals As Result, fs As List Of RecField) As RckWork
+    Select Case vals
+        Case Ok(xs)
+            RcAppendMatched(r, k, xs, fs)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("RECAPPEND did not answer")
+
+Def RcAppendMatched(r As RckRes, k As Number, xs As List Of Cell, fs As List Of RecField) As RckWork
+    If Length(xs) <> Length(fs) Then
+        RckWorkBad("RECAPPEND: THE RECORD HAS " & Str(Length(xs)) & " VALUES AND THE SCHEMA HAS " & Str(Length(fs)) & " FIELDS")
+    Else
+        RcAppendSound(r, k, xs, fs, RcWhyRow("RECAPPEND", xs, fs, 1))
+
+Def RcAppendSound(r As RckRes, k As Number, xs As List Of Cell, fs As List Of RecField, why As String) As RckWork
+    If why <> "" Then
+        RckWorkBad(why)
+    Else
+        RcAppendWrote(r, k, xs, fs)
+
+Def RcAppendWrote(r As RckRes, k As Number, xs As List Of Cell, fs As List Of RecField) As RckWork
+    RcWroteRec(ResHandOf(r), k, RcSize(fs), fs, xs)
+    RckVals({ CutNum(k) })
+
+Rem ---- checking a row against the schema --------------------------------
+
+Rem "" for nothing wrong, so a caller reads one string rather than
+Rem unwrapping a Result at four call sites. The position is carried so
+Rem the message can name WHICH field, which is the whole difference
+Rem between a usable refusal and "that record is wrong".
+Def RcWhyRow(word As String, xs As List Of Cell, fs As List Of RecField, k As Number) As String
+    If IsEmpty(fs) Then
+        ""
+    Else
+        RcWhyNext(word, xs, fs, k, RcWhyOne(word, First(xs), First(fs), k))
+
+Def RcWhyNext(word As String, xs As List Of Cell, fs As List Of RecField, k As Number, why As String) As String
+    If why <> "" Then
+        why
+    Else
+        RcWhyRow(word, Rest(xs), Rest(fs), k + 1)
+
+Def RcWhyOne(word As String, c As Cell, x As RecField, k As Number) As String
+    If FldKind(x) = RcNumKind() Then
+        RcWhyNum(word, c, x, k)
+    Else
+        If FldKind(x) = RcBoolKind() Then
+            RcWhyBool(word, c, x, k)
+        Else
+            RcWhyStr(word, c, x, k)
+
+Def RcWhyAt(word As String, x As RecField, k As Number, wanted As String) As String
+    word & ": FIELD " & Str(k) & " (" & FldName(x) & ") WANTS " & wanted
+
+Def RcWhyNum(word As String, c As Cell, x As RecField, k As Number) As String
+    Select Case c
+        Case CutNum(v)
+            ""
+        Case Else
+            RcWhyAt(word, x, k, "A NUMBER")
+
+Def RcWhyBool(word As String, c As Cell, x As RecField, k As Number) As String
+    Select Case c
+        Case CutBool(v)
+            ""
+        Case Else
+            RcWhyAt(word, x, k, "TRUE OR FALSE")
+
+Def RcWhyStr(word As String, c As Cell, x As RecField, k As Number) As String
+    Select Case c
+        Case CutStr(v)
+            RcWhyFits(word, v, x, k)
+        Case Else
+            RcWhyAt(word, x, k, "A STRING")
+
+Rem PutStr ABORTS on a string longer than its field rather than
+Rem truncating, so this is the guard that keeps a long name from ending
+Rem the session. Measured in BYTES, because that is what the field
+Rem holds and what PutStr counts.
+Def RcWhyFits(word As String, v As String, x As RecField, k As Number) As String
+    If Len(v) > FldWidth(x) Then
+        word & ": FIELD " & Str(k) & " (" & FldName(x) & ") HOLDS " & Str(FldWidth(x)) & " BYTES AND THAT STRING IS " & Str(Len(v))
+    Else
+        ""
+
+Rem ---- the transfers ----------------------------------------------------
+
+Rem Reading and writing one record, field by field, in schema order.
+Rem RecSeek puts the position at the start of record k and every Get and
+Rem Put advances it, so these two walk the row exactly as recio's own
+Rem examples do — the difference is only that the field list is data
+Rem here and code there.
+
+Def RcReadRec(f As Number, k As Number, size As Number, fs As List Of RecField) As Cell
+    RecSeek(f, k, size)
+    CutList(RcReadFields(f, fs, { }))
+
+Def RcReadFields(f As Number, fs As List Of RecField, acc As List Of Cell) As List Of Cell
+    If IsEmpty(fs) Then
+        acc
+    Else
+        RcReadOn(f, fs, acc, RcReadOne(f, First(fs)))
+
+Def RcReadOn(f As Number, fs As List Of RecField, acc As List Of Cell, c As Cell) As List Of Cell
+    RcReadFields(f, Rest(fs), Append(acc, c))
+
+Def RcReadOne(f As Number, x As RecField) As Cell
+    If FldKind(x) = RcNumKind() Then
+        CutNum(GetNum(f))
+    Else
+        If FldKind(x) = RcBoolKind() Then
+            CutBool(GetBool(f))
+        Else
+            CutStr(GetStr(f, FldWidth(x)))
+
+Def RcWroteRec(f As Number, k As Number, size As Number, fs As List Of RecField, xs As List Of Cell)
+    RecSeek(f, k, size)
+    RcWriteFields(f, fs, xs)
+
+Def RcWriteFields(f As Number, fs As List Of RecField, xs As List Of Cell)
+    If Not IsEmpty(fs) Then
+        RcWriteOn(f, fs, xs)
+
+Def RcWriteOn(f As Number, fs As List Of RecField, xs As List Of Cell)
+    RcWriteOne(f, First(fs), First(xs))
+    RcWriteFields(f, Rest(fs), Rest(xs))
+
+Rem The row was checked against the schema before anything was written,
+Rem so the Else here is unreachable rather than lenient — it writes the
+Rem field's worth of nothing so the record stays its stated size, which
+Rem is the only answer that keeps the file readable.
+Def RcWriteOne(f As Number, x As RecField, c As Cell)
+    Select Case c
+        Case CutNum(v)
+            PutNum(f, v)
+        Case CutBool(v)
+            PutBool(f, v)
+        Case CutStr(v)
+            PutStr(f, v, FldWidth(x))
+        Case Else
+            PutStr(f, "", FldWidth(x))
+
+Rem ---- the seed ---------------------------------------------------------
+
+Def RckSeedRecio(st As RckState) As RckState
+    Let s1 = RcSeedOpen(RckSeeding(st, "seed-recio"))
+    Let s2 = RcSeedCount(s1)
+    Let s3 = RcSeedFields(s2)
+    Let s4 = RcSeedGet(s3)
+    Let s5 = RcSeedAll(s4)
+    Let s6 = RcSeedPut(s5)
+    RcSeedAppend(s6)

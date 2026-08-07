@@ -135,11 +135,59 @@ Def TmpPath() As String
 Def JunkPath() As String
     "tst/csv/_seedneuraltest_junk.tmp"
 
+Def BinPath() As String
+    "tst/csv/_seedneuraltest_bin.tmp"
+
+Def ModelPath() As String
+    "tst/csv/_seedneuraltest_model.tmp"
+
+Def StubPath() As String
+    "tst/csv/_seedneuraltest_stub.tmp"
+
 Def Wipe()
     If FileExists(TmpPath()) Then
         DeleteFile(TmpPath())
     If FileExists(JunkPath()) Then
         DeleteFile(JunkPath())
+    If FileExists(BinPath()) Then
+        DeleteFile(BinPath())
+    If FileExists(ModelPath()) Then
+        DeleteFile(ModelPath())
+    If FileExists(StubPath()) Then
+        DeleteFile(StubPath())
+
+Rem A four-double header and nothing after it: enough for the magic and
+Rem the architecture to be read, never enough to be the file that header
+Rem describes. Written with the raw builtins because a test PROGRAM may
+Rem hold a handle — it is a session that may not.
+Def WriteStub(magic As Number, ni As Number, nh As Number, no As Number)
+    If FileExists(StubPath()) Then
+        DeleteFile(StubPath())
+    Let f = BOpen(StubPath())
+    PutNum(f, magic)
+    PutNum(f, ni)
+    PutNum(f, nh)
+    PutNum(f, no)
+    BClose(f)
+
+Rem The model format's header is five doubles, not four, so its
+Rem wrong-size case needs a stub long enough to get past the
+Rem too-short-to-hold-a-header check and be judged on its arithmetic.
+Def WriteStub5(magic As Number, ni As Number, nh As Number, no As Number, code As Number)
+    If FileExists(StubPath()) Then
+        DeleteFile(StubPath())
+    Let f = BOpen(StubPath())
+    PutNum(f, magic)
+    PutNum(f, ni)
+    PutNum(f, nh)
+    PutNum(f, no)
+    PutNum(f, code)
+    BClose(f)
+
+Rem The file's size in bytes. Latin1 is the runtime's file encoding —
+Rem one char to one byte — so a whole-file read measures it exactly.
+Def ByteLen(path As String) As Number
+    Len(ReadFile(path))
 
 Def Main()
     Seed(1)
@@ -269,6 +317,79 @@ Def Main()
     Rem mill has to survive either way.
     Assert(Text(Ran(saved, Q("T") & " RCL " & Q("tst/csv/no/such/dir/w.tmp") & " NEURALSAVE")) = "False", "AND SAVING TO A DIRECTORY THAT DOES NOT EXIST ANSWERS FALSE RATHER THAN ABORTING")
     Assert(Text(Ran(Ran(saved, Q("T") & " RCL " & Q("tst/csv/no/such/dir/w.tmp") & " NEURALSAVE"), "DROP 1 1 +")) = "2", "AND THE SESSION SURVIVES IT")
+    Wipe()
+
+    Print("--- the binary weight file, which needed TRYBOPEN to be reachable ---")
+    Rem The text format goes through Str at ten significant digits, so
+    Rem its round trip is only Near. The binary one is doubles on disk,
+    Rem so this asserts EXACT equality of the shown answer — that is the
+    Rem whole reason the format exists and the thing Near would hide.
+    Assert(Text(Ran(t1, Q("T") & " RCL " & Q(BinPath()) & " NEURALSAVEBIN")) = "True", "NEURALSAVEBIN ANSWERS TRUE ON A PATH IT CAN WRITE")
+    Let b1 = Ran(t1, Q("T") & " RCL " & Q(BinPath()) & " NEURALSAVEBIN DROP")
+    Assert(ByteLen(BinPath()) = 8 * (4 + 16), "AND WROTE A 4-DOUBLE HEADER AND ONE DOUBLE PER WEIGHT — 1*5 + 5 + 5*1 + 1")
+    Assert(Text(Ran(b1, Q(BinPath()) & " NEURALLOADBIN { 0.5 } NEURALPREDICT")) = Text(Ran(b1, Q("T") & " RCL { 0.5 } NEURALPREDICT")), "AND LOADING IT BACK PREDICTS BIT FOR BIT WHAT THE NET IN HAND DOES")
+    Assert(Text(Ran(b1, Q(BinPath()) & " NEURALLOADBIN " & LineXs() & " " & LineYs() & " NEURALMSE")) = Text(Ran(b1, Q("T") & " RCL " & LineXs() & " " & LineYs() & " NEURALMSE")), "AND SCORES IDENTICALLY, WHICH THE TEXT FORMAT CANNOT PROMISE")
+    Rem Self-describing: no architecture arguments, unlike NEURALLOAD.
+    Assert(Not Bad(b1, Q(BinPath()) & " NEURALLOADBIN"), "AND TOOK NO ARCHITECTURE ARGUMENTS TO DO IT")
+
+    Print("--- and every way that read can go wrong is a refusal, not an abort ---")
+    Rem THE POINT OF TRYBOPEN, in two assertions. BOpen is
+    Rem FileMode.OpenOrCreate, so asking after a file that is not there
+    Rem used to CREATE it — the question damaged its own answer. The
+    Rem second line is the one that would have failed before.
+    Assert(Refuses(g, Q("tst/csv/_no_such_model.tmp") & " NEURALLOADBIN", "NO SUCH FILE"), "A PATH THAT IS NOT THERE, NAMED AS MISSING RATHER THAN ABORTING")
+    Assert(Not FileExists("tst/csv/_no_such_model.tmp"), "AND ASKING DID NOT CREATE IT, WHICH IS WHAT BOPEN WOULD HAVE DONE")
+    Assert(Refuses(g, Q("tst/csv") & " NEURALLOADBIN", "IS A DIRECTORY"), "AND A DIRECTORY, TOLD APART FROM A MISSING FILE")
+    WriteLines(JunkPath(), { "1", "not a number", "3" })
+    Assert(Refuses(g, Q(JunkPath()) & " NEURALLOADBIN", "IS NOT A NEURAL WEIGHT FILE"), "A FILE TOO SHORT TO HOLD A HEADER")
+    WriteStub(1, 1, 5, 1)
+    Assert(Refuses(g, Q(StubPath()) & " NEURALLOADBIN", "IS NOT A NEURAL WEIGHT FILE"), "AND ONE LONG ENOUGH BUT CARRYING THE WRONG MARKER")
+    Rem A header that passes the marker check and then lies. Both halves
+    Rem are refused BEFORE anything sized from them is built, which is
+    Rem what stops a damaged file becoming a hang rather than an error.
+    WriteStub(1986, 0, 5, 1)
+    Assert(Refuses(g, Q(StubPath()) & " NEURALLOADBIN", "HAS A DAMAGED HEADER"), "A MARKED FILE CLAIMING AN ARCHITECTURE THAT IS NOT ONE")
+    WriteStub(1986, 1, 5, 1)
+    Assert(Refuses(g, Q(StubPath()) & " NEURALLOADBIN", "IS THE WRONG SIZE FOR THE 1-5-1 NET ITS HEADER CLAIMS"), "AND ONE CLAIMING MORE WEIGHTS THAN IT HOLDS, NAMING THE ARCHITECTURE BACK")
+    Rem The same shape NEURALSAVE has: whether it wrote is the question
+    Rem the word was asked, so an unwritable path is answered False
+    Rem rather than refused.
+    Assert(Text(Ran(b1, Q("T") & " RCL " & Q("tst/csv/no/such/dir/w.tmp") & " NEURALSAVEBIN")) = "False", "SAVING INTO A DIRECTORY THAT IS NOT THERE ANSWERS FALSE RATHER THAN ABORTING")
+    Assert(Text(Ran(Ran(b1, Q("T") & " RCL " & Q("tst/csv/no/such/dir/w.tmp") & " NEURALSAVEBIN"), "DROP 1 1 +")) = "2", "AND THE SESSION SURVIVES IT")
+
+    Print("--- a whole model: weights, task and scaler as one artifact ---")
+    Rem A net alone is not enough to predict with, and a session that
+    Rem rebuilt the scaling by hand would be keeping a second copy of a
+    Rem decision. NEURALMODELPREDICT takes RAW inputs, so it cannot drift.
+    Let mk = Q("T") & " RCL " & Q("regress") & " " & LineXs() & " NEURALSCALERFIT NEURALMODEL "
+    Let m1 = Ran(b1, mk & Q("M") & " STO")
+    Assert(Not Bad(b1, mk), "NEURALMODEL BUILDS ONE FROM A NET, A TASK AND A SCALER")
+    Assert(Instr(Text(Ran(m1, Q("M") & " RCL " & Q("task") & " DGET")), "regress") > 0, "AND IT IS A DICT, SO THE TASK READS BACK OUT WITH DGET")
+    Assert(Not Bad(m1, Q("M") & " RCL { 0.5 } NEURALMODELPREDICT"), "AND PREDICTS FROM RAW, UNSCALED INPUTS")
+    Assert(Refuses(m1, Q("M") & " RCL { 1 2 } NEURALMODELPREDICT", "X HAS 2 ENTRIES, THE NET WANTS 1"), "AN X THE NET CANNOT TAKE")
+    Assert(Refuses(g, Q("T") & " RCL " & Q("sideways") & " " & LineXs() & " NEURALSCALERFIT NEURALMODEL", "THE TASK MUST BE"), "AND A TASK THAT IS NEITHER HEAD, NAMING BOTH")
+    Rem The guard that exists because ModelPredict would otherwise scale
+    Rem a row to a width MatVec then refuses, a long way from the mistake.
+    Assert(Refuses(g, Q("T") & " RCL " & Q("regress") & " { { 1 2 } { 3 4 } } NEURALSCALERFIT NEURALMODEL", "THE SCALER IS FOR 2 INPUTS AND THE NET TAKES 1"), "AND A SCALER FITTED ON A DIFFERENT WIDTH FROM THE NET'S")
+
+    Print("--- the model file, and the two binary formats refusing each other ---")
+    Assert(Text(Ran(m1, Q("M") & " RCL " & Q(ModelPath()) & " NEURALMODELSAVE")) = "True", "NEURALMODELSAVE ANSWERS TRUE ON A PATH IT CAN WRITE")
+    Let m2 = Ran(m1, Q("M") & " RCL " & Q(ModelPath()) & " NEURALMODELSAVE DROP")
+    Assert(ByteLen(ModelPath()) = 8 * (5 + 16 + 2), "AND WROTE A 5-DOUBLE HEADER, THE WEIGHTS, THEN THE SCALER'S CENTRES AND SPREADS")
+    Assert(Text(Ran(m2, Q(ModelPath()) & " NEURALMODELLOAD { 0.5 } NEURALMODELPREDICT")) = Text(Ran(m2, Q("M") & " RCL { 0.5 } NEURALMODELPREDICT")), "AND THE ROUND TRIP PREDICTS BIT FOR BIT, SCALER AND ALL")
+    Assert(Instr(Text(Ran(m2, Q(ModelPath()) & " NEURALMODELLOAD " & Q("task") & " DGET")), "regress") > 0, "AND CARRIED THE TASK BACK WITH IT")
+    Rem The separate marker earns its keep here: neither word will read
+    Rem the other's file, so a model saved as weights alone cannot come
+    Rem back silently missing its scaling.
+    Assert(Refuses(g, Q(BinPath()) & " NEURALMODELLOAD", "IS NOT A NEURAL MODEL FILE"), "A WEIGHT FILE HANDED TO THE MODEL READER")
+    Assert(Refuses(g, Q(ModelPath()) & " NEURALLOADBIN", "IS NOT A NEURAL WEIGHT FILE"), "AND A MODEL FILE HANDED TO THE WEIGHT READER")
+    Assert(Refuses(g, Q("tst/csv/_no_such_model.tmp") & " NEURALMODELLOAD", "NO SUCH FILE"), "AND THE MODEL READER REPORTS A MISSING PATH TOO")
+    WriteStub(1987, 1, 5, 1)
+    Assert(Refuses(g, Q(StubPath()) & " NEURALMODELLOAD", "IS NOT A NEURAL MODEL FILE"), "A MODEL FILE TOO SHORT FOR ITS OWN FIVE-DOUBLE HEADER")
+    WriteStub5(1987, 1, 5, 1, 0)
+    Assert(Refuses(g, Q(StubPath()) & " NEURALMODELLOAD", "IS THE WRONG SIZE FOR THE 1-5-1 MODEL ITS HEADER CLAIMS"), "AND A MARKED MODEL FILE THAT IS THE WRONG LENGTH")
+    WriteStub5(1987, 1, 5, 1, 7)
+    Assert(Refuses(g, Q(StubPath()) & " NEURALMODELLOAD", "HAS A DAMAGED HEADER"), "AND ONE NAMING A TASK THAT IS NEITHER HEAD")
     Wipe()
 
     Print("--- the scaler, unchanged, still pairs with both paths ---")

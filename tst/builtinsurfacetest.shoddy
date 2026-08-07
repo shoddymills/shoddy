@@ -12,9 +12,10 @@ Rem
 Rem WHAT THIS IS FOR. The reckoner's dictionary and the runtime's
 Rem builtins are two different surfaces, and nothing until now compared
 Rem them. A builtin is reachable from a prompt only if the core or some
-Rem seed registered a word for it, and 148 builtins against a 565-word
-Rem dictionary is not a comparison anybody makes by eye. So it is made
-Rem here, once, and it partitions the whole surface three ways:
+Rem seed registered a word for it, and the runtime's whole dispatch
+Rem against a dictionary of several hundred words is not a comparison
+Rem anybody makes by eye. So it is made here, once, and it partitions
+Rem the whole surface three ways:
 Rem
 Rem   CLAIMED  — the core or a seed already registers this name.
 Rem   EXCLUDED — deliberately absent, and the rule that excludes it is
@@ -62,8 +63,8 @@ Include "../mills/halifax/halifax-core.shoddy"
 
 Rem ---- the runtime's whole dispatch, in one place ----------------------
 
-Rem Split across several Defs only because one list literal of 148
-Rem strings is a wall nobody can read; the grouping is alphabetical
+Rem Split across several Defs only because one list literal of the whole
+Rem dispatch is a wall nobody can read; the grouping is alphabetical
 Rem convenience and carries no meaning.
 Def Builtins() As List Of String
     Concat(Concat(BuiltinsA(), BuiltinsB()), Concat(BuiltinsC(), BuiltinsD()))
@@ -95,8 +96,9 @@ Def BuiltinsD() As List Of String
     { "SOUND", "SOUNDGAIN", "SOUNDQUEUE", "SOUNDSTOP", "SOUNDWAVE", "SQR",
       "STR", "SWAP", "TAN", "TANH", "TCPACCEPT", "TCPCLOSE", "TCPCONNECT",
       "TCPEOF", "TCPLISTEN", "TCPPEER", "TCPPOLL", "TCPRECV", "TCPSECURE",
-      "TCPSEND", "TICKS", "TIMES", "TOARRAY", "TOLIST", "TRUE", "TRYREADFILE",
-      "TRYWRITEFILE", "TUCK", "UPPER", "VAL", "VALOR", "WRAP", "WRITEFILE", "^" }
+      "TCPSEND", "TICKS", "TIMES", "TOARRAY", "TOLIST", "TRUE", "TRYBOPEN",
+      "TRYDELETEFILE", "TRYREADFILE", "TRYWRITEFILE", "TUCK", "UPPER", "VAL",
+      "VALOR", "WRAP", "WRITEFILE", "^" }
 
 Rem ---- what is deliberately absent, and the rule that decides --------
 
@@ -109,28 +111,37 @@ Type Rule
     RuleNames As List Of String
 
 Def Excluded() As List Of Rule
-    { RuleHandle(), RuleSocket(), RuleDevice(), RuleEffect(), RuleNoCell(), RuleNoTry(), RuleSpelled() }
+    { RuleHandle(), RuleSocket(), RuleDevice(), RuleEffect(), RuleNoCell(), RuleSpelled() }
 
-Rem Aborts on a failure nothing can ask about first, and has no guarded
-Rem twin to be rebuilt over. READFILE, WRITEFILE and APPENDFILE are the
-Rem contrast that makes this a rule rather than an excuse: all three
-Rem abort too, and all three ARE seeded, because TRYREADFILE and
-Rem TRYWRITEFILE exist to rebuild them on. There is no TRYDELETEFILE.
-Rem FILEEXISTS narrows the window and does not close it — a file that
-Rem exists can still be locked or unreadable when the delete lands, and
-Rem then the session is gone. seedfile.shoddy reached the same
-Rem conclusion first: it registers FILEEXISTS and not DELETEFILE.
-Def RuleNoTry() As Rule
-    Rule("aborts on a failure it cannot pre-flight, with no guarded twin to build on",
-         { "DELETEFILE" })
+Rem THERE WAS A SEVENTH RULE HERE, and it is gone rather than emptied.
+Rem RuleNoTry excluded DELETEFILE alone, for "aborts on a failure it
+Rem cannot pre-flight, with no guarded twin to build on" — READFILE and
+Rem WRITEFILE being the contrast that made it a rule and not an excuse,
+Rem since both abort too and both are seeded over TRYREADFILE and
+Rem TRYWRITEFILE. Its load-bearing sentence was "there is no
+Rem TRYDELETEFILE". There is now, so the reason is simply false, and a
+Rem rule kept past its reason is the stale exclusion this file warns
+Rem about two assertions down — it would read as a decision about a
+Rem builtin rather than a fact about one. DELETEFILE moved to the
+Rem seeded list under exactly the precedent it used to be the exception
+Rem to.
 
-Rem R3.5(b), the rule that has already kept isam, recio and the binary
-Rem model formats out: a handle is a NUMBER capped at sixteen and shared
-Rem across kinds, so an UNDO after opening one restores the stack while
-Rem leaving the resource open and now unreachable.
+Rem R3.5(b), the rule that has already kept isam and recio out: a handle
+Rem is a NUMBER capped at sixteen and shared across kinds, so an UNDO
+Rem after opening one restores the stack while leaving the resource open
+Rem and now unreachable.
+Rem
+Rem TRYBOPEN IS HERE AND NOT UNDER "no cell to answer with", though both
+Rem could claim it — it answers a Result, like TRYREADFILE. The handle
+Rem is the stronger reason and so it is the stated one: a Result that
+Rem could be given a cell shape tomorrow would still be carrying a
+Rem handle, and this is the rule that would still refuse it. What
+Rem TRYBOPEN is FOR is the seeds — a word that opens, checks, reads and
+Rem closes inside its own body, which is how seedneural.shoddy reaches
+Rem the binary model formats without a handle ever reaching a stack.
 Def RuleHandle() As Rule
     Rule("a handle would reach the stack (R3.5(b))",
-         { "BOPEN", "BCLOSE", "SEEK", "BPOS", "BSIZE",
+         { "BOPEN", "TRYBOPEN", "BCLOSE", "SEEK", "BPOS", "BSIZE",
            "PUTNUM", "GETNUM", "PUTBOOL", "GETBOOL", "PUTSTR", "GETSTR" })
 
 Rem The same rule, plus a capability the mill has to be started with:
@@ -165,16 +176,18 @@ Def RuleEffect() As Rule
          { "PRINT", "INPUT", "INPUTLINE", "INKEY" })
 
 Rem R4.16: there is no ARRAY cell and no RESULT cell at the keyboard, so
-Rem these four have nothing to answer WITH. TOARRAY and TOLIST would be
-Rem the identity. TRYREADFILE and TRYWRITEFILE answer a Result, which is
-Rem not a Cell — their guarding is what READFILE and WRITEFILE would be
-Rem registered OVER, exactly as seedfile.shoddy already builds READLINES
-Rem on TryReadFile rather than registering TryReadFile itself. EACH
-Rem sequences effects and there are none to sequence, so it is MAP and a
-Rem DROP, which the dictionary already has both of.
+Rem these have nothing to answer WITH. TOARRAY and TOLIST would be
+Rem the identity. TRYREADFILE, TRYWRITEFILE and TRYDELETEFILE are the
+Rem guarded twins, and a guarded twin is what the ABORTING word gets
+Rem registered OVER rather than something registered itself — exactly as
+Rem seedfile.shoddy builds READLINES on TryReadFile rather than
+Rem registering TryReadFile. A session that wants a delete it can trust
+Rem types DELETEFILE, which is seeded and which is this one underneath.
+Rem EACH sequences effects and there are none to sequence, so it is MAP
+Rem and a DROP, which the dictionary already has both of.
 Def RuleNoCell() As Rule
-    Rule("no cell to answer with, or nothing left to do once effects are gone (R4.16)",
-         { "TOARRAY", "TOLIST", "TRYREADFILE", "TRYWRITEFILE", "EACH" })
+    Rule("no cell to answer with, or a guarded twin the seeded word is built over (R4.16)",
+         { "TOARRAY", "TOLIST", "TRYREADFILE", "TRYWRITEFILE", "TRYDELETEFILE", "EACH" })
 
 Rem Already reachable under the name the dictionary chose, and a seed
 Rem that registered a second spelling would be a seed that made HELP
@@ -201,8 +214,8 @@ Def RuleSpelled() As Rule
 
 Rem ---- what was left, and is now seedbuiltin's --------------------------
 
-Rem These thirty-two were the free list — neither claimed nor excluded —
-Rem and seedbuiltin.shoddy is what was written against it. So the
+Rem These were the free list — neither claimed nor excluded — and
+Rem seedbuiltin.shoddy is what was written against it. So the
 Rem assertion has moved on with them: it is no longer "these are free"
 Rem but "these are exactly what the builtin seed registers, and nothing
 Rem is free any more". That is the stronger claim of the two, because it
@@ -210,7 +223,7 @@ Rem fails in both directions — a name dropped from the seed, and a name
 Rem added to it that this file has not been told about.
 Def SeededHere() As List Of String
     { "APPENDFILE", "ARGS", "ASC", "ASSERT", "ATN", "ATN2", "BETAI",
-      "CALL", "CHR", "CLOCK", "DIM", "ERF", "ERROR", "GAMMAP",
+      "CALL", "CHR", "CLOCK", "DELETEFILE", "DIM", "ERF", "ERROR", "GAMMAP",
       "INSTR", "ISEMPTY", "ISNUMERIC", "LEFT", "LEN", "MID", "NEGATE", "NTH",
       "PREPEND", "READFILE", "RIGHT", "SETNTH", "SLEEP", "STR",
       "TANH", "VAL", "VALOR", "WRITEFILE" }

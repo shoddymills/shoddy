@@ -92,20 +92,34 @@ at one epoch and at five hundred, on a dictionary of five hundred words.
 then goes on evaluating — the test that would have settled it, now standing
 as an assertion rather than as a comment somebody once wrote.</p>
 
-<p><strong>Not bridged:</strong> the <em>binary</em> formats —
-<code>NetSaveBin</code>, <code>NetLoadBin</code>, <code>ModelSave</code> and
-<code>ModelLoad</code>. <code>NEURALSAVE</code> and <code>NEURALLOAD</code>
-bridge the text pair, because <code>NetSave</code>/<code>NetLoad</code> are
+<p><strong>Both file formats are bridged</strong>, and the binary one took a
+runtime change to get there. <code>NEURALSAVE</code> and <code>NEURALLOAD</code>
+carry the text pair, because <code>NetSave</code>/<code>NetLoad</code> are
 <code>WriteLines</code>/<code>ReadLines</code> underneath and this seed can
 reimplement those over <code>TRYWRITEFILE</code>/<code>TRYREADFILE</code> the
-way <a href="seedfile.html">seedfile</a> already does. The binary pair cannot
-be reached the same way. It is not the handle on the stack that stops them —
-it never reaches the stack, since the word would open and close inside its own
-body — it is that <code>NetLoadBin</code> aborts on a short or wrongly-tagged
-file <em>with the handle still open</em>, and there is no way to ask a file its
-size, or its magic number, without opening it first. A guarded
-<code>BOpen</code> (or a <code>TryFileSize</code>) has to exist before those
-four can be bridged, and building it is a runtime change rather than a seed.</p>
+way <a href="seedfile.html">seedfile</a> already does. The binary pair —
+<code>NetSaveBin</code>, <code>NetLoadBin</code>, <code>ModelSave</code> and
+<code>ModelLoad</code> — could not be reached that way, and an earlier pass
+left them out saying so.</p>
+<p>What stopped them was never the handle. These words open and close inside
+their own bodies, so nothing R3.5(b) is about ever happens: no handle reaches
+the stack and no <code>UNDO</code> can strand one. It was that there was no way
+to <em>ask</em>. <code>NetLoadBin</code> aborts on a short or wrongly-tagged
+file <em>with the handle still open</em>; nothing could learn a file's size or
+its magic number without opening it first; and <code>BOpen</code> is
+open-or-create, so the very act of checking left an empty file behind.
+<code>TryBOpen</code> is the runtime change that answered all three — an
+existing-file-only open that reports failure as a <code>Result</code> — and
+the six words below are built on it, reusing
+<a href="neural.html">neural</a>'s own record layout so the format stays one
+definition and files move both ways bit for bit.</p>
+<p><strong>A model is a cell kind here</strong>, like a net, a scaler and a
+plan: <code>{ ("net" net) ("task" str) ("prep" scaler) }</code>. It has a
+constructor and a predict of its own rather than only a save and a load,
+because a model you can write to disk and read back but not predict with is
+not a bridged feature. <code>NEURALMODELPREDICT</code> takes <em>raw</em>
+inputs and does the scaling itself, which is the whole reason
+<a href="neural.html">neural</a> has a <code>Model</code> type at all.</p>
 
 <h2 id="guide">User's Guide</h2>
 <p>A line fitted, then a two-class problem, both from the prompt. Both
@@ -167,12 +181,18 @@ housekeeping:</p>
 <tr><td>NEURALSCALERAPPLY ( scaler x -- x2 )</td><td>x, centred and scaled by scaler. Refuses unless x has as many entries as the scaler was fitted with.</td></tr>
 <tr><td>NEURALSAVE ( net path -- ok )</td><td>Write the net's weights to a text file, one number a line, in neural's own order; True on success.</td></tr>
 <tr><td>NEURALLOAD ( path ni nh no -- net )</td><td>Read a weight file back into a net of ni inputs, nh hidden units and no outputs. Refuses unless the file reads, holds nothing but numbers, and holds exactly as many as that architecture needs.</td></tr>
+<tr><td>NEURALSAVEBIN ( net path -- ok )</td><td>Write the net to a binary file — bit-exact, and self-describing, so <code>NEURALLOADBIN</code> needs no architecture arguments. True on success.</td></tr>
+<tr><td>NEURALLOADBIN ( path -- net )</td><td>Read a binary weight file back into a net. Refuses unless the file opens, carries the right marker, and is exactly the size its own header claims.</td></tr>
+<tr><td>NEURALMODEL ( net task prep -- model )</td><td>A model: the net, the task it was fitted for (<code>"regress"</code> or <code>"classify"</code>), and the scaler its inputs were scaled with. <code>NEURALMODELPREDICT</code> takes raw inputs, so the scaling cannot drift away from the net.</td></tr>
+<tr><td>NEURALMODELSAVE ( model path -- ok )</td><td>Write a whole model — weights, task and scaler — to one binary file. A different marker from <code>NEURALSAVEBIN</code>'s, so the two formats can never be mistaken for one another. True on success.</td></tr>
+<tr><td>NEURALMODELLOAD ( path -- model )</td><td>Read a whole model back. Self-describing, so no architecture arguments. Refuses a file <code>NEURALMODELSAVE</code> did not write.</td></tr>
+<tr><td>NEURALMODELPREDICT ( model x -- list )</td><td>The model's outputs for <em>raw, unscaled</em> inputs x: scaled by the model's own scaler and read through its own task. The word to predict with once a model is loaded.</td></tr>
 </table>
 
 <h2 id="usedby">Who Uses It</h2>
 <table>
 <tr><th></th><th>User</th><th>How</th></tr>
-<tr><td class="uicon"><a href="../mills/halifax.html"><img src="../media/icons/halifax.svg" alt=""></a></td><td><a href="../mills/halifax.html">halifax</a></td><td>The calculator's network words — both training paths, the classifier's readers and scorers, the scaler, and the text weight file.</td></tr>
+<tr><td class="uicon"><a href="../mills/halifax.html"><img src="../media/icons/halifax.svg" alt=""></a></td><td><a href="../mills/halifax.html">halifax</a></td><td>The calculator's network words — both training paths, the classifier's readers and scorers, the scaler, both weight file formats, and the whole model.</td></tr>
 </table>
 <p>A mill claims this seed by folding <code>RckSeedNeural</code> over its
 reckoner state, which is all halifax does.</p>

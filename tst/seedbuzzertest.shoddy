@@ -1,0 +1,180 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem seedbuzzertest.shoddy — test program for seedbuzzer.shoddy
+Rem
+Rem Assert-driven, in the cuttletest / reckonertest / seedtest pattern:
+Rem it prints what it is doing and stops the run at the first assertion
+Rem that fails, ending with ALL ASSERTIONS PASSED when it does not.
+Rem
+Rem IT NEEDS NO SOUND CARD, and that is buzzer's own contract rather
+Rem than a concession here: with no audio device every sound word is a
+Rem NO-OP rather than a failure, so a tune queues identically on a
+Rem machine that can play it and one that cannot. What the suite
+Rem asserts is therefore everything except the noise — that a score
+Rem parses to the right length, that every malformed one is refused
+Rem naming the position, and that the queue bookkeeping is real.
+Rem
+Rem THE PARSER IS THE INTERESTING PART. buzzer.shoddy was rewritten to
+Rem thread a Result so that TryMmlNotes could exist, and MmlNotes is now
+Rem that answer with the Err turned back into an abort. So there are two
+Rem things worth proving: that the guarded form reports each of the five
+Rem malformed cases, and that the ABORTING form still behaves exactly as
+Rem it did — which is what the machine's own C# suite covers, and what
+Rem BUZZLENGTH below re-checks from this side by measuring known scores.
+Rem
+Rem Run: bin\mill run tst\seedbuzzertest.shoddy      (from the repo root)
+Rem ==================================================================
+
+Include "../machines/cuttle.shoddy"
+Include "../machines/reckoner.shoddy"
+Include "../machines/seq.shoddy"
+Include "../machines/str.shoddy"
+Include "../machines/seeds/seedbuzzer.shoddy"
+
+Rem ---- reading an answer ------------------------------------------------
+
+Def Ran(st As RckState, line As String) As RckState
+    Select Case RckEval(st, line)
+        Case RckNext(st2, out)
+            st2
+        Case RckStop(st2, why, out)
+            st2
+        Case Else
+            st
+
+Def Bad(st As RckState, line As String) As Boolean
+    Select Case RckEval(st, line)
+        Case RckStop(st2, why, out)
+            True
+        Case Else
+            False
+
+Def Why(st As RckState, line As String) As String
+    Select Case RckEval(st, line)
+        Case RckStop(st2, why, out)
+            why
+        Case Else
+            ""
+
+Def Text(st As RckState) As String
+    Join(Map(CutCells(RckStack(st)), Fn(c) => CutShow(c, RckFmt(st))), " | ")
+
+Def TopNum(st As RckState) As Number
+    If CutDepth(RckStack(st)) < 1 Then
+        0 - 999999
+    Else
+        NumOf(First(CutCells(RckStack(st))))
+
+Def NumOf(c As Cell) As Number
+    Select Case c
+        Case CutNum(x)
+            x
+        Case Else
+            0 - 999999
+
+Def Q(s As String) As String
+    Chr(34) & s & Chr(34)
+
+Rem Safe for every word here: nothing this seed does opens or closes
+Rem anything, and re-queueing a tune three times is only more sound.
+Rem The one exception is anything measured against the QUEUE, which is
+Rem why those are run once and read.
+Def Refuses(st As RckState, line As String, why As String) As Boolean
+    Bad(st, line) And Instr(Why(st, line), why) > 0 And Text(Ran(st, line)) = Text(st) And Text(Ran(Ran(st, line), "1 1 +")) = Text(Ran(st, "1 1 +"))
+
+Def Near(a As Number, b As Number) As Boolean
+    Abs(a - b) <= 0.001
+
+Def Main()
+    Let s0 = RckSeedBuzzer(RckNew())
+    Let g = Ran(s0, "1 2")
+
+    Print("--- the seed is in the dictionary, grouped and documented ---")
+    Assert(RckKnows(s0, "BUZZPLAY") And RckKnows(s0, "BUZZFREQ") And RckKnows(s0, "BUZZLENGTH"), "THE WORDS ARE THERE")
+    Assert(Contains(RckWords(s0), "-- seed-buzzer --"), "AND THEY HAVE A GROUP OF THEIR OWN")
+    Assert(All(RckDict(s0), Fn(e) => WordEffect(e) <> "" And WordDesc(e) <> ""), "NO WORD IS WITHOUT AN EFFECT LINE AND A DESCRIPTION")
+    Assert(All(RckDict(s0), Fn(e) => Length(RckHelp(s0, WordName(e))) = 3), "AND HELP ANSWERS FOR EVERY ONE OF THEM")
+    Rem A sound is FIRED, not opened — there is no handle and no name to
+    Rem bind, which is what makes this the odd one out among the seeds
+    Rem that reach a device.
+    Assert(All(RckDict(s0), Fn(e) => Instr(Lower(WordEffect(e)), "handle") = 0), "NO WORD'S EFFECT STRING MENTIONS A HANDLE")
+    Assert(Not RckKnows(s0, "BUZZOPEN") And Not RckKnows(s0, "BUZZCLOSE"), "AND THERE IS NO OPEN OR CLOSE — A SOUND IS FIRED, NOT HELD")
+    Assert(IsEmpty(RckBoundNames(Ran(g, "1 " & Q("CDE") & " BUZZPLAY"))), "AND PLAYING BINDS NOTHING")
+
+    Print("--- the pure half: a note's frequency, and a score's length ---")
+    Assert(Near(TopNum(Ran(s0, Q("A4") & " BUZZFREQ")), 440), "A4 IS 440 HERTZ, WHICH IS THE ONE EVERYBODY KNOWS")
+    Assert(TopNum(Ran(s0, Q("A5") & " BUZZFREQ")) > TopNum(Ran(s0, Q("A4") & " BUZZFREQ")), "AND AN OCTAVE UP IS HIGHER")
+    Assert(Near(TopNum(Ran(s0, Q("A5") & " BUZZFREQ")), 880), "EXACTLY TWICE AS HIGH, WHICH IS WHAT AN OCTAVE MEANS")
+    Assert(Near(TopNum(Ran(s0, Q("c4") & " BUZZFREQ")), TopNum(Ran(s0, Q("C4") & " BUZZFREQ"))), "AND A NOTE NAME IS CASE-INSENSITIVE")
+    Rem A whole note is 4 * 60000 / tempo ms, so at T120 a quarter note
+    Rem is 500ms and four of them are two seconds. This is the check that
+    Rem the rewritten parser still computes what it always did.
+    Assert(Near(TopNum(Ran(s0, Q("T120 CDEF") & " BUZZLENGTH")), 2000), "FOUR QUARTER NOTES AT T120 IS TWO SECONDS")
+    Assert(Near(TopNum(Ran(s0, Q("T60 CDEF") & " BUZZLENGTH")), 4000), "AND AT HALF THE TEMPO, TWICE AS LONG")
+    Assert(Near(TopNum(Ran(s0, Q("T120 L8 CDEF") & " BUZZLENGTH")), 1000), "AND AT EIGHTH NOTES, HALF AS LONG")
+    Rem A dot is one and a half times, which the parser reads separately
+    Rem from the length digits.
+    Assert(Near(TopNum(Ran(s0, Q("T120 C4.") & " BUZZLENGTH")), 750), "A DOTTED QUARTER IS HALF AS LONG AGAIN")
+    Assert(Near(TopNum(Ran(s0, Q("") & " BUZZLENGTH")), 0), "AND AN EMPTY SCORE TAKES NO TIME AT ALL")
+
+    Print("--- every way an MML string can be malformed, each named ---")
+    Rem These five were Errors in the machine until buzzer.shoddy was
+    Rem rewritten to thread a Result. Each reports what is wrong AND
+    Rem where, which is what makes a long score fixable.
+    Assert(Refuses(g, "1 " & Q("CDEZ") & " BUZZPLAY", "UNEXPECTED 'Z' AT POSITION 4"), "AN UNKNOWN COMMAND, NAMING THE CHARACTER AND THE POSITION")
+    Assert(Refuses(g, "1 " & Q("O9 C") & " BUZZPLAY", "OCTAVE OUT OF RANGE 0-8"), "AN OCTAVE PAST THE TOP")
+    Rem The default octave is 4, so it takes five steps down to fall off
+    Rem the bottom — and the fifth is the one that must be caught, not
+    Rem the first.
+    Assert(Not Bad(g, "1 " & Q("<<<< C") & " BUZZPLAY"), "FOUR STEPS DOWN FROM THE DEFAULT REACHES OCTAVE 0, WHICH IS FINE")
+    Assert(Refuses(g, "1 " & Q("<<<<< C") & " BUZZPLAY", "OCTAVE OUT OF RANGE 0-8"), "AND THE FIFTH FALLS OFF THE BOTTOM")
+    Assert(Refuses(g, "1 " & Q("T C") & " BUZZPLAY", "T NEEDS A NUMBER"), "A TEMPO WITH NO NUMBER AFTER IT")
+    Assert(Refuses(g, "1 " & Q("T0 C") & " BUZZPLAY", "T MUST BE AT LEAST 1"), "AND A TEMPO OF NOTHING")
+    Assert(Refuses(g, "1 " & Q("C0") & " BUZZPLAY", "BAD LENGTH"), "A NOTE LENGTH OF ZERO")
+    Rem The same five reach BUZZLENGTH, which parses and plays nothing —
+    Rem so a score can be checked without being committed to a channel.
+    Assert(Refuses(g, Q("CDEZ") & " BUZZLENGTH", "UNEXPECTED 'Z'"), "AND BUZZLENGTH REFUSES THEM TOO, WITHOUT QUEUEING A NOTE")
+
+    Print("--- a bad note name, which was the other abort ---")
+    Assert(Refuses(g, Q("H4") & " BUZZFREQ", "BAD NOTE NAME 'H4'"), "A LETTER THAT IS NOT A NOTE")
+    Assert(Refuses(g, Q("C") & " BUZZFREQ", "BAD NOTE NAME"), "A NAME WITH NO OCTAVE")
+    Assert(Refuses(g, Q("C9") & " BUZZFREQ", "BAD NOTE NAME"), "AN OCTAVE PAST THE TOP")
+    Assert(Refuses(g, "1 " & Q("H4") & " 250 BUZZNOTE", "BAD NOTE NAME"), "AND BUZZNOTE REFUSES THE SAME")
+
+    Print("--- the channel, the loudness and the waveform ---")
+    Assert(Refuses(g, "9 " & Q("C") & " BUZZPLAY", "FROM 1 TO 8"), "A CHANNEL PAST THE LAST")
+    Assert(Refuses(g, "0 " & Q("C") & " BUZZPLAY", "FROM 1 TO 8"), "AND CHANNEL ZERO")
+    Assert(Refuses(g, "1.5 " & Q("C") & " BUZZPLAY", "BUZZPLAY"), "AND A FRACTIONAL ONE")
+    Assert(Refuses(g, "1 2 BUZZGAIN", "LOUDNESS RUNS FROM 0 TO 1"), "A LOUDNESS ABOVE ONE")
+    Assert(Refuses(g, "1 -1 BUZZGAIN", "LOUDNESS RUNS FROM 0 TO 1"), "AND BELOW ZERO")
+    Assert(Not Bad(g, "1 0 BUZZGAIN"), "BUT SILENCE IS A LOUDNESS")
+    Assert(Refuses(g, "1 " & Q("wobble") & " BUZZWAVE", "IS NOT A WAVEFORM"), "A WAVEFORM THAT IS NOT ONE, LISTING THE THREE THAT ARE")
+    Assert(Not Bad(g, "1 " & Q("SINE") & " BUZZWAVE"), "AND A WAVEFORM NAME IS CASE-INSENSITIVE")
+    Assert(Refuses(g, "1 -100 250 BUZZTONE", "FREQUENCY CANNOT BE NEGATIVE"), "A NEGATIVE FREQUENCY")
+    Assert(Refuses(g, "1 440 -5 BUZZTONE", "LESS THAN NO TIME"), "AND A NEGATIVE DURATION")
+    Assert(Not Bad(g, "1 0 250 BUZZTONE"), "BUT A FREQUENCY OF 0 IS A REST, WHICH IS ORDINARY")
+
+    Print("--- the queue, which is the fault nothing could see coming ---")
+    Rem SOUNDQUEUE refuses more than five minutes queued ahead, and until
+    Rem SOUNDQUEUED there was no way to ask what was already in front of
+    Rem you. Run ONCE and read, because unlike everything above these
+    Rem really do change the channel.
+    Let q0 = Ran(g, "8 BUZZSTOP")
+    Assert(Near(TopNum(Ran(q0, "8 BUZZQUEUED")), 0), "A CHANNEL JUST STOPPED HAS NOTHING QUEUED")
+    Let q1 = Ran(q0, "8 " & Q("T120 CDEF") & " BUZZPLAY")
+    Assert(TopNum(Ran(q1, "8 BUZZQUEUED")) > 1000, "AND AFTER A TWO-SECOND TUNE IT HAS SECONDS IN FRONT OF IT")
+    Assert(TopNum(Ran(q1, "8 BUZZQUEUED")) <= 2000, "AND NO MORE THAN THE TUNE WAS LONG")
+    Rem A score longer than the cap is refused whole, before a note of it
+    Rem is queued — a tune half queued is a tune that has already started.
+    Assert(Refuses(q1, "8 " & Q("T1 L1 CCCCCCCCCC CCCCCCCCCC CCCCCCCCCC") & " BUZZPLAY", "MORE THAN 5 MINUTES AHEAD"), "A SCORE LONGER THAN THE CAP, NAMING THE CHANNEL AND THE REMEDY")
+    Assert(TopNum(Ran(q1, "8 BUZZQUEUED")) <= 2000, "AND THAT REFUSAL QUEUED NOTHING")
+    Let q2 = Ran(q1, "8 BUZZSTOP")
+    Assert(Near(TopNum(Ran(q2, "8 BUZZQUEUED")), 0), "AND BUZZSTOP THROWS AWAY WHAT WAS WAITING")
+
+    Print("--- and the session is exactly as it was ---")
+    Assert(Text(Ran(g, "1 1 +")) = "2 | 2 | 1", "THE STACK IS STILL THERE AND STILL EVALUATING")
+
+    Print("")
+    Print("ALL ASSERTIONS PASSED")

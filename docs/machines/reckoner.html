@@ -1,0 +1,398 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="The runtime engine — machines/reckoner.shoddy">
+<title>reckoner — The Runtime Engine | Shoddy Machines</title>
+<link rel="stylesheet" href="../style.css">
+<link rel="icon" href="../favicon.svg" type="image/svg+xml">
+<link rel="alternate icon" href="../favicon.ico" sizes="48x48">
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+</head>
+<body>
+<div class="topbar"><div class="inner">
+  <div class="row">
+    <a class="phase" href="index.html"><img class="mark" src="../media/brand/shoddy-icon.svg" alt="" width="23" height="23">Shoddy · The Machines</a>
+    <span class="spacer"></span>
+    <nav class="docnav meta" aria-label="About"><a href="../heritage.html">Heritage</a><a href="../authorship.html">Authorship</a></nav>
+  </div>
+  <nav class="docnav main" aria-label="Documentation"><a href="../tutorials/index.html">Tutorials</a><a href="../guide.html">Guide</a><a href="../quickref.html">Reference</a><span class="here">Machines</span><a href="../mills/index.html">Mills</a><a href="../stack.html">Stack</a><a href="../spec.html">Spec</a><a href="../setup.html">Setup</a><a href="../vscode.html">VS Code</a><a href="../assistants.html">AI</a><a href="../build.html">Toolchain</a><a href="../errors.html">Errors</a></nav>
+</div></div>
+<div class="wrap">
+
+
+<header class="mast has-icon"><div><p class="eyebrow"><a href="index.html#runtime-stack">The Machines &middot; Runtime stack</a></p><h1>reckoner</h1><p class="kicker">The runtime engine — machines/reckoner.shoddy</p></div><img class="micon" src="../media/icons/reckoner.svg" alt="the reckoner machine&#39;s icon"></header>
+<nav class="pagertop" aria-label="Machines, in catalog order"><a href="cuttle.html">&larr; cuttle</a><a href="index.html">All machines</a><a href="seedmath.html">seedmath &rarr;</a></nav>
+
+<h2 id="summary">Summary</h2>
+<p><code>reckoner</code> is an interpreter for whitespace-tokenized RPN
+lines, evaluated against a dictionary of registered words over
+<a href="cuttle.html">cuttle</a>'s runtime stack. It reifies Shoddy's own
+concatenative core as a value a program can drive one line at a time —
+the runtime dialect is Appendix A, reified. Literals, dictionary lookup,
+list literals (<code>{ &hellip; }</code>), quoted programs
+(<code>[ &hellip; ]</code>), user-word definition (<code>: NAME &hellip; ;</code>),
+registers (<code>STO</code>/<code>RCL</code>), mode words,
+<code>UNDO</code>/<code>REDO</code>, a <code>TRACE</code> mode, an
+adding-machine tape and <code>HELP</code> are all here, plus the combinators
+(<code>IFT IFTE TIMES MAP FILTER FOLD</code>) that take a quoted program off
+the stack and run it back through this same evaluator.</p>
+<p>It is general infrastructure, not a calculator: a formula read from a
+spec file, an expression typed into a form field, and an embedded scripting
+layer are equally its callers, which is why it is not named for the
+showpiece RPN shell built on top of it.</p>
+<p class="tag" style="border-left:3px solid var(--accent); padding-left:.75rem">
+<strong>Nothing keyable aborts the mill.</strong> Underflow, a missing
+arity, an unknown word, a kind with no arithmetic, a divisor of zero, a
+domain a builtin would <code>Error</code> on — every one of these answers a
+value with the state intact. Losing the stack, the dictionary, the
+registers and the tape is worse than any wrong answer, so every guard is
+written before the builtin it protects rather than after it.</p>
+
+<h2 id="why">Why It's Useful</h2>
+<p>Once evaluating a line is a pure function from one state to the next,
+undo falls out of the semantics rather than needing to be built: keep the
+last fifty states and stepping back is just picking an earlier one. The
+same purity is what lets a mill embed a formula language without owning an
+evaluator itself — hand <code>RckEval</code> a state and a line, get back
+the next state and the output to show, and the mill never has to reason
+about partial execution, because a whole line evaluates or the state
+stands exactly as it was.</p>
+<p>And because <code>reckoner</code> knows no domain — there is no
+<code>Include</code> of <a href="../machines/stats.html">stats</a>,
+<a href="csv.html">csv</a>, <a href="file.html">file</a> or anything else,
+and no word here names one — every domain arrives through
+<code>RckReg</code> as a seed file with zero engine changes. A mill that
+wants a spreadsheet-style column mean seeds <a href="seedstats.html">seedstats</a>;
+one that never touches a file never pays for
+<a href="seedfile.html">seedfile</a>'s dictionary entries. The engine's own
+size is fixed; the dictionary's is not.</p>
+
+<h2 id="name">Where the Name Comes From</h2>
+<p>A <strong>ready reckoner</strong> was the printed table of pre-computed
+answers every cloth merchant and mill clerk worked from to price a piece by
+length and weight — the trade's calculating instrument before there were
+calculators. "Reckon" is the plain regional word for compute besides. The
+RPN calculator built on this machine is one caller among several, not the
+machine itself, which is the whole reason the engine is not named for the
+showpiece shell: a form field evaluating an expression and a spec file
+carrying a formula are equally reckoners, and a name taken from the
+calculator would misdescribe both of them. (<a href="../heritage.html">The heritage of the name</a> has the rest of the mill.)</p>
+
+<h2 id="guide">User's Guide</h2>
+<p>Start from <code>RckNew()</code> — the engine core seeded, nothing else
+— and thread a state through <code>RckEval</code> one line at a time:</p>
+<pre><code>Include "reckoner.shoddy"
+
+Def Main()
+    Let st0 = RckNew()
+    Select Case RckEval(st0, "3 4 + 5 *")
+        Case RckNext(st1, out)
+            Print(RckShow(st1))          ' x: 35
+        Case RckStop(st1, why, out)
+            Print(why)</code></pre>
+<p>A seed file folds its own words in before the first line runs — a mill
+that wants statistics and CSV loading seeds both:</p>
+<pre><code>Let st0 = RckSeedCsv(RckSeedStats(RckNew()))
+Select Case RckEval(st0, Chr(34) & "dat/sales.csv" & Chr(34) & " CSVLOAD 3 CSVCOLUMNNUMS MEAN")
+    Case RckNext(st1, out)
+        Print(RckShow(st1))              ' x: 12483.61</code></pre>
+<p>A few things worth remembering:</p>
+<ul>
+<li><strong>Definitions, quotations and the combinators all run on this
+same evaluator.</strong> <code>: SQ DUP * ;</code> validates <code>SQ</code>'s
+body against the dictionary as it stands, so a definition can only name
+words that already exist — recursion is impossible by construction, and
+iteration is <code>TIMES</code>, <code>MAP</code>, <code>FILTER</code> and
+<code>FOLD</code>.</li>
+<li><strong>A sub-evaluation gets a fresh stack but threads the state.</strong>
+A <code>{ &hellip; }</code> literal, a combinator's program and a user
+word's body each run on a stack of their own, while registers, the
+dictionary and the modes thread through and any change persists. Token
+lists have no closures, so <code>STO</code> before and <code>RCL</code>
+inside is the only way a program reaches a value that is not its own
+element — the closure substitute, and the reason the threading is
+guaranteed rather than incidental.</li>
+<li><strong>A mill that seeds only this engine sees no bare domain
+names.</strong> Seeding <a href="seedstats.html">seedstats</a> puts
+<code>MEAN</code> in the dictionary, not <code>Mean</code> in scope — the
+dictionary, not the include table, is the runtime route to a word, so a
+mill that never includes <a href="../machines/stats.html">stats</a>
+directly can still answer <code>MEAN</code> from the entry line.</li>
+<li><strong>A seed's guards repeat the engine's own rule, on purpose.</strong>
+Shoddy has no catchable errors, so a bridged word cannot call a builtin
+that might <code>Error</code> and recover — it has to pre-flight the same
+domain check the builtin would have made and answer a refusal instead. That
+duplication (division and <code>Mod</code> by zero, <code>SQRT</code> of a
+negative, statistics on an empty list, and so on, each re-stated beside the
+word it guards) is the honest price of the missing feature, paid once per
+seed rather than retrofitted later.</li>
+<li><strong>Registration is the whole of how a domain arrives:</strong>
+<code>RckReg(state, name, arity, body, effect, desc)</code> adds a
+primitive, <code>RckDef</code> a user word, <code>RckUnreg</code> removes
+one, and <code>RckWords</code>/<code>RckHelp</code> read the metadata every
+registration is required to carry back out again.</li>
+</ul>
+
+<h2 id="words">Word Reference</h2>
+<p class="tag">The engine core every mill gets before it seeds anything —
+about forty words, arithmetic and comparison as ordinary registered
+primitives, the rest reaching the stack, registers, modes, history or the
+evaluator itself</p>
+
+<h3>Arithmetic</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>+ ( a b -- a+b )</td><td>Add two cells: numbers, money, matrices of one shape, or strings joined.</td></tr>
+<tr><td>- ( a b -- a-b )</td><td>Subtract: numbers, or money exact at the cent.</td></tr>
+<tr><td>* ( a b -- a*b )</td><td>Multiply: numbers, matrices, or a matrix scaled by a number.</td></tr>
+<tr><td>/ ( a b -- a/b )</td><td>Divide one number by another.</td></tr>
+<tr><td>^ ( a b -- a^b )</td><td>Raise a number to a power.</td></tr>
+<tr><td>MOD ( a b -- r )</td><td>Truncated remainder, which keeps the sign of a.</td></tr>
+<tr><td>WRAP ( a b -- r )</td><td>Floored modulo: the answer keeps the sign of b, so -340 256 WRAP is 172.</td></tr>
+<tr><td>ABS ( x -- |x| )</td><td>Magnitude, without the sign.</td></tr>
+<tr><td>SGN ( x -- s )</td><td>The sign of a number: -1, 0 or 1.</td></tr>
+<tr><td>FLOOR ( x -- n )</td><td>The largest whole number no greater than x.</td></tr>
+<tr><td>CEIL ( x -- n )</td><td>The smallest whole number no less than x.</td></tr>
+<tr><td>ROUND ( x -- n )</td><td>Round to the nearest whole number, halves upward.</td></tr>
+<tr><td>MIN ( a b -- m )</td><td>The smaller of two numbers.</td></tr>
+<tr><td>MAX ( a b -- m )</td><td>The larger of two numbers.</td></tr>
+<tr><td>SQRT ( x -- root )</td><td>Square root; refuses a negative number.</td></tr>
+<tr><td>EXP ( x -- e^x )</td><td>The exponential of x.</td></tr>
+<tr><td>LN ( x -- ln x )</td><td>Natural logarithm; refuses zero and below.</td></tr>
+<tr><td>LOG ( x -- log x )</td><td>Logarithm base ten; refuses zero and below.</td></tr>
+<tr><td>PI ( -- pi )</td><td>The ratio of a circle to its diameter.</td></tr>
+<tr><td>E ( -- e )</td><td>The base of the natural logarithm.</td></tr>
+</table>
+
+<h3>Comparison and logic</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>= ( a b -- flag )</td><td>Whether two cells are equal, all the way down.</td></tr>
+<tr><td>&lt;&gt; ( a b -- flag )</td><td>Whether two cells differ.</td></tr>
+<tr><td>&lt; ( a b -- flag )</td><td>Whether a orders before b; numbers, strings and money order.</td></tr>
+<tr><td>&gt; ( a b -- flag )</td><td>Whether a orders after b.</td></tr>
+<tr><td>&lt;= ( a b -- flag )</td><td>Whether a does not order after b.</td></tr>
+<tr><td>&gt;= ( a b -- flag )</td><td>Whether a does not order before b.</td></tr>
+<tr><td>NOT ( flag -- flag )</td><td>The other truth value.</td></tr>
+<tr><td>AND ( a b -- flag )</td><td>True when both are true.</td></tr>
+<tr><td>OR ( a b -- flag )</td><td>True when either is true.</td></tr>
+<tr><td>TRUE ( -- flag )</td><td>The true value.</td></tr>
+<tr><td>FALSE ( -- flag )</td><td>The false value.</td></tr>
+</table>
+
+<h3>Stack shuffles and aggregates</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>DUP ( x -- x x )</td><td>Copy the top cell.</td></tr>
+<tr><td>DROP ( x -- )</td><td>Discard the top cell.</td></tr>
+<tr><td>SWAP ( x y -- y x )</td><td>Exchange the top two cells.</td></tr>
+<tr><td>OVER ( x y -- x y x )</td><td>Copy the second cell over the top.</td></tr>
+<tr><td>NIP ( x y -- y )</td><td>Discard the second cell.</td></tr>
+<tr><td>TUCK ( x y -- y x y )</td><td>Copy the top cell under the second.</td></tr>
+<tr><td>ROT ( x y z -- y z x )</td><td>Bring the third cell to the top.</td></tr>
+<tr><td>ROLL ( n -- )</td><td>Move the cell at level n to the top, counting from 1 at the top.</td></tr>
+<tr><td>PICK ( n -- x )</td><td>Copy the cell at level n to the top.</td></tr>
+<tr><td>DEPTH ( -- n )</td><td>How many cells the stack holds.</td></tr>
+<tr><td>CLEAR ( &hellip; -- )</td><td>Empty the stack.</td></tr>
+<tr><td>GATHER ( x1 &hellip; xn n -- list )</td><td>Collect the n cells under the count into one list.</td></tr>
+<tr><td>UNPACK ( list -- x1 &hellip; xn n )</td><td>Spread a list onto the stack and push how many; UNPACK GATHER round-trips.</td></tr>
+<tr><td>LASTX ( -- x )</td><td>The top cell the last word to take one consumed.</td></tr>
+</table>
+
+<h3>Registers, modes, history and definitions</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>STO ( x name -- )</td><td>Bank a cell in a named register.</td></tr>
+<tr><td>RCL ( name -- x )</td><td>Fetch a cell from a named register.</td></tr>
+<tr><td>CLOSE ( name -- )</td><td>Shut the resource opened under that name and let the name go.</td></tr>
+<tr><td>CLOSEALL ( -- n )</td><td>Shut everything that is open and push how many there were.</td></tr>
+<tr><td>BOUND ( -- list )</td><td>What is open right now: a list of name/kind pairs, empty when nothing is.</td></tr>
+<tr><td>UNDO ( -- )</td><td>Put the stack back as the previous line found it.</td></tr>
+<tr><td>REDO ( -- )</td><td>Put back the stack UNDO stepped away from; anything else you do clears it.</td></tr>
+<tr><td>DEG ( -- )</td><td>Read and write angles in degrees.</td></tr>
+<tr><td>RAD ( -- )</td><td>Read and write angles in radians.</td></tr>
+<tr><td>FIX ( n -- )</td><td>Show numbers to n decimal places.</td></tr>
+<tr><td>SCI ( n -- )</td><td>Show numbers in scientific notation to n places.</td></tr>
+<tr><td>ENG ( n -- )</td><td>Show numbers in engineering notation to n places.</td></tr>
+<tr><td>STD ( -- )</td><td>Show numbers at their own precision.</td></tr>
+<tr><td>: NAME &hellip; ;</td><td>Define a user word; refused at definition if its body names an unknown word.</td></tr>
+<tr><td>VIEW ( -- )</td><td>Print the word named next back as it was defined.</td></tr>
+<tr><td>HELP ( -- )</td><td>Show what the word named next does — <code>HELP MEAN</code>, not <code>"MEAN" HELP</code>.</td></tr>
+<tr><td>WORDS ( -- )</td><td>List every word in the dictionary, grouped by where it came from.</td></tr>
+</table>
+
+<h3>The trace and the tape</h3>
+<p>Both are state, because both are reached by dictionary words and a
+dictionary word reaches the state or it reaches nothing. Neither performs
+an effect: the trace rides the same output lines every other word answers
+with, and the shell decides what to do with them.</p>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>TRACE ( -- )</td><td>Show the stack after every token, indented where a program runs, until NOTRACE.</td></tr>
+<tr><td>NOTRACE ( -- )</td><td>Stop showing the stack after every token.</td></tr>
+<tr><td>TAPE ( -- n )</td><td>How many rows the tape holds; it keeps the last 500 and drops the oldest.</td></tr>
+<tr><td>CLEARTAPE ( -- )</td><td>Throw the tape away and start it again empty.</td></tr>
+</table>
+<p>A trace row is the token, a marker and a stack. The marker is
+<code>|</code> for a token that ran, <code>&raquo;</code> for a
+sub-evaluation being entered and <code>&laquo;</code> for one returning,
+and the indent is two spaces per level of nesting. That indent is not
+decoration: a user word's body, a <code>{ &hellip; }</code> literal and
+every pass of a combinator run on a <em>fresh</em> stack, so the cells on
+an indented row are a different stack from the ones above it. Printed
+flat, a cascade would read as one stack that suddenly lost its lower
+half.</p>
+<pre><code>&gt; 250 VAT
+  250        | 300 250
+  VAT        &raquo; DUP 0.2 * +
+    DUP      | 250 250
+    0.2      | 250 250 0.2
+    *        | 250 50
+    +        | 300
+  VAT        &laquo; 300 300</code></pre>
+<p><code>VAT</code> is applied with <code>300 250</code> on the caller's
+stack and its body sees only the <code>250</code> — the one cell a user
+word is ever given.</p>
+
+<h3>Trigonometry — honours the current angle mode</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>SIN, COS, TAN ( a -- x )</td><td>Sine, cosine, tangent of an angle in the current angle mode.</td></tr>
+<tr><td>ASIN, ACOS ( x -- a )</td><td>The angle whose sine or cosine is x; refuses x outside -1 to 1.</td></tr>
+<tr><td>ATAN ( x -- a )</td><td>The angle whose tangent is x.</td></tr>
+<tr><td>ATAN2 ( y x -- a )</td><td>The angle of the point x y from the origin, in all four quadrants.</td></tr>
+</table>
+
+<h3>Combinators — take one or two quoted programs off the stack</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>IFT ( x flag prog -- y )</td><td>Run prog on x when flag is true, otherwise leave x.</td></tr>
+<tr><td>IFTE ( x flag then else -- y )</td><td>Run one of two programs on x, chosen by flag.</td></tr>
+<tr><td>TIMES ( x prog n -- y )</td><td>Run prog on x n times over, each pass taking the last answer.</td></tr>
+<tr><td>MAP ( list prog -- list )</td><td>Run prog on every element and collect the answers.</td></tr>
+<tr><td>FILTER ( list prog -- list )</td><td>Keep the elements prog answers True for.</td></tr>
+<tr><td>FOLD ( list init prog -- x )</td><td>Run prog over each element with a running answer, starting from init.</td></tr>
+</table>
+
+<h3>Serialization and the two renders</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>RckSave(st)</td><td>The user dictionary as a <code>List Of String</code>, one <code>: NAME &hellip; ;</code> line per definition — the mill owns the path.</td></tr>
+<tr><td>RckLoad(st, lines)</td><td>Re-registers a saved dictionary; a malformed line errors and leaves the dictionary unchanged.</td></tr>
+<tr><td>RckShow(st)</td><td>Line-oriented text for a scrolling shell: <code>x: y: z: t:</code> labels, deepest first so <code>x</code> lands nearest the prompt. Complete on its own — <code>[ empty ]</code> for an empty stack, and <code>[ depth n ]</code> above the top four for one deeper than four.</td></tr>
+<tr><td>RckRows(st)</td><td>Structured rows (label, kind constant, text) for a graphical shell, one per cell however deep — the same formatting path as <code>RckShow</code>, so the two cannot disagree about a row. A graphical shell paints what it has room for and puts the depth in a status field.</td></tr>
+</table>
+
+<h3>Resources held by name</h3>
+<p>A handle must never reach the stack. The ground for that rule is
+specific: a handle is a Number, <code>UNDO</code> restores the stack, and
+the number naming an open file would go with it — leaving the file open
+and unreachable. That is a true account of a handle <em>on the stack</em>.
+It is not an account of a resource held anywhere else.</p>
+<p><code>RckUndone</code> rewrites <code>RckStack</code>,
+<code>RckHist</code> and <code>RckFore</code>, and nothing else. So a
+resource bound in the state under a <em>name</em> the session chose is
+still bound after any number of undos, exactly as a word defined on an
+earlier line is still defined. The name is the whole of the difference: it
+is not a value that can be dropped, overwritten or undone away, and
+<code>CLOSE</code> and <code>BOUND</code> can always reach what is open
+because the table — not the stack — is where openness lives.</p>
+<p><strong>The closer travels with the resource.</strong> The engine cannot
+know how to shut a recio file, an isam table or a plotter without depending
+on every machine that has one. So whatever opens it supplies a closer with
+the handle closed over inside, and the engine shuts everything the same way
+without knowing what any of it is — the shape
+<a href="isam.html">isam</a> already uses for its reader, writer and key
+functions. <code>ResKind</code> is for a session to read in
+<code>BOUND</code>, never for the engine to branch on; the moment it
+branched on a kind it would be back to depending on the machines.</p>
+<p>No handle appears anywhere in this. <code>BOUND</code> answers names and
+kinds, so there is no number a session could take away and use.</p>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>RckBind(st, name, kind, shut)</td><td>Bind a live resource under a name, with <code>shut</code> a <code>[ -- Boolean ]</code> that has the handle closed over inside it. What a machine's own <code>OPEN</code> word calls once it has one.</td></tr>
+<tr><td>RckBoundTo(st, name)</td><td>Whether anything is open under that name — the check an <code>OPEN</code> word makes before binding, so it can refuse in its own words.</td></tr>
+<tr><td>RckResOf(st, name)</td><td>The resource under that name, as a list that is empty when there is none.</td></tr>
+<tr><td>RckBoundNames(st)</td><td>Every name currently bound.</td></tr>
+<tr><td>RckUnbind(st, name)</td><td>Let a name go without calling its closer. <code>CLOSE</code> is the word that does both.</td></tr>
+</table>
+<p class="note">One thing the table cannot check: two names bound to the
+<em>same</em> handle. Closing both would shut it twice, and a second close
+on a returned handle aborts. A closer is an opaque function, and comparing
+two of them is not a question Shoddy can ask — so it belongs to whatever
+opens the resource, which hands out one binding per open.</p>
+
+<h2 id="seeds">The Reckoner Seeds</h2>
+<p>Files bridge the rest of the standard library into this engine
+through the registration API above — one per domain, each folding its
+words in with <code>RckReg</code>. None of them is catalogued in
+<a href="index.html">the general machines index</a>: a seed has no bearing
+on its own, only together with <code>cuttle</code> and this engine, so it
+is listed here instead, where seeding one actually means something.</p>
+<table>
+<tr><th></th><th>Seed</th><th>Bridges</th></tr>
+<tr><td class="uicon"><a href="seedmath.html"><img src="../media/icons/seedmath.svg" alt=""></a></td><td><a href="seedmath.html">seedmath</a></td><td><code>LOGB LOG2 HYPOT DIST CLAMP LERP REMAP ROUNDTO</code> — <a href="math.html">math</a>'s geometry and interpolation words.</td></tr>
+<tr><td class="uicon"><a href="seedstats.html"><img src="../media/icons/seedstats.svg" alt=""></a></td><td><a href="seedstats.html">seedstats</a></td><td><code>MEAN MEDIAN STDEV STDEVP VAR SUM QUANTILE CORREL NORMCDF NORMINV TCDF</code> — <a href="stats.html">stats</a>'s descriptive layer, guarded where stats itself isn't.</td></tr>
+<tr><td class="uicon"><a href="seedseq.html"><img src="../media/icons/seedseq.svg" alt=""></a></td><td><a href="seedseq.html">seedseq</a></td><td><code>RANGE LENGTH REVERSE CONCAT FIRST REST SORTL PAIR HEAD TAIL</code> — list and pair structure over <a href="seq.html">seq</a>.</td></tr>
+<tr><td class="uicon"><a href="seedstr.html"><img src="../media/icons/seedstr.svg" alt=""></a></td><td><a href="seedstr.html">seedstr</a></td><td><code>STRCAT UPPER LOWER TRIM SPLIT JOIN TOFIXED</code> — <a href="str.html">str</a>'s text words.</td></tr>
+<tr><td class="uicon"><a href="seedmoney.html"><img src="../media/icons/seedmoney.svg" alt=""></a></td><td><a href="seedmoney.html">seedmoney</a></td><td><code>MONEY MADD MSUB MSPLIT MFMT</code> — <a href="money.html">money</a>'s exact currency.</td></tr>
+<tr><td class="uicon"><a href="seedmatrix.html"><img src="../media/icons/seedmatrix.svg" alt=""></a></td><td><a href="seedmatrix.html">seedmatrix</a></td><td><code>MAT IDENT TRANSP MMUL MATADD MGET DOT</code> — <a href="matrix.html">matrix</a>, converting at the bridge, no array cell at the keyboard.</td></tr>
+<tr><td class="uicon"><a href="seeddict.html"><img src="../media/icons/seeddict.svg" alt=""></a></td><td><a href="seeddict.html">seeddict</a></td><td><code>DPUT DGET DHAS DKEYS</code> — a list of pairs treated as a dictionary, keyed structurally.</td></tr>
+<tr><td class="uicon"><a href="seedfile.html"><img src="../media/icons/seedfile.svg" alt=""></a></td><td><a href="seedfile.html">seedfile</a></td><td><code>READLINES WRITELINES APPENDLINE FILEEXISTS</code> — text files over the guarded builtins, never the aborting ones.</td></tr>
+<tr><td class="uicon"><a href="seedcsv.html"><img src="../media/icons/seedcsv.svg" alt=""></a></td><td><a href="seedcsv.html">seedcsv</a></td><td><code>CSVLOAD CSVREAD CSVSAVE CSVWIDTH CSVCOLUMN CSVCOLUMNNUMS CSVHEADS CSVBODY CSVGET CSVWHERE CSVPAIRS</code> — <a href="csv.html">csv</a> over the guarded builtins.</td></tr>
+<tr><td class="uicon"><a href="seedisam.html"><img src="../media/icons/seedisam.svg" alt=""></a></td><td><a href="seedisam.html">seedisam</a></td><td><code>ISAMALL ISAMRANGE ISAMHAS ISAMGETOR ISAMCOUNT</code> — <a href="isam.html">isam</a>'s whole-table words, over a handle the caller already opened.</td></tr>
+<tr><td class="uicon"><a href="seedclock.html"><img src="../media/icons/seedclock.svg" alt=""></a></td><td><a href="seedclock.html">seedclock</a></td><td><code>STAMP STAMPDATE STAMPTIME TICKS ELAPSED FORMATDURATION</code> — <a href="clock.html">clock</a>'s stamping and monotonic timing.</td></tr>
+<tr><td class="uicon"><a href="seedrandom.html"><img src="../media/icons/seedrandom.svg" alt=""></a></td><td><a href="seedrandom.html">seedrandom</a></td><td><code>RANDOM RANDOMRANGE RANDOMINT SHUFFLE SAMPLE SEED</code> — <a href="random.html">random</a>, plus the builtin that makes a session reproducible.</td></tr>
+<tr><td class="uicon"><a href="seedbool.html"><img src="../media/icons/seedbool.svg" alt=""></a></td><td><a href="seedbool.html">seedbool</a></td><td><code>HEX BIN INBASE FROMBASE BITAND BITOR BITXOR BITNOT SHL SHR MASK GETFIELD BITAT POPCOUNT NAND NOR XOR XNOR IMPLIES IFF</code> — <a href="bool.html">bool</a>'s binary layer, translating the strictest guards in the tree into refusals. The widest seed, and the six gates are here because a user word takes exactly one cell, so a keyboard cannot define a two-argument <code>XOR</code> for itself.</td></tr>
+<tr><td class="uicon"><a href="seedshaker.html"><img src="../media/icons/seedshaker.svg" alt=""></a></td><td><a href="seedshaker.html">seedshaker</a></td><td><code>SHAKE UNSHAKE UNSHAKEOR SHAKEOK SHAKEMOD</code> — <a href="shaker.html">shaker</a>'s reversible obfuscation over lists of numbers.</td></tr>
+<tr><td class="uicon"><a href="seedjson.html"><img src="../media/icons/seedjson.svg" alt=""></a></td><td><a href="seedjson.html">seedjson</a></td><td><code>JSONPARSE JSONTEXT JSONPRETTY JSONLOAD JSONSAVE</code> — <a href="json.html">json</a>, an object landing as the same dict shape <code>seeddict</code> already established.</td></tr>
+<tr><td class="uicon"><a href="seedxml.html"><img src="../media/icons/seedxml.svg" alt=""></a></td><td><a href="seedxml.html">seedxml</a></td><td><code>XMLPARSE XMLTEXT XMLPRETTY XMLLOAD XMLSAVE</code> — <a href="xml.html">xml</a>, a node as a tagged list, an element's attributes as a dict.</td></tr>
+<tr><td class="uicon"><a href="seedhtml.html"><img src="../media/icons/seedhtml.svg" alt=""></a></td><td><a href="seedhtml.html">seedhtml</a></td><td><code>HTMLPARSE HTMLTEXT HTMLPRETTY HTMLLOAD HTMLSAVE</code> — <a href="html.html">html</a>'s tolerant reader and writer, sharing seedxml's tree shape for the same <code>Xml</code> type.</td></tr>
+<tr><td class="uicon"><a href="seedsimplex.html"><img src="../media/icons/seedsimplex.svg" alt=""></a></td><td><a href="seedsimplex.html">seedsimplex</a></td><td><code>LPPROBLEM LPSOLVE</code> — <a href="simplex.html">simplex</a>'s linear-programming solver, a problem and its solution each a dict.</td></tr>
+<tr><td class="uicon"><a href="seedlin.html"><img src="../media/icons/seedlin.svg" alt=""></a></td><td><a href="seedlin.html">seedlin</a></td><td>Determinants, inverses, systems, echelon forms, rank, the LU/QR/Cholesky factorisations, characteristic polynomials, eigenvalues and the vector words — <a href="lin.html">lin</a>'s named public surface.</td></tr>
+<tr><td class="uicon"><a href="seedeng.html"><img src="../media/icons/seedeng.svg" alt=""></a></td><td><a href="seedeng.html">seedeng</a></td><td>Trigonometry, hyperbolics, complex numbers, statistics and distributions, number theory, polynomial arithmetic, sequences, unit conversion and physical constants — <a href="eng.html">eng</a>'s non-quotation surface.</td></tr>
+<tr><td class="uicon"><a href="seedfin.html"><img src="../media/icons/seedfin.svg" alt=""></a></td><td><a href="seedfin.html">seedfin</a></td><td>Rates, time value of money, growth, statistics, budgeting, loan amortization, NPV/IRR/payback, CAGR/ROI, dollar-cost averaging, margin, break-even, payroll and depreciation — <a href="fin.html">fin</a>'s core, its date/bond subsystem left for its own pass.</td></tr>
+<tr><td class="uicon"><a href="seedalg.html"><img src="../media/icons/seedalg.svg" alt=""></a></td><td><a href="seedalg.html">seedalg</a></td><td><code>ALGSIMPLIFY ALGEXPAND ALGFACTOR ALGSOLVE ALGDESOLVE</code> — <a href="alg.html">alg</a>'s symbolic algebra, staying at the text boundary rather than putting an expression tree on the stack.</td></tr>
+<tr><td class="uicon"><a href="seedneural.html"><img src="../media/icons/seedneural.svg" alt=""></a></td><td><a href="seedneural.html">seedneural</a></td><td><code>NEURALNEW NEURALPREDICT NEURALSCALERFIT NEURALSCALERAPPLY</code> — <a href="neural.html">neural</a>'s network and scaler as dicts, both training paths, both weight file formats, and the whole model.</td></tr>
+<tr><td class="uicon"><a href="seedbuiltin.html"><img src="../media/icons/seedbuiltin.svg" alt=""></a></td><td><a href="seedbuiltin.html">seedbuiltin</a></td><td><code>LEN MID VAL NTH CALL ERROR</code> and the rest of the RUNTIME's own builtins — the only seed that bridges no machine.</td></tr>
+<tr><td class="uicon"><a href="seedrecio.html"><img src="../media/icons/seedrecio.svg" alt=""></a></td><td><a href="seedrecio.html">seedrecio</a></td><td><code>RECOPEN RECGET RECPUT RECAPPEND RECALL</code> — <a href="recio.html">recio</a>'s record files, driven by a schema typed at the prompt. The first seed that opens something and keeps it open, over the named-resource table above.</td></tr>
+<tr><td class="uicon"><a href="seedisam.html"><img src="../media/icons/seedisam.svg" alt=""></a></td><td><a href="seedisam.html">seedisam</a></td><td><code>ISAMOPEN ISAMINSERT ISAMGETOR ISAMRANGE</code> — <a href="isam.html">isam</a>'s indexed tables, over the same table and the same schema. Also has an older entry point that takes a table its host already opened.</td></tr>
+<tr><td class="uicon"><a href="seedvt100.html"><img src="../media/icons/seedvt100.svg" alt=""></a></td><td><a href="seedvt100.html">seedvt100</a></td><td><code>VTCLEARSCREEN VTCURSORPOS VTBOLD VTEVALKEY</code> — <a href="vt100.html">vt100</a>'s escape sequences as strings. Pure: the machine builds them and never emits one.</td></tr>
+<tr><td class="uicon"><a href="seedkeys.html"><img src="../media/icons/seedkeys.svg" alt=""></a></td><td><a href="seedkeys.html">seedkeys</a></td><td><code>KEYNAME KEYGLYPH KEYIS</code> — <a href="keys.html">keys</a>'s physical key codes, named. A lookup table, and no keyboard is read.</td></tr>
+<tr><td class="uicon"><a href="seedscribbler.html"><img src="../media/icons/seedscribbler.svg" alt=""></a></td><td><a href="seedscribbler.html">seedscribbler</a></td><td><code>SCRIBOPEN SCRIBFILL SCRIBPIXEL SCRIBTEXT SCRIBSAVE</code> — <a href="scribbler.html">scribbler</a>'s window, held by name over the table above. A session can draw.</td></tr>
+<tr><td class="uicon"><a href="seednet.html"><img src="../media/icons/seednet.svg" alt=""></a></td><td><a href="seednet.html">seednet</a></td><td><code>NETGET NETREQUEST</code> — <a href="net.html">net</a>'s request/response half. Opens and closes inside one word, so it needs the table not at all.</td></tr>
+<tr><td class="uicon"><a href="seedturtle.html"><img src="../media/icons/seedturtle.svg" alt=""></a></td><td><a href="seedturtle.html">seedturtle</a></td><td><code>TURTLEFORWARD TURTLERIGHT TURTLEPENUP TURTLESAVE</code> — <a href="turtle.html">turtle</a>'s LOGO turtle. The seed <code>RckUpdated</code> exists for: the first resource whose state is Shoddy's own and changes with every word.</td></tr>
+<tr><td class="uicon"><a href="seedplotter.html"><img src="../media/icons/seedplotter.svg" alt=""></a></td><td><a href="seedplotter.html">seedplotter</a></td><td><code>PLOTHISTOGRAM PLOTBAR PLOTPIE PLOTBOX PLOTSCATTER</code> — <a href="plotter.html">plotter</a>'s five charts, one word away from the numbers a session already has.</td></tr>
+<tr><td class="uicon"><a href="seedbuzzer.html"><img src="../media/icons/seedbuzzer.svg" alt=""></a></td><td><a href="seedbuzzer.html">seedbuzzer</a></td><td><code>BUZZPLAY BUZZFREQ BUZZLENGTH BUZZSTOP</code> — <a href="buzzer.html">buzzer</a>'s MML tunes. The odd one out: a sound is fired rather than opened, so it binds nothing and needs no <code>CLOSE</code>.</td></tr>
+<tr><td class="uicon"><a href="seedhttps.html"><img src="../media/icons/seedhttps.svg" alt=""></a></td><td><a href="seedhttps.html">seedhttps</a></td><td><code>HTTPSGET HTTPSTATUS HTTPHEADER HTTPBODY</code> — <a href="https.html">https</a>'s replies taken apart. Five of its seven words are pure, so they work with no network at all.</td></tr>
+</table>
+
+<h2 id="usedby">Who Uses It</h2>
+<table>
+<tr><th></th><th>User</th><th>How</th></tr>
+<tr><td class="uicon"><a href="../mills/halifax.html"><img src="../media/icons/halifax.svg" alt=""></a></td><td><a href="../mills/halifax.html">halifax</a></td><td>The whole of the calculator. <code>RckNew</code> folded through seven seeds is its dictionary, <code>RckEval</code> is the only door its shell needs, and <code>RckShow</code>, <code>RckSave</code>, <code>RckLoad</code> and <code>RckTape</code> are its render, its file format and its tape.</td></tr>
+</table>
+<p>Every reckoner seed listed above also includes this engine, to register its
+words against — already listed there rather than repeated here.</p>
+
+<h2 id="uses">The Machines It Uses</h2>
+<table>
+<tr><th></th><th>Machine</th><th>Why</th></tr>
+<tr><td class="uicon"><a href="cuttle.html"><img src="../media/icons/cuttle.svg" alt=""></a></td><td><a href="cuttle.html">cuttle</a></td><td>The whole value set and pure algebra every word and combinator here runs against.</td></tr>
+<tr><td class="uicon"><a href="seq.html"><img src="../media/icons/seq.svg" alt=""></a></td><td><a href="seq.html">seq</a></td><td>List plumbing throughout the tokenizer, the evaluator's walk, and the combinators' folding.</td></tr>
+<tr><td class="uicon"><a href="str.html"><img src="../media/icons/str.svg" alt=""></a></td><td><a href="str.html">str</a></td><td><code>Upper</code> case-folds a name at registration and lookup, matching the language.</td></tr>
+<tr><td class="uicon"><a href="dict.html"><img src="../media/icons/dict.svg" alt=""></a></td><td><a href="dict.html">dict</a></td><td>The registers are an association list, exactly as <a href="dict.html">dict</a> already shapes one.</td></tr>
+</table>
+
+<nav class="pager" aria-label="Machines, in catalog order">
+  <a href="cuttle.html"><span class="dir">&larr; Previous machine</span><span class="ttl">cuttle</span></a>
+  <a class="next" href="seedmath.html"><span class="dir">Next machine &rarr;</span><span class="ttl">seedmath</span></a>
+</nav>
+<footer>Named for the shoddy mills of the West Riding: Useless Things Made
+Useful Through Skill (<a href="../heritage.html">the heritage of the name</a>).<br>
+&copy; 2026 Stephen Vincent Foster</footer>
+</div>
+</body>
+</html>

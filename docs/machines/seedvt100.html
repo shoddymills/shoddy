@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="reckoner seed: vt100, escape sequences as strings — machines/seeds/seedvt100.shoddy">
+<title>seedvt100 — A Reckoner Seed | Shoddy Machines</title>
+<link rel="stylesheet" href="../style.css">
+<link rel="icon" href="../favicon.svg" type="image/svg+xml">
+<link rel="alternate icon" href="../favicon.ico" sizes="48x48">
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+</head>
+<body>
+<div class="topbar"><div class="inner">
+  <div class="row">
+    <a class="phase" href="index.html"><img class="mark" src="../media/brand/shoddy-icon.svg" alt="" width="23" height="23">Shoddy · The Machines</a>
+    <span class="spacer"></span>
+    <nav class="docnav meta" aria-label="About"><a href="../heritage.html">Heritage</a><a href="../authorship.html">Authorship</a></nav>
+  </div>
+  <nav class="docnav main" aria-label="Documentation"><a href="../tutorials/index.html">Tutorials</a><a href="../guide.html">Guide</a><a href="../quickref.html">Reference</a><span class="here">Machines</span><a href="../mills/index.html">Mills</a><a href="../stack.html">Stack</a><a href="../spec.html">Spec</a><a href="../setup.html">Setup</a><a href="../vscode.html">VS Code</a><a href="../assistants.html">AI</a><a href="../build.html">Toolchain</a><a href="../errors.html">Errors</a></nav>
+</div></div>
+<div class="wrap">
+
+
+<header class="mast has-icon"><div><p class="eyebrow"><a href="index.html#runtime-stack">The Machines &middot; Runtime stack</a></p><h1>seedvt100</h1><p class="kicker">A reckoner seed: vt100, escape sequences as strings — machines/seeds/seedvt100.shoddy</p></div><img class="micon" src="../media/icons/seedvt100.svg" alt="the seedvt100 machine&#39;s icon"></header>
+<nav class="pagertop" aria-label="Machines, in catalog order"><a href="seedrecio.html">&larr; seedrecio</a><a href="index.html">All machines</a><a href="seedkeys.html">seedkeys &rarr;</a></nav>
+
+<h2 id="summary">Summary</h2>
+<p><code>seedvt100</code> brings <a href="vt100.html">vt100</a>'s whole
+surface to a prompt: ninety-odd escape sequences as string constants,
+the cursor and scrolling-region words that take numbers, and
+<code>VTEVALKEY</code> for reading a keystroke sequence back.</p>
+<p><strong>This seed exists because a note was wrong.</strong>
+<a href="../mills/halifax.html">halifax</a> listed
+<a href="vt100.html">vt100</a> among the machines a prompt could not
+reach, under &ldquo;the terminal, which this shell already owns. Two
+things driving one screen is one thing driving it wrongly.&rdquo; That is
+a true sentence about a machine that <em>drives</em> a terminal, and
+<a href="vt100.html">vt100</a> is not one. Its own header says so:
+<em>&ldquo;Pure — nothing here writes to the screen.&rdquo;</em> Every word
+below <code>EvalKey</code> <strong>builds and returns a string</strong>.
+The program does the printing, or does not.</p>
+<p>So the note confused <em>building</em> an escape sequence with
+<em>emitting</em> one. There was never a rule in the way, and nothing here
+needs the resource table, a guarded builtin or a capability — this is the
+most ordinary kind of seed there is, a machine of pure functions over
+strings and numbers.</p>
+
+<h2 id="why">Why It's Useful</h2>
+<p><strong>What a session does with the string</strong> is its own
+business, and there are two honest answers. It can join sequences with
+<code>+</code> and <code>WRITEFILE</code> the result, which is how you
+build a banner, a terminal script or a test fixture. And halifax
+<em>prints</em> what a line answers — so a string of escapes will reach the
+terminal and take effect.</p>
+<p><strong>That second one is worth saying plainly:</strong> a session can
+scramble its own display this way, and <code>VTCLEARSCREEN</code> will do
+exactly what it says. That is not a leak and not a rule broken — it is the
+operator's own terminal doing what the operator asked, exactly as if they
+had typed the escape by hand. The stack, the dictionary and the tape are
+untouched, and <code>CLEAR</code> or a redraw puts the screen back.</p>
+<p><strong>The constants are registered from a table</strong>, not one
+registration line apiece. Eighty-nine words that differ only in a name, a
+string and a sentence are data, and writing them as data is what lets the
+list be read down and checked against the VT100 reference in one pass. The
+eight that take numbers and the one that reads a key are registered by
+hand, because each has a guard of its own.</p>
+<p><strong><code>VTESC</code> and <code>VTCSI</code> are bridged too</strong>,
+deliberately. They are the building blocks the rest is made of, and with
+them a session can assemble a sequence this machine never named — which is
+better than a bridge that only reaches the ones somebody thought of.</p>
+<p><strong>A VT100 counts from 1.</strong> A zero row, column or move count
+is accepted by a real terminal and does something other than what the
+caller meant, so it is refused here rather than built. The scrolling region
+is the one pair that is a <em>range</em> rather than a point, so it is the
+one with an ordering to get wrong, and it is checked.</p>
+
+<h2 id="guide">User's Guide</h2>
+<pre><code>&gt; VTCLEARSCREEN VTCURSORHOME +
+x: "…"
+
+&gt; 3 5 VTCURSORPOS VTBOLD + "HELLO" + VTATTRSOFF +
+x: "…"
+
+&gt; VTESC "OP" + VTEVALKEY
+x: "pf1"
+
+&gt; "banner.txt" VTCLEARSCREEN VTBOLD + "SHODDY" + WRITEFILE
+x: True</code></pre>
+<p>The last is the use that needs no terminal at all: a file of escape
+sequences, built at a prompt, to be <code>cat</code>-ed later.</p>
+
+<h2 id="words">Word Reference</h2>
+<p class="tag">The constants all have the effect <code>( -- str )</code>.
+They are listed by the section of the VT100 reference they come from; the
+seed's own table is in the same order.</p>
+<table>
+<tr><th>Group</th><th>Words</th></tr>
+<tr><td>Building blocks</td><td><code>VTESC VTCSI</code></td></tr>
+<tr><td>Modes</td><td><code>VTNEWLINEMODE VTLINEFEEDMODE VTCURSORKEYAPP VTCURSORKEYNORMAL VT132COLS VT80COLS VTSMOOTHSCROLL VTJUMPSCROLL VTREVERSESCREEN VTNORMALSCREEN VTORIGINRELATIVE VTORIGINABSOLUTE VTAUTOWRAP VTNOAUTOWRAP VTAUTOREPEAT VTNOAUTOREPEAT VTINTERLACE VTNOINTERLACE VTVT52MODE VTANSIMODE</code></td></tr>
+<tr><td>Keypad</td><td><code>VTALTKEYPAD VTNUMKEYPAD</code></td></tr>
+<tr><td>Character sets</td><td><code>VTUKG0 VTUKG1 VTUSG0 VTUSG1 VTSPECIALG0 VTSPECIALG1 VTALTROMG0 VTALTROMG1 VTALTROMSPECIALG0 VTALTROMSPECIALG1 VTSHIFT2 VTSHIFT3</code></td></tr>
+<tr><td>Attributes</td><td><code>VTATTRSOFF VTBOLD VTLOWINTENSITY VTUNDERLINE VTBLINK VTREVERSEVIDEO VTINVISIBLE</code></td></tr>
+<tr><td>Cursor</td><td><code>VTCURSORHOME VTHVHOME VTINDEXDOWN VTREVERSEINDEX VTNEXTLINE VTSAVECURSOR VTRESTORECURSOR</code></td></tr>
+<tr><td>Tabs</td><td><code>VTTABSET VTTABCLEAR VTTABCLEARALL</code></td></tr>
+<tr><td>Line size</td><td><code>VTDOUBLEHEIGHTTOP VTDOUBLEHEIGHTBOTTOM VTSINGLEWIDTHHEIGHT VTDOUBLEWIDTHHEIGHT</code></td></tr>
+<tr><td>Erasing</td><td><code>VTCLEAREOL VTCLEARBOL VTCLEARLINE VTCLEAREOS VTCLEARBOS VTCLEARSCREEN</code></td></tr>
+<tr><td>Status</td><td><code>VTREQUESTSTATUS VTREQUESTCURSORPOS VTREQUESTTERMINALTYPE VTRESETTERMINAL</code></td></tr>
+<tr><td>Tests &amp; LEDs</td><td><code>VTSCREENALIGNMENTTEST VTTESTPOWERUP VTTESTLOOPBACK VTTESTPOWERUPREPEAT VTTESTLOOPBACKREPEAT VTLEDSOFF VTLED1ON VTLED2ON VTLED3ON VTLED4ON</code></td></tr>
+<tr><td>VT52 mode</td><td><code>VTVT52GRAPHICS VTVT52NOGRAPHICS VTVT52UP VTVT52DOWN VTVT52RIGHT VTVT52LEFT VTVT52HOME VTVT52REVERSEINDEX VTVT52CLEAREOL VTVT52CLEAREOS VTVT52IDENT VTVT52IDENTRESPONSE</code></td></tr>
+</table>
+<p class="tag">The words that take arguments</p>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>VTCURSORUP ( n -- str )</td><td>Move the cursor up n lines. Also <code>VTCURSORDOWN</code>, <code>VTCURSORRIGHT</code>, <code>VTCURSORLEFT</code>. Refuses a count below 1.</td></tr>
+<tr><td>VTCURSORPOS ( row col -- str )</td><td>Put the cursor at row, col. Both count from 1.</td></tr>
+<tr><td>VTHVPOS ( row col -- str )</td><td>The same position, by the horizontal-and-vertical sequence.</td></tr>
+<tr><td>VTVT52POS ( row col -- str )</td><td>VT52 mode: the same.</td></tr>
+<tr><td>VTSCROLLREGION ( top bottom -- str )</td><td>Confine scrolling to those lines. Refuses unless top is above bottom.</td></tr>
+<tr><td>VTEVALKEY ( raw -- str )</td><td>What escape sequence raw is, as a name: <code>"up"</code>, <code>"down"</code>, <code>"left"</code>, <code>"right"</code>, <code>"pf1"</code>&ndash;<code>"pf4"</code>, <code>"enter"</code>, the character itself for a keypad key, or <code>"unknown"</code>. Both the application-mode and normal-mode forms are recognised.</td></tr>
+</table>
+
+<h2 id="usedby">Who Uses It</h2>
+<table>
+<tr><th></th><th>User</th><th>How</th></tr>
+<tr><td class="uicon"><a href="../mills/halifax.html"><img src="../media/icons/halifax.svg" alt=""></a></td><td><a href="../mills/halifax.html">halifax</a></td><td>The calculator's terminal-control words — escape sequences built at the prompt, to be written to a file or printed.</td></tr>
+</table>
+<p>A mill claims this seed by folding <code>RckSeedVt100</code> over its
+reckoner state, which is all halifax does.</p>
+
+<h2 id="uses">The Machines It Uses</h2>
+<table>
+<tr><th></th><th>Machine</th><th>Why</th></tr>
+<tr><td class="uicon"><a href="vt100.html"><img src="../media/icons/vt100.svg" alt=""></a></td><td><a href="vt100.html">vt100</a></td><td>The domain this seed bridges: every escape-sequence builder, and <code>EvalKey</code> for the other direction.</td></tr>
+<tr><td class="uicon"><a href="cuttle.html"><img src="../media/icons/cuttle.svg" alt=""></a></td><td><a href="cuttle.html">cuttle</a></td><td>The <code>Cell</code> type the sequences answer as.</td></tr>
+<tr><td class="uicon"><a href="reckoner.html"><img src="../media/icons/reckoner.svg" alt=""></a></td><td><a href="reckoner.html">reckoner</a></td><td><code>RckReg</code> and the argument readers every registered word is built from.</td></tr>
+<tr><td class="uicon"><a href="seq.html"><img src="../media/icons/seq.svg" alt=""></a></td><td><a href="seq.html">seq</a></td><td><code>Concat</code> and the fold that registers the constant table.</td></tr>
+</table>
+
+<nav class="pager" aria-label="Machines, in catalog order">
+  <a href="seedrecio.html"><span class="dir">&larr; Previous machine</span><span class="ttl">seedrecio</span></a>
+  <a class="next" href="seedkeys.html"><span class="dir">Next machine &rarr;</span><span class="ttl">seedkeys</span></a>
+</nav>
+<footer>Named for the shoddy mills of the West Riding: Useless Things Made
+Useful Through Skill (<a href="../heritage.html">the heritage of the name</a>).<br>
+&copy; 2026 Stephen Vincent Foster</footer>
+</div>
+</body>
+</html>

@@ -1,0 +1,266 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem halifax.shoddy — the shell: a prompt, four files, and nothing else.
+Rem
+Rem     bin/mill run mills/halifax/halifax.shoddy
+Rem     ./build.sh run                             (from this directory)
+Rem
+Rem Everything that touches the outside world is here and nothing else
+Rem is: reading a line, printing what came back, and the four words that
+Rem name a file. Every decision about what a line MEANS is in
+Rem halifax-core.shoddy, which is pure and which test.shoddy grades with
+Rem no terminal anywhere near it.
+Rem
+Rem ---- why the loop is one Def -------------------------------------
+Rem
+Rem HxLoop calls itself and only itself, in tail position. The compiler
+Rem turns a SELF tail call into a jump and a mutual one into a call, so a
+Rem loop written as HxLoop -> HxTurn -> HxLoop would grow the stack by a
+Rem frame or two per line entered. That is fine for an afternoon and not
+Rem fine for a redirected script of a hundred thousand lines, and
+Rem "nothing keyable aborts the mill" does not have an exception for
+Rem typing a lot. So QUIT is decided by a pure test BEFORE the turn
+Rem rather than by the turn handing back a stop, and the price is reading
+Rem the line twice, which costs a tokenize.
+Rem
+Rem ---- what QUIT does not do ---------------------------------------
+Rem
+Rem Nothing is saved on the way out. The tape and the words you defined
+Rem are gone unless SAVE or TAPESAVE put them somewhere, which is what
+Rem HELP QUIT says. A calculator that wrote files as it closed would be a
+Rem calculator that wrote files you did not ask for.
+Rem
+Rem ---- paths -------------------------------------------------------
+Rem
+Rem Resolved against the CURRENT DIRECTORY, and halifaxrc is looked for
+Rem there too. Guarded twins throughout — TryReadFile and TryWriteFile,
+Rem never ReadFile or WriteFile — because an unwritable path is an
+Rem ordinary answer to give at a prompt and an aborted mill is not.
+Rem ==================================================================
+
+Include "../../machines/str.shoddy"
+Include "halifax-core.shoddy"
+
+Rem ---- reading a line --------------------------------------------------
+
+Rem End of input is not an empty line, and the difference is the whole
+Rem reason this is InputLine and not Input: a redirected script has to end
+Rem the session, and a blank line typed at a prompt has to earn a fresh
+Rem prompt. InputLine reports the two separately; this lifts its flat
+Rem carrier into an answer that can be matched.
+Type HxIn = HxEof | HxTyped(HxText As String)
+
+Def HxAsked() As HxIn
+    HxAskedOf(InputLine(HxPrompt()))
+
+Def HxAskedOf(r As Array) As HxIn
+    If Nth(r, 1) Then
+        HxEof()
+    Else
+        HxTyped(Nth(r, 2))
+
+Rem ---- the loop --------------------------------------------------------
+
+Def HxLoop(st As RckState)
+    Select Case HxAsked()
+        Case HxTyped(line)
+            If HxQuits(line) Then
+                HxDone(st)
+            Else
+                HxLoop(HxTurn(st, line))
+        Case Else
+            HxDone(st)
+
+Rem Shut whatever the session left open, both ways out — QUIT and end of
+Rem input. This is NOT the "nothing is saved on the way out" rule being
+Rem broken: that rule is about not CREATING things nobody asked for, and
+Rem releasing a resource the session explicitly opened is the opposite.
+Rem A calculator that left a file locked, or a window on the screen,
+Rem after you told it to quit would be the surprising one.
+Rem
+Rem AND FOR ONE KIND OF RESOURCE IT IS NOT MERELY TIDY. A file handle is
+Rem closed by the process exiting anyway, so this is good manners. A
+Rem WINDOW is not: the mill runs the program on a background thread and
+Rem pumps windows on the main one, and with lingering on — which is
+Rem right, so that `mill run` of a drawing program leaves its picture up
+Rem — the pump loop keeps going while any window is open. A session that
+Rem opened one and quit would leave the mill running with no prompt.
+Rem Closing here is what lets the loop see no windows, break, and exit.
+Def HxDone(st As RckState)
+    RckShutAll(st)
+    Print("")
+
+Rem One turn: work out what the line was, do it, show it, and hand back
+Rem the state to go on from. A refusal is a state too — the one the line
+Rem started from, with the refusal on the tape.
+Def HxTurn(st As RckState, line As String) As RckState
+    HxShowed(st, HxActed(st, line))
+
+Def HxShowed(st As RckState, r As RckLine) As RckState
+    Each(HxShown(r), Print)
+    HxAfter(st, r)
+
+Def HxActed(st As RckState, line As String) As RckLine
+    Select Case HxRead(line)
+        Case HxEval(l)
+            HxDo(st, l)
+        Case HxPath(w, p)
+            HxFiled(st, line, w, p)
+        Case HxPlain(w)
+            HxPlained(st, line, w)
+        Case HxAskBad(why)
+            HxRefused(st, line, why)
+        Case Else
+            HxRefused(st, line, "the line did not read")
+
+Rem RESET is the one intercepted word that performs no effect: a fresh
+Rem state, which only this mill can build because only this mill knows
+Rem which seeds went into the last one. It is not taped, for the same
+Rem reason CLEARTAPE is not — a line that empties the tape cannot leave
+Rem its own record on the empty tape.
+Def HxPlained(st As RckState, line As String, w As String) As RckLine
+    If w = HxResetWord() Then
+        RckNext(HxFresh(), { "reset" })
+    Else
+        HxRefused(st, line, w & " is decided before the turn and should never arrive here")
+
+Rem ---- the four words that name a file ---------------------------------
+
+Def HxFiled(st As RckState, line As String, w As String, path As String) As RckLine
+    If w = HxSaveWord() Then
+        HxSavedWords(st, line, path)
+    Else
+        If w = HxTapeSaveWord() Then
+            HxSavedTape(st, line, path)
+        Else
+            HxLoaded(st, line, path)
+
+Def HxSavedWords(st As RckState, line As String, path As String) As RckLine
+    If TryWriteFile(path, HxFileText(RckSave(st))) Then
+        HxSaid(st, line, "saved " & HxCounted(HxUserCount(st), "word", "words"))
+    Else
+        HxRefused(st, line, "cannot write " & path)
+
+Rem The tape is written as it stands, which does not include the TAPESAVE
+Rem line itself: a line cannot record having done something it has not
+Rem finished doing. The confirmation goes on the tape afterwards, so the
+Rem next TAPESAVE writes this one.
+Def HxSavedTape(st As RckState, line As String, path As String) As RckLine
+    If TryWriteFile(path, HxFileText(RckTape(st))) Then
+        HxSaid(st, line, "wrote " & HxCounted(Length(RckTape(st)), "row", "rows"))
+    Else
+        HxRefused(st, line, "cannot write " & path)
+
+Rem The missing file is asked about separately rather than left to
+Rem TryReadFile's own reason, which is shouted upper case the way the
+Rem runtime's messages are. Every refusal the engine gives is lower-case
+Rem prose, and a prompt that answers in two voices reads as though one of
+Rem them is a bug. FileExists covers the case that happens; the guarded
+Rem read still covers the ones that do not — a directory, a file being
+Rem written, a permission that is not there.
+Def HxLoaded(st As RckState, line As String, path As String) As RckLine
+    If Not FileExists(path) Then
+        HxRefused(st, line, "there is no file called " & path)
+    Else
+        HxLoadedRead(st, line, path, TryReadFile(path))
+
+Def HxLoadedRead(st As RckState, line As String, path As String, r As Result) As RckLine
+    Select Case r
+        Case Ok(text)
+            HxLoadedInto(st, line, RckLoad(st, HxTextLines(text)))
+        Case Else
+            HxRefused(st, line, "cannot read " & path)
+
+Rem A file with one bad line in it changes nothing: RckLoad validates a
+Rem saved line exactly as a typed one and refuses the whole file, so the
+Rem dictionary is never left half-populated by a truncated download.
+Def HxLoadedInto(st As RckState, line As String, r As RckLine) As RckLine
+    Select Case r
+        Case RckNext(st2, out)
+            HxLoadedShown(st, st2, line, out)
+        Case RckStop(st2, why, out)
+            HxRefused(st, line, why)
+        Case Else
+            HxRefused(st, line, "the file did not load")
+
+Rem Every loaded line gets the same row a typed one would have — you see
+Rem what LOAD did, not just how many words it left behind. RckLoad built
+Rem this already; the summary is the one thing this mill still owns.
+Def HxLoadedShown(st As RckState, st2 As RckState, line As String, out As List Of String) As RckLine
+    Let said = Append(out, "loaded " & HxCounted(HxUserCount(st2) - HxUserCount(st), "word", "words"))
+    RckNext(RckTapedOk(st, st2, line, said), said)
+
+Rem ---- text and files --------------------------------------------------
+
+Rem One line per row and a closing newline, so the file ends the way every
+Rem other text file does and a shell that cats it gets its prompt back on
+Rem a line of its own. An empty tape writes an empty file rather than a
+Rem file containing one blank line.
+Def HxFileText(rows As List Of String) As String
+    If IsEmpty(rows) Then
+        ""
+    Else
+        Join(rows, Chr(10)) & Chr(10)
+
+Rem Split on the newline and Trim what is left, which takes the carriage
+Rem return off a file written on Windows and read on anything else. A
+Rem definition's leading spaces mean nothing to the tokenizer, so there is
+Rem nothing here for Trim to damage.
+Def HxTextLines(text As String) As List Of String
+    Map(Split(text, Chr(10)), Trim)
+
+Rem ---- starting up -----------------------------------------------------
+
+Def HxRcName() As String
+    "halifaxrc"
+
+Rem A missing halifaxrc is silence, not an error: most sessions have no
+Rem such file and a mill that complained about its absence would be
+Rem complaining at everyone. A file that IS there and will not load says
+Rem so and starts anyway, because a bad startup file is a reason to fix
+Rem the file and not a reason to have no calculator.
+Rem
+Rem It loads through RckLoad rather than through a turn, so it leaves no
+Rem tape rows: the tape is a record of a session, and nobody typed this.
+Def HxStart(st As RckState) As RckState
+    If Not FileExists(HxRcName()) Then
+        st
+    Else
+        HxStartRead(st, TryReadFile(HxRcName()))
+
+Def HxStartRead(st As RckState, r As Result) As RckState
+    Select Case r
+        Case Ok(text)
+            HxStartLoad(st, RckLoad(st, HxTextLines(text)))
+        Case Else
+            HxStartSaid(st, HxRcName() & ": cannot read it")
+
+Def HxStartLoad(st As RckState, r As RckLine) As RckState
+    Select Case r
+        Case RckNext(st2, out)
+            HxStartSaid(st2, HxRcName() & ": loaded " & HxCounted(HxUserCount(st2) - HxUserCount(st), "word", "words"))
+        Case RckStop(st2, why, out)
+            HxStartSaid(st, HxRcName() & ": " & why)
+        Case Else
+            st
+
+Def HxStartSaid(st As RckState, said As String) As RckState
+    Print(said)
+    st
+
+Rem ---- the run ---------------------------------------------------------
+
+Rem The banner, then the startup file, then the stack — and only then the
+Rem first prompt. The stack is printed once here and once per turn after
+Rem that, which is why an empty session opens on [ empty ] rather than on
+Rem nothing at all.
+Def HxOpened() As RckState
+    Let st = HxStart(HxFresh())
+    Each(RckShow(st), Print)
+    st
+
+Def Main()
+    Each(HxBanner(), Print)
+    HxLoop(HxOpened())

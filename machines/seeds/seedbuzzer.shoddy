@@ -1,0 +1,352 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem seedbuzzer.shoddy — reckoner seed: buzzer.shoddy, a tune from the
+Rem entry line
+Rem
+Rem 1 "T140 O5 CDEC CDEC EFG EFG" BUZZPLAY, and the mill plays it.
+Rem
+Rem NOT A RESOURCE, WHICH MAKES THIS THE ODD ONE OUT of the seeds that
+Rem reach a device. A window and a file are opened, held and shut; a
+Rem sound is FIRED. SOUNDQUEUE takes a channel NUMBER — one of eight
+Rem that always exist — and returns as soon as the notes are queued, so
+Rem there is nothing to bind, nothing to name and nothing to CLOSE. The
+Rem resource table does not come into it.
+Rem
+Rem ---- WHAT DID HAVE TO CHANGE, AND WHERE ---------------------------
+Rem
+Rem buzzer's MML parser aborted five ways and its note-name reader two
+Rem more, and R3.5(a) does not allow a bridged word that can end the
+Rem session. There was no guarded builtin to build on, because the
+Rem parse is not in the runtime — it is in the MACHINE.
+Rem
+Rem So buzzer.shoddy grew the tree's first machine-level guarded twins:
+Rem TryMmlNotes and TryNoteMidi answer a Result, and MmlNotes and
+Rem NoteMidi are those answers with the Err turned back into the abort
+Rem they always were. One set of rules, not a parser and a validator
+Rem that drift apart — which is the whole reason it was worth rewriting
+Rem a working parser rather than checking the string twice.
+Rem
+Rem AND ONE RUNTIME ADDITION, for the one sound fault nothing could
+Rem pre-flight. SOUNDQUEUE refuses more than five minutes queued ahead
+Rem on a channel, and until SOUNDQUEUED there was no way to ask how much
+Rem was already in front of you. A word that measured its own score and
+Rem still could not see the queue would be guessing.
+Rem
+Rem ---- THE SILENCE IS NOT AN ERROR ----------------------------------
+Rem
+Rem With no audio device every sound word is a no-op rather than a
+Rem failure, so BUZZPLAY answers the same at a prompt with speakers and
+Rem one without. That is buzzer's own contract and this seed keeps it:
+Rem a session is told when its MUSIC is wrong and never when the machine
+Rem it is running on has no sound.
+Rem ==================================================================
+
+Include "buzzer.shoddy"
+Include "cuttle.shoddy"
+Include "reckoner.shoddy"
+Include "seq.shoddy"
+
+Rem ---- the shared guards -------------------------------------------------
+
+Rem Eight channels, and they are the runtime's own count rather than a
+Rem number chosen here.
+Def BzChannels() As Number
+    8
+
+Def BzWhyChannel(word As String, ch As Number) As String
+    If ch < 1 Or ch > BzChannels() Or ch <> Floor(ch) Then
+        word & ": THE CHANNEL MUST BE A WHOLE NUMBER FROM 1 TO " & Str(BzChannels())
+    Else
+        ""
+
+Rem SOUNDQUEUE refuses more than five minutes queued ahead, and that is
+Rem the one sound fault a caller cannot see coming without asking. The
+Rem score's own length is measured, added to what is already playing,
+Rem and the whole thing refused before a single note is queued — because
+Rem a tune half queued is a tune that has already started.
+Def BzCapMs() As Number
+    5 * 60000
+
+Def BzWhyRoom(word As String, ch As Number, ms As Number) As String
+    If SoundQueued(ch) + ms > BzCapMs() Then
+        word & ": THAT WOULD PUT MORE THAN " & Str(BzCapMs() / 60000) & " MINUTES AHEAD ON CHANNEL " & Str(ch) & " — LET SOME PLAY, OR " & Str(ch) & " BUZZSTOP"
+    Else
+        ""
+
+Def BzTotalMs(ns As List Of BuzzerNote) As Number
+    Fold(Map(ns, MsOfNote), 0, +)
+
+Def MsOfNote(n As BuzzerNote) As Number
+    Ms(n)
+
+Rem ---- BUZZPLAY ----------------------------------------------------------
+
+Def BzSeedPlay(st As RckState) As RckState
+    Let s1 = RckReg(st, "BUZZPLAY", 2, RckTouch(Fn(vs) => BzPlay(vs)), "( ch mml -- )", "Play an MML tune on channel 1 to 8. A-G are notes, # and - sharpen and flatten, a digit is a length, O sets the octave, T the tempo, L the default length, P or R a rest. Returns as soon as the tune is queued.")
+    Let s2 = RckReg(s1, "BUZZTONE", 3, RckTouch(Fn(vs) => BzTone(vs)), "( ch hz ms -- )", "Queue one tone of hz hertz for ms milliseconds. A frequency of 0 is a rest.")
+    Let s3 = RckReg(s2, "BUZZNOTE", 3, RckTouch(Fn(vs) => BzNote(vs)), "( ch name ms -- )", "Queue one named note — \"C4\", \"F#3\", \"Bb5\" — for ms milliseconds. C4 is middle C.")
+    Let s4 = RckReg(s3, "BUZZFREQ", 1, RckPure(Fn(vs) => BzFreq(vs)), "( name -- hz )", "The frequency of a named note in hertz, and nothing is played. \"A4\" is 440.")
+    Let s5 = RckReg(s4, "BUZZLENGTH", 1, RckPure(Fn(vs) => BzLength(vs)), "( mml -- ms )", "How long that tune would take, in milliseconds, without playing a note of it. The way to check a score before committing it to a channel.")
+    Let s5a = RckReg(s5, "BUZZQUEUED", 1, RckTouch(Fn(vs) => BzQueued(vs)), "( ch -- ms )", "How far ahead that channel is already queued, in milliseconds, and 0 once it has drained. BUZZLENGTH measures a tune; this measures what is in front of it.")
+    Let s6 = RckReg(s5a, "BUZZSTOP", 1, RckTouch(Fn(vs) => BzStop(vs)), "( ch -- )", "Stop channel 1 to 8 at once and throw away whatever it had queued.")
+    Let s7 = RckReg(s6, "BUZZGAIN", 2, RckTouch(Fn(vs) => BzGain(vs)), "( ch v -- )", "How loud that channel is, from 0 to 1. Sticky until set again.")
+    RckReg(s7, "BUZZWAVE", 2, RckTouch(Fn(vs) => BzWave(vs)), "( ch name -- )", "The channel's waveform: \"square\", \"triangle\" or \"sine\". Sticky until set again.")
+
+Def BzPlay(vs As List Of Cell) As RckWork
+    Select Case Pair(RckWholeArg("BUZZPLAY", Nth(vs, 1)), RckTextArg("BUZZPLAY", Nth(vs, 2)))
+        Case Pair(Ok(ch), Ok(mml))
+            BzPlayChannel(ch, mml)
+        Case Else
+            RckWorkBad("BUZZPLAY needs a channel and an MML STRING")
+
+Def BzPlayChannel(ch As Number, mml As String) As RckWork
+    If BzWhyChannel("BUZZPLAY", ch) <> "" Then
+        RckWorkBad(BzWhyChannel("BUZZPLAY", ch))
+    Else
+        BzPlayParsed(ch, TryMmlNotes(mml))
+
+Def BzPlayParsed(ch As Number, r As Result) As RckWork
+    Select Case r
+        Case Ok(ns)
+            BzPlayRoom(ch, ns)
+        Case Err(w, at)
+            RckWorkBad("BUZZPLAY: " & w)
+        Case Else
+            RckWorkBad("BUZZPLAY did not answer")
+
+Def BzPlayRoom(ch As Number, ns As List Of BuzzerNote) As RckWork
+    If BzWhyRoom("BUZZPLAY", ch, BzTotalMs(ns)) <> "" Then
+        RckWorkBad(BzWhyRoom("BUZZPLAY", ch, BzTotalMs(ns)))
+    Else
+        BzPlayed(ch, ns)
+
+Def BzPlayed(ch As Number, ns As List Of BuzzerNote) As RckWork
+    PlayNotes(ch, ns)
+    RckVals({ })
+
+Rem ---- BUZZTONE and BUZZNOTE ---------------------------------------------
+
+Def BzTone(vs As List Of Cell) As RckWork
+    Select Case BzThree("BUZZTONE", vs)
+        Case Ok(ns)
+            BzToneAt("BUZZTONE", Nth(ns, 1), Nth(ns, 2), Nth(ns, 3))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("BUZZTONE did not answer")
+
+Def BzThree(word As String, vs As List Of Cell) As Result
+    Select Case Pair(RckNumArg(word, Nth(vs, 1)), RckNumArg(word, Nth(vs, 2)))
+        Case Pair(Ok(a), Ok(b))
+            BzThird(word, a, b, RckNumArg(word, Nth(vs, 3)))
+        Case Else
+            Err(word & " needs three NUMBERs", 0)
+
+Def BzThird(word As String, a As Number, b As Number, r As Result) As Result
+    Select Case r
+        Case Ok(c)
+            Ok({ a, b, c })
+        Case Err(w, at)
+            Err(w, at)
+        Case Else
+            Err(word & " did not answer", 0)
+
+Rem SoundQueue refuses a negative frequency and a negative duration, so
+Rem both are asked here — and the whole thing is checked before the one
+Rem note is queued, for the same reason a tune is.
+Def BzToneAt(word As String, ch As Number, hz As Number, ms As Number) As RckWork
+    If BzWhyChannel(word, ch) <> "" Then
+        RckWorkBad(BzWhyChannel(word, ch))
+    Else
+        BzToneSound(word, ch, hz, ms)
+
+Def BzToneSound(word As String, ch As Number, hz As Number, ms As Number) As RckWork
+    If hz < 0 Then
+        RckWorkBad(word & ": A FREQUENCY CANNOT BE NEGATIVE — 0 IS A REST")
+    Else
+        BzToneTimed(word, ch, hz, ms)
+
+Def BzToneTimed(word As String, ch As Number, hz As Number, ms As Number) As RckWork
+    If ms < 0 Then
+        RckWorkBad(word & ": A NOTE CANNOT LAST LESS THAN NO TIME")
+    Else
+        BzToneRoom(word, ch, hz, ms)
+
+Def BzToneRoom(word As String, ch As Number, hz As Number, ms As Number) As RckWork
+    If BzWhyRoom(word, ch, ms) <> "" Then
+        RckWorkBad(BzWhyRoom(word, ch, ms))
+    Else
+        BzToneQueued(ch, hz, ms)
+
+Def BzToneQueued(ch As Number, hz As Number, ms As Number) As RckWork
+    SoundQueue(ch, hz, ms)
+    RckVals({ })
+
+Def BzNote(vs As List Of Cell) As RckWork
+    Select Case Pair(RckWholeArg("BUZZNOTE", Nth(vs, 1)), RckTextArg("BUZZNOTE", Nth(vs, 2)))
+        Case Pair(Ok(ch), Ok(name))
+            BzNoteMs(ch, name, Nth(vs, 3))
+        Case Else
+            RckWorkBad("BUZZNOTE needs a channel, a note name and a length in ms")
+
+Def BzNoteMs(ch As Number, name As String, mc As Cell) As RckWork
+    Select Case RckNumArg("BUZZNOTE", mc)
+        Case Ok(ms)
+            BzNoteNamed(ch, name, ms, TryNoteMidi(name))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("BUZZNOTE did not answer")
+
+Def BzNoteNamed(ch As Number, name As String, ms As Number, r As Result) As RckWork
+    Select Case r
+        Case Ok(midi)
+            BzToneAt("BUZZNOTE", ch, MidiFreq(midi), ms)
+        Case Err(w, at)
+            RckWorkBad("BUZZNOTE: " & w)
+        Case Else
+            RckWorkBad("BUZZNOTE did not answer")
+
+Rem ---- the two that play nothing -----------------------------------------
+
+Def BzFreq(vs As List Of Cell) As RckWork
+    Select Case RckTextArg("BUZZFREQ", First(vs))
+        Case Ok(name)
+            BzFreqOf(name, TryNoteMidi(name))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("BUZZFREQ did not answer")
+
+Def BzFreqOf(name As String, r As Result) As RckWork
+    Select Case r
+        Case Ok(midi)
+            RckVals({ CutNum(MidiFreq(midi)) })
+        Case Err(w, at)
+            RckWorkBad("BUZZFREQ: " & w)
+        Case Else
+            RckWorkBad("BUZZFREQ did not answer")
+
+Rem The score measured without being played, which is what makes the
+Rem queue cap something a session can work with rather than run into.
+Def BzLength(vs As List Of Cell) As RckWork
+    Select Case RckTextArg("BUZZLENGTH", First(vs))
+        Case Ok(mml)
+            BzLengthOf(TryMmlNotes(mml))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("BUZZLENGTH did not answer")
+
+Def BzLengthOf(r As Result) As RckWork
+    Select Case r
+        Case Ok(ns)
+            RckVals({ CutNum(BzTotalMs(ns)) })
+        Case Err(w, at)
+            RckWorkBad("BUZZLENGTH: " & w)
+        Case Else
+            RckWorkBad("BUZZLENGTH did not answer")
+
+Rem ---- the channel settings ----------------------------------------------
+
+Def BzQueued(vs As List Of Cell) As RckWork
+    Select Case RckWholeArg("BUZZQUEUED", First(vs))
+        Case Ok(ch)
+            BzQueuedAt(ch)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("BUZZQUEUED did not answer")
+
+Def BzQueuedAt(ch As Number) As RckWork
+    If BzWhyChannel("BUZZQUEUED", ch) <> "" Then
+        RckWorkBad(BzWhyChannel("BUZZQUEUED", ch))
+    Else
+        RckVals({ CutNum(SoundQueued(ch)) })
+
+Def BzStop(vs As List Of Cell) As RckWork
+    Select Case RckWholeArg("BUZZSTOP", First(vs))
+        Case Ok(ch)
+            BzStopAt(ch)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("BUZZSTOP did not answer")
+
+Def BzStopAt(ch As Number) As RckWork
+    If BzWhyChannel("BUZZSTOP", ch) <> "" Then
+        RckWorkBad(BzWhyChannel("BUZZSTOP", ch))
+    Else
+        BzStopped(ch)
+
+Def BzStopped(ch As Number) As RckWork
+    SoundStop(ch)
+    RckVals({ })
+
+Def BzGain(vs As List Of Cell) As RckWork
+    Select Case Pair(RckWholeArg("BUZZGAIN", Nth(vs, 1)), RckNumArg("BUZZGAIN", Nth(vs, 2)))
+        Case Pair(Ok(ch), Ok(v))
+            BzGainAt(ch, v)
+        Case Else
+            RckWorkBad("BUZZGAIN needs a channel and a loudness from 0 to 1")
+
+Def BzGainAt(ch As Number, v As Number) As RckWork
+    If BzWhyChannel("BUZZGAIN", ch) <> "" Then
+        RckWorkBad(BzWhyChannel("BUZZGAIN", ch))
+    Else
+        BzGainRanged(ch, v)
+
+Def BzGainRanged(ch As Number, v As Number) As RckWork
+    If v < 0 Or v > 1 Then
+        RckWorkBad("BUZZGAIN: LOUDNESS RUNS FROM 0 TO 1")
+    Else
+        BzGained(ch, v)
+
+Def BzGained(ch As Number, v As Number) As RckWork
+    SoundGain(ch, v)
+    RckVals({ })
+
+Rem The waveform is named rather than numbered, because "0" is not a
+Rem thing anybody can read back off a stack — the numbers are
+Rem buzzer.shoddy's own WaveSquare and friends, so they cannot drift.
+Def BzWave(vs As List Of Cell) As RckWork
+    Select Case Pair(RckWholeArg("BUZZWAVE", Nth(vs, 1)), RckTextArg("BUZZWAVE", Nth(vs, 2)))
+        Case Pair(Ok(ch), Ok(name))
+            BzWaveAt(ch, Lower(name))
+        Case Else
+            RckWorkBad("BUZZWAVE needs a channel and a waveform name")
+
+Def BzWaveAt(ch As Number, name As String) As RckWork
+    If BzWhyChannel("BUZZWAVE", ch) <> "" Then
+        RckWorkBad(BzWhyChannel("BUZZWAVE", ch))
+    Else
+        BzWaveNamed(ch, name, BzWaveOf(name))
+
+Def BzWaveOf(name As String) As Number
+    If name = "square" Then
+        WaveSquare()
+    Else
+        If name = "triangle" Then
+            WaveTriangle()
+        Else
+            If name = "sine" Then
+                WaveSine()
+            Else
+                0 - 1
+
+Def BzWaveNamed(ch As Number, name As String, k As Number) As RckWork
+    If k < 0 Then
+        RckWorkBad("BUZZWAVE: \"" & name & "\" IS NOT A WAVEFORM — THEY ARE \"square\", \"triangle\" AND \"sine\"")
+    Else
+        BzWaved(ch, k)
+
+Def BzWaved(ch As Number, k As Number) As RckWork
+    SoundWave(ch, k)
+    RckVals({ })
+
+Rem ---- the seed ------------------------------------------------------------
+
+Def RckSeedBuzzer(st As RckState) As RckState
+    BzSeedPlay(RckSeeding(st, "seed-buzzer"))

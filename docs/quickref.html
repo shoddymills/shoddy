@@ -197,7 +197,11 @@ is always the same and <code>Result</code> when it isn't.</p></section>
 <tr><td>BetaI(a, b, x)</td><td>Regularized incomplete beta &mdash; t and F CDFs.</td></tr>
 <tr><td>Rnd</td><td>Uniform [0,1). Impure.</td></tr>
 <tr><td>Seed(n)</td><td>Make Rnd reproducible.</td></tr>
-</table></section>
+</table>
+<p class="note">There are <strong>no bitwise operators</strong> and no integer
+type. Number bases, bit operations, masks and fields, two's complement, the
+codes and truth tables are all words in
+<a href="machines/bool.html">bool.shoddy</a>.</p></section>
 
 <section><h2>Time</h2>
 <table>
@@ -219,11 +223,13 @@ FormatDuration: <a href="machines/clock.html">clock.shoddy</a>.</p></section>
 <tr><td>Error(MSG)</td><td>Abort with message + line number.</td></tr>
 <tr><td>Assert(COND, MSG)</td><td>Abort unless COND.</td></tr>
 <tr><td>ReadFile(path)</td><td>Whole file &rarr; String (missing file aborts).</td></tr>
+<tr><td>TryReadFile(path)</td><td>ReadFile that reports failure instead of aborting &rarr; <code>Result</code>: <code>Ok(text)</code>, or <code>Err(why, 0)</code> with <code>why</code> = <code>CANNOT READ 'path' (&hellip;)</code> ending NO SUCH FILE / IS A DIRECTORY / ACCESS DENIED / UNREADABLE. The only way to ask whether a path can be read.</td></tr>
 <tr><td>WriteFile(path, s)</td><td>Write, overwriting.</td></tr>
 <tr><td>TryWriteFile(path, s)</td><td>WriteFile that reports failure instead of aborting &rarr; Boolean. The only way to ask whether a path can be written.</td></tr>
 <tr><td>AppendFile(path, s)</td><td>Append.</td></tr>
 <tr><td>FileExists(path)</td><td>&rarr; Boolean.</td></tr>
 <tr><td>DeleteFile(path)</td><td>Remove the file.</td></tr>
+<tr><td>TryDeleteFile(path)</td><td>DeleteFile that reports failure instead of aborting &rarr; Boolean. True if the file went; False if it was not there or could not be removed. FileExists narrows that window without closing it &mdash; a file that exists can still be locked when the delete lands.</td></tr>
 <tr><td>Args()</td><td>&rarr; List Of String; program's command-line arguments.</td></tr>
 </table>
 <p class="note">Line-oriented I/O &mdash; ReadLines, WriteLines, AppendLine:
@@ -236,6 +242,13 @@ record k at <code>1 + (k-1)*20</code>.</p>
 <table>
 <tr><th>Word</th><th>Meaning</th></tr>
 <tr><td>BOpen(path)</td><td>&rarr; handle. Read/write, creates if absent; up to 16 open.</td></tr>
+<tr><td>TryTcpRequest(host, port, secure, msg)</td><td>The whole request/response as one guarded word: connect, optionally TLS, send, read to the end of the reply, close &rarr; <code>Result</code>. <code>Ok(reply)</code>, or <code>Err(why, 0)</code> with <code>why</code> = <code>CANNOT REACH 'host:port' (&hellip;)</code> ending NETWORK IS DISABLED / NO SUCH HOST / REFUSED / TIMED OUT / TLS HANDSHAKE FAILED&hellip; No socket is ever visible, and it cannot hang &mdash; the read is deadline-bounded, unlike net.shoddy's RecvAll.</td></tr>
+<tr><td>TryScribblerOpen(w, h)</td><td>ScribblerOpen that reports failure instead of aborting &rarr; <code>Result</code>: <code>Ok(slot)</code>, or <code>Err(why, 0)</code> with <code>why</code> = <code>CANNOT OPEN A WINDOW (&hellip;)</code>. Answers a <em>slot number</em>, not a window, so a reckoner seed can keep one in its named resource table &mdash; an ordinary program takes the window from <code>ScribblerOpen</code> and never sees a slot.</td></tr>
+<tr><td>ScribblerOf(n)</td><td>The window a slot names. For the seed that holds the slot; aborts on one that is not open.</td></tr>
+<tr><td>ScribblerShut(n)</td><td>Close the window a slot names and free the slot &rarr; Boolean. False for a slot already let go, so closing twice cannot end the run.</td></tr>
+<tr><td>NetAllowed()</td><td>&rarr; Boolean; whether the mill was started with <code>--allow-net</code>. The one word in the socket family that is not gated &mdash; the question has to stay askable when the answer is no, since every other TCP word aborts when the network is off.</td></tr>
+<tr><td>TryTcpConnect(host, port)</td><td>TCPConnect that reports failure instead of aborting &rarr; <code>Result</code>: <code>Ok(handle)</code>, or <code>Err(why, 0)</code> with <code>why</code> = <code>CANNOT REACH 'host:port' (&hellip;)</code> ending NETWORK IS DISABLED / TOO MANY OPEN SOCKETS / TIMED OUT / NO SUCH HOST OR REFUSED. Lets a word connect, ask and close inside its own body without a mistyped hostname ending the run.</td></tr>
+<tr><td>TryBOpen(path)</td><td>BOpen that reports failure instead of aborting, and opens an <em>existing</em> file only &rarr; <code>Result</code>: <code>Ok(handle)</code>, or <code>Err(why, 0)</code> with <code>why</code> = <code>CANNOT OPEN 'path' (&hellip;)</code> ending NO SUCH FILE / IS A DIRECTORY / ACCESS DENIED / UNREADABLE / TOO MANY OPEN FILES. The only way to pre-flight a binary read: BOpen creates on a failed read, so asking with it damages the answer.</td></tr>
 <tr><td>BClose(h)</td><td>Close.</td></tr>
 <tr><td>Seek(h, pos)</td><td>Move to byte pos (1-based).</td></tr>
 <tr><td>BPos(h) / BSize(h)</td><td>Current position / file size in bytes.</td></tr>
@@ -312,6 +325,7 @@ in silence.</p>
 <tr><td>NoteOn(ch, freq)</td><td>Hold freq on channel ch until NoteOff. On a sounding channel: retune in place, no re-attack.</td></tr>
 <tr><td>NoteOff(ch)</td><td>Release the held note (nothing held: no-op).</td></tr>
 <tr><td>SoundQueue(ch, freq, ms)</td><td>Append to ch's queue; notes play back-to-back, sample-accurate. freq 0 = rest. &gt;5 min queued ahead aborts.</td></tr>
+<tr><td>SoundQueued(ch)</td><td>&rarr; ms already queued ahead on ch, 0 once drained. The only way to see that cap coming &mdash; measure your score, add this, and refuse before queueing rather than after.</td></tr>
 <tr><td>SoundStop(ch)</td><td>Silence now: release held note, flush queue.</td></tr>
 <tr><td>SoundGain(ch, vol)</td><td>Channel volume 0&ndash;1, sticky until set again.</td></tr>
 <tr><td>SoundWave(ch, wave)</td><td>Channel timbre, sticky: 0 square (default), 1 triangle, 2 sine. Re-voices a held note in place; the Sound pool is square only.</td></tr>
@@ -347,6 +361,7 @@ full word reference, a user&rsquo;s guide, and examples &mdash; start at the
 <h3>Numbers &amp; math</h3>
 <table>
 <tr><th>Machine</th><th>What it gives you</th></tr>
+<tr><td><a href="machines/bool.html">bool</a></td><td>The binary layer, and why Shoddy needs no bitwise operators. Bases: BoolInBase, BoolFromBase (Result, 1-based At) / BoolFromBaseOr, BoolHex/BoolBinS/BoolOctS, BoolHexW/BoolBinW, BoolGrouped (from the right), BoolCard/BoolCardWith. Bits: BoolBitAnd/Or/Xor are the ONLY three that take no width; BoolBitNot/Nand/Nor/Xnor, BoolShl, BoolShr (logical, no width), BoolShrA (arithmetic), BoolRotl/BoolRotr. Masks and fields: BoolMask, BoolMaskFrom, BoolTest/BoolTestAny, BoolSet/BoolClear/BoolToggle, BoolGetField/BoolSetField, BoolDecode over Type BoolField. Inspection: BoolBitAt (Boolean, never 1), BoolSetBit, BoolPopCount, BoolLowBit/BoolHighBit (Option, None at zero — no -1 sentinel), BoolLog2Floor, BoolLeadZeros, BoolReverse, BoolBitList/BoolFromBitList, BoolIsPow2/BoolNextPow2. Two's complement: BoolSigned, BoolUnsigned (the one word taking a negative), BoolSignExtend, BoolNeg, BoolAddW/SubW/MulW, BoolCarries and BoolOverflows apart. Codes: BoolGray/BoolFromGray, BoolParity (odd) beside BoolParityBit (the even-parity bit), BoolHamming, BoolBcd/BoolFromBcd. Nine gates on Boolean: BoolAnd Or Not Nand Nor Xor Xnor Implies Iff. Truth tables over a quotation: BoolRowInputs (variable 1 is the HIGH bit), BoolTruthTable, BoolMinterms/BoolMaxterms, BoolFromMinterms, BoolEquiv, BoolTableText. Minimisation: BoolPrimeImplicants, BoolMinimise/BoolMinimiseWith, BoolSopText/BoolPosText. Domain checked never masked; widths 1..53; BoolMaxVars() = 12.</td></tr>
 <tr><td><a href="machines/math.html">math</a></td><td>E, Tau, Rad/Deg, Clamp, Lerp, Remap, Smoothstep, Hypot, and game randomness (RandInt, Pick, Chance).</td></tr>
 <tr><td><a href="machines/eng.html">eng</a></td><td>The engineer's calculator, closed under an Eng prefix. Angles always radians; polynomial coefficients always highest power first. Trig and hyperbolics: EngSec/EngCsc/EngCot, EngSinh…EngAcoth, EngDmsOf. Complex: EngComplex, EngCMul/EngCDiv/EngCExp/EngCSqrt, EngCShow — compare with EngCNear, never =. Calculus over quotations: EngDeriv, EngDeriv2, EngIntegrate, EngSumOf. Solving: EngZeroOf (checks the bracket), EngNewtonOf, EngMinOf. Polynomials: EngPolyEval/Add/Mul/Div/Deriv, EngQuadRoots, EngCubicReal. Number theory: EngGcd, EngModPow, EngModInv, EngIsPrime, EngFactorize, EngTotient. Combinatorics and gamma: EngFact, EngComb, EngGammaLn. Distributions, statistics, sequences, EngConvert with checked quantities, the CODATA constants, and EngSigFig/EngSci/EngMetric.</td></tr>
 <tr><td><a href="machines/money.html">money</a></td><td>Exact whole-cent arithmetic: Dollars, MoneyAdd, MoneyMul, MoneySplit (no penny created or lost), MoneyFmt.</td></tr>

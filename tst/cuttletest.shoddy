@@ -1,0 +1,378 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem cuttletest.shoddy — test program for machines/cuttle.shoddy
+Rem
+Rem Assert-driven, in the csvtest.shoddy / jsontest.shoddy pattern: it
+Rem prints what it is doing and stops the run at the first assertion that
+Rem fails, ending with ALL ASSERTIONS PASSED when it does not.
+Rem
+Rem The contract under test is that NOTHING HERE ABORTS. Every guard in
+Rem the machine owes exactly one refusing assertion, and the section
+Rem "every guard refuses" is that list, walked: underflow on every one of
+Rem the popping words, a level that is not a whole number of at least
+Rem one, a kind that has no arithmetic, and a matrix of the wrong shape.
+Rem A guard that aborted instead of answering would take this whole run
+Rem down with it, which is the same thing it would do to a session.
+Rem
+Rem The display sections are golden rather than illustrative. The
+Rem twenty-five primes to 100 render WHOLE at 74 columns while three
+Rem spiral rows of four render abbreviated at 63 — the same rule, told
+Rem apart by width and not by a count of elements, which is the only way
+Rem those two lines can both be right.
+Rem
+Rem Build (once): build.ps1 machines
+Rem Run:          bin\mill run tst\cuttletest.shoddy      (from the repo root)
+Rem ==================================================================
+
+Include "../machines/seq.shoddy"
+Include "../machines/str.shoddy"
+Include "../machines/money.shoddy"
+Include "../machines/matrix.shoddy"
+Include "../machines/cuttle.shoddy"
+
+Rem ---- helpers ---------------------------------------------------------
+Rem Cells are written often enough here to be worth one-letter builders.
+
+Def N(x As Number) As Cell
+    CutNum(x)
+
+Def Nums(xs As List Of Number) As List Of Cell
+    Map(xs, CutNum)
+
+Def Sh(c As Cell) As String
+    CutShow(c, CutFmtStd())
+
+Def ShAs(c As Cell, mode As String, digits As Number) As String
+    CutShow(c, CutFmt(mode, digits))
+
+Rem A whole stack, top first, as one line: "3 | 2 | 1".
+Def StkText(s As Stack) As String
+    Join(Map(CutCells(s), Fn(c) => Sh(c)), " | ")
+
+Rem ---- reading the three answer types ----------------------------------
+Rem Every one of these matches, so a test helper can never be the thing
+Rem that aborts: a bare accessor on the wrong case would.
+
+Def Stk(o As CutOut) As Stack
+    Select Case o
+        Case CutDone(s)
+            s
+        Case CutOutBad(w, s)
+            s
+        Case Else
+            CutNew()
+
+Def OutText(o As CutOut) As String
+    StkText(Stk(o))
+
+Def Refused(o As CutOut) As Boolean
+    Select Case o
+        Case CutOutBad(w, s)
+            True
+        Case Else
+            False
+
+Def RefusedWhy(o As CutOut) As String
+    Select Case o
+        Case CutOutBad(w, s)
+            w
+        Case Else
+            ""
+
+Def Took(t As CutTake) As Cell
+    Select Case t
+        Case CutTook(v, r)
+            v
+        Case Else
+            CutStr("NOTHING WAS TAKEN")
+
+Def AfterPop(t As CutTake) As Stack
+    Select Case t
+        Case CutTook(v, r)
+            r
+        Case CutTakeBad(w, s)
+            s
+        Case Else
+            CutNew()
+
+Def TakeRefused(t As CutTake) As Boolean
+    Select Case t
+        Case CutTakeBad(w, s)
+            True
+        Case Else
+            False
+
+Def TakeWhyOf(t As CutTake) As String
+    Select Case t
+        Case CutTakeBad(w, s)
+            w
+        Case Else
+            ""
+
+Def Ans(c As CutCalc) As Cell
+    Select Case c
+        Case CutGot(v)
+            v
+        Case Else
+            CutStr("NO ANSWER")
+
+Def AnsText(c As CutCalc) As String
+    Sh(Ans(c))
+
+Def CalcRefused(c As CutCalc) As Boolean
+    Select Case c
+        Case CutCalcBad(w)
+            True
+        Case Else
+            False
+
+Def CalcWhyOf(c As CutCalc) As String
+    Select Case c
+        Case CutCalcBad(w)
+            w
+        Case Else
+            ""
+
+Rem ---- fixtures ---------------------------------------------------------
+
+Rem 1 2 3 typed in that order, so 3 is on top.
+Def OneTwoThree() As Stack
+    CutOf(Nums({ 1, 2, 3 }))
+
+Rem The primes to 100 — Appendix A.1's answer, as a fixture rather than
+Rem a computation, since what is under test is how it DISPLAYS.
+Def Primes100() As List Of Cell
+    Nums({ 2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59, 61, 67, 71, 73, 79, 83, 89, 97 })
+
+Rem Appendix A.2's spiral, one row per turn: 9i, 5i+90, 300-4i and 2i,
+Rem each colour channel wrapped into 0..255. The blue channel is the
+Rem reason WRAP and not MOD: 300-4i goes negative from i = 76 on.
+Def SpinAt(i As Number) As Cell
+    CutList(Nums({ Wrap(i * 9, 256), Wrap(i * 5 + 90, 256), Wrap(300 - i * 4, 256), i * 2 }))
+
+Def Spiral(n As Number) As List Of Cell
+    Map(Range(1, n), SpinAt)
+
+Def Main()
+    Print("--- the value set, and its kinds ---")
+    Assert(CutKindOf(N(3)) = CutKindNumber(), "A NUMBER CELL IS A NUMBER")
+    Assert(CutKindOf(CutStr("A")) = CutKindString(), "A STRING CELL IS A STRING")
+    Assert(CutKindOf(CutBool(True)) = CutKindBoolean(), "A BOOLEAN CELL IS A BOOLEAN")
+    Assert(CutKindOf(CutList({ })) = CutKindList(), "A LIST CELL IS A LIST")
+    Assert(CutKindOf(CutProg({ "DUP", "*" })) = CutKindProgram(), "A PROGRAM CELL IS A PROGRAM")
+    Assert(CutKindOf(CutPair(Pair(CutStr("RATE"), N(0.05)))) = CutKindPair(), "A PAIR CELL IS A PAIR")
+    Assert(CutKindOf(CutMoney(Dollars(1))) = CutKindMoney(), "A MONEY CELL IS MONEY")
+    Assert(CutKindOf(CutMat(Ident(2))) = CutKindMatrix(), "A MATRIX CELL IS A MATRIX")
+    Rem Eight kinds, eight distinct names — a shell tags a row by these.
+    Assert(Length(Modes8()) = 8, "AND THE EIGHT NAMES ARE ALL DIFFERENT")
+
+    Print("--- an aggregate is ONE cell ---")
+    Assert(CutDepth(CutPush(CutNew(), CutList(Primes100()))) = 1, "A TWENTY-FIVE ELEMENT LIST IS DEPTH 1")
+    Assert(CutDepth(CutPush(CutNew(), CutMat(Ident(4)))) = 1, "A 4x4 MATRIX IS DEPTH 1")
+    Assert(CutDepth(CutPush(CutNew(), CutProg({ "DUP", "*" }))) = 1, "A PROGRAM IS DEPTH 1")
+
+    Print("--- push, pop, and the round trip ---")
+    Assert(CutDepth(CutNew()) = 0, "A NEW STACK IS EMPTY")
+    Assert(StkText(OneTwoThree()) = "3 | 2 | 1", "CUTOF PUSHES IN THE ORDER TYPED")
+    Assert(CutDepth(OneTwoThree()) = 3, "THREE PUSHES MAKE A DEPTH OF THREE")
+    Let popped = CutPop(OneTwoThree())
+    Assert(CutEqual(Took(popped), N(3)), "POP TAKES THE TOP CELL")
+    Assert(StkText(AfterPop(popped)) = "2 | 1", "AND LEAVES THE REST")
+    Assert(StkText(CutPush(AfterPop(popped), Took(popped))) = "3 | 2 | 1", "PUSH AFTER POP IS THE STACK AGAIN")
+    Assert(StkText(CutOf(Reverse(CutCells(OneTwoThree())))) = "3 | 2 | 1", "AND CUTOF OF THE REVERSED CELLS IS TOO")
+    Assert(CutDepth(CutClear(OneTwoThree())) = 0, "CLEAR EMPTIES IT")
+
+    Print("--- the shuffles, hand-worked ---")
+    Assert(OutText(CutDup(OneTwoThree())) = "3 | 3 | 2 | 1", "DUP COPIES THE TOP")
+    Assert(OutText(CutDrop(OneTwoThree())) = "2 | 1", "DROP DISCARDS IT")
+    Assert(OutText(CutSwap(OneTwoThree())) = "2 | 3 | 1", "SWAP EXCHANGES THE TOP TWO")
+    Assert(OutText(CutOver(OneTwoThree())) = "2 | 3 | 2 | 1", "OVER COPIES THE SECOND OVER THE TOP")
+    Assert(OutText(CutNip(OneTwoThree())) = "3 | 1", "NIP DISCARDS THE SECOND")
+    Assert(OutText(CutTuck(OneTwoThree())) = "3 | 2 | 3 | 1", "TUCK COPIES THE TOP UNDER THE SECOND")
+    Assert(OutText(CutRot(OneTwoThree())) = "1 | 3 | 2", "ROT BRINGS THE THIRD TO THE TOP")
+
+    Print("--- roll and pick count from the top, 1-based ---")
+    Let four = CutOf(Nums({ 1, 2, 3, 4 }))
+    Assert(StkText(four) = "4 | 3 | 2 | 1", "FOUR CELLS, 4 ON TOP")
+    Assert(OutText(CutRoll(four, 1)) = "4 | 3 | 2 | 1", "ROLL 1 IS THE TOP CELL, SO IT DOES NOTHING")
+    Assert(OutText(CutRoll(four, 2)) = "3 | 4 | 2 | 1", "ROLL 2 MOVES THE SECOND UP")
+    Assert(OutText(CutRoll(four, 3)) = "2 | 4 | 3 | 1", "ROLL 3 MOVES THE THIRD UP")
+    Assert(OutText(CutRoll(four, 4)) = "1 | 4 | 3 | 2", "ROLL 4 MOVES THE FOURTH UP")
+    Assert(OutText(CutPick(four, 1)) = "4 | 4 | 3 | 2 | 1", "PICK 1 COPIES THE TOP")
+    Assert(OutText(CutPick(four, 2)) = "3 | 4 | 3 | 2 | 1", "PICK 2 COPIES THE SECOND")
+    Assert(OutText(CutPick(four, 4)) = "1 | 4 | 3 | 2 | 1", "PICK 4 COPIES THE FOURTH")
+    Rem The identities the two words are named by, on the same stack.
+    Assert(OutText(CutRoll(four, 2)) = OutText(CutSwap(four)), "ROLL 2 IS SWAP")
+    Assert(OutText(CutRoll(four, 3)) = OutText(CutRot(four)), "ROLL 3 IS ROT")
+    Assert(OutText(CutPick(four, 1)) = OutText(CutDup(four)), "PICK 1 IS DUP")
+    Assert(OutText(CutPick(four, 2)) = OutText(CutOver(four)), "PICK 2 IS OVER")
+
+    Print("--- every guard refuses, and the stack survives it ---")
+    Rem Nothing below aborts. That is the whole contract, and this run
+    Rem reaching its last line is the proof of it.
+    Let empty = CutNew()
+    Let one = CutOf({ N(7) })
+    Assert(TakeRefused(CutPop(empty)), "POP ON AN EMPTY STACK ANSWERS")
+    Assert(TakeWhyOf(CutPop(empty)) = "POP needs 1, the stack holds 0", "AND SAYS WHAT IT NEEDED")
+    Assert(CutDepth(AfterPop(CutPop(empty))) = 0, "AND HANDS THE STACK BACK")
+    Assert(Refused(CutDup(empty)), "DUP ON AN EMPTY STACK ANSWERS")
+    Assert(Refused(CutDrop(empty)), "DROP ON AN EMPTY STACK ANSWERS")
+    Assert(Refused(CutSwap(one)), "SWAP ON A STACK OF ONE ANSWERS")
+    Assert(Refused(CutOver(one)), "OVER ON A STACK OF ONE ANSWERS")
+    Assert(Refused(CutNip(one)), "NIP ON A STACK OF ONE ANSWERS")
+    Assert(Refused(CutTuck(one)), "TUCK ON A STACK OF ONE ANSWERS")
+    Assert(Refused(CutRot(CutOf(Nums({ 1, 2 })))), "ROT ON A STACK OF TWO ANSWERS")
+    Assert(Refused(CutRoll(one, 3)), "ROLL PAST THE BOTTOM ANSWERS")
+    Assert(Refused(CutPick(one, 3)), "PICK PAST THE BOTTOM ANSWERS")
+    Assert(RefusedWhy(CutSwap(one)) = "SWAP needs 2, the stack holds 1", "AND EACH SAYS WHAT IT NEEDED")
+    Rem The refusal carries the stack AS IT WAS — R4.2, at this level.
+    Assert(OutText(CutSwap(one)) = "7", "THE REFUSED STACK IS THE ONE THAT WENT IN")
+    Assert(OutText(CutRot(OneTwoThree())) = "1 | 3 | 2", "AND A GOOD CALL STILL WORKS AFTER A REFUSED ONE")
+
+    Print("--- a level is a whole number of at least one ---")
+    Assert(Refused(CutRoll(four, 0)), "ROLL 0 IS REFUSED")
+    Assert(Refused(CutRoll(four, 0 - 1)), "ROLL -1 IS REFUSED")
+    Assert(Refused(CutRoll(four, 2.5)), "ROLL 2.5 IS REFUSED RATHER THAN ROUNDED")
+    Assert(Refused(CutPick(four, 0)), "PICK 0 IS REFUSED")
+    Assert(Refused(CutPick(four, 2.5)), "PICK 2.5 IS REFUSED RATHER THAN ROUNDED")
+    Assert(RefusedWhy(CutPick(four, 0)) = "PICK needs a level of 1 or more, got 0", "AND SAYS SO IN THOSE WORDS")
+    Assert(OutText(CutPick(four, 0)) = "4 | 3 | 2 | 1", "AND THE STACK IS UNTOUCHED")
+
+    Print("--- equality is structural, never = ---")
+    Assert(CutEqual(N(3), N(3)), "TWO THREES ARE EQUAL")
+    Assert(Not CutEqual(N(3), N(4)), "THREE AND FOUR ARE NOT")
+    Assert(Not CutEqual(N(3), CutStr("3")), "A NUMBER IS NOT ITS SPELLING")
+    Assert(CutEqual(CutList(Nums({ 1, 2, 3 })), CutList(Nums({ 1, 2, 3 }))), "TWO LISTS OF THE SAME NUMBERS ARE EQUAL")
+    Rem The two names below hold equal lists that = calls unequal, which
+    Rem is why CutEqual exists at all: a List is a quotation and compares
+    Rem by identity, exactly as CsvEqual and JEqual document.
+    Let l1 = Nums({ 1, 2, 3 })
+    Let l2 = Nums({ 1, 2, 3 })
+    Assert(l1 <> l2, "WHICH = COULD NOT SAY, SINCE A LIST COMPARES BY IDENTITY")
+    Assert(l1 = l1, "THOUGH A LIST IS OF COURSE ITSELF")
+    Assert(Not CutEqual(CutList(Nums({ 1, 2 })), CutList(Nums({ 1, 2, 3 }))), "A SHORTER LIST IS NOT EQUAL")
+    Assert(CutEqual(CutList({ CutList(Nums({ 1 })) }), CutList({ CutList(Nums({ 1 })) })), "AND NESTING COMPARES ALL THE WAY DOWN")
+    Assert(CutEqual(CutProg({ "DUP", "*" }), CutProg({ "DUP", "*" })), "TWO PROGRAMS OF THE SAME TOKENS ARE EQUAL")
+    Assert(Not CutEqual(CutProg({ "DUP" }), CutProg({ "DUP", "*" })), "AND OF DIFFERENT TOKENS ARE NOT")
+    Assert(CutEqual(CutMoney(Dollars(1.5)), CutMoney(Dollars(1.5))), "MONEY COMPARES AT THE CENT")
+    Assert(CutEqual(CutMat(Ident(3)), CutMat(Ident(3))), "TWO IDENTITIES OF A SIZE ARE EQUAL")
+    Assert(Not CutEqual(CutMat(Ident(3)), CutMat(Ident(2))), "AND OF DIFFERENT SIZES ARE NOT")
+    Assert(CutEqual(CutPair(Pair(CutStr("RATE"), N(0.05))), CutPair(Pair(CutStr("RATE"), N(0.05)))), "PAIRS COMPARE ON BOTH HALVES")
+
+    Print("--- + - * dispatch on the kinds ---")
+    Assert(AnsText(CutAdd(N(3), N(4))) = "7", "NUMBER PLUS NUMBER")
+    Assert(AnsText(CutSub(N(3), N(4))) = "-1", "NUMBER MINUS NUMBER")
+    Assert(AnsText(CutMul(N(3), N(4))) = "12", "NUMBER TIMES NUMBER")
+    Assert(AnsText(CutAdd(CutStr("SHOD"), CutStr("DY"))) = Chr(34) & "SHODDY" & Chr(34), "STRING PLUS STRING CONCATENATES")
+    Assert(AnsText(CutAdd(CutMoney(Dollars(12.55)), CutMoney(Dollars(0.45)))) = "$13.00", "MONEY PLUS MONEY IS EXACT AT THE CENT")
+    Assert(AnsText(CutSub(CutMoney(Dollars(13)), CutMoney(Dollars(0.45)))) = "$12.55", "AND SO IS MONEY MINUS MONEY")
+    Assert(AnsText(CutMul(N(2), CutMat(Ident(2)))) = "2x2 { { 2 0 } { 0 2 } }", "NUMBER TIMES MATRIX SCALES IT")
+    Assert(AnsText(CutMul(CutMat(Ident(2)), N(3))) = "2x2 { { 3 0 } { 0 3 } }", "AND THE OTHER WAY ROUND TOO")
+    Assert(AnsText(CutAdd(CutMat(Ident(2)), CutMat(Ident(2)))) = "2x2 { { 2 0 } { 0 2 } }", "MATRIX PLUS MATRIX ADDS")
+    Assert(AnsText(CutMul(CutMat(Mat(2, 2, { 1, 2, 3, 4 })), CutMat(Ident(2)))) = "2x2 { { 1 2 } { 3 4 } }", "MATRIX TIMES MATRIX MULTIPLIES")
+
+    Print("--- and names both kinds when it does not ---")
+    Assert(CalcRefused(CutAdd(N(1), CutMoney(Dollars(1)))), "NUMBER PLUS MONEY IS REFUSED")
+    Assert(CalcWhyOf(CutAdd(N(1), CutMoney(Dollars(1)))) = "+ is not defined for NUMBER and MONEY", "NAMING BOTH KINDS")
+    Assert(CalcRefused(CutMul(CutStr("A"), CutStr("B"))), "STRING TIMES STRING IS REFUSED")
+    Assert(CalcRefused(CutSub(CutStr("A"), CutStr("B"))), "STRING MINUS STRING IS REFUSED")
+    Assert(CalcRefused(CutMul(CutMoney(Dollars(1)), N(2))), "MONEY TIMES A NUMBER IS REFUSED")
+    Assert(CalcRefused(CutAdd(CutBool(True), CutBool(False))), "BOOLEAN PLUS BOOLEAN IS REFUSED")
+    Rem Matrix subtraction is deliberately outside the set (R4.18 gives
+    Rem matrices add and multiply, and nothing else), so it lands in the
+    Rem same refusal as any other pair of kinds without an operator.
+    Assert(CalcRefused(CutSub(CutMat(Ident(2)), CutMat(Ident(2)))), "MATRIX MINUS MATRIX IS REFUSED")
+
+    Print("--- and refuses a matrix of the wrong shape rather than dying ---")
+    Rem MatAdd and MatMul both Error on a mismatch. Reaching the next
+    Rem line is the assertion that the pre-flight ran instead of them.
+    Assert(CalcRefused(CutAdd(CutMat(Ident(2)), CutMat(Ident(3)))), "ADDING A 2x2 TO A 3x3 IS REFUSED")
+    Assert(CalcWhyOf(CutAdd(CutMat(Ident(2)), CutMat(Ident(3)))) = "+ needs two matrices of one shape, got 2x2 and 3x3", "NAMING BOTH SHAPES")
+    Assert(CalcRefused(CutMul(CutMat(Mat(2, 3, { 1, 2, 3, 4, 5, 6 })), CutMat(Ident(2)))), "MULTIPLYING 2x3 BY 2x2 IS REFUSED")
+    Assert(AnsText(CutAdd(N(1), N(1))) = "2", "AND ARITHMETIC STILL WORKS AFTERWARDS")
+
+    Print("--- ordering, where there is one ---")
+    Assert(AnsText(CutLess(N(1), N(2))) = "True", "1 IS LESS THAN 2")
+    Assert(AnsText(CutLess(N(2), N(1))) = "False", "2 IS NOT LESS THAN 1")
+    Assert(AnsText(CutLess(CutStr("A"), CutStr("B"))) = "True", "STRINGS ORDER TOO")
+    Assert(AnsText(CutLess(CutMoney(Dollars(1)), CutMoney(Dollars(2)))) = "True", "AND SO DOES MONEY")
+    Assert(CalcRefused(CutLess(N(1), CutStr("A"))), "A NUMBER AND A STRING DO NOT ORDER")
+    Assert(CalcRefused(CutLess(CutList({ }), CutList({ }))), "AND NEITHER DO TWO LISTS")
+
+    Print("--- how one cell reads ---")
+    Assert(Sh(N(2)) = "2", "A WHOLE NUMBER PRINTS WHOLE")
+    Assert(Sh(N(1.5)) = "1.5", "AND A FRACTION AT ITS OWN PRECISION")
+    Assert(Sh(N(0 - 340)) = "-340", "AND A NEGATIVE KEEPS ITS SIGN")
+    Assert(Sh(CutStr("A B")) = Chr(34) & "A B" & Chr(34), "A STRING PRINTS QUOTED, SO 12 IS NOT " & Chr(34) & "12" & Chr(34))
+    Assert(Sh(CutBool(True)) = "True", "TRUE PRINTS AS THE LANGUAGE SPELLS IT")
+    Assert(Sh(CutBool(False)) = "False", "AND SO DOES FALSE")
+    Assert(Sh(CutProg({ "DUP", "*" })) = "[ DUP * ]", "A PROGRAM PRINTS AS IT WAS TYPED")
+    Assert(Sh(CutProg({ })) = "[ ]", "AN EMPTY PROGRAM IS STILL A PROGRAM")
+    Assert(Sh(CutPair(Pair(CutStr("RATE"), N(0.05)))) = "( " & Chr(34) & "RATE" & Chr(34) & " 0.05 )", "A PAIR PRINTS BOTH HALVES")
+    Assert(Sh(CutMoney(Dollars(1234.5))) = "$1,234.50", "MONEY PRINTS THROUGH MONEYFMT")
+    Assert(Sh(CutList({ })) = "{ }", "THE EMPTY LIST")
+    Assert(Sh(CutList(Nums({ 1, 2, 3 }))) = "{ 1 2 3 }", "A SHORT LIST INLINE")
+    Assert(Sh(CutList({ N(1), CutList(Nums({ 2, 3 })) })) = "{ 1 { 2 3 } }", "AND A NESTED ONE INSIDE IT")
+
+    Print("--- numbers, by mode and digits ---")
+    Assert(ShAs(N(2), CutModeFix(), 2) = "2.00", "FIX 2 SHOWS TWO PLACES")
+    Rem 1.25 and not 1.005: the second is 1.00499999999999989 in binary
+    Rem and would be asserting the arithmetic of the machine rather than
+    Rem the formatting of this one.
+    Assert(ShAs(N(1.25), CutModeFix(), 1) = "1.3", "AND ROUNDS AT THE LAST ONE SHOWN")
+    Assert(ShAs(N(2), CutModeFix(), 0) = "2", "FIX 0 IS THE WHOLE-NUMBER FORMATTER")
+    Assert(ShAs(N(12345), CutModeSci(), 4) = "1.2345E+04", "SCI PUTS ONE DIGIT IN FRONT")
+    Assert(ShAs(N(0.00123), CutModeSci(), 3) = "1.230E-03", "AND A NEGATIVE EXPONENT FOR A SMALL NUMBER")
+    Assert(ShAs(N(0), CutModeSci(), 2) = "0.00E+00", "ZERO HAS NO LOGARITHM, AND PRINTS ANYWAY")
+    Assert(ShAs(N(9.999), CutModeSci(), 2) = "1.00E+01", "AND A MANTISSA THAT ROUNDS UP CARRIES THE EXPONENT")
+    Assert(ShAs(N(12345), CutModeEng(), 3) = "12.345E+03", "ENG KEEPS THE EXPONENT A MULTIPLE OF THREE")
+    Assert(ShAs(N(0.00123), CutModeEng(), 2) = "1.23E-03", "IN BOTH DIRECTIONS")
+    Assert(ShAs(N(1000000), CutModeEng(), 1) = "1.0E+06", "AND AN EXACT POWER OF TEN LANDS ON IT")
+    Assert(Sh(N(1000000)) = ShAs(N(1000000), CutModeStd(), 0), "STD IS WHAT CUTFMTSTD IS")
+
+    Print("--- a matrix reads as its dimensions, and its rows when small ---")
+    Assert(Sh(CutMat(Mat(2, 3, { 1, 2, 3, 4, 5, 6 }))) = "2x3 { { 1 2 3 } { 4 5 6 } }", "A 2x3 SHOWS ITS ROWS")
+    Assert(Sh(CutMat(Ident(20))) = "20x20", "A 20x20 SHOWS ITS DIMENSIONS AND STOPS")
+    Assert(Instr(Sh(CutMat(Ident(20))), CutMoreMark()) = 0, "AND NEVER A HALF-PRINTED BODY")
+
+    Print("--- long aggregates abbreviate on WIDTH, not on a count ---")
+    Rem Appendix A.1's answer, entire: twenty-five cells at 74 columns.
+    Let primes = Sh(CutList(Primes100()))
+    Print("    " & primes)
+    Assert(primes = "{ 2 3 5 7 11 13 17 19 23 29 31 37 41 43 47 53 59 61 67 71 73 79 83 89 97 }", "TWENTY-FIVE PRIMES RENDER WHOLE")
+    Assert(Len(primes) = 74, "AT SEVENTY-FOUR COLUMNS, INSIDE THE BOUND OF 76")
+    Assert(Instr(primes, CutMoreMark()) = 0, "SO NOTHING IS ABBREVIATED")
+
+    Rem Appendix A.2's answer: three rows of four, and the count of the
+    Rem rest. A fourth row would have run to 79 columns, which is why
+    Rem three is where it stops.
+    Let spun = Sh(CutList(Spiral(160)))
+    Print("    " & spun)
+    Assert(spun = "{ { 9 95 40 2 } { 18 100 36 4 } { 27 105 32 6 }  ... 157 more }", "THE SPIRAL SHOWS THREE ROWS AND COUNTS THE REST")
+    Assert(Len(spun) <= CutBound(), "INSIDE THE BOUND")
+    Assert(Sh(Nth(Spiral(160), 3)) = "{ 27 105 32 6 }", "AND THE THIRD ROW IS THE ONE THE SESSION SHOWS")
+    Assert(Sh(Nth(Spiral(160), 160)) = "{ 160 122 172 320 }", "AND THE LAST ROW IS WRAPPED, NOT TRUNCATED")
+    Rem The blue channel is why: MOD would answer -84 where WRAP answers
+    Rem 172, and every non-negative turn agrees, so only this one tells.
+    Assert(Wrap(0 - 340, 256) = 172, "WRAP IS FLOORED WHERE MOD IS TRUNCATED")
+
+    Rem Six hundred one-digit cells: the count in the marker is of what
+    Rem was left, however many that is.
+    Let six = Sh(CutList(Map(Range(1, 600), Fn(k) => N(Wrap(k, 10)))))
+    Print("    " & six)
+    Assert(Instr(six, CutMoreMark()) > 0, "SIX HUNDRED CELLS ABBREVIATE")
+    Assert(Instr(six, "... 571 more") > 0, "SHOWING TWENTY-NINE AND COUNTING THE OTHER 571")
+    Assert(Len(six) <= CutBound(), "AND STILL INSIDE THE BOUND")
+
+    Print("")
+    Print("ALL ASSERTIONS PASSED")
+
+Rem The eight kind names, deduplicated by hand: eight distinct strings in,
+Rem eight out, which is the check that no two cases share a tag.
+Def Modes8() As List Of String
+    Distinct({ CutKindNumber(), CutKindString(), CutKindBoolean(), CutKindList(), CutKindProgram(), CutKindPair(), CutKindMoney(), CutKindMatrix() })
+
+Def Distinct(xs As List Of String) As List Of String
+    Fold(xs, { }, Fn(a, x) => Ifte(Contains(a, x), a, Append(a, x)))

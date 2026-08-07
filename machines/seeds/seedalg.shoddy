@@ -1,0 +1,229 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem seedalg.shoddy — reckoner seed: alg.shoddy, converting at the
+Rem bridge
+Rem
+Rem ALGSIMPLIFY, ALGEXPAND, ALGFACTOR, ALGSOLVE and ALGDESOLVE. Per
+Rem R4.16 there is no EXPRESSION cell at the keyboard, and AlgEx is a
+Rem full symbolic-expression tree (sums, products, powers, function
+Rem calls) — not a shape a dict or a pair fits without inventing a
+Rem second grammar for it. Every word here therefore stays at the
+Rem string boundary alg.shoddy already has: text in, through AlgRead
+Rem (the total half of AlgParse), the algebra, then AlgShow back out.
+Rem An expression never sits on the stack as anything but the text
+Rem that reads back as itself — "x^2 - 4", not a tree only this
+Rem machine could take apart.
+Rem
+Rem AlgRead, not AlgParse: AlgParse Errors on bad syntax, AlgRead
+Rem answers a Result, which is what lets a mistyped expression refuse
+Rem instead of aborting the session.
+Rem ==================================================================
+
+Include "alg.shoddy"
+Include "cuttle.shoddy"
+Include "reckoner.shoddy"
+Include "seq.shoddy"
+
+Rem ---- shared: text to expression and back --------------------------
+
+Def AsRead(word As String, s As String) As Result
+    Select Case AlgRead(s)
+        Case Ok(e)
+            Ok(e)
+        Case Err(w, at)
+            Err(word & ": " & w & " AT TOKEN " & Str(at), at)
+        Case Else
+            Err(word & " did not answer", 0)
+
+Def AsShowEach(es As List Of AlgEx) As Cell
+    CutList(Map(es, AsShowOne))
+
+Def AsShowOne(e As AlgEx) As Cell
+    CutStr(AlgShow(e))
+
+Rem ---- ALGSIMPLIFY, ALGEXPAND -------------------------------------------
+
+Def AsSeedSimplify(st As RckState) As RckState
+    RckReg(st, "ALGSIMPLIFY", 1, RckPure(Fn(vs) => AsSimplify(vs)), "( str -- str2 )", "The expression, simplified — like terms combined, obvious identities applied.")
+
+Def AsSimplify(vs As List Of Cell) As RckWork
+    Select Case RckTextArg("ALGSIMPLIFY", First(vs))
+        Case Ok(s)
+            AsSimplifyAt(s)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("ALGSIMPLIFY did not answer")
+
+Def AsSimplifyAt(s As String) As RckWork
+    Select Case AsRead("ALGSIMPLIFY", s)
+        Case Ok(e)
+            RckVals({ CutStr(AlgShow(AlgSimplify(e))) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("ALGSIMPLIFY did not answer")
+
+Def AsSeedExpand(st As RckState) As RckState
+    RckReg(st, "ALGEXPAND", 1, RckPure(Fn(vs) => AsExpand(vs)), "( str -- str2 )", "The expression, multiplied out — (x+1)(x-1) becomes x^2 - 1.")
+
+Def AsExpand(vs As List Of Cell) As RckWork
+    Select Case RckTextArg("ALGEXPAND", First(vs))
+        Case Ok(s)
+            AsExpandAt(s)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("ALGEXPAND did not answer")
+
+Def AsExpandAt(s As String) As RckWork
+    Select Case AsRead("ALGEXPAND", s)
+        Case Ok(e)
+            RckVals({ CutStr(AlgShow(AlgExpand(e))) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("ALGEXPAND did not answer")
+
+Rem ---- ALGFACTOR ----------------------------------------------------------
+
+Def AsSeedFactor(st As RckState) As RckState
+    RckReg(st, "ALGFACTOR", 2, RckPure(Fn(vs) => AsFactor(vs)), "( str var -- str2 )", "The expression factored, as one string — a polynomial in var only. Refuses on a non-polynomial, a constant, or one irreducible over the rationals.")
+
+Def AsFactor(vs As List Of Cell) As RckWork
+    Select Case RckTextArg("ALGFACTOR", First(vs))
+        Case Ok(s)
+            AsFactorVar(s, Nth(vs, 2))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("ALGFACTOR did not answer")
+
+Def AsFactorVar(s As String, varC As Cell) As RckWork
+    Select Case RckTextArg("ALGFACTOR", varC)
+        Case Ok(var)
+            AsFactorAt(s, var)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("ALGFACTOR did not answer")
+
+Def AsFactorAt(s As String, var As String) As RckWork
+    Select Case AsRead("ALGFACTOR", s)
+        Case Ok(e)
+            AsFactorResult(AlgFactor(e, var))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("ALGFACTOR did not answer")
+
+Def AsFactorResult(r As Result) As RckWork
+    Select Case r
+        Case Ok(e)
+            RckVals({ CutStr(AlgShow(e)) })
+        Case Err(w, at)
+            RckWorkBad("ALGFACTOR: " & w)
+        Case Else
+            RckWorkBad("ALGFACTOR did not answer")
+
+Rem ---- ALGSOLVE -----------------------------------------------------------
+
+Def AsSeedSolve(st As RckState) As RckState
+    RckReg(st, "ALGSOLVE", 2, RckPure(Fn(vs) => AsSolve(vs)), "( str var -- list )", "The roots, as a list of strings — a polynomial in var of degree <= 2 solved exactly, higher degrees bisected numerically. A degree-0 equation with no var answers an empty list. Refuses on a non-polynomial.")
+
+Def AsSolve(vs As List Of Cell) As RckWork
+    Select Case RckTextArg("ALGSOLVE", First(vs))
+        Case Ok(s)
+            AsSolveVar(s, Nth(vs, 2))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("ALGSOLVE did not answer")
+
+Def AsSolveVar(s As String, varC As Cell) As RckWork
+    Select Case RckTextArg("ALGSOLVE", varC)
+        Case Ok(var)
+            AsSolveAt(s, var)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("ALGSOLVE did not answer")
+
+Def AsSolveAt(s As String, var As String) As RckWork
+    Select Case AsRead("ALGSOLVE", s)
+        Case Ok(e)
+            AsSolveResult(AlgSolve(e, var))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("ALGSOLVE did not answer")
+
+Def AsSolveResult(r As Result) As RckWork
+    Select Case r
+        Case Ok(roots)
+            RckVals({ AsShowEach(roots) })
+        Case Err(w, at)
+            RckWorkBad("ALGSOLVE: " & w)
+        Case Else
+            RckWorkBad("ALGSOLVE did not answer")
+
+Rem ---- ALGDESOLVE ---------------------------------------------------------
+
+Def AsSeedDesolve(st As RckState) As RckState
+    RckReg(st, "ALGDESOLVE", 3, RckPure(Fn(vs) => AsDesolve(vs)), "( rhs y x -- str2 )", "The general solution of y' = rhs, where y and x name the dependent and independent variables. Refuses when rhs fits neither the direct-integration nor the y' = g(x)*y case this covers.")
+
+Def AsDesolve(vs As List Of Cell) As RckWork
+    Select Case RckTextArg("ALGDESOLVE", First(vs))
+        Case Ok(s)
+            AsDesolveY(s, Nth(vs, 2), Nth(vs, 3))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("ALGDESOLVE did not answer")
+
+Def AsDesolveY(s As String, yc As Cell, xc As Cell) As RckWork
+    Select Case RckTextArg("ALGDESOLVE", yc)
+        Case Ok(y)
+            AsDesolveX(s, y, xc)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("ALGDESOLVE did not answer")
+
+Def AsDesolveX(s As String, y As String, xc As Cell) As RckWork
+    Select Case RckTextArg("ALGDESOLVE", xc)
+        Case Ok(x)
+            AsDesolveAt(s, y, x)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("ALGDESOLVE did not answer")
+
+Def AsDesolveAt(s As String, y As String, x As String) As RckWork
+    Select Case AsRead("ALGDESOLVE", s)
+        Case Ok(rhs)
+            AsDesolveResult(AlgDeSolve(rhs, y, x))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("ALGDESOLVE did not answer")
+
+Def AsDesolveResult(r As Result) As RckWork
+    Select Case r
+        Case Ok(sol)
+            RckVals({ CutStr(AlgShow(sol)) })
+        Case Err(w, at)
+            RckWorkBad("ALGDESOLVE: " & w)
+        Case Else
+            RckWorkBad("ALGDESOLVE did not answer")
+
+Rem ---- the seed -----------------------------------------------------------
+
+Def RckSeedAlg(st As RckState) As RckState
+    Let s1 = AsSeedSimplify(RckSeeding(st, "seed-alg"))
+    Let s2 = AsSeedExpand(s1)
+    Let s3 = AsSeedFactor(s2)
+    Let s4 = AsSeedSolve(s3)
+    AsSeedDesolve(s4)

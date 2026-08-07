@@ -321,6 +321,10 @@ public class MachineSurfaceTests
                 Path.Combine(Root, "mills", "tally", "..", "..", "machines", "stats.shoddy")));
             Assert.True(Lexer.IsMachineLibrary(Path.Combine(Root, "machines", "seq.shoddy")));
 
+            // A reckoner seed, one level deeper than the machines it bridges.
+            Assert.True(Lexer.IsMachineLibrary(
+                Path.Combine(Root, "machines", "seeds", "seedbool.shoddy")));
+
             // And a mill's own file, however it is spelled.
             Assert.False(Lexer.IsMachineLibrary(
                 Path.Combine(Root, "mills", "tally", "tally-spec.shoddy")));

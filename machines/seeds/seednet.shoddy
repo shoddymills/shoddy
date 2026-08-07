@@ -1,0 +1,193 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem seednet.shoddy — reckoner seed: net.shoddy's request/response half
+Rem
+Rem NETGET fetches a URL from the prompt. NETREQUEST sends whatever you
+Rem like and hands back the whole reply. NETALLOWED — seedbuiltin's, not
+Rem this seed's — says whether either can work at all.
+Rem
+Rem ---- THREE OBJECTIONS, AND WHICH ONE WAS REAL ----------------------
+Rem
+Rem THE HANDLE. R3.5(b) keeps a socket off the stack, and this seed
+Rem never puts one there: a request opens, talks and closes inside one
+Rem word. Nothing to strand, so nothing to hold by name either — unlike
+Rem a file or a window, a request/response has no life between lines,
+Rem which is why this seed uses the resource table not at all.
+Rem
+Rem THE CAPABILITY, and this is the one the tree used to record as
+Rem decisive: "--allow-net is not something a session can obtain half
+Rem way through". True, and it does not follow that nothing can be
+Rem bridged. A mill STARTED with the flag has the capability; what was
+Rem missing was a way to ASK, since every socket builtin begins by
+Rem aborting when the network is off. NETALLOWED is that question, and
+Rem TRYTCPREQUEST reports the same fact as an ordinary refusal.
+Rem
+Rem THE ABORTS, which turned out to be the real obstacle and the largest
+Rem one. TCPSEND and TCPRECV die eight ways between them on plain
+Rem network faults, and TCPSECURE takes the handle with it on a failed
+Rem handshake. A bridge built from guarded PARTS would be a socket that
+Rem must be closed on each of a dozen error paths and leaked on the one
+Rem that was missed. TRYTCPREQUEST guards the WHOLE conversation
+Rem instead — the same call TRYREADFILE makes about whole-file reads,
+Rem and for the same reason.
+Rem
+Rem ---- WHY THIS SEED DOES NOT CALL net.shoddy ------------------------
+Rem
+Rem It calls TRYTCPREQUEST directly. net.shoddy's own Request is
+Rem Connect/Send/RecvAll/Close over the ABORTING builtins, so it is the
+Rem thing being replaced rather than the thing being wrapped — exactly
+Rem as seedfile.shoddy rebuilds ReadLines rather than calling it.
+Rem
+Rem AND RECVALL WOULD HANG, which at a prompt is worse than aborting. It
+Rem polls until the peer closes, and a keep-alive server never does, so
+Rem a session would sit there with no way back. The runtime's read is
+Rem bounded by a deadline and gives back what it has.
+Rem
+Rem ---- WHAT IS NOT BRIDGED ------------------------------------------
+Rem
+Rem The SERVER half — Listen, Accept, Serve1 — and the raw socket words.
+Rem A listener is a live resource with a life between lines, so it would
+Rem want the named table; but a server that cannot run a loop is not a
+Rem server, and a reckoner line answers and ends. That is a design, and
+Rem not this one.
+Rem ==================================================================
+
+Include "cuttle.shoddy"
+Include "reckoner.shoddy"
+Include "seq.shoddy"
+Include "str.shoddy"
+
+Rem ---- the two words -----------------------------------------------------
+
+Def NsSeedGet(st As RckState) As RckState
+    Let s1 = RckReg(st, "NETGET", 1, RckTouch(Fn(vs) => NsGet(vs)), "( url -- str )", "Fetch a URL and answer the whole reply, headers and all. http:// and https:// both work, and a bare host is taken as https. HTTPBODY, seedhttps's, drops the headers. Refuses, rather than aborting, when the mill has no --allow-net or the host cannot be reached.")
+    RckReg(s1, "NETREQUEST", 4, RckTouch(Fn(vs) => NsRequest(vs)), "( host port secure msg -- str )", "Send msg to host on that port, with TLS when secure is True, and answer the whole reply. The raw form NETGET is built on, for a protocol that is not HTTP.")
+
+Rem ---- NETGET ------------------------------------------------------------
+
+Def NsGet(vs As List Of Cell) As RckWork
+    Select Case RckTextArg("NETGET", First(vs))
+        Case Ok(url)
+            NsGetUrl(url)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("NETGET did not answer")
+
+Rem A bare host means HTTPS, because a bare host on the modern web means
+Rem HTTPS. net.shoddy's own HttpGet speaks plaintext on port 80 and its
+Rem header says as much — enough for a demo and not enough for the web.
+Def NsGetUrl(url As String) As RckWork
+    If StartsWith(Lower(url), "http://") Then
+        NsGetParts(Mid(url, 8, Len(url)), False, 80)
+    Else
+        If StartsWith(Lower(url), "https://") Then
+            NsGetParts(Mid(url, 9, Len(url)), True, 443)
+        Else
+            NsGetParts(url, True, 443)
+
+Rem The host is up to the first slash and the path is the rest, with a
+Rem bare host meaning "/". A port written into the host — "example.com:8080"
+Rem — is honoured, because a URL may carry one and silently ignoring it
+Rem would fetch the wrong thing.
+Def NsGetParts(rest As String, secure As Boolean, port As Number) As RckWork
+    NsGetSplit(NsUpTo(rest, "/"), NsFrom(rest, "/"), secure, port)
+
+Def NsUpTo(s As String, mark As String) As String
+    If Instr(s, mark) = 0 Then
+        s
+    Else
+        Left(s, Instr(s, mark) - 1)
+
+Def NsFrom(s As String, mark As String) As String
+    If Instr(s, mark) = 0 Then
+        "/"
+    Else
+        Mid(s, Instr(s, mark), Len(s))
+
+Def NsGetSplit(hostport As String, path As String, secure As Boolean, port As Number) As RckWork
+    If Instr(hostport, ":") = 0 Then
+        NsGetAt(hostport, hostport, port, secure, path)
+    Else
+        NsGetPorted(NsUpTo(hostport, ":"), Mid(hostport, Instr(hostport, ":") + 1, Len(hostport)), secure, path)
+
+Def NsGetPorted(host As String, ps As String, secure As Boolean, path As String) As RckWork
+    If Not IsNumeric(ps) Then
+        RckWorkBad("NETGET: '" & ps & "' IS NOT A PORT NUMBER")
+    Else
+        NsGetAt(host, host, Val(ps), secure, path)
+
+Rem The Host header carries the name and not the name-with-port, which
+Rem is what a server matches its virtual hosts on.
+Def NsGetAt(host As String, hdr As String, port As Number, secure As Boolean, path As String) As RckWork
+    If host = "" Then
+        RckWorkBad("NETGET: THERE IS NO HOST IN THAT URL")
+    Else
+        NsAsked("NETGET", host, port, secure, NsHttpGet(hdr, path))
+
+Rem HTTP/1.0 with no keep-alive, so the server closes when it is done and
+Rem the reply has a definite end. A User-Agent because a good many hosts
+Rem refuse a request without one.
+Def NsHttpGet(host As String, path As String) As String
+    "GET " & path & " HTTP/1.0\r\nHost: " & host & "\r\nUser-Agent: shoddy\r\nConnection: close\r\n\r\n"
+
+Rem ---- NETREQUEST --------------------------------------------------------
+
+Def NsRequest(vs As List Of Cell) As RckWork
+    Select Case Pair(RckTextArg("NETREQUEST", Nth(vs, 1)), RckWholeArg("NETREQUEST", Nth(vs, 2)))
+        Case Pair(Ok(host), Ok(port))
+            NsRequestFlag(host, port, Nth(vs, 3), Nth(vs, 4))
+        Case Else
+            RckWorkBad("NETREQUEST needs a host and a port")
+
+Def NsRequestFlag(host As String, port As Number, sc As Cell, mc As Cell) As RckWork
+    Select Case Pair(sc, mc)
+        Case Pair(CutBool(secure), CutStr(msg))
+            NsRequestPort(host, port, secure, msg)
+        Case Else
+            RckWorkBad("NETREQUEST needs True or False for secure, and a STRING to send")
+
+Rem A port outside 1..65535 is not a port. The runtime would report the
+Rem failure anyway, but it would report it as a connection that could not
+Rem be made, which is a worse account of a number that was mistyped.
+Def NsRequestPort(host As String, port As Number, secure As Boolean, msg As String) As RckWork
+    If port < 1 Or port > 65535 Then
+        RckWorkBad("NETREQUEST: " & Str(port) & " IS NOT A PORT — THEY RUN FROM 1 TO 65535")
+    Else
+        NsAsked("NETREQUEST", host, port, secure, msg)
+
+Rem ---- the one place either of them touches the network -------------------
+
+Rem NETALLOWED is asked FIRST, so a mill with no --allow-net is told what
+Rem is actually wrong rather than being handed a failure that reads like
+Rem the host's fault. The runtime reports it too; this one names the
+Rem remedy, which the runtime is not the place to do.
+Def NsAsked(word As String, host As String, port As Number, secure As Boolean, msg As String) As RckWork
+    If Not NetAllowed() Then
+        RckWorkBad(word & ": THE NETWORK IS OFF — START THE MILL WITH --allow-net")
+    Else
+        NsAnswered(word, TryTcpRequest(host, port, secure, msg))
+
+Def NsAnswered(word As String, r As Result) As RckWork
+    Select Case r
+        Case Ok(reply)
+            RckVals({ CutStr(reply) })
+        Case Err(w, at)
+            RckWorkBad(word & ": " & w)
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Rem THERE WAS A NETBODY HERE, and seedhttps.shoddy is where it went. It
+Rem split a reply at the blank line, which is what HTTPBODY does — and
+Rem HTTPBODY is https.shoddy's own, so it does it properly. Keeping both
+Rem would have been a second spelling of a word the dictionary already
+Rem had, which is the thing seedbuiltin's own rules exist to prevent. A
+Rem mill that wants replies taken apart folds seedhttps; this seed
+Rem fetches the text.
+
+Rem ---- the seed ----------------------------------------------------------
+
+Def RckSeedNet(st As RckState) As RckState
+    NsSeedGet(RckSeeding(st, "seed-net"))

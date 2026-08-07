@@ -1,0 +1,161 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem seedstr.shoddy — reckoner seed: str.shoddy's text words
+Rem
+Rem STRCAT, UPPER, LOWER, TRIM, SPLIT, JOIN and TOFIXED. Upper and
+Rem Lower are builtins reached directly; the rest are str.shoddy, guarded
+Rem where it Errors — SPLIT on an empty separator, TOFIXED on a place
+Rem count wide enough to overflow the ^ underneath it.
+Rem ==================================================================
+
+Include "str.shoddy"
+Include "cuttle.shoddy"
+Include "reckoner.shoddy"
+Include "seq.shoddy"
+
+Rem ---- a LIST cell as List Of String --------------------------------------
+
+Def SrListStr(word As String, c As Cell) As Result
+    Select Case RckListArg(word, c)
+        Case Ok(xs)
+            SrStrsAt(word, xs, { })
+        Case Err(w, at)
+            Err(w, at)
+        Case Else
+            Err(word & " did not answer", 0)
+
+Def SrStrsAt(word As String, xs As List Of Cell, acc As List Of String) As Result
+    If IsEmpty(xs) Then
+        Ok(acc)
+    Else
+        SrStrsNext(word, xs, acc, First(xs))
+
+Def SrStrsNext(word As String, xs As List Of Cell, acc As List Of String, c As Cell) As Result
+    Select Case c
+        Case CutStr(t)
+            SrStrsAt(word, Rest(xs), Append(acc, t))
+        Case Else
+            Err(RckKindWhy(word, "a LIST of STRINGs", c), 0)
+
+Rem ---- STRCAT -----------------------------------------------------------
+Rem CutAdd already joins two strings under +; STRCAT is the same answer
+Rem under its own name for a dictionary that reaches for it by kind.
+
+Def SrSeedStrcat(st As RckState) As RckState
+    RckReg(st, "STRCAT", 2, RckPure(Fn(vs) => RckCalc(CutAdd(Nth(vs, 1), Nth(vs, 2)))), "( a b -- ab )", "Two strings joined end to end.")
+
+Rem ---- UPPER, LOWER, TRIM ---------------------------------------------
+Rem All total, straight to the builtin or str.shoddy underneath.
+
+Def SrSeedUpper(st As RckState) As RckState
+    RckReg(st, "UPPER", 1, RckPure(Fn(vs) => SrText("UPPER", First(vs), Upper)), "( s -- s )", "The string in upper case.")
+
+Def SrSeedLower(st As RckState) As RckState
+    RckReg(st, "LOWER", 1, RckPure(Fn(vs) => SrText("LOWER", First(vs), Lower)), "( s -- s )", "The string in lower case.")
+
+Def SrSeedTrim(st As RckState) As RckState
+    RckReg(st, "TRIM", 1, RckPure(Fn(vs) => SrText("TRIM", First(vs), Trim)), "( s -- s )", "The string with leading and trailing spaces removed.")
+
+Def SrText(word As String, c As Cell, f As [ String -- String ]) As RckWork
+    Select Case RckTextArg(word, c)
+        Case Ok(s)
+            RckVals({ CutStr(Call(f, s)) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Rem ---- SPLIT, JOIN ------------------------------------------------------
+Rem Split Errors on an empty separator; refused here rather than reached.
+
+Def SrSeedSplit(st As RckState) As RckState
+    RckReg(st, "SPLIT", 2, RckPure(Fn(vs) => SrSplit(vs)), "( s sep -- list )", "s cut apart everywhere sep occurs.")
+
+Def SrSplit(vs As List Of Cell) As RckWork
+    Select Case RckTextArg("SPLIT", Nth(vs, 1))
+        Case Ok(s)
+            SrSplitAt(s, Nth(vs, 2))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("SPLIT did not answer")
+
+Def SrSplitAt(s As String, c As Cell) As RckWork
+    Select Case RckTextArg("SPLIT", c)
+        Case Ok(sep)
+            SrSplitOn(s, sep)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("SPLIT did not answer")
+
+Def SrSplitOn(s As String, sep As String) As RckWork
+    If sep = "" Then
+        RckWorkBad("SPLIT needs a separator that is not empty")
+    Else
+        RckVals({ CutList(Map(Split(s, sep), CutStr)) })
+
+Def SrSeedJoin(st As RckState) As RckState
+    RckReg(st, "JOIN", 2, RckPure(Fn(vs) => SrJoin(vs)), "( list sep -- s )", "The list's strings joined together with sep between them.")
+
+Def SrJoin(vs As List Of Cell) As RckWork
+    Select Case SrListStr("JOIN", Nth(vs, 1))
+        Case Ok(xs)
+            SrJoinAt(xs, Nth(vs, 2))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("JOIN did not answer")
+
+Def SrJoinAt(xs As List Of String, c As Cell) As RckWork
+    Select Case RckTextArg("JOIN", c)
+        Case Ok(sep)
+            RckVals({ CutStr(Join(xs, sep)) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("JOIN did not answer")
+
+Rem ---- TOFIXED ----------------------------------------------------------
+Rem ToFixed raises 10 to the power of p when p is positive; the same
+Rem magnitude bound the engine core's ^ enforces keeps that finite.
+
+Def SrSeedTofixedReg(st As RckState) As RckState
+    RckReg(st, "TOFIXED", 2, RckPure(Fn(vs) => SrTofixed(vs)), "( x p -- s )", "x written with exactly p decimal places.")
+
+Def SrTofixed(vs As List Of Cell) As RckWork
+    Select Case RckNumArg("TOFIXED", Nth(vs, 1))
+        Case Ok(x)
+            SrTofixedAt(x, Nth(vs, 2))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("TOFIXED did not answer")
+
+Def SrTofixedAt(x As Number, c As Cell) As RckWork
+    Select Case RckNumArg("TOFIXED", c)
+        Case Ok(p)
+            SrTofixedOf(x, p)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("TOFIXED did not answer")
+
+Def SrTofixedOf(x As Number, p As Number) As RckWork
+    If p > 15 Or p <> Floor(p) Then
+        RckWorkBad("TOFIXED needs a whole number of places no wider than 15")
+    Else
+        RckVals({ CutStr(ToFixed(x, p)) })
+
+Rem ---- the seed -----------------------------------------------------------
+
+Def RckSeedStr(st As RckState) As RckState
+    Let st1 = SrSeedStrcat(RckSeeding(st, "seed-str"))
+    Let st2 = SrSeedUpper(st1)
+    Let st3 = SrSeedLower(st2)
+    Let st4 = SrSeedTrim(st3)
+    Let st5 = SrSeedSplit(st4)
+    Let st6 = SrSeedJoin(st5)
+    SrSeedTofixedReg(st6)

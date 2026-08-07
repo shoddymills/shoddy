@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="reckoner seed: net's request/response half — machines/seeds/seednet.shoddy">
+<title>seednet — A Reckoner Seed | Shoddy Machines</title>
+<link rel="stylesheet" href="../style.css">
+<link rel="icon" href="../favicon.svg" type="image/svg+xml">
+<link rel="alternate icon" href="../favicon.ico" sizes="48x48">
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+</head>
+<body>
+<div class="topbar"><div class="inner">
+  <div class="row">
+    <a class="phase" href="index.html"><img class="mark" src="../media/brand/shoddy-icon.svg" alt="" width="23" height="23">Shoddy · The Machines</a>
+    <span class="spacer"></span>
+    <nav class="docnav meta" aria-label="About"><a href="../heritage.html">Heritage</a><a href="../authorship.html">Authorship</a></nav>
+  </div>
+  <nav class="docnav main" aria-label="Documentation"><a href="../tutorials/index.html">Tutorials</a><a href="../guide.html">Guide</a><a href="../quickref.html">Reference</a><span class="here">Machines</span><a href="../mills/index.html">Mills</a><a href="../stack.html">Stack</a><a href="../spec.html">Spec</a><a href="../setup.html">Setup</a><a href="../vscode.html">VS Code</a><a href="../assistants.html">AI</a><a href="../build.html">Toolchain</a><a href="../errors.html">Errors</a></nav>
+</div></div>
+<div class="wrap">
+
+
+<header class="mast has-icon"><div><p class="eyebrow"><a href="index.html#runtime-stack">The Machines &middot; Runtime stack</a></p><h1>seednet</h1><p class="kicker">A reckoner seed: net's request/response half — machines/seeds/seednet.shoddy</p></div><img class="micon" src="../media/icons/seednet.svg" alt="the seednet machine&#39;s icon"></header>
+<nav class="pagertop" aria-label="Machines, in catalog order"><a href="seedscribbler.html">&larr; seedscribbler</a><a href="index.html">All machines</a><a href="seedturtle.html">seedturtle &rarr;</a></nav>
+
+<h2 id="summary">Summary</h2>
+<p><code>NETGET</code> fetches a URL from the prompt.
+<code>NETREQUEST</code> sends whatever you like and hands back the whole
+reply. <code>NETALLOWED</code> — <a href="seedbuiltin.html">seedbuiltin</a>'s,
+not this seed's — says whether either can work at all, and
+<a href="seedhttps.html">seedhttps</a> is what takes a reply apart.</p>
+<pre><code>&gt; "https://example.com/" NETGET HTTPBODY
+x: "&lt;!doctype html&gt;&lt;html lang=\"en\"&gt;&lt;head&gt;&lt;title&gt;Example Domain&lt;/title&gt;…"</code></pre>
+
+<h2 id="why">Why It's Useful</h2>
+<p><strong>Three objections stood in the way, and only one was real.</strong></p>
+<table>
+<tr><th>Objection</th><th>What became of it</th></tr>
+<tr><td><strong>The handle.</strong> A socket must not reach the stack.</td><td>Never does. A request opens, talks and closes inside one word — so unlike a file or a window there is no life between lines, and this seed uses the resource table not at all.</td></tr>
+<tr><td><strong>The capability.</strong> The tree recorded this as decisive: <code>--allow-net</code> is not something a session can obtain half way through.</td><td>True, and it does not follow. A mill <em>started</em> with the flag has it. What was missing was a way to <em>ask</em>, since every socket builtin begins by aborting when the network is off — <code>NetAllowed</code> is that question, and it is deliberately not gated itself.</td></tr>
+<tr><td><strong>The aborts.</strong></td><td><strong>The real obstacle, and the largest.</strong> <code>TCPSend</code> and <code>TCPRecv</code> die eight ways between them on plain network faults, and <code>TCPSecure</code> takes the handle with it on a failed handshake.</td></tr>
+</table>
+<p><strong>So the runtime guards the whole conversation, not the parts.</strong>
+<code>TryTcpRequest</code> connects, optionally secures, sends, reads to the
+end of the reply and closes — answering <code>Ok(reply)</code> or
+<code>Err(why, 0)</code>. A bridge built from guarded <em>pieces</em> would
+be a socket that must be closed on each of a dozen error paths, and leaked
+on the one that was missed; here the socket cannot outlive the word,
+because every exit runs through the same close.
+<a href="seedfile.html">TryReadFile</a> settled the same question the same
+way, guarding a whole read rather than open/read/close.</p>
+<p><strong>It cannot hang</strong>, which matters more at a prompt than in a
+program. <a href="net.html">net</a>'s own <code>RecvAll</code> polls until
+the peer closes and never returns against a keep-alive server — a session
+would sit there with no way back. The runtime's read is bounded by a
+deadline and gives back what it has.</p>
+<p><strong>A bare host means HTTPS</strong>, because a bare host on the
+modern web means HTTPS. <a href="net.html">net</a>'s own
+<code>HttpGet</code> speaks plaintext on port 80 and its header says as
+much — enough for a demo and not enough for the web. Write
+<code>http://</code> explicitly if that is what you want.</p>
+<p><strong>This seed does not call <a href="net.html">net</a>.</strong> Its
+<code>Request</code> is Connect/Send/RecvAll/Close over the <em>aborting</em>
+builtins, so it is the thing being replaced rather than the thing being
+wrapped — exactly as <a href="seedfile.html">seedfile</a> rebuilds
+<code>ReadLines</code> rather than calling it.</p>
+<p><strong>What is not bridged:</strong> the server half —
+<code>Listen</code>, <code>Accept</code>, <code>Serve1</code> — and the raw
+socket words. A listener is a live resource with a life between lines, so
+it would want the named table; but a server that cannot run a loop is not a
+server, and a reckoner line answers and ends. That is a different design.</p>
+
+<h2 id="guide">User's Guide</h2>
+<pre><code>&gt; NETALLOWED
+x: True
+
+&gt; "https://example.com/" NETGET HTTPBODY
+x: "&lt;!doctype html&gt;…"
+
+&gt; "example.com" NETGET                    ' a bare host is https
+x: "HTTP/1.1 200 OK…"
+
+&gt; "http://example.com:8080/status" NETGET ' scheme and port both honoured
+x: "…"
+
+&gt; "https://no.such.host.invalid/" NETGET
+NETGET: CANNOT REACH 'no.such.host.invalid:443' (NO SUCH HOST)
+
+&gt; "example.com" 443 True "GET / HTTP/1.0\r\nHost: example.com\r\n\r\n" NETREQUEST
+x: "…"</code></pre>
+<p>Without <code>--allow-net</code> every fetch refuses with
+<code>THE NETWORK IS OFF — START THE MILL WITH --allow-net</code>. The
+session carries on either way: that refusal is the branch this seed exists
+to make possible, and it used to be an abort.</p>
+
+<h2 id="words">Word Reference</h2>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>NETGET ( url -- str )</td><td>Fetch a URL and answer the whole reply, headers and all. <code>http://</code> and <code>https://</code> both work, and a bare host is taken as HTTPS. A port in the URL is honoured.</td></tr>
+<tr><td>NETREQUEST ( host port secure msg -- str )</td><td>Send msg to host on that port, with TLS when secure is True, and answer the whole reply. The raw form <code>NETGET</code> is built on, for a protocol that is not HTTP.</td></tr>
+</table>
+<p class="note">There was a <code>NETBODY</code> here, and
+<a href="seedhttps.html">seedhttps</a> is where it went.
+<code>HTTPBODY</code> is <a href="https.html">https</a>'s own and does the
+job properly, so keeping both would have been the second spelling of a word
+the dictionary already had.</p>
+<p class="note">The refusals are all answered <em>before</em> anything is
+dialled: a URL with no host, a port that is not a number, a port outside
+1&ndash;65535, an argument of the wrong kind — and the network being off,
+which is asked first so that the message can name the remedy rather than
+reading like the host's fault.</p>
+
+<h2 id="usedby">Who Uses It</h2>
+<table>
+<tr><th></th><th>User</th><th>How</th></tr>
+<tr><td class="uicon"><a href="../mills/halifax.html"><img src="../media/icons/halifax.svg" alt=""></a></td><td><a href="../mills/halifax.html">halifax</a></td><td>The calculator's fetch words. Without <code>--allow-net</code> they refuse and say so, which is an ordinary answer at a prompt.</td></tr>
+</table>
+<p>A mill claims this seed by folding <code>RckSeedNet</code> over its
+reckoner state, which is all halifax does.</p>
+
+<h2 id="uses">The Machines It Uses</h2>
+<table>
+<tr><th></th><th>Machine</th><th>Why</th></tr>
+<tr><td class="uicon"><a href="cuttle.html"><img src="../media/icons/cuttle.svg" alt=""></a></td><td><a href="cuttle.html">cuttle</a></td><td>The <code>Cell</code> type the reply crosses the bridge as.</td></tr>
+<tr><td class="uicon"><a href="reckoner.html"><img src="../media/icons/reckoner.svg" alt=""></a></td><td><a href="reckoner.html">reckoner</a></td><td><code>RckReg</code> and the argument readers every registered word is built from.</td></tr>
+<tr><td class="uicon"><a href="seq.html"><img src="../media/icons/seq.svg" alt=""></a></td><td><a href="seq.html">seq</a></td><td><code>Pair</code>, for reading the arguments the two-and-more-argument words take.</td></tr>
+<tr><td class="uicon"><a href="str.html"><img src="../media/icons/str.svg" alt=""></a></td><td><a href="str.html">str</a></td><td><code>StartsWith</code>, for telling a scheme from a bare host.</td></tr>
+</table>
+<p class="note">Not <a href="net.html">net</a> itself, and that is the
+point: its <code>Request</code> is built on the aborting builtins, so this
+seed replaces it rather than calling it.</p>
+
+<nav class="pager" aria-label="Machines, in catalog order">
+  <a href="seedscribbler.html"><span class="dir">&larr; Previous machine</span><span class="ttl">seedscribbler</span></a>
+  <a class="next" href="seedturtle.html"><span class="dir">Next machine &rarr;</span><span class="ttl">seedturtle</span></a>
+</nav>
+<footer>Named for the shoddy mills of the West Riding: Useless Things Made
+Useful Through Skill (<a href="../heritage.html">the heritage of the name</a>).<br>
+&copy; 2026 Stephen Vincent Foster</footer>
+</div>
+</body>
+</html>

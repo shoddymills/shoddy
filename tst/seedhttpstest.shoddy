@@ -1,0 +1,177 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem seedhttpstest.shoddy — test program for seedhttps.shoddy
+Rem
+Rem Assert-driven, in the cuttletest / reckonertest / seedtest pattern:
+Rem it prints what it is doing and stops the run at the first assertion
+Rem that fails, ending with ALL ASSERTIONS PASSED when it does not.
+Rem
+Rem IT NEEDS NO NETWORK, and this seed is the one where that costs
+Rem nothing at all. https.shoddy's own header states the rule: "PURE
+Rem WHERE IT CAN BE... Building a request and parsing a reply are
+Rem functions on Strings... tested offline against fixture text." Five
+Rem of the seven words are exactly that, so five of the seven are tested
+Rem the same way — against replies written out below rather than
+Rem fetched from somebody else's server.
+Rem
+Rem The two that DO reach the network are asserted on their refusals,
+Rem which is the half worth pinning anyway: the suite runs without
+Rem --allow-net, so every fetch takes the branch that used to be an
+Rem abort. Their argument guards are asserted whatever the network is
+Rem doing, because every one of them is answered before anything is
+Rem dialled.
+Rem
+Rem THE REQUEST-SMUGGLING GUARDS ARE THE ONES TO READ. A line break in a
+Rem header, a host or a method does not make a malformed request — it
+Rem makes TWO, the second one written by whoever supplied the string.
+Rem Nothing downstream would notice, which is why they are refused here
+Rem and why each has its own assertion.
+Rem
+Rem Run: bin\mill run tst\seedhttpstest.shoddy      (from the repo root)
+Rem ==================================================================
+
+Include "../machines/cuttle.shoddy"
+Include "../machines/reckoner.shoddy"
+Include "../machines/seq.shoddy"
+Include "../machines/str.shoddy"
+Include "../machines/seeds/seedhttps.shoddy"
+Include "../machines/seeds/seeddict.shoddy"
+
+Rem ---- reading an answer ------------------------------------------------
+
+Def Ran(st As RckState, line As String) As RckState
+    Select Case RckEval(st, line)
+        Case RckNext(st2, out)
+            st2
+        Case RckStop(st2, why, out)
+            st2
+        Case Else
+            st
+
+Def Bad(st As RckState, line As String) As Boolean
+    Select Case RckEval(st, line)
+        Case RckStop(st2, why, out)
+            True
+        Case Else
+            False
+
+Def Why(st As RckState, line As String) As String
+    Select Case RckEval(st, line)
+        Case RckStop(st2, why, out)
+            why
+        Case Else
+            ""
+
+Def Text(st As RckState) As String
+    Join(Map(CutCells(RckStack(st)), Fn(c) => CutShow(c, RckFmt(st))), " | ")
+
+Def Q(s As String) As String
+    Chr(34) & s & Chr(34)
+
+Def Refuses(st As RckState, line As String, why As String) As Boolean
+    Bad(st, line) And Instr(Why(st, line), why) > 0 And Text(Ran(st, line)) = Text(st) And Text(Ran(Ran(st, line), "1 1 +")) = Text(Ran(st, "1 1 +"))
+
+Rem ---- the fixtures, which is what "tested offline" means ---------------
+
+Rem A reply as it comes off the wire: CRLF line ends, a blank line, then
+Rem the body. Written here so the parse is checked against something
+Rem known rather than against whatever a server felt like sending.
+Def Reply() As String
+    "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nServer: shoddy-test\r\n\r\n<h1>hello</h1>"
+
+Rem A redirect, which https.shoddy reports rather than chases — so the
+Rem status and the location header are what a caller acts on.
+Def Redirect() As String
+    "HTTP/1.1 301 Moved Permanently\r\nLocation: https://example.com/\r\n\r\n"
+
+Def Ua() As String
+    "{ { " & Q("user-agent") & " " & Q("shoddy") & " } }"
+
+Def Main()
+    Let s0 = RckSeedDict(RckSeedHttps(RckNew()))
+    Let g = Ran(s0, "1 2")
+
+    Print("--- the seed is in the dictionary, grouped and documented ---")
+    Assert(RckKnows(s0, "HTTPSTATUS") And RckKnows(s0, "HTTPBODY") And RckKnows(s0, "HTTPSGET"), "THE WORDS ARE THERE")
+    Assert(Contains(RckWords(s0), "-- seed-https --"), "AND THEY HAVE A GROUP OF THEIR OWN")
+    Assert(All(RckDict(s0), Fn(e) => WordEffect(e) <> "" And WordDesc(e) <> ""), "NO WORD IS WITHOUT AN EFFECT LINE AND A DESCRIPTION")
+    Assert(All(RckDict(s0), Fn(e) => Length(RckHelp(s0, WordName(e))) = 3), "AND HELP ANSWERS FOR EVERY ONE OF THEM")
+    Assert(All(RckDict(s0), Fn(e) => Instr(Lower(WordEffect(e)), "handle") = 0), "NO WORD'S EFFECT STRING MENTIONS A HANDLE")
+    Rem A fetch opens, talks and closes inside one word, exactly as
+    Rem seednet's does, so nothing here is a resource either.
+    Assert(IsEmpty(RckBoundNames(Ran(g, Q("example.com") & " " & Q("/") & " { } HTTPSGET"))), "AND A FETCH BINDS NOTHING, WHETHER IT WORKED OR NOT")
+    Rem The five pure words touch nothing, which is the claim
+    Rem https.shoddy's own header makes and this seed rests on.
+    Assert(Holds(RckHelp(s0, "HTTPSTATUS"), "touches nothing"), "READING A STATUS TOUCHES NOTHING")
+    Assert(Holds(RckHelp(s0, "HTTPBODY"), "touches nothing"), "AND NEITHER DOES TAKING A BODY OUT")
+    Assert(Holds(RckHelp(s0, "HTTPSGET"), "touches the world"), "WHILE FETCHING ONE DOES")
+
+    Print("--- taking a reply apart, against fixture text ---")
+    Assert(Text(Ran(s0, Q(Reply()) & " HTTPSTATUS")) = "200", "THE STATUS IS A NUMBER, NOT THE LINE IT CAME FROM")
+    Assert(Text(Ran(s0, Q(Reply()) & " HTTPREASON")) = Q("OK"), "AND THE REASON IS BESIDE IT")
+    Assert(Text(Ran(s0, Q(Reply()) & " HTTPBODY")) = Q("<h1>hello</h1>"), "THE BODY IS WHAT FOLLOWS THE BLANK LINE")
+    Rem Header names come back lowercased, because HTTP names are
+    Rem case-insensitive and https.shoddy normalises at the boundary —
+    Rem which is what lets DGET find one without guessing how the server
+    Rem spelled it.
+    Assert(Text(Ran(s0, Q(Reply()) & " HTTPHEADERS " & Q("server") & " DGET")) = Q("shoddy-test"), "HEADERS COME BACK AS A DICT DGET CAN READ")
+    Assert(Instr(Text(Ran(s0, Q(Reply()) & " HTTPHEADERS")), "content-type") > 0, "AND THEIR NAMES ARE LOWERCASED, HOWEVER THE SERVER WROTE THEM")
+    Assert(Text(Ran(s0, Q(Reply()) & " " & Q("Content-Type") & " " & Q("?") & " HTTPHEADER")) = Q("text/html; charset=utf-8"), "HTTPHEADER FINDS ONE WHATEVER CASE IT IS ASKED IN")
+    Assert(Text(Ran(s0, Q(Reply()) & " " & Q("x-nothing") & " " & Q("none") & " HTTPHEADER")) = Q("none"), "AND ANSWERS THE DEFAULT FOR ONE THAT IS NOT THERE")
+
+    Print("--- a redirect is REPORTED, which is the machine's own policy ---")
+    Rem https.shoddy does not chase a 301: loops, cross-host hops and
+    Rem method rewriting are the caller's policy rather than a library's,
+    Rem and a session is a caller like any other. So both halves of the
+    Rem decision have to be reachable.
+    Assert(Text(Ran(s0, Q(Redirect()) & " HTTPSTATUS")) = "301", "THE STATUS SAYS IT MOVED")
+    Assert(Text(Ran(s0, Q(Redirect()) & " " & Q("location") & " " & Q("none") & " HTTPHEADER")) = Q("https://example.com/"), "AND THE LOCATION HEADER SAYS WHERE")
+    Assert(Text(Ran(s0, Q(Redirect()) & " HTTPBODY")) = Q(""), "AND A REDIRECT'S BODY IS EMPTY, WHICH IS AN ANSWER AND NOT A FAILURE")
+
+    Print("--- text that is not a reply answers rather than refusing ---")
+    Rem https.shoddy answers 0, "" or an empty dict for anything that is
+    Rem not a reply, which is the right answer for a caller holding
+    Rem something unexpected — better than a refusal they cannot act on.
+    Assert(Text(Ran(s0, Q("not a reply at all") & " HTTPSTATUS")) = "0", "A STATUS OF 0 MEANS THIS IS NOT A REPLY")
+    Assert(Text(Ran(s0, Q("") & " HTTPSTATUS")) = "0", "AND SO DOES AN EMPTY STRING")
+    Assert(Text(Ran(s0, Q("not a reply") & " HTTPHEADERS")) = "{ }", "AND THERE ARE NO HEADERS IN IT")
+    Assert(Refuses(g, "5 HTTPSTATUS", "HTTPSTATUS"), "BUT A NUMBER IS NOT A REPLY AND IS REFUSED")
+
+    Print("--- the request-smuggling guards, which are the ones that matter ---")
+    Rem A line break in any of these does not make a malformed request —
+    Rem it makes TWO, the second written by whoever supplied the string.
+    Assert(Refuses(g, Q("example.com") & " " & Q("/") & " { { " & Q("a") & " " & Q("b\r\nX: y") & " } } HTTPSGET", "CANNOT CONTAIN A LINE BREAK"), "A LINE BREAK IN A HEADER VALUE")
+    Assert(Refuses(g, Q("example.com") & " " & Q("/") & " { { " & Q("a\r\nX") & " " & Q("b") & " } } HTTPSGET", "CANNOT CONTAIN A LINE BREAK"), "AND IN A HEADER NAME")
+    Assert(Refuses(g, Q("exa\r\nmple.com") & " " & Q("/") & " { } HTTPSGET", "NOT A HOST NAME"), "AND IN A HOST")
+    Assert(Refuses(g, Q("example.com") & " " & Q("/a\r\nb") & " { } HTTPSGET", "CANNOT CONTAIN A SPACE OR A LINE BREAK"), "AND IN A PATH")
+    Assert(Refuses(g, Q("GET IT") & " " & Q("example.com") & " " & Q("/") & " { } HTTPSREQUEST", "A METHOD IS ONE WORD"), "AND A METHOD WITH A SPACE IN IT")
+    Rem A space in a path would end the request line early, which is the
+    Rem same fault by another route.
+    Assert(Refuses(g, Q("example.com") & " " & Q("/a b") & " { } HTTPSGET", "CANNOT CONTAIN A SPACE"), "AND A SPACE IN A PATH")
+
+    Print("--- the ordinary argument guards ---")
+    Assert(Refuses(g, Q("") & " " & Q("/") & " { } HTTPSGET", "NOT A HOST NAME"), "AN EMPTY HOST")
+    Assert(Refuses(g, Q("example.com") & " " & Q("/") & " { " & Q("nope") & " } HTTPSGET", "A HEADER IS A NAME AND A VALUE"), "A HEADER THAT IS NOT A PAIR")
+    Assert(Refuses(g, Q("example.com") & " " & Q("/") & " { { " & Q("a") & " } } HTTPSGET", "HAS 1 PARTS"), "A HEADER PAIR WITH A PART MISSING, NAMING THE COUNT")
+    Assert(Refuses(g, Q("example.com") & " " & Q("/") & " { { " & Q("a") & " 5 } } HTTPSGET", "MUST BOTH BE STRINGS"), "A HEADER VALUE THAT IS NOT A STRING")
+    Assert(Refuses(g, Q("example.com") & " " & Q("/") & " { { " & Q("") & " " & Q("v") & " } } HTTPSGET", "NEEDS A NAME"), "AND A HEADER WITH NO NAME AT ALL")
+    Assert(Refuses(g, Q("example.com") & " " & Q("/") & " 5 HTTPSGET", "HTTPSGET"), "HEADERS THAT ARE NOT A LIST")
+
+    Print("--- with the network off, a fetch refuses and names the remedy ---")
+    Assert(Refuses(g, Q("example.com") & " " & Q("/") & " " & Ua() & " HTTPSGET", "THE NETWORK IS OFF"), "A FETCH WITH NO CAPABILITY")
+    Assert(Instr(Why(g, Q("example.com") & " " & Q("/") & " " & Ua() & " HTTPSGET"), "--allow-net") > 0, "AND SAYS HOW TO TURN IT ON")
+    Assert(Refuses(g, Q("HEAD") & " " & Q("example.com") & " " & Q("/") & " { } HTTPSREQUEST", "THE NETWORK IS OFF"), "AND SO DOES THE GENERAL FORM")
+    Rem A path is allowed to be bare or missing its slash, because that
+    Rem is what somebody types before they think about it — so these get
+    Rem as far as the network check rather than being refused early.
+    Assert(Refuses(g, Q("example.com") & " " & Q("index.html") & " { } HTTPSGET", "THE NETWORK IS OFF"), "A PATH WITH NO LEADING SLASH IS FIXED, NOT REFUSED")
+    Assert(Refuses(g, Q("example.com") & " " & Q("") & " { } HTTPSGET", "THE NETWORK IS OFF"), "AND SO IS AN EMPTY ONE")
+    Assert(Text(Ran(g, "1 1 +")) = "2 | 2 | 1", "AND THE SESSION IS EXACTLY AS IT WAS")
+
+    Print("")
+    Print("ALL ASSERTIONS PASSED")
+
+Def Holds(lines As List Of String, sub As String) As Boolean
+    Any(lines, Fn(l) => Instr(l, sub) > 0)

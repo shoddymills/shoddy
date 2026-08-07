@@ -145,12 +145,12 @@ public sealed class MachineSet
         foreach (var dep in asm.GetCustomAttributes<ShoddyDependsOnAttribute>())
         {
             if (loaded.Contains(dep.AssemblyName)) continue;
-            string dpath = Path.Combine(Path.GetDirectoryName(dllPath)!,
-                                        dep.AssemblyName + ".dll");
-            if (!File.Exists(dpath))
+            string? dpath = FindDependencyDll(dllPath, dep.AssemblyName);
+            if (dpath == null)
                 throw new ShoddyError(0,
                     $"machine {asm.GetName().Name} declares dependency " +
-                    $"{dep.AssemblyName}, but {dpath} is missing");
+                    $"{dep.AssemblyName}, but its DLL could not be found beside " +
+                    $"{dllPath} or its machine library");
             via.TryAdd(dep.AssemblyName, SourceNameFor(asm.GetName().Name!));
             LoadRecursive(dpath);
         }
@@ -159,13 +159,28 @@ public sealed class MachineSet
             if (!rn.Name!.StartsWith("Shoddy.Machines.", StringComparison.Ordinal))
                 continue;
             if (loaded.Contains(rn.Name)) continue;
-            string dep = Path.Combine(Path.GetDirectoryName(dllPath)!, rn.Name + ".dll");
-            if (!File.Exists(dep))
+            string? dep = FindDependencyDll(dllPath, rn.Name!);
+            if (dep == null)
                 throw new ShoddyError(0,
-                    $"machine {asm.GetName().Name} references {rn.Name}, but {dep} is missing");
+                    $"machine {asm.GetName().Name} references {rn.Name}, but its DLL " +
+                    $"could not be found beside {dllPath} or its machine library");
             via.TryAdd(rn.Name, SourceNameFor(asm.GetName().Name!));
             LoadRecursive(dep);
         }
+    }
+
+    /// <summary>Where a dependency's DLL is, relative to the machine that
+    /// needs it: beside it first (the common case — every machine in
+    /// machines/bin depends only on siblings there), then one directory up
+    /// (a reckoner seed in machines/seeds/bin depending on the machine it
+    /// bridges, one level up in machines/bin). Null if neither has it.</summary>
+    static string? FindDependencyDll(string dllPath, string assemblyName)
+    {
+        string dir = Path.GetDirectoryName(dllPath)!;
+        string sibling = Path.Combine(dir, assemblyName + ".dll");
+        if (File.Exists(sibling)) return sibling;
+        string upOneLevel = Path.Combine(dir, "..", "..", "bin", assemblyName + ".dll");
+        return File.Exists(upOneLevel) ? upOneLevel : null;
     }
 
     /// <summary>Seed a program with the surface of every machine it

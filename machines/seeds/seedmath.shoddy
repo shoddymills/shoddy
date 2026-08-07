@@ -1,0 +1,166 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem seed-math.shoddy — reckoner seed: math.shoddy's derived layer
+Rem
+Rem Bridges the geometry, interpolation and logarithm words math.shoddy
+Rem adds on top of the engine core's own trig and logs. RckSeedMath(st)
+Rem is the whole of this file's public surface: fold it over a state and
+Rem LOGB, LOG2, HYPOT, DIST, CLAMP, LERP, REMAP and ROUNDTO are in the
+Rem dictionary.
+Rem
+Rem NOT BRIDGED: Rad and Deg. The engine already owns DEG/RAD as the
+Rem angle mode (R4.7), and a program that wants degree/radian conversion
+Rem as a VALUE rather than a mode still has DEG SIN and RAD SIN to hand —
+Rem bridging math's Rad/Deg here would give two spellings for one idea
+Rem and the wrong one would be the one that gets used by habit.
+Rem
+Rem Every word here pre-flights the division or logarithm math.shoddy's
+Rem plain "/" and Log would otherwise abort on — R4.1 applied to a
+Rem machine that was written before the no-abort contract existed, and so
+Rem carries none of its own guards.
+Rem ==================================================================
+
+Include "math.shoddy"
+Include "cuttle.shoddy"
+Include "reckoner.shoddy"
+Include "seq.shoddy"
+
+Rem ---- pulling several numeric arguments at once -----------------------
+Rem The reckoner's own RckNumArg reads one; a word of arity 3 or more
+Rem reads several, deepest first, and stops at the first one that is not
+Rem a NUMBER.
+
+Def MNums(word As String, vs As List Of Cell) As Result
+    MNumsAt(word, vs, 1, { })
+
+Def MNumsAt(word As String, vs As List Of Cell, k As Number, acc As List Of Number) As Result
+    If k > Length(vs) Then
+        Ok(acc)
+    Else
+        MNumsNext(word, vs, k, acc, RckNumArg(word, Nth(vs, k)))
+
+Def MNumsNext(word As String, vs As List Of Cell, k As Number, acc As List Of Number, r As Result) As Result
+    Select Case r
+        Case Ok(x)
+            MNumsAt(word, vs, k + 1, Append(acc, x))
+        Case Err(w, at)
+            Err(w, at)
+        Case Else
+            Err(word & " did not answer", 0)
+
+Rem ---- LOGB, LOG2 --------------------------------------------------------
+Rem Both refuse before Log is asked to: a non-positive x or a base of 1
+Rem would otherwise carry a plain "/" straight into abort.
+
+Def MSeedLogb(st As RckState) As RckState
+    RckReg(st, "LOGB", 2, RckPure(Fn(vs) => MLogb(vs)), "( base x -- log )", "Logarithm of x to the given base.")
+
+Def MLogb(vs As List Of Cell) As RckWork
+    Select Case MNums("LOGB", vs)
+        Case Ok(ns)
+            MLogbAt(Nth(ns, 1), Nth(ns, 2))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("LOGB did not answer")
+
+Def MLogbAt(base As Number, x As Number) As RckWork
+    If x <= 0 Then
+        RckWorkBad("LOGB has no answer for x at or below zero")
+    Else
+        If base <= 0 Or base = 1 Then
+            RckWorkBad("LOGB needs a base greater than zero and not equal to one")
+        Else
+            RckVals({ CutNum(LogBase(base, x)) })
+
+Def MSeedLog2(st As RckState) As RckState
+    RckReg(st, "LOG2", 1, RckPure(Fn(vs) => RckLift1("LOG2", vs, >(0), "has no answer at or below zero", Log2)), "( x -- log2 x )", "Logarithm base two; refuses zero and below.")
+
+Rem ---- HYPOT, DIST --------------------------------------------------------
+Rem Both total: a sum of squares under a square root never goes negative.
+
+Def MSeedHypot(st As RckState) As RckState
+    RckReg(st, "HYPOT", 2, RckPure(Fn(vs) => RckLift2("HYPOT", vs, RckAlways2, "", Hypot)), "( x y -- h )", "The length of the hypotenuse of a right triangle with legs x and y.")
+
+Def MSeedDist(st As RckState) As RckState
+    RckReg(st, "DIST", 4, RckPure(Fn(vs) => MDist(vs)), "( x0 y0 x1 y1 -- d )", "The distance between two points.")
+
+Def MDist(vs As List Of Cell) As RckWork
+    Select Case MNums("DIST", vs)
+        Case Ok(ns)
+            RckVals({ CutNum(Dist(Nth(ns, 1), Nth(ns, 2), Nth(ns, 3), Nth(ns, 4))) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("DIST did not answer")
+
+Rem ---- CLAMP, LERP, REMAP -------------------------------------------------
+Rem CLAMP and LERP are total for any lo/hi or a/b, even out of order.
+Rem REMAP divides by the input span, so an input range of zero width is
+Rem refused before Remap's own InvLerp is asked to divide by it.
+
+Def MSeedClamp(st As RckState) As RckState
+    RckReg(st, "CLAMP", 3, RckPure(Fn(vs) => MClamp(vs)), "( x lo hi -- y )", "x held between lo and hi.")
+
+Def MClamp(vs As List Of Cell) As RckWork
+    Select Case MNums("CLAMP", vs)
+        Case Ok(ns)
+            RckVals({ CutNum(Clamp(Nth(ns, 1), Nth(ns, 2), Nth(ns, 3))) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("CLAMP did not answer")
+
+Def MSeedLerp(st As RckState) As RckState
+    RckReg(st, "LERP", 3, RckPure(Fn(vs) => MLerp(vs)), "( a b t -- y )", "Linear interpolation between a and b at fraction t.")
+
+Def MLerp(vs As List Of Cell) As RckWork
+    Select Case MNums("LERP", vs)
+        Case Ok(ns)
+            RckVals({ CutNum(Lerp(Nth(ns, 1), Nth(ns, 2), Nth(ns, 3))) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("LERP did not answer")
+
+Def MSeedRemap(st As RckState) As RckState
+    RckReg(st, "REMAP", 5, RckPure(Fn(vs) => MRemap(vs)), "( x inLo inHi outLo outHi -- y )", "Map x from one range onto another, linearly.")
+
+Def MRemap(vs As List Of Cell) As RckWork
+    Select Case MNums("REMAP", vs)
+        Case Ok(ns)
+            MRemapAt(ns)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("REMAP did not answer")
+
+Def MRemapAt(ns As List Of Number) As RckWork
+    If Nth(ns, 2) = Nth(ns, 3) Then
+        RckWorkBad("REMAP needs an input range with two different ends")
+    Else
+        RckVals({ CutNum(Remap(Nth(ns, 1), Nth(ns, 2), Nth(ns, 3), Nth(ns, 4), Nth(ns, 5))) })
+
+Rem ---- ROUNDTO ------------------------------------------------------------
+Rem RoundTo raises 10 to the power of n; the same magnitude bound the
+Rem engine core's own ^ enforces keeps that finite.
+
+Def MSeedRoundto(st As RckState) As RckState
+    RckReg(st, "ROUNDTO", 2, RckPure(Fn(vs) => RckLift2("ROUNDTO", vs, MRoundOk, "needs a place count no wider than 15", RoundTo)), "( x n -- y )", "x rounded to n decimal places.")
+
+Def MRoundOk(x As Number, n As Number) As Boolean
+    Abs(n) <= 15
+
+Rem ---- the seed -----------------------------------------------------------
+
+Def RckSeedMath(st As RckState) As RckState
+    Let st1 = MSeedLogb(RckSeeding(st, "seed-math"))
+    Let st2 = MSeedLog2(st1)
+    Let st3 = MSeedHypot(st2)
+    Let st4 = MSeedDist(st3)
+    Let st5 = MSeedClamp(st4)
+    Let st6 = MSeedLerp(st5)
+    Let st7 = MSeedRemap(st6)
+    MSeedRoundto(st7)

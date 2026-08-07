@@ -1,0 +1,197 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem seedsimplextest.shoddy — test program for seedsimplex.shoddy's MPS
+Rem words
+Rem
+Rem Assert-driven, in the cuttletest / reckonertest / seedtest pattern:
+Rem it prints what it is doing and stops the run at the first assertion
+Rem that fails, ending with ALL ASSERTIONS PASSED when it does not.
+Rem
+Rem WHAT IS GRADED HERE. LPPROBLEM and LPSOLVE arrived with the first
+Rem seeding pass and simplex.shoddy has its own suite (tst/simplex.shoddy)
+Rem for the arithmetic. What is graded here is the part deferred then and
+Rem built now: reading an MPS file, and the total validator that makes
+Rem doing so safe.
+Rem
+Rem THE VALIDATOR IS THE WHOLE TEST. mps.shoddy Errors at a dozen
+Rem malformed-input points, and the seed's answer is MpsWhy — a second,
+Rem total walk of the same lines that reports the first thing wrong
+Rem rather than aborting on it. Every one of those dozen points is
+Rem walked below exactly once, which is the same "the guard list is the
+Rem test list" rule the rest of the seed suites follow, and here it is
+Rem also the only defence against the two scanners drifting apart: a
+Rem section mps.shoddy learns and this does not shows up as a file the
+Rem validator refuses.
+Rem
+Rem TWO OF THE CHECKS ARE THE SEED'S OWN and have no counterpart in
+Rem mps.shoddy at all — a ROWS line of one field, which RowLine indexes
+Rem past the end of, and a COLUMNS or RHS value that is not a number,
+Rem which Val reads as a silent zero. The second is the more dangerous:
+Rem it is not an abort, it is a different linear program solved
+Rem confidently.
+Rem
+Rem Fixtures: mills/simplex-from-mps/files/mix.mps, whose optimum is
+Rem written into its own header comment and asserted here.
+Rem
+Rem Run: bin\mill run tst\seedsimplextest.shoddy   (from the repo root)
+Rem ==================================================================
+
+Include "../machines/cuttle.shoddy"
+Include "../machines/reckoner.shoddy"
+Include "../machines/seq.shoddy"
+Include "../machines/str.shoddy"
+Include "../machines/seeds/seedsimplex.shoddy"
+Include "../machines/seeds/seeddict.shoddy"
+
+Rem ---- reading an answer ------------------------------------------------
+
+Def Ran(st As RckState, line As String) As RckState
+    Select Case RckEval(st, line)
+        Case RckNext(st2, out)
+            st2
+        Case RckStop(st2, why, out)
+            st2
+        Case Else
+            st
+
+Def Bad(st As RckState, line As String) As Boolean
+    Select Case RckEval(st, line)
+        Case RckStop(st2, why, out)
+            True
+        Case Else
+            False
+
+Def Why(st As RckState, line As String) As String
+    Select Case RckEval(st, line)
+        Case RckStop(st2, why, out)
+            why
+        Case Else
+            ""
+
+Def Text(st As RckState) As String
+    Join(Map(CutCells(RckStack(st)), Fn(c) => CutShow(c, RckFmt(st))), " | ")
+
+Def Q(s As String) As String
+    Chr(34) & s & Chr(34)
+
+Def Refuses(st As RckState, line As String, why As String) As Boolean
+    Bad(st, line) And Instr(Why(st, line), why) > 0 And Text(Ran(st, line)) = Text(st) And Text(Ran(Ran(st, line), "1 1 +")) = Text(Ran(st, "1 1 +"))
+
+Def Holds(lines As List Of String, sub As String) As Boolean
+    Any(lines, Fn(l) => Instr(l, sub) > 0)
+
+Rem ---- the MPS text the assertions are about ----------------------------
+Rem The supplement mix, the same problem mix.mps states and
+Rem tst/simplex.shoddy states inline: minimize 5X + 7Y subject to
+Rem 2X + Y >= 8 and X + 2Y >= 10. Optimum X = 2, Y = 4, cost 38.
+Rem
+Rem Built line by line rather than read from the fixture so the malformed
+Rem variants below are one line different from the good one, and so the
+Rem section a case is about is visible at the case.
+
+Def Nl() As String
+    Chr(10)
+
+Def Lines(xs As List Of String) As String
+    Join(xs, Nl())
+
+Def MixText() As String
+    Lines({ "NAME MIX", "ROWS", " N COST", " G VITA", " G VITC", "COLUMNS",
+            " X COST 5 VITA 2", " X VITC 1", " Y COST 7 VITA 1", " Y VITC 2",
+            "RHS", " RHS VITA 8 VITC 10", "ENDATA" })
+
+Rem A one-variable, one-constraint program, for the cases where the
+Rem point is the malformed line and not the program.
+Def Tiny(extra As List Of String) As String
+    Lines(Concat({ "ROWS", " N C", " G R", "COLUMNS", " X C 1 R 1", "RHS", " RHS R 1" }, extra))
+
+Def MixPath() As String
+    "mills/simplex-from-mps/files/mix.mps"
+
+Def Main()
+    Let s0 = RckSeedDict(RckSeedSimplex(RckNew()))
+    Let g = Ran(s0, "1 2")
+
+    Print("--- the five words are registered and carry their metadata ---")
+    Assert(RckKnows(s0, "MPSPARSE") And RckKnows(s0, "MPSPARSEZERO"), "THE TWO TEXT WORDS ARE IN THE DICTIONARY")
+    Assert(RckKnows(s0, "MPSLOAD") And RckKnows(s0, "MPSLOADZERO"), "AND THE TWO FILE WORDS")
+    Assert(RckKnows(s0, "MPSNAMES"), "AND THE ONE THAT ANSWERS WHAT THINGS WERE CALLED")
+    Assert(All(RckDict(s0), Fn(e) => WordEffect(e) <> "" And WordDesc(e) <> ""), "NO WORD IS WITHOUT AN EFFECT LINE AND A DESCRIPTION")
+    Assert(All(RckDict(s0), Fn(e) => Length(RckHelp(s0, WordName(e))) = 3), "AND HELP ANSWERS FOR EVERY ONE OF THEM")
+    Rem Reading a path is an effect and parsing text on the stack is not,
+    Rem and the pair have to say so differently or the effect listing is
+    Rem no use to anyone auditing a program.
+    Assert(Holds(RckHelp(s0, "MPSLOAD"), "touches the world"), "READING A FILE TOUCHES THE WORLD")
+    Assert(Holds(RckHelp(s0, "MPSPARSE"), "touches nothing"), "AND PARSING TEXT ALREADY ON THE STACK DOES NOT")
+    Assert(All(RckDict(s0), Fn(e) => Instr(Lower(WordEffect(e)), "handle") = 0), "NO WORD'S EFFECT STRING MENTIONS A HANDLE")
+
+    Print("--- the mix problem, parsed and solved to its own stated optimum ---")
+    Let m = Ran(s0, Q(MixText()) & " MPSPARSE " & Q("P") & " STO")
+    Assert(Not Bad(s0, Q(MixText()) & " MPSPARSE"), "THE TEXT PARSES")
+    Assert(Text(Ran(m, Q("P") & " RCL " & Q("costs") & " DGET")) = "{ 5 7 }", "THE OBJECTIVE ROW BECAME THE COSTS")
+    Assert(Text(Ran(m, Q("P") & " RCL " & Q("rhs") & " DGET")) = "{ 8 10 }", "AND THE RHS SECTION THE RIGHT-HAND SIDES")
+    Assert(Text(Ran(m, Q("P") & " RCL " & Q("a") & " DGET")) = "2x2 { { 2 1 } { 1 2 } }", "AND THE COLUMNS SECTION THE MATRIX, COLUMN-WISE ENTRIES GATHERED BY ROW")
+    Assert(Text(Ran(m, Q("P") & " RCL LPSOLVE " & Q("status") & " DGET")) = Q("OPTIMAL"), "IT SOLVES")
+    Assert(Text(Ran(m, Q("P") & " RCL LPSOLVE " & Q("cost") & " DGET")) = "38", "TO THE COST ITS OWN HEADER STATES")
+    Assert(Text(Ran(m, Q("P") & " RCL LPSOLVE " & Q("x") & " DGET")) = "{ 2 4 }", "AT THE VARIABLES IT STATES")
+    Rem The same file off disk, which is the whole reason these words
+    Rem exist: an MPS file is how a linear program actually arrives.
+    Assert(Text(Ran(s0, Q(MixPath()) & " MPSLOAD LPSOLVE " & Q("cost") & " DGET")) = "38", "AND THE COMMITTED FIXTURE SOLVES TO THE SAME COST OFF DISK")
+
+    Print("--- MPSNAMES says what the columns and rows were called ---")
+    Assert(Text(Ran(s0, Q(MixText()) & " MPSNAMES " & Q("vars") & " DGET")) = "{ " & Q("X") & " " & Q("Y") & " }", "THE VARIABLES, IN THE ORDER THE COSTS AND COLUMNS ARE IN")
+    Assert(Text(Ran(s0, Q(MixText()) & " MPSNAMES " & Q("cons") & " DGET")) = "{ " & Q("VITA") & " " & Q("VITC") & " }", "AND THE CONSTRAINTS")
+    Rem An E row is split into a >= pair on the way in, so the labels have
+    Rem to be split the same way or they stop lining up with the matrix.
+    Let e = Lines({ "ROWS", " N C", " E R", "COLUMNS", " X C 1 R 1", "RHS", " RHS R 1", "ENDATA" })
+    Assert(Text(Ran(s0, Q(e) & " MPSNAMES " & Q("cons") & " DGET")) = "{ " & Q("R+") & " " & Q("R-") & " }", "AND AN E ROW APPEARS AS THE PLUS/MINUS PAIR IT WAS SPLIT INTO")
+
+    Print("--- the senses: G passes, L negates, E doubles ---")
+    Let l = Lines({ "ROWS", " N C", " L R", "COLUMNS", " X C 1 R 1", "RHS", " RHS R 4", "ENDATA" })
+    Assert(Text(Ran(s0, Q(l) & " MPSPARSE " & Q("rhs") & " DGET")) = "{ -4 }", "AN L ROW IS NEGATED INTO THE MACHINE'S >= FORM")
+    Assert(Text(Ran(s0, Q(e) & " MPSPARSE " & Q("rhs") & " DGET")) = "{ 1 -1 }", "AND AN E ROW BECOMES A >= PAIR")
+
+    Print("--- every abort mps.shoddy has, refused instead ---")
+    Assert(Refuses(g, Q(Lines({ "ROWS", " N C", " N D" })) & " MPSPARSE", "MULTIPLE OBJECTIVE ROWS"), "A SECOND OBJECTIVE ROW")
+    Assert(Refuses(g, Q(Lines({ "ROWS", " Z BAD" })) & " MPSPARSE", "BAD ROW SENSE Z"), "A ROW SENSE THAT IS NOT ONE, NAMING IT")
+    Assert(Refuses(g, Q("RANGES") & " MPSPARSE", "RANGES SECTION NOT SUPPORTED"), "THE RANGES SECTION")
+    Assert(Refuses(g, Q("BOUNDS") & " MPSPARSE", "BOUNDS SECTION NOT SUPPORTED"), "THE BOUNDS SECTION, WHICH THE PLAIN SPELLING WILL NOT GUESS AT")
+    Assert(Refuses(g, Q("WOBBLE") & " MPSPARSE", "UNKNOWN SECTION WOBBLE"), "A SECTION HEADER THAT IS NOT A SECTION")
+    Assert(Refuses(g, Q(Tiny({ "COLUMNS", " MARK 'MARKER' 'INTORG'" })) & " MPSPARSE", "INTEGER MARKERS NOT SUPPORTED"), "AN INTEGER MARKER")
+    Assert(Refuses(g, Q(Lines({ "ROWS", " N C", " G R", "COLUMNS", " X C 1 R" })) & " MPSPARSE", "3 OR 5 FIELDS, NOT 4"), "A COLUMNS LINE OF THE WRONG WIDTH, NAMING THE WIDTH IT HAS")
+    Assert(Refuses(g, Q(Lines({ "OBJSENSE", " MAX" })) & " MPSPARSE", "ONLY MINIMIZE IS SUPPORTED"), "A MAXIMIZE OBJECTIVE")
+    Assert(Refuses(g, Q(Lines({ "ROWS", " G R", "COLUMNS", " X R 1" })) & " MPSPARSE", "THERE IS NO OBJECTIVE (N) ROW"), "A FILE WITH NOTHING TO MINIMIZE")
+
+    Print("--- and the three faults mps.shoddy would not have noticed at all ---")
+    Rem RowLine reads Nth(toks, 2) with no width check, so a one-field
+    Rem ROWS line indexes past the end of the list.
+    Assert(Refuses(g, Q(Lines({ "ROWS", " N" })) & " MPSPARSE", "A ROWS LINE NEEDS A SENSE AND A NAME"), "A ROWS LINE WITH NO NAME ON IT")
+    Rem The dangerous pair. Val is strtod: it answers 0 for text, so
+    Rem without IsNumeric these two would parse into a DIFFERENT LINEAR
+    Rem PROGRAM and solve it confidently — a wrong answer, not an abort.
+    Assert(Refuses(g, Q(Lines({ "ROWS", " N C", " G R", "COLUMNS", " X C oops R 1" })) & " MPSPARSE", "COLUMNS LINE HAS oops WHERE A NUMBER SHOULD BE"), "A COEFFICIENT THAT IS NOT A NUMBER, WHICH VAL WOULD HAVE READ AS ZERO")
+    Assert(Refuses(g, Q(Lines({ "ROWS", " N C", " G R", "COLUMNS", " X C 1 R 1", "RHS", " RHS R oops" })) & " MPSPARSE", "RHS LINE HAS oops WHERE A NUMBER SHOULD BE"), "AND A RIGHT-HAND SIDE THAT IS NOT ONE")
+    Rem And the two shapes that parse but make no program.
+    Assert(Refuses(g, Q(Lines({ "ROWS", " N C" })) & " MPSPARSE", "THERE ARE NO CONSTRAINT (G, L OR E) ROWS"), "A FILE WITH AN OBJECTIVE AND NO CONSTRAINTS")
+    Assert(Refuses(g, Q(Lines({ "ROWS", " N C", " G R" })) & " MPSPARSE", "THE PROBLEM HAS NO VARIABLES"), "AND ONE WITH ROWS AND NO COLUMNS")
+    Assert(Refuses(g, "3 MPSPARSE", "needs a STRING, got NUMBER"), "AND A CELL THAT IS NOT TEXT AT ALL")
+
+    Print("--- the ZERO spelling forgives BOUNDS, and only BOUNDS ---")
+    Let bnd = Tiny({ "BOUNDS", " UP BND X 9", "ENDATA" })
+    Assert(Bad(s0, Q(bnd) & " MPSPARSE"), "MPSPARSE STILL REFUSES A BOUNDS SECTION")
+    Assert(Not Bad(s0, Q(bnd) & " MPSPARSEZERO"), "AND MPSPARSEZERO SKIPS IT")
+    Assert(Text(Ran(s0, Q(bnd) & " MPSPARSEZERO LPSOLVE " & Q("cost") & " DGET")) = "1", "AND SOLVES THE PROBLEM UNDERNEATH IT")
+    Assert(Refuses(g, Q(Lines({ "RANGES" })) & " MPSPARSEZERO", "RANGES SECTION NOT SUPPORTED"), "WHILE RANGES IS STILL REFUSED BY BOTH SPELLINGS")
+
+    Print("--- the file words, over the guarded read ---")
+    Assert(Refuses(g, Q("tst/csv/does-not-exist.mps") & " MPSLOAD", "CANNOT READ"), "A PATH THAT IS NOT THERE")
+    Assert(Refuses(g, Q("tst/csv") & " MPSLOAD", "CANNOT READ"), "AND A DIRECTORY")
+    Assert(Refuses(g, Q("tst/csv/sales.csv") & " MPSLOAD", "MPS:"), "AND A FILE THAT READS BUT IS NOT AN MPS FILE, WHICH IS REFUSED BY THE VALIDATOR RATHER THAN BY THE READ")
+
+    Print("--- nothing above cost the session anything ---")
+    Assert(Text(Ran(g, "1 1 +")) = "2 | 2 | 1", "THE STACK IS STILL THERE AND STILL EVALUATING")
+
+    Print("")
+    Print("ALL ASSERTIONS PASSED")

@@ -5,6 +5,7 @@ using System.Globalization;
 using System.Net;
 using System.Net.Security;
 using System.Net.Sockets;
+using System.Security.Authentication;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
 
@@ -20,6 +21,16 @@ public sealed partial class Engine
 {
     readonly List<Value> Stk = new();
     readonly FileStream?[] files = new FileStream?[16];
+    // Scribblers reached by SLOT NUMBER rather than as a value on the
+    // stack. A SCRIBBLER is its own Value kind, so unlike a file or a
+    // socket it cannot be carried by a number — which is exactly what a
+    // reckoner seed needs, since a resource held in reckoner's named
+    // table is found again by an integer the binding carries. These three
+    // slots-and-numbers words exist for that and nothing else; a program
+    // uses the ordinary SCRIBBLER* family with the value in hand.
+    // A null slot IS the free slot, so there is no parallel "in use"
+    // array to fall out of step with this one.
+    readonly Value?[] scribs = new Value?[16];
     readonly Socket?[] socks = new Socket?[16];   // TCP: connected sockets and listeners share the table
     // The network is a gated capability — off unless the mill was armed
     // with --allow-net (which sets SHODDY_ALLOW_NET=1 in the environment,
@@ -273,6 +284,24 @@ public sealed partial class Engine
         if (!Builtin(w, line)) UnknownWord(w, line);
     }
 
+    // ---- text files ----
+
+    /// <summary>The reason TRYREADFILE and TRYBOPEN report inside their Err,
+    /// as a short phrase from a closed set. A caller that could act
+    /// differently on why it failed is the whole test for Result over Option,
+    /// so the phrase has to distinguish the cases a mistyped entry line
+    /// actually produces — and it must not be the platform's exception text,
+    /// which varies by OS and by locale and would make a golden test
+    /// unwritable. The directory check is explicit rather than left to the
+    /// exception: every platform reports it as access denied, which is the
+    /// one wrong answer here, since a directory is exactly what FILEEXISTS
+    /// also gets wrong.</summary>
+    static string ReadWhy(Exception e, string path) =>
+        Directory.Exists(path) ? "IS A DIRECTORY"
+        : e is FileNotFoundException or DirectoryNotFoundException ? "NO SUCH FILE"
+        : e is UnauthorizedAccessException ? "ACCESS DENIED"
+        : "UNREADABLE";
+
     // ---- binary random-access files ----
 
     FileStream BinHandle(double h, int line, string w)
@@ -309,6 +338,60 @@ public sealed partial class Engine
         if (!netOK)
             throw Die(line, $"{w}: network is disabled — run the mill with --allow-net");
     }
+
+    /// <summary>TRYTCPCONNECT's Err, in the shape TRYREADFILE and TRYBOPEN
+    /// already established: one sentence naming what could not be reached
+    /// and a reason from a closed set. At is 0 — a failure to connect has
+    /// no position in anything.</summary>
+    /// <summary>An Err carrying one sentence and no position, for the
+    /// guarded words whose failure has nowhere in anything to point at.</summary>
+    void PushErrAt(string why) =>
+        Push(Value.OfRec(Prelude.Err, new[] { Value.OfStr(why), Value.OfNum(0) }));
+
+    /// <summary>The slot a scribbler number names, or death. Only a seed
+    /// holding its own binding reaches this.</summary>
+    int ScribSlot(double n, int line, string w)
+    {
+        int k = (int)n;
+        if (k < 1 || k > scribs.Length || scribs[k - 1] == null)
+            throw Die(line, $"{w}: bad scribbler slot");
+        return k - 1;
+    }
+
+    /// <summary>Why a whole request failed, as a short phrase from a
+    /// closed set — never the platform's socket or TLS text, which varies
+    /// by OS and by locale and would make a golden test unwritable. The
+    /// TLS cases are told apart from the plain ones because they are the
+    /// two a caller can actually act on differently: a name that does not
+    /// match its certificate is a typo in the host, and a refused
+    /// connection is a port.</summary>
+    static string RequestWhy(Exception e) => RequestWhyOf(Unwrap(e));
+
+    /// <summary>ConnectAsync(...).Wait(...) and AuthenticateAsClientAsync
+    /// both surface their real fault inside an AggregateException, so the
+    /// phrase would be UNREACHABLE for everything without this. Nested
+    /// aggregates unwrap too — Flatten then take the first, since a single
+    /// awaited task has exactly one.</summary>
+    static Exception Unwrap(Exception e) =>
+        e is AggregateException ag && ag.Flatten().InnerExceptions.Count > 0
+            ? ag.Flatten().InnerExceptions[0]
+            : e;
+
+    static string RequestWhyOf(Exception e) =>
+        e is AuthenticationException ? "TLS HANDSHAKE FAILED (WRONG HOST NAME, OR AN UNTRUSTED CERTIFICATE)"
+        : e is SocketException se && se.SocketErrorCode == SocketError.TimedOut ? "TIMED OUT"
+        : e is SocketException sh && (sh.SocketErrorCode == SocketError.HostNotFound
+                                      || sh.SocketErrorCode == SocketError.NoData) ? "NO SUCH HOST"
+        : e is SocketException ? "REFUSED"
+        : e is IOException ? "THE CONNECTION BROKE PART WAY THROUGH"
+        : "UNREACHABLE";
+
+    void PushConnErr(string host, int port, string why) =>
+        Push(Value.OfRec(Prelude.Err, new[]
+        {
+            Value.OfStr($"CANNOT REACH '{host}:{port}' ({why})"),
+            Value.OfNum(0),
+        }));
 
     /// <summary>All builtin words, dispatched by folded name.
     /// Returns true if the word was handled.</summary>
@@ -565,6 +648,41 @@ public sealed partial class Engine
                 PushStr(Bytes.GetString(buf));
                 return true;
             }
+            case "TRYREADFILE":                 // ( path -- Result )
+            {
+                // READFILE with the failure REPORTED rather than fatal, and
+                // the twin TRYWRITEFILE has always had. Whole-file reads were
+                // the one I/O family with no guarded form: writes answer
+                // through TRYWRITEFILE, binary reads pre-flight through
+                // BSIZE, but a mistyped path handed to READFILE ends the run,
+                // and FILEEXISTS cannot stand in for the question -- a
+                // directory reports false and an unreadable existing file
+                // reports true.
+                //
+                // It answers the LANGUAGE's own Result rather than a Boolean
+                // or a flat Array, because unlike TRYWRITEFILE it has a
+                // payload to carry on success and a reason worth telling
+                // apart on failure. Ok(text) or Err(why, 0) -- At is 0
+                // because a failure to open has no position in the file.
+                // Prelude's TypeDefs are the one shared instance, so the
+                // record this pushes matches a Case Ok in any weave (the
+                // usual "a builtin cannot reach a TypeDef" bar applies to
+                // MACHINE types, not to the four the language predeclares).
+                string path = PopStr(line, w);
+                byte[] buf;
+                try { buf = File.ReadAllBytes(path); }
+                catch (Exception e) when (e is not ShoddyError)
+                {
+                    Push(Value.OfRec(Prelude.Err, new[]
+                    {
+                        Value.OfStr($"CANNOT READ '{path}' ({ReadWhy(e, path)})"),
+                        Value.OfNum(0),
+                    }));
+                    return true;
+                }
+                Push(Value.OfRec(Prelude.Ok, new[] { Value.OfStr(Bytes.GetString(buf)) }));
+                return true;
+            }
             case "WRITEFILE":
             case "APPENDFILE":
             {
@@ -620,6 +738,35 @@ public sealed partial class Engine
                 }
                 return true;
             }
+            case "TRYDELETEFILE":               // ( path -- ok )
+            {
+                // DELETEFILE with the failure reported rather than fatal, and
+                // the last of the aborting file words to get a guarded twin.
+                // FILEEXISTS cannot stand in for it: a file that exists can
+                // still be locked, read-only or a directory when the delete
+                // lands, and DELETEFILE then ends the run. Answers a Boolean
+                // rather than a Result because, unlike a read, there is no
+                // payload to carry back and nothing a caller would do
+                // differently per reason -- the file is gone or it is not.
+                //
+                // Deleting a path that was ALREADY absent answers False, not
+                // True, matching DELETEFILE's own view that a missing file is
+                // a failed delete. A caller who means "make sure it is gone"
+                // writes that as an ignored answer, which reads as the
+                // intention it is.
+                string path = PopStr(line, w);
+                try
+                {
+                    if (!File.Exists(path)) { PushBool(false); return true; }
+                    File.Delete(path);
+                    PushBool(true);
+                }
+                catch (Exception e) when (e is not ShoddyError)
+                {
+                    PushBool(false);
+                }
+                return true;
+            }
 
             /* binary random-access: handles are NUMBERs, positions are
              * 1-based bytes, GET/PUT advance. NUMBER = 8-byte native-endian
@@ -639,6 +786,57 @@ public sealed partial class Engine
                     throw Die(line, $"BOPEN: cannot open '{path}'");
                 }
                 PushNum(slot + 1);
+                return true;
+            }
+            case "TRYBOPEN":                    // ( path -- Result )
+            {
+                // BOPEN with the failure REPORTED rather than fatal, and with
+                // the OpenOrCreate wart removed: this opens an EXISTING file
+                // only. That distinction is the whole reason it exists.
+                // BOPEN's FileMode.OpenOrCreate means a failed READ leaves an
+                // empty file behind, so a caller that wanted to ask "is there
+                // a model at this path?" damages the answer by asking; and
+                // nothing can ask a file its size or its magic number without
+                // opening it first, so there was no way to pre-flight a
+                // binary read at all. Both halves are why the binary model
+                // formats could never be reached from a reckoner session.
+                //
+                // Answers the language's own Result, like TRYREADFILE and for
+                // the same reason: there is a payload on success (the handle)
+                // and reasons worth telling apart on failure. Err's At is 0 --
+                // a failure to open has no position in the file.
+                //
+                // The handle it carries is still a handle, and R3.5(b) still
+                // keeps it off a session's stack. What this changes is that a
+                // WORD can now open, check, read and close inside its own
+                // body without a bad file ending the run mid-way, which is
+                // what a seed needs and all it needs.
+                string path = PopStr(line, w);
+                int slot = Array.IndexOf(files, null);
+                if (slot < 0)
+                {
+                    Push(Value.OfRec(Prelude.Err, new[]
+                    {
+                        Value.OfStr($"CANNOT OPEN '{path}' (TOO MANY OPEN FILES)"),
+                        Value.OfNum(0),
+                    }));
+                    return true;
+                }
+                try
+                {
+                    files[slot] = new FileStream(path, FileMode.Open,
+                                                 FileAccess.ReadWrite);
+                }
+                catch (Exception e) when (e is not ShoddyError)
+                {
+                    Push(Value.OfRec(Prelude.Err, new[]
+                    {
+                        Value.OfStr($"CANNOT OPEN '{path}' ({ReadWhy(e, path)})"),
+                        Value.OfNum(0),
+                    }));
+                    return true;
+                }
+                Push(Value.OfRec(Prelude.Ok, new[] { Value.OfNum(slot + 1) }));
                 return true;
             }
             case "BCLOSE":                      // ( h -- )
@@ -753,6 +951,155 @@ public sealed partial class Engine
                 }
                 socks[slot] = sk;
                 PushNum(slot + 1);
+                return true;
+            }
+            case "NETALLOWED":                  // ( -- bool )
+                // Whether the network capability is on, ASKED rather than
+                // discovered by dying. Every other TCP word begins with
+                // RequireNet, which aborts — so without this a bridged word
+                // could not tell "no network" from "no answer" except by
+                // ending the run, and a seed may not do that. It is
+                // deliberately NOT gated itself: the question has to stay
+                // askable when the answer is no.
+                PushBool(netOK);
+                return true;
+            case "TRYTCPCONNECT":               // ( host port -- Result )
+            {
+                // TCPCONNECT with every failure REPORTED rather than fatal.
+                // TCPCONNECT can die three ways — no capability, no free
+                // slot, no host — and a session mistyping a hostname is an
+                // ordinary thing rather than the end of a session. The
+                // reasons are a closed set of Shoddy's own, never the
+                // platform's socket text, for the reason TryReadFile's are.
+                //
+                // The handle it carries is still a handle, and R3.5(b) still
+                // keeps it off a session's stack. This exists so a WORD can
+                // connect, ask and close inside its own body, which is what
+                // a request/response bridge needs and all it needs.
+                int cport = (int)PopNum(line, w);
+                string chost = PopStr(line, w);
+                if (!netOK)
+                {
+                    PushConnErr(chost, cport, "NETWORK IS DISABLED");
+                    return true;
+                }
+                int cslot = Array.IndexOf(socks, null);
+                if (cslot < 0)
+                {
+                    PushConnErr(chost, cport, "TOO MANY OPEN SOCKETS");
+                    return true;
+                }
+                Socket csk = new(SocketType.Stream, ProtocolType.Tcp);
+                try
+                {
+                    if (!csk.ConnectAsync(chost, cport).Wait(ConnectTimeoutMs))
+                    {
+                        csk.Dispose();
+                        PushConnErr(chost, cport, "TIMED OUT");
+                        return true;
+                    }
+                    csk.Blocking = false;
+                }
+                catch (Exception e) when (e is not ShoddyError)
+                {
+                    csk.Dispose();
+                    PushConnErr(chost, cport, "NO SUCH HOST OR REFUSED");
+                    return true;
+                }
+                socks[cslot] = csk;
+                Push(Value.OfRec(Prelude.Ok, new[] { Value.OfNum(cslot + 1) }));
+                return true;
+            }
+            case "TRYTCPREQUEST":               // ( host port secure msg -- Result )
+            {
+                // THE WHOLE CONVERSATION, GUARDED, AS ONE WORD: connect,
+                // optionally secure, send, read to end of reply, close.
+                // Ok(reply) or Err(why, 0), and no socket is ever visible.
+                //
+                // WHY A WHOLE OPERATION RATHER THAN GUARDED PARTS. The
+                // request/response shape needs five steps and TCPSEND and
+                // TCPRECV alone die eight ways between them on ordinary
+                // network faults — so a bridge built from guarded pieces
+                // would be a socket that has to be closed on each of a
+                // dozen error paths, and a leak on the one that was
+                // missed. Doing it here means the socket cannot outlive
+                // the word: every exit runs through the same close.
+                // TRYREADFILE settled the same question the same way,
+                // guarding the whole read rather than open/read/close.
+                //
+                // IT CANNOT HANG, which matters more at a prompt than in a
+                // program. net.shoddy's RecvAll polls until the peer
+                // closes and never returns against a keep-alive server;
+                // this is bounded by a read deadline and gives back what
+                // it has when the deadline passes.
+                string msg = PopStr(line, w);
+                bool secure = PopBool(line, w);
+                int rport = (int)PopNum(line, w);
+                string rhost = PopStr(line, w);
+                if (!netOK)
+                {
+                    PushConnErr(rhost, rport, "NETWORK IS DISABLED");
+                    return true;
+                }
+                Socket rsk = new(SocketType.Stream, ProtocolType.Tcp);
+                SslStream? rss = null;
+                try
+                {
+                    if (!rsk.ConnectAsync(rhost, rport).Wait(ConnectTimeoutMs))
+                    {
+                        PushConnErr(rhost, rport, "TIMED OUT");
+                        return true;
+                    }
+                    if (secure)
+                    {
+                        rss = new SslStream(new NetworkStream(rsk, ownsSocket: false), false,
+                            (sender, cert, chain, errors) =>
+                                tlsInsecure || errors == SslPolicyErrors.None);
+                        if (!rss.AuthenticateAsClientAsync(rhost).Wait(TlsHandshakeTimeoutMs))
+                        {
+                            PushConnErr(rhost, rport, "TLS HANDSHAKE TIMED OUT");
+                            return true;
+                        }
+                        rss.ReadTimeout = TlsReadTimeoutMs;
+                    }
+                    else
+                    {
+                        rsk.SendTimeout = ConnectTimeoutMs;
+                        rsk.ReceiveTimeout = TlsReadTimeoutMs;
+                    }
+                    byte[] outb = Bytes.GetBytes(msg);
+                    if (rss != null) rss.Write(outb, 0, outb.Length);
+                    else
+                    {
+                        int sent = 0;
+                        while (sent < outb.Length)
+                        {
+                            int n = rsk.Send(outb, sent, outb.Length - sent, SocketFlags.None);
+                            if (n <= 0) break;
+                            sent += n;
+                        }
+                    }
+                    var got = new MemoryStream();
+                    var buf = new byte[4096];
+                    while (true)
+                    {
+                        int n = rss != null ? rss.Read(buf, 0, buf.Length)
+                                            : rsk.Receive(buf, 0, buf.Length, SocketFlags.None);
+                        if (n <= 0) break;
+                        got.Write(buf, 0, n);
+                    }
+                    Push(Value.OfRec(Prelude.Ok, new[]
+                        { Value.OfStr(Bytes.GetString(got.ToArray())) }));
+                }
+                catch (Exception e) when (e is not ShoddyError)
+                {
+                    PushConnErr(rhost, rport, RequestWhy(e));
+                }
+                finally
+                {
+                    rss?.Dispose();
+                    try { rsk.Dispose(); } catch (Exception) { }
+                }
                 return true;
             }
             case "TCPLISTEN":                   // ( host port -- h ), host is an IP literal
@@ -1346,6 +1693,78 @@ public sealed partial class Engine
                 Push(Value.OfScribbler(h));
                 return true;
             }
+            case "TRYSCRIBBLEROPEN":            // ( width height -- Result )
+            {
+                // SCRIBBLEROPEN with its two deaths reported rather than
+                // fatal — no window backend, and a size below 1x1 — and
+                // answering a SLOT NUMBER instead of the scribbler itself.
+                //
+                // The slot is the whole point. A SCRIBBLER is its own Value
+                // kind, so a reckoner seed cannot keep one in the named
+                // resource table the way it keeps a file handle; it can keep
+                // an integer. SCRIBBLEROF turns the integer back into the
+                // window and SCRIBBLERSHUT lets it go, so the seed holds a
+                // number and the ordinary drawing words do the work.
+                //
+                // Window creation itself is left to throw: it is marshalled
+                // to the main thread and rethrown here, and a failure at
+                // that point is a broken display rather than a mistyped
+                // argument. The two things a CALLER can get wrong are the
+                // ones reported.
+                int shgt = (int)PopNum(line, w), swid = (int)PopNum(line, w);
+                Func<int, int, ScribblerHandle>? make = ScribblerRegistry.CreateScribbler;
+                if (make == null)
+                {
+                    PushErrAt("CANNOT OPEN A WINDOW (THERE IS NO WINDOW BACKEND — THIS NEEDS `mill run`)");
+                    return true;
+                }
+                if (swid < 1 || shgt < 1)
+                {
+                    PushErrAt($"CANNOT OPEN A WINDOW ({swid}x{shgt} IS SMALLER THAN 1x1)");
+                    return true;
+                }
+                int sslot = Array.IndexOf(scribs, null);
+                if (sslot < 0)
+                {
+                    PushErrAt("CANNOT OPEN A WINDOW (TOO MANY OPEN SCRIBBLERS)");
+                    return true;
+                }
+                ScribblerHandle sh = make(swid, shgt);   // blocks until it exists
+                sh.Width = swid; sh.Height = shgt;
+                if (sh.Pixels.Length != swid * shgt * 4) sh.Pixels = new byte[swid * shgt * 4];
+                Interlocked.Increment(ref ScribblerRegistry.OpenCount);
+                scribs[sslot] = Value.OfScribbler(sh);
+                Push(Value.OfRec(Prelude.Ok, new[] { Value.OfNum(sslot + 1) }));
+                return true;
+            }
+            case "SCRIBBLEROF":                 // ( n -- scribbler )
+            {
+                // The window a slot names. Dies on a slot that is not open,
+                // and that is right: a seed only ever asks for a slot its
+                // own binding is holding, so reaching here with a bad one is
+                // a fault in the seed rather than a mistake at a prompt.
+                Push(scribs[ScribSlot(PopNum(line, w), line, w)]!);
+                return true;
+            }
+            case "SCRIBBLERSHUT":               // ( n -- ok )
+            {
+                // Close the window a slot names and free the slot. Answers a
+                // Boolean because it is what a resource closer answers, and
+                // False for a slot that was already let go — closing twice
+                // is the ordinary shape of a double CLOSE and must not end
+                // the session.
+                int k = (int)PopNum(line, w);
+                if (k < 1 || k > scribs.Length || scribs[k - 1] == null)
+                {
+                    PushBool(false);
+                    return true;
+                }
+                ScribblerHandle done = scribs[k - 1]!.Scribbler!;
+                scribs[k - 1] = null;
+                if (done.MarkClosed()) ScribblerRegistry.NoteClosed();
+                PushBool(true);
+                return true;
+            }
             case "SCRIBBLERPIXEL":              // ( scribbler x y r g b -- scribbler )
             {
                 byte b = Chan(PopNum(line, w)), g = Chan(PopNum(line, w)), r = Chan(PopNum(line, w));
@@ -1554,6 +1973,20 @@ public sealed partial class Engine
                 BuzzerRegistry.Queue?.Invoke(ch, freq, ms);
                 return true;
             }
+            case "SOUNDQUEUED":                 // ( ch -- ms )
+            {
+                // How far ahead this channel is already queued, in
+                // milliseconds, and 0 once it has drained. The cap above is
+                // the only sound fault that CANNOT be pre-flighted from
+                // Shoddy without it: a caller can measure the score it is
+                // about to queue, and had no way at all to measure what was
+                // already in front of it. The message on that abort tells
+                // you to "feed long scores incrementally", which is the one
+                // thing this makes possible.
+                int qch = PopBuzzerChannel(line, w, "SoundQueued");
+                PushNum(Math.Max(0, buzzQueueEnd[qch] - Ticker.Now));
+                return true;
+            }
             case "SOUNDSTOP":                   // ( ch -- ) release held note, flush queue
             {
                 int ch = PopBuzzerChannel(line, w, "SoundStop");
@@ -1639,10 +2072,13 @@ public sealed partial class Engine
         "AND", "OR", "NOT", "TRUE", "FALSE",
         "&", "LEN", "STR", "VAL", "ISNUMERIC", "VALOR", "LEFT", "RIGHT", "MID", "CHR", "ASC",
         "UPPER", "LOWER",
-        "PRINT", "READFILE", "WRITEFILE", "APPENDFILE", "TRYWRITEFILE", "FILEEXISTS",
-        "DELETEFILE", "BOPEN", "BCLOSE", "SEEK", "BPOS", "BSIZE",
+        "PRINT", "READFILE", "TRYREADFILE", "WRITEFILE", "APPENDFILE",
+        "TRYWRITEFILE", "FILEEXISTS",
+        "DELETEFILE", "TRYDELETEFILE",
+        "BOPEN", "TRYBOPEN", "BCLOSE", "SEEK", "BPOS", "BSIZE",
         "PUTNUM", "GETNUM", "PUTBOOL", "GETBOOL", "PUTSTR", "GETSTR",
-        "TCPCONNECT", "TCPLISTEN", "TCPACCEPT", "TCPSEND", "TCPRECV",
+        "TCPCONNECT", "TRYTCPCONNECT", "TRYTCPREQUEST", "NETALLOWED",
+        "TCPLISTEN", "TCPACCEPT", "TCPSEND", "TCPRECV",
         "TCPEOF", "TCPPOLL", "TCPPEER", "TCPCLOSE", "TCPSECURE",
         "INPUT", "INPUTLINE", "INKEY", "ARGS",
         "CALL", "IFTE", "MAP", "FILTER", "FOLD", "EACH", "TIMES", "RANGE",
@@ -1650,12 +2086,13 @@ public sealed partial class Engine
         "ISEMPTY", "FIRST", "NTH", "SETNTH", "DIM", "TOARRAY", "TOLIST",
         "REST", "PREPEND",
         "TICKS", "SLEEP", "CLOCK",
-        "SCRIBBLEROPEN", "SCRIBBLERPIXEL", "SCRIBBLERFILL", "SCRIBBLERTEXT",
+        "SCRIBBLEROPEN", "TRYSCRIBBLEROPEN", "SCRIBBLEROF", "SCRIBBLERSHUT",
+        "SCRIBBLERPIXEL", "SCRIBBLERFILL", "SCRIBBLERTEXT",
         "SCRIBBLERGETPIXEL", "SCRIBBLERWIDTH", "SCRIBBLERHEIGHT",
         "SCRIBBLERBLIT", "SCRIBBLERCLOSE", "SCRIBBLERTITLE", "SCRIBBLERPOLL",
         "SCRIBBLERWAIT", "SCRIBBLERSETINTERVAL", "SCRIBBLERSAVE", "SCRIBBLERPLACE",
-        "SOUND", "NOTEON", "NOTEOFF", "SOUNDQUEUE", "SOUNDSTOP", "SOUNDGAIN",
-        "SOUNDWAVE",
+        "SOUND", "NOTEON", "NOTEOFF", "SOUNDQUEUE", "SOUNDQUEUED",
+        "SOUNDSTOP", "SOUNDGAIN", "SOUNDWAVE",
     };
 
     // ---- special functions ----------------------------------------------

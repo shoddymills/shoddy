@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="reckoner seed: csv over the guarded builtins — machines/seeds/seedcsv.shoddy">
+<title>seedcsv — A Reckoner Seed | Shoddy Machines</title>
+<link rel="stylesheet" href="../style.css">
+<link rel="icon" href="../favicon.svg" type="image/svg+xml">
+<link rel="alternate icon" href="../favicon.ico" sizes="48x48">
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+</head>
+<body>
+<div class="topbar"><div class="inner">
+  <div class="row">
+    <a class="phase" href="index.html"><img class="mark" src="../media/brand/shoddy-icon.svg" alt="" width="23" height="23">Shoddy · The Machines</a>
+    <span class="spacer"></span>
+    <nav class="docnav meta" aria-label="About"><a href="../heritage.html">Heritage</a><a href="../authorship.html">Authorship</a></nav>
+  </div>
+  <nav class="docnav main" aria-label="Documentation"><a href="../tutorials/index.html">Tutorials</a><a href="../guide.html">Guide</a><a href="../quickref.html">Reference</a><span class="here">Machines</span><a href="../mills/index.html">Mills</a><a href="../stack.html">Stack</a><a href="../spec.html">Spec</a><a href="../setup.html">Setup</a><a href="../vscode.html">VS Code</a><a href="../assistants.html">AI</a><a href="../build.html">Toolchain</a><a href="../errors.html">Errors</a></nav>
+</div></div>
+<div class="wrap">
+
+
+<header class="mast has-icon"><div><p class="eyebrow"><a href="index.html#runtime-stack">The Machines &middot; Runtime stack</a></p><h1>seedcsv</h1><p class="kicker">A reckoner seed: csv over the guarded builtins — machines/seeds/seedcsv.shoddy</p></div><img class="micon" src="../media/icons/seedcsv.svg" alt="the seedcsv machine&#39;s icon"></header>
+<nav class="pagertop" aria-label="Machines, in catalog order"><a href="seedfile.html">&larr; seedfile</a><a href="index.html">All machines</a><a href="seedisam.html">seedisam &rarr;</a></nav>
+
+<h2 id="summary">Summary</h2>
+<p><code>seedcsv</code> bridges <a href="csv.html">csv</a>:
+<code>CSVLOAD CSVREAD CSVSAVE CSVWIDTH CSVCOLUMN CSVCOLUMNNUMS CSVHEADS
+CSVBODY CSVGET CSVWHERE CSVPAIRS</code>. A "document" at the keyboard is
+exactly what <a href="csv.html">csv.shoddy</a>'s own comments call it: a
+<code>LIST</code> of <code>LIST</code>s of <code>STRING</code>s, no new
+stack case needed. A "sheet" is never carried as its own cell —
+<code>CSVHEADS</code>, <code>CSVBODY</code>, <code>CSVCOLUMN</code>,
+<code>CSVCOLUMNNUMS</code>, <code>CSVGET</code>, <code>CSVWHERE</code> and
+<code>CSVPAIRS</code> all rebuild the header split from the document cell
+each time they are called, which is what keeps the value set untouched.</p>
+
+<h2 id="why">Why It's Useful</h2>
+<p><code>CSVLOAD</code> and <code>CSVSAVE</code> do not call
+<code>CsvLoad</code>/<code>CsvSave</code>, whose <code>ReadFile</code> and
+<code>WriteFile</code> abort — <code>CSVLOAD</code> instead runs
+<code>TryReadFile</code> and then the total reader, matching its own
+success-or-error variant rather than the wrapper that turns a parse failure
+into an <code>Error</code>. <strong><code>CSVGET</code> stays strict</strong>:
+<a href="csv.html">csv.shoddy</a>'s own <code>CsvGet</code> <code>Error</code>s
+rather than defaulting when the column or the row is short, on the ground
+that a file whose header promises a column it does not deliver is a file
+worth hearing about — <code>CSVGET</code> keeps that judgment and only
+trades the <code>Error</code> for a refusal. <code>CSVWHERE</code> and
+<code>CSVCOLUMN</code>/<code>CSVCOLUMNNUMS</code> lean on the total column
+readers instead, since a WHERE clause or a column scan that stopped at the
+first ragged row would be less useful than one that treats a missing cell
+as empty.</p>
+<p><strong>A column is named either way</strong> — by its header, or by its
+1-based position — because each is the natural spelling somewhere: a header
+when the file carries one worth reading, a position when it does not, when
+the header is noise, or when the column is simply "the third one". The
+number form resolves to the header <em>at</em> that position and then reads
+by name like everything else in this seed, so a position and a name address
+the same column by the same route; <a href="csv.html">csv.shoddy</a>'s whole
+column API is name-based, and a second addressing scheme that disagreed with
+it on a duplicated header would be worse than inheriting the one it has. A
+position outside the header row is refused rather than clamped, since
+<code>0</code> and <code>99</code> are both typos on a four-column file.</p>
+
+<h2 id="guide">User's Guide</h2>
+<p>This is the worked data session R2.9 asks for, reachable from the entry
+line in two:</p>
+<pre><code>Let st0 = RckSeedStats(RckSeedCsv(RckNew()))
+Select Case RckEval(st0, Chr(34) & "dat/sales.csv" & Chr(34) & " CSVLOAD  3 CSVCOLUMNNUMS  MEAN")
+    Case RckNext(st1, out)
+        Print(RckShow(st1))              ' x: 12483.61</code></pre>
+<p>A mistyped path answers rather than ending the session:</p>
+<pre><code>RckEval(st0, Chr(34) & "dat/missing.csv" & Chr(34) & " CSVLOAD")
+' ERR: cannot read dat/missing.csv (no such file); the stack is exactly as it was</code></pre>
+
+<h2 id="words">Word Reference</h2>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>CSVLOAD ( path -- doc )</td><td>The CSV file at path, parsed to a document (a list of rows of cells); a refusal if it cannot be read or does not parse.</td></tr>
+<tr><td>CSVREAD ( text -- doc )</td><td>CSV text already on the stack, parsed to a document; a refusal if it does not parse.</td></tr>
+<tr><td>CSVSAVE ( path doc -- ok )</td><td>Write a document to path as CSV; True on success.</td></tr>
+<tr><td>CSVWIDTH ( doc -- n )</td><td>The width of the widest row in the document.</td></tr>
+<tr><td>CSVHEADS ( doc -- list )</td><td>The document's first row, as the column headers.</td></tr>
+<tr><td>CSVBODY ( doc -- doc )</td><td>The document without its header row.</td></tr>
+<tr><td>CSVCOLUMN ( doc col -- list )</td><td>One column, top to bottom, as strings; col is a header name or a 1-based position, and a header the document does not name or a position outside it is refused.</td></tr>
+<tr><td>CSVCOLUMNNUMS ( doc col -- list )</td><td>One column, top to bottom, read as numbers (0 for a missing or short row); col is a header name or a 1-based position, refused the same way.</td></tr>
+<tr><td>CSVGET ( doc row head -- s )</td><td>The cell in row under the named column, taken from doc's header; refuses an unknown column or a row that stops short of it.</td></tr>
+<tr><td>CSVWHERE ( doc head v -- doc )</td><td>The rows whose named column reads v.</td></tr>
+<tr><td>CSVPAIRS ( doc row -- list )</td><td>row zipped with doc's header as an association list — <a href="seeddict.html">seeddict</a>'s <code>DGET</code>, <code>DHAS</code> and <code>DKEYS</code> read it unchanged.</td></tr>
+</table>
+
+<h2 id="usedby">Who Uses It</h2>
+<table>
+<tr><th></th><th>User</th><th>How</th></tr>
+<tr><td class="uicon"><a href="../mills/halifax.html"><img src="../media/icons/halifax.svg" alt=""></a></td><td><a href="../mills/halifax.html">halifax</a></td><td>The calculator's CSV words: <code>CSVLOAD</code>, <code>CSVREAD</code>, <code>CSVSAVE</code>, <code>CSVCOLUMN</code>, <code>CSVWHERE</code>, <code>CSVPAIRS</code> and the rest of the table.</td></tr>
+</table>
+<p>A mill claims this seed by folding <code>RckSeedCsv</code> over its
+reckoner state, which is all halifax does.</p>
+
+<h2 id="uses">The Machines It Uses</h2>
+<table>
+<tr><th></th><th>Machine</th><th>Why</th></tr>
+<tr><td class="uicon"><a href="csv.html"><img src="../media/icons/csv.svg" alt=""></a></td><td><a href="csv.html">csv</a></td><td>The domain this seed bridges: <code>CsvReadAs</code>, <code>CsvText</code>, <code>CsvSheetOf</code>, <code>CsvHeads</code>, <code>CsvBody</code>, <code>CsvGetOr</code>, <code>CsvNumOr</code> and <code>CsvWhere</code>.</td></tr>
+<tr><td class="uicon"><a href="cuttle.html"><img src="../media/icons/cuttle.svg" alt=""></a></td><td><a href="cuttle.html">cuttle</a></td><td>The <code>Cell</code> type a document's rows and cells are built from.</td></tr>
+<tr><td class="uicon"><a href="reckoner.html"><img src="../media/icons/reckoner.svg" alt=""></a></td><td><a href="reckoner.html">reckoner</a></td><td><code>RckReg</code>, <code>RckSeeding</code> and the argument readers every registered word is built from.</td></tr>
+<tr><td class="uicon"><a href="seq.html"><img src="../media/icons/seq.svg" alt=""></a></td><td><a href="seq.html">seq</a></td><td><code>Zip</code> pairs a row with its header for <code>CSVPAIRS</code>; list plumbing under every row and document reader.</td></tr>
+</table>
+
+<nav class="pager" aria-label="Machines, in catalog order">
+  <a href="seedfile.html"><span class="dir">&larr; Previous machine</span><span class="ttl">seedfile</span></a>
+  <a class="next" href="seedisam.html"><span class="dir">Next machine &rarr;</span><span class="ttl">seedisam</span></a>
+</nav>
+<footer>Named for the shoddy mills of the West Riding: Useless Things Made
+Useful Through Skill (<a href="../heritage.html">the heritage of the name</a>).<br>
+&copy; 2026 Stephen Vincent Foster</footer>
+</div>
+</body>
+</html>

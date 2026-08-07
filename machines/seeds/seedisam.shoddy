@@ -1,0 +1,813 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem seedisam.shoddy — reckoner seed: isam.shoddy, whole-table words
+Rem only, over a handle the CALLER already opened
+Rem
+Rem THIS SEED DOES NOT REGISTER ISAMOPEN. R3.5(b) is why: a handle must
+Rem never reach the stack, because a handle is a NUMBER capped at 16 and
+Rem shared with sockets, and UNDO after an open would restore the stack
+Rem while leaving the handle open and now unreachable. So
+Rem RckSeedIsamNum/RckSeedIsamStr take an ALREADY-OPEN Isam handle as
+Rem their own argument — closed over inside the words they register,
+Rem never pushed — the way a form field or an embedded scripting layer
+Rem (R1.4's "equally its callers") would seed the engine with a table its
+Rem host already knows about.
+Rem
+Rem "CANNOT" IS NOW TOO STRONG, and this comment used to say it.
+Rem reckoner.shoddy holds resources by NAME, in a table UNDO does not
+Rem touch, with CLOSE and BOUND over it — so "open a table from the
+Rem entry line" no longer breaks R3.5(b) on its own, and a future
+Rem ISAMOPEN would bind rather than push.
+Rem
+Rem WHAT STILL STOPS IT IS THE RECORD LAYOUT, which is a different
+Rem problem and was always the harder half. An Isam carries Rd, Wr and
+Rem KeyOf — reader, writer and key functions over the CALLER's own Type,
+Rem written in Shoddy and compiled in. A host program has them. A
+Rem session has to be told a layout at the prompt, which means a schema
+Rem cell and generic functions driven by it. Until that exists this seed
+Rem stays as it is, and the reason it stays is worth keeping straight:
+Rem it is the layout, not the handle.
+Rem
+Rem TWO ENTRY POINTS, NOT ONE GENERIC ONE. isam.shoddy's keys must be
+Rem NUMBERs or STRINGs (its own header comment says so), and Shoddy has
+Rem no way to ask a Cell which of the two it holds and hand back a
+Rem value of the matching generic type — so a NUMBER-keyed table seeds
+Rem through RckSeedIsamNum and a STRING-keyed one through
+Rem RckSeedIsamStr. Both register the same five words.
+Rem
+Rem RECORDS CROSS THE BRIDGE THROUGH cellOf, A FUNCTION THE CALLER
+Rem SUPPLIES ( [ t -- Cell ] ), not a new stack case: isam's record type
+Rem is the caller's own Type, unknown here exactly as it is unknown to
+Rem isam.shoddy itself, and a PAIR built from field to field (as
+Rem CSVPAIRS already does for a CSV row) is the usual shape to hand
+Rem back. ISAMGETOR needs no inverse: its default argument is already a
+Rem CELL as typed on the entry line, pushed back unchanged when the key
+Rem is absent, never converted to or from the record type.
+Rem
+Rem WHOLE-TABLE WORDS ONLY (R3.5(b) again): ISAMALL, ISAMRANGE, ISAMHAS,
+Rem ISAMGETOR and ISAMCOUNT. No BOPEN, no SEEK, no per-slot access.
+Rem ==================================================================
+
+Include "isam.shoddy"
+Include "cuttle.shoddy"
+Include "reckoner.shoddy"
+
+Rem ---- NUMBER-keyed tables ----------------------------------------------
+
+Def RckSeedIsamNum(st As RckState, db As Isam, cellOf As [ t -- Cell ]) As RckState
+    Let st1 = IsnSeedAll(RckSeeding(st, "seed-isam"), db, cellOf)
+    Let st2 = IsnSeedCount(st1, db)
+    Let st3 = IsnSeedHas(st2, db)
+    Let st4 = IsnSeedRange(st3, db, cellOf)
+    IsnSeedGetor(st4, db, cellOf)
+
+Def IsnSeedAll(st As RckState, db As Isam, cellOf As [ t -- Cell ]) As RckState
+    RckReg(st, "ISAMALL", 0, RckTouch(Fn(vs) => RckVals({ CutList(Map(IsamAll(db), cellOf)) })), "( -- list )", "Every record in the table, key order.")
+
+Def IsnSeedCount(st As RckState, db As Isam) As RckState
+    RckReg(st, "ISAMCOUNT", 0, RckTouch(Fn(vs) => RckVals({ CutNum(IsamCount(db)) })), "( -- n )", "How many records the table holds.")
+
+Def IsnSeedHas(st As RckState, db As Isam) As RckState
+    RckReg(st, "ISAMHAS", 1, RckTouch(Fn(vs) => IsnHas(db, vs)), "( k -- flag )", "Whether the table has a record under key k.")
+
+Def IsnHas(db As Isam, vs As List Of Cell) As RckWork
+    Select Case RckNumArg("ISAMHAS", First(vs))
+        Case Ok(k)
+            RckVals({ CutBool(IsamHas(db, k)) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("ISAMHAS did not answer")
+
+Def IsnSeedRange(st As RckState, db As Isam, cellOf As [ t -- Cell ]) As RckState
+    RckReg(st, "ISAMRANGE", 2, RckTouch(Fn(vs) => IsnRange(db, cellOf, vs)), "( lo hi -- list )", "The records with keys from lo to hi inclusive, key order.")
+
+Def IsnRange(db As Isam, cellOf As [ t -- Cell ], vs As List Of Cell) As RckWork
+    Select Case RckNumArg("ISAMRANGE", Nth(vs, 1))
+        Case Ok(lo)
+            IsnRangeAt(db, cellOf, lo, Nth(vs, 2))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("ISAMRANGE did not answer")
+
+Def IsnRangeAt(db As Isam, cellOf As [ t -- Cell ], lo As Number, c As Cell) As RckWork
+    Select Case RckNumArg("ISAMRANGE", c)
+        Case Ok(hi)
+            RckVals({ CutList(Map(IsamRange(db, lo, hi), cellOf)) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("ISAMRANGE did not answer")
+
+Def IsnSeedGetor(st As RckState, db As Isam, cellOf As [ t -- Cell ]) As RckState
+    RckReg(st, "ISAMGETOR", 2, RckTouch(Fn(vs) => IsnGetor(db, cellOf, vs)), "( k dflt -- rec )", "The record under key k, or dflt unchanged when there is none.")
+
+Def IsnGetor(db As Isam, cellOf As [ t -- Cell ], vs As List Of Cell) As RckWork
+    Select Case RckNumArg("ISAMGETOR", Nth(vs, 1))
+        Case Ok(k)
+            RckVals({ IsnGetorAt(db, cellOf, k, Nth(vs, 2)) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("ISAMGETOR did not answer")
+
+Def IsnGetorAt(db As Isam, cellOf As [ t -- Cell ], k As Number, dflt As Cell) As Cell
+    If IsamHas(db, k) Then
+        Call(cellOf, IsamGet(db, k))
+    Else
+        dflt
+
+Rem ---- STRING-keyed tables ------------------------------------------------
+
+Def RckSeedIsamStr(st As RckState, db As Isam, cellOf As [ t -- Cell ]) As RckState
+    Let st1 = IssSeedAll(RckSeeding(st, "seed-isam"), db, cellOf)
+    Let st2 = IssSeedCount(st1, db)
+    Let st3 = IssSeedHas(st2, db)
+    Let st4 = IssSeedRange(st3, db, cellOf)
+    IssSeedGetor(st4, db, cellOf)
+
+Def IssSeedAll(st As RckState, db As Isam, cellOf As [ t -- Cell ]) As RckState
+    RckReg(st, "ISAMALL", 0, RckTouch(Fn(vs) => RckVals({ CutList(Map(IsamAll(db), cellOf)) })), "( -- list )", "Every record in the table, key order.")
+
+Def IssSeedCount(st As RckState, db As Isam) As RckState
+    RckReg(st, "ISAMCOUNT", 0, RckTouch(Fn(vs) => RckVals({ CutNum(IsamCount(db)) })), "( -- n )", "How many records the table holds.")
+
+Def IssSeedHas(st As RckState, db As Isam) As RckState
+    RckReg(st, "ISAMHAS", 1, RckTouch(Fn(vs) => IssHas(db, vs)), "( k -- flag )", "Whether the table has a record under key k.")
+
+Def IssHas(db As Isam, vs As List Of Cell) As RckWork
+    Select Case RckTextArg("ISAMHAS", First(vs))
+        Case Ok(k)
+            RckVals({ CutBool(IsamHas(db, k)) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("ISAMHAS did not answer")
+
+Def IssSeedRange(st As RckState, db As Isam, cellOf As [ t -- Cell ]) As RckState
+    RckReg(st, "ISAMRANGE", 2, RckTouch(Fn(vs) => IssRange(db, cellOf, vs)), "( lo hi -- list )", "The records with keys from lo to hi inclusive, key order.")
+
+Def IssRange(db As Isam, cellOf As [ t -- Cell ], vs As List Of Cell) As RckWork
+    Select Case RckTextArg("ISAMRANGE", Nth(vs, 1))
+        Case Ok(lo)
+            IssRangeAt(db, cellOf, lo, Nth(vs, 2))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("ISAMRANGE did not answer")
+
+Def IssRangeAt(db As Isam, cellOf As [ t -- Cell ], lo As String, c As Cell) As RckWork
+    Select Case RckTextArg("ISAMRANGE", c)
+        Case Ok(hi)
+            RckVals({ CutList(Map(IsamRange(db, lo, hi), cellOf)) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("ISAMRANGE did not answer")
+
+Def IssSeedGetor(st As RckState, db As Isam, cellOf As [ t -- Cell ]) As RckState
+    RckReg(st, "ISAMGETOR", 2, RckTouch(Fn(vs) => IssGetor(db, cellOf, vs)), "( k dflt -- rec )", "The record under key k, or dflt unchanged when there is none.")
+
+Def IssGetor(db As Isam, cellOf As [ t -- Cell ], vs As List Of Cell) As RckWork
+    Select Case RckTextArg("ISAMGETOR", Nth(vs, 1))
+        Case Ok(k)
+            RckVals({ IssGetorAt(db, cellOf, k, Nth(vs, 2)) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("ISAMGETOR did not answer")
+
+Def IssGetorAt(db As Isam, cellOf As [ t -- Cell ], k As String, dflt As Cell) As Cell
+    If IsamHas(db, k) Then
+        Call(cellOf, IsamGet(db, k))
+    Else
+        dflt
+
+Rem ======================================================================
+Rem A TABLE A SESSION OPENS FOR ITSELF
+Rem
+Rem Everything above takes a table the HOST already opened. This half
+Rem takes a path and a schema typed at the prompt, and is what the
+Rem "cannot" at the top of this file used to rule out.
+Rem
+Rem TWO THINGS HAD TO EXIST FIRST, and neither is a better guard.
+Rem reckoner.shoddy now holds resources by NAME in a table UNDO does not
+Rem touch, so an open table is reachable after any number of undos and
+Rem no handle goes on the stack. And seedrecio.shoddy worked out how to
+Rem describe a record layout at a prompt — a list of { name kind }
+Rem specs — which is the half R3.5(b) never had anything to say about,
+Rem and the half that actually kept isam out.
+Rem
+Rem THE SCHEMA LANGUAGE IS SEEDRECIO'S, not a second dialect. This file
+Rem includes that seed and calls its reader, its writer and its row
+Rem checks, so the two record machines cannot drift into disagreeing
+Rem about what a spec means. That is why seedrecio is among this seed's
+Rem dependencies: one definition, used twice.
+Rem
+Rem ---- THE ONE PLACE THE TYPES FIGHT BACK ----------------------------
+Rem
+Rem isam orders keys with a raw "<", so KeyOf's answer must be a NUMBER
+Rem or a STRING at the TYPE level. CutLess exists but answers a CutCalc
+Rem rather than a Boolean, so a Cell key will not do. The schema that
+Rem says WHICH is data, read at run time.
+Rem
+Rem So there are two instantiations of Isam here, held in one sum type
+Rem and chosen when the schema is read. Every word branches on that sum
+Rem once and then does the same thing on either side. It reads like
+Rem duplication and it is not: the two sides have different types, and
+Rem that is exactly the fact the language is stating.
+Rem
+Rem THE ISAM IS REBUILT ON EVERY CALL from the two handles the binding
+Rem carries. That is sound because isam's own mutators say so — each
+Rem returns the now-unchanged handle — so every byte of state lives in
+Rem the two files, and an Isam is a record of two handles, a size and
+Rem three functions this seed supplies. IsamOpen's one-time work,
+Rem initialising a fresh index or rebuilding a stale one, happens at
+Rem ISAMOPEN and never again.
+Rem
+Rem EVERY WORD PRE-FLIGHTS, because isam Errors rather than refusing:
+Rem IsamInsert on a duplicate key, IsamUpdate, IsamDelete and IsamGet on
+Rem a missing one. IsamHas and IsamCount answer all of those questions
+Rem first, so nothing here can end a session.
+Rem ======================================================================
+
+Include "seedrecio.shoddy"
+Include "seq.shoddy"
+Include "str.shoddy"
+
+Rem ---- the two instantiations, and the sum that holds either -----------
+
+Type IsamHeld = IsamByNum(HeldNum As Isam) | IsamByStr(HeldStr As Isam)
+
+Def IskKindName() As String
+    "isam"
+
+Rem Which position in the schema the key field sits at, or 0 for a key
+Rem naming no field at all.
+Def IskKeyAt(fs As List Of RecField, key As String, k As Number) As Number
+    If k > Length(fs) Then
+        0
+    Else
+        IskKeyIs(fs, key, k)
+
+Def IskKeyIs(fs As List Of RecField, key As String, k As Number) As Number
+    If RfName(Nth(fs, k)) = key Then
+        k
+    Else
+        IskKeyAt(fs, key, k + 1)
+
+Rem ---- reading and writing a record, in isam's own shape ---------------
+
+Rem isam hands its reader a handle it has already sought, exactly as
+Rem recio does, so seedrecio's field walk serves unchanged.
+Def IskRd(fs As List Of RecField, f As Number) As Cell
+    CutList(RcReadFields(f, fs, { }))
+
+Def IskWr(fs As List Of RecField, f As Number, rec As Cell)
+    RcWriteFields(f, fs, IskCellsOf(rec))
+
+Def IskCellsOf(rec As Cell) As List Of Cell
+    Select Case rec
+        Case CutList(xs)
+            xs
+        Case Else
+            { }
+
+Def IskKeyNumOf(at As Number, rec As Cell) As Number
+    IskNumOf(Nth(IskCellsOf(rec), at))
+
+Def IskKeyStrOf(at As Number, rec As Cell) As String
+    IskStrOf(Nth(IskCellsOf(rec), at))
+
+Def IskNumOf(c As Cell) As Number
+    Select Case c
+        Case CutNum(x)
+            x
+        Case Else
+            0
+
+Def IskStrOf(c As Cell) As String
+    Select Case c
+        Case CutStr(s)
+            s
+        Case Else
+            ""
+
+Rem ---- the binding's own data cell -------------------------------------
+
+Rem The data handle, the index handle, the record size, the schema as
+Rem the session typed it, and the key's position. The two handles are
+Rem here rather than on the stack, which is the whole of what makes this
+Rem safe: reachable by name, unreachable by value.
+Def IskDataCell(fh As Number, ih As Number, size As Number, sc As Cell, at As Number) As Cell
+    CutList({ CutNum(fh), CutNum(ih), CutNum(size), sc, CutNum(at) })
+
+Def IskPart(r As RckRes, k As Number) As Cell
+    Nth(IskCellsOf(ResDataOf(r)), k)
+
+Def IskFh(r As RckRes) As Number
+    IskNumOf(IskPart(r, 1))
+
+Def IskIxFh(r As RckRes) As Number
+    IskNumOf(IskPart(r, 2))
+
+Def IskSize(r As RckRes) As Number
+    IskNumOf(IskPart(r, 3))
+
+Def IskSchemaCell(r As RckRes) As Cell
+    IskPart(r, 4)
+
+Def IskKeyPos(r As RckRes) As Number
+    IskNumOf(IskPart(r, 5))
+
+Rem ---- rebuilding the table a word was named ---------------------------
+
+Def IskHeld(r As RckRes, fs As List Of RecField) As IsamHeld
+    If FldKind(Nth(fs, IskKeyPos(r))) = RcNumKind() Then
+        IsamByNum(Isam(IskFh(r), IskIxFh(r), IskSize(r), Fn(f) => IskRd(fs, f), Fn(f, v) => IskWr(fs, f, v), Fn(v) => IskKeyNumOf(IskKeyPos(r), v)))
+    Else
+        IsamByStr(Isam(IskFh(r), IskIxFh(r), IskSize(r), Fn(f) => IskRd(fs, f), Fn(f, v) => IskWr(fs, f, v), Fn(v) => IskKeyStrOf(IskKeyPos(r), v)))
+
+Def IskFound(word As String, st As RckState, c As Cell) As Result
+    Select Case RckTextArg(word, c)
+        Case Ok(nm)
+            IskFoundAt(word, st, nm)
+        Case Err(w, at)
+            Err(w, at)
+        Case Else
+            Err(word & " did not answer", 0)
+
+Def IskFoundAt(word As String, st As RckState, nm As String) As Result
+    If Not RckBoundTo(st, nm) Then
+        Err(word & ": THERE IS NOTHING OPEN CALLED " & nm, 0)
+    Else
+        IskFoundKind(word, First(RckResOf(st, nm)), nm)
+
+Def IskFoundKind(word As String, r As RckRes, nm As String) As Result
+    If ResKindOf(r) <> IskKindName() Then
+        Err(word & ": " & nm & " IS A " & Upper(ResKindOf(r)) & ", NOT A TABLE", 0)
+    Else
+        Ok(r)
+
+Def IskSchemaFor(word As String, r As RckRes) As Result
+    RcSchemaOf(word, IskSchemaCell(r))
+
+Rem ---- ISAMOPEN ---------------------------------------------------------
+
+Def IskSeedOpen(st As RckState) As RckState
+    RckReg(st, "ISAMOPEN", 4, RckPureOver(Fn(s, vs) => IskOpen(s, vs)), "( path schema key name -- )", "Open an indexed table and keep it open under that name. The schema is a list of { name kind } specs, as for RECOPEN, and key names which field is the key. Makes the table if it is not there. CLOSE shuts it; BOUND lists what is open.")
+
+Def IskOpen(st As RckState, vs As List Of Cell) As RckWork
+    Select Case Pair(RckTextArg("ISAMOPEN", Nth(vs, 1)), RckTextArg("ISAMOPEN", Nth(vs, 4)))
+        Case Pair(Ok(path), Ok(nm))
+            IskOpenFree(st, path, Nth(vs, 2), Nth(vs, 3), nm)
+        Case Else
+            RckWorkBad("ISAMOPEN needs a path, a schema, a key field and a name")
+
+Def IskOpenFree(st As RckState, path As String, sc As Cell, kc As Cell, nm As String) As RckWork
+    If RckBoundTo(st, nm) Then
+        RckWorkBad("ISAMOPEN: THERE IS ALREADY SOMETHING OPEN CALLED " & nm)
+    Else
+        IskOpenKey(path, sc, kc, nm)
+
+Def IskOpenKey(path As String, sc As Cell, kc As Cell, nm As String) As RckWork
+    Select Case RckTextArg("ISAMOPEN", kc)
+        Case Ok(key)
+            IskOpenSchema(path, sc, key, nm)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("ISAMOPEN did not answer")
+
+Def IskOpenSchema(path As String, sc As Cell, key As String, nm As String) As RckWork
+    Select Case RcSchemaOf("ISAMOPEN", sc)
+        Case Ok(fs)
+            IskOpenFound(path, sc, key, nm, fs, IskKeyAt(fs, key, 1))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("ISAMOPEN did not answer")
+
+Rem A key naming no field is the mistake worth catching hardest: the
+Rem table would otherwise be built around a position that is not there.
+Def IskOpenFound(path As String, sc As Cell, key As String, nm As String, fs As List Of RecField, at As Number) As RckWork
+    If at = 0 Then
+        RckWorkBad("ISAMOPEN: NO FIELD IS CALLED " & key & " — THE SCHEMA HAS " & Join(RcNames(fs), " "))
+    Else
+        IskOpenOrdered(path, sc, nm, fs, at)
+
+Rem The key must be a NUMBER or a STRING because isam keeps keys in
+Rem order. A BOOLEAN key would compile and would give a table that can
+Rem hold two records, which is a worse outcome than a refusal.
+Def IskOpenOrdered(path As String, sc As Cell, nm As String, fs As List Of RecField, at As Number) As RckWork
+    If FldKind(Nth(fs, at)) = RcBoolKind() Then
+        RckWorkBad("ISAMOPEN: THE KEY FIELD " & RfName(Nth(fs, at)) & " IS A BOOLEAN — A KEY MUST BE A NUMBER OR A STRING, BECAUSE THE TABLE KEEPS THEM IN ORDER")
+    Else
+        IskOpenMade(path, sc, nm, fs, at)
+
+Def IskOpenMade(path As String, sc As Cell, nm As String, fs As List Of RecField, at As Number) As RckWork
+    If Not FileExists(path) And Not TryWriteFile(path, "") Then
+        RckWorkBad("ISAMOPEN: CANNOT MAKE '" & path & "'")
+    Else
+        IskOpenNow(path, sc, nm, fs, at, RcSize(fs))
+
+Rem IsamOpen goes through BOpen, which ABORTS on a path it cannot use.
+Rem TryBOpen is asked first purely as the pre-flight: if the data file
+Rem opens, it is shut again at once and isam is left to do its own
+Rem opening, index rebuild and all.
+Def IskOpenNow(path As String, sc As Cell, nm As String, fs As List Of RecField, at As Number, size As Number) As RckWork
+    Select Case TryBOpen(path)
+        Case Ok(probe)
+            IskOpenProbed(RcShut(probe), path, sc, nm, fs, at, size)
+        Case Err(w, where)
+            RckWorkBad("ISAMOPEN: " & w)
+        Case Else
+            RckWorkBad("ISAMOPEN did not answer")
+
+Def IskOpenProbed(shut As Boolean, path As String, sc As Cell, nm As String, fs As List Of RecField, at As Number, size As Number) As RckWork
+    If FldKind(Nth(fs, at)) = RcNumKind() Then
+        IskOpenedAs(IsamByNum(IsamOpen(path, size, Fn(f) => IskRd(fs, f), Fn(f, v) => IskWr(fs, f, v), Fn(v) => IskKeyNumOf(at, v))), sc, nm, at)
+    Else
+        IskOpenedAs(IsamByStr(IsamOpen(path, size, Fn(f) => IskRd(fs, f), Fn(f, v) => IskWr(fs, f, v), Fn(v) => IskKeyStrOf(at, v))), sc, nm, at)
+
+Def IskOpenedAs(h As IsamHeld, sc As Cell, nm As String, at As Number) As RckWork
+    Select Case h
+        Case IsamByNum(db)
+            RckOpened(nm, IskKindName(), Fh(db), IskDataCell(Fh(db), IxFh(db), RecSize(db), sc, at), Fn() => IskShut(Fh(db), IxFh(db)))
+        Case IsamByStr(db)
+            RckOpened(nm, IskKindName(), Fh(db), IskDataCell(Fh(db), IxFh(db), RecSize(db), sc, at), Fn() => IskShut(Fh(db), IxFh(db)))
+        Case Else
+            RckWorkBad("ISAMOPEN did not answer")
+
+Rem A table is TWO files, so the closer shuts two handles. The core sees
+Rem one resource under one name, which is what a session should see too.
+Def IskShut(fh As Number, ih As Number) As Boolean
+    BClose(fh)
+    BClose(ih)
+    True
+
+Rem ---- the branch, once per operation -----------------------------------
+
+Rem Each of these is the same call written twice over two different key
+Rem types. There is no way to write it once: the two Isam values do not
+Rem share a type, and a generic helper would have to name the key type
+Rem it was generic over.
+
+Def IskCountOf(h As IsamHeld) As Number
+    Select Case h
+        Case IsamByNum(db)
+            IsamCount(db)
+        Case IsamByStr(db)
+            IsamCount(db)
+        Case Else
+            0
+
+Def IskHasOf(h As IsamHeld, kc As Cell) As Boolean
+    Select Case h
+        Case IsamByNum(db)
+            IsamHas(db, IskNumOf(kc))
+        Case IsamByStr(db)
+            IsamHas(db, IskStrOf(kc))
+        Case Else
+            False
+
+Def IskGetOf(h As IsamHeld, kc As Cell) As Cell
+    Select Case h
+        Case IsamByNum(db)
+            IsamGet(db, IskNumOf(kc))
+        Case IsamByStr(db)
+            IsamGet(db, IskStrOf(kc))
+        Case Else
+            CutList({ })
+
+Def IskAllOf(h As IsamHeld) As List Of Cell
+    Select Case h
+        Case IsamByNum(db)
+            IsamAll(db)
+        Case IsamByStr(db)
+            IsamAll(db)
+        Case Else
+            { }
+
+Def IskRangeOf(h As IsamHeld, lo As Cell, hi As Cell) As List Of Cell
+    Select Case h
+        Case IsamByNum(db)
+            IsamRange(db, IskNumOf(lo), IskNumOf(hi))
+        Case IsamByStr(db)
+            IsamRange(db, IskStrOf(lo), IskStrOf(hi))
+        Case Else
+            { }
+
+Rem The mutators answer the handle they were given, unchanged, so their
+Rem answer is taken and dropped: everything they did is in the files.
+Def IskInsertOf(h As IsamHeld, rec As Cell) As Boolean
+    Select Case h
+        Case IsamByNum(db)
+            IskDid(IsamInsert(db, rec))
+        Case IsamByStr(db)
+            IskDid(IsamInsert(db, rec))
+        Case Else
+            False
+
+Def IskUpdateOf(h As IsamHeld, rec As Cell) As Boolean
+    Select Case h
+        Case IsamByNum(db)
+            IskDid(IsamUpdate(db, rec))
+        Case IsamByStr(db)
+            IskDid(IsamUpdate(db, rec))
+        Case Else
+            False
+
+Def IskDeleteOf(h As IsamHeld, kc As Cell) As Boolean
+    Select Case h
+        Case IsamByNum(db)
+            IskDid(IsamDelete(db, IskNumOf(kc)))
+        Case IsamByStr(db)
+            IskDid(IsamDelete(db, IskStrOf(kc)))
+        Case Else
+            False
+
+Def IskDid(db As Isam) As Boolean
+    True
+
+Rem ---- what a key must be, asked before it is used ----------------------
+
+Rem IskNumOf answers 0 for anything that is not a NUMBER and IskStrOf
+Rem answers "" for anything that is not a STRING, so an unchecked key of
+Rem the wrong kind would not fail — it would quietly look up the wrong
+Rem record. That is the one failure mode worth the most care here.
+Def IskWhyKey(word As String, fs As List Of RecField, at As Number, kc As Cell) As String
+    If FldKind(Nth(fs, at)) = RcNumKind() Then
+        IskWhyNum(word, fs, at, kc)
+    Else
+        IskWhyStr(word, fs, at, kc)
+
+Def IskWhyNum(word As String, fs As List Of RecField, at As Number, kc As Cell) As String
+    Select Case kc
+        Case CutNum(x)
+            ""
+        Case Else
+            word & ": THE KEY " & RfName(Nth(fs, at)) & " IS A NUMBER, AND THAT IS NOT ONE"
+
+Def IskWhyStr(word As String, fs As List Of RecField, at As Number, kc As Cell) As String
+    Select Case kc
+        Case CutStr(s)
+            ""
+        Case Else
+            word & ": THE KEY " & RfName(Nth(fs, at)) & " IS A STRING, AND THAT IS NOT ONE"
+
+Rem A whole row, checked against the schema exactly as RECPUT checks
+Rem one — same schema language, same checker, same messages.
+Def IskWhyRec(word As String, fs As List Of RecField, rec As Cell) As String
+    Select Case RckListArg(word, rec)
+        Case Ok(xs)
+            IskWhyWide(word, fs, xs)
+        Case Err(w, at)
+            w
+        Case Else
+            word & " did not answer"
+
+Def IskWhyWide(word As String, fs As List Of RecField, xs As List Of Cell) As String
+    If Length(xs) <> Length(fs) Then
+        word & ": THE RECORD HAS " & Str(Length(xs)) & " VALUES AND THE SCHEMA HAS " & Str(Length(fs)) & " FIELDS"
+    Else
+        RcWhyRow(word, xs, fs, 1)
+
+Rem ---- the words -------------------------------------------------------
+
+Rem Every one of them starts the same way: a name off the stack, the
+Rem binding, its schema, and the table rebuilt from the two handles the
+Rem binding carries.
+
+Def IskSeedCount(st As RckState) As RckState
+    Let s1 = RckReg(st, "ISAMCOUNT", 1, RckPureOver(Fn(s, vs) => IskCount(s, vs)), "( name -- n )", "How many records the table bound under that name holds.")
+    RckReg(s1, "ISAMFIELDS", 1, RckPureOver(Fn(s, vs) => IskFields(s, vs)), "( name -- list )", "The field names of that table's schema, in the order a record lists them. The key is one of these.")
+
+Def IskCount(st As RckState, vs As List Of Cell) As RckWork
+    Select Case IskWith("ISAMCOUNT", st, First(vs))
+        Case Ok(p)
+            RckVals({ CutNum(IskCountOf(IskHeldOf(p))) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("ISAMCOUNT did not answer")
+
+Def IskFields(st As RckState, vs As List Of Cell) As RckWork
+    Select Case IskWith("ISAMFIELDS", st, First(vs))
+        Case Ok(p)
+            RckVals({ CutList(Map(RcNames(IskFieldsOf(p)), CutStr)) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("ISAMFIELDS did not answer")
+
+Def IskSeedHas(st As RckState) As RckState
+    Let s1 = RckReg(st, "ISAMHAS", 2, RckPureOver(Fn(s, vs) => IskHas(s, vs)), "( name k -- flag )", "Whether the table has a record under key k.")
+    RckReg(s1, "ISAMGETOR", 3, RckPureOver(Fn(s, vs) => IskGetor(s, vs)), "( name k dflt -- rec )", "The record under key k as a list of values in schema order, or dflt unchanged when there is none. There is no plain ISAMGET: a missing key would have nothing to answer with.")
+
+Def IskHas(st As RckState, vs As List Of Cell) As RckWork
+    Select Case IskWith("ISAMHAS", st, Nth(vs, 1))
+        Case Ok(p)
+            IskHasKeyed("ISAMHAS", p, Nth(vs, 2))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("ISAMHAS did not answer")
+
+Def IskHasKeyed(word As String, p As IsamUse, kc As Cell) As RckWork
+    If IskWhyKey(word, IskFieldsOf(p), IskAtOf(p), kc) <> "" Then
+        RckWorkBad(IskWhyKey(word, IskFieldsOf(p), IskAtOf(p), kc))
+    Else
+        RckVals({ CutBool(IskHasOf(IskHeldOf(p), kc)) })
+
+Def IskGetor(st As RckState, vs As List Of Cell) As RckWork
+    Select Case IskWith("ISAMGETOR", st, Nth(vs, 1))
+        Case Ok(p)
+            IskGetorKeyed(p, Nth(vs, 2), Nth(vs, 3))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("ISAMGETOR did not answer")
+
+Rem IsamGet Errors on a missing key, so the presence check is not a
+Rem convenience — it is the whole reason this word is reachable.
+Def IskGetorKeyed(p As IsamUse, kc As Cell, dflt As Cell) As RckWork
+    If IskWhyKey("ISAMGETOR", IskFieldsOf(p), IskAtOf(p), kc) <> "" Then
+        RckWorkBad(IskWhyKey("ISAMGETOR", IskFieldsOf(p), IskAtOf(p), kc))
+    Else
+        RckVals({ IskGetorAt(IskHeldOf(p), kc, dflt) })
+
+Def IskGetorAt(h As IsamHeld, kc As Cell, dflt As Cell) As Cell
+    If IskHasOf(h, kc) Then
+        IskGetOf(h, kc)
+    Else
+        dflt
+
+Def IskSeedAll(st As RckState) As RckState
+    Let s1 = RckReg(st, "ISAMALL", 1, RckPureOver(Fn(s, vs) => IskAll(s, vs)), "( name -- list )", "Every record in the table, in key order, each one a list of values in schema order.")
+    RckReg(s1, "ISAMRANGE", 3, RckPureOver(Fn(s, vs) => IskRange(s, vs)), "( name lo hi -- list )", "Every record whose key lies from lo to hi, in key order.")
+
+Def IskAll(st As RckState, vs As List Of Cell) As RckWork
+    Select Case IskWith("ISAMALL", st, First(vs))
+        Case Ok(p)
+            RckVals({ CutList(IskAllOf(IskHeldOf(p))) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("ISAMALL did not answer")
+
+Def IskRange(st As RckState, vs As List Of Cell) As RckWork
+    Select Case IskWith("ISAMRANGE", st, Nth(vs, 1))
+        Case Ok(p)
+            IskRangeKeyed(p, Nth(vs, 2), Nth(vs, 3))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("ISAMRANGE did not answer")
+
+Def IskRangeKeyed(p As IsamUse, lo As Cell, hi As Cell) As RckWork
+    If IskWhyKey("ISAMRANGE", IskFieldsOf(p), IskAtOf(p), lo) & IskWhyKey("ISAMRANGE", IskFieldsOf(p), IskAtOf(p), hi) <> "" Then
+        RckWorkBad(IskWhyEither("ISAMRANGE", p, lo, hi))
+    Else
+        RckVals({ CutList(IskRangeOf(IskHeldOf(p), lo, hi)) })
+
+Def IskWhyEither(word As String, p As IsamUse, lo As Cell, hi As Cell) As String
+    If IskWhyKey(word, IskFieldsOf(p), IskAtOf(p), lo) <> "" Then
+        IskWhyKey(word, IskFieldsOf(p), IskAtOf(p), lo)
+    Else
+        IskWhyKey(word, IskFieldsOf(p), IskAtOf(p), hi)
+
+Def IskSeedWrite(st As RckState) As RckState
+    Let s1 = RckReg(st, "ISAMINSERT", 2, RckPureOver(Fn(s, vs) => IskInsert(s, vs)), "( name rec -- )", "Add rec to the table. Refuses when a record with that key is already there — ISAMUPDATE is the one that replaces.")
+    Let s2 = RckReg(s1, "ISAMUPDATE", 2, RckPureOver(Fn(s, vs) => IskUpdate(s, vs)), "( name rec -- )", "Replace the record with rec's key. Refuses when there is none — ISAMINSERT is the one that adds.")
+    RckReg(s2, "ISAMDELETE", 2, RckPureOver(Fn(s, vs) => IskDelete(s, vs)), "( name k -- )", "Remove the record under key k. Refuses when there is none.")
+
+Def IskInsert(st As RckState, vs As List Of Cell) As RckWork
+    Select Case IskWith("ISAMINSERT", st, Nth(vs, 1))
+        Case Ok(p)
+            IskInsertRow(p, Nth(vs, 2))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("ISAMINSERT did not answer")
+
+Rem Two pre-flights, and isam Errors on either: the row has to fit the
+Rem schema, and the key has to be absent.
+Def IskInsertRow(p As IsamUse, rec As Cell) As RckWork
+    If IskWhyRec("ISAMINSERT", IskFieldsOf(p), rec) <> "" Then
+        RckWorkBad(IskWhyRec("ISAMINSERT", IskFieldsOf(p), rec))
+    Else
+        IskInsertFree(p, rec, IskKeyIn(p, rec))
+
+Def IskInsertFree(p As IsamUse, rec As Cell, kc As Cell) As RckWork
+    If IskHasOf(IskHeldOf(p), kc) Then
+        RckWorkBad("ISAMINSERT: THERE IS ALREADY A RECORD UNDER THAT KEY — ISAMUPDATE REPLACES ONE")
+    Else
+        IskWrote(IskInsertOf(IskHeldOf(p), rec))
+
+Def IskUpdate(st As RckState, vs As List Of Cell) As RckWork
+    Select Case IskWith("ISAMUPDATE", st, Nth(vs, 1))
+        Case Ok(p)
+            IskUpdateRow(p, Nth(vs, 2))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("ISAMUPDATE did not answer")
+
+Def IskUpdateRow(p As IsamUse, rec As Cell) As RckWork
+    If IskWhyRec("ISAMUPDATE", IskFieldsOf(p), rec) <> "" Then
+        RckWorkBad(IskWhyRec("ISAMUPDATE", IskFieldsOf(p), rec))
+    Else
+        IskUpdateThere(p, rec, IskKeyIn(p, rec))
+
+Def IskUpdateThere(p As IsamUse, rec As Cell, kc As Cell) As RckWork
+    If Not IskHasOf(IskHeldOf(p), kc) Then
+        RckWorkBad("ISAMUPDATE: THERE IS NO RECORD UNDER THAT KEY — ISAMINSERT ADDS ONE")
+    Else
+        IskWrote(IskUpdateOf(IskHeldOf(p), rec))
+
+Def IskDelete(st As RckState, vs As List Of Cell) As RckWork
+    Select Case IskWith("ISAMDELETE", st, Nth(vs, 1))
+        Case Ok(p)
+            IskDeleteKeyed(p, Nth(vs, 2))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("ISAMDELETE did not answer")
+
+Def IskDeleteKeyed(p As IsamUse, kc As Cell) As RckWork
+    If IskWhyKey("ISAMDELETE", IskFieldsOf(p), IskAtOf(p), kc) <> "" Then
+        RckWorkBad(IskWhyKey("ISAMDELETE", IskFieldsOf(p), IskAtOf(p), kc))
+    Else
+        IskDeleteThere(p, kc)
+
+Def IskDeleteThere(p As IsamUse, kc As Cell) As RckWork
+    If Not IskHasOf(IskHeldOf(p), kc) Then
+        RckWorkBad("ISAMDELETE: THERE IS NO RECORD UNDER THAT KEY")
+    Else
+        IskWrote(IskDeleteOf(IskHeldOf(p), kc))
+
+Rem The write happened for its effect; the Boolean is how it is made to
+Rem happen in a position where an answer can be given.
+Def IskWrote(did As Boolean) As RckWork
+    If did Then
+        RckVals({ })
+    Else
+        RckVals({ })
+
+Def IskKeyIn(p As IsamUse, rec As Cell) As Cell
+    Nth(IskCellsOf(rec), IskAtOf(p))
+
+Rem ---- what every word needs, gathered once -----------------------------
+
+Rem The binding, its schema, the key's position and the rebuilt table.
+Rem Assembling these four separately at every call site was the first
+Rem draft and it read as noise; they always travel together.
+Type IsamUse
+    UseFields As List Of RecField
+    UseAt     As Number
+    UseHeld   As IsamHeld
+
+Def IskFieldsOf(p As IsamUse) As List Of RecField
+    UseFields(p)
+
+Def IskAtOf(p As IsamUse) As Number
+    UseAt(p)
+
+Def IskHeldOf(p As IsamUse) As IsamHeld
+    UseHeld(p)
+
+Def IskWith(word As String, st As RckState, c As Cell) As Result
+    Select Case IskFound(word, st, c)
+        Case Ok(r)
+            IskWithSchema(word, r)
+        Case Err(w, at)
+            Err(w, at)
+        Case Else
+            Err(word & " did not answer", 0)
+
+Def IskWithSchema(word As String, r As RckRes) As Result
+    Select Case IskSchemaFor(word, r)
+        Case Ok(fs)
+            Ok(IsamUse(fs, IskKeyPos(r), IskHeld(r, fs)))
+        Case Err(w, at)
+            Err(w, at)
+        Case Else
+            Err(word & " did not answer", 0)
+
+Rem ---- the seed ---------------------------------------------------------
+
+Rem The entry point a mill folds with no arguments, unlike
+Rem RckSeedIsamNum/RckSeedIsamStr above, which need a table their host
+Rem already opened. A mill folds one or the other: the word NAMES are
+Rem shared on purpose, so a session learns one vocabulary, and the
+Rem arities differ because these take the name of the table to work on.
+Def RckSeedIsam(st As RckState) As RckState
+    Let s1 = IskSeedOpen(RckSeeding(st, "seed-isam"))
+    Let s2 = IskSeedCount(s1)
+    Let s3 = IskSeedHas(s2)
+    Let s4 = IskSeedAll(s3)
+    IskSeedWrite(s4)

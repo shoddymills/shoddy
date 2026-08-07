@@ -1,0 +1,182 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem seedshaker.shoddy — reckoner seed: shaker.shoddy, converting at
+Rem the bridge
+Rem
+Rem SHAKE, UNSHAKE, UNSHAKEOR, SHAKEOK and SHAKEMOD. Per R4.16 there is
+Rem no ARRAY cell at the keyboard: a message or a key list is a LIST of
+Rem NUMBERs on the way in and out, exactly as shaker.shoddy itself wants
+Rem — this machine already deals in nothing but numbers.
+Rem
+Rem SHAKE and UNSHAKE pre-flight the exact conditions ShakeEncrypt and
+Rem ShakeDecrypt themselves Error on — an empty key, a key or message
+Rem value outside the field, a checksum that does not match — and
+Rem refuse by name instead, the same guard-before-abort discipline every
+Rem other seed applies to the machine underneath it. UNSHAKEOR and
+Rem SHAKEOK need no guard of their own: shaker.shoddy already made both
+Rem total.
+Rem ==================================================================
+
+Include "shaker.shoddy"
+Include "cuttle.shoddy"
+Include "reckoner.shoddy"
+Include "seq.shoddy"
+
+Rem ---- a LIST cell as List Of Number ----------------------------------
+
+Def ShListNum(word As String, c As Cell) As Result
+    Select Case RckListArg(word, c)
+        Case Ok(xs)
+            ShNumsAt(word, xs, { })
+        Case Err(w, at)
+            Err(w, at)
+        Case Else
+            Err(word & " did not answer", 0)
+
+Def ShNumsAt(word As String, xs As List Of Cell, acc As List Of Number) As Result
+    If IsEmpty(xs) Then
+        Ok(acc)
+    Else
+        ShNumsNext(word, xs, acc, First(xs))
+
+Def ShNumsNext(word As String, xs As List Of Cell, acc As List Of Number, c As Cell) As Result
+    Select Case c
+        Case CutNum(x)
+            ShNumsAt(word, Rest(xs), Append(acc, x))
+        Case Else
+            Err(RckKindWhy(word, "a LIST of NUMBERs", c), 0)
+
+Rem Both arguments read as List Of Number before either machine word
+Rem sees them, so a wrong-shaped list is refused by this seed rather
+Rem than reaching shaker.shoddy at all.
+Def ShTwoLists(word As String, a As Cell, b As Cell) As Result
+    Select Case ShListNum(word, a)
+        Case Ok(xs)
+            ShTwoListsWith(word, xs, b)
+        Case Err(w, at)
+            Err(w, at)
+        Case Else
+            Err(word & " did not answer", 0)
+
+Def ShTwoListsWith(word As String, xs As List Of Number, b As Cell) As Result
+    Select Case ShListNum(word, b)
+        Case Ok(ys)
+            Ok({ xs, ys })
+        Case Err(w, at)
+            Err(w, at)
+        Case Else
+            Err(word & " did not answer", 0)
+
+Rem ---- SHAKE ------------------------------------------------------------
+Rem The three conditions ShakeEncrypt itself Errors on, checked here so
+Rem a bad call refuses instead: an empty key, a key value outside the
+Rem field, a message value outside the field.
+
+Def ShSeedShake(st As RckState) As RckState
+    RckReg(st, "SHAKE", 2, RckPure(Fn(vs) => ShShake(vs)), "( list keys -- cipher )", "The list, obfuscated under keys — one value longer, the last a tamper checksum.")
+
+Def ShShake(vs As List Of Cell) As RckWork
+    Select Case ShTwoLists("SHAKE", Nth(vs, 1), Nth(vs, 2))
+        Case Ok(pair)
+            ShShakeChecked(Nth(pair, 1), Nth(pair, 2))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("SHAKE did not answer")
+
+Def ShShakeChecked(xs As List Of Number, keys As List Of Number) As RckWork
+    If IsEmpty(keys) Then
+        RckWorkBad("SHAKE: THE KEY IS EMPTY")
+    Else
+        If Not ShakeAllField(keys) Then
+            RckWorkBad("SHAKE: EVERY KEY VALUE MUST BE A WHOLE NUMBER IN 0 .. " & Str(ShakeModulus() - 1))
+        Else
+            If Not ShakeAllField(xs) Then
+                RckWorkBad("SHAKE: EVERY MESSAGE VALUE MUST BE A WHOLE NUMBER IN 0 .. " & Str(ShakeModulus() - 1))
+            Else
+                RckVals({ CutList(Map(ShakeEncrypt(xs, keys), CutNum)) })
+
+Rem ---- UNSHAKE ------------------------------------------------------------
+Rem Strict, matching ShakeDecrypt: an empty key or a checksum mismatch
+Rem refuses rather than answering rubbish.
+
+Def ShSeedUnshake(st As RckState) As RckState
+    RckReg(st, "UNSHAKE", 2, RckPure(Fn(vs) => ShUnshake(vs)), "( cipher keys -- list )", "The message SHAKE produced, or a refusal if the key is empty or the checksum does not match.")
+
+Def ShUnshake(vs As List Of Cell) As RckWork
+    Select Case ShTwoLists("UNSHAKE", Nth(vs, 1), Nth(vs, 2))
+        Case Ok(pair)
+            ShUnshakeChecked(Nth(pair, 1), Nth(pair, 2))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("UNSHAKE did not answer")
+
+Def ShUnshakeChecked(xs As List Of Number, keys As List Of Number) As RckWork
+    If IsEmpty(keys) Then
+        RckWorkBad("UNSHAKE: THE KEY IS EMPTY")
+    Else
+        If Not ShakeAllField(keys) Then
+            RckWorkBad("UNSHAKE: EVERY KEY VALUE MUST BE A WHOLE NUMBER IN 0 .. " & Str(ShakeModulus() - 1))
+        Else
+            If Not ShakeVerify(xs) Then
+                RckWorkBad("UNSHAKE: CHECKSUM MISMATCH — THE MESSAGE WAS ALTERED OR IS NOT A CIPHERTEXT")
+            Else
+                RckVals({ CutList(Map(ShakeDecrypt(xs, keys), CutNum)) })
+
+Rem ---- UNSHAKEOR ----------------------------------------------------------
+Rem Already total in shaker.shoddy, so this is the plain three-argument
+Rem bridge and nothing more.
+
+Def ShSeedUnshakeor(st As RckState) As RckState
+    RckReg(st, "UNSHAKEOR", 3, RckPure(Fn(vs) => ShUnshakeor(vs)), "( cipher keys dflt -- list )", "UNSHAKE, or dflt unchanged when the key is empty, out of field, or the checksum does not match.")
+
+Def ShUnshakeor(vs As List Of Cell) As RckWork
+    Select Case ShTwoLists("UNSHAKEOR", Nth(vs, 1), Nth(vs, 2))
+        Case Ok(pair)
+            ShUnshakeorChecked(Nth(pair, 1), Nth(pair, 2), Nth(vs, 3))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("UNSHAKEOR did not answer")
+
+Def ShUnshakeorChecked(xs As List Of Number, keys As List Of Number, dflt As Cell) As RckWork
+    Select Case ShListNum("UNSHAKEOR", dflt)
+        Case Ok(ds)
+            RckVals({ CutList(Map(ShakeDecryptOr(xs, keys, ds), CutNum)) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("UNSHAKEOR did not answer")
+
+Rem ---- SHAKEOK ------------------------------------------------------------
+Rem ShakeVerify is already total — False for anything too short to
+Rem carry a checksum, never a refusal.
+
+Def ShSeedShakeok(st As RckState) As RckState
+    RckReg(st, "SHAKEOK", 1, RckPure(Fn(vs) => ShShakeok(vs)), "( list -- flag )", "Whether the checksum SHAKE appended still matches the body.")
+
+Def ShShakeok(vs As List Of Cell) As RckWork
+    Select Case ShListNum("SHAKEOK", Nth(vs, 1))
+        Case Ok(xs)
+            RckVals({ CutBool(ShakeVerify(xs)) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("SHAKEOK did not answer")
+
+Rem ---- SHAKEMOD -----------------------------------------------------------
+
+Def ShSeedShakemod(st As RckState) As RckState
+    RckReg(st, "SHAKEMOD", 0, RckPure(Fn(vs) => RckVals({ CutNum(ShakeModulus()) })), "( -- n )", "The field size: every SHAKE value is a whole number in 0 .. n-1.")
+
+Rem ---- the seed -----------------------------------------------------------
+
+Def RckSeedShaker(st As RckState) As RckState
+    Let s1 = ShSeedShake(RckSeeding(st, "seed-shaker"))
+    Let s2 = ShSeedUnshake(s1)
+    Let s3 = ShSeedUnshakeor(s2)
+    Let s4 = ShSeedShakeok(s3)
+    ShSeedShakemod(s4)

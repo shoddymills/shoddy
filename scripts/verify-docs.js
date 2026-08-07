@@ -40,21 +40,31 @@ const path = require("path");
 const root = path.resolve(__dirname, "..");
 
 // ---- ground truth: machine -> machines it includes ----
+// The reckoner seeds live one level deeper, in machines/seeds/, so both
+// directories are walked into the same flat machine-name space.
 const includes = {};
 const words = {};
-for (const f of fs.readdirSync(path.join(root, "machines"))) {
-  if (!f.endsWith(".shoddy")) continue;
-  const name = f.replace(".shoddy", "");
-  const txt = fs.readFileSync(path.join(root, "machines", f), "utf8");
-  includes[name] = [...txt.matchAll(/^Include "([a-z0-9-]+)\.shoddy"/gm)].map(m => m[1]);
-  words[name] = [...txt.matchAll(/^Def ([A-Za-z0-9]+)/gm)].map(m => m[1]);
-}
+const machineDirs = ["machines", path.join("machines", "seeds")];
+for (const dir of machineDirs)
+  for (const f of fs.readdirSync(path.join(root, dir))) {
+    if (!f.endsWith(".shoddy")) continue;
+    const name = f.replace(".shoddy", "");
+    const txt = fs.readFileSync(path.join(root, dir, f), "utf8");
+    includes[name] = [...txt.matchAll(/^Include "([a-z0-9-]+)\.shoddy"/gm)].map(m => m[1]);
+    words[name] = [...txt.matchAll(/^Def ([A-Za-z0-9]+)/gm)].map(m => m[1]);
+  }
 
 // ---- ground truth: machine -> machines that include it ----
 const usedByMachines = {};
 for (const m of Object.keys(includes)) usedByMachines[m] = [];
 for (const [m, incs] of Object.entries(includes))
   for (const dep of incs) usedByMachines[dep].push(m);
+// Every reckoner seed includes both cuttle and reckoner, which would make
+// their usedby tables just the thirteen seeds again - already listed, with
+// more detail, in the "The Reckoner Seeds" section those two pages carry
+// instead. Strip seeds from just these two so the tables aren't a duplicate.
+usedByMachines["cuttle"] = usedByMachines["cuttle"].filter(m => !m.startsWith("seed"));
+usedByMachines["reckoner"] = usedByMachines["reckoner"].filter(m => !m.startsWith("seed"));
 
 // ---- ground truth: machine -> mills that call its words ----
 const usedByMills = {};
@@ -145,12 +155,18 @@ for (const m of Object.keys(includes).sort()) {
 }
 
 // ---- catalogs: nothing added to the tree may go unlisted ----
+// Exception: the reckoner seeds ("seed*"). They have no bearing outside
+// cuttle/reckoner, so they are deliberately not tiled in the general
+// catalogs - reckoner's own page lists all twelve instead. They still need
+// a page (the orphan check below still runs over every machine) and their
+// usedby/uses sections are still ground-truth-checked as normal.
 const machineNames = Object.keys(includes).sort();
+const catalogedNames = machineNames.filter(n => !n.startsWith("seed"));
 const read = f => fs.readFileSync(path.join(root, f), "utf8");
 const listings = [
-  ["machine", machineNames, "docs/machines/index.html", n => n + ".html"],
-  ["machine", machineNames, "docs/index.html", n => "machines/" + n + ".html"],
-  ["machine", machineNames, "README.md", n => "machines/" + n + ".html"],
+  ["machine", catalogedNames, "docs/machines/index.html", n => n + ".html"],
+  ["machine", catalogedNames, "docs/index.html", n => "machines/" + n + ".html"],
+  ["machine", catalogedNames, "README.md", n => "machines/" + n + ".html"],
   ["mill", mills, "docs/mills/index.html", n => n + ".html"],
   ["mill", mills, "docs/index.html", n => "mills/" + n + ".html"],
   ["mill", mills, "README.md", n => "mills/" + n + ".html"],

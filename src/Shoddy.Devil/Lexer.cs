@@ -213,10 +213,20 @@ public static class Lexer
     static IEnumerable<string> LibDirs()
     {
         string? env = Environment.GetEnvironmentVariable("SHODDYLIB");
-        if (env != null) yield return env;
+        // The reckoner seeds live one level deeper, beside the machines
+        // they bridge rather than mixed in among them — every route to a
+        // machine library gets a "seeds" companion one segment further
+        // down, including a pinned SHODDYLIB.
+        if (env != null)
+        {
+            yield return env;
+            yield return Path.Combine(env, "seeds");
+        }
         string mill = AppContext.BaseDirectory;
         yield return Path.Combine(mill, "machines");
         yield return Path.Combine(mill, "..", "machines");
+        yield return Path.Combine(mill, "machines", "seeds");
+        yield return Path.Combine(mill, "..", "machines", "seeds");
     }
 
     /// <summary>Resolve an INCLUDE name relative to the including file's

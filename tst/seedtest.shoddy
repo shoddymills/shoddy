@@ -1,0 +1,499 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem seedtest.shoddy — test program for the thirteen reckoner seeds
+Rem
+Rem Assert-driven, in the cuttletest.shoddy / reckonertest.shoddy pattern:
+Rem it prints what it is doing and stops the run at the first assertion
+Rem that fails, ending with ALL ASSERTIONS PASSED when it does not.
+Rem
+Rem cuttletest.shoddy and reckonertest.shoddy already cover the engine's
+Rem own contract (T1-T8, T10-T14, T18, and Appendix B.1-B.3/B.6/B.7)
+Rem against the engine core plus a mini test seed. What is left, and what
+Rem this file is for, is everything that only shows up once the REAL
+Rem seeds are in the dictionary: a guard written into an actual seed word
+Rem (T9's seed rows), abort-safety across real I/O — files, CSV, isam
+Rem (T15), the promise that no handle ever reaches the stack (T16), the
+Rem worked data session (T17, and Appendix A.3 entered exactly as the
+Rem appendix writes it), and B.5's converting bridge. Every guard below is
+Rem walked exactly once, per the test approach's "the guard list is the
+Rem test list."
+Rem
+Rem SURVIVAL IS PROVED BY THE NEXT LINE. Every abort-safety assertion
+Rem below is in two parts: the failing line answers a refusal (or, for
+Rem the words that are guarded by construction, an honest answer) with
+Rem the state intact, AND a further line evaluates afterwards — "the mill
+Rem did not die" is the actual contract, and only a subsequent line
+Rem proves it.
+Rem
+Rem WHAT IS DELIBERATELY NOT HERE: T15.3, "READLINES on an unreadable
+Rem existing file." TryReadFileTests.cs (phase 3's own C# suite, with
+Rem full runtime access) tests only "missing" and "is a directory" for
+Rem the same reason this file does not add a third: forcing a genuine
+Rem UnauthorizedAccessException from a committed, offline, cross-platform
+Rem fixture is not reliable — permission bits do not survive a Windows
+Rem checkout the way a file's bytes do, and no builtin this seed can
+Rem reach opens a file with a share mode that would conflict with
+Rem TryReadFile's own read. The guard exists in the runtime (Engine.cs's
+Rem ReadWhy names ACCESS DENIED explicitly); it is simply not exercised
+Rem from here, on the same ground the phase-3 suite already established.
+Rem
+Rem Fixtures: tst/csv/sales.csv (250 generated rows, Appendix A.3 and
+Rem T17), tst/csv/malformed.csv (an unterminated quoted cell, T15.6).
+Rem Both committed beside this file, per the test approach.
+Rem
+Rem Build (once): build.ps1 machines
+Rem Run:          bin\mill run tst\seedtest.shoddy      (from the repo root)
+Rem ==================================================================
+
+Include "../machines/cuttle.shoddy"
+Include "../machines/reckoner.shoddy"
+Include "../machines/seq.shoddy"
+Include "../machines/str.shoddy"
+Include "../machines/csv.shoddy"
+Include "../machines/stats.shoddy"
+Include "../machines/isam.shoddy"
+Include "../machines/seeds/seedmath.shoddy"
+Include "../machines/seeds/seedstats.shoddy"
+Include "../machines/seeds/seedseq.shoddy"
+Include "../machines/seeds/seedstr.shoddy"
+Include "../machines/seeds/seedmoney.shoddy"
+Include "../machines/seeds/seedmatrix.shoddy"
+Include "../machines/seeds/seeddict.shoddy"
+Include "../machines/seeds/seedfile.shoddy"
+Include "../machines/seeds/seedcsv.shoddy"
+Include "../machines/seeds/seedisam.shoddy"
+Include "../machines/seeds/seedclock.shoddy"
+Include "../machines/seeds/seedrandom.shoddy"
+Include "../machines/seeds/seedbool.shoddy"
+
+Rem ---- reading an answer --------------------------------------------------
+Rem The same shapes reckonertest.shoddy reads with, repeated here rather
+Rem than shared, in the house pattern of each test file standing alone.
+
+Def Ran(st As RckState, line As String) As RckState
+    Select Case RckEval(st, line)
+        Case RckNext(st2, out)
+            st2
+        Case RckStop(st2, why, out)
+            st2
+        Case Else
+            st
+
+Def Runs(st As RckState, lines As List Of String) As RckState
+    Fold(lines, st, Ran)
+
+Def Bad(st As RckState, line As String) As Boolean
+    Select Case RckEval(st, line)
+        Case RckStop(st2, why, out)
+            True
+        Case Else
+            False
+
+Def Why(st As RckState, line As String) As String
+    Select Case RckEval(st, line)
+        Case RckStop(st2, why, out)
+            why
+        Case Else
+            ""
+
+Def Text(st As RckState) As String
+    Join(Map(CutCells(RckStack(st)), Fn(c) => CutShow(c, RckFmt(st))), " | ")
+
+Def Deep(st As RckState) As Number
+    CutDepth(RckStack(st))
+
+Def TopNum(st As RckState) As Number
+    If Deep(st) < 1 Then
+        0 - 999999
+    Else
+        NumOf(First(CutCells(RckStack(st))))
+
+Def NumOf(c As Cell) As Number
+    Select Case c
+        Case CutNum(x)
+            x
+        Case Else
+            0 - 999999
+
+Rem Trig, statistics and anything transcendental compare inside this;
+Rem only results exact by construction compare with =.
+Def Tol() As Number
+    0.0001
+
+Def Near(a As Number, b As Number) As Boolean
+    Abs(a - b) <= Tol()
+
+Def Q(s As String) As String
+    Chr(34) & s & Chr(34)
+
+Rem The two-part abort-safety assertion: the line answers for the stated
+Rem reason with the state as it was, AND a further line evaluates
+Rem afterwards. Only the second half proves the mill lived.
+Def Refuses(st As RckState, line As String, why As String) As Boolean
+    Bad(st, line) And Instr(Why(st, line), why) > 0 And Text(Ran(st, line)) = Text(st) And Text(Ran(Ran(st, line), "1 1 +")) = Text(Ran(st, "1 1 +"))
+
+Rem The abort-safety shape T15 and T17's ISAMGETOR need: not every
+Rem guarded word REFUSES on the bad case (WRITELINES answers False,
+Rem ISAMGETOR answers the default), so survival there is just "a further
+Rem line still evaluates" without insisting on a particular refusal or on
+Rem the stack being unchanged, since the line under test may have pushed
+Rem an honest answer rather than refusing at all.
+Def Survives(st As RckState, line As String) As Boolean
+    Not Bad(Ran(st, line), "1 1 +")
+
+Rem ---- an isam fixture, opened once, seeded through as an ALREADY-OPEN
+Rem handle (R3.5(b)) -----------------------------------------------------
+Rem The record shape isamtest.shoddy's own fixture uses, in miniature: a
+Rem NUMBER key and a short STRING value.
+
+Type Kv
+    K As Number
+    V As String
+
+Def RdKv(f As Number) As Kv
+    Kv(GetNum(f), GetStr(f, 20))
+
+Def WrKv(f As Number, r As Kv)
+    PutNum(f, K(r))
+    PutStr(f, V(r), 20)
+
+Def KvKey(r As Kv) As Number
+    K(r)
+
+Def KvCell(r As Kv) As Cell
+    CutPair(Pair(CutNum(K(r)), CutStr(V(r))))
+
+Def IsamPath() As String
+    "tst/csv/_seedtest_isam.tmp"
+
+Def IsamWipe()
+    If FileExists(IsamPath()) Then
+        DeleteFile(IsamPath())
+    If FileExists(IsamPath() & ".idx") Then
+        DeleteFile(IsamPath() & ".idx")
+
+Def FreshIsam() As Isam
+    IsamWipe()
+    Let db0 = IsamOpen(IsamPath(), 4, RdKv, WrKv, KvKey)
+    Let db1 = IsamInsert(db0, Kv(1, "ONE"))
+    Let db2 = IsamInsert(db1, Kv(2, "TWO"))
+    IsamInsert(db2, Kv(3, "THREE"))
+
+Rem ---- the whole seeded dictionary --------------------------------------
+Rem All thirteen seeds, folded over the engine core, exactly the shape a
+Rem mill that wants every domain would build. This is also R2.4's own
+Rem test, walked at scale: thirteen domains arrived with zero engine
+Rem changes.
+
+Def AllSeeded(db As Isam) As RckState
+    Let s1 = RckSeedMath(RckNew())
+    Let s2 = RckSeedStats(s1)
+    Let s3 = RckSeedSeq(s2)
+    Let s4 = RckSeedStr(s3)
+    Let s5 = RckSeedMoney(s4)
+    Let s6 = RckSeedMatrix(s5)
+    Let s7 = RckSeedDict(s6)
+    Let s8 = RckSeedFile(s7)
+    Let s9 = RckSeedCsv(s8)
+    Let s10 = RckSeedIsamNum(s9, db, KvCell)
+    Let s11 = RckSeedClock(s10)
+    Let s12 = RckSeedRandom(s11)
+    RckSeedBool(s12)
+
+Rem ---- reading the CSV fixture directly, for T17.3's "agree with
+Rem stats.shoddy called directly" -----------------------------------------
+
+Def SalesPath() As String
+    "tst/csv/sales.csv"
+
+Def SalesAmounts() As List Of Number
+    Let sh = CsvSheetLoad(SalesPath())
+    Map(CsvBody(sh), Fn(r) => CsvNumOr(sh, r, "Amount", 0))
+
+Def Main()
+    Let db = FreshIsam()
+    Let s0 = AllSeeded(db)
+
+    Print("--- thirteen seeds, zero engine changes, one dictionary ---")
+    Assert(RckKnows(s0, "LOGB"), "SEED-MATH IS IN THE DICTIONARY")
+    Assert(RckKnows(s0, "MEAN"), "SEED-STATS TOO")
+    Assert(RckKnows(s0, "SORTL"), "SEED-SEQ")
+    Assert(RckKnows(s0, "SPLIT"), "SEED-STR")
+    Assert(RckKnows(s0, "MSPLIT"), "SEED-MONEY")
+    Assert(RckKnows(s0, "MMUL"), "SEED-MATRIX")
+    Assert(RckKnows(s0, "DPUT"), "SEED-DICT")
+    Assert(RckKnows(s0, "READLINES"), "SEED-FILE")
+    Assert(RckKnows(s0, "CSVLOAD"), "SEED-CSV")
+    Assert(RckKnows(s0, "ISAMALL"), "SEED-ISAM")
+    Assert(RckKnows(s0, "STAMP"), "SEED-CLOCK")
+    Assert(RckKnows(s0, "RANDOM"), "SEED-RANDOM")
+    Assert(RckKnows(s0, "BITAND"), "SEED-BOOL")
+    Rem Not bridged, per R4.7: the mode words are the only spelling, so
+    Rem RAD is still the engine core's, not something seed-math redefined.
+    Assert(RckKnows(s0, "RAD"), "RAD IS STILL A WORD")
+    Assert(SeedOf(s0, "RAD") = "core", "AND IT IS STILL THE ENGINE CORE'S, NOT SEED-MATH'S")
+
+    Print("--- T10, walked over the real dictionary, not a mini-seed ---")
+    Assert(Length(RckDict(s0)) > 110, "THIRTEEN SEEDS PLUS THE CORE IS WELL PAST A HUNDRED AND TEN WORDS")
+    Assert(All(RckDict(s0), Fn(e) => WordEffect(e) <> ""), "NO WORD HAS AN EMPTY STACK-EFFECT STRING")
+    Assert(All(RckDict(s0), Fn(e) => WordDesc(e) <> ""), "NO WORD HAS AN EMPTY DESCRIPTION")
+    Assert(All(RckDict(s0), Fn(e) => WordSeed(e) <> ""), "AND EVERY WORD KNOWS ITS SEED")
+    Assert(All(RckDict(s0), Fn(e) => Length(RckHelp(s0, WordName(e))) = 3), "AND HELP ANSWERS FOR EVERY ONE OF THEM")
+    Assert(Holds(RckWords(s0), "-- seed-isam --"), "WORDS GROUPS BY SEED, INCLUDING ISAM")
+    Assert(Holds(RckHelp(s0, "READLINES"), "touches the world"), "AN EFFECTFUL SEED WORD SAYS SO")
+    Assert(Holds(RckHelp(s0, "MEAN"), "touches nothing"), "AND A PURE ONE SAYS SO TOO")
+
+    Print("--- seed-math: LOGB, LOG2, REMAP, ROUNDTO ---")
+    Let g = Ran(s0, "1 2")
+    Assert(Refuses(g, "2 0 LOGB", "LOGB has no answer for x at or below zero"), "LOGB OF X AT OR BELOW ZERO")
+    Assert(Refuses(g, "1 8 LOGB", "LOGB needs a base greater than zero and not equal to one"), "LOGB TO BASE ONE")
+    Assert(Refuses(g, "-1 8 LOGB", "LOGB needs a base greater than zero and not equal to one"), "LOGB TO A NEGATIVE BASE")
+    Assert(Refuses(g, "0 LOG2", "LOG2 has no answer at or below zero"), "LOG2 OF ZERO")
+    Assert(Refuses(g, "-1 LOG2", "LOG2 has no answer at or below zero"), "AND OF A NEGATIVE")
+    Assert(Refuses(g, "5 1 1 10 20 REMAP", "REMAP needs an input range with two different ends"), "REMAP WITH A ZERO-WIDTH INPUT RANGE")
+    Assert(Refuses(g, "1.5 16 ROUNDTO", "ROUNDTO needs a place count no wider than 15"), "ROUNDTO PAST FIFTEEN PLACES")
+    Assert(Text(Ran(s0, "2 8 LOGB")) = "3", "AND LOGB STILL WORKS")
+    Assert(Near(TopNum(Ran(s0, "0 0 3 4 DIST")), 5), "AND SO DOES DIST")
+
+    Print("--- seed-stats: every guard stats.shoddy would otherwise abort on ---")
+    Assert(Refuses(g, "{ } MEAN", "MEAN needs at least one value, the list is empty"), "MEAN OF AN EMPTY LIST")
+    Assert(Refuses(g, "{ } MEDIAN", "MEDIAN needs at least one value, the list is empty"), "MEDIAN OF AN EMPTY LIST")
+    Assert(Refuses(g, "{ } STDEVP", "STDEVP needs at least one value, the list is empty"), "STDEVP OF AN EMPTY LIST")
+    Assert(Refuses(g, "{ 1 } STDEV", "STDEV needs at least two values, got 1"), "STDEV OF ONE VALUE")
+    Assert(Refuses(g, "{ 1 } VAR", "VAR needs at least two values, got 1"), "VAR OF ONE VALUE")
+    Assert(Text(Ran(s0, "{ } SUM")) = "0", "AND SUM OF NOTHING IS ZERO, NOT A REFUSAL")
+    Assert(Refuses(g, "{ } 0.5 QUANTILE", "QUANTILE needs at least one value, the list is empty"), "QUANTILE OF AN EMPTY LIST")
+    Assert(Refuses(g, "{ 1 2 3 } 1.5 QUANTILE", "QUANTILE needs p between 0 and 1, got 1.5"), "QUANTILE PAST ONE")
+    Assert(Refuses(g, "{ 1 2 3 } -0.1 QUANTILE", "QUANTILE needs p between 0 and 1, got -0.1"), "AND BELOW ZERO")
+    Assert(Refuses(g, "{ 1 2 } { 1 2 3 } CORREL", "CORREL needs two lists of the same length, got 2 and 3"), "CORREL OF LISTS OF DIFFERENT LENGTHS")
+    Assert(Refuses(g, "{ 1 } { 2 } CORREL", "CORREL needs at least two values in each list, got 1"), "CORREL OF TOO SHORT A LIST")
+    Assert(Refuses(g, "{ 1 1 1 } { 1 2 3 } CORREL", "CORREL needs both lists to vary, and one of them does not"), "CORREL WHEN ONE SIDE IS CONSTANT")
+    Assert(Refuses(g, "0 NORMINV", "NORMINV needs p strictly between 0 and 1"), "NORMINV AT ZERO")
+    Assert(Refuses(g, "1 NORMINV", "NORMINV needs p strictly between 0 and 1"), "AND AT ONE")
+    Assert(Refuses(g, "1 0 TCDF", "TCDF needs a positive degrees of freedom"), "TCDF WITH NO DEGREES OF FREEDOM")
+    Assert(Refuses(g, "1 -5 TCDF", "TCDF needs a positive degrees of freedom"), "AND A NEGATIVE COUNT")
+    Assert(Text(Ran(s0, "{ 2 4 4 4 5 5 7 9 } STDEV")) <> "", "AND STDEV STILL WORKS ON A REAL LIST")
+
+    Print("--- seed-matrix: converting at the bridge, and every pre-flight ---")
+    Assert(Refuses(g, "2 2 { 1 2 3 } MAT", "MAT needs 4 numbers for a 2x2 matrix, got 3"), "MAT WITH THE WRONG COUNT OF NUMBERS")
+    Assert(Refuses(g, "0 2 { } MAT", "MAT needs r and c of 1 or more, got 0 and 2"), "MAT WITH A ROW COUNT OF ZERO")
+    Assert(Refuses(g, "2 2.5 { } MAT", "MAT needs a whole number of 0 or more, got 2.5"), "MAT WITH A FRACTIONAL COLUMN COUNT")
+    Assert(Refuses(g, "0 IDENT", "IDENT needs a whole number of 1 or more, got 0"), "IDENT OF SIZE ZERO")
+    Assert(Refuses(g, "2 IDENT 3 IDENT MATADD", "+ needs two matrices of one shape, got 2x2 and 3x3"), "MATADD OF DIFFERENT SHAPES")
+    Assert(Refuses(g, "2 3 { 1 2 3 4 5 6 } MAT 2 IDENT MMUL", "* needs the columns of the first to match the rows of the second, got 2x3 and 2x2"), "MMUL WHERE THE INNER DIMENSIONS DO NOT MATCH")
+    Assert(Refuses(g, "2 IDENT 3 1 MGET", "MGET needs row 1 to 2 and column 1 to 2, got 3 and 1"), "MGET PAST THE LAST ROW")
+    Assert(Refuses(g, "2 IDENT 1 0 MGET", "MGET needs row 1 to 2 and column 1 to 2, got 1 and 0"), "AND BEFORE THE FIRST COLUMN")
+    Assert(Refuses(g, "{ 1 2 } { 1 2 3 } DOT", "DOT needs two lists of the same length, got 2 and 3"), "DOT OF LISTS OF DIFFERENT LENGTHS")
+    Rem B.5: every vector-taking word here is a LIST in, a LIST or a
+    Rem NUMBER out — no ARRAY cell is ever built at the keyboard (R4.16).
+    Assert(Text(Ran(s0, "{ 1 2 } { 3 4 } DOT")) = "11", "DOT TAKES TWO LISTS AND ANSWERS A NUMBER")
+    Assert(Text(Ran(s0, "2 3 { 1 2 3 4 5 6 } MAT TRANSP")) = "3x2 { { 1 4 } { 2 5 } { 3 6 } }", "AND MATRIX WORDS ANSWER A MATRIX, NEVER AN ARRAY")
+
+    Print("--- seed-money: exact, and refuses rather than losing a penny ---")
+    Assert(Refuses(g, "5 MONEY 0 MSPLIT", "MSPLIT needs a whole number of shares of 1 or more, got 0"), "MSPLIT INTO ZERO SHARES")
+    Assert(Refuses(g, "1 5 MONEY MADD", "MADD needs two MONEYs, got NUMBER"), "MADD GIVEN A BARE NUMBER")
+    Assert(Text(Ran(s0, "10 MONEY 3 MSPLIT")) = "{ $3.34 $3.33 $3.33 }", "AND MSPLIT LOSES NO PENNY")
+
+    Print("--- seed-seq: FIRST, REST, SORTL ---")
+    Assert(Refuses(g, "{ } FIRST", "FIRST needs a non-empty list"), "FIRST OF NOTHING")
+    Assert(Refuses(g, "{ } REST", "REST needs a non-empty list"), "REST OF NOTHING")
+    Assert(Refuses(g, "{ 1 " & Q("a") & " } SORTL", "SORTL needs every element to be the same kind"), "SORTL OF MIXED KINDS")
+    Assert(Refuses(g, "{ TRUE FALSE } SORTL", "SORTL needs a list of NUMBERs or a list of STRINGs, got BOOLEAN"), "SORTL OF A KIND WITH NO ORDER")
+    Assert(Text(Ran(s0, "{ 3 1 2 } SORTL")) = "{ 1 2 3 }", "AND SORTL STILL SORTS")
+
+    Print("--- seed-str: SPLIT, TOFIXED ---")
+    Assert(Refuses(g, Q("a b") & " " & Q("") & " SPLIT", "SPLIT needs a separator that is not empty"), "SPLIT ON AN EMPTY SEPARATOR")
+    Assert(Refuses(g, "1.5 16 TOFIXED", "TOFIXED needs a whole number of places no wider than 15"), "TOFIXED PAST FIFTEEN PLACES")
+    Assert(Refuses(g, "1.5 2.5 TOFIXED", "TOFIXED needs a whole number of places no wider than 15"), "AND A FRACTIONAL PLACE COUNT")
+    Assert(Text(Ran(s0, "3.14159 2 TOFIXED")) = Q("3.14"), "AND TOFIXED STILL WORKS")
+
+    Print("--- seed-dict: DHAS, DGET, DPUT, DKEYS ---")
+    Let d1 = Ran(s0, Q("rate") & " 0.05 PAIR 1 GATHER")
+    Assert(Text(d1) = "{ ( " & Q("rate") & " 0.05 ) }", "PAIR AND GATHER MAKE A ONE-ENTRY DICT")
+    Assert(Refuses(g, "{ } " & Q("rate") & " DGET", "DGET found no entry for that key"), "DGET ON A KEY THAT IS NOT THERE")
+    Assert(Text(Ran(d1, Q("rate") & " DGET")) = "0.05", "AND DGET FINDS IT WHEN IT IS")
+    Assert(Text(Ran(d1, Q("cap") & " 100 DPUT")) = "{ ( " & Q("rate") & " 0.05 ) ( " & Q("cap") & " 100 ) }", "DPUT GROWS THE DICT, APPENDING A NEW KEY AT THE END")
+
+    Print("--- seed-random: guarded reproducibly under SEED ---")
+    Assert(Refuses(g, "5 1 RANDOMRANGE", "RANDOMRANGE needs hi at or above lo, got 5 and 1"), "RANDOMRANGE WITH HI BELOW LO")
+    Assert(Refuses(g, "5 1 RANDOMINT", "RANDOMINT needs hi at or above lo, got 5 and 1"), "RANDOMINT WITH HI BELOW LO")
+    Let r1 = Ran(s0, "42 SEED 1 6 RANDOMINT")
+    Let r2 = Ran(s0, "42 SEED 1 6 RANDOMINT")
+    Assert(Text(r1) = Text(r2), "SEED MAKES THE SESSION REPRODUCIBLE")
+
+    Print("--- seed-clock: total, and FORMATDURATION alone touches nothing ---")
+    Assert(Holds(RckHelp(s0, "TICKS"), "touches the world"), "READING THE CLOCK IS AN EFFECT")
+    Assert(Holds(RckHelp(s0, "FORMATDURATION"), "touches nothing"), "FORMATTING A NUMBER ALREADY ON THE STACK IS NOT")
+    Assert(Deep(Ran(s0, "STAMPDATE")) = 1, "STAMPDATE ANSWERS ONE CELL")
+
+    Print("--- seed-bool: every refusal bool.shoddy would otherwise abort on ---")
+    Rem bool is the strictest machine in the tree - it refuses a negative,
+    Rem a fraction, a value that does not fit its width and a width outside
+    Rem 1..53 - and every one of those refusals is an Error. This seed's
+    Rem whole job is asking each question first and answering instead, so
+    Rem the guard list below IS the seed's reason for existing.
+    Assert(Refuses(g, "0 1 - 1 BITAND", "BITAND needs a whole number of 0 or more, got -1"), "A NEGATIVE BIT PATTERN")
+    Assert(Refuses(g, "1.5 0 BITAT", "BITAT needs a whole number of 0 or more, got 1.5"), "AND A FRACTIONAL ONE")
+    Assert(Refuses(g, "2 53 ^ POPCOUNT", "POPCOUNT needs a whole number below 2^53"), "AND ONE PAST THE 53-BIT CEILING, WHERE IT IS NO LONGER EXACTLY ITSELF")
+    Assert(Refuses(g, "256 8 BITNOT", "BITNOT needs a value that fits 8 bits, and 256 does not"), "A VALUE TOO WIDE FOR ITS WIDTH")
+    Assert(Refuses(g, "0 54 BITNOT", "BITNOT needs a width from 1 to 53, got 54"), "A WIDTH ABOVE THE CEILING")
+    Assert(Refuses(g, "0 0 BITNOT", "BITNOT needs a width from 1 to 53, got 0"), "AND ONE BELOW ONE")
+    Assert(Refuses(g, "5 37 INBASE", "INBASE needs a base from 2 to 36, got 37"), "A BASE THE DIGIT ALPHABET CANNOT SPELL")
+    Assert(Refuses(g, "5 1 INBASE", "INBASE needs a base from 2 to 36, got 1"), "AND A BASE OF ONE")
+    Assert(Refuses(g, "0 53 BITAT", "BITAT needs a bit index from 0 to 52, got 53"), "A BIT INDEX PAST THE LAST ONE A 53-BIT WORD HAS")
+    Assert(Refuses(g, "54 MASK", "MASK needs a bit count from 0 to 53, got 54"), "A MASK WIDER THAN THE CEILING")
+    Assert(Refuses(g, "1 99 8 SHL", "SHL needs a shift from 0 to 53, got 99"), "A SHIFT PAST THE CEILING")
+    Assert(Refuses(g, "255 54 SHR", "SHR needs a shift from 0 to 53, got 54"), "AND THE SAME FOR THE ONE SHIFT THAT TAKES NO WIDTH")
+    Assert(Refuses(g, "171 4 7 GETFIELD", "GETFIELD needs a high bit at or above the low bit, got 4 and 7"), "AN INVERTED FIELD")
+    Rem FROMBASE reads text, so bool answers Result rather than aborting;
+    Rem this is the one guard the seed translates rather than invents, and
+    Rem the message it hands on names FROMBASE, not BOOLFROMBASE.
+    Assert(Refuses(g, Q("1F") & " 2 FROMBASE", "FROMBASE: '1F' HAS NO DIGIT F IN BASE 2 at position 2"), "A DIGIT THE BASE DOES NOT HAVE, WITH ITS 1-BASED POSITION")
+    Assert(Refuses(g, Q("") & " 16 FROMBASE", "FROMBASE: THE EMPTY STRING IS NOT A NUMBER IN BASE 16"), "AND AN EMPTY STRING, WHICH HAS NO POSITION TO REPORT")
+    Assert(Refuses(g, "TRUE 1 XOR", "XOR needs a BOOLEAN, got NUMBER"), "A GATE HANDED A NUMBER")
+
+    Print("--- seed-bool: and the answers ---")
+    Assert(Text(Ran(s0, "255 HEX")) = Q("FF"), "HEX")
+    Assert(Text(Ran(s0, "5 BIN")) = Q("101"), "BIN")
+    Assert(Text(Ran(s0, "1295 36 INBASE")) = Q("ZZ"), "INBASE AT THE TOP OF THE ALPHABET")
+    Assert(Text(Ran(s0, Q("ff") & " 16 FROMBASE")) = "255", "FROMBASE, CASE-INSENSITIVE")
+    Assert(Text(Ran(s0, "255 HEX 16 FROMBASE")) = "255", "AND THE ROUND TRIP THROUGH BOTH")
+    Rem BITAND, BITOR and BITXOR are the three width-free words, which is
+    Rem why none of them takes a width here either.
+    Assert(Text(Ran(s0, "12 10 BITAND")) = "8", "BITAND")
+    Assert(Text(Ran(s0, "12 10 BITOR")) = "14", "BITOR")
+    Assert(Text(Ran(s0, "12 10 BITXOR")) = "6", "BITXOR")
+    Assert(Text(Ran(s0, "0 8 BITNOT")) = "255", "BITNOT WITHIN A BYTE")
+    Assert(Text(Ran(s0, "1 7 8 SHL")) = "128", "SHL TO THE TOP OF A BYTE")
+    Assert(Text(Ran(s0, "1 8 8 SHL")) = "0", "AND ONE PLACE FURTHER FALLS OFF")
+    Assert(Text(Ran(s0, "255 4 SHR")) = "15", "SHR")
+    Assert(Text(Ran(s0, "8 MASK")) = "255", "MASK")
+    Assert(Text(Ran(s0, "171 7 4 GETFIELD")) = "10", "GETFIELD READS THE HIGH NIBBLE OF 171")
+    Assert(Text(Ran(s0, "12 2 BITAT")) = "True", "BITAT ANSWERS A BOOLEAN, NOT A ONE")
+    Assert(Text(Ran(s0, "12 0 BITAT")) = "False", "AND A FALSE, NOT A ZERO")
+    Assert(Text(Ran(s0, "255 POPCOUNT")) = "8", "POPCOUNT")
+    Assert(Text(Ran(s0, "TRUE TRUE NAND")) = "False", "NAND")
+    Assert(Text(Ran(s0, "FALSE FALSE NOR")) = "True", "NOR")
+    Assert(Text(Ran(s0, "TRUE FALSE XOR")) = "True", "XOR")
+    Assert(Text(Ran(s0, "TRUE TRUE XNOR")) = "True", "XNOR")
+    Assert(Text(Ran(s0, "TRUE FALSE IMPLIES")) = "False", "IMPLIES, ON ITS ONE FALSE ROW")
+    Assert(Text(Ran(s0, "FALSE FALSE IFF")) = "True", "IFF")
+    Rem The same rule seed-math applied to Rad and Deg: the engine core
+    Rem already owns these three, so seed-bool does not redefine them.
+    Assert(SeedOf(s0, "AND") = "core", "AND IS STILL THE ENGINE CORE'S, NOT SEED-BOOL'S")
+    Assert(SeedOf(s0, "NOT") = "core", "AND SO IS NOT")
+    Assert(SeedOf(s0, "XOR") = "seed-bool", "WHILE XOR, WHICH THE CORE LACKS, IS SEED-BOOL'S")
+
+    Print("--- T15: abort-safety across real I/O, survival proved by the next line ---")
+    Assert(Refuses(g, Q("tst/csv/does-not-exist.txt") & " READLINES", "CANNOT READ"), "READLINES ON A MISSING PATH")
+    Assert(Refuses(g, Q("tst/csv") & " READLINES", "CANNOT READ"), "READLINES ON A DIRECTORY")
+    Assert(Survives(g, Q("tst/csv/no/such/dir/out.txt") & " { " & Q("a") & " } WRITELINES"), "WRITELINES TO A PATH WHOSE DIRECTORY DOES NOT EXIST")
+    Assert(Text(Ran(g, Q("tst/csv/no/such/dir/out.txt") & " { " & Q("a") & " } WRITELINES")) = "False | 2 | 1", "AND ANSWERS FALSE RATHER THAN AN ERROR")
+    Assert(Refuses(g, Q("tst/csv/does-not-exist.csv") & " CSVLOAD", "CANNOT READ"), "CSVLOAD ON A MISSING PATH")
+    Assert(Refuses(g, Q("tst/csv/malformed.csv") & " CSVLOAD", "found malformed CSV"), "CSVLOAD ON A MALFORMED DOCUMENT")
+    Assert(Survives(g, "999 " & Q("nope") & " ISAMGETOR"), "ISAMGETOR ON A MISSING KEY")
+    Assert(Text(Ran(g, "999 " & Q("nope") & " ISAMGETOR")) = Q("nope") & " | 2 | 1", "AND ANSWERS THE DEFAULT UNCHANGED, RATHER THAN A REFUSAL")
+
+    Print("--- T16: no handle ever reaches the stack ---")
+    Assert(All(RckDict(s0), Fn(e) => Instr(Lower(WordEffect(e)), "handle") = 0), "NO WORD'S EFFECT STRING MENTIONS A HANDLE")
+    Assert(Bad(s0, "1 BOPEN"), "BOPEN IS AN UNKNOWN WORD")
+    Assert(Why(s0, "1 BOPEN") = "unknown word BOPEN", "NAMING IT")
+    Assert(Bad(s0, Q("x") & " 16 ISAMOPEN"), "ISAMOPEN TOO")
+    Assert(Bad(s0, "1 2 SEEK"), "AND SEEK")
+    Rem A hundred loads of the same file leaks nothing, since CSVLOAD opens,
+    Rem reads and closes inside TRYREADFILE every time — there is no handle
+    Rem on the stack for UNDO to strand or for a hundred calls to exhaust.
+    Let loaded100 = Fold(Range(1, 100), s0, Fn(a, k) => Ran(a, Q(SalesPath()) & " CSVLOAD DROP"))
+    Assert(Deep(loaded100) = 0, "A HUNDRED LOADS OF THE SAME FILE SUCCEED AND LEAVE NOTHING BEHIND")
+
+    Print("--- T17: the data session ---")
+    Let s1 = Ran(s0, Q(SalesPath()) & " CSVLOAD " & Q("S") & " STO")
+    Assert(Text(Ran(s1, Q("S") & " RCL CSVWIDTH")) = "4", "THE FIXTURE IS FOUR COLUMNS WIDE")
+    Assert(Text(Ran(s1, Q("S") & " RCL LENGTH")) = "251", "AND TWO HUNDRED FIFTY ROWS PLUS ITS HEADER")
+    Let s2 = Ran(s1, Q("S") & " RCL " & Q("Amount") & " CSVCOLUMNNUMS " & Q("C") & " STO")
+    Assert(Deep(Ran(s2, Q("C") & " RCL")) = 1, "THE COLUMN IS ONE CELL")
+    Assert(Text(Ran(s2, Q("C") & " RCL LENGTH")) = "250", "OF TWO HUNDRED FIFTY NUMBERS")
+    Rem The independent half of T17.3: stats.shoddy called directly on the
+    Rem same fixture, parsed by hand rather than through the engine.
+    Let amounts = SalesAmounts()
+    Assert(Near(TopNum(Ran(s2, Q("C") & " RCL MEAN")), Mean(amounts)), "MEAN AGREES WITH STATS.SHODDY CALLED DIRECTLY")
+    Assert(Near(TopNum(Ran(s2, Q("C") & " RCL STDEV")), StdDev(amounts)), "AND SO DOES STDEV")
+    Assert(Near(TopNum(Ran(s2, Q("C") & " RCL 0.95 QUANTILE")), Quantile(amounts, 0.95)), "AND QUANTILE AT 0.95")
+    Rem CSVPAIRS zips a row against the header; DGET reads it back exactly
+    Rem as seed-dict's own association list would.
+    Let firstRow = Ran(s2, Q("S") & " RCL " & Q("S") & " RCL CSVBODY FIRST CSVPAIRS")
+    Assert(Text(Ran(firstRow, Q("Region") & " DGET")) = Q("South"), "CSVPAIRS THEN DGET READS THE FIRST ROW'S REGION")
+    Assert(Text(Ran(firstRow, Q("Date") & " DGET")) = Q("2025-01-01"), "AND ITS DATE")
+    Rem CSVGET stays strict (R5's note): a column the header does not
+    Rem promise is worth hearing about, so it is refused rather than
+    Rem defaulted — the one guard CSVCOLUMN/CSVCOLUMNNUMS trade away on
+    Rem purpose, in favour of a scan that does not stop at a ragged row.
+    Assert(Refuses(s1, Q("S") & " RCL " & Q("S") & " RCL CSVBODY FIRST " & Q("Nope") & " CSVGET", "CSVGET found no column named 'Nope'"), "CSVGET ON A COLUMN THE HEADER DOES NOT NAME")
+    Rem CSVGET's other half: the header promises a column and the ROW stops
+    Rem short of it. Built on the stack rather than from a fixture, since a
+    Rem ragged document is two literals and needs no file.
+    Assert(Refuses(s1, "{ { " & Q("a") & " " & Q("b") & " } { " & Q("1") & " } } { " & Q("1") & " } " & Q("b") & " CSVGET", "CSVGET: the row stops short of column 'b'"), "AND ON A ROW THAT STOPS SHORT OF ONE IT DOES NAME")
+    Assert(Refuses(s1, Q("S") & " RCL " & Q("Nope") & " CSVCOLUMN", "CSVCOLUMN found no column named 'Nope'"), "AND CSVCOLUMN, THE SAME WAY")
+    Assert(Refuses(s1, Q("S") & " RCL " & Q("Nope") & " CSVCOLUMNNUMS", "CSVCOLUMNNUMS found no column named 'Nope'"), "AND CSVCOLUMNNUMS")
+    Assert(Text(Ran(s1, Q("S") & " RCL " & Q("S") & " RCL CSVBODY FIRST " & Q("Region") & " CSVGET")) = Q("South"), "AND CSVGET STILL WORKS ON A COLUMN THAT IS THERE")
+
+    Rem A column is named by header OR by 1-based position, and the two
+    Rem address the same column: Amount is the fixture's third. The
+    Rem positional form is what the worked data session keys, so it is the
+    Rem one the acceptance criterion runs on.
+    Print("--- either spelling names a column, and both name the same one ---")
+    Assert(Text(Ran(s1, Q("S") & " RCL 3 CSVCOLUMNNUMS " & Q("S") & " RCL " & Q("Amount") & " CSVCOLUMNNUMS =")) = "True", "3 CSVCOLUMNNUMS IS " & Q("AMOUNT") & " CSVCOLUMNNUMS")
+    Assert(Text(Ran(s1, Q("S") & " RCL 1 CSVCOLUMN " & Q("S") & " RCL " & Q("Date") & " CSVCOLUMN =")) = "True", "AND 1 CSVCOLUMN IS THE DATE COLUMN")
+    Rem Three refusals for the three ways a position can be wrong, and one
+    Rem for a cell that is neither spelling: 0 and 99 are off the end, 2.5
+    Rem is a typo, and answering any of them would hide one.
+    Assert(Refuses(s1, Q("S") & " RCL 0 CSVCOLUMNNUMS", "CSVCOLUMNNUMS needs a column from 1 to 4, got 0"), "A POSITION BELOW ONE IS REFUSED")
+    Assert(Refuses(s1, Q("S") & " RCL 99 CSVCOLUMN", "CSVCOLUMN needs a column from 1 to 4, got 99"), "AND ONE PAST THE LAST COLUMN")
+    Assert(Refuses(s1, Q("S") & " RCL 2.5 CSVCOLUMN", "CSVCOLUMN needs a column from 1 to 4, got 2.5"), "AND ONE THAT IS NOT WHOLE")
+    Assert(Refuses(s1, Q("S") & " RCL TRUE CSVCOLUMN", "CSVCOLUMN needs a STRING header or a NUMBER column, got BOOLEAN"), "AND A CELL THAT IS NEITHER SPELLING")
+
+    Print("--- Appendix A.3, the golden session, entered exactly as written ---")
+    Rem The appendix's own lines, positional column and all. Its printed
+    Rem figures are illustrative of a file this repository does not ship;
+    Rem the numbers here are asserted against stats.shoddy called directly
+    Rem on the committed fixture, which is the stronger check anyway.
+    Let a1 = Ran(s0, Q(SalesPath()) & " CSVLOAD " & Q("S") & " STO")
+    Assert(Text(Ran(a1, Q("S") & " RCL CSVWIDTH " & Q("S") & " RCL LENGTH")) = "251 | 4", "y: 4, x: 251")
+    Let a2 = Ran(a1, Q("S") & " RCL 3 CSVCOLUMNNUMS " & Q("C") & " STO")
+    Assert(Near(TopNum(Ran(a2, Q("C") & " RCL MEAN")), Mean(amounts)), "y: THE MEAN")
+    Assert(Near(TopNum(Ran(a2, Q("C") & " RCL STDEV")), StdDev(amounts)), "x: THE STANDARD DEVIATION")
+    Assert(Near(TopNum(Ran(a2, Q("C") & " RCL 0.95 QUANTILE")), Quantile(amounts, 0.95)), "AND THE 95TH PERCENTILE")
+    Rem The last line is the contract, not the feature (Appendix A.3): a
+    Rem mistyped path answers an error value and the stack — the register,
+    Rem the dictionary, the session — is exactly as it was.
+    Let a3 = Ran(a2, Q("C") & " RCL")
+    Assert(Bad(a3, Q("tst/csv/missing.csv") & " CSVLOAD"), "A MISTYPED PATH IS REFUSED")
+    Assert(Text(Ran(a3, Q("tst/csv/missing.csv") & " CSVLOAD")) = Text(a3), "AND THE STACK IS EXACTLY AS IT WAS")
+    Assert(Text(Ran(Ran(a3, Q("tst/csv/missing.csv") & " CSVLOAD"), "LENGTH")) = "250", "THE COLUMN IS STILL BANKED, AND THE SESSION CONTINUES")
+
+    Rem R2.9 at its shortest, and the acceptance criterion verbatim: load a
+    Rem delimited file, take a column, describe it — one line, from the
+    Rem entry line, with the path the only thing changed from the criterion
+    Rem as written. This is the assertion that separates a dictionary that
+    Rem can open a file from a pocket calculator.
+    Print("--- data in, answer out, in one line ---")
+    Let one = Ran(s0, Q(SalesPath()) & " CSVLOAD  3 CSVCOLUMNNUMS  MEAN")
+    Assert(Deep(one) = 1, "THE WHOLE SESSION LEAVES ONE CELL")
+    Assert(Near(TopNum(one), Mean(amounts)), "AND IT IS THE MEAN OF THE AMOUNT COLUMN")
+
+    Print("")
+    Print("ALL ASSERTIONS PASSED")
+
+Rem ---- one more shared shape ------------------------------------------
+
+Def Holds(lines As List Of String, sub As String) As Boolean
+    Any(lines, Fn(l) => Instr(l, sub) > 0)
+
+Def SeedOf(st As RckState, name As String) As String
+    Select Case RckFind(st, name)
+        Case Some(e)
+            WordSeed(e)
+        Case Else
+            "NOT A WORD"

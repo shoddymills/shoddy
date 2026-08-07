@@ -1,0 +1,232 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem seedmatrix.shoddy — reckoner seed: matrix.shoddy, converting at
+Rem the bridge
+Rem
+Rem MAT, IDENT, TRANSP, MMUL, MATADD, MGET and DOT. Per R4.16 there is
+Rem no ARRAY cell at the keyboard: every vector-taking word here accepts
+Rem a LIST and converts internally, and every vector-returning word
+Rem answers a LIST back. MMUL and MATADD reuse cuttle's own CutMatMul
+Rem and CutMatAdd, which already pre-flight the dimension checks
+Rem matrix.shoddy Errors on — the same guard the engine core's
+Rem polymorphic * and + apply to a MATMUL mismatch reached through them.
+Rem
+Rem NAMED MATADD, NOT MADD. The indicative word list names MADD for
+Rem both money and matrix, and a dictionary cannot hold two entries
+Rem under one name — R5's own "every entry appears exactly once"
+Rem discipline settles it here in matrix's favour of the name
+Rem matrix.shoddy's own Error text already uses ("MATADD: DIMENSION
+Rem MISMATCH"), leaving seed-money's MADD as the one un-renamed.
+Rem ==================================================================
+
+Include "matrix.shoddy"
+Include "cuttle.shoddy"
+Include "reckoner.shoddy"
+Include "seq.shoddy"
+
+Rem ---- a LIST cell as List Of Number --------------------------------------
+
+Def MxListNum(word As String, c As Cell) As Result
+    Select Case RckListArg(word, c)
+        Case Ok(xs)
+            MxNumsAt(word, xs, { })
+        Case Err(w, at)
+            Err(w, at)
+        Case Else
+            Err(word & " did not answer", 0)
+
+Def MxNumsAt(word As String, xs As List Of Cell, acc As List Of Number) As Result
+    If IsEmpty(xs) Then
+        Ok(acc)
+    Else
+        MxNumsNext(word, xs, acc, First(xs))
+
+Def MxNumsNext(word As String, xs As List Of Cell, acc As List Of Number, c As Cell) As Result
+    Select Case c
+        Case CutNum(x)
+            MxNumsAt(word, Rest(xs), Append(acc, x))
+        Case Else
+            Err(RckKindWhy(word, "a LIST of NUMBERs", c), 0)
+
+Rem ---- MAT ----------------------------------------------------------
+Rem Mat Errors when the list holds the wrong count of cells; r and c
+Rem are pre-flighted to whole numbers of 1 or more first.
+
+Def MxSeedMat(st As RckState) As RckState
+    RckReg(st, "MAT", 3, RckPure(Fn(vs) => MxMat(vs)), "( r c list -- matrix )", "An r by c matrix from a list of r*c numbers, row by row.")
+
+Def MxMat(vs As List Of Cell) As RckWork
+    Select Case RckWholeArg("MAT", Nth(vs, 1))
+        Case Ok(r)
+            MxMatC(r, Nth(vs, 2), Nth(vs, 3))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("MAT did not answer")
+
+Def MxMatC(r As Number, cCell As Cell, listCell As Cell) As RckWork
+    Select Case RckWholeArg("MAT", cCell)
+        Case Ok(c)
+            MxMatList(r, c, listCell)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("MAT did not answer")
+
+Def MxMatList(r As Number, c As Number, listCell As Cell) As RckWork
+    Select Case MxListNum("MAT", listCell)
+        Case Ok(ns)
+            MxMatOf(r, c, ns)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("MAT did not answer")
+
+Def MxMatOf(r As Number, c As Number, ns As List Of Number) As RckWork
+    If r < 1 Or c < 1 Then
+        RckWorkBad("MAT needs r and c of 1 or more, got " & Str(r) & " and " & Str(c))
+    Else
+        If Length(ns) <> r * c Then
+            RckWorkBad("MAT needs " & Str(r * c) & " numbers for a " & Str(r) & "x" & Str(c) & " matrix, got " & Str(Length(ns)))
+        Else
+            RckVals({ CutMat(Mat(r, c, ns)) })
+
+Rem ---- IDENT ----------------------------------------------------------
+
+Def MxSeedIdent(st As RckState) As RckState
+    RckReg(st, "IDENT", 1, RckPure(Fn(vs) => MxIdent(vs)), "( n -- matrix )", "The n by n identity matrix.")
+
+Def MxIdent(vs As List Of Cell) As RckWork
+    Select Case RckWholeArg("IDENT", First(vs))
+        Case Ok(n)
+            MxIdentAt(n)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("IDENT did not answer")
+
+Def MxIdentAt(n As Number) As RckWork
+    If n < 1 Then
+        RckWorkBad("IDENT needs a whole number of 1 or more, got " & Str(n))
+    Else
+        RckVals({ CutMat(Ident(n)) })
+
+Rem ---- TRANSP -----------------------------------------------------------
+Rem Total over any matrix MAT could have built (r and c both 1 or more).
+
+Def MxSeedTransp(st As RckState) As RckState
+    RckReg(st, "TRANSP", 1, RckPure(Fn(vs) => MxTransp(vs)), "( matrix -- matrix )", "The matrix flipped across its diagonal.")
+
+Def MxTransp(vs As List Of Cell) As RckWork
+    Select Case First(vs)
+        Case CutMat(m)
+            RckVals({ CutMat(Transp(m)) })
+        Case Else
+            RckWorkBad(RckKindWhy("TRANSP", "a MATRIX", First(vs)))
+
+Rem ---- MMUL, MATADD -------------------------------------------------------
+Rem Both reuse cuttle's own pre-flighted arithmetic — the same dimension
+Rem check and message the engine core's * and + already give a MATRIX
+Rem mismatch reached through the polymorphic operators.
+
+Def MxSeedMmul(st As RckState) As RckState
+    RckReg(st, "MMUL", 2, RckPure(Fn(vs) => MxBoth("MMUL", vs, CutMatMul)), "( a b -- ab )", "Matrix product; the columns of a must match the rows of b.")
+
+Def MxSeedMatadd(st As RckState) As RckState
+    RckReg(st, "MATADD", 2, RckPure(Fn(vs) => MxBoth("MATADD", vs, CutMatAdd)), "( a b -- a+b )", "Two matrices of one shape, added cell by cell.")
+
+Def MxBoth(word As String, vs As List Of Cell, f As [ Matrix Matrix -- CutCalc ]) As RckWork
+    Select Case Nth(vs, 1)
+        Case CutMat(a)
+            MxBothOn(word, a, Nth(vs, 2), f)
+        Case Else
+            RckWorkBad(RckKindWhy(word, "two MATRIXs", Nth(vs, 1)))
+
+Def MxBothOn(word As String, a As Matrix, c As Cell, f As [ Matrix Matrix -- CutCalc ]) As RckWork
+    Select Case c
+        Case CutMat(b)
+            RckCalc(Call(f, a, b))
+        Case Else
+            RckWorkBad(RckKindWhy(word, "two MATRIXs", c))
+
+Rem ---- MGET -------------------------------------------------------------
+Rem MatGet indexes a flat Array with no bounds check of its own; both
+Rem indices are checked against the matrix's own shape first.
+
+Def MxSeedMget(st As RckState) As RckState
+    RckReg(st, "MGET", 3, RckPure(Fn(vs) => MxMget(vs)), "( matrix r c -- x )", "The cell at row r, column c, both 1-based.")
+
+Def MxMget(vs As List Of Cell) As RckWork
+    Select Case Nth(vs, 1)
+        Case CutMat(m)
+            MxMgetR(m, Nth(vs, 2), Nth(vs, 3))
+        Case Else
+            RckWorkBad(RckKindWhy("MGET", "a MATRIX", Nth(vs, 1)))
+
+Def MxMgetR(m As Matrix, rCell As Cell, cCell As Cell) As RckWork
+    Select Case RckWholeArg("MGET", rCell)
+        Case Ok(r)
+            MxMgetC(m, r, cCell)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("MGET did not answer")
+
+Def MxMgetC(m As Matrix, r As Number, cCell As Cell) As RckWork
+    Select Case RckWholeArg("MGET", cCell)
+        Case Ok(c)
+            MxMgetAt(m, r, c)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("MGET did not answer")
+
+Def MxMgetAt(m As Matrix, r As Number, c As Number) As RckWork
+    If r < 1 Or r > Rows(m) Or c < 1 Or c > Cols(m) Then
+        RckWorkBad("MGET needs row 1 to " & Str(Rows(m)) & " and column 1 to " & Str(Cols(m)) & ", got " & Str(r) & " and " & Str(c))
+    Else
+        RckVals({ CutNum(MatGet(m, r, c)) })
+
+Rem ---- DOT ------------------------------------------------------------
+Rem Dot walks to Length(xs), so a shorter ys would run past its own end;
+Rem refused by matching lengths before either list becomes an Array.
+
+Def MxSeedDot(st As RckState) As RckState
+    RckReg(st, "DOT", 2, RckPure(Fn(vs) => MxDot(vs)), "( xs ys -- d )", "The dot product of two lists of numbers of the same length.")
+
+Def MxDot(vs As List Of Cell) As RckWork
+    Select Case MxListNum("DOT", Nth(vs, 1))
+        Case Ok(xs)
+            MxDotY(xs, Nth(vs, 2))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("DOT did not answer")
+
+Def MxDotY(xs As List Of Number, c As Cell) As RckWork
+    Select Case MxListNum("DOT", c)
+        Case Ok(ys)
+            MxDotAt(xs, ys)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("DOT did not answer")
+
+Def MxDotAt(xs As List Of Number, ys As List Of Number) As RckWork
+    If Length(xs) <> Length(ys) Then
+        RckWorkBad("DOT needs two lists of the same length, got " & Str(Length(xs)) & " and " & Str(Length(ys)))
+    Else
+        RckVals({ CutNum(Dot(ToArray(xs), ToArray(ys))) })
+
+Rem ---- the seed -----------------------------------------------------------
+
+Def RckSeedMatrix(st As RckState) As RckState
+    Let st1 = MxSeedMat(RckSeeding(st, "seed-matrix"))
+    Let st2 = MxSeedIdent(st1)
+    Let st3 = MxSeedTransp(st2)
+    Let st4 = MxSeedMmul(st3)
+    Let st5 = MxSeedMatadd(st4)
+    Let st6 = MxSeedMget(st5)
+    MxSeedDot(st6)

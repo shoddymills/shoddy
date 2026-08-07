@@ -1,0 +1,417 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem seedcsv.shoddy — reckoner seed: csv.shoddy, over the guarded
+Rem builtins and CsvRead's own CsvDoc rather than the aborting layer
+Rem
+Rem A "document" at the keyboard is exactly what csv.shoddy's own
+Rem comments call it: a LIST of LISTs of STRINGs, no new stack case
+Rem needed (R5's note that csv "needs no new value case"). A "sheet" is
+Rem never carried as its own cell — CSVHEADS, CSVBODY, CSVCOLUMN,
+Rem CSVCOLUMNNUMS, CSVGET, CSVWHERE and CSVPAIRS all rebuild the header
+Rem split with csv.shoddy's own (total) CsvSheetOf from the document
+Rem cell each time they are called, which is what keeps the value set
+Rem untouched.
+Rem
+Rem CSVLOAD AND CSVSAVE DO NOT CALL CsvLoad/CsvSave, whose ReadFile and
+Rem WriteFile abort. CSVLOAD instead runs TRYREADFILE and then
+Rem CsvReadAs, matching CsvDoc's own CsvOk/CsvErr rather than the
+Rem CsvParseAs wrapper that turns a CsvErr into an Error — the parse
+Rem failure T15.6 exercises is exactly the case CsvErr exists to report
+Rem without aborting. CSVSAVE runs TRYWRITEFILE.
+Rem
+Rem CSVGET STAYS STRICT. csv.shoddy's own CsvGet Errors rather than
+Rem defaulting when the column or the row is short, on the ground that
+Rem a file whose header promises a column it does not deliver is a file
+Rem worth hearing about; CSVGET keeps that judgment and only trades the
+Rem Error for a refusal. CSVWHERE and CSVCOLUMN/CSVCOLUMNNUMS lean on
+Rem CsvGetOr/CsvNumOr instead, exactly as csv.shoddy's own CsvWhere
+Rem already does, since a WHERE clause or a column scan that stopped at
+Rem the first ragged row would be less useful than one that treats a
+Rem missing cell as empty.
+Rem
+Rem CSVCOLUMN AND CSVCOLUMNNUMS NAME A COLUMN EITHER WAY — by header, or
+Rem by 1-based position. See CvHead below for why both, and why the
+Rem position resolves to a header rather than indexing rows itself.
+Rem ==================================================================
+
+Include "csv.shoddy"
+Include "cuttle.shoddy"
+Include "reckoner.shoddy"
+Include "seq.shoddy"
+
+Rem ---- a document cell as List Of List Of String ---------------------
+
+Def CvRow(word As String, c As Cell) As Result
+    Select Case RckListArg(word, c)
+        Case Ok(xs)
+            CvStrsAt(word, xs, { })
+        Case Err(w, at)
+            Err(w, at)
+        Case Else
+            Err(word & " did not answer", 0)
+
+Def CvStrsAt(word As String, xs As List Of Cell, acc As List Of String) As Result
+    If IsEmpty(xs) Then
+        Ok(acc)
+    Else
+        CvStrsNext(word, xs, acc, First(xs))
+
+Def CvStrsNext(word As String, xs As List Of Cell, acc As List Of String, c As Cell) As Result
+    Select Case c
+        Case CutStr(t)
+            CvStrsAt(word, Rest(xs), Append(acc, t))
+        Case Else
+            Err(RckKindWhy(word, "a LIST of STRINGs", c), 0)
+
+Def CvDoc(word As String, c As Cell) As Result
+    Select Case RckListArg(word, c)
+        Case Ok(xs)
+            CvRowsAt(word, xs, { })
+        Case Err(w, at)
+            Err(w, at)
+        Case Else
+            Err(word & " did not answer", 0)
+
+Def CvRowsAt(word As String, xs As List Of Cell, acc As List Of List Of String) As Result
+    If IsEmpty(xs) Then
+        Ok(acc)
+    Else
+        CvRowsNext(word, xs, acc, First(xs))
+
+Def CvRowsNext(word As String, xs As List Of Cell, acc As List Of List Of String, c As Cell) As Result
+    Select Case CvRow(word, c)
+        Case Ok(row)
+            CvRowsAt(word, Rest(xs), Append(acc, row))
+        Case Err(w, at)
+            Err(w, at)
+        Case Else
+            Err(word & " did not answer", 0)
+
+Def CvCellRow(row As List Of String) As Cell
+    CutList(Map(row, CutStr))
+
+Def CvCellDoc(rows As List Of List Of String) As Cell
+    CutList(Map(rows, CvCellRow))
+
+Rem ---- parsing text, whether it came from a file or the stack -----------
+
+Def CvParsed(word As String, text As String) As RckWork
+    Select Case CsvReadAs(text, CsvComma())
+        Case CsvOk(rows)
+            RckVals({ CvCellDoc(rows) })
+        Case CsvErr(why, at)
+            RckWorkBad(word & " found malformed CSV: " & why & " at position " & Str(at))
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Rem ---- CSVLOAD, CSVREAD ---------------------------------------------------
+
+Def CvSeedCsvload(st As RckState) As RckState
+    RckReg(st, "CSVLOAD", 1, RckTouch(Fn(vs) => CvCsvload(vs)), "( path -- doc )", "The CSV file at path, parsed to a document (a list of rows of cells); a refusal if it cannot be read or does not parse.")
+
+Def CvCsvload(vs As List Of Cell) As RckWork
+    Select Case RckTextArg("CSVLOAD", First(vs))
+        Case Ok(path)
+            CvCsvloadAt(TryReadFile(path))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("CSVLOAD did not answer")
+
+Def CvCsvloadAt(r As Result) As RckWork
+    Select Case r
+        Case Ok(text)
+            CvParsed("CSVLOAD", text)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("CSVLOAD did not answer")
+
+Def CvSeedCsvread(st As RckState) As RckState
+    RckReg(st, "CSVREAD", 1, RckPure(Fn(vs) => CvCsvread(vs)), "( text -- doc )", "CSV text already on the stack, parsed to a document; a refusal if it does not parse.")
+
+Def CvCsvread(vs As List Of Cell) As RckWork
+    Select Case RckTextArg("CSVREAD", First(vs))
+        Case Ok(text)
+            CvParsed("CSVREAD", text)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("CSVREAD did not answer")
+
+Rem ---- CSVSAVE ------------------------------------------------------------
+
+Def CvSeedCsvsave(st As RckState) As RckState
+    RckReg(st, "CSVSAVE", 2, RckTouch(Fn(vs) => CvCsvsave(vs)), "( path doc -- ok )", "Write a document to path as CSV; True on success.")
+
+Def CvCsvsave(vs As List Of Cell) As RckWork
+    Select Case RckTextArg("CSVSAVE", Nth(vs, 1))
+        Case Ok(path)
+            CvCsvsaveAt(path, Nth(vs, 2))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("CSVSAVE did not answer")
+
+Def CvCsvsaveAt(path As String, c As Cell) As RckWork
+    Select Case CvDoc("CSVSAVE", c)
+        Case Ok(rows)
+            RckVals({ CutBool(TryWriteFile(path, CsvText(rows))) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("CSVSAVE did not answer")
+
+Rem ---- CSVWIDTH -------------------------------------------------------
+
+Def CvSeedCsvwidth(st As RckState) As RckState
+    RckReg(st, "CSVWIDTH", 1, RckPure(Fn(vs) => CvCsvwidth(vs)), "( doc -- n )", "The width of the widest row in the document.")
+
+Def CvCsvwidth(vs As List Of Cell) As RckWork
+    Select Case CvDoc("CSVWIDTH", First(vs))
+        Case Ok(rows)
+            RckVals({ CutNum(CsvWidth(rows)) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("CSVWIDTH did not answer")
+
+Rem ---- CSVHEADS, CSVBODY ------------------------------------------------
+Rem CsvSheetOf is total: an empty document gives empty heads and body.
+
+Def CvSeedCsvheads(st As RckState) As RckState
+    RckReg(st, "CSVHEADS", 1, RckPure(Fn(vs) => CvCsvheads(vs)), "( doc -- list )", "The document's first row, as the column headers.")
+
+Def CvCsvheads(vs As List Of Cell) As RckWork
+    Select Case CvDoc("CSVHEADS", First(vs))
+        Case Ok(rows)
+            RckVals({ CvCellRow(CsvHeads(CsvSheetOf(rows))) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("CSVHEADS did not answer")
+
+Def CvSeedCsvbody(st As RckState) As RckState
+    RckReg(st, "CSVBODY", 1, RckPure(Fn(vs) => CvCsvbody(vs)), "( doc -- doc )", "The document without its header row.")
+
+Def CvCsvbody(vs As List Of Cell) As RckWork
+    Select Case CvDoc("CSVBODY", First(vs))
+        Case Ok(rows)
+            RckVals({ CvCellDoc(CsvBody(CsvSheetOf(rows))) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("CSVBODY did not answer")
+
+Rem ---- naming a column ----------------------------------------------------
+Rem EITHER SPELLING NAMES A COLUMN, because each is the natural one
+Rem somewhere: a header when the file carries one worth reading, and a
+Rem 1-based position when it does not, when the header is noise, or when
+Rem the column is simply "the third one" — which is how the worked data
+Rem session reads it ("dat/sales.csv" CSVLOAD 3 CSVCOLUMNNUMS MEAN).
+Rem
+Rem The NUMBER form resolves to the header AT that position and then reads
+Rem by name like everything else in this seed, rather than indexing rows
+Rem directly. csv.shoddy's whole column API is name-based — CsvIndexOf
+Rem takes the first of a repeated header — so a second addressing scheme
+Rem that disagreed with it on a duplicated header would be worse than
+Rem inheriting the one route it already has.
+Rem
+Rem A position outside the header row is refused rather than clamped or
+Rem read as empty: 0 and 99 are both typos on a four-column file, and
+Rem answering them would hide one.
+
+Def CvHead(word As String, sh As CsvSheet, c As Cell) As Result
+    Select Case c
+        Case CutStr(t)
+            CvHeadNamed(word, sh, t)
+        Case CutNum(x)
+            CvHeadAt(word, sh, x)
+        Case Else
+            Err(RckKindWhy(word, "a STRING header or a NUMBER column", c), 0)
+
+Def CvHeadNamed(word As String, sh As CsvSheet, t As String) As Result
+    If CsvHas(sh, t) Then
+        Ok(t)
+    Else
+        Err(word & " found no column named '" & t & "'", 0)
+
+Def CvHeadAt(word As String, sh As CsvSheet, x As Number) As Result
+    If x < 1 Or x <> Floor(x) Or x > Length(CsvHeads(sh)) Then
+        Err(word & " needs a column from 1 to " & Str(Length(CsvHeads(sh))) & ", got " & Str(x), 0)
+    Else
+        Ok(Nth(CsvHeads(sh), x))
+
+Rem ---- CSVCOLUMN, CSVCOLUMNNUMS -------------------------------------------
+Rem Both refuse a column the header does not name and a position outside
+Rem it; each row after that goes through CsvGetOr/CsvNumOr rather than the
+Rem strict CsvGet, so one short row does not stop the scan.
+
+Def CvSeedCsvcolumn(st As RckState) As RckState
+    RckReg(st, "CSVCOLUMN", 2, RckPure(Fn(vs) => CvCsvcolumn(vs)), "( doc col -- list )", "One column, top to bottom, as strings; col is a header name or a 1-based position.")
+
+Def CvCsvcolumn(vs As List Of Cell) As RckWork
+    Select Case CvDoc("CSVCOLUMN", Nth(vs, 1))
+        Case Ok(rows)
+            CvCsvcolumnAt(CsvSheetOf(rows), Nth(vs, 2))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("CSVCOLUMN did not answer")
+
+Def CvCsvcolumnAt(sh As CsvSheet, c As Cell) As RckWork
+    Select Case CvHead("CSVCOLUMN", sh, c)
+        Case Ok(head)
+            CvCsvcolumnOn(sh, head)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("CSVCOLUMN did not answer")
+
+Def CvCsvcolumnOn(sh As CsvSheet, head As String) As RckWork
+    RckVals({ CvCellRow(Map(CsvBody(sh), Fn(r) => CsvGetOr(sh, r, head, ""))) })
+
+Def CvSeedCsvcolumnnums(st As RckState) As RckState
+    RckReg(st, "CSVCOLUMNNUMS", 2, RckPure(Fn(vs) => CvCsvcolumnnums(vs)), "( doc col -- list )", "One column, top to bottom, read as numbers (0 for a missing or short row); col is a header name or a 1-based position.")
+
+Def CvCsvcolumnnums(vs As List Of Cell) As RckWork
+    Select Case CvDoc("CSVCOLUMNNUMS", Nth(vs, 1))
+        Case Ok(rows)
+            CvCsvcolumnnumsAt(CsvSheetOf(rows), Nth(vs, 2))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("CSVCOLUMNNUMS did not answer")
+
+Def CvCsvcolumnnumsAt(sh As CsvSheet, c As Cell) As RckWork
+    Select Case CvHead("CSVCOLUMNNUMS", sh, c)
+        Case Ok(head)
+            CvCsvcolumnnumsOn(sh, head)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("CSVCOLUMNNUMS did not answer")
+
+Def CvCsvcolumnnumsOn(sh As CsvSheet, head As String) As RckWork
+    RckVals({ CutList(Map(CsvBody(sh), Fn(r) => CutNum(CsvNumOr(sh, r, head, 0)))) })
+
+Rem ---- CSVGET -----------------------------------------------------------
+Rem The strict half of the guard pair, kept strict: a refusal, naming
+Rem the missing column or the row that stopped short, rather than an
+Rem Error and rather than a silent default.
+
+Def CvSeedCsvget(st As RckState) As RckState
+    RckReg(st, "CSVGET", 3, RckPure(Fn(vs) => CvCsvget(vs)), "( doc row head -- s )", "The cell in row under the named column, taken from doc's header.")
+
+Def CvCsvget(vs As List Of Cell) As RckWork
+    Select Case CvDoc("CSVGET", Nth(vs, 1))
+        Case Ok(rows)
+            CvCsvgetRow(CsvSheetOf(rows), Nth(vs, 2), Nth(vs, 3))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("CSVGET did not answer")
+
+Def CvCsvgetRow(sh As CsvSheet, c As Cell, headCell As Cell) As RckWork
+    Select Case CvRow("CSVGET", c)
+        Case Ok(row)
+            CvCsvgetHead(sh, row, headCell)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("CSVGET did not answer")
+
+Def CvCsvgetHead(sh As CsvSheet, row As List Of String, headCell As Cell) As RckWork
+    Select Case RckTextArg("CSVGET", headCell)
+        Case Ok(head)
+            CvCsvgetAt(sh, row, head)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("CSVGET did not answer")
+
+Def CvCsvgetAt(sh As CsvSheet, row As List Of String, head As String) As RckWork
+    Let k = CsvIndexOf(sh, head)
+    If k = 0 Then
+        RckWorkBad("CSVGET found no column named '" & head & "'")
+    Else
+        If k > Length(row) Then
+            RckWorkBad("CSVGET: the row stops short of column '" & head & "'")
+        Else
+            RckVals({ CutStr(Nth(row, k)) })
+
+Rem ---- CSVWHERE ---------------------------------------------------------
+Rem CsvWhere already goes through CsvGetOr, so it is total; no guard
+Rem needed beyond reading its three arguments.
+
+Def CvSeedCsvwhere(st As RckState) As RckState
+    RckReg(st, "CSVWHERE", 3, RckPure(Fn(vs) => CvCsvwhere(vs)), "( doc head v -- doc )", "The rows whose named column reads v.")
+
+Def CvCsvwhere(vs As List Of Cell) As RckWork
+    Select Case CvDoc("CSVWHERE", Nth(vs, 1))
+        Case Ok(rows)
+            CvCsvwhereHead(rows, Nth(vs, 2), Nth(vs, 3))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("CSVWHERE did not answer")
+
+Def CvCsvwhereHead(rows As List Of List Of String, c As Cell, vCell As Cell) As RckWork
+    Select Case RckTextArg("CSVWHERE", c)
+        Case Ok(head)
+            CvCsvwhereV(rows, head, vCell)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("CSVWHERE did not answer")
+
+Def CvCsvwhereV(rows As List Of List Of String, head As String, vCell As Cell) As RckWork
+    Select Case RckTextArg("CSVWHERE", vCell)
+        Case Ok(v)
+            RckVals({ CvCellDoc(CsvWhere(CsvSheetOf(rows), head, v)) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("CSVWHERE did not answer")
+
+Rem ---- CSVPAIRS -----------------------------------------------------------
+Rem Zip stops at the shorter side, so a ragged row is simply short of
+Rem keys rather than a reason to refuse.
+
+Def CvSeedCsvpairs(st As RckState) As RckState
+    RckReg(st, "CSVPAIRS", 2, RckPure(Fn(vs) => CvCsvpairs(vs)), "( doc row -- list )", "row zipped with doc's header as an association list: seed-dict's DGET, DHAS and DKEYS read it unchanged.")
+
+Def CvCsvpairs(vs As List Of Cell) As RckWork
+    Select Case CvDoc("CSVPAIRS", Nth(vs, 1))
+        Case Ok(rows)
+            CvCsvpairsRow(CsvHeads(CsvSheetOf(rows)), Nth(vs, 2))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("CSVPAIRS did not answer")
+
+Def CvCsvpairsRow(heads As List Of String, c As Cell) As RckWork
+    Select Case CvRow("CSVPAIRS", c)
+        Case Ok(row)
+            RckVals({ CutList(Map(Zip(heads, row), Fn(p) => CutPair(Pair(CutStr(Fst(p)), CutStr(Snd(p)))))) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("CSVPAIRS did not answer")
+
+Rem ---- the seed -----------------------------------------------------------
+
+Def RckSeedCsv(st As RckState) As RckState
+    Let st1 = CvSeedCsvload(RckSeeding(st, "seed-csv"))
+    Let st2 = CvSeedCsvread(st1)
+    Let st3 = CvSeedCsvsave(st2)
+    Let st4 = CvSeedCsvwidth(st3)
+    Let st5 = CvSeedCsvheads(st4)
+    Let st6 = CvSeedCsvbody(st5)
+    Let st7 = CvSeedCsvcolumn(st6)
+    Let st8 = CvSeedCsvcolumnnums(st7)
+    Let st9 = CvSeedCsvget(st8)
+    Let st10 = CvSeedCsvwhere(st9)
+    CvSeedCsvpairs(st10)

@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="A reckoner seed: bool's binary layer — machines/seeds/seedbool.shoddy">
+<title>seedbool — A reckoner seed: bool's binary layer | Shoddy Machines</title>
+<link rel="stylesheet" href="../style.css">
+<link rel="icon" href="../favicon.svg" type="image/svg+xml">
+<link rel="alternate icon" href="../favicon.ico" sizes="48x48">
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+</head>
+<body>
+<div class="topbar"><div class="inner">
+  <div class="row">
+    <a class="phase" href="index.html"><img class="mark" src="../media/brand/shoddy-icon.svg" alt="" width="23" height="23">Shoddy · The Machines</a>
+    <span class="spacer"></span>
+    <nav class="docnav meta" aria-label="About"><a href="../heritage.html">Heritage</a><a href="../authorship.html">Authorship</a></nav>
+  </div>
+  <nav class="docnav main" aria-label="Documentation"><a href="../tutorials/index.html">Tutorials</a><a href="../guide.html">Guide</a><a href="../quickref.html">Reference</a><span class="here">Machines</span><a href="../mills/index.html">Mills</a><a href="../stack.html">Stack</a><a href="../spec.html">Spec</a><a href="../setup.html">Setup</a><a href="../vscode.html">VS Code</a><a href="../assistants.html">AI</a><a href="../build.html">Toolchain</a><a href="../errors.html">Errors</a></nav>
+</div></div>
+<div class="wrap">
+
+
+<header class="mast has-icon"><div><p class="eyebrow"><a href="index.html#runtime-stack">The Machines &middot; Runtime stack</a></p><h1>seedbool</h1><p class="kicker">A reckoner seed: bool's binary layer — machines/seeds/seedbool.shoddy</p></div><img class="micon" src="../media/icons/seedbool.svg" alt="the seedbool machine&#39;s icon"></header>
+<nav class="pagertop" aria-label="Machines, in catalog order"><a href="seedrandom.html">&larr; seedrandom</a><a href="index.html">All machines</a><a href="seedshaker.html">seedshaker &rarr;</a></nav>
+
+<h2 id="summary">Summary</h2>
+<p><code>seedbool</code> bridges <a href="bool.html">bool</a>'s binary layer
+into the <a href="reckoner.html">reckoner</a> engine:
+<code>HEX BIN INBASE FROMBASE</code>,
+<code>BITAND BITOR BITXOR BITNOT SHL SHR</code>,
+<code>MASK GETFIELD BITAT POPCOUNT</code>, and the six logic gates the engine
+core does not already own — <code>NAND NOR XOR XNOR IMPLIES IFF</code>. Its
+whole public surface is one function: fold <code>RckSeedBool</code> over a
+state and all twenty words are in the dictionary.</p>
+<p>It is <strong>the widest seed</strong>, because <code>bool</code> is the
+widest domain bridged. Bases, bit operations, masks and gates are four
+families that share nothing but the value they work on, and a keyboard that
+has one of them and not the others is a keyboard that cannot finish the
+job.</p>
+
+<h2 id="why">Why It's Useful</h2>
+<p>Every <code>Bool*</code> word aborts on a bad domain, and nothing keyable
+may. That is the whole work of this file. <a href="bool.html">bool</a> is
+deliberately the strictest machine in the tree — it refuses a negative, a
+fraction, a value that does not fit its width, a width outside 1..53, a base
+outside 2..36 — and every one of those refusals is an <code>Error</code>,
+which would take the mill down with it. So each word here asks the question
+<code>bool</code> would abort on <em>first</em>, and answers a refusal
+instead. R4.1, applied to a machine that guards itself thoroughly and in the
+one way a reckoner cannot use.</p>
+<p>The guard helpers answer a <strong>reason string</strong>, empty when there
+is nothing wrong, rather than a <code>Result</code> — the question is only
+ever "may this proceed, and if not why not", and there is no payload to
+carry.</p>
+<p class="note"><strong>Every guard tests its reason with
+<code>If</code>/<code>Then</code>/<code>Else</code> and never
+<code>Ifte</code>.</strong> <code>Ifte</code> is an ordinary call, so both of
+its arms are evaluated before it chooses between them — handing it a
+<code>Bool*</code> word as one arm would run exactly the abort the guard was
+written to prevent. <code>If</code>/<code>Then</code>/<code>Else</code>
+compiles to two quotations and one <code>Ifte</code> over them, so only the
+chosen arm runs. It is the single most dangerous thing in the file to "tidy
+up".</p>
+
+<h2 id="guide">User's Guide</h2>
+<pre><code>Let st0 = RckSeedBool(RckNew())
+RckEval(st0, "255 HEX")                  ' x: "FF"
+RckEval(st0, "12 10 BITAND")             ' x: 8
+RckEval(st0, "171 7 4 GETFIELD")         ' x: 10
+RckEval(st0, "1 7 8 SHL")                ' x: 128</code></pre>
+<p>A register decoded at the keyboard, which is what the field words are
+for — 180 is <code>1011 0100</code>, and there are no hex literals in
+Shoddy, so a value is typed in decimal or read with
+<code>FROMBASE</code>:</p>
+<pre><code>RckEval(st0, "180 5 2 GETFIELD")         ' x: 13   — bits 5..2
+RckEval(st0, "180 7 BITAT")              ' x: True — the top bit
+RckEval(st0, "180 BIN")                  ' x: "10110100"</code></pre>
+<p>Refusals name the bound they are enforcing, not merely that something was
+out of range, because "1 to 53" is the fact a caller needs and "bad width"
+is not:</p>
+<pre><code>RckEval(st0, "256 8 BITNOT")   ' BITNOT needs a value that fits 8 bits, and 256 does not
+RckEval(st0, "0 54 BITNOT")    ' BITNOT needs a width from 1 to 53, got 54
+RckEval(st0, "5 37 INBASE")    ' INBASE needs a base from 2 to 36, got 37
+RckEval(st0, "TRUE 1 XOR")     ' XOR needs a BOOLEAN, got NUMBER</code></pre>
+<p><code>FROMBASE</code> is the one guard this seed translates rather than
+invents. Reading text is not a bug, so <code>bool</code> answers a
+<code>Result</code> there; this turns it into a refusal carrying the 1-based
+position. The message names <code>FROMBASE</code> and not
+<code>BOOLFROMBASE</code> — the prefix up to the first colon is replaced
+rather than repeated, since naming two words for one refusal names neither of
+them clearly:</p>
+<pre><code>RckEval(st0, "\"1F\" 2 FROMBASE")  ' FROMBASE: '1F' HAS NO DIGIT F IN BASE 2 at position 2</code></pre>
+
+<h2 id="words">Word Reference</h2>
+<h3>Bases and rendering</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>HEX ( n -- s )</td><td>n written in hexadecimal, uppercase.</td></tr>
+<tr><td>BIN ( n -- s )</td><td>n written in binary.</td></tr>
+<tr><td>INBASE ( n base -- s )</td><td>n written in the given base, 2 to 36, uppercase letters past 9; refuses a base outside that range.</td></tr>
+<tr><td>FROMBASE ( s base -- n )</td><td>The digit string s read in the given base, case-insensitively; refuses a digit the base does not have, naming its 1-based position, and refuses the empty string.</td></tr>
+</table>
+
+<h3>Bit operations</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>BITAND ( a b -- c )</td><td>Bitwise AND. Needs no width.</td></tr>
+<tr><td>BITOR ( a b -- c )</td><td>Bitwise OR. Needs no width.</td></tr>
+<tr><td>BITXOR ( a b -- c )</td><td>Bitwise XOR. Needs no width. These three are the only width-free words, here as in <a href="bool.html">bool</a> itself.</td></tr>
+<tr><td>BITNOT ( a width -- c )</td><td>Bitwise NOT within the given width; refuses a width outside 1..53 and a value that does not fit it.</td></tr>
+<tr><td>SHL ( a n width -- c )</td><td>a shifted left n places within the width, bits above it falling off; refuses a shift past 53.</td></tr>
+<tr><td>SHR ( a n -- c )</td><td>a shifted right n places, zeros coming in at the top. Needs no width, because a logical right shift cannot produce a bit the input did not have.</td></tr>
+</table>
+
+<h3>Masks, fields and inspection</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>MASK ( n -- m )</td><td>A mask with the low n bits set, n from 0 to 53.</td></tr>
+<tr><td>GETFIELD ( a hi lo -- v )</td><td>Bits hi down to lo of a, inclusive and 0-based, shifted down to zero; refuses an inverted field and an index past 52.</td></tr>
+<tr><td>BITAT ( a k -- flag )</td><td>Whether bit k of a is set. Answers a <strong>BOOLEAN</strong>, never 1 or 0.</td></tr>
+<tr><td>POPCOUNT ( a -- n )</td><td>How many of a's bits are set.</td></tr>
+</table>
+
+<h3>The six gates the core does not own</h3>
+<p>All on <code>BOOLEAN</code>, all one line each over
+<code>RckBool2</code>, which names the kind it got instead when handed
+something else. They have to be here: <strong>a user word takes exactly one
+cell</strong>, so a keyboard user cannot define a two-argument
+<code>XOR</code> for themselves.</p>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>NAND ( p q -- r )</td><td>NOT (p AND q).</td></tr>
+<tr><td>NOR ( p q -- r )</td><td>NOT (p OR q).</td></tr>
+<tr><td>XOR ( p q -- r )</td><td>True when exactly one of p and q is true.</td></tr>
+<tr><td>XNOR ( p q -- r )</td><td>True when p and q agree.</td></tr>
+<tr><td>IMPLIES ( p q -- r )</td><td>False on exactly one row: p true and q false.</td></tr>
+<tr><td>IFF ( p q -- r )</td><td>Material equivalence — the same answer as XNOR, under a logician's name.</td></tr>
+</table>
+
+<h3>Not bridged</h3>
+<table>
+<tr><th>Left out</th><th>Why</th></tr>
+<tr><td><code>AND</code>, <code>OR</code>, <code>NOT</code></td><td>The engine core owns all three as Boolean words already. Bridging <code>bool</code>'s would give two spellings for one idea, which is the rule <a href="seedmath.html">seedmath</a> applied to <code>Rad</code> and <code>Deg</code>.</td></tr>
+<tr><td>Truth tables and minimisation</td><td><code>BoolTruthTable</code> answers a <code>List Of BoolRow</code> and <code>BoolMinimise</code> a <code>List Of BoolTerm</code>, and neither is a <a href="cuttle.html">cuttle</a> <code>Cell</code> — the value set has no case for either. Bridging them means inventing a stack representation for a product term, which is a design and not a bridge.</td></tr>
+<tr><td><code>BoolLowBit</code>, <code>BoolHighBit</code></td><td>They answer an <code>Option</code>, and <code>None()</code> at zero is an <em>ordinary</em> answer a stack has nowhere to put. A word that refused on zero would contradict the contract <code>bool</code> itself draws. <code>POPCOUNT</code> and <code>BITAT</code> answer the questions a keyboard actually asks.</td></tr>
+<tr><td><code>BoolCard</code></td><td>Its glyphs are UTF-8 and file I/O is Latin-1, so a card that reaches a tape or a saved session is a row of question marks. <code>BIN</code> is the render that survives being written down.</td></tr>
+<tr><td>The rotates, <code>BoolShrA</code>, two's complement, the codes</td><td>Bridgeable, and deliberately left: each wants a width the keyboard must keep supplying, and a seed of forty words has stopped being a bridge and become a second dictionary. A mill that wants them registers them itself — <code>RckReg</code> is public, and that is the whole point of the seed pattern.</td></tr>
+</table>
+
+<h2 id="usedby">Who Uses It</h2>
+<table>
+<tr><th></th><th>User</th><th>How</th></tr>
+<tr><td class="uicon"><a href="../mills/halifax.html"><img src="../media/icons/halifax.svg" alt=""></a></td><td><a href="../mills/halifax.html">halifax</a></td><td>The calculator's bases and bitwise/boolean words: <code>HEX</code>, <code>BIN</code>, <code>BITAND</code>, <code>BITOR</code>, <code>SHL</code>, <code>SHR</code>, <code>NAND</code>, <code>XOR</code> and the rest of the table.</td></tr>
+</table>
+<p>A mill claims this seed by folding <code>RckSeedBool</code> over its
+reckoner state, which is all halifax does.
+<a href="../../tst/seedtest.shoddy">tst/seedtest.shoddy</a> exercises every
+word and every refusal above.</p>
+
+<h2 id="uses">The Machines It Uses</h2>
+<table>
+<tr><th></th><th>Machine</th><th>Why</th></tr>
+<tr><td class="uicon"><a href="bool.html"><img src="../media/icons/bool.svg" alt=""></a></td><td><a href="bool.html">bool</a></td><td>The domain this seed bridges: <code>BoolHex</code>, <code>BoolBinS</code>, <code>BoolInBase</code>, <code>BoolFromBase</code>, the bit operations, <code>BoolMask</code>, <code>BoolGetField</code>, <code>BoolBitAt</code>, <code>BoolPopCount</code> and the six gates.</td></tr>
+<tr><td class="uicon"><a href="cuttle.html"><img src="../media/icons/cuttle.svg" alt=""></a></td><td><a href="cuttle.html">cuttle</a></td><td>The <code>Cell</code> type every bridged word reads its arguments from and answers into.</td></tr>
+<tr><td class="uicon"><a href="reckoner.html"><img src="../media/icons/reckoner.svg" alt=""></a></td><td><a href="reckoner.html">reckoner</a></td><td><code>RckReg</code>, <code>RckSeeding</code>, <code>RckWholeArg</code> — which already refuses a negative and a fraction, two of bool's three domain rules — and <code>RckBool2</code>, which is the whole of each gate.</td></tr>
+<tr><td class="uicon"><a href="seq.html"><img src="../media/icons/seq.svg" alt=""></a></td><td><a href="seq.html">seq</a></td><td><code>Append</code>, under the multi-argument reader that pulls several whole numbers off the stack at once and stops at the first that is not one.</td></tr>
+</table>
+
+<nav class="pager" aria-label="Machines, in catalog order">
+  <a href="seedrandom.html"><span class="dir">&larr; Previous machine</span><span class="ttl">seedrandom</span></a>
+  <a class="next" href="seedshaker.html"><span class="dir">Next machine &rarr;</span><span class="ttl">seedshaker</span></a>
+</nav>
+<footer>Named for the shoddy mills of the West Riding: Useless Things Made
+Useful Through Skill (<a href="../heritage.html">the heritage of the name</a>).<br>
+&copy; 2026 Stephen Vincent Foster</footer>
+</div>
+</body>
+</html>

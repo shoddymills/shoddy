@@ -55,16 +55,21 @@ public static class Effects
         ["UPPER"] = new(1, 1), ["LOWER"] = new(1, 1),
         // console and files
         ["PRINT"] = new(1, 0), ["READFILE"] = new(1, 1),
+        ["TRYREADFILE"] = new(1, 1),
         ["WRITEFILE"] = new(2, 0), ["APPENDFILE"] = new(2, 0),
         ["TRYWRITEFILE"] = new(2, 1), ["FILEEXISTS"] = new(1, 1),
-        ["DELETEFILE"] = new(1, 0),
-        ["BOPEN"] = new(1, 1), ["BCLOSE"] = new(1, 0), ["SEEK"] = new(2, 0),
+        ["DELETEFILE"] = new(1, 0), ["TRYDELETEFILE"] = new(1, 1),
+        ["BOPEN"] = new(1, 1), ["TRYBOPEN"] = new(1, 1),
+        ["BCLOSE"] = new(1, 0), ["SEEK"] = new(2, 0),
         ["BPOS"] = new(1, 1), ["BSIZE"] = new(1, 1),
         ["PUTNUM"] = new(2, 0), ["GETNUM"] = new(1, 1),
         ["PUTBOOL"] = new(2, 0), ["GETBOOL"] = new(1, 1),
         ["PUTSTR"] = new(3, 0), ["GETSTR"] = new(2, 1),
         // network (gated)
-        ["TCPCONNECT"] = new(2, 1), ["TCPLISTEN"] = new(2, 1),
+        ["TCPCONNECT"] = new(2, 1), ["TRYTCPCONNECT"] = new(2, 1),
+        ["TRYTCPREQUEST"] = new(4, 1),
+        ["NETALLOWED"] = new(0, 1),
+        ["TCPLISTEN"] = new(2, 1),
         ["TCPACCEPT"] = new(1, 1), ["TCPSEND"] = new(2, 0),
         ["TCPRECV"] = new(2, 1), ["TCPEOF"] = new(1, 1),
         ["TCPPOLL"] = new(1, 1), ["TCPPEER"] = new(1, 1),
@@ -87,7 +92,8 @@ public static class Effects
         // time
         ["TICKS"] = new(0, 1), ["SLEEP"] = new(1, 0), ["CLOCK"] = new(0, 1),
         // scribbler
-        ["SCRIBBLEROPEN"] = new(2, 1), ["SCRIBBLERPIXEL"] = new(6, 1),
+        ["SCRIBBLEROPEN"] = new(2, 1), ["TRYSCRIBBLEROPEN"] = new(2, 1),
+        ["SCRIBBLEROF"] = new(1, 1), ["SCRIBBLERSHUT"] = new(1, 1), ["SCRIBBLERPIXEL"] = new(6, 1),
         ["SCRIBBLERFILL"] = new(4, 1), ["SCRIBBLERTEXT"] = new(8, 1),
         ["SCRIBBLERGETPIXEL"] = new(3, 1), ["SCRIBBLERWIDTH"] = new(1, 1),
         ["SCRIBBLERHEIGHT"] = new(1, 1), ["SCRIBBLERBLIT"] = new(1, 1),
@@ -97,7 +103,7 @@ public static class Effects
         ["SCRIBBLERSAVE"] = new(2, 1), ["SCRIBBLERPLACE"] = new(3, 1),
         // sound
         ["SOUND"] = new(2, 0), ["NOTEON"] = new(2, 0), ["NOTEOFF"] = new(1, 0),
-        ["SOUNDQUEUE"] = new(3, 0), ["SOUNDSTOP"] = new(1, 0),
+        ["SOUNDQUEUE"] = new(3, 0), ["SOUNDQUEUED"] = new(1, 1), ["SOUNDSTOP"] = new(1, 0),
         ["SOUNDGAIN"] = new(2, 0), ["SOUNDWAVE"] = new(2, 0),
     };
 }

@@ -1,0 +1,327 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem seedturtle.shoddy — reckoner seed: turtle.shoddy, LOGO at a prompt
+Rem
+Rem FORWARD 100, TURNRIGHT 90, four times, and there is a square on the
+Rem screen. That is what this seed is for, and it is the oldest reason
+Rem anybody ever put a language in front of a beginner.
+Rem
+Rem THE FIRST RESOURCE WHOSE STATE IS SHODDY'S OWN. A recio file, an
+Rem isam table and a scribbler window all keep their state where the
+Rem operating system keeps it: a word reads the binding and never writes
+Rem it, because the bytes and the pixels are not in the reckoner. A
+Rem TURTLE is different — its position, heading, pen and colour live in
+Rem a Shoddy record, and every step changes them.
+Rem
+Rem So this is the seed that needed RckUpdated, reckoner's other half of
+Rem RckOpened: a way for a word to say "the thing under this name has
+Rem moved". Without it a turtle could be opened and asked where it was,
+Rem and never advanced.
+Rem
+Rem WHAT THE BINDING HOLDS. ResHand is the scribbler SLOT, exactly as
+Rem seedscribbler holds one — a Scribbler is its own value kind and will
+Rem not fit in a binding, so the drawing surface is reached through
+Rem SCRIBBLEROF. ResData is the turtle's own seven: x, y, heading, pen,
+Rem and the three colour channels. Between them they are a whole Turtle,
+Rem rebuilt on every call and written back whenever it changed.
+Rem
+Rem NOTHING HERE ABORTS, and turtle.shoddy deserves the credit: it has
+Rem not one Error in it. Every guard below is about arguments — an angle
+Rem that is not a number, a colour that is not — rather than about the
+Rem machine being fragile.
+Rem
+Rem THE BLIT IS NOT AUTOMATIC, and that is a choice worth stating.
+Rem Drawing happens into the buffer and TURTLEBLIT pushes it to the
+Rem window, so a hundred steps cost one repaint rather than a hundred.
+Rem A session that draws and sees nothing has forgotten TURTLEBLIT, and
+Rem that is the price of not making every FORWARD flicker.
+Rem ==================================================================
+
+Include "turtle.shoddy"
+Include "cuttle.shoddy"
+Include "reckoner.shoddy"
+Include "seq.shoddy"
+
+Def TsKindName() As String
+    "turtle"
+
+Rem ---- the binding, and the Turtle rebuilt from it -----------------------
+
+Def TsData(t As Turtle) As Cell
+    CutList({ CutNum(X(t)), CutNum(Y(t)), CutNum(Heading(t)), CutBool(Pen(t)),
+              CutNum(R(t)), CutNum(G(t)), CutNum(B(t)) })
+
+Def TsCellsOf(c As Cell) As List Of Cell
+    Select Case c
+        Case CutList(xs)
+            xs
+        Case Else
+            { }
+
+Def TsNumAt(c As Cell, k As Number) As Number
+    TsNumOf(Nth(TsCellsOf(c), k))
+
+Def TsNumOf(c As Cell) As Number
+    Select Case c
+        Case CutNum(x)
+            x
+        Case Else
+            0
+
+Def TsPenOf(c As Cell) As Boolean
+    Select Case Nth(TsCellsOf(c), 4)
+        Case CutBool(p)
+            p
+        Case Else
+            True
+
+Rem The scribbler comes from the slot and the rest from the data cell,
+Rem so the Turtle a word works with is assembled fresh and the one it
+Rem leaves is written back. The surface is mutated in place by the
+Rem drawing, which is why only the seven need saving.
+Def TsTurtle(r As RckRes) As Turtle
+    Turtle(ScribblerOf(ResHandOf(r)), TsNumAt(ResDataOf(r), 1), TsNumAt(ResDataOf(r), 2),
+           TsNumAt(ResDataOf(r), 3), TsPenOf(ResDataOf(r)),
+           TsNumAt(ResDataOf(r), 5), TsNumAt(ResDataOf(r), 6), TsNumAt(ResDataOf(r), 7))
+
+Rem ---- finding the turtle a word was named ------------------------------
+
+Def TsFound(word As String, st As RckState, c As Cell) As Result
+    Select Case RckTextArg(word, c)
+        Case Ok(nm)
+            TsFoundAt(word, st, nm)
+        Case Err(w, at)
+            Err(w, at)
+        Case Else
+            Err(word & " did not answer", 0)
+
+Def TsFoundAt(word As String, st As RckState, nm As String) As Result
+    If Not RckBoundTo(st, nm) Then
+        Err(word & ": THERE IS NOTHING OPEN CALLED " & nm, 0)
+    Else
+        TsFoundKind(word, First(RckResOf(st, nm)), nm)
+
+Def TsFoundKind(word As String, r As RckRes, nm As String) As Result
+    If ResKindOf(r) <> TsKindName() Then
+        Err(word & ": " & nm & " IS A " & Upper(ResKindOf(r)) & ", NOT A TURTLE", 0)
+    Else
+        Ok(r)
+
+Rem ---- TURTLEOPEN --------------------------------------------------------
+
+Def TsSeedOpen(st As RckState) As RckState
+    RckReg(st, "TURTLEOPEN", 3, RckPureOver(Fn(s, vs) => TsOpen(s, vs)), "( w h name -- )", "Open a w by h drawing window with a turtle at its centre facing up, pen down, drawing white on black, and keep it under that name. CLOSE shuts it; BOUND lists what is open.")
+
+Def TsOpen(st As RckState, vs As List Of Cell) As RckWork
+    Select Case Pair(RckWholeArg("TURTLEOPEN", Nth(vs, 1)), RckWholeArg("TURTLEOPEN", Nth(vs, 2)))
+        Case Pair(Ok(wid), Ok(hgt))
+            TsOpenNamed(st, wid, hgt, Nth(vs, 3))
+        Case Else
+            RckWorkBad("TURTLEOPEN needs a width, a height and a name")
+
+Def TsOpenNamed(st As RckState, wid As Number, hgt As Number, nc As Cell) As RckWork
+    Select Case RckTextArg("TURTLEOPEN", nc)
+        Case Ok(nm)
+            TsOpenFree(st, wid, hgt, nm)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("TURTLEOPEN did not answer")
+
+Def TsOpenFree(st As RckState, wid As Number, hgt As Number, nm As String) As RckWork
+    If RckBoundTo(st, nm) Then
+        RckWorkBad("TURTLEOPEN: THERE IS ALREADY SOMETHING OPEN CALLED " & nm)
+    Else
+        TsOpenSized(wid, hgt, nm)
+
+Def TsOpenSized(wid As Number, hgt As Number, nm As String) As RckWork
+    If wid < 1 Or hgt < 1 Then
+        RckWorkBad("TURTLEOPEN: A WINDOW MUST BE AT LEAST 1 BY 1")
+    Else
+        TsOpenAt(wid, hgt, nm)
+
+Rem NewTurtle would go through the ABORTING ScribblerOpen, so the window
+Rem is opened through the guarded one and the black fill and the centred
+Rem turtle are done here — the same three things NewTurtle does, over a
+Rem window that reported rather than died.
+Def TsOpenAt(wid As Number, hgt As Number, nm As String) As RckWork
+    Select Case TryScribblerOpen(wid, hgt)
+        Case Ok(slot)
+            TsOpenFilled(slot, wid, hgt, nm)
+        Case Err(w, at)
+            RckWorkBad("TURTLEOPEN: " & w)
+        Case Else
+            RckWorkBad("TURTLEOPEN did not answer")
+
+Def TsOpenFilled(slot As Number, wid As Number, hgt As Number, nm As String) As RckWork
+    TsOpenBound(slot, nm, ScribblerFill(ScribblerOf(slot), 0, 0, 0), wid, hgt)
+
+Def TsOpenBound(slot As Number, nm As String, sc As Scribbler, wid As Number, hgt As Number) As RckWork
+    RckOpened(nm, TsKindName(), slot,
+              TsData(Turtle(sc, wid / 2, hgt / 2, 0, True, 255, 255, 255)),
+              Fn() => ScribblerShut(slot))
+
+Rem ---- moving, which is where RckUpdated earns its keep -----------------
+
+Rem Every one of these rebuilds the Turtle, asks turtle.shoddy to do the
+Rem work, and writes the answer back under the same name. The surface is
+Rem mutated in place, so only the seven travel.
+Def TsMoved(word As String, r As RckRes, t As Turtle) As RckWork
+    RckUpdated(ResNameOf(r), TsData(t), { })
+
+Def TsSeedMove(st As RckState) As RckState
+    Let s1 = TsRegStep(st, "TURTLEFORWARD", Forward, "Move d forward, drawing if the pen is down.")
+    Let s2 = TsRegStep(s1, "TURTLEBACK", Back, "Move d backward, drawing if the pen is down.")
+    Let s3 = TsRegStep(s2, "TURTLERIGHT", TurnRight, "Turn deg degrees clockwise.")
+    Let s4 = TsRegStep(s3, "TURTLELEFT", TurnLeft, "Turn deg degrees anticlockwise.")
+    Let s5 = TsRegStep(s4, "TURTLESETHEADING", SetHeading, "Face deg degrees, with 0 straight up and clockwise positive.")
+    Let s6 = RckReg(s5, "TURTLEHOME", 1, RckPureOver(Fn(s, vs) => TsPlain("TURTLEHOME", s, vs, Home)), "( name -- )", "Put the turtle back at the centre facing up. Pen and colour are kept, and nothing is erased.")
+    Let s7 = RckReg(s6, "TURTLEPENUP", 1, RckPureOver(Fn(s, vs) => TsPlain("TURTLEPENUP", s, vs, PenUp)), "( name -- )", "Lift the pen, so moving leaves no trail.")
+    RckReg(s7, "TURTLEPENDOWN", 1, RckPureOver(Fn(s, vs) => TsPlain("TURTLEPENDOWN", s, vs, PenDown)), "( name -- )", "Put the pen down, so moving draws.")
+
+Def TsRegStep(st As RckState, name As String, f As [ Turtle Number -- Turtle ], desc As String) As RckState
+    RckReg(st, name, 2, RckPureOver(Fn(s, vs) => TsStep(name, s, vs, f)), "( name n -- )", desc)
+
+Def TsStep(word As String, st As RckState, vs As List Of Cell, f As [ Turtle Number -- Turtle ]) As RckWork
+    Select Case Pair(TsFound(word, st, Nth(vs, 1)), RckNumArg(word, Nth(vs, 2)))
+        Case Pair(Ok(r), Ok(n))
+            TsMoved(word, r, Call(f, TsTurtle(r), n))
+        Case Else
+            TsStepWhy(word, st, vs)
+
+Rem Which of the two was wrong, said in its own words rather than as one
+Rem message covering both.
+Def TsStepWhy(word As String, st As RckState, vs As List Of Cell) As RckWork
+    Select Case TsFound(word, st, Nth(vs, 1))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad(word & ": THAT IS NOT A NUMBER OF STEPS OR DEGREES")
+
+Def TsPlain(word As String, st As RckState, vs As List Of Cell, f As [ Turtle -- Turtle ]) As RckWork
+    Select Case TsFound(word, st, First(vs))
+        Case Ok(r)
+            TsMoved(word, r, Call(f, TsTurtle(r)))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Rem ---- placing and colouring --------------------------------------------
+
+Def TsSeedPlace(st As RckState) As RckState
+    Let s1 = RckReg(st, "TURTLEGOTO", 3, RckPureOver(Fn(s, vs) => TsGoto(s, vs)), "( name x y -- )", "Move straight to x, y, drawing if the pen is down. The centre of the window is half its width and half its height; y counts downward.")
+    Let s2 = RckReg(s1, "TURTLESETPEN", 4, RckPureOver(Fn(s, vs) => TsSetPen(s, vs)), "( name r g b -- )", "Draw in that colour from now on. Channels are 0 to 255.")
+    Let s3 = RckReg(s2, "TURTLEWHERE", 1, RckPureOver(Fn(s, vs) => TsWhere(s, vs)), "( name -- list )", "Where the turtle is and which way it faces: a list of x, y and heading.")
+    RckReg(s3, "TURTLEBLIT", 1, RckPureOver(Fn(s, vs) => TsBlit(s, vs)), "( name -- )", "Show what has been drawn. Drawing goes into a buffer, so a hundred steps cost one repaint — and a picture nobody can see is one nobody blitted.")
+
+Def TsGoto(st As RckState, vs As List Of Cell) As RckWork
+    Select Case TsFound("TURTLEGOTO", st, Nth(vs, 1))
+        Case Ok(r)
+            TsGotoAt(r, TsNums("TURTLEGOTO", { Nth(vs, 2), Nth(vs, 3) }))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("TURTLEGOTO did not answer")
+
+Def TsGotoAt(r As RckRes, ns As Result) As RckWork
+    Select Case ns
+        Case Ok(xy)
+            TsMoved("TURTLEGOTO", r, SetXY(TsTurtle(r), Nth(xy, 1), Nth(xy, 2)))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("TURTLEGOTO did not answer")
+
+Def TsSetPen(st As RckState, vs As List Of Cell) As RckWork
+    Select Case TsFound("TURTLESETPEN", st, Nth(vs, 1))
+        Case Ok(r)
+            TsSetPenAt(r, TsNums("TURTLESETPEN", Rest(vs)))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("TURTLESETPEN did not answer")
+
+Def TsSetPenAt(r As RckRes, ns As Result) As RckWork
+    Select Case ns
+        Case Ok(c)
+            TsMoved("TURTLESETPEN", r, SetPenColor(TsTurtle(r), Nth(c, 1), Nth(c, 2), Nth(c, 3)))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("TURTLESETPEN did not answer")
+
+Rem The two that do NOT move the turtle, and so answer values rather
+Rem than an update: where it is, and a repaint.
+Def TsWhere(st As RckState, vs As List Of Cell) As RckWork
+    Select Case TsFound("TURTLEWHERE", st, First(vs))
+        Case Ok(r)
+            RckVals({ CutList({ CutNum(TsNumAt(ResDataOf(r), 1)), CutNum(TsNumAt(ResDataOf(r), 2)), CutNum(TsNumAt(ResDataOf(r), 3)) }) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("TURTLEWHERE did not answer")
+
+Def TsBlit(st As RckState, vs As List Of Cell) As RckWork
+    Select Case TsFound("TURTLEBLIT", st, First(vs))
+        Case Ok(r)
+            TsBlitted(ScribblerBlit(ScribblerOf(ResHandOf(r))))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("TURTLEBLIT did not answer")
+
+Def TsBlitted(sc As Scribbler) As RckWork
+    RckVals({ })
+
+Rem ---- saving ------------------------------------------------------------
+
+Def TsSeedSave(st As RckState) As RckState
+    RckReg(st, "TURTLESAVE", 2, RckPureOver(Fn(s, vs) => TsSave(s, vs)), "( name path -- ok )", "Write the drawing to a PNG file; True on success, False on a path it cannot write.")
+
+Def TsSave(st As RckState, vs As List Of Cell) As RckWork
+    Select Case Pair(TsFound("TURTLESAVE", st, Nth(vs, 1)), RckTextArg("TURTLESAVE", Nth(vs, 2)))
+        Case Pair(Ok(r), Ok(path))
+            TsSaveTo(r, path)
+        Case Else
+            RckWorkBad("TURTLESAVE needs a name and a path")
+
+Rem ScribblerSave aborts on a path it cannot write and has no guarded
+Rem twin, so the path is pre-flighted with TryWriteFile — which asks the
+Rem question and leaves the file for the PNG to replace.
+Def TsSaveTo(r As RckRes, path As String) As RckWork
+    If Not TryWriteFile(path, "") Then
+        RckVals({ CutBool(False) })
+    Else
+        TsSaved(ScribblerSave(ScribblerOf(ResHandOf(r)), path))
+
+Def TsSaved(sc As Scribbler) As RckWork
+    RckVals({ CutBool(True) })
+
+Rem ---- reading a run of numbers -----------------------------------------
+
+Def TsNums(word As String, cs As List Of Cell) As Result
+    TsNumsAt(word, cs, { })
+
+Def TsNumsAt(word As String, cs As List Of Cell, acc As List Of Number) As Result
+    If IsEmpty(cs) Then
+        Ok(acc)
+    Else
+        TsNumsNext(word, cs, acc, First(cs))
+
+Def TsNumsNext(word As String, cs As List Of Cell, acc As List Of Number, c As Cell) As Result
+    Select Case c
+        Case CutNum(x)
+            TsNumsAt(word, Rest(cs), Append(acc, x))
+        Case Else
+            Err(RckKindWhy(word, "NUMBERs", c), 0)
+
+Rem ---- the seed ----------------------------------------------------------
+
+Def RckSeedTurtle(st As RckState) As RckState
+    Let s1 = TsSeedOpen(RckSeeding(st, "seed-turtle"))
+    Let s2 = TsSeedMove(s1)
+    Let s3 = TsSeedPlace(s2)
+    TsSeedSave(s3)

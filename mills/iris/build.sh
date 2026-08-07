@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Build / run the iris mill (Unix: Linux / macOS / WSL).
-# Windows users: run this via Git Bash or WSL (same commands).
+# Windows users: use build.ps1 (same commands).
 #
 #   ./build.sh            build both programs into bin/
 #   ./build.sh build      same as above
@@ -19,8 +19,10 @@
 #   dotnet bin/iris.dll
 #
 # Neither takes arguments - the data and model paths are fixed at dat/,
-# relative to this directory, so run from here. Train first; the
-# predictor aborts (politely) without dat/iris-model.bin.
+# relative to this directory, and train/run always run from here
+# regardless of where you invoke this script from: the model is the
+# mill's own asset, not something to relocate by choice of cwd. Train
+# first; the predictor aborts (politely) without dat/iris-model.bin.
 #
 # This is the classification counterpart to the demographics mill.
 # Demographics predicts a number and is scored on how close it gets;
@@ -31,28 +33,14 @@
 # works.
 set -euo pipefail
 cd "$(dirname "$0")"
+. ../../scripts/mill-common.sh
 
-REPO=../..
-MILL=$REPO/bin/mill
-TRAINOUT=bin/iris-train.dll
-RUNOUT=bin/iris.dll
-
-ensure_mill() {
-    [ -x "$MILL" ] || {
-        echo "mill toolchain not built; building it into $REPO/bin ..."
-        dotnet publish "$REPO/src/Shoddy.Mill" -c Release -o "$REPO/bin"
-    }
-}
+TRAIN_OUT=bin/iris-train.dll
+RUN_OUT=bin/iris.dll
 
 build() {
-    ensure_mill
-    "$MILL" weave iris-train.shoddy
-    "$MILL" weave iris.shoddy
-    mkdir -p bin
-    mv -f iris-train.dll iris-train.runtimeconfig.json bin/
-    mv -f iris.dll iris.runtimeconfig.json bin/
-    mv -f Shoddy.*.dll bin/ 2>/dev/null || true
-    echo "built -> $TRAINOUT, $RUNOUT"
+    weave_and_move iris-train.shoddy iris.shoddy
+    echo "built -> $TRAIN_OUT, $RUN_OUT"
 }
 
 case "${1:-build}" in
@@ -60,12 +48,12 @@ case "${1:-build}" in
         build
         ;;
     train)
-        [ -f "$TRAINOUT" ] || build
-        dotnet "$TRAINOUT"
+        [ -f "$TRAIN_OUT" ] || build
+        dotnet "$TRAIN_OUT"
         ;;
     run)
-        [ -f "$RUNOUT" ] || build
-        dotnet "$RUNOUT"
+        [ -f "$RUN_OUT" ] || build
+        dotnet "$RUN_OUT"
         ;;
     test)
         # Run from source, not from bin/: the point is to grade what is

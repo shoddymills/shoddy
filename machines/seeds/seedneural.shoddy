@@ -1,0 +1,1255 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem seedneural.shoddy — reckoner seed: neural.shoddy, converting at
+Rem the bridge
+Rem
+Rem Build a net, train it either way, scale inputs, predict, score, and
+Rem read or write a weight file — entirely on the stack. Per R4.16 there
+Rem is no NETWORK cell at the keyboard: a Net is a dict, the same
+Rem LIST-of-PAIR shape seeddict.shoddy already established —
+Rem { ("w1" matrix) ("b1" list) ("w2" matrix) ("b2" list) } — a Scaler
+Rem is { ("center" list) ("spread" list) }, and a Plan is
+Rem { ("task" str) ("rate" n) ("moment" n) ("batch" n) ("epochs" n) }.
+Rem
+Rem NEURALNEW, NEURALNEWSCALED, NEURALTRAIN and NEURALFIT are RckTouch:
+Rem the first two draw initial weights from Rnd and the last two shuffle
+Rem the row order once per epoch, so two calls with the same arguments
+Rem do not answer the same net — exactly as typing the same line twice
+Rem at a calculator prompt need not. Everything else here is RckPure.
+Rem
+Rem TWO TRAINING PATHS, BOTH BRIDGED, because neural.shoddy has two and
+Rem hiding one would make the dictionary lie about the machine:
+Rem   * NEURALTRAIN — regression, scalar targets, plain SGD.
+Rem   * NEURALFIT   — either head, vector targets, momentum, driven by a
+Rem     plan dict, so the five hyperparameters travel as one cell rather
+Rem     than as five stack positions nobody can keep in order.
+Rem
+Rem WHY THE EPOCH LOOP IS SAFE TO CALL. An earlier pass left NEURALTRAIN
+Rem out, reporting that folding the epoch loop from inside a registered
+Rem word corrupted the engine's own state. It does not, and there is no
+Rem such fault: the epoch fold, the shuffle, and the report quotation
+Rem invoked through Call all thread correctly through a dictionary
+Rem word's dispatch, at one epoch and at five hundred, on a dictionary
+Rem of five hundred words. The seed suite trains a net to a stated MSE
+Rem bound and then goes on evaluating, which is the test that would have
+Rem caught it. What the report quotation IS here is [ Drop Drop ]: the
+Rem engine performs no effect (R3.2), so per-epoch progress has nobody
+Rem to report to and the silent quotation is the only honest argument.
+Rem
+Rem EVERY GUARD HERE MATCHES ONE neural.shoddy ITSELF NEEDS. The shape
+Rem checks are not defensive decoration — VSub and MatVec are
+Rem dimension-checked and Error on a mismatch, NetStep divides by the
+Rem batch length and takes First of the batch's gradients, and
+Rem NetEpoch divides by the batch size. So a row whose width is not the
+Rem net's input count, a target vector that is not the output count, a
+Rem batch size of zero or one past the row count, and an empty training
+Rem set are each refused before the machine is entered rather than
+Rem after it has aborted.
+Rem
+Rem BOTH FILE FORMATS ARE BRIDGED, and the binary one took a runtime
+Rem change to get there. NEURALSAVE and NEURALLOAD carry the TEXT pair,
+Rem because NetSave/NetLoad are WriteLines/ReadLines underneath and this
+Rem seed can reimplement those over TRYWRITEFILE/TRYREADFILE the way
+Rem seedfile.shoddy already does. The binary pair — NetSaveBin,
+Rem NetLoadBin, ModelSave and ModelLoad — could not be reached the same
+Rem way, and an earlier pass left them out saying so.
+Rem
+Rem What stopped them was never the handle. These words open and close
+Rem inside their own bodies, so nothing R3.5(b) is about ever happens:
+Rem no handle reaches the stack and no UNDO can strand one. It was that
+Rem there was no way to ASK. NetLoadBin Errors on a short or
+Rem wrongly-tagged file with the handle still open; nothing could learn
+Rem a file's size or its magic number without opening it first; and
+Rem BOpen is FileMode.OpenOrCreate, so the very act of checking left an
+Rem empty file behind. TRYBOPEN is the runtime change that answered all
+Rem three — an EXISTING-file-only open that reports failure as a Result
+Rem — and the binary words below are built on it, reusing
+Rem neural.shoddy's own NetPutAt/NetGetAt so the format stays one
+Rem definition and files move both ways bit for bit.
+Rem
+Rem A MODEL IS A CELL KIND HERE, like a Net, a Scaler and a Plan:
+Rem { ("net" net) ("task" str) ("prep" scaler) }. It has a constructor
+Rem and a predict of its own rather than only a save and a load, because
+Rem a model you can write to disk and read back but not predict with is
+Rem not a bridged feature. NEURALMODELPREDICT takes RAW inputs and does
+Rem the scaling itself, which is the whole reason neural.shoddy has a
+Rem Model type at all.
+Rem ==================================================================
+
+Include "neural.shoddy"
+Include "matrix.shoddy"
+Include "cuttle.shoddy"
+Include "reckoner.shoddy"
+Include "seq.shoddy"
+Include "str.shoddy"
+
+Rem ---- shared conversions -----------------------------------------------
+
+Def NsListNum(word As String, c As Cell) As Result
+    Select Case RckListArg(word, c)
+        Case Ok(xs)
+            NsNumsAt(word, xs, { })
+        Case Err(w, at)
+            Err(w, at)
+        Case Else
+            Err(word & " did not answer", 0)
+
+Def NsNumsAt(word As String, xs As List Of Cell, acc As List Of Number) As Result
+    If IsEmpty(xs) Then
+        Ok(acc)
+    Else
+        NsNumsNext(word, xs, acc, First(xs))
+
+Def NsNumsNext(word As String, xs As List Of Cell, acc As List Of Number, c As Cell) As Result
+    Select Case c
+        Case CutNum(x)
+            NsNumsAt(word, Rest(xs), Append(acc, x))
+        Case Else
+            Err(RckKindWhy(word, "a LIST of NUMBERs", c), 0)
+
+Rem A LIST cell of LIST-of-NUMBER cells: one training row per element.
+Def NsListOfLists(word As String, c As Cell) As Result
+    Select Case RckListArg(word, c)
+        Case Ok(xs)
+            NsListsAt(word, xs, { })
+        Case Err(w, at)
+            Err(w, at)
+        Case Else
+            Err(word & " did not answer", 0)
+
+Def NsListsAt(word As String, xs As List Of Cell, acc As List Of List Of Number) As Result
+    If IsEmpty(xs) Then
+        Ok(acc)
+    Else
+        NsListsNext(word, xs, acc, First(xs))
+
+Def NsListsNext(word As String, xs As List Of Cell, acc As List Of List Of Number, c As Cell) As Result
+    Select Case NsListNum(word, c)
+        Case Ok(row)
+            NsListsAt(word, Rest(xs), Append(acc, row))
+        Case Err(w, at)
+            Err(w, at)
+        Case Else
+            Err(word & " did not answer", 0)
+
+Def NsEntry(k As String, v As Cell) As Cell
+    CutPair(Pair(CutStr(k), v))
+
+Def NsListOf(ns As List Of Number) As Cell
+    CutList(Map(ns, CutNum))
+
+Def NsNetCell(n As Net) As Cell
+    CutList({ NsEntry("w1", CutMat(W1(n))), NsEntry("b1", NsListOf(ToList(B1(n)))), NsEntry("w2", CutMat(W2(n))), NsEntry("b2", NsListOf(ToList(B2(n)))) })
+
+Rem The other direction: a dict built by NsNetCell, read back positionally.
+Def NsNetOf(word As String, c As Cell) As Result
+    Select Case RckListArg(word, c)
+        Case Ok(fields)
+            NsNetFields(word, fields)
+        Case Err(w, at)
+            Err(w, at)
+        Case Else
+            Err(word & " did not answer", 0)
+
+Def NsNetFields(word As String, fields As List Of Cell) As Result
+    If Length(fields) <> 4 Then
+        Err(word & ": NOT A NET — USE NEURALNEW OR NEURALTRAIN'S OWN ANSWER", 0)
+    Else
+        NsNetVals(word, NsPairVal(Nth(fields, 1)), NsPairVal(Nth(fields, 2)), NsPairVal(Nth(fields, 3)), NsPairVal(Nth(fields, 4)))
+
+Def NsPairVal(entry As Cell) As Cell
+    Select Case entry
+        Case CutPair(p)
+            Snd(p)
+        Case Else
+            entry
+
+Def NsNetVals(word As String, w1c As Cell, b1c As Cell, w2c As Cell, b2c As Cell) As Result
+    Select Case Pair(w1c, w2c)
+        Case Pair(CutMat(w1), CutMat(w2))
+            NsNetBiases(word, w1, b1c, w2, b2c)
+        Case Else
+            Err(word & ": NOT A NET — USE NEURALNEW OR NEURALTRAIN'S OWN ANSWER", 0)
+
+Def NsNetBiases(word As String, w1 As Matrix, b1c As Cell, w2 As Matrix, b2c As Cell) As Result
+    Select Case Pair(NsListNum(word, b1c), NsListNum(word, b2c))
+        Case Pair(Ok(b1), Ok(b2))
+            Ok(Net(w1, ToArray(b1), w2, ToArray(b2)))
+        Case Else
+            Err(word & ": NOT A NET — USE NEURALNEW OR NEURALTRAIN'S OWN ANSWER", 0)
+
+Def NsScalerCell(s As Scaler) As Cell
+    CutList({ NsEntry("center", NsListOf(ToList(Center(s)))), NsEntry("spread", NsListOf(ToList(Spread(s)))) })
+
+Def NsScalerOf(word As String, c As Cell) As Result
+    Select Case RckListArg(word, c)
+        Case Ok(fields)
+            NsScalerFields(word, fields)
+        Case Err(w, at)
+            Err(w, at)
+        Case Else
+            Err(word & " did not answer", 0)
+
+Def NsScalerFields(word As String, fields As List Of Cell) As Result
+    If Length(fields) <> 2 Then
+        Err(word & ": NOT A SCALER — USE NEURALSCALERFIT'S OWN ANSWER", 0)
+    Else
+        NsScalerVals(word, NsPairVal(Nth(fields, 1)), NsPairVal(Nth(fields, 2)))
+
+Def NsScalerVals(word As String, centerC As Cell, spreadC As Cell) As Result
+    Select Case Pair(NsListNum(word, centerC), NsListNum(word, spreadC))
+        Case Pair(Ok(center), Ok(spread))
+            Ok(Scaler(ToArray(center), ToArray(spread)))
+        Case Else
+            Err(word & ": NOT A SCALER — USE NEURALSCALERFIT'S OWN ANSWER", 0)
+
+Rem ---- a Plan as a dict ---------------------------------------------
+
+Rem The head is spelled out rather than numbered, because a plan is a
+Rem cell someone reads on the stack and "task: 1" says nothing. These
+Rem two names are the whole of that spelling, in one place, so the
+Rem builder and the reader cannot disagree about them.
+
+Def NsRegressName() As String
+    "regress"
+
+Def NsClassName() As String
+    "classify"
+
+Def NsPlanCell(task As String, lr As Number, mu As Number, batch As Number, epochs As Number) As Cell
+    CutList({ NsEntry("task", CutStr(task)), NsEntry("rate", CutNum(lr)), NsEntry("moment", CutNum(mu)), NsEntry("batch", CutNum(batch)), NsEntry("epochs", CutNum(epochs)) })
+
+Def NsPlanOf(word As String, c As Cell) As Result
+    Select Case RckListArg(word, c)
+        Case Ok(fields)
+            NsPlanFields(word, fields)
+        Case Err(w, at)
+            Err(w, at)
+        Case Else
+            Err(word & " did not answer", 0)
+
+Def NsPlanWhy(word As String) As String
+    word & ": NOT A PLAN — USE NEURALREGRESSPLAN OR NEURALCLASSPLAN'S OWN ANSWER"
+
+Def NsPlanFields(word As String, fields As List Of Cell) As Result
+    If Length(fields) <> 5 Then
+        Err(NsPlanWhy(word), 0)
+    Else
+        NsPlanTask(word, NsPairVal(First(fields)), Map(Rest(fields), NsPairVal))
+
+Def NsPlanTask(word As String, taskC As Cell, rest As List Of Cell) As Result
+    Select Case taskC
+        Case CutStr(task)
+            NsPlanNums(word, task, rest)
+        Case Else
+            Err(NsPlanWhy(word), 0)
+
+Def NsPlanNums(word As String, task As String, rest As List Of Cell) As Result
+    Select Case NsListNum(word, CutList(rest))
+        Case Ok(ns)
+            NsPlanMade(word, task, Nth(ns, 1), Nth(ns, 2), Nth(ns, 3), Nth(ns, 4))
+        Case Err(w, at)
+            Err(w, at)
+        Case Else
+            Err(word & " did not answer", 0)
+
+Def NsPlanMade(word As String, task As String, lr As Number, mu As Number, batch As Number, epochs As Number) As Result
+    If task = NsClassName() Then
+        Ok(ClassPlan(lr, mu, batch, epochs))
+    Else
+        If task = NsRegressName() Then
+            Ok(RegressPlan(lr, mu, batch, epochs))
+        Else
+            Err(NsPlanWhy(word), 0)
+
+Rem ---- the shape checks the training and scoring words share ----------
+
+Rem neural.shoddy is dimension-checked rather than forgiving: VSub and
+Rem MatVec Error on a mismatch, NetStep takes First of a batch's
+Rem gradients and divides by their count, and NetEpoch divides by the
+Rem batch size. Each of the questions below is one of those, asked
+Rem before the machine is entered. They answer "" for "nothing wrong",
+Rem so a caller reads a single string rather than unwrapping a Result
+Rem at five call sites.
+
+Def NsWhyData(word As String, n As Net, xs As List Of List Of Number, nys As Number) As String
+    If IsEmpty(xs) Then
+        word & ": THERE ARE NO ROWS TO WORK ON"
+    Else
+        NsWhyPaired(word, n, xs, nys)
+
+Def NsWhyPaired(word As String, n As Net, xs As List Of List Of Number, nys As Number) As String
+    If Length(xs) <> nys Then
+        word & ": " & Str(Length(xs)) & " ROWS AND " & Str(nys) & " TARGETS — THEY MUST PAIR UP"
+    Else
+        NsWhyWidth(word, n, xs)
+
+Def NsWhyWidth(word As String, n As Net, xs As List Of List Of Number) As String
+    If Any(xs, Fn(r) => Length(r) <> Cols(W1(n))) Then
+        word & ": EVERY ROW MUST HAVE " & Str(Cols(W1(n))) & " ENTRIES, THE NET'S INPUT COUNT"
+    Else
+        ""
+
+Rem A batch bigger than the row count is not an abort — NetEpoch tiles
+Rem Floor(rows / batch) chunks, so it silently trains on nothing and
+Rem answers the net unchanged. That is worse than a refusal, because it
+Rem looks like training that did not work rather than a number that was
+Rem wrong, so it is refused here.
+Def NsWhyTrain(word As String, n As Net, xs As List Of List Of Number, nys As Number, batch As Number, epochs As Number) As String
+    If NsWhyData(word, n, xs, nys) <> "" Then
+        NsWhyData(word, n, xs, nys)
+    Else
+        NsWhyBatch(word, Length(xs), batch, epochs)
+
+Def NsWhyBatch(word As String, rows As Number, batch As Number, epochs As Number) As String
+    If batch < 1 Or batch <> Floor(batch) Or batch > rows Then
+        word & ": BATCH MUST BE A WHOLE NUMBER FROM 1 TO " & Str(rows) & ", THE ROW COUNT"
+    Else
+        NsWhyEpochs(word, epochs)
+
+Def NsWhyEpochs(word As String, epochs As Number) As String
+    If epochs < 0 Or epochs <> Floor(epochs) Then
+        word & ": EPOCHS MUST BE A WHOLE NUMBER OF 0 OR MORE"
+    Else
+        ""
+
+Rem A scalar target only pairs with a one-output net; anything wider and
+Rem VSub refuses the pairing inside the backward pass.
+Def NsWhyScalar(word As String, n As Net) As String
+    If Rows(W2(n)) <> 1 Then
+        word & ": TARGETS ARE SINGLE NUMBERS AND THIS NET HAS " & Str(Rows(W2(n))) & " OUTPUTS — USE NEURALFIT"
+    Else
+        ""
+
+Def NsWhyVectors(word As String, n As Net, ys As List Of List Of Number) As String
+    If Any(ys, Fn(r) => Length(r) <> Rows(W2(n))) Then
+        word & ": EVERY TARGET MUST HAVE " & Str(Rows(W2(n))) & " ENTRIES, THE NET'S OUTPUT COUNT"
+    Else
+        ""
+
+Def NsWhyX(word As String, n As Net, got As Number) As String
+    word & ": X HAS " & Str(got) & " ENTRIES, THE NET WANTS " & Str(Cols(W1(n)))
+
+Rem ---- NEURALNEW, NEURALNEWSCALED -------------------------------------
+
+Rem Two initializations over one guard, because the architecture
+Rem argument is the same three whole numbers either way and only the
+Rem draw differs: NetNew's fixed ±0.01, which suits the handful of
+Rem inputs a regression demo has, and NetNewScaled's Xavier spread,
+Rem which is what a wide layer needs if its units are to differentiate
+Rem in this lifetime.
+
+Def NsSeedNew(st As RckState) As RckState
+    Let s1 = RckReg(st, "NEURALNEW", 3, RckTouch(Fn(vs) => NsNewOf("NEURALNEW", vs, NetNew)), "( ni nh no -- net )", "A new net: ni inputs, nh hidden units, no outputs, small random weights. Refuses unless all three are whole numbers of 1 or more.")
+    RckReg(s1, "NEURALNEWSCALED", 3, RckTouch(Fn(vs) => NsNewOf("NEURALNEWSCALED", vs, NetNewScaled)), "( ni nh no -- net )", "The same, with Xavier-scaled weights and zero biases — the initialization a wide layer needs. Refuses unless all three are whole numbers of 1 or more.")
+
+Def NsNewOf(word As String, vs As List Of Cell, f As [ Number Number Number -- Net ]) As RckWork
+    Select Case NsListNum(word, CutList(vs))
+        Case Ok(ns)
+            NsNewAt(word, Nth(ns, 1), Nth(ns, 2), Nth(ns, 3), f)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Def NsNewAt(word As String, ni As Number, nh As Number, no As Number, f As [ Number Number Number -- Net ]) As RckWork
+    If ni < 1 Or nh < 1 Or no < 1 Or ni <> Floor(ni) Or nh <> Floor(nh) Or no <> Floor(no) Then
+        RckWorkBad(word & ": NI, NH AND NO MUST ALL BE WHOLE NUMBERS OF 1 OR MORE")
+    Else
+        RckVals({ NsNetCell(Call(f, ni, nh, no)) })
+
+Rem ---- NEURALPREDICT ----------------------------------------------------
+
+Def NsSeedPredict(st As RckState) As RckState
+    RckReg(st, "NEURALPREDICT", 2, RckPure(Fn(vs) => NsPredict(vs)), "( net x -- y )", "The net's scalar output for input x.")
+
+Def NsPredict(vs As List Of Cell) As RckWork
+    Select Case NsNetOf("NEURALPREDICT", First(vs))
+        Case Ok(n)
+            NsPredictX(n, Nth(vs, 2))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("NEURALPREDICT did not answer")
+
+Def NsPredictX(n As Net, xc As Cell) As RckWork
+    Select Case NsListNum("NEURALPREDICT", xc)
+        Case Ok(x)
+            NsPredictShaped(n, x)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("NEURALPREDICT did not answer")
+
+Def NsPredictShaped(n As Net, x As List Of Number) As RckWork
+    If Length(x) <> Cols(W1(n)) Then
+        RckWorkBad(NsWhyX("NEURALPREDICT", n, Length(x)))
+    Else
+        RckVals({ CutNum(NetOut(n, ToArray(x))) })
+
+Rem ---- NEURALTRAIN: regression, scalar targets, plain SGD ---------------
+
+Rem The report quotation is [ Drop Drop ] and can be nothing else: the
+Rem engine performs no effect (R3.2), so there is nobody for a
+Rem per-epoch progress line to be printed to. What a session sees is the
+Rem trained net on the stack and NEURALMSE to judge it by, which is the
+Rem same information one line later.
+
+Def NsSeedTrain(st As RckState) As RckState
+    RckReg(st, "NEURALTRAIN", 6, RckTouch(Fn(vs) => NsTrain(vs)), "( net xs ys lr batch epochs -- net )", "Train net on the rows of xs against the single-number targets ys: learning rate lr, mini-batches of batch rows, epochs passes over the data, shuffled each pass.")
+
+Def NsTrain(vs As List Of Cell) As RckWork
+    Select Case NsNetOf("NEURALTRAIN", Nth(vs, 1))
+        Case Ok(n)
+            NsTrainXs(n, vs)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("NEURALTRAIN did not answer")
+
+Def NsTrainXs(n As Net, vs As List Of Cell) As RckWork
+    Select Case NsListOfLists("NEURALTRAIN", Nth(vs, 2))
+        Case Ok(xs)
+            NsTrainYs(n, xs, vs)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("NEURALTRAIN did not answer")
+
+Def NsTrainYs(n As Net, xs As List Of List Of Number, vs As List Of Cell) As RckWork
+    Select Case NsListNum("NEURALTRAIN", Nth(vs, 3))
+        Case Ok(ys)
+            NsTrainNums(n, xs, ys, vs)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("NEURALTRAIN did not answer")
+
+Def NsTrainNums(n As Net, xs As List Of List Of Number, ys As List Of Number, vs As List Of Cell) As RckWork
+    Select Case NsListNum("NEURALTRAIN", CutList({ Nth(vs, 4), Nth(vs, 5), Nth(vs, 6) }))
+        Case Ok(ns)
+            NsTrainAt(n, xs, ys, Nth(ns, 1), Nth(ns, 2), Nth(ns, 3))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("NEURALTRAIN did not answer")
+
+Def NsTrainAt(n As Net, xs As List Of List Of Number, ys As List Of Number, lr As Number, batch As Number, epochs As Number) As RckWork
+    If NsWhyTrain("NEURALTRAIN", n, xs, Length(ys), batch, epochs) <> "" Then
+        RckWorkBad(NsWhyTrain("NEURALTRAIN", n, xs, Length(ys), batch, epochs))
+    Else
+        NsTrainScalar(n, xs, ys, lr, batch, epochs)
+
+Def NsTrainScalar(n As Net, xs As List Of List Of Number, ys As List Of Number, lr As Number, batch As Number, epochs As Number) As RckWork
+    If NsWhyScalar("NEURALTRAIN", n) <> "" Then
+        RckWorkBad(NsWhyScalar("NEURALTRAIN", n))
+    Else
+        RckVals({ NsNetCell(NetTrain(n, Map(xs, ToArray), ys, lr, batch, epochs, [ Drop Drop ])) })
+
+Rem ---- NEURALREGRESSPLAN, NEURALCLASSPLAN, NEURALFIT --------------------
+
+Rem NetFit's second way in: either head, target VECTORS rather than
+Rem single numbers, and momentum. The five hyperparameters travel as one
+Rem plan cell because five bare numbers in a fixed order on the stack is
+Rem exactly the arrangement nobody can read back a line later.
+
+Def NsSeedPlans(st As RckState) As RckState
+    Let s1 = RckReg(st, "NEURALREGRESSPLAN", 4, RckPure(Fn(vs) => NsPlan("NEURALREGRESSPLAN", NsRegressName(), vs)), "( lr mu batch epochs -- plan )", "A training plan for the regression head: a dict with task, rate, moment, batch and epochs. mu is the momentum, and 0 makes this plain descent.")
+    RckReg(s1, "NEURALCLASSPLAN", 4, RckPure(Fn(vs) => NsPlan("NEURALCLASSPLAN", NsClassName(), vs)), "( lr mu batch epochs -- plan )", "The same for the classification head, which reads the outputs through NEURALSOFTMAX and wants one-hot targets.")
+
+Def NsPlan(word As String, task As String, vs As List Of Cell) As RckWork
+    Select Case NsListNum(word, CutList(vs))
+        Case Ok(ns)
+            NsPlanAt(word, task, Nth(ns, 1), Nth(ns, 2), Nth(ns, 3), Nth(ns, 4))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Rem The batch size is only checked against the row count at NEURALFIT: a
+Rem plan is built before the data is on the stack and cannot know how
+Rem many rows it will meet. What can be said this early is that a batch
+Rem below one, or a fractional count of either kind, is a typo whatever
+Rem data follows it.
+Def NsPlanAt(word As String, task As String, lr As Number, mu As Number, batch As Number, epochs As Number) As RckWork
+    If batch < 1 Or batch <> Floor(batch) Then
+        RckWorkBad(word & ": BATCH MUST BE A WHOLE NUMBER OF 1 OR MORE")
+    Else
+        NsPlanEpochs(word, task, lr, mu, batch, epochs)
+
+Def NsPlanEpochs(word As String, task As String, lr As Number, mu As Number, batch As Number, epochs As Number) As RckWork
+    If NsWhyEpochs(word, epochs) <> "" Then
+        RckWorkBad(NsWhyEpochs(word, epochs))
+    Else
+        RckVals({ NsPlanCell(task, lr, mu, batch, epochs) })
+
+Def NsSeedFit(st As RckState) As RckState
+    RckReg(st, "NEURALFIT", 4, RckTouch(Fn(vs) => NsFit(vs)), "( net plan xs ys -- net )", "Train net on the rows of xs against the target VECTORS ys, following plan. A classify plan wants one-hot targets (NEURALONEHOT); a regress plan wants each value in a one-entry list.")
+
+Def NsFit(vs As List Of Cell) As RckWork
+    Select Case NsNetOf("NEURALFIT", Nth(vs, 1))
+        Case Ok(n)
+            NsFitPlan(n, vs)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("NEURALFIT did not answer")
+
+Def NsFitPlan(n As Net, vs As List Of Cell) As RckWork
+    Select Case NsPlanOf("NEURALFIT", Nth(vs, 2))
+        Case Ok(pl)
+            NsFitXs(n, pl, vs)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("NEURALFIT did not answer")
+
+Def NsFitXs(n As Net, pl As Plan, vs As List Of Cell) As RckWork
+    Select Case NsListOfLists("NEURALFIT", Nth(vs, 3))
+        Case Ok(xs)
+            NsFitYs(n, pl, xs, vs)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("NEURALFIT did not answer")
+
+Def NsFitYs(n As Net, pl As Plan, xs As List Of List Of Number, vs As List Of Cell) As RckWork
+    Select Case NsListOfLists("NEURALFIT", Nth(vs, 4))
+        Case Ok(ys)
+            NsFitAt(n, pl, xs, ys)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("NEURALFIT did not answer")
+
+Def NsFitAt(n As Net, pl As Plan, xs As List Of List Of Number, ys As List Of List Of Number) As RckWork
+    If NsWhyTrain("NEURALFIT", n, xs, Length(ys), Batch(pl), Epochs(pl)) <> "" Then
+        RckWorkBad(NsWhyTrain("NEURALFIT", n, xs, Length(ys), Batch(pl), Epochs(pl)))
+    Else
+        NsFitWide(n, pl, xs, ys)
+
+Def NsFitWide(n As Net, pl As Plan, xs As List Of List Of Number, ys As List Of List Of Number) As RckWork
+    If NsWhyVectors("NEURALFIT", n, ys) <> "" Then
+        RckWorkBad(NsWhyVectors("NEURALFIT", n, ys))
+    Else
+        RckVals({ NsNetCell(NetFit(n, pl, Map(xs, ToArray), Map(ys, ToArray), [ Drop Drop ])) })
+
+Rem ---- reading a classifier's answer ------------------------------------
+
+Def NsSeedRead(st As RckState) As RckState
+    Let s1 = RckReg(st, "NEURALPROBS", 2, RckPure(Fn(vs) => NsProbs(vs)), "( net x -- list )", "The net's outputs for x read through the classify head: probabilities that sum to 1, one per class.")
+    Let s2 = RckReg(s1, "NEURALCLASSOF", 2, RckPure(Fn(vs) => NsClassof(vs)), "( net x -- k )", "Which class the net picks for x: the 1-based position of its largest output.")
+    Let s3 = RckReg(s2, "NEURALSOFTMAX", 1, RckPure(Fn(vs) => NsSoftmax(vs)), "( list -- list )", "A list of scores as probabilities that sum to 1. Refuses on an empty list.")
+    Let s4 = RckReg(s3, "NEURALARGMAX", 1, RckPure(Fn(vs) => NsArgmax(vs)), "( list -- k )", "The 1-based position of the largest value. Refuses on an empty list.")
+    RckReg(s4, "NEURALONEHOT", 2, RckPure(Fn(vs) => NsOnehot(vs)), "( k n -- list )", "A target vector of n entries: 1 in position k, 0 everywhere else. Refuses unless k is a whole number from 1 to n.")
+
+Def NsProbs(vs As List Of Cell) As RckWork
+    NsOnX("NEURALPROBS", vs, Fn(n, x) => NsListOf(ToList(NetPredict(n, Classify(), ToArray(x)))))
+
+Def NsClassof(vs As List Of Cell) As RckWork
+    NsOnX("NEURALCLASSOF", vs, Fn(n, x) => CutNum(NetClassOf(n, ToArray(x))))
+
+Rem Both of the above are ( net x -- one cell ) with the same width
+Rem guard, so the pair share the reading and differ by the one function
+Rem that turns the answer into a cell.
+Def NsOnX(word As String, vs As List Of Cell, f As [ Net List Of Number -- Cell ]) As RckWork
+    Select Case NsNetOf(word, First(vs))
+        Case Ok(n)
+            NsOnXAt(word, n, Nth(vs, 2), f)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Def NsOnXAt(word As String, n As Net, xc As Cell, f As [ Net List Of Number -- Cell ]) As RckWork
+    Select Case NsListNum(word, xc)
+        Case Ok(x)
+            NsOnXShaped(word, n, x, f)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Def NsOnXShaped(word As String, n As Net, x As List Of Number, f As [ Net List Of Number -- Cell ]) As RckWork
+    If Length(x) <> Cols(W1(n)) Then
+        RckWorkBad(NsWhyX(word, n, Length(x)))
+    Else
+        RckVals({ Call(f, n, x) })
+
+Rem Softmax takes Nth(zs, 1) as its starting maximum and Argmax counts
+Rem from 1, so both have an empty list as their one undefined case.
+Def NsSoftmax(vs As List Of Cell) As RckWork
+    NsOnList("NEURALSOFTMAX", First(vs), Fn(zs) => NsListOf(ToList(Softmax(ToArray(zs)))))
+
+Def NsArgmax(vs As List Of Cell) As RckWork
+    NsOnList("NEURALARGMAX", First(vs), Fn(zs) => CutNum(Argmax(ToArray(zs))))
+
+Def NsOnList(word As String, c As Cell, f As [ List Of Number -- Cell ]) As RckWork
+    Select Case NsListNum(word, c)
+        Case Ok(zs)
+            NsOnListAt(word, zs, f)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Def NsOnListAt(word As String, zs As List Of Number, f As [ List Of Number -- Cell ]) As RckWork
+    If IsEmpty(zs) Then
+        RckWorkBad(word & ": THE LIST IS EMPTY")
+    Else
+        RckVals({ Call(f, zs) })
+
+Rem NetOneHot is Kron along the row, so a k outside 1..n is not an
+Rem abort — it answers a vector of all zeros, which trains a net towards
+Rem "none of the above" and looks like a bad learning rate rather than a
+Rem mistyped class. Refused instead.
+Def NsOnehot(vs As List Of Cell) As RckWork
+    Select Case Pair(RckWholeArg("NEURALONEHOT", Nth(vs, 1)), RckWholeArg("NEURALONEHOT", Nth(vs, 2)))
+        Case Pair(Ok(k), Ok(n))
+            NsOnehotAt(k, n)
+        Case Else
+            RckWorkBad("NEURALONEHOT did not answer")
+
+Def NsOnehotAt(k As Number, n As Number) As RckWork
+    If n < 1 Or k < 1 Or k > n Then
+        RckWorkBad("NEURALONEHOT: NEEDS A CLASS FROM 1 TO N, AND AN N OF 1 OR MORE")
+    Else
+        RckVals({ NsListOf(ToList(NetOneHot(k, n))) })
+
+Rem ---- scoring a trained net --------------------------------------------
+
+Rem Two pairs, matching the two heads: MSE and percent-close accuracy
+Rem judge a regression net against single numbers, cross-entropy and
+Rem winner-takes-all accuracy judge a classifier against one-hot
+Rem targets. Scoring a net with the wrong pair is a question with no
+Rem meaning rather than a number that is merely off, so the target shape
+Rem is checked for each.
+
+Def NsSeedScore(st As RckState) As RckState
+    Let s1 = RckReg(st, "NEURALMSE", 3, RckPure(Fn(vs) => NsMse(vs)), "( net xs ys -- n )", "Mean squared error over the rows of xs and the single-number targets ys.")
+    Let s2 = RckReg(s1, "NEURALACCURACY", 4, RckPure(Fn(vs) => NsAccuracy(vs)), "( net xs ys pctclose -- n )", "The fraction of rows the net predicts within pctclose of the target — 0.1 for within ten percent.")
+    Let s3 = RckReg(s2, "NEURALLOGLOSS", 3, RckPure(Fn(vs) => NsLogloss(vs)), "( net xs ys -- n )", "Mean cross-entropy over the rows of xs and the one-hot targets ys.")
+    RckReg(s3, "NEURALCLASSACCURACY", 3, RckPure(Fn(vs) => NsClassaccuracy(vs)), "( net xs ys -- n )", "The fraction of rows whose largest output sits where the one-hot target's 1 is.")
+
+Def NsMse(vs As List Of Cell) As RckWork
+    NsScoreNum("NEURALMSE", vs, Fn(n, xs, ys) => CutNum(NetMse(n, Map(xs, ToArray), ys)))
+
+Def NsAccuracy(vs As List Of Cell) As RckWork
+    Select Case RckNumArg("NEURALACCURACY", Nth(vs, 4))
+        Case Ok(pct)
+            NsScoreNum("NEURALACCURACY", vs, Fn(n, xs, ys) => CutNum(NetAccuracy(n, Map(xs, ToArray), ys, pct)))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("NEURALACCURACY did not answer")
+
+Def NsLogloss(vs As List Of Cell) As RckWork
+    NsScoreVec("NEURALLOGLOSS", vs, Fn(n, xs, ys) => CutNum(NetLogLoss(n, Map(xs, ToArray), Map(ys, ToArray))))
+
+Def NsClassaccuracy(vs As List Of Cell) As RckWork
+    NsScoreVec("NEURALCLASSACCURACY", vs, Fn(n, xs, ys) => CutNum(NetClassAccuracy(n, Map(xs, ToArray), Map(ys, ToArray))))
+
+Rem The scalar-target pair: ( net xs ys ... ) with ys a LIST of NUMBERs.
+Def NsScoreNum(word As String, vs As List Of Cell, f As [ Net List Of List Of Number List Of Number -- Cell ]) As RckWork
+    Select Case NsNetOf(word, Nth(vs, 1))
+        Case Ok(n)
+            NsScoreNumXs(word, n, vs, f)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Def NsScoreNumXs(word As String, n As Net, vs As List Of Cell, f As [ Net List Of List Of Number List Of Number -- Cell ]) As RckWork
+    Select Case NsListOfLists(word, Nth(vs, 2))
+        Case Ok(xs)
+            NsScoreNumYs(word, n, xs, Nth(vs, 3), f)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Def NsScoreNumYs(word As String, n As Net, xs As List Of List Of Number, yc As Cell, f As [ Net List Of List Of Number List Of Number -- Cell ]) As RckWork
+    Select Case NsListNum(word, yc)
+        Case Ok(ys)
+            NsScoreNumAt(word, n, xs, ys, f)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Def NsScoreNumAt(word As String, n As Net, xs As List Of List Of Number, ys As List Of Number, f As [ Net List Of List Of Number List Of Number -- Cell ]) As RckWork
+    If NsWhyData(word, n, xs, Length(ys)) & NsWhyScalar(word, n) <> "" Then
+        RckWorkBad(NsWhyData(word, n, xs, Length(ys)) & NsWhyScalar(word, n))
+    Else
+        RckVals({ Call(f, n, xs, ys) })
+
+Rem The vector-target pair: ( net xs ys -- n ) with ys a LIST of LISTs.
+Def NsScoreVec(word As String, vs As List Of Cell, f As [ Net List Of List Of Number List Of List Of Number -- Cell ]) As RckWork
+    Select Case NsNetOf(word, Nth(vs, 1))
+        Case Ok(n)
+            NsScoreVecXs(word, n, vs, f)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Def NsScoreVecXs(word As String, n As Net, vs As List Of Cell, f As [ Net List Of List Of Number List Of List Of Number -- Cell ]) As RckWork
+    Select Case NsListOfLists(word, Nth(vs, 2))
+        Case Ok(xs)
+            NsScoreVecYs(word, n, xs, Nth(vs, 3), f)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Def NsScoreVecYs(word As String, n As Net, xs As List Of List Of Number, yc As Cell, f As [ Net List Of List Of Number List Of List Of Number -- Cell ]) As RckWork
+    Select Case NsListOfLists(word, yc)
+        Case Ok(ys)
+            NsScoreVecAt(word, n, xs, ys, f)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Def NsScoreVecAt(word As String, n As Net, xs As List Of List Of Number, ys As List Of List Of Number, f As [ Net List Of List Of Number List Of List Of Number -- Cell ]) As RckWork
+    If NsWhyData(word, n, xs, Length(ys)) & NsWhyVectors(word, n, ys) <> "" Then
+        RckWorkBad(NsWhyData(word, n, xs, Length(ys)) & NsWhyVectors(word, n, ys))
+    Else
+        RckVals({ Call(f, n, xs, ys) })
+
+Rem ---- the text weight file ---------------------------------------------
+
+Rem NetSave and NetLoad are WriteLines and ReadLines underneath, which
+Rem are built on the aborting WriteFile and ReadFile — so, exactly as
+Rem seedfile.shoddy does, this seed does not call them. It writes the
+Rem same text through TRYWRITEFILE and reads it through TRYREADFILE,
+Rem then runs NetLoad's own count check itself. The format is unchanged,
+Rem so a file written here loads in a mill and the other way about.
+
+Def NsSeedFiles(st As RckState) As RckState
+    Let s1 = RckReg(st, "NEURALSAVE", 2, RckTouch(Fn(vs) => NsSave(vs)), "( net path -- ok )", "Write the net's weights to a text file, one number a line, in neural.shoddy's own order; True on success.")
+    RckReg(s1, "NEURALLOAD", 4, RckTouch(Fn(vs) => NsLoad(vs)), "( path ni nh no -- net )", "Read a weight file back into a net of ni inputs, nh hidden units and no outputs. Refuses unless the file reads, holds nothing but numbers, and holds exactly as many as that architecture needs.")
+
+Def NsSave(vs As List Of Cell) As RckWork
+    Select Case NsNetOf("NEURALSAVE", Nth(vs, 1))
+        Case Ok(n)
+            NsSaveAt(n, Nth(vs, 2))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("NEURALSAVE did not answer")
+
+Def NsSaveAt(n As Net, pc As Cell) As RckWork
+    Select Case RckTextArg("NEURALSAVE", pc)
+        Case Ok(path)
+            RckVals({ CutBool(TryWriteFile(path, Join(Map(NetWeightList(n), Str), "\n") & "\n")) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("NEURALSAVE did not answer")
+
+Def NsLinesOf(c As String) As List Of String
+    NsLinesNorm(Replace(c, "\r", ""))
+
+Def NsLinesNorm(c As String) As List Of String
+    If c = "" Then
+        { }
+    Else
+        If EndsWith(c, "\n") Then
+            Split(Left(c, Len(c) - 1), "\n")
+        Else
+            Split(c, "\n")
+
+Def NsLoad(vs As List Of Cell) As RckWork
+    Select Case RckTextArg("NEURALLOAD", Nth(vs, 1))
+        Case Ok(path)
+            NsLoadDims(path, vs)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("NEURALLOAD did not answer")
+
+Def NsLoadDims(path As String, vs As List Of Cell) As RckWork
+    Select Case NsListNum("NEURALLOAD", CutList({ Nth(vs, 2), Nth(vs, 3), Nth(vs, 4) }))
+        Case Ok(ns)
+            NsLoadAt(path, Nth(ns, 1), Nth(ns, 2), Nth(ns, 3))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("NEURALLOAD did not answer")
+
+Def NsLoadAt(path As String, ni As Number, nh As Number, no As Number) As RckWork
+    If ni < 1 Or nh < 1 Or no < 1 Or ni <> Floor(ni) Or nh <> Floor(nh) Or no <> Floor(no) Then
+        RckWorkBad("NEURALLOAD: NI, NH AND NO MUST ALL BE WHOLE NUMBERS OF 1 OR MORE")
+    Else
+        NsLoadRead(ni, nh, no, TryReadFile(path))
+
+Def NsLoadRead(ni As Number, nh As Number, no As Number, r As Result) As RckWork
+    Select Case r
+        Case Ok(text)
+            NsLoadLines(ni, nh, no, NsLinesOf(text))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("NEURALLOAD did not answer")
+
+Rem Val is strtod and answers 0 for anything it cannot read, so a file
+Rem of prose would load as a net of zeros rather than refusing. IsNumeric
+Rem is the question Val does not ask, so it is asked here first.
+Def NsLoadLines(ni As Number, nh As Number, no As Number, lines As List Of String) As RckWork
+    If Not All(lines, IsNumeric) Then
+        RckWorkBad("NEURALLOAD: THAT FILE HAS A LINE IN IT THAT IS NOT A NUMBER")
+    Else
+        NsLoadCount(ni, nh, no, Map(lines, Val))
+
+Def NsLoadCount(ni As Number, nh As Number, no As Number, ws As List Of Number) As RckWork
+    If Length(ws) <> NsWeightCount(ni, nh, no) Then
+        RckWorkBad("NEURALLOAD: THAT FILE HOLDS " & Str(Length(ws)) & " WEIGHTS, AND " & Str(ni) & "-" & Str(nh) & "-" & Str(no) & " NEEDS " & Str(NsWeightCount(ni, nh, no)))
+    Else
+        RckVals({ NsNetCell(NetFromList(ToArray(ws), ni, nh, no)) })
+
+Def NsWeightCount(ni As Number, nh As Number, no As Number) As Number
+    ni * nh + nh + nh * no + no
+
+Rem ---- the binary weight file, and the whole model ----------------------
+
+Rem WHAT MADE THESE REACHABLE. NetSaveBin, NetLoadBin, ModelSave and
+Rem ModelLoad were the last of neural.shoddy left at the door, and the
+Rem reason was never the handle on the stack — these words open and
+Rem close inside their own bodies, so nothing a session can UNDO ever
+Rem holds one. It was that there was no way to ASK. BOpen is
+Rem FileMode.OpenOrCreate, so a failed read left an empty file behind
+Rem and damaged the answer by asking for it; and nothing could learn a
+Rem file's size or its magic number without opening it first, so a
+Rem binary read could not be pre-flighted at all. TryBOpen is the
+Rem runtime change that fixed both: it opens an EXISTING file only and
+Rem reports failure as a Result. R3.5(b) is untouched — no handle
+Rem reaches the stack here, and TryBOpen stays out of the dictionary
+Rem under exactly the rule that kept BOpen out.
+Rem
+Rem THE FORMAT IS NOT REDEFINED HERE. NetPutAt, NetGetAt, NetBinMagic
+Rem and ModelBinMagic are neural.shoddy's own, so a file written at a
+Rem prompt loads in a mill and the other way about, bit for bit. What
+Rem this seed does not reuse is NetLoadBin and ModelLoad themselves,
+Rem for the reason seedfile.shoddy does not reuse ReadLines: they Error
+Rem on a short or wrongly-tagged file, with the handle still open.
+Rem
+Rem EVERY OPEN IS CLOSED ON THE SAME STRAIGHT LINE. The read is split
+Rem so that no refusal ever sits between an open and its BClose: the
+Rem header is read and the file closed, the header is judged with the
+Rem file shut, and only a header that passed reopens to read the body.
+Rem Two opens rather than one is the price, and it buys a discipline
+Rem that can be checked by eye rather than argued about.
+
+Def NsSeedBinary(st As RckState) As RckState
+    Let s1 = RckReg(st, "NEURALSAVEBIN", 2, RckTouch(Fn(vs) => NsSavebin(vs)), "( net path -- ok )", "Write the net to a binary file — bit-exact, and self-describing, so NEURALLOADBIN needs no architecture arguments. True on success.")
+    Let s2 = RckReg(s1, "NEURALLOADBIN", 1, RckTouch(Fn(vs) => NsLoadbin(vs)), "( path -- net )", "Read a binary weight file back into a net. Refuses unless the file opens, carries the right marker, and is exactly the size its own header claims.")
+    Let s3 = RckReg(s2, "NEURALMODEL", 3, RckPure(Fn(vs) => NsModel(vs)), "( net task prep -- model )", "A model: the net, the task it was fitted for (\"regress\" or \"classify\"), and the scaler its inputs were scaled with. NEURALMODELPREDICT takes RAW inputs, so the scaling cannot drift away from the net.")
+    Let s4 = RckReg(s3, "NEURALMODELSAVE", 2, RckTouch(Fn(vs) => NsModelsave(vs)), "( model path -- ok )", "Write a whole model — weights, task and scaler — to one binary file. A different marker from NEURALSAVEBIN's, so the two formats can never be mistaken for one another. True on success.")
+    Let s5 = RckReg(s4, "NEURALMODELLOAD", 1, RckTouch(Fn(vs) => NsModelload(vs)), "( path -- model )", "Read a whole model back. Self-describing, so no architecture arguments. Refuses a file NEURALMODELSAVE did not write.")
+    RckReg(s5, "NEURALMODELPREDICT", 2, RckPure(Fn(vs) => NsModelpredict(vs)), "( model x -- list )", "The model's outputs for RAW, UNSCALED inputs x: scaled by the model's own scaler and read through its own task. The word to predict with once a model is loaded.")
+
+Rem ---- NEURALSAVEBIN ---------------------------------------------------
+
+Rem TryWriteFile with an empty string is the guarded create: it makes
+Rem the file or truncates one already there, and reports rather than
+Rem aborting. Truncating matters — BOpen would leave the tail of a
+Rem longer previous file in place, and the size check on the way back
+Rem in is exactly what that tail would break.
+Def NsSavebin(vs As List Of Cell) As RckWork
+    Select Case Pair(NsNetOf("NEURALSAVEBIN", Nth(vs, 1)), RckTextArg("NEURALSAVEBIN", Nth(vs, 2)))
+        Case Pair(Ok(n), Ok(path))
+            NsSavebinFresh(n, path)
+        Case Else
+            RckWorkBad("NEURALSAVEBIN needs a net and a path")
+
+Rem A path it cannot write answers False rather than refusing, which is
+Rem the shape NEURALSAVE already set and the honest one: whether the
+Rem save happened is exactly the question the word was asked, so it is
+Rem reported as the answer rather than as a refusal to answer.
+Def NsSavebinFresh(n As Net, path As String) As RckWork
+    If Not TryWriteFile(path, "") Then
+        RckVals({ CutBool(False) })
+    Else
+        NsSavebinOpen(n, path)
+
+Def NsSavebinOpen(n As Net, path As String) As RckWork
+    Select Case TryBOpen(path)
+        Case Ok(f)
+            NsSavebinWrote(n, f)
+        Case Else
+            RckVals({ CutBool(False) })
+
+Def NsSavebinWrote(n As Net, f As Number) As RckWork
+    NetPutAt(f, 1, NetBinMagic())
+    NetPutAt(f, 2, Cols(W1(n)))
+    NetPutAt(f, 3, Rows(W1(n)))
+    NetPutAt(f, 4, Rows(W2(n)))
+    Let ws = ToArray(NetWeightList(n))
+    Each(Range(1, Length(ws)), Fn(k) => NetPutAt(f, k + 4, Nth(ws, k)))
+    BClose(f)
+    RckVals({ CutBool(True) })
+
+Rem ---- NEURALLOADBIN ---------------------------------------------------
+
+Def NsLoadbin(vs As List Of Cell) As RckWork
+    Select Case RckTextArg("NEURALLOADBIN", First(vs))
+        Case Ok(path)
+            NsLoadbinOpen(path)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("NEURALLOADBIN did not answer")
+
+Def NsLoadbinOpen(path As String) As RckWork
+    Select Case TryBOpen(path)
+        Case Ok(f)
+            NsLoadbinHead(path, f)
+        Case Err(w, at)
+            RckWorkBad("NEURALLOADBIN: " & w)
+        Case Else
+            RckWorkBad("NEURALLOADBIN did not answer")
+
+Rem Read the header and close, in that order and with nothing between
+Rem them that could refuse. Judging it happens with the file already
+Rem shut.
+Def NsLoadbinHead(path As String, f As Number) As RckWork
+    Let size = BSize(f)
+    Let head = NsBinHead(f, size, 4)
+    BClose(f)
+    NsLoadbinJudge(path, size, head)
+
+Rem The header, or nothing at all when the file is too short to hold
+Rem one. Asking for a double that is not there would abort, which is
+Rem the whole thing this pre-flight exists to avoid.
+Def NsBinHead(f As Number, size As Number, want As Number) As List Of Number
+    If size < 8 * want Then
+        { }
+    Else
+        Map(Range(1, want), Fn(k) => NetGetAt(f, k))
+
+Def NsLoadbinJudge(path As String, size As Number, head As List Of Number) As RckWork
+    If IsEmpty(head) Or Nth(head, 1) <> NetBinMagic() Then
+        RckWorkBad("NEURALLOADBIN: '" & path & "' IS NOT A NEURAL WEIGHT FILE")
+    Else
+        NsLoadbinDims(path, size, Nth(head, 2), Nth(head, 3), Nth(head, 4))
+
+Rem The architecture is read from the file, so it is exactly as
+Rem trustworthy as the file is. A corrupt header could name a hundred
+Rem million hidden units, and Range would then be asked to build that
+Rem list, so the three are checked for being whole and positive BEFORE
+Rem any count computed from them is used for anything.
+Def NsLoadbinDims(path As String, size As Number, ni As Number, nh As Number, no As Number) As RckWork
+    If Not NsWholeDims(ni, nh, no) Then
+        RckWorkBad("NEURALLOADBIN: '" & path & "' HAS A DAMAGED HEADER")
+    Else
+        NsLoadbinSized(path, size, ni, nh, no, NsWeightCount(ni, nh, no))
+
+Def NsWholeDims(ni As Number, nh As Number, no As Number) As Boolean
+    (ni >= 1) And (nh >= 1) And (no >= 1) And (ni = Floor(ni)) And (nh = Floor(nh)) And (no = Floor(no))
+
+Rem The size check is what bounds the read. Only once the file is
+Rem exactly as long as its own header claims is Range asked for the
+Rem body, so a header naming more weights than the file holds is
+Rem refused here rather than aborting on a read past the end.
+Def NsLoadbinSized(path As String, size As Number, ni As Number, nh As Number, no As Number, count As Number) As RckWork
+    If size <> 8 * (4 + count) Then
+        RckWorkBad("NEURALLOADBIN: '" & path & "' IS THE WRONG SIZE FOR THE " & Str(ni) & "-" & Str(nh) & "-" & Str(no) & " NET ITS HEADER CLAIMS")
+    Else
+        NsLoadbinBody(path, ni, nh, no, count)
+
+Def NsLoadbinBody(path As String, ni As Number, nh As Number, no As Number, count As Number) As RckWork
+    Select Case TryBOpen(path)
+        Case Ok(f)
+            NsLoadbinRead(f, ni, nh, no, count)
+        Case Err(w, at)
+            RckWorkBad("NEURALLOADBIN: " & w)
+        Case Else
+            RckWorkBad("NEURALLOADBIN did not answer")
+
+Def NsLoadbinRead(f As Number, ni As Number, nh As Number, no As Number, count As Number) As RckWork
+    Let ws = ToArray(Map(Range(1, count), Fn(k) => NetGetAt(f, k + 4)))
+    BClose(f)
+    RckVals({ NsNetCell(NetFromList(ws, ni, nh, no)) })
+
+Rem ---- a Model as a dict ------------------------------------------------
+
+Rem A net on its own is not enough to predict with: whoever fitted it
+Rem also chose a task and a scaling, and a session that rebuilds those
+Rem by hand is keeping a second copy of a decision. That is the classic
+Rem way to serve a model different inputs from the ones it was fitted
+Rem on, with nothing to warn you. The task is spelled out rather than
+Rem numbered for the same reason a Plan's is — "task: 1" says nothing
+Rem to somebody reading the cell on the stack — and it reuses a Plan's
+Rem own two names, so the two dicts cannot disagree about them.
+
+Def NsModelCell(m As Model) As Cell
+    CutList({ NsEntry("net", NsNetCell(Weights(m))), NsEntry("task", CutStr(NsTaskName(Task(m)))), NsEntry("prep", NsScalerCell(Prep(m))) })
+
+Def NsTaskName(h As Head) As String
+    If HeadCode(h) = 1 Then
+        NsClassName()
+    Else
+        NsRegressName()
+
+Def NsModelWhy(word As String) As String
+    word & ": NOT A MODEL — USE NEURALMODEL OR NEURALMODELLOAD'S OWN ANSWER"
+
+Def NsModelOf(word As String, c As Cell) As Result
+    Select Case RckListArg(word, c)
+        Case Ok(fields)
+            NsModelFields(word, fields)
+        Case Err(w, at)
+            Err(w, at)
+        Case Else
+            Err(word & " did not answer", 0)
+
+Def NsModelFields(word As String, fields As List Of Cell) As Result
+    If Length(fields) <> 3 Then
+        Err(NsModelWhy(word), 0)
+    Else
+        NsModelVals(word, NsPairVal(Nth(fields, 1)), NsPairVal(Nth(fields, 2)), NsPairVal(Nth(fields, 3)))
+
+Def NsModelVals(word As String, netc As Cell, taskc As Cell, prepc As Cell) As Result
+    Select Case taskc
+        Case CutStr(task)
+            NsModelParts(word, netc, task, prepc)
+        Case Else
+            Err(NsModelWhy(word), 0)
+
+Def NsModelParts(word As String, netc As Cell, task As String, prepc As Cell) As Result
+    Select Case Pair(NsNetOf(word, netc), NsScalerOf(word, prepc))
+        Case Pair(Ok(n), Ok(s))
+            NsModelMade(word, n, task, s)
+        Case Else
+            Err(NsModelWhy(word), 0)
+
+Rem The scaler has to have been fitted on the width the net actually
+Rem takes, or ModelPredict scales a row to a length MatVec then
+Rem refuses. Asked here, where a model is assembled, rather than at
+Rem every place one is used.
+Def NsModelMade(word As String, n As Net, task As String, s As Scaler) As Result
+    If Length(ToList(Center(s))) <> Cols(W1(n)) Then
+        Err(word & ": THE SCALER IS FOR " & Str(Length(ToList(Center(s)))) & " INPUTS AND THE NET TAKES " & Str(Cols(W1(n))), 0)
+    Else
+        NsModelHead(word, n, task, s)
+
+Def NsModelHead(word As String, n As Net, task As String, s As Scaler) As Result
+    If task = NsClassName() Then
+        Ok(Model(n, Classify(), s))
+    Else
+        If task = NsRegressName() Then
+            Ok(Model(n, Regress(), s))
+        Else
+            Err(word & ": THE TASK MUST BE \"" & NsRegressName() & "\" OR \"" & NsClassName() & "\"", 0)
+
+Rem ---- NEURALMODEL, NEURALMODELPREDICT ---------------------------------
+
+Def NsModel(vs As List Of Cell) As RckWork
+    Select Case NsModelArgs("NEURALMODEL", Nth(vs, 1), Nth(vs, 2), Nth(vs, 3))
+        Case Ok(m)
+            RckVals({ NsModelCell(m) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("NEURALMODEL did not answer")
+
+Rem The constructor takes the three pieces loose rather than a dict,
+Rem because a dict is what it is FOR: the pieces are what a session
+Rem already has in hand after NEURALFIT and NEURALSCALERFIT.
+Def NsModelArgs(word As String, netc As Cell, taskc As Cell, prepc As Cell) As Result
+    Select Case taskc
+        Case CutStr(task)
+            NsModelBuilt(word, netc, task, prepc)
+        Case Else
+            Err(word & ": THE TASK MUST BE \"" & NsRegressName() & "\" OR \"" & NsClassName() & "\"", 0)
+
+Def NsModelBuilt(word As String, netc As Cell, task As String, prepc As Cell) As Result
+    Select Case Pair(NsNetOf(word, netc), NsScalerOf(word, prepc))
+        Case Pair(Ok(n), Ok(s))
+            NsModelMade(word, n, task, s)
+        Case Else
+            Err(word & " needs a net, a task and a scaler", 0)
+
+Def NsModelpredict(vs As List Of Cell) As RckWork
+    Select Case NsModelOf("NEURALMODELPREDICT", Nth(vs, 1))
+        Case Ok(m)
+            NsModelpredictX(m, Nth(vs, 2))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("NEURALMODELPREDICT did not answer")
+
+Def NsModelpredictX(m As Model, xc As Cell) As RckWork
+    Select Case NsListNum("NEURALMODELPREDICT", xc)
+        Case Ok(x)
+            NsModelpredictShaped(m, x)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("NEURALMODELPREDICT did not answer")
+
+Def NsModelpredictShaped(m As Model, x As List Of Number) As RckWork
+    If Length(x) <> Cols(W1(Weights(m))) Then
+        RckWorkBad(NsWhyX("NEURALMODELPREDICT", Weights(m), Length(x)))
+    Else
+        RckVals({ NsListOf(ToList(ModelPredict(m, ToArray(x)))) })
+
+Rem ---- NEURALMODELSAVE, NEURALMODELLOAD --------------------------------
+
+Def NsModelsave(vs As List Of Cell) As RckWork
+    Select Case Pair(NsModelOf("NEURALMODELSAVE", Nth(vs, 1)), RckTextArg("NEURALMODELSAVE", Nth(vs, 2)))
+        Case Pair(Ok(m), Ok(path))
+            NsModelsaveFresh(m, path)
+        Case Else
+            RckWorkBad("NEURALMODELSAVE needs a model and a path")
+
+Def NsModelsaveFresh(m As Model, path As String) As RckWork
+    If Not TryWriteFile(path, "") Then
+        RckVals({ CutBool(False) })
+    Else
+        NsModelsaveOpen(m, path)
+
+Def NsModelsaveOpen(m As Model, path As String) As RckWork
+    Select Case TryBOpen(path)
+        Case Ok(f)
+            NsModelsaveWrote(m, f)
+        Case Else
+            RckVals({ CutBool(False) })
+
+Def NsModelsaveWrote(m As Model, f As Number) As RckWork
+    Let n = Weights(m)
+    Let ni = Cols(W1(n))
+    NetPutAt(f, 1, ModelBinMagic())
+    NetPutAt(f, 2, ni)
+    NetPutAt(f, 3, Rows(W1(n)))
+    NetPutAt(f, 4, Rows(W2(n)))
+    NetPutAt(f, 5, HeadCode(Task(m)))
+    Let ws = ToArray(NetWeightList(n))
+    Each(Range(1, Length(ws)), Fn(k) => NetPutAt(f, k + 5, Nth(ws, k)))
+    Each(Range(1, ni), Fn(k) => NetPutAt(f, k + 5 + Length(ws), Nth(Center(Prep(m)), k)))
+    Each(Range(1, ni), Fn(k) => NetPutAt(f, k + 5 + Length(ws) + ni, Nth(Spread(Prep(m)), k)))
+    BClose(f)
+    RckVals({ CutBool(True) })
+
+Def NsModelload(vs As List Of Cell) As RckWork
+    Select Case RckTextArg("NEURALMODELLOAD", First(vs))
+        Case Ok(path)
+            NsModelloadOpen(path)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("NEURALMODELLOAD did not answer")
+
+Def NsModelloadOpen(path As String) As RckWork
+    Select Case TryBOpen(path)
+        Case Ok(f)
+            NsModelloadHead(path, f)
+        Case Err(w, at)
+            RckWorkBad("NEURALMODELLOAD: " & w)
+        Case Else
+            RckWorkBad("NEURALMODELLOAD did not answer")
+
+Def NsModelloadHead(path As String, f As Number) As RckWork
+    Let size = BSize(f)
+    Let head = NsBinHead(f, size, 5)
+    BClose(f)
+    NsModelloadJudge(path, size, head)
+
+Def NsModelloadJudge(path As String, size As Number, head As List Of Number) As RckWork
+    If IsEmpty(head) Or Nth(head, 1) <> ModelBinMagic() Then
+        RckWorkBad("NEURALMODELLOAD: '" & path & "' IS NOT A NEURAL MODEL FILE")
+    Else
+        NsModelloadDims(path, size, Nth(head, 2), Nth(head, 3), Nth(head, 4), Nth(head, 5))
+
+Def NsModelloadDims(path As String, size As Number, ni As Number, nh As Number, no As Number, code As Number) As RckWork
+    If Not NsWholeDims(ni, nh, no) Or (code <> 0 And code <> 1) Then
+        RckWorkBad("NEURALMODELLOAD: '" & path & "' HAS A DAMAGED HEADER")
+    Else
+        NsModelloadSized(path, size, ni, nh, no, code, NsWeightCount(ni, nh, no))
+
+Def NsModelloadSized(path As String, size As Number, ni As Number, nh As Number, no As Number, code As Number, count As Number) As RckWork
+    If size <> 8 * (5 + count + 2 * ni) Then
+        RckWorkBad("NEURALMODELLOAD: '" & path & "' IS THE WRONG SIZE FOR THE " & Str(ni) & "-" & Str(nh) & "-" & Str(no) & " MODEL ITS HEADER CLAIMS")
+    Else
+        NsModelloadBody(path, ni, nh, no, code, count)
+
+Def NsModelloadBody(path As String, ni As Number, nh As Number, no As Number, code As Number, count As Number) As RckWork
+    Select Case TryBOpen(path)
+        Case Ok(f)
+            NsModelloadRead(f, ni, nh, no, code, count)
+        Case Err(w, at)
+            RckWorkBad("NEURALMODELLOAD: " & w)
+        Case Else
+            RckWorkBad("NEURALMODELLOAD did not answer")
+
+Def NsModelloadRead(f As Number, ni As Number, nh As Number, no As Number, code As Number, count As Number) As RckWork
+    Let ws = ToArray(Map(Range(1, count), Fn(k) => NetGetAt(f, k + 5)))
+    Let ctr = ToArray(Map(Range(1, ni), Fn(k) => NetGetAt(f, k + 5 + count)))
+    Let spr = ToArray(Map(Range(1, ni), Fn(k) => NetGetAt(f, k + 5 + count + ni)))
+    BClose(f)
+    RckVals({ NsModelCell(Model(NetFromList(ws, ni, nh, no), HeadOfCode(code), Scaler(ctr, spr))) })
+
+Rem ---- NEURALSCALERFIT, NEURALSCALERAPPLY --------------------------------
+
+Def NsSeedScalerfit(st As RckState) As RckState
+    RckReg(st, "NEURALSCALERFIT", 1, RckPure(Fn(vs) => NsScalerfit(vs)), "( xs -- scaler )", "A scaler that centres and spreads xs's columns to mean 0: a dict with center and spread. Refuses on an empty list.")
+
+Def NsScalerfit(vs As List Of Cell) As RckWork
+    Select Case NsListOfLists("NEURALSCALERFIT", First(vs))
+        Case Ok(xs)
+            NsScalerfitAt(xs)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("NEURALSCALERFIT did not answer")
+
+Def NsScalerfitAt(xs As List Of List Of Number) As RckWork
+    If IsEmpty(xs) Then
+        RckWorkBad("NEURALSCALERFIT: THE LIST IS EMPTY")
+    Else
+        RckVals({ NsScalerCell(ScalerFit(ToArray(Map(xs, ToArray)))) })
+
+Def NsSeedScalerapply(st As RckState) As RckState
+    RckReg(st, "NEURALSCALERAPPLY", 2, RckPure(Fn(vs) => NsScalerapply(vs)), "( scaler x -- x2 )", "x, centred and scaled by scaler. Refuses unless x has as many entries as the scaler was fitted with.")
+
+Def NsScalerapply(vs As List Of Cell) As RckWork
+    Select Case NsScalerOf("NEURALSCALERAPPLY", First(vs))
+        Case Ok(s)
+            NsScalerapplyX(s, Nth(vs, 2))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("NEURALSCALERAPPLY did not answer")
+
+Def NsScalerapplyX(s As Scaler, xc As Cell) As RckWork
+    Select Case NsListNum("NEURALSCALERAPPLY", xc)
+        Case Ok(x)
+            NsScalerapplyShaped(s, x)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("NEURALSCALERAPPLY did not answer")
+
+Def NsScalerapplyShaped(s As Scaler, x As List Of Number) As RckWork
+    If Length(x) <> Length(ToList(Center(s))) Then
+        RckWorkBad("NEURALSCALERAPPLY: X HAS " & Str(Length(x)) & " ENTRIES, THE SCALER WANTS " & Str(Length(ToList(Center(s)))))
+    Else
+        RckVals({ NsListOf(ToList(ScalerApply(s, ToArray(x)))) })
+
+Rem ---- the seed -----------------------------------------------------------
+
+Def RckSeedNeural(st As RckState) As RckState
+    Let s1 = NsSeedNew(RckSeeding(st, "seed-neural"))
+    Let s2 = NsSeedPredict(s1)
+    Let s3 = NsSeedTrain(s2)
+    Let s4 = NsSeedPlans(s3)
+    Let s5 = NsSeedFit(s4)
+    Let s6 = NsSeedRead(s5)
+    Let s7 = NsSeedScore(s6)
+    Let s8 = NsSeedScalerfit(s7)
+    Let s9 = NsSeedScalerapply(s8)
+    Let s10 = NsSeedFiles(s9)
+    NsSeedBinary(s10)

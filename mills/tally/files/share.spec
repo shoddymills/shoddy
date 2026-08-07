@@ -2,7 +2,7 @@
 #
 #     ./build.sh capture mills/tally/files/share.spec
 
-data.file      = mills/tally/files/grades.csv
+data.file      = files/grades.csv
 
 derive.TOTAL   = add MIDTERM FINAL
 
@@ -19,5 +19,5 @@ chart.labels   = STUDENT
 chart.title    = TOTAL MARKS, TEN HOURS OR MORE
 
 window.size    = 480 320
-window.capture = mills/tally/files/share.png
+window.capture = files/share.png
 window.show    = no

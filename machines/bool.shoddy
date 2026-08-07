@@ -1,0 +1,1083 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem bool.shoddy — Shoddy standard library: the binary layer
+Rem
+Rem Number bases, bit patterns, masks and fields, two's complement, the
+Rem codes (Gray, BCD, parity, Hamming), the logic gates the operators do
+Rem not supply, truth tables, and Quine–McCluskey minimisation. Every
+Rem word and type is prefixed Bool.
+Rem
+Rem THERE ARE NO BITWISE BUILTINS. And/Or/Not are Boolean operators
+Rem only; there is no integer AND, no XOR, no shift, no rotate and no
+Rem way to reach a double's bits. Everything below is Mod and 2 ^ n, and
+Rem this machine is why a program needs none of it by hand.
+Rem
+Rem Conventions, all of them load-bearing:
+Rem
+Rem   * THE DOMAIN IS CHECKED, NEVER MASKED. Every value is a
+Rem     non-negative whole number below 2 ^ 53, and every word errors
+Rem     naming itself on anything else. BoolBitAnd(-1, 1) refuses.
+Rem     Silently masking is what makes bit code impossible to debug: the
+Rem     answer is plausible, the bug is upstream, and nothing points at
+Rem     it. The non-integer test is a <> Floor(a) — Round is half-up and
+Rem     Fix truncates, so neither is the right test.
+Rem
+Rem   * ERRORS, RESULT AND OPTION ARE THREE DIFFERENT ANSWERS. A bad
+Rem     argument is a bug in the calling program and aborts. Reading
+Rem     external text is not: BoolFromBase and BoolFromBcd return
+Rem     Result, with At carrying a 1-based position and 0 when there is
+Rem     none. Absence is neither: BoolLowBit and BoolHighBit answer
+Rem     None() on zero, because "no bits set" is an ordinary answer in a
+Rem     scan. No -1 sentinel appears anywhere in this machine.
+Rem
+Rem   * WIDTHS RUN 1 TO 53. Doubles hold whole numbers exactly to 2 ^ 53,
+Rem     so a 54-bit word cannot represent its own top bit — 2 ^ 53 + 1 IS
+Rem     2 ^ 53 — and a rotation would lose a bit without complaining.
+Rem     BoolBits() = 32 is a default offered, not a limit imposed.
+Rem
+Rem   * THREE WORDS ARE WIDTH-FREE: BoolBitAnd, BoolBitOr and BoolBitXor.
+Rem     Their answers do not depend on the width at all —
+Rem     BoolBitAnd(12, 10) is 8 whether the word is 8 bits or 48 — so a
+Rem     width parameter would buy nothing but noise. Every other word
+Rem     whose answer depends on where the word ends takes one. The single
+Rem     exception is BoolShr, which needs no width for a different
+Rem     reason: a logical right shift cannot produce a bit the input did
+Rem     not have, so there is no end for the answer to depend on.
+Rem
+Rem   * BIT PATTERNS AND TRUTH VALUES NEVER SHARE A NAME. Operating on a
+Rem     bit pattern carries Bit (BoolBitAnd, BoolBitXor); operating on
+Rem     Booleans is the bare gate name (BoolAnd, BoolXor). So BoolBitAt
+Rem     returns Boolean, never 0 or 1, and BoolPopCount returns Number.
+Rem
+Rem   * VARIABLE 1 IS THE MOST SIGNIFICANT BIT of a row index, matching
+Rem     every digital-logic textbook: row 5 of a 3-variable table is
+Rem     { True, False, True }. Get it backwards and every minterm number
+Rem     in every result is wrong in a way that still looks valid.
+Rem
+Rem   * MINIMISATION IS GREEDY IN ITS COVER STEP. The result is minimal
+Rem     in practice, not proven minimal — exact cover is NP-hard.
+Rem
+Rem   * TRUTH TABLES ARE COMFORTABLE TO n = 8 (256 rows), slow at 10 and
+Rem     hopeless at 16, because a List is a linked list. BoolMaxVars() =
+Rem     12 is a hard refusal, so the far end is a named error rather
+Rem     than a hang.
+Rem ==================================================================
+
+Include "seq.shoddy"
+Include "str.shoddy"
+
+Rem ---- constants -------------------------------------------------------
+Rem Zero-arg Defs, not top-level Lets: a machine constant is private to
+Rem its file and does not cross the manifest, so a machine publishes one
+Rem with a Def that returns it. Where a word and a constant compete for a
+Rem name the word wins and the constant is suffixed — hence BoolHexR,
+Rem beside the BoolHex formatter.
+
+Def BoolBin() As Number
+    2
+
+Def BoolOct() As Number
+    8
+
+Def BoolDec() As Number
+    10
+
+Def BoolHexR() As Number
+    16
+
+Rem The conventional default width. Offered, never imposed.
+Def BoolBits() As Number
+    32
+
+Rem The arithmetic ceiling: whole numbers are exact to 2 ^ 53.
+Def BoolMaxWidth() As Number
+    53
+
+Rem The truth-table and minimisation refusal. The comfort figure is 8.
+Def BoolMaxVars() As Number
+    12
+
+Rem The digit alphabet for bases 2..36, uppercase.
+Def BoolDigits() As String
+    "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+
+Rem ---- the guards ------------------------------------------------------
+Rem Each returns its argument unchanged so a word can bind a checked
+Rem copy on its first line and use that thereafter. Each takes the
+Rem calling word's name in UPPERCASE, because an error that does not say
+Rem which word refused is an error a caller cannot act on.
+
+Rem A non-negative whole number below the 53-bit ceiling.
+Def BoolChk(word As String, a As Number) As Number
+    If a < 0 Then
+        Error(word & ": '" & Str(a) & "' IS NEGATIVE - THE DOMAIN IS WHOLE NUMBERS FROM 0")
+    Else
+        If a <> Floor(a) Then
+            Error(word & ": '" & Str(a) & "' IS NOT A WHOLE NUMBER")
+        Else
+            If a > 2 ^ BoolMaxWidth() - 1 Then
+                Error(word & ": '" & Str(a) & "' IS ABOVE THE 53-BIT CEILING - WHOLE NUMBERS ARE EXACT ONLY TO 2 ^ 53")
+            Else
+                a
+
+Rem A width: a whole number in 1..53.
+Def BoolChkW(word As String, w As Number) As Number
+    If w <> Floor(w) Or w < 1 Or w > BoolMaxWidth() Then
+        Error(word & ": WIDTH '" & Str(w) & "' IS OUTSIDE 1.." & Str(BoolMaxWidth()))
+    Else
+        w
+
+Rem A value that must fit the given width. The width is checked first, so
+Rem a caller who got both wrong hears about the width.
+Def BoolChkFit(word As String, a As Number, w As Number) As Number
+    Let ww = BoolChkW(word, w)
+    Let aa = BoolChk(word, a)
+    If aa >= 2 ^ ww Then
+        Error(word & ": '" & Str(aa) & "' DOES NOT FIT " & Str(ww) & " BITS - THE LIMIT IS " & Str(2 ^ ww - 1))
+    Else
+        aa
+
+Rem A bit index: 0..52, the positions a 53-bit word has.
+Def BoolChkIdx(word As String, k As Number) As Number
+    If k <> Floor(k) Or k < 0 Or k > BoolMaxWidth() - 1 Then
+        Error(word & ": BIT INDEX '" & Str(k) & "' IS OUTSIDE 0.." & Str(BoolMaxWidth() - 1))
+    Else
+        k
+
+Rem A bit count: 0..53. BoolMask(0) is 0, which is a mask a caller can
+Rem reach by arithmetic and should not have to special-case.
+Def BoolChkCount(word As String, n As Number) As Number
+    If n <> Floor(n) Or n < 0 Or n > BoolMaxWidth() Then
+        Error(word & ": BIT COUNT '" & Str(n) & "' IS OUTSIDE 0.." & Str(BoolMaxWidth()))
+    Else
+        n
+
+Rem A shift or rotate distance: 0..53. Refused above the ceiling so 2 ^ n
+Rem never reaches infinity; a shift that far has already lost everything.
+Def BoolChkShift(word As String, n As Number) As Number
+    If n <> Floor(n) Or n < 0 Or n > BoolMaxWidth() Then
+        Error(word & ": SHIFT '" & Str(n) & "' IS OUTSIDE 0.." & Str(BoolMaxWidth()))
+    Else
+        n
+
+Rem A radix: a whole number in 2..36, the range the digit alphabet spans.
+Def BoolChkBase(word As String, b As Number) As Number
+    If b <> Floor(b) Or b < 2 Or b > 36 Then
+        Error(word & ": BASE '" & Str(b) & "' IS OUTSIDE 2..36")
+    Else
+        b
+
+Rem A variable count for a truth table: 1..BoolMaxVars(). The refusal is
+Rem what stops a caller discovering the ceiling as a hang.
+Def BoolChkVars(word As String, n As Number) As Number
+    If n <> Floor(n) Or n < 1 Or n > BoolMaxVars() Then
+        Error(word & ": " & Str(n) & " VARIABLES IS OUTSIDE 1.." & Str(BoolMaxVars()) & " - COMFORTABLE TO 8, SLOW AT 10")
+    Else
+        n
+
+Rem ---- internal bit arithmetic -----------------------------------------
+Rem Below the guards, so unchecked. Mod is floored (a - b * Floor(a / b)),
+Rem which agrees with truncation on a non-negative domain, so all of this
+Rem is total once the domain check above has run.
+
+Rem Bit k of a as 0 or 1. The public word is BoolBitAt, which answers a
+Rem Boolean; this exists because the folds need a number to add.
+Def BoolBitRaw(a As Number, k As Number) As Number
+    Floor(a / 2 ^ k) Mod 2
+
+Def BoolTopBitGo(a As Number, k As Number) As Number
+    If a < 2 Then
+        k
+    Else
+        BoolTopBitGo(Floor(a / 2), k + 1)
+
+Rem Internal. The index of the highest set bit as a raw Number, 0 for 0.
+Rem The public word is BoolHighBit, which returns an Option; this exists
+Rem because the fold bounds in BoolBitAnd and friends need a number, and
+Rem Max over two Options is not a thing. Not on the docs page.
+Def BoolTopBit(a As Number) As Number
+    BoolTopBitGo(a, 0)
+
+Rem The one bit walk, written once. Every width-free bit operation is
+Rem this fold over a different two-bit function, bounded by the higher of
+Rem the two top bits — beyond that both inputs are zero and every
+Rem width-free function of (0, 0) is 0.
+Def BoolBitOp(a As Number, b As Number, f As [ Number Number -- Number ]) As Number
+    Fold(Range(0, Max(BoolTopBit(a), BoolTopBit(b))), 0,
+         Fn(acc, k) => acc + Call(f, BoolBitRaw(a, k), BoolBitRaw(b, k)) * 2 ^ k)
+
+Rem ======================================================================
+Rem BASES AND RENDERING
+Rem ======================================================================
+
+Def BoolInBaseGo(n As Number, b As Number) As String
+    If n = 0 Then
+        ""
+    Else
+        BoolInBaseGo(Floor(n / b), b) & Mid(BoolDigits(), (n Mod b) + 1, 1)
+
+Rem n written in the given base, uppercase letters past 9. Zero is "0".
+Def BoolInBase(n As Number, base As Number) As String
+    Let bb = BoolChkBase("BOOLINBASE", base)
+    Let nn = BoolChk("BOOLINBASE", n)
+    If nn = 0 Then
+        "0"
+    Else
+        BoolInBaseGo(nn, bb)
+
+Def BoolFromBaseGo(s As String, u As String, b As Number, k As Number, acc As Number) As Result
+    If k > Len(u) Then
+        Ok(acc)
+    Else
+        Let c = Mid(u, k, 1)
+        Let d = Instr(BoolDigits(), c) - 1
+        If d < 0 Or d >= b Then
+            Err("BOOLFROMBASE: '" & s & "' HAS NO DIGIT " & c & " IN BASE " & Str(b), k)
+        Else
+            If acc > (2 ^ BoolMaxWidth() - 1 - d) / b Then
+                Err("BOOLFROMBASE: '" & s & "' IS ABOVE THE 53-BIT CEILING", k)
+            Else
+                BoolFromBaseGo(s, u, b, k + 1, acc * b + d)
+
+Rem Reading external text, so a bad digit is a fact about the input and
+Rem not a bug in the program: this returns Result rather than aborting,
+Rem exactly as a malformed document does for JsonRead. At is the 1-based
+Rem offset of the offending character, 0 when there is no position.
+Rem Case-insensitive: "ff" and "FF" are both Ok(255).
+Def BoolFromBase(s As String, base As Number) As Result
+    Let bb = BoolChkBase("BOOLFROMBASE", base)
+    If Len(s) = 0 Then
+        Err("BOOLFROMBASE: THE EMPTY STRING IS NOT A NUMBER IN BASE " & Str(bb), 0)
+    Else
+        BoolFromBaseGo(s, Upper(s), bb, 1, 0)
+
+Rem The one-liner over it, in the shape of str's ToBoolOr and json's
+Rem JGetOr. Option and Result have no accessor words — Select Case is the
+Rem only way in — so every *Or word in the tree looks like this.
+Def BoolFromBaseOr(s As String, base As Number, dflt As Number) As Number
+    Select Case BoolFromBase(s, base)
+        Case Ok(n)
+            n
+        Case Else
+            dflt
+
+Rem The three shortcuts. BoolBinS and BoolOctS carry the S because the
+Rem bare names are the radix constants.
+Def BoolHex(n As Number) As String
+    BoolInBase(n, 16)
+
+Def BoolBinS(n As Number) As String
+    BoolInBase(n, 2)
+
+Def BoolOctS(n As Number) As String
+    BoolInBase(n, 8)
+
+Rem Zero-padding is StrRep, not str's PadZero: PadZero takes a Number and
+Rem so cannot pad a base-36 rendering. Never truncates — a value wider
+Rem than the field comes back whole, because losing digits to make a
+Rem column line up is the silent masking this machine exists to refuse.
+Def BoolPadTo(d As String, n As Number) As String
+    StrRep("0", n - Len(d)) & d
+
+Def BoolHexW(n As Number, digits As Number) As String
+    Let dd = BoolChkCount("BOOLHEXW", digits)
+    BoolPadTo(BoolHex(n), dd)
+
+Def BoolBinW(n As Number, width As Number) As String
+    Let ww = BoolChkCount("BOOLBINW", width)
+    BoolPadTo(BoolBinS(n), ww)
+
+Rem Groups FROM THE RIGHT, following str's CommaGroup and the hex and
+Rem binary convention: "110101100" in fours is "1 1010 1100", the short
+Rem group leading. A symmetric example would settle nothing.
+Def BoolGrouped(s As String, size As Number, sep As String) As String
+    If size <> Floor(size) Or size < 1 Then
+        Error("BOOLGROUPED: GROUP SIZE '" & Str(size) & "' IS NOT A WHOLE NUMBER FROM 1")
+    Else
+        If Len(s) <= size Then
+            s
+        Else
+            BoolGrouped(Left(s, Len(s) - size), size, sep) & sep & Right(s, size)
+
+Rem The punched card, most significant bit leftmost. Not decoration: a
+Rem 32-bit mask printed as 4294901760 tells a reader nothing and "FFFF0000"
+Rem tells them a little, where sixteen filled holes followed by sixteen
+Rem empty ones tells them at once.
+Rem
+Rem FILE I/O IS LATIN-1, so a card written to a file becomes question
+Rem marks. The default glyphs are for a terminal; BoolCardWith is how you
+Rem get a row a file can hold.
+Def BoolCardWith(a As Number, width As Number, on As String, off As String) As String
+    Let aa = BoolChkFit("BOOLCARDWITH", a, width)
+    Fold(Range(1, width), "",
+         Fn(s, i) => s & Ifte(BoolBitRaw(aa, width - i) = 1, on, off))
+
+Rem The same row in the default glyphs. See BoolCardWith on Latin-1.
+Def BoolCard(a As Number, width As Number) As String
+    BoolCardWith(a, width, "●", "○")
+
+Rem ======================================================================
+Rem BIT OPERATIONS
+Rem ======================================================================
+
+Rem The three width-free words. AND is bitwise multiply, OR is bitwise
+Rem Max and XOR is bitwise sum mod 2, which is why all three are the one
+Rem fold over three operators the language already has.
+Def BoolBitAnd(a As Number, b As Number) As Number
+    Let aa = BoolChk("BOOLBITAND", a)
+    Let bb = BoolChk("BOOLBITAND", b)
+    BoolBitOp(aa, bb, *)
+
+Def BoolBitOr(a As Number, b As Number) As Number
+    Let aa = BoolChk("BOOLBITOR", a)
+    Let bb = BoolChk("BOOLBITOR", b)
+    BoolBitOp(aa, bb, Max)
+
+Def BoolBitXor(a As Number, b As Number) As Number
+    Let aa = BoolChk("BOOLBITXOR", a)
+    Let bb = BoolChk("BOOLBITXOR", b)
+    BoolBitOp(aa, bb, Fn(x, y) => (x + y) Mod 2)
+
+Rem Complement within the width — every other bit operation that has to
+Rem know where the word ends takes one for this reason.
+Def BoolBitNot(a As Number, width As Number) As Number
+    Let aa = BoolChkFit("BOOLBITNOT", a, width)
+    2 ^ width - 1 - aa
+
+Def BoolBitNand(a As Number, b As Number, width As Number) As Number
+    Let aa = BoolChkFit("BOOLBITNAND", a, width)
+    Let bb = BoolChkFit("BOOLBITNAND", b, width)
+    2 ^ width - 1 - BoolBitOp(aa, bb, *)
+
+Def BoolBitNor(a As Number, b As Number, width As Number) As Number
+    Let aa = BoolChkFit("BOOLBITNOR", a, width)
+    Let bb = BoolChkFit("BOOLBITNOR", b, width)
+    2 ^ width - 1 - BoolBitOp(aa, bb, Max)
+
+Def BoolBitXnor(a As Number, b As Number, width As Number) As Number
+    Let aa = BoolChkFit("BOOLBITXNOR", a, width)
+    Let bb = BoolChkFit("BOOLBITXNOR", b, width)
+    2 ^ width - 1 - BoolBitOp(aa, bb, Fn(x, y) => (x + y) Mod 2)
+
+Rem Left shift, bits above the width falling off. The doomed bits are
+Rem dropped BEFORE the multiply, not after: (a * 2 ^ n) Mod 2 ^ width
+Rem forms a product past 2 ^ 53 and the Mod then divides an answer that
+Rem has already been rounded. Do not simplify this back to a Mod.
+Def BoolShl(a As Number, n As Number, width As Number) As Number
+    Let aa = BoolChkFit("BOOLSHL", a, width)
+    Let nn = BoolChkShift("BOOLSHL", n)
+    If nn >= width Then
+        0
+    Else
+        (aa Mod 2 ^ (width - nn)) * 2 ^ nn
+
+Rem LOGICAL right shift: zeros come in at the top, so this needs no width
+Rem — it cannot produce a bit the input did not have. For a value meant as
+Rem signed, BoolShrA is the word: the difference between the two is the
+Rem most common bit-shifting bug there is.
+Def BoolShr(a As Number, n As Number) As Number
+    Let aa = BoolChk("BOOLSHR", a)
+    Let nn = BoolChkShift("BOOLSHR", n)
+    Floor(aa / 2 ^ nn)
+
+Rem ARITHMETIC right shift: the sign bit is replicated, so a negative
+Rem two's-complement value stays negative. BoolShr on the same value
+Rem gives a large positive number and nothing tells you — which is why
+Rem these are two words and not one with a flag.
+Def BoolShrA(a As Number, n As Number, width As Number) As Number
+    Let aa = BoolChkFit("BOOLSHRA", a, width)
+    Let nn = BoolChkShift("BOOLSHRA", n)
+    Let neg = BoolBitRaw(aa, width - 1) = 1
+    If nn >= width Then
+        Ifte(neg, 2 ^ width - 1, 0)
+    Else
+        Ifte(neg,
+             Floor(aa / 2 ^ nn) + (2 ^ width - 2 ^ (width - nn)),
+             Floor(aa / 2 ^ nn))
+
+Rem Rotates are safe once BoolShl is. The distance is taken mod the
+Rem width, so a full turn is the identity.
+Def BoolRotl(a As Number, n As Number, width As Number) As Number
+    Let aa = BoolChkFit("BOOLROTL", a, width)
+    Let nn = BoolChkShift("BOOLROTL", n) Mod width
+    BoolShl(aa, nn, width) + Floor(aa / 2 ^ (width - nn))
+
+Def BoolRotr(a As Number, n As Number, width As Number) As Number
+    Let aa = BoolChkFit("BOOLROTR", a, width)
+    Let nn = BoolChkShift("BOOLROTR", n) Mod width
+    BoolRotl(aa, width - nn, width)
+
+Rem ======================================================================
+Rem MASKS, FIELDS AND INSPECTION
+Rem ======================================================================
+
+Rem The low n bits set. BoolMask(0) is 0.
+Def BoolMask(n As Number) As Number
+    Let nn = BoolChkCount("BOOLMASK", n)
+    2 ^ nn - 1
+
+Rem Bits hi..lo set, inclusive, 0-based from the low end.
+Def BoolMaskFrom(hi As Number, lo As Number) As Number
+    Let h = BoolChkIdx("BOOLMASKFROM", hi)
+    Let l = BoolChkIdx("BOOLMASKFROM", lo)
+    If h < l Then
+        Error("BOOLMASKFROM: HIGH BIT '" & Str(h) & "' IS BELOW LOW BIT '" & Str(l) & "'")
+    Else
+        (2 ^ (h - l + 1) - 1) * 2 ^ l
+
+Rem Are ALL of the mask's bits set in a?
+Def BoolTest(a As Number, mask As Number) As Boolean
+    BoolBitAnd(a, mask) = mask
+
+Rem Is ANY of them?
+Def BoolTestAny(a As Number, mask As Number) As Boolean
+    BoolBitAnd(a, mask) > 0
+
+Def BoolSet(a As Number, mask As Number) As Number
+    BoolBitOr(a, mask)
+
+Def BoolClear(a As Number, mask As Number) As Number
+    Let aa = BoolChk("BOOLCLEAR", a)
+    aa - BoolBitAnd(aa, mask)
+
+Def BoolToggle(a As Number, mask As Number) As Number
+    BoolBitXor(a, mask)
+
+Rem A bit field, shifted down to zero. Named BoolGetField and not
+Rem BoolField because that name is the type's constructor, and the two
+Rem would be a duplicate definition at the same arity.
+Def BoolGetField(a As Number, hi As Number, lo As Number) As Number
+    Let m = BoolMaskFrom(hi, lo)
+    Let aa = BoolChk("BOOLGETFIELD", a)
+    Floor(BoolBitAnd(aa, m) / 2 ^ lo)
+
+Rem Insert one. Errors when the value does not fit the field, rather than
+Rem quietly writing its low bits and corrupting the neighbouring field.
+Def BoolSetField(a As Number, hi As Number, lo As Number, v As Number) As Number
+    Let m = BoolMaskFrom(hi, lo)
+    Let aa = BoolChk("BOOLSETFIELD", a)
+    Let vv = BoolChk("BOOLSETFIELD", v)
+    If vv >= 2 ^ (hi - lo + 1) Then
+        Error("BOOLSETFIELD: '" & Str(vv) & "' DOES NOT FIT BITS " & Str(hi) & ".." & Str(lo))
+    Else
+        aa - BoolBitAnd(aa, m) + vv * 2 ^ lo
+
+Rem A named bit field, for decoding a register. FName/HiBit/LoBit rather
+Rem than Name/Hi/Lo: hi and lo are parameters on BoolMaskFrom,
+Rem BoolGetField and BoolSetField, and a local outranks a field accessor
+Rem of the same name silently — so Hi(f) would be unreachable in exactly
+Rem the words that need it.
+Type BoolField
+    FName As String
+    HiBit As Number
+    LoBit As Number
+
+Rem Write the register layout once as named fields and get every value
+Rem out in one call. THE NAMES DO NOT COME BACK: the result is a
+Rem List Of Number positionally aligned with the field list, because
+Rem returning seq's Pair would put a machine's type in this machine's
+Rem surface. Pair them at the call site:
+Rem
+Rem     Let vals = BoolDecode(reg, fields)
+Rem     Each(Range(1, Length(fields)),
+Rem          Fn(k) => Print(FName(Nth(fields, k)) & " = " & Str(Nth(vals, k))))
+Rem
+Rem Overlapping fields are allowed — real registers document overlapping
+Rem views of the same bits, and refusing them would make this word
+Rem useless for the datasheets it exists for.
+Def BoolDecode(a As Number, fields As List Of BoolField) As List Of Number
+    Let aa = BoolChk("BOOLDECODE", a)
+    Map(fields, Fn(f) => BoolGetField(aa, HiBit(f), LoBit(f)))
+
+Rem Returns a BOOLEAN, never 0 or 1, so If BoolBitAt(reg, 5) Then is the
+Rem sentence a caller wants and BoolBitAt(reg, 5) = 1 is a type error
+Rem rather than a subtle one.
+Def BoolBitAt(a As Number, k As Number) As Boolean
+    Let aa = BoolChk("BOOLBITAT", a)
+    Let kk = BoolChkIdx("BOOLBITAT", k)
+    BoolBitRaw(aa, kk) = 1
+
+Def BoolSetBit(a As Number, k As Number, on As Boolean) As Number
+    Let aa = BoolChk("BOOLSETBIT", a)
+    Let kk = BoolChkIdx("BOOLSETBIT", k)
+    Ifte(on, BoolSet(aa, 2 ^ kk), BoolClear(aa, 2 ^ kk))
+
+Rem The count of set bits. Exists precisely because Fold(bits, 0, +) over
+Rem a list of Booleans is not a thing.
+Def BoolPopCount(a As Number) As Number
+    Let aa = BoolChk("BOOLPOPCOUNT", a)
+    CountIf(Range(0, BoolTopBit(aa)), Fn(k) => BoolBitRaw(aa, k) = 1)
+
+Def BoolLowBitGo(a As Number, k As Number) As Number
+    If (a Mod 2) = 1 Then
+        k
+    Else
+        BoolLowBitGo(Floor(a / 2), k + 1)
+
+Rem The index of the lowest set bit, or None() when there is none. Zero
+Rem is an ordinary answer in a scan, not a mistake and not a failure.
+Rem
+Rem There is no BoolTrailZeros: the count of trailing zeros is by
+Rem definition this index, so it would be this word under a second name
+Rem with a worse contract at zero.
+Def BoolLowBit(a As Number) As Option
+    Let aa = BoolChk("BOOLLOWBIT", a)
+    If aa = 0 Then
+        None()
+    Else
+        Some(BoolLowBitGo(aa, 0))
+
+Def BoolHighBit(a As Number) As Option
+    Let aa = BoolChk("BOOLHIGHBIT", a)
+    If aa = 0 Then
+        None()
+    Else
+        Some(BoolTopBit(aa))
+
+Rem BoolHighBit's strict twin, for a caller who knows the value is
+Rem non-zero and wants a Number. Aborts on zero, which has no logarithm.
+Def BoolLog2Floor(a As Number) As Number
+    Let aa = BoolChk("BOOLLOG2FLOOR", a)
+    If aa = 0 Then
+        Error("BOOLLOG2FLOOR: ZERO HAS NO LOGARITHM - BOOLHIGHBIT ANSWERS NONE INSTEAD")
+    Else
+        BoolTopBit(aa)
+
+Rem Leading zeros within the width — width when a is 0. This one survives
+Rem beside BoolHighBit because it genuinely needs a width and
+Rem BoolHighBit does not take one.
+Def BoolLeadZeros(a As Number, width As Number) As Number
+    Let aa = BoolChkFit("BOOLLEADZEROS", a, width)
+    If aa = 0 Then
+        width
+    Else
+        width - 1 - BoolTopBit(aa)
+
+Def BoolReverse(a As Number, width As Number) As Number
+    Let aa = BoolChkFit("BOOLREVERSE", a, width)
+    Fold(Range(0, width - 1), 0,
+         Fn(acc, k) => acc + BoolBitRaw(aa, k) * 2 ^ (width - 1 - k))
+
+Rem The indices that are set, ascending. A List Of Number and not seq's
+Rem Pair or anything else a consumer would have to include a machine for.
+Def BoolBitList(a As Number) As List Of Number
+    Let aa = BoolChk("BOOLBITLIST", a)
+    Filter(Range(0, BoolTopBit(aa)), Fn(k) => BoolBitRaw(aa, k) = 1)
+
+Rem The inverse. Set semantics, so duplicates are idempotent; an index
+Rem outside 0..52 aborts.
+Def BoolFromBitList(ks As List Of Number) As Number
+    Fold(ks, 0, Fn(acc, k) => BoolSet(acc, 2 ^ BoolChkIdx("BOOLFROMBITLIST", k)))
+
+Def BoolIsPow2(a As Number) As Boolean
+    Let aa = BoolChk("BOOLISPOW2", a)
+    aa > 0 And BoolPopCount(aa) = 1
+
+Rem The least power of two at or above a. BoolNextPow2(0) is 1.
+Def BoolNextPow2(a As Number) As Number
+    Let aa = BoolChk("BOOLNEXTPOW2", a)
+    If aa <= 1 Then
+        1
+    Else
+        If aa > 2 ^ (BoolMaxWidth() - 1) Then
+            Error("BOOLNEXTPOW2: '" & Str(aa) & "' HAS NO POWER OF TWO ABOVE IT BELOW THE 53-BIT CEILING")
+        Else
+            2 ^ (BoolTopBit(aa - 1) + 1)
+
+Rem ======================================================================
+Rem TWO'S COMPLEMENT AND FIXED-WIDTH ARITHMETIC
+Rem ======================================================================
+
+Rem The bit pattern read as the signed value it represents.
+Def BoolSigned(a As Number, width As Number) As Number
+    Let aa = BoolChkFit("BOOLSIGNED", a, width)
+    If BoolBitRaw(aa, width - 1) = 1 Then
+        aa - 2 ^ width
+    Else
+        aa
+
+Rem The other way. THE ONE WORD WHOSE INPUT MAY BE NEGATIVE — it takes a
+Rem signed value, so its range is -(2 ^ (width - 1)) to 2 ^ (width - 1) - 1
+Rem and BoolUnsigned(128, 8) errors while BoolUnsigned(-128, 8) is 128.
+Def BoolUnsigned(v As Number, width As Number) As Number
+    Let ww = BoolChkW("BOOLUNSIGNED", width)
+    If v <> Floor(v) Then
+        Error("BOOLUNSIGNED: '" & Str(v) & "' IS NOT A WHOLE NUMBER")
+    Else
+        If v < 0 - 2 ^ (ww - 1) Or v > 2 ^ (ww - 1) - 1 Then
+            Error("BOOLUNSIGNED: '" & Str(v) & "' IS NOT REPRESENTABLE IN " & Str(ww) & " SIGNED BITS")
+        Else
+            Ifte(v < 0, v + 2 ^ ww, v)
+
+Rem Widen, replicating the sign bit.
+Def BoolSignExtend(a As Number, from As Number, to As Number) As Number
+    Let f = BoolChkW("BOOLSIGNEXTEND", from)
+    Let t = BoolChkW("BOOLSIGNEXTEND", to)
+    Let aa = BoolChkFit("BOOLSIGNEXTEND", a, f)
+    If f > t Then
+        Error("BOOLSIGNEXTEND: CANNOT WIDEN FROM " & Str(f) & " BITS TO " & Str(t))
+    Else
+        If BoolBitRaw(aa, f - 1) = 1 Then
+            aa + (2 ^ t - 2 ^ f)
+        Else
+            aa
+
+Rem Two's complement negation. Zero negates to zero — the case an
+Rem implementation built on BoolBitNot plus one gets wrong.
+Def BoolNeg(a As Number, width As Number) As Number
+    Let aa = BoolChkFit("BOOLNEG", a, width)
+    If aa = 0 Then
+        0
+    Else
+        2 ^ width - aa
+
+Rem Wrapping add. The guard evaluates a + b, and that is safe: both
+Rem operands are whole and below 2 ^ 53, so the true sum is a whole
+Rem number below 2 ^ 54; doubles hold every whole number below 2 ^ 53
+Rem exactly and every EVEN whole number in [2 ^ 53, 2 ^ 54], so a true
+Rem sum below 2 ^ 53 cannot round up across the boundary and one at or
+Rem above it rounds to an even value still at or above it. Both branches
+Rem then stay below 2 ^ 53 and are exact. (a + b) Mod 2 ^ width is NOT
+Rem the same word — do not simplify this back to it.
+Def BoolAddW(a As Number, b As Number, width As Number) As Number
+    Let aa = BoolChkFit("BOOLADDW", a, width)
+    Let bb = BoolChkFit("BOOLADDW", b, width)
+    If aa + bb >= 2 ^ width Then
+        aa - (2 ^ width - bb)
+    Else
+        aa + bb
+
+Def BoolSubW(a As Number, b As Number, width As Number) As Number
+    Let aa = BoolChkFit("BOOLSUBW", a, width)
+    Let bb = BoolChkFit("BOOLSUBW", b, width)
+    If aa >= bb Then
+        aa - bb
+    Else
+        aa + (2 ^ width - bb)
+
+Def BoolMulWGo(a As Number, b As Number, width As Number, acc As Number) As Number
+    If b = 0 Then
+        acc
+    Else
+        BoolMulWGo(BoolAddW(a, a, width), Floor(b / 2), width,
+                   Ifte((b Mod 2) = 1, BoolAddW(acc, a, width), acc))
+
+Rem Wrapping multiply, by shift-and-add reducing mod 2 ^ width at every
+Rem step. A single product needs up to 2 ^ 106 and is exact only to about
+Rem width 26, so the naive (a * b) Mod 2 ^ width is wrong at any width a
+Rem caller would reach for this word to get.
+Def BoolMulW(a As Number, b As Number, width As Number) As Number
+    Let aa = BoolChkFit("BOOLMULW", a, width)
+    Let bb = BoolChkFit("BOOLMULW", b, width)
+    BoolMulWGo(aa, bb, width, 0)
+
+Rem Would the UNSIGNED add carry out of the width? Separate from
+Rem BoolOverflows because they answer different questions: at width 8,
+Rem 127 + 1 overflows signed but does not carry, and 255 + 1 carries but
+Rem does not overflow. The safe comparison is BoolAddW's — see its Rem.
+Def BoolCarries(a As Number, b As Number, width As Number) As Boolean
+    Let aa = BoolChkFit("BOOLCARRIES", a, width)
+    Let bb = BoolChkFit("BOOLCARRIES", b, width)
+    aa + bb >= 2 ^ width
+
+Rem Would the SIGNED add overflow — two operands of one sign giving a sum
+Rem of the other? See BoolCarries for the pair that tells these apart.
+Def BoolOverflows(a As Number, b As Number, width As Number) As Boolean
+    Let aa = BoolChkFit("BOOLOVERFLOWS", a, width)
+    Let bb = BoolChkFit("BOOLOVERFLOWS", b, width)
+    Let sa = BoolBitRaw(aa, width - 1)
+    Let sb = BoolBitRaw(bb, width - 1)
+    Let sr = BoolBitRaw(BoolAddW(aa, bb, width), width - 1)
+    sa = sb And (sa = sr) = False
+
+Rem ======================================================================
+Rem CODES
+Rem ======================================================================
+Rem The reverse trap of this machine: BoolGray, its inverse and BoolBcd
+Rem all look like they should take Booleans, and all take Numbers.
+
+Rem Binary to reflected Gray code. Consecutive values differ in exactly
+Rem one bit, which is the property the test asserts rather than a table.
+Def BoolGray(n As Number) As Number
+    Let nn = BoolChk("BOOLGRAY", n)
+    BoolBitXor(nn, Floor(nn / 2))
+
+Def BoolFromGrayGo(g As Number, sh As Number, acc As Number) As Number
+    If Floor(g / 2 ^ sh) = 0 Then
+        acc
+    Else
+        BoolFromGrayGo(g, sh + 1, BoolBitXor(acc, Floor(g / 2 ^ sh)))
+
+Def BoolFromGray(g As Number) As Number
+    Let gg = BoolChk("BOOLFROMGRAY", g)
+    BoolFromGrayGo(gg, 1, gg)
+
+Rem TRUE WHEN THE NUMBER OF SET BITS IS ODD. BoolParityBit is the other
+Rem convention and the two look like one word: this is the predicate, and
+Rem that is the bit you append.
+Def BoolParity(a As Number) As Boolean
+    (BoolPopCount(a) Mod 2) = 1
+
+Rem THE EVEN-PARITY BIT TO APPEND — 1 when the set-bit count is odd, so
+Rem that the count including this bit is even. See BoolParity, which is
+Rem the predicate and not this.
+Def BoolParityBit(a As Number) As Number
+    BoolPopCount(a) Mod 2
+
+Def BoolHamming(a As Number, b As Number) As Number
+    BoolPopCount(BoolBitXor(a, b))
+
+Def BoolBcdGo(n As Number, sh As Number) As Number
+    If n = 0 Then
+        0
+    Else
+        (n Mod 10) * 2 ^ sh + BoolBcdGo(Floor(n / 10), sh + 4)
+
+Rem Decimal to packed BCD, one nibble per digit. Packed BCD holds 13
+Rem nibbles in 53 bits, so 10 ^ 13 and above aborts.
+Def BoolBcd(n As Number) As Number
+    Let nn = BoolChk("BOOLBCD", n)
+    If nn >= 10 ^ 13 Then
+        Error("BOOLBCD: '" & Str(nn) & "' IS AT OR ABOVE 10 ^ 13 - PACKED BCD HOLDS 13 NIBBLES IN 53 BITS")
+    Else
+        BoolBcdGo(nn, 0)
+
+Def BoolFromBcdGo(b As Number, k As Number, mul As Number, acc As Number, orig As Number) As Result
+    If b = 0 Then
+        Ok(acc)
+    Else
+        Let d = b Mod 16
+        If d > 9 Then
+            Err("BOOLFROMBCD: '" & Str(orig) & "' HAS THE NIBBLE " & Str(d) & ", WHICH IS NOT A DECIMAL DIGIT", k)
+        Else
+            BoolFromBcdGo(Floor(b / 16), k + 1, mul * 10, acc + d * mul, orig)
+
+Rem Packed BCD back to decimal. An encoding read from outside, so a
+Rem nibble above 9 is a fact about the input and not a bug in the
+Rem program: Result, with At the 1-based nibble position from the low end.
+Def BoolFromBcd(b As Number) As Result
+    Let bb = BoolChk("BOOLFROMBCD", b)
+    BoolFromBcdGo(bb, 1, 1, 0, bb)
+
+Def BoolFromBcdOr(b As Number, dflt As Number) As Number
+    Select Case BoolFromBcd(b)
+        Case Ok(n)
+            n
+        Case Else
+            dflt
+
+Rem ======================================================================
+Rem LOGIC GATES
+Rem ======================================================================
+Rem All on Boolean, all one-liners. BoolAnd, BoolOr and BoolNot duplicate
+Rem built-in operators and ship anyway, because AN OPERATOR CANNOT BE
+Rem PASSED AS A BARE NAME — BoolTruthTable and BoolEquiv need them as
+Rem ordinary words they can hold in a quotation.
+
+Def BoolAnd(p As Boolean, q As Boolean) As Boolean
+    p And q
+
+Def BoolOr(p As Boolean, q As Boolean) As Boolean
+    p Or q
+
+Def BoolNot(p As Boolean) As Boolean
+    p = False
+
+Def BoolNand(p As Boolean, q As Boolean) As Boolean
+    (p And q) = False
+
+Def BoolNor(p As Boolean, q As Boolean) As Boolean
+    (p Or q) = False
+
+Def BoolXor(p As Boolean, q As Boolean) As Boolean
+    (p = q) = False
+
+Def BoolXnor(p As Boolean, q As Boolean) As Boolean
+    p = q
+
+Def BoolImplies(p As Boolean, q As Boolean) As Boolean
+    (p = False) Or q
+
+Def BoolIff(p As Boolean, q As Boolean) As Boolean
+    p = q
+
+Rem ======================================================================
+Rem TRUTH TABLES
+Rem ======================================================================
+Rem A Boolean function is A QUOTATION, NOT A PARSED STRING. There is no
+Rem expression syntax here and no parser: no "A AND (B OR C)" anywhere,
+Rem the same line eng draws against symbolic algebra. The output side is
+Rem text — BoolSopText, BoolPosText, BoolTermText — and reading a
+Rem minimised form back in is a later proposal.
+
+Rem One line of a truth table. Carries a List Of Boolean, so a BoolRow
+Rem does NOT compare with = (a record compares structurally only if every
+Rem field does, and a List compares by identity). Assert on Output and on
+Rem Inputs element-wise.
+Type BoolRow
+    Inputs As List Of Boolean
+    Output As Boolean
+
+Rem Row k's input vector. VARIABLE 1 IS THE MOST SIGNIFICANT BIT, so
+Rem BoolRowInputs(5, 3) is { True, False, True }, matching every
+Rem digital-logic textbook. This word fixes the order once and everything
+Rem below depends on it.
+Def BoolRowInputs(k As Number, n As Number) As List Of Boolean
+    Let nn = BoolChkVars("BOOLROWINPUTS", n)
+    Let kk = BoolChk("BOOLROWINPUTS", k)
+    If kk >= 2 ^ nn Then
+        Error("BOOLROWINPUTS: ROW '" & Str(kk) & "' IS OUTSIDE 0.." & Str(2 ^ nn - 1) & " FOR " & Str(nn) & " VARIABLES")
+    Else
+        Map(Range(1, nn), Fn(i) => BoolBitRaw(kk, nn - i) = 1)
+
+Rem The row index an input vector stands for — BoolRowInputs the other
+Rem way round.
+Def BoolRowIndex(vs As List Of Boolean, n As Number) As Number
+    Let nn = BoolChkVars("BOOLROWINDEX", n)
+    If Length(vs) <> nn Then
+        Error("BOOLROWINDEX: " & Str(Length(vs)) & " INPUTS FOR " & Str(nn) & " VARIABLES")
+    Else
+        Fold(Range(1, nn), 0, Fn(acc, i) => acc + Ifte(Nth(vs, i), 2 ^ (nn - i), 0))
+
+Def BoolRowOf(f As [ List Of Boolean -- Boolean ], k As Number, n As Number) As BoolRow
+    Let vs = BoolRowInputs(k, n)
+    BoolRow(vs, Call(f, vs))
+
+Rem Every row, in row order. Comfortable to n = 8 (256 rows); n above
+Rem BoolMaxVars() is refused rather than left to hang.
+Def BoolTruthTable(f As [ List Of Boolean -- Boolean ], n As Number) As List Of BoolRow
+    Let nn = BoolChkVars("BOOLTRUTHTABLE", n)
+    Map(Range(0, 2 ^ nn - 1), Fn(k) => BoolRowOf(f, k, nn))
+
+Def BoolMinterms(f As [ List Of Boolean -- Boolean ], n As Number) As List Of Number
+    Let nn = BoolChkVars("BOOLMINTERMS", n)
+    Filter(Range(0, 2 ^ nn - 1), Fn(k) => Call(f, BoolRowInputs(k, nn)))
+
+Def BoolMaxterms(f As [ List Of Boolean -- Boolean ], n As Number) As List Of Number
+    Let nn = BoolChkVars("BOOLMAXTERMS", n)
+    Filter(Range(0, 2 ^ nn - 1), Fn(k) => Call(f, BoolRowInputs(k, nn)) = False)
+
+Rem The function a minterm set stands for, as a quotation. Quotations are
+Rem closures with lexical capture, so this is well-founded — alg's
+Rem AlgToFn is the precedent. It closes the loop: minimise a function,
+Rem rebuild it from its minterms, and BoolEquiv the two.
+Def BoolFromMinterms(ms As List Of Number, n As Number) As [ List Of Boolean -- Boolean ]
+    Let nn = BoolChkVars("BOOLFROMMINTERMS", n)
+    Fn(vs) => Contains(ms, BoolRowIndex(vs, nn))
+
+Def BoolIsTautology(f As [ List Of Boolean -- Boolean ], n As Number) As Boolean
+    Let nn = BoolChkVars("BOOLISTAUTOLOGY", n)
+    All(Range(0, 2 ^ nn - 1), Fn(k) => Call(f, BoolRowInputs(k, nn)))
+
+Def BoolIsContradiction(f As [ List Of Boolean -- Boolean ], n As Number) As Boolean
+    Let nn = BoolChkVars("BOOLISCONTRADICTION", n)
+    Any(Range(0, 2 ^ nn - 1), Fn(k) => Call(f, BoolRowInputs(k, nn))) = False
+
+Rem Exhaustive comparison over every row. The only way to compare two
+Rem quotations at all — a quotation compares by reference identity, so
+Rem f = g is never True for two separately built functions.
+Def BoolEquiv(f As [ List Of Boolean -- Boolean ], g As [ List Of Boolean -- Boolean ], n As Number) As Boolean
+    Let nn = BoolChkVars("BOOLEQUIV", n)
+    All(Range(0, 2 ^ nn - 1),
+        Fn(k) => Call(f, BoolRowInputs(k, nn)) = Call(g, BoolRowInputs(k, nn)))
+
+Def BoolTf(p As Boolean) As String
+    Ifte(p, "T", "F")
+
+Rem The table as text, one row per line, in row order: the variable names
+Rem then " | OUT", then a T/F line per row.
+Def BoolTableText(f As [ List Of Boolean -- Boolean ], n As Number, names As List Of String) As String
+    Let nn = BoolChkVars("BOOLTABLETEXT", n)
+    If Length(names) <> nn Then
+        Error("BOOLTABLETEXT: " & Str(Length(names)) & " NAMES FOR " & Str(nn) & " VARIABLES")
+    Else
+        Join(Prepend(Join(names, " ") & " | OUT",
+                     Map(Range(0, 2 ^ nn - 1),
+                         Fn(k) => Join(Map(BoolRowInputs(k, nn), BoolTf), " ") & " | " & BoolTf(Call(f, BoolRowInputs(k, nn))))),
+             Chr(10))
+
+Rem ======================================================================
+Rem MINIMISATION
+Rem ======================================================================
+Rem Quine–McCluskey in the two stages it is taught in: combine adjacent
+Rem terms until nothing more combines (the prime implicants), then cover
+Rem the minterms by taking the essential prime implicants first and
+Rem greedily filling the rest. THE COVER STEP IS GREEDY — the result is
+Rem minimal in practice, not proven minimal, because exact cover is
+Rem NP-hard. Comfortable to n = 8; above BoolMaxVars() it refuses.
+
+Rem A product term: the fixed bit values, a mask saying which of them
+Rem matter, and how many variables the term is over. Care rather than
+Rem Mask because BoolMask is a word. Vars is carried so BoolTermText and
+Rem BoolTermCovers work without being told again, and so two terms of
+Rem different widths cannot be combined by accident.
+Rem
+Rem ALL-SCALAR, so a BoolTerm compares with = and can be asserted
+Rem directly — unlike BoolRow.
+Type BoolTerm
+    Bits As Number
+    Care As Number
+    Vars As Number
+
+Rem Does the term cover this minterm?
+Def BoolTermCovers(t As BoolTerm, m As Number) As Boolean
+    Let mm = BoolChk("BOOLTERMCOVERS", m)
+    BoolBitAnd(mm, Care(t)) = BoolBitAnd(Bits(t), Care(t))
+
+Rem Every minterm the term covers, ascending.
+Def BoolTermMinterms(t As BoolTerm) As List Of Number
+    Filter(Range(0, 2 ^ Vars(t) - 1), Fn(m) => BoolTermCovers(t, m))
+
+Rem The textbook notation: a dropped variable is omitted and a
+Rem complemented one carries a trailing apostrophe, so A'BC. A term with
+Rem every variable dropped is the constant and renders as "1".
+Def BoolTermText(t As BoolTerm, names As List Of String) As String
+    If Length(names) <> Vars(t) Then
+        Error("BOOLTERMTEXT: " & Str(Length(names)) & " NAMES FOR A TERM OVER " & Str(Vars(t)) & " VARIABLES")
+    Else
+        Let lits = Map(Filter(Range(1, Vars(t)), Fn(i) => BoolBitRaw(Care(t), Vars(t) - i) = 1),
+                       Fn(i) => Nth(names, i) & Ifte(BoolBitRaw(Bits(t), Vars(t) - i) = 1, "", "'"))
+        If IsEmpty(lits) Then
+            "1"
+        Else
+            Join(lits, "")
+
+Rem One term as a parenthesised sum with every literal complemented —
+Rem the De Morgan reading BoolPosText needs. A term with everything
+Rem dropped means the complement is a tautology, so the clause is "(0)".
+Def BoolTermSumText(t As BoolTerm, names As List Of String) As String
+    If Length(names) <> Vars(t) Then
+        Error("BOOLTERMSUMTEXT: " & Str(Length(names)) & " NAMES FOR A TERM OVER " & Str(Vars(t)) & " VARIABLES")
+    Else
+        Let lits = Map(Filter(Range(1, Vars(t)), Fn(i) => BoolBitRaw(Care(t), Vars(t) - i) = 1),
+                       Fn(i) => Nth(names, i) & Ifte(BoolBitRaw(Bits(t), Vars(t) - i) = 1, "'", ""))
+        If IsEmpty(lits) Then
+            "(0)"
+        Else
+            "(" & Join(lits, " + ") & ")"
+
+Rem Two terms combine when they are over the same variables, care about
+Rem the same bits, and differ in exactly one of them.
+Def BoolCombines(a As BoolTerm, b As BoolTerm) As Boolean
+    Vars(a) = Vars(b) And Care(a) = Care(b) And BoolPopCount(BoolBitXor(Bits(a), Bits(b))) = 1
+
+Def BoolCombined(a As BoolTerm, b As BoolTerm) As BoolTerm
+    Let keep = 2 ^ Vars(a) - 1 - BoolBitXor(Bits(a), Bits(b))
+    BoolTerm(BoolBitAnd(Bits(a), keep), BoolBitAnd(Care(a), keep), Vars(a))
+
+Rem A BoolTerm is all-scalar, so Contains does the right thing here and
+Rem the whole algorithm can dedupe by value.
+Def BoolDedupTerms(ts As List Of BoolTerm) As List Of BoolTerm
+    Fold(ts, { }, Fn(acc, t) => Ifte(Contains(acc, t), acc, Append(acc, t)))
+
+Def BoolPiRound(ts As List Of BoolTerm) As List Of BoolTerm
+    BoolDedupTerms(Flatten(Map(ts,
+        Fn(a) => Map(Filter(ts, Fn(b) => BoolCombines(a, b)), Fn(b) => BoolCombined(a, b)))))
+
+Rem The terms this round could not combine with anything: those are prime.
+Def BoolUncombined(ts As List Of BoolTerm) As List Of BoolTerm
+    Filter(ts, Fn(a) => Any(ts, Fn(b) => BoolCombines(a, b)) = False)
+
+Def BoolPiGo(ts As List Of BoolTerm, primes As List Of BoolTerm, k As Number) As List Of BoolTerm
+    If IsEmpty(ts) Or k <= 0 Then
+        primes
+    Else
+        Let nxt = BoolPiRound(ts)
+        If IsEmpty(nxt) Then
+            BoolDedupTerms(Concat(primes, ts))
+        Else
+            BoolPiGo(nxt, BoolDedupTerms(Concat(primes, BoolUncombined(ts))), k - 1)
+
+Def BoolTermsOf(ms As List Of Number, n As Number) As List Of BoolTerm
+    BoolDedupTerms(Map(ms, Fn(m) => BoolTerm(m, 2 ^ n - 1, n)))
+
+Def BoolChkMinterms(word As String, ms As List Of Number, n As Number) As List Of Number
+    Map(ms, Fn(m) => Ifte(BoolChk(word, m) >= 2 ^ n,
+                          Error(word & ": MINTERM '" & Str(m) & "' IS OUTSIDE 0.." & Str(2 ^ n - 1) & " FOR " & Str(n) & " VARIABLES"),
+                          m))
+
+Rem Every prime implicant of the minterm set: the first Quine–McCluskey
+Rem stage on its own, for a caller who wants the implicant chart rather
+Rem than one cover of it.
+Def BoolPrimeImplicants(minterms As List Of Number, n As Number) As List Of BoolTerm
+    Let nn = BoolChkVars("BOOLPRIMEIMPLICANTS", n)
+    Let ms = BoolChkMinterms("BOOLPRIMEIMPLICANTS", minterms, nn)
+    BoolPiGo(BoolTermsOf(ms, nn), { }, nn + 2)
+
+Def BoolPiScore(t As BoolTerm, todo As List Of Number) As Number
+    CountIf(todo, Fn(m) => BoolTermCovers(t, m))
+
+Def BoolBestPi(pis As List Of BoolTerm, todo As List Of Number) As BoolTerm
+    Fold(Rest(pis), First(pis),
+         Fn(b, t) => Ifte(BoolPiScore(t, todo) > BoolPiScore(b, todo), t, b))
+
+Def BoolCoverGo(pis As List Of BoolTerm, todo As List Of Number, chosen As List Of BoolTerm, k As Number) As List Of BoolTerm
+    If IsEmpty(todo) Or k <= 0 Then
+        chosen
+    Else
+        Let best = BoolBestPi(pis, todo)
+        BoolCoverGo(pis, Filter(todo, Fn(m) => BoolTermCovers(best, m) = False),
+                    Append(chosen, best), k - 1)
+
+Rem A minterm covered by exactly one prime implicant forces that
+Rem implicant into any cover at all: those go in before the greedy step
+Rem gets a say, which is what makes the result minimal in practice on
+Rem the functions a caller actually has.
+Def BoolEssentials(pis As List Of BoolTerm, ms As List Of Number) As List Of BoolTerm
+    BoolDedupTerms(Map(Filter(ms, Fn(m) => CountIf(pis, Fn(t) => BoolTermCovers(t, m)) = 1),
+                       Fn(m) => First(Filter(pis, Fn(t) => BoolTermCovers(t, m)))))
+
+Def BoolCoverOf(pis As List Of BoolTerm, ms As List Of Number) As List Of BoolTerm
+    Let ess = BoolEssentials(pis, ms)
+    Let rest = Filter(ms, Fn(m) => Any(ess, Fn(t) => BoolTermCovers(t, m)) = False)
+    Concat(ess, BoolCoverGo(pis, rest, { }, Length(ms) + 1))
+
+Rem A minimised sum of products, as a term list. The empty minterm set
+Rem gives the empty term list, whose BoolSopText is "0"; a full cover
+Rem gives one term with every variable dropped, whose BoolSopText is "1".
+Def BoolMinimise(minterms As List Of Number, n As Number) As List Of BoolTerm
+    Let nn = BoolChkVars("BOOLMINIMISE", n)
+    Let ms = BoolChkMinterms("BOOLMINIMISE", minterms, nn)
+    If IsEmpty(ms) Then
+        { }
+    Else
+        BoolCoverOf(BoolPrimeImplicants(ms, nn), ms)
+
+Rem The same, with don't-cares: they may be used to grow an implicant but
+Rem need not be covered. A don't-care that is also a minterm aborts —
+Rem that is a caller mistake, not a set to reconcile.
+Def BoolMinimiseWith(minterms As List Of Number, dontCares As List Of Number, n As Number) As List Of BoolTerm
+    Let nn = BoolChkVars("BOOLMINIMISEWITH", n)
+    Let ms = BoolChkMinterms("BOOLMINIMISEWITH", minterms, nn)
+    Let dc = BoolChkMinterms("BOOLMINIMISEWITH", dontCares, nn)
+    If Any(dc, Fn(d) => Contains(ms, d)) Then
+        Error("BOOLMINIMISEWITH: A DONT-CARE IS ALSO A MINTERM - THE TWO SETS MUST NOT OVERLAP")
+    Else
+        If IsEmpty(ms) Then
+            { }
+        Else
+            BoolCoverOf(BoolPrimeImplicants(Concat(ms, dc), nn), ms)
+
+Rem "A'B + BC'". The empty term list is "0" — the empty sum.
+Def BoolSopText(terms As List Of BoolTerm, names As List Of String) As String
+    If IsEmpty(terms) Then
+        "0"
+    Else
+        Join(Map(terms, Fn(t) => BoolTermText(t, names)), " + ")
+
+Rem "(A + B')(B' + C)". The empty term list is "1" — the empty product,
+Rem and the pair with BoolSopText's "0" is what makes the algebra close.
+Rem
+Rem A MINIMISED PRODUCT-OF-SUMS IS THE MINIMISED SUM-OF-PRODUCTS OF THE
+Rem COMPLEMENT, read through De Morgan: each product term becomes a sum
+Rem clause and every literal flips. So the terms to hand BoolPosText are
+Rem BoolMinimise(BoolMaxterms(f, n), n) — not BoolMinimise(BoolMinterms(...)).
+Rem Rendering a minimised sum-of-products as a product of sums would be
+Rem meaningless.
+Def BoolPosText(terms As List Of BoolTerm, names As List Of String) As String
+    If IsEmpty(terms) Then
+        "1"
+    Else
+        Join(Map(terms, Fn(t) => BoolTermSumText(t, names)), "")

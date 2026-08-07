@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="The Binary Machine — machines/bool.shoddy">
+<title>bool — The Binary Machine | Shoddy Machines</title>
+<link rel="stylesheet" href="../style.css">
+<link rel="icon" href="../favicon.svg" type="image/svg+xml">
+<link rel="alternate icon" href="../favicon.ico" sizes="48x48">
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+</head>
+<body>
+<div class="topbar"><div class="inner">
+  <div class="row">
+    <a class="phase" href="index.html"><img class="mark" src="../media/brand/shoddy-icon.svg" alt="" width="23" height="23">Shoddy · The Machines</a>
+    <span class="spacer"></span>
+    <nav class="docnav meta" aria-label="About"><a href="../heritage.html">Heritage</a><a href="../authorship.html">Authorship</a></nav>
+  </div>
+  <nav class="docnav main" aria-label="Documentation"><a href="../tutorials/index.html">Tutorials</a><a href="../guide.html">Guide</a><a href="../quickref.html">Reference</a><span class="here">Machines</span><a href="../mills/index.html">Mills</a><a href="../stack.html">Stack</a><a href="../spec.html">Spec</a><a href="../setup.html">Setup</a><a href="../vscode.html">VS Code</a><a href="../assistants.html">AI</a><a href="../build.html">Toolchain</a><a href="../errors.html">Errors</a></nav>
+</div></div>
+<div class="wrap">
+
+
+<header class="mast has-icon"><div><p class="eyebrow"><a href="index.html#numbers-math">The Machines &middot; Numbers &amp; math</a></p><h1>bool</h1><p class="kicker">The Binary Machine &mdash; machines/bool.shoddy</p></div><img class="micon" src="../media/icons/bool.svg" alt="the bool machine&#39;s icon"></header>
+<nav class="pagertop" aria-label="Machines, in catalog order"><a href="str.html">&larr; str</a><a href="index.html">All machines</a><a href="math.html">math &rarr;</a></nav>
+
+<h2 id="summary">Summary</h2>
+<p><strong>Shoddy has no bitwise builtins, and this machine is why you do not
+need any.</strong> <code>And</code>, <code>Or</code> and <code>Not</code> are
+Boolean operators only: there is no integer AND, no XOR, no shift, no rotate
+and no way to reach a double's bits. <code>bool</code> supplies all of it as
+ordinary words &mdash; number bases, bit patterns, masks and fields, two's
+complement, the codes (Gray, BCD, parity, Hamming), the logic gates the
+operators do not give you, truth tables, and Quine&ndash;McCluskey
+minimisation. Every word and type is prefixed <code>Bool</code>. Pure
+throughout.</p>
+<p>Two things a caller gets wrong, so both are said here first.
+<strong>Exactly three words are width-free</strong> &mdash;
+<code>BoolBitAnd</code>, <code>BoolBitOr</code> and <code>BoolBitXor</code>
+&mdash; because their answers do not depend on the width at all, and a width
+parameter would buy nothing but noise. Everything else whose answer depends on
+where the word ends takes one; the single word that needs none for a different
+reason is <code>BoolShr</code>, since a logical right shift cannot produce a
+bit the input did not have. And <strong>variable 1 is the most significant
+bit</strong> of a row index, matching every digital-logic textbook: row 5 of a
+3-variable table is <code>{ True, False, True }</code>.</p>
+
+<h2 id="why">Why It's Useful</h2>
+<p>Underneath everything here is one fact: with no bitwise operators, every
+bit operation is <code>Mod</code> and <code>2 ^ n</code> written out at the
+call site. Extracting a length field from a binary frame becomes four lines
+of <code>Floor</code> and <code>Mod</code> that look plausible and are wrong
+one time in five. This machine writes that arithmetic once, gets the edges
+right, and puts a name on it.</p>
+<p><strong>The domain is checked, never masked.</strong> Every value is a
+non-negative whole number below 2<sup>53</sup>, and every word errors naming
+itself on anything else &mdash; <code>BoolBitAnd(-1, 1)</code> refuses rather
+than answering. That is the design decision the rest of the machine hangs
+from. Silently masking a bad input is what makes bit code impossible to
+debug: the answer is plausible, the bug is upstream, and nothing points at
+it.</p>
+<p><strong>The width ceiling is honest.</strong> Widths run 1 to 53, because
+doubles hold whole numbers exactly to 2<sup>53</sup> and a 54-bit word cannot
+represent its own top bit &mdash; <code>2 ^ 53 + 1</code> <em>is</em>
+<code>2 ^ 53</code>, so a rotation would lose a bit without complaining.
+Three words are written to reduce before they multiply or add, because the
+naive formula overflows 2<sup>53</sup> <em>before</em> its <code>Mod</code>
+could run: <code>(a * 2 ^ n) Mod 2 ^ width</code> forms a product that has
+already been rounded. A word exact only to width 26 while the banner claimed
+53 would be precisely the plausible-wrong-answer failure this machine exists
+to prevent.</p>
+<p>What it makes possible, none of which anything in the tree does today
+because nothing in the tree can:</p>
+<ul>
+<li><strong>Binary protocols over <a href="net.html">net</a> and
+<a href="https.html">https</a>.</strong> Payloads are Strings carrying one
+byte per character, so every consumer today parses text; pulling a length
+field or a flag byte out of a binary frame is hand-rolled arithmetic at the
+call site.</li>
+<li><strong>Colour packing.</strong> The scribbler builtins pass
+<code>r g b</code> as three separate numbers and
+<a href="plotter.html">plotter</a> carries a <code>Type Rgb</code> record,
+because there is no way to pack a triple into one number and get it back
+out.</li>
+<li><strong>Alternative round functions in <a href="shaker.html">shaker</a>.</strong>
+Its Feistel network uses modular arithmetic over a prime because Shoddy has
+no bitwise operators; a caller who wants the textbook XOR construction has
+had no way to write one.</li>
+</ul>
+<p class="note"><strong>Not <a href="eng.html">eng</a>, and not
+<a href="alg.html">alg</a>.</strong> The three do not overlap and none
+includes another: <code>eng</code> is continuous mathematics over
+<code>Number</code> &mdash; trigonometry, calculus, units, constants;
+<code>alg</code> is symbolic algebra over an expression type; and this is
+discrete &mdash; how an integer is <em>written</em> and how truth values
+<em>combine</em>. Base conversion lives here because a hex formatter belongs
+beside the bits it renders and not beside the determinant.</p>
+
+<h2 id="guide">User's Guide</h2>
+<p>Include the file and the words are yours. Nothing here touches a file, a
+socket or the screen.</p>
+<pre><code>Include "bool.shoddy"
+
+Def Main()
+    ' A status register, 1011 0100. There are no hex literals in Shoddy,
+    ' so a fixture is decimal with the binary in a comment.
+    Let reg = 180
+    Print(BoolBinW(reg, 8))                  ' 10110100
+    Print(BoolCard(reg, 8))                  ' the punched-card row
+    Print(Str(BoolGetField(reg, 5, 2)))      ' 13 - bits 5..2
+    If BoolBitAt(reg, 7) Then
+        Print("MODE BIT SET")
+
+    ' Write the layout down once, decode in one call.
+    Let fields = { BoolField("MODE", 7, 6), BoolField("COUNT", 5, 2),
+                   BoolField("FLAGS", 1, 0) }
+    Let vals = BoolDecode(reg, fields)
+    Each(Range(1, Length(fields)),
+         Fn(k) =&gt; Print(FName(Nth(fields, k)) &amp; " = " &amp; Str(Nth(vals, k))))</code></pre>
+<p><strong>Errors, <code>Result</code> and <code>Option</code> are three
+different answers</strong>, and the machine keeps them apart deliberately.
+A negative, non-integer or out-of-width argument is a bug in the calling
+program: it aborts, naming the word. Reading external text is not, so
+<code>BoolFromBase</code> and <code>BoolFromBcd</code> return the language's
+<code>Result</code> &mdash; a bad digit is a fact about the input, exactly as
+a malformed document is for <code>JsonRead</code>. And absence is neither:
+<code>BoolLowBit(0)</code> and <code>BoolHighBit(0)</code> answer
+<code>None()</code>, because "no bits set" is an ordinary answer in a scan.
+<strong>No &minus;1 sentinel appears anywhere in the machine.</strong></p>
+<p><strong>Bit patterns and truth values never share a name.</strong>
+Operating on a bit pattern carries <code>Bit</code> in the name
+(<code>BoolBitAnd</code>, <code>BoolBitXor</code>); operating on
+<code>Boolean</code>s is the bare gate name (<code>BoolAnd</code>,
+<code>BoolXor</code>). So <code>BoolBitAt</code> returns a
+<code>Boolean</code> and never 0 or 1 &mdash;
+<code>If BoolBitAt(reg, 5) Then</code> is the sentence you want, and
+<code>BoolBitAt(reg, 5) = 1</code> is a type error rather than a subtle one.
+<code>BoolPopCount</code> returns a <code>Number</code>, and exists precisely
+because folding <code>+</code> over a list of Booleans is not a thing.</p>
+<p><strong>A Boolean function is a quotation, not a parsed string.</strong>
+<code>BoolTruthTable</code>, <code>BoolMinterms</code>, <code>BoolEquiv</code>
+and <code>BoolIsTautology</code> all take
+<code>[ List Of Boolean -- Boolean ]</code>. There is no expression syntax
+here and no parser &mdash; no <code>"A AND (B OR C)"</code> anywhere, the same
+line <code>eng</code> draws against symbolic algebra. The output side is
+text.</p>
+<pre><code>Def Carry(vs As List Of Boolean) As Boolean
+    BoolOr(BoolAnd(Nth(vs, 1), Nth(vs, 2)),
+           BoolAnd(Nth(vs, 3), BoolXor(Nth(vs, 1), Nth(vs, 2))))
+
+Let terms = BoolMinimise(BoolMinterms(Carry, 3), 3)
+Print(BoolSopText(terms, { "A", "B", "Cin" }))    ' AB + ACin + BCin</code></pre>
+<p><strong>Lists compare by identity, so nothing here hides one in a
+<code>Result</code>.</strong> <code>{ 2, 3 } = { 2, 3 }</code> is
+<code>False</code>, which means a caller writing <code>= Ok(...)</code>
+against a list payload would silently never match. Every <code>Result</code>
+and <code>Option</code> payload in this machine is a Number, so
+<code>BoolFromBase("ff", 16) = Ok(255)</code> is a valid test.
+<code>BoolTerm</code> and <code>BoolField</code> are all-scalar and compare
+with <code>=</code>; <code>BoolRow</code> carries a list and does not, so
+assert on <code>Output</code> and on <code>Inputs</code> element-wise.</p>
+<p><strong>The scale ceiling is enforced, not merely stated.</strong> Truth
+tables and minimisation are comfortable to n = 8 (256 rows), slow at 10 and
+hopeless at 16, because a List is a linked list &mdash; a 65,536-element
+table is not a slow answer but a hang. <code>BoolMaxVars()</code> is
+<strong>12</strong>, and every word that takes a variable count refuses above
+it, so the far end is a named error rather than a stall.</p>
+
+<h2 id="words">Word Reference</h2>
+
+<h3>Constants</h3>
+<p>Zero-arg <code>Def</code>s, as a machine constant must be: a machine
+publishes a constant with a <code>Def</code> that returns it. Where a word and
+a constant compete for a name the word wins and the constant is suffixed
+&mdash; hence <code>BoolHexR</code>, beside the <code>BoolHex</code>
+formatter.</p>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>BoolBin() / BoolOct() / BoolDec() / BoolHexR()</td><td>The radix constants: 2, 8, 10, 16. Pass one to <code>BoolInBase</code> rather than writing the number.</td></tr>
+<tr><td>BoolBits()</td><td>32 &mdash; the conventional default width. Offered, never imposed.</td></tr>
+<tr><td>BoolMaxWidth()</td><td>53 &mdash; the arithmetic ceiling, and the largest width any word accepts.</td></tr>
+<tr><td>BoolMaxVars()</td><td>12 &mdash; the hard refusal for truth tables and minimisation. The comfort figure is 8.</td></tr>
+<tr><td>BoolDigits()</td><td>The uppercase digit alphabet for bases 2..36.</td></tr>
+</table>
+
+<h3>Bases and rendering</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>BoolInBase(n, base)</td><td><code>n</code> written in the given base (2..36), uppercase letters past 9. <code>BoolInBase(0, b)</code> is <code>"0"</code>.</td></tr>
+<tr><td>BoolFromBase(s, base)</td><td><strong><code>Result</code></strong>: <code>Ok(n)</code>, or <code>Err(why, at)</code> with the <strong>1-based</strong> offset of the offending character &mdash; 0 when there is no position. Case-insensitive, so <code>"ff"</code> and <code>"FF"</code> both give <code>Ok(255)</code>. A sign is not a digit: <code>"-1"</code> is an <code>Err</code> at 1.</td></tr>
+<tr><td>BoolFromBaseOr(s, base, dflt)</td><td>The one-liner over it, in the shape of str's <code>ToBoolOr</code> and json's <code>JGetOr</code>.</td></tr>
+<tr><td>BoolHex(n) / BoolBinS(n) / BoolOctS(n)</td><td>The three shortcuts. <code>BoolBinS</code> and <code>BoolOctS</code> carry the S because the bare names are the radix constants.</td></tr>
+<tr><td>BoolHexW(n, digits)</td><td>Hex zero-padded to a digit count. Never truncates &mdash; a value wider than the field comes back whole.</td></tr>
+<tr><td>BoolBinW(n, width)</td><td>Binary zero-padded to a bit count, same rule.</td></tr>
+<tr><td>BoolGrouped(s, size, sep)</td><td>A digit string grouped <strong>from the right</strong>, following str's <code>CommaGroup</code> and the hex/binary convention: <code>BoolGrouped("110101100", 4, " ")</code> is <code>"1 1010 1100"</code>, the short group leading.</td></tr>
+<tr><td>BoolCard(a, width)</td><td>The punched-card row, most significant bit leftmost. Not decoration: a 32-bit mask printed as <code>4294901760</code> tells a reader nothing and <code>"FFFF0000"</code> tells them a little, where sixteen filled holes followed by sixteen empty ones tells them at once. <strong>File I/O is Latin-1</strong>, so a card written to a file becomes question marks &mdash; the default glyphs are for a terminal.</td></tr>
+<tr><td>BoolCardWith(a, width, on, off)</td><td>The same row in glyphs you choose, which is how you get one a file can hold.</td></tr>
+</table>
+
+<h3>Bit operations</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>BoolBitAnd(a, b)</td><td><strong>Width-free.</strong> <code>BoolBitAnd(12, 10)</code> is 8 whether the word is 8 bits or 48.</td></tr>
+<tr><td>BoolBitOr(a, b)</td><td><strong>Width-free.</strong></td></tr>
+<tr><td>BoolBitXor(a, b)</td><td><strong>Width-free.</strong> These three are the only ones.</td></tr>
+<tr><td>BoolBitNot(a, width)</td><td>Complement within the width &mdash; which is why it needs one.</td></tr>
+<tr><td>BoolBitNand / BoolBitNor / BoolBitXnor (a, b, width)</td><td>The complemented pairs, each within the width.</td></tr>
+<tr><td>BoolShl(a, n, width)</td><td>Left shift; bits above the width fall off. The doomed bits are dropped <em>before</em> the multiply, not after.</td></tr>
+<tr><td>BoolShr(a, n)</td><td><strong>Logical</strong> right shift, and the one shift that needs no width: it cannot produce a bit the input did not have.</td></tr>
+<tr><td>BoolShrA(a, n, width)</td><td><strong>Arithmetic</strong> right shift &mdash; the sign bit is replicated. A separate word because the difference is the single most common bit-shifting bug there is: <code>BoolShr</code> on a negative two's-complement value gives a large positive number and nothing tells you.</td></tr>
+<tr><td>BoolRotl / BoolRotr (a, n, width)</td><td>Rotates. The distance is taken mod the width, so a full turn is the identity.</td></tr>
+</table>
+
+<h3>Masks, fields and inspection</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>BoolMask(n)</td><td>The low <code>n</code> bits set. <code>BoolMask(0)</code> is 0.</td></tr>
+<tr><td>BoolMaskFrom(hi, lo)</td><td>Bits <code>hi</code>..<code>lo</code> set, inclusive, 0-based from the low end.</td></tr>
+<tr><td>BoolTest(a, mask)</td><td><code>Boolean</code>: are <strong>all</strong> the mask's bits set in <code>a</code>?</td></tr>
+<tr><td>BoolTestAny(a, mask)</td><td><code>Boolean</code>: is <strong>any</strong> of them?</td></tr>
+<tr><td>BoolSet / BoolClear / BoolToggle (a, mask)</td><td>Set, clear or flip the mask's bits.</td></tr>
+<tr><td>BoolGetField(a, hi, lo)</td><td>A bit field, shifted down to zero. Named <code>BoolGetField</code> and not <code>BoolField</code> because that name is the type's constructor, and the two would be a duplicate definition at the same arity.</td></tr>
+<tr><td>BoolSetField(a, hi, lo, v)</td><td>Insert one. <strong>Errors</strong> when the value does not fit, rather than quietly writing its low bits and corrupting the neighbouring field.</td></tr>
+<tr><td>Type BoolField</td><td>A named field: <code>FName</code>, <code>HiBit</code>, <code>LoBit</code> (inclusive, 0-based). Not <code>Name</code>/<code>Hi</code>/<code>Lo</code>, because <code>hi</code> and <code>lo</code> are parameters on three words here and a local outranks a field accessor of the same name silently.</td></tr>
+<tr><td>BoolDecode(a, fields)</td><td><code>List Of BoolField</code> &rarr; <code>List Of Number</code>. Write the register layout down once and get every value out in one call &mdash; the word that makes this machine worth including for embedded work. <strong>The names do not come back</strong>: the result is positionally aligned with the field list. Overlapping fields are allowed, because real registers document overlapping views.</td></tr>
+<tr><td>BoolBitAt(a, k)</td><td><strong><code>Boolean</code></strong>, never 0 or 1.</td></tr>
+<tr><td>BoolSetBit(a, k, on)</td><td>One bit, set from a <code>Boolean</code>.</td></tr>
+<tr><td>BoolPopCount(a)</td><td><code>Number</code>: how many bits are set.</td></tr>
+<tr><td>BoolLowBit(a) / BoolHighBit(a)</td><td><strong><code>Option</code></strong>: <code>Some(index)</code>, or <code>None()</code> when nothing is set.</td></tr>
+<tr><td>BoolLog2Floor(a)</td><td><code>BoolHighBit</code>'s strict twin, for a caller who wants a Number. <strong>Aborts on zero</strong>, which has no logarithm.</td></tr>
+<tr><td>BoolLeadZeros(a, width)</td><td>Leading zeros within the width; <code>width</code> when <code>a</code> is 0. It survives beside <code>BoolHighBit</code> because it genuinely needs a width.</td></tr>
+<tr><td>BoolReverse(a, width)</td><td>The bits end to end.</td></tr>
+<tr><td>BoolBitList(a)</td><td><code>List Of Number</code>: the indices that are set, ascending.</td></tr>
+<tr><td>BoolFromBitList(ks)</td><td>The inverse. Set semantics, so duplicates are idempotent; an index outside 0..52 aborts.</td></tr>
+<tr><td>BoolIsPow2(a) / BoolNextPow2(a)</td><td><code>BoolIsPow2(0)</code> is <code>False</code>; <code>BoolNextPow2(0)</code> is 1, <code>BoolNextPow2(1)</code> is 1 and <code>BoolNextPow2(5)</code> is 8.</td></tr>
+</table>
+<p class="note"><strong>There is no <code>BoolTrailZeros</code>.</strong> The
+count of trailing zeros is by definition the index of the lowest set bit, so
+it would be <code>BoolLowBit</code> under a second name with a worse contract
+at zero.</p>
+
+<h3>Two's complement and fixed-width arithmetic</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>BoolSigned(a, width)</td><td>The bit pattern read as the signed value it represents: <code>BoolSigned(255, 8)</code> is &minus;1.</td></tr>
+<tr><td>BoolUnsigned(v, width)</td><td>The other way. <strong>The one word whose input may be negative</strong>, its domain being &minus;(2<sup>width&minus;1</sup>) to 2<sup>width&minus;1</sup>&minus;1: <code>BoolUnsigned(-128, 8)</code> is 128 and <code>BoolUnsigned(128, 8)</code> <strong>errors</strong>.</td></tr>
+<tr><td>BoolSignExtend(a, from, to)</td><td>Widen, replicating the sign bit. Requires <code>1 &lt;= from &lt;= to &lt;= 53</code>.</td></tr>
+<tr><td>BoolNeg(a, width)</td><td>Two's complement negation. Zero negates to zero &mdash; the case an implementation built on <code>BoolBitNot</code> plus one gets wrong.</td></tr>
+<tr><td>BoolAddW / BoolSubW / BoolMulW (a, b, width)</td><td>Wrapping arithmetic, exact at width 53. The add compares before it adds and the multiply is shift-and-add reducing at every step, because a single product needs up to 2<sup>106</sup> and the naive form is exact only to about width 26.</td></tr>
+<tr><td>BoolCarries(a, b, width)</td><td><code>Boolean</code>: would the <strong>unsigned</strong> add carry out?</td></tr>
+<tr><td>BoolOverflows(a, b, width)</td><td><code>Boolean</code>: would the <strong>signed</strong> add overflow? Two words because they answer different questions &mdash; at width 8, <code>127 + 1</code> overflows signed but does not carry, and <code>255 + 1</code> carries but does not overflow.</td></tr>
+</table>
+
+<h3>Codes</h3>
+<p>The reverse trap of this machine: these all look like they should take
+Booleans, and all take Numbers.</p>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>BoolGray(n) / BoolFromGray(g)</td><td>Reflected Gray code, both ways. Consecutive values differ in exactly one bit.</td></tr>
+<tr><td>BoolParity(a)</td><td><code>Boolean</code>: <strong>True when the number of set bits is odd.</strong></td></tr>
+<tr><td>BoolParityBit(a)</td><td><code>Number</code>: <strong>the even-parity bit to append.</strong> These two look like one word and are not: that is the predicate, this is the bit.</td></tr>
+<tr><td>BoolHamming(a, b)</td><td>How many bit positions differ.</td></tr>
+<tr><td>BoolBcd(n)</td><td>Decimal to packed BCD, one nibble per digit. Packed BCD holds 13 nibbles in 53 bits, so <code>10 ^ 13</code> and above aborts.</td></tr>
+<tr><td>BoolFromBcd(b)</td><td><strong><code>Result</code></strong>: an encoding read from outside, so a nibble above 9 is a fact about the input, with <code>At</code> the 1-based nibble position from the low end.</td></tr>
+<tr><td>BoolFromBcdOr(b, dflt)</td><td>The one-liner over it.</td></tr>
+</table>
+
+<h3>Logic gates</h3>
+<p>All on <code>Boolean</code>. <code>BoolAnd</code>, <code>BoolOr</code> and
+<code>BoolNot</code> duplicate built-in operators and ship anyway, because
+<strong>an operator cannot be passed as a bare name</strong> &mdash;
+<code>BoolTruthTable</code> and <code>BoolEquiv</code> need them as ordinary
+words they can hold in a quotation.</p>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>BoolAnd / BoolOr / BoolNot</td><td>The three the language already has as operators.</td></tr>
+<tr><td>BoolNand / BoolNor / BoolXor / BoolXnor</td><td>The four it does not.</td></tr>
+<tr><td>BoolImplies(p, q)</td><td>False on exactly one row: <code>p</code> true, <code>q</code> false.</td></tr>
+<tr><td>BoolIff(p, q)</td><td>Material equivalence &mdash; the same table as <code>BoolXnor</code>, under the name a logician reaches for.</td></tr>
+</table>
+
+<h3>Truth tables</h3>
+<p>All of these refuse a variable count below 1 or above
+<code>BoolMaxVars()</code>.</p>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>Type BoolRow</td><td><code>Inputs As List Of Boolean</code>, <code>Output As Boolean</code>. Carries a list, so a <code>BoolRow</code> does <strong>not</strong> compare with <code>=</code>.</td></tr>
+<tr><td>BoolRowInputs(k, n)</td><td>Row <code>k</code>'s input vector. <strong>Variable 1 is the most significant bit</strong>, so <code>BoolRowInputs(5, 3)</code> is <code>{ True, False, True }</code>. This word fixes the order once and everything else depends on it.</td></tr>
+<tr><td>BoolRowIndex(vs, n)</td><td>The same conversion the other way.</td></tr>
+<tr><td>BoolTruthTable(f, n)</td><td><code>List Of BoolRow</code>, in row order.</td></tr>
+<tr><td>BoolMinterms(f, n) / BoolMaxterms(f, n)</td><td>The rows where <code>f</code> is True, and where it is False.</td></tr>
+<tr><td>BoolFromMinterms(ms, n)</td><td>Returns a <strong>quotation</strong> &mdash; a closure over the minterm set. Closes the loop: minimise a function, rebuild it from its minterms, and <code>BoolEquiv</code> the two.</td></tr>
+<tr><td>BoolIsTautology(f, n) / BoolIsContradiction(f, n)</td><td>True on every row, and true on none.</td></tr>
+<tr><td>BoolEquiv(f, g, n)</td><td>Exhaustive comparison &mdash; and the only way to compare two quotations at all, since a quotation compares by reference identity.</td></tr>
+<tr><td>BoolTableText(f, n, names)</td><td>The table as text, one row per line.</td></tr>
+</table>
+
+<h3>Minimisation</h3>
+<p>Quine&ndash;McCluskey in the two stages it is taught in: combine adjacent
+terms until nothing more combines (the prime implicants), then cover the
+minterms by taking the essential prime implicants first and greedily filling
+the rest. <strong>The cover step is greedy</strong> &mdash; the result is
+minimal in practice, not proven minimal, because exact cover is NP-hard.</p>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>Type BoolTerm</td><td><code>Bits</code> (the fixed values), <code>Care</code> (1 where <code>Bits</code> matters, 0 where the variable is dropped) and <code>Vars</code> (how many variables the term is over). <code>Care</code> rather than <code>Mask</code> because <code>BoolMask</code> is a word; <code>Vars</code> is carried so two terms of different widths cannot be combined by accident. All-scalar, so it compares with <code>=</code>.</td></tr>
+<tr><td>BoolPrimeImplicants(minterms, n)</td><td>The first stage on its own, for a caller who wants the implicant chart rather than one cover of it.</td></tr>
+<tr><td>BoolMinimise(minterms, n)</td><td>A minimised sum of products. The empty minterm set gives the empty term list; a full cover gives one term with every variable dropped.</td></tr>
+<tr><td>BoolMinimiseWith(minterms, dontCares, n)</td><td>The same with don't-cares: they may grow an implicant but need not be covered. A don't-care that is also a minterm <strong>aborts</strong> &mdash; a caller mistake, not a set to reconcile.</td></tr>
+<tr><td>BoolTermCovers(t, m) / BoolTermMinterms(t)</td><td>Does the term cover this minterm, and which ones does it cover.</td></tr>
+<tr><td>BoolTermText(t, names)</td><td>The textbook notation: a dropped variable omitted, a complemented one with a trailing apostrophe &mdash; <code>A'BC</code>. A term with every variable dropped is the constant and renders as <code>"1"</code>.</td></tr>
+<tr><td>BoolSopText(terms, names)</td><td><code>"A'B + BC'"</code>. The empty term list is <code>"0"</code> &mdash; the empty sum.</td></tr>
+<tr><td>BoolPosText(terms, names)</td><td><code>"(A + B')(B' + C)"</code>. The empty term list is <code>"1"</code>, and that pair with <code>BoolSopText</code>'s <code>"0"</code> is what makes the algebra close.</td></tr>
+<tr><td>BoolTermSumText(t, names)</td><td>One clause of the above, on its own.</td></tr>
+</table>
+<p class="note"><strong><code>BoolPosText</code> is not a free dual of a SOP
+term list.</strong> Rendering <code>BoolMinimise</code>'s output as a product
+of sums would be meaningless. A minimised product-of-sums is the minimised
+sum-of-products of the <em>complement</em>, read through De Morgan: each
+product term becomes a sum clause and every literal flips. So the terms to
+hand <code>BoolPosText</code> are
+<code>BoolMinimise(BoolMaxterms(f, n), n)</code> &mdash; not
+<code>BoolMinimise(BoolMinterms(...))</code>.</p>
+
+<h3>The refusals</h3>
+<p>Every message this machine can raise, each naming the word that raised it.
+Shoddy has no catchable errors, so these stop the program &mdash; that is the
+point. The two <code>Result</code>-returning words are the deliberate
+exception and are listed last.</p>
+<table>
+<tr><th>Message</th><th>When</th></tr>
+<tr><td><code>{WORD}: '{a}' IS NEGATIVE - THE DOMAIN IS WHOLE NUMBERS FROM 0</code></td><td>Any word, on a negative value.</td></tr>
+<tr><td><code>{WORD}: '{a}' IS NOT A WHOLE NUMBER</code></td><td>Any word, on a fraction. The test is <code>a &lt;&gt; Floor(a)</code>.</td></tr>
+<tr><td><code>{WORD}: '{a}' IS ABOVE THE 53-BIT CEILING - WHOLE NUMBERS ARE EXACT ONLY TO 2 ^ 53</code></td><td>Any word, on a value no longer exactly representable.</td></tr>
+<tr><td><code>{WORD}: WIDTH '{w}' IS OUTSIDE 1..53</code></td><td>Any width-taking word.</td></tr>
+<tr><td><code>{WORD}: '{a}' DOES NOT FIT {w} BITS - THE LIMIT IS {max}</code></td><td>A value at or above <code>2 ^ width</code>.</td></tr>
+<tr><td><code>{WORD}: BIT INDEX '{k}' IS OUTSIDE 0..52</code></td><td><code>BoolBitAt</code>, <code>BoolSetBit</code>, <code>BoolMaskFrom</code>, <code>BoolGetField</code>, <code>BoolSetField</code>, <code>BoolFromBitList</code>.</td></tr>
+<tr><td><code>{WORD}: BIT COUNT '{n}' IS OUTSIDE 0..53</code></td><td><code>BoolMask</code>, <code>BoolHexW</code>, <code>BoolBinW</code>.</td></tr>
+<tr><td><code>{WORD}: SHIFT '{n}' IS OUTSIDE 0..53</code></td><td>The shifts and rotates.</td></tr>
+<tr><td><code>{WORD}: BASE '{b}' IS OUTSIDE 2..36</code></td><td><code>BoolInBase</code>, <code>BoolFromBase</code>. A bad base is a caller bug, not bad input.</td></tr>
+<tr><td><code>{WORD}: {n} VARIABLES IS OUTSIDE 1..12 - COMFORTABLE TO 8, SLOW AT 10</code></td><td>Every truth-table and minimisation word.</td></tr>
+<tr><td><code>{WORD}: MINTERM '{m}' IS OUTSIDE 0..{max} FOR {n} VARIABLES</code></td><td>A minterm the variable count cannot hold.</td></tr>
+<tr><td><code>BOOLGROUPED: GROUP SIZE '{n}' IS NOT A WHOLE NUMBER FROM 1</code></td><td>A group size of zero would not terminate.</td></tr>
+<tr><td><code>BOOLMASKFROM: HIGH BIT '{h}' IS BELOW LOW BIT '{l}'</code></td><td>An inverted field, in <code>BoolMaskFrom</code> and everything over it.</td></tr>
+<tr><td><code>BOOLSETFIELD: '{v}' DOES NOT FIT BITS {hi}..{lo}</code></td><td>A value too wide for the field it is going into.</td></tr>
+<tr><td><code>BOOLUNSIGNED: '{v}' IS NOT A WHOLE NUMBER</code></td><td>Its own check, since this is the one word taking a signed value.</td></tr>
+<tr><td><code>BOOLUNSIGNED: '{v}' IS NOT REPRESENTABLE IN {w} SIGNED BITS</code></td><td>Outside &minus;(2<sup>w&minus;1</sup>) to 2<sup>w&minus;1</sup>&minus;1.</td></tr>
+<tr><td><code>BOOLSIGNEXTEND: CANNOT WIDEN FROM {f} BITS TO {t}</code></td><td>The target width is narrower than the source.</td></tr>
+<tr><td><code>BOOLLOG2FLOOR: ZERO HAS NO LOGARITHM - BOOLHIGHBIT ANSWERS NONE INSTEAD</code></td><td>And it names the total word to use instead.</td></tr>
+<tr><td><code>BOOLNEXTPOW2: '{a}' HAS NO POWER OF TWO ABOVE IT BELOW THE 53-BIT CEILING</code></td><td>Above 2<sup>52</sup>.</td></tr>
+<tr><td><code>BOOLBCD: '{n}' IS AT OR ABOVE 10 ^ 13 - PACKED BCD HOLDS 13 NIBBLES IN 53 BITS</code></td><td>The BCD ceiling.</td></tr>
+<tr><td><code>BOOLROWINPUTS: ROW '{k}' IS OUTSIDE 0..{max} FOR {n} VARIABLES</code></td><td>A row index the table does not have.</td></tr>
+<tr><td><code>BOOLROWINDEX: {len} INPUTS FOR {n} VARIABLES</code></td><td>An input vector of the wrong length.</td></tr>
+<tr><td><code>BOOLTABLETEXT: {len} NAMES FOR {n} VARIABLES</code></td><td>A name list of the wrong length.</td></tr>
+<tr><td><code>BOOLTERMTEXT: {len} NAMES FOR A TERM OVER {v} VARIABLES</code></td><td>Likewise, and the same from <code>BOOLTERMSUMTEXT</code>.</td></tr>
+<tr><td><code>BOOLMINIMISEWITH: A DONT-CARE IS ALSO A MINTERM - THE TWO SETS MUST NOT OVERLAP</code></td><td>The two sets must be disjoint.</td></tr>
+<tr><td><code>Err("BOOLFROMBASE: '{s}' HAS NO DIGIT {c} IN BASE {b}", at)</code></td><td><strong>Not an abort.</strong> External text, so a <code>Result</code>, with the 1-based position.</td></tr>
+<tr><td><code>Err("BOOLFROMBASE: THE EMPTY STRING IS NOT A NUMBER IN BASE {b}", 0)</code></td><td>No position to report, so <code>At</code> is 0.</td></tr>
+<tr><td><code>Err("BOOLFROMBASE: '{s}' IS ABOVE THE 53-BIT CEILING", at)</code></td><td>A digit string too long to read exactly.</td></tr>
+<tr><td><code>Err("BOOLFROMBCD: '{b}' HAS THE NIBBLE {d}, WHICH IS NOT A DECIMAL DIGIT", at)</code></td><td><code>At</code> is the 1-based nibble position from the low end.</td></tr>
+</table>
+
+<h2 id="story">The Story Behind the Machine</h2>
+<p><strong>Joseph Marie Jacquard</strong> (1752&ndash;1834) put on show in
+Lyon in 1804 a loom head that read its pattern from a chain of punched cards.
+Hole or no hole, one bit per hook, one card per pick &mdash; the first machine
+to take its instructions from data rather than from its own construction.
+Charles Babbage took the card from it for the Analytical Engine, Herman
+Hollerith for the 1890 United States census, and IBM from Hollerith; the
+eighty-column card lying on a computer-room floor in 1970 is a direct
+descendant of a device for weaving figured silk.</p>
+<p>It is the right story twice over. A Jacquard card <strong>is</strong> a bit
+vector, exactly and without metaphor &mdash; which is why
+<code>BoolCard</code> renders a word as one and keeps the ancestry visible at
+the call site. And a Jacquard head is a <strong>loom</strong>: West Riding
+mills ran them for figured worsteds through the whole nineteenth century, so
+for a language named after a textile trade the punched card is the binary
+story that already lives in the mill.</p>
+
+<h2 id="usedby">Who Uses It</h2>
+<table>
+<tr><th></th><th>User</th><th>How</th></tr>
+<tr><td class="uicon"><a href="seedbool.html"><img src="../media/icons/seedbool.svg" alt=""></a></td><td><a href="seedbool.html">seedbool</a></td><td>The <a href="reckoner.html">reckoner</a> seed: twenty of these words at the keyboard as <code>HEX BIN BITAND SHL GETFIELD POPCOUNT XOR</code> and the rest, with every refusal above translated into an answer, because nothing keyable may abort the mill.</td></tr>
+</table>
+<p>No mill yet. One that puts it to work will appear here; a decoder for a
+real datasheet's status register, or a logic-gate simulator over the
+truth-table words, is the obvious one.</p>
+
+<h2 id="uses">The Machines It Uses</h2>
+<table>
+<tr><th></th><th>Machine</th><th>Why</th></tr>
+<tr><td class="uicon"><a href="seq.html"><img src="../media/icons/seq.svg" alt=""></a></td><td><a href="seq.html">seq</a></td><td><code>CountIf</code> is <code>BoolPopCount</code> and scores the greedy cover, <code>Contains</code> and <code>Append</code> dedupe the implicant sets by value, <code>Flatten</code> collects each combining round, and <code>All</code>/<code>Any</code> carry the tautology and coverage tests.</td></tr>
+<tr><td class="uicon"><a href="str.html"><img src="../media/icons/str.svg" alt=""></a></td><td><a href="str.html">str</a></td><td><code>StrRep</code> zero-pads a rendering in any base &mdash; <code>PadZero</code> takes a Number and so cannot &mdash; and <code>Join</code> assembles the truth table, the sum of products and the product of sums.</td></tr>
+</table>
+<p class="note">Two includes, and deliberately only two: a machine about bits
+should not drag in statistics or matrices. Nothing from either appears in a
+<code>Bool*</code> signature or return type, so a program that includes
+<code>bool</code> alone gets a closed surface &mdash;
+<code>BoolBitList</code> answers a <code>List Of Number</code> and
+<code>BoolTruthTable</code> a <code>List Of BoolRow</code>, never seq's
+<code>Pair</code>. <code>Option</code> and <code>Result</code> need no
+include either: they are the language's.</p>
+
+<nav class="pager" aria-label="Machines, in catalog order">
+  <a href="str.html"><span class="dir">&larr; Previous machine</span><span class="ttl">str</span></a>
+  <a class="next" href="math.html"><span class="dir">Next machine &rarr;</span><span class="ttl">math</span></a>
+</nav>
+<footer>Named for the shoddy mills of the West Riding: Useless Things Made
+Useful Through Skill (<a href="../heritage.html">the heritage of the name</a>).<br>
+&copy; 2026 Stephen Vincent Foster</footer>
+</div>
+</body>
+</html>

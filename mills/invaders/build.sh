@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Run Shoddy Invaders (Unix: Linux / macOS / WSL).
-# Windows users: run this via Git Bash or WSL (same commands).
+# Windows users: use build.ps1 (same commands).
 #
 #   ./build.sh          run the game
 #   ./build.sh run      same as above
@@ -13,16 +13,7 @@
 # Q or Escape quits.
 set -euo pipefail
 cd "$(dirname "$0")"
-
-REPO=../..
-MILL=$REPO/bin/mill
-
-ensure_mill() {
-    [ -x "$MILL" ] || {
-        echo "mill toolchain not built; building it into $REPO/bin ..."
-        dotnet publish "$REPO/src/Shoddy.Mill" -c Release -o "$REPO/bin"
-    }
-}
+. ../../scripts/mill-common.sh
 
 case "${1:-run}" in
     run)

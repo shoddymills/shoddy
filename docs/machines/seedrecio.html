@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="reckoner seed: recio, over a resource held by name — machines/seeds/seedrecio.shoddy">
+<title>seedrecio — A Reckoner Seed | Shoddy Machines</title>
+<link rel="stylesheet" href="../style.css">
+<link rel="icon" href="../favicon.svg" type="image/svg+xml">
+<link rel="alternate icon" href="../favicon.ico" sizes="48x48">
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+</head>
+<body>
+<div class="topbar"><div class="inner">
+  <div class="row">
+    <a class="phase" href="index.html"><img class="mark" src="../media/brand/shoddy-icon.svg" alt="" width="23" height="23">Shoddy · The Machines</a>
+    <span class="spacer"></span>
+    <nav class="docnav meta" aria-label="About"><a href="../heritage.html">Heritage</a><a href="../authorship.html">Authorship</a></nav>
+  </div>
+  <nav class="docnav main" aria-label="Documentation"><a href="../tutorials/index.html">Tutorials</a><a href="../guide.html">Guide</a><a href="../quickref.html">Reference</a><span class="here">Machines</span><a href="../mills/index.html">Mills</a><a href="../stack.html">Stack</a><a href="../spec.html">Spec</a><a href="../setup.html">Setup</a><a href="../vscode.html">VS Code</a><a href="../assistants.html">AI</a><a href="../build.html">Toolchain</a><a href="../errors.html">Errors</a></nav>
+</div></div>
+<div class="wrap">
+
+
+<header class="mast has-icon"><div><p class="eyebrow"><a href="index.html#runtime-stack">The Machines &middot; Runtime stack</a></p><h1>seedrecio</h1><p class="kicker">A reckoner seed: recio, over a resource held by name — machines/seeds/seedrecio.shoddy</p></div><img class="micon" src="../media/icons/seedrecio.svg" alt="the seedrecio machine&#39;s icon"></header>
+<nav class="pagertop" aria-label="Machines, in catalog order"><a href="seedbuiltin.html">&larr; seedbuiltin</a><a href="index.html">All machines</a><a href="seedvt100.html">seedvt100 &rarr;</a></nav>
+
+<h2 id="summary">Summary</h2>
+<p><code>seedrecio</code> is <strong>the first seed that opens
+something</strong>. Every other seed in the directory takes values off the
+stack and puts values back; this one opens a file, keeps it open across
+lines, and shuts it when told:
+<code>RECOPEN RECCOUNT RECFIELDS RECGET RECALL RECPUT RECAPPEND</code>.</p>
+<p>That was impossible until <a href="reckoner.html">reckoner</a> grew a
+table of named resources. A handle must never reach the stack, because
+<code>UNDO</code> restores the stack and the number naming an open file
+would go with it. A <em>name</em> cannot be dropped, overwritten or undone
+away — so <code>RECOPEN</code> binds one and nothing ever pushes the
+handle.</p>
+<p>What a session holds is therefore a string.
+<code>"sales" RECCOUNT</code> asks the file bound under
+<code>"sales"</code> how many records it has. <code>CLOSE</code> and
+<code>BOUND</code> are reckoner's own words and work here without this seed
+saying anything about them — and there is deliberately no
+<code>RECCLOSE</code>, because one way to shut a resource is the whole
+reason the table is uniform.</p>
+
+<h2 id="why">Why It's Useful</h2>
+<p><strong>The layout problem, and the shape of the answer.</strong>
+<a href="recio.html">recio</a> asks for a record size and a reader/writer
+pair over the caller's own <code>Type</code>:</p>
+<pre class="basic"><code>Def rdstudent(f As Number) As Student
+    Student(GetStr(f, 12), GetNum(f))</code></pre>
+<p>A host program writes those and compiles them in. A session cannot:
+there is no <code>Type</code> at a prompt and no way to write a
+<code>Def</code> there that the compiler has already seen. So this seed
+supplies <em>one</em> generic reader and <em>one</em> generic writer, and
+drives them from a <strong>schema</strong> the session types — a list of
+field specs:</p>
+<pre class="basic"><code>{ { "id" "number" } { "name" "str" 12 } { "paid" "bool" } }</code></pre>
+<p>Three kinds, because three are what the runtime transfers: a number is
+eight bytes, a boolean is one, and a string is a fixed zero-padded field
+whose width the spec carries. The record size is the sum, computed once at
+<code>RECOPEN</code> and kept with the binding, so no later word can
+disagree with the file about it.</p>
+<p><strong>A record is a plain list</strong>, in schema order —
+<code>{ 3 "GRACE" True }</code> — and not a dict. A dict would be truer to
+the schema and worse to type: a session that has to build
+<code>{ ("id" 3) ("name" "GRACE") }</code> to write one row will not write
+many. The names live in the schema, <code>RECFIELDS</code> answers them,
+and a session that wants a dict has <a href="seeddict.html">seeddict</a>'s
+own words to make one.</p>
+<p><strong>Every read is pre-flighted.</strong> <code>GetNum</code>,
+<code>GetBool</code> and <code>GetStr</code> all abort past the end of the
+file, and a bridged word must not be able to abort the session. So no read
+happens until the record number has been checked against the count. A file
+whose length is not a whole number of records is refused at
+<code>RECOPEN</code> rather than at the first read — that is a fact about
+the file and the schema together, and the moment they first meet is the
+earliest honest place to say it.</p>
+<p><strong>A row is checked before any of it is written.</strong> A record
+half-written is a record corrupted, and <code>PutStr</code> aborts on a
+string longer than its field rather than truncating. So the whole row is
+validated against the schema first — count, kind and string width, each
+refusal naming which field — and the transfer only starts once nothing can
+refuse.</p>
+<p><strong><code>RECPUT</code> may extend by exactly one.</strong>
+<code>Seek</code> can go anywhere, so writing record 900 of a three-record
+file would leave a hole of undefined bytes that reads back as garbage
+rather than as an error. One past the end is an append; anything further is
+refused, naming the furthest write allowed.</p>
+
+<h2 id="guide">User's Guide</h2>
+<pre><code>&gt; "sales.dat" { { "id" "number" } { "who" "str" 12 } { "paid" "bool" } } "db" RECOPEN
+ok: opened db
+[ empty ]
+
+&gt; "db" { 1 "GRACE" True } RECAPPEND
+x: 1
+
+&gt; DROP "db" { 2 "ADA" False } RECAPPEND DROP
+[ empty ]
+
+&gt; "db" RECCOUNT
+x: 2
+
+&gt; "db" 1 RECGET
+x: { 1 "GRACE" True }
+
+&gt; "db" RECALL
+x: { { 1 "GRACE" True } { 2 "ADA" False } }
+
+&gt; BOUND
+x: { ( "db" "recio" ) }
+
+&gt; "db" CLOSE
+ok: closed db
+[ empty ]</code></pre>
+<p>The file survives <code>UNDO</code>. Wind the stack all the way back and
+<code>"db" RECCOUNT</code> still answers — and still answers the records
+that were written, because <code>UNDO</code> restores a stack and does not
+un-write a file.</p>
+
+<h2 id="words">Word Reference</h2>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>RECOPEN ( path schema name -- )</td><td>Open a binary record file and keep it open under that name. The schema is a list of <code>{ name kind }</code> specs, kind being <code>"number"</code> or <code>"bool"</code>, or <code>"str"</code> with a width. Makes the file if it is not there. <code>CLOSE</code> shuts it; <code>BOUND</code> lists what is open.</td></tr>
+<tr><td>RECCOUNT ( name -- n )</td><td>How many records the file bound under that name holds.</td></tr>
+<tr><td>RECFIELDS ( name -- list )</td><td>The field names of that file's schema, in the order a record lists them.</td></tr>
+<tr><td>RECGET ( name k -- rec )</td><td>Record k, as a list of values in schema order. Records number from 1.</td></tr>
+<tr><td>RECALL ( name -- list )</td><td>Every record in file order, each one a list of values in schema order.</td></tr>
+<tr><td>RECPUT ( name k rec -- )</td><td>Write rec as record k, replacing what was there. k may be one past the end, which adds a record; anything beyond that is refused.</td></tr>
+<tr><td>RECAPPEND ( name rec -- k )</td><td>Add rec to the end and push the record number it became.</td></tr>
+</table>
+
+<h2 id="usedby">Who Uses It</h2>
+<table>
+<tr><th></th><th>User</th><th>How</th></tr>
+<tr><td class="uicon"><a href="../mills/halifax.html"><img src="../media/icons/halifax.svg" alt=""></a></td><td><a href="../mills/halifax.html">halifax</a></td><td>The calculator's record-file words — the first resource a halifax session can open, write to and close.</td></tr>
+<tr><td class="uicon"><a href="seedisam.html"><img src="../media/icons/seedisam.svg" alt=""></a></td><td><a href="seedisam.html">seedisam</a></td><td>The schema language and its reader, writer and row checks — so an indexed table and a flat record file agree about what a field spec means.</td></tr>
+</table>
+<p>A mill claims this seed by folding <code>RckSeedRecio</code> over its
+reckoner state, which is all halifax does.</p>
+
+<h2 id="uses">The Machines It Uses</h2>
+<table>
+<tr><th></th><th>Machine</th><th>Why</th></tr>
+<tr><td class="uicon"><a href="recio.html"><img src="../media/icons/recio.svg" alt=""></a></td><td><a href="recio.html">recio</a></td><td>The domain this seed bridges: <code>RecSeek</code> and the record offset arithmetic, driven by a schema instead of a compiled reader and writer.</td></tr>
+<tr><td class="uicon"><a href="cuttle.html"><img src="../media/icons/cuttle.svg" alt=""></a></td><td><a href="cuttle.html">cuttle</a></td><td>The <code>Cell</code> type a record's values cross the bridge as.</td></tr>
+<tr><td class="uicon"><a href="reckoner.html"><img src="../media/icons/reckoner.svg" alt=""></a></td><td><a href="reckoner.html">reckoner</a></td><td><code>RckReg</code> and the argument readers, and the named-resource table — <code>RckBind</code>, <code>RckBoundTo</code>, <code>RckResOf</code> — that makes an open file reachable after <code>UNDO</code>.</td></tr>
+<tr><td class="uicon"><a href="seq.html"><img src="../media/icons/seq.svg" alt=""></a></td><td><a href="seq.html">seq</a></td><td>List plumbing under the schema reader and the row checks.</td></tr>
+</table>
+
+<nav class="pager" aria-label="Machines, in catalog order">
+  <a href="seedbuiltin.html"><span class="dir">&larr; Previous machine</span><span class="ttl">seedbuiltin</span></a>
+  <a class="next" href="seedvt100.html"><span class="dir">Next machine &rarr;</span><span class="ttl">seedvt100</span></a>
+</nav>
+<footer>Named for the shoddy mills of the West Riding: Useless Things Made
+Useful Through Skill (<a href="../heritage.html">the heritage of the name</a>).<br>
+&copy; 2026 Stephen Vincent Foster</footer>
+</div>
+</body>
+</html>

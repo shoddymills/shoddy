@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="reckoner seed: lin's linear algebra — determinants, factorisations, eigenvalues — machines/seeds/seedlin.shoddy">
+<title>seedlin — A Reckoner Seed | Shoddy Machines</title>
+<link rel="stylesheet" href="../style.css">
+<link rel="icon" href="../favicon.svg" type="image/svg+xml">
+<link rel="alternate icon" href="../favicon.ico" sizes="48x48">
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+</head>
+<body>
+<div class="topbar"><div class="inner">
+  <div class="row">
+    <a class="phase" href="index.html"><img class="mark" src="../media/brand/shoddy-icon.svg" alt="" width="23" height="23">Shoddy · The Machines</a>
+    <span class="spacer"></span>
+    <nav class="docnav meta" aria-label="About"><a href="../heritage.html">Heritage</a><a href="../authorship.html">Authorship</a></nav>
+  </div>
+  <nav class="docnav main" aria-label="Documentation"><a href="../tutorials/index.html">Tutorials</a><a href="../guide.html">Guide</a><a href="../quickref.html">Reference</a><span class="here">Machines</span><a href="../mills/index.html">Mills</a><a href="../stack.html">Stack</a><a href="../spec.html">Spec</a><a href="../setup.html">Setup</a><a href="../vscode.html">VS Code</a><a href="../assistants.html">AI</a><a href="../build.html">Toolchain</a><a href="../errors.html">Errors</a></nav>
+</div></div>
+<div class="wrap">
+
+
+<header class="mast has-icon"><div><p class="eyebrow"><a href="index.html#runtime-stack">The Machines &middot; Runtime stack</a></p><h1>seedlin</h1><p class="kicker">A reckoner seed: lin's linear algebra — determinants, factorisations, eigenvalues — machines/seeds/seedlin.shoddy</p></div><img class="micon" src="../media/icons/seedlin.svg" alt="the seedlin machine&#39;s icon"></header>
+<nav class="pagertop" aria-label="Machines, in catalog order"><a href="seedsimplex.html">&larr; seedsimplex</a><a href="index.html">All machines</a><a href="seedeng.html">seedeng &rarr;</a></nav>
+
+<h2 id="summary">Summary</h2>
+<p><code>seedlin</code> bridges <a href="lin.html">lin</a>'s named public
+surface — determinants, inverses, linear systems, echelon forms and rank,
+the LU/QR/Cholesky factorisations, characteristic polynomials, eigenvalues
+and the vector words — leaving the Go/Cell-suffixed single-step elimination
+internals beneath each of those out, since they are not vocabulary meant
+for a prompt. Per R4.16 there is no FACTOR cell at the keyboard:
+<code>LinLu</code>, <code>LinQr</code> and <code>LinEigen</code> are each a
+dict, the same shape <a href="seeddict.html">seeddict</a> already
+established — <code>{ ("l" m) ("u" m) ("p" m) ("psign" n) }</code>,
+<code>{ ("q" m) ("r" m) }</code> and
+<code>{ ("values" list) ("vectors" m) }</code>. <code>LININV</code>,
+<code>LINSOLVE</code>, <code>LINADJ</code> and <code>LINCHOL</code>
+pre-flight the exact conditions lin.shoddy itself Errors on — not square,
+singular, not symmetric — using the same predicates lin.shoddy answers with,
+and refuse instead.</p>
+
+<h2 id="why">Why It's Useful</h2>
+<p>Linear algebra is the arithmetic where being wrong looks exactly like
+being right: an inverse of a singular matrix, a determinant of something
+that is not square, a Cholesky factor of a matrix that is not symmetric —
+each is a well-formed pile of numbers or an aborted session, and neither is
+an answer. lin.shoddy aborts on all three, which is correct for a machine
+and fatal for a prompt.</p>
+<p>So <code>LINDET</code>, <code>LINADJ</code>, <code>LININV</code>,
+<code>LINSOLVE</code> and <code>LINCHOL</code> ask the question first — and
+ask it with lin's <em>own</em> predicates, <code>LinIsSquare</code> and
+<code>LinIsSym</code>, rather than with a second opinion written here. That
+matters more than it sounds: a guard that tests symmetry to a different
+tolerance from the factoriser it protects would refuse matrices the machine
+would have accepted, or worse, pass ones it will not.</p>
+<p>The factorisations come back as dicts because there is no FACTOR cell at
+the keyboard, and each part is then an ordinary matrix the rest of the
+dictionary can multiply: <code>DGET "l"</code> and <code>DGET "u"</code>
+from <code>LINLUOF</code> multiply back to a row-swapped original, which is
+how a session checks the factorisation rather than trusting it.</p>
+
+<h2 id="guide">User's Guide</h2>
+<p>A 2&times;2 banked in a register, then the four things anyone wants from
+one:</p>
+<pre><code>&gt; 2 2 { 1 2 3 4 } MAT "A" STO
+ok: A
+[ empty ]
+&gt; "A" RCL LINDET
+x: -2
+&gt; CLEAR "A" RCL LININV
+x: 2x2 { { -2 1 } { 1.5 -0.5 } }
+&gt; CLEAR "A" RCL { 5 11 } LINSOLVE
+x: { 1 2 }
+&gt; CLEAR "A" RCL LINRANK
+x: 2</code></pre>
+<p>Eigenvalues, two ways. <code>LINEIGVALS</code> brackets sign changes in
+the characteristic polynomial and works on any square matrix;
+<code>LINEIGSYM</code> wants a symmetric one and answers vectors as well.
+<strong>They do not agree about order</strong> — neither promises one, and a
+session that indexes into either had better read the values rather than
+assume:</p>
+<pre><code>&gt; 2 2 { 2 1 1 2 } MAT LINEIGVALS
+x: { 1 3 }
+&gt; CLEAR 2 2 { 2 1 1 2 } MAT LINEIGSYM "values" DGET
+x: { 3 1 }</code></pre>
+<p>And the three refusals that are the seed's reason for existing, each one
+an abort in the machine underneath:</p>
+<pre><code>&gt; 2 3 { 1 2 3 4 5 6 } MAT LINDET
+?: LINDET: NEEDS A SQUARE MATRIX
+&gt; CLEAR 2 2 { 1 2 2 4 } MAT LININV
+?: LININV: MATRIX IS SINGULAR - IT HAS NO INVERSE
+&gt; CLEAR 2 2 { 1 2 3 4 } MAT LINCHOL
+?: LINCHOL: NEEDS A SYMMETRIC MATRIX</code></pre>
+<p>The vector words take plain LISTs, not matrices, so they compose with
+everything else on the stack:</p>
+<pre><code>&gt; CLEAR { 3 4 } LINVNORM
+x: 5</code></pre>
+
+<h2 id="words">Word Reference</h2>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>LINTRACE ( m -- n )</td><td>The sum of the diagonal.</td></tr>
+<tr><td>LINNORM ( m -- n )</td><td>The Frobenius norm.</td></tr>
+<tr><td>LINMAXABS ( m -- n )</td><td>The largest absolute value of any entry.</td></tr>
+<tr><td>LINISSQUARE ( m -- flag )</td><td>Whether m has as many rows as columns.</td></tr>
+<tr><td>LINISSYM ( m tol -- flag )</td><td>Whether m equals its own transpose within tol.</td></tr>
+<tr><td>LINREF ( m -- m2 )</td><td>Row echelon form.</td></tr>
+<tr><td>LINRREF ( m -- m2 )</td><td>Reduced row echelon form.</td></tr>
+<tr><td>LINRANK ( m -- n )</td><td>The number of nonzero rows in the row echelon form.</td></tr>
+<tr><td>LINDET ( m -- n )</td><td>The determinant. Refuses if m is not square.</td></tr>
+<tr><td>LINADJ ( m -- m2 )</td><td>The adjugate. Refuses if m is not square.</td></tr>
+<tr><td>LININV ( m -- m2 )</td><td>The inverse. Refuses if m is not square or singular.</td></tr>
+<tr><td>LINCHOL ( m -- m2 )</td><td>The Cholesky factor L, where m = L * Transp(L). Refuses if m is not symmetric.</td></tr>
+<tr><td>LINLUOF ( m -- lu )</td><td>P A = L U: a dict with l, u, p and psign.</td></tr>
+<tr><td>LINQROF ( m -- qr )</td><td>A = Q R via Gram-Schmidt: a dict with q and r.</td></tr>
+<tr><td>LINCHARPOLY ( m -- list )</td><td>The characteristic polynomial's coefficients, highest power first.</td></tr>
+<tr><td>LINEIGVALS ( m -- list )</td><td>The real eigenvalues found by bracketing sign changes.</td></tr>
+<tr><td>LINEIGSYM ( m -- eigen )</td><td>The complete eigendecomposition of a symmetric matrix: a dict with values and vectors.</td></tr>
+<tr><td>LINSWAPROWS ( m i j -- m2 )</td><td>m with rows i and j exchanged.</td></tr>
+<tr><td>LINSCALEROW ( m p k -- m2 )</td><td>m with row p multiplied by k.</td></tr>
+<tr><td>LINSCALECOL ( m p k -- m2 )</td><td>m with column p multiplied by k.</td></tr>
+<tr><td>LINCOLS ( m lo hi -- m2 )</td><td>Columns lo through hi of m, inclusive.</td></tr>
+<tr><td>LINAUG ( a b -- m )</td><td>a and b side by side. Same row count required.</td></tr>
+<tr><td>LINSOLVE ( a b -- x )</td><td>Solves a x = b for x. Refuses if a is not square, b is the wrong length, or a is singular.</td></tr>
+<tr><td>LINPOW ( m n -- m2 )</td><td>m raised to the whole power n.</td></tr>
+<tr><td>LINVNORM ( v -- n )</td><td>The Euclidean length of v.</td></tr>
+<tr><td>LINVUNIT ( v -- v2 )</td><td>v scaled to length 1. Refuses on the zero vector.</td></tr>
+<tr><td>LINCROSS ( u v -- w )</td><td>The 3-D cross product. Refuses unless both are length 3.</td></tr>
+</table>
+
+<h2 id="usedby">Who Uses It</h2>
+<table>
+<tr><th></th><th>User</th><th>How</th></tr>
+<tr><td class="uicon"><a href="../mills/halifax.html"><img src="../media/icons/halifax.svg" alt=""></a></td><td><a href="../mills/halifax.html">halifax</a></td><td>The calculator's linear-algebra words, LINTRACE through LINCROSS.</td></tr>
+</table>
+<p>A mill claims this seed by folding <code>RckSeedLin</code> over its
+reckoner state, which is all halifax does.</p>
+
+<h2 id="uses">The Machines It Uses</h2>
+<table>
+<tr><th></th><th>Machine</th><th>Why</th></tr>
+<tr><td class="uicon"><a href="lin.html"><img src="../media/icons/lin.svg" alt=""></a></td><td><a href="lin.html">lin</a></td><td>The domain this seed bridges.</td></tr>
+<tr><td class="uicon"><a href="matrix.html"><img src="../media/icons/matrix.svg" alt=""></a></td><td><a href="matrix.html">matrix</a></td><td>The <code>Matrix</code> cell every word here reads and answers.</td></tr>
+<tr><td class="uicon"><a href="cuttle.html"><img src="../media/icons/cuttle.svg" alt=""></a></td><td><a href="cuttle.html">cuttle</a></td><td>The <code>Cell</code> type every bridged word reads its arguments from and answers into.</td></tr>
+<tr><td class="uicon"><a href="reckoner.html"><img src="../media/icons/reckoner.svg" alt=""></a></td><td><a href="reckoner.html">reckoner</a></td><td><code>RckReg</code> and the argument readers every registered word is built from.</td></tr>
+<tr><td class="uicon"><a href="seq.html"><img src="../media/icons/seq.svg" alt=""></a></td><td><a href="seq.html">seq</a></td><td>List plumbing under the dict converters.</td></tr>
+</table>
+
+<nav class="pager" aria-label="Machines, in catalog order">
+  <a href="seedsimplex.html"><span class="dir">&larr; Previous machine</span><span class="ttl">seedsimplex</span></a>
+  <a class="next" href="seedeng.html"><span class="dir">Next machine &rarr;</span><span class="ttl">seedeng</span></a>
+</nav>
+<footer>Named for the shoddy mills of the West Riding: Useless Things Made
+Useful Through Skill (<a href="../heritage.html">the heritage of the name</a>).<br>
+&copy; 2026 Stephen Vincent Foster</footer>
+</div>
+</body>
+</html>

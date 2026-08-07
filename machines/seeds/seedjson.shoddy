@@ -1,0 +1,207 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem seedjson.shoddy — reckoner seed: json.shoddy, converting at the
+Rem bridge
+Rem
+Rem JSONPARSE, JSONTEXT, JSONPRETTY, JSONLOAD and JSONSAVE. Per R4.16
+Rem there is no DOCUMENT cell at the keyboard: a Json value converts to
+Rem and from the same shapes every other seed already uses — JNum,
+Rem JStr and JBool onto the matching cell, JArr onto a LIST, and JObj
+Rem onto a LIST of PAIRs, exactly the "dict" shape seeddict.shoddy
+Rem already established. A parsed object is a dict the moment it lands
+Rem on the stack: DGET, DHAS and DKEYS from seeddict work on it
+Rem unchanged, and DPUT grows it.
+Rem
+Rem THE ONE GAP: JNull and an empty array both convert to the same
+Rem empty LIST { }, and so both write back out as []. JSON's own type
+Rem tells them apart; nothing on this stack does, and giving null a
+Rem cell of its own is exactly the R4.16 growth this seed is built to
+Rem avoid. A document that leans on the difference will not round-trip
+Rem — everything else does.
+Rem
+Rem JSONLOAD and JSONSAVE go through TRYREADFILE/TRYWRITEFILE rather
+Rem than json.shoddy's own JsonLoad/JsonSave, which are built on the
+Rem aborting ReadFile/WriteFile (R3.5(a)). JSONPARSE reads through
+Rem JsonRead, the total half of JsonParse, for the same reason: a
+Rem bridged word must refuse, never abort, on bad input.
+Rem ==================================================================
+
+Include "json.shoddy"
+Include "cuttle.shoddy"
+Include "reckoner.shoddy"
+Include "seq.shoddy"
+
+Rem ---- Json <-> Cell, at the bridge ----------------------------------
+
+Rem Total: every Cell shape has SOME Json answer, even one nothing here
+Rem otherwise produces. A PAIR met on its own, a MATRIX, MONEY and a
+Rem PROGRAM have no natural JSON shape, so each becomes the text it
+Rem already renders as at the prompt — the same CutShow every stack
+Rem word's own answer goes through.
+Def JcToJson(c As Cell) As Json
+    Select Case c
+        Case CutNum(n)
+            JNum(n)
+        Case CutStr(s)
+            JStr(s)
+        Case CutBool(b)
+            JBool(b)
+        Case CutList(xs)
+            JcListToJson(xs)
+        Case Else
+            JStr(CutShow(c, CutFmtStd()))
+
+Rem A LIST is an object when every element is a PAIR keyed by a STRING,
+Rem and an array otherwise — the same test DcPairs applies for a dict,
+Rem so a value built by DPUT reads back out through JSONTEXT unchanged.
+Def JcListToJson(xs As List Of Cell) As Json
+    If JcAllStrPairs(xs) Then
+        JObj(Map(xs, JcMemberOf))
+    Else
+        JArr(Map(xs, JcToJson))
+
+Def JcAllStrPairs(xs As List Of Cell) As Boolean
+    Not IsEmpty(xs) And All(xs, JcIsStrPair)
+
+Def JcIsStrPair(c As Cell) As Boolean
+    Select Case c
+        Case CutPair(p)
+            JcIsStr(Fst(p))
+        Case Else
+            False
+
+Def JcIsStr(c As Cell) As Boolean
+    Select Case c
+        Case CutStr(s)
+            True
+        Case Else
+            False
+
+Def JcMemberOf(c As Cell) As Pair
+    Select Case c
+        Case CutPair(p)
+            JcMemberKeyed(Fst(p), Snd(p))
+        Case Else
+            Pair("", JNull)
+
+Def JcMemberKeyed(k As Cell, v As Cell) As Pair
+    Select Case k
+        Case CutStr(s)
+            Pair(s, JcToJson(v))
+        Case Else
+            Pair("", JNull)
+
+Rem Total the other way too: JNull is the one Json shape with no cell
+Rem of its own, so it takes the empty list — see THE ONE GAP above.
+Def JcOfJson(j As Json) As Cell
+    Select Case j
+        Case JNull
+            CutList({ })
+        Case JBool(b)
+            CutBool(b)
+        Case JNum(n)
+            CutNum(n)
+        Case JStr(s)
+            CutStr(s)
+        Case JArr(items)
+            CutList(Map(items, JcOfJson))
+        Case JObj(members)
+            CutList(Map(members, JcPairOf))
+        Case Else
+            CutList({ })
+
+Def JcPairOf(p As Pair) As Cell
+    CutPair(Pair(CutStr(Fst(p)), JcOfJson(Snd(p))))
+
+Rem ---- JSONPARSE ------------------------------------------------------
+
+Def JsSeedJsonparse(st As RckState) As RckState
+    RckReg(st, "JSONPARSE", 1, RckPure(Fn(vs) => JsJsonparse(vs)), "( str -- doc )", "The string, parsed as JSON — objects become dicts, arrays become lists.")
+
+Def JsJsonparse(vs As List Of Cell) As RckWork
+    Select Case RckTextArg("JSONPARSE", First(vs))
+        Case Ok(s)
+            JsJsonparseRead(JsonRead(s))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("JSONPARSE did not answer")
+
+Def JsJsonparseRead(r As JRead) As RckWork
+    Select Case r
+        Case JOk(doc)
+            RckVals({ JcOfJson(doc) })
+        Case JErr(why, at)
+            RckWorkBad("JSONPARSE: " & why & " AT " & Str(at))
+        Case Else
+            RckWorkBad("JSONPARSE did not answer")
+
+Rem ---- JSONTEXT ---------------------------------------------------------
+
+Def JsSeedJsontext(st As RckState) As RckState
+    RckReg(st, "JSONTEXT", 1, RckPure(Fn(vs) => RckVals({ CutStr(JsonText(JcToJson(First(vs)))) })), "( doc -- str )", "The value, written out as compact JSON text.")
+
+Rem ---- JSONPRETTY ---------------------------------------------------------
+
+Def JsSeedJsonpretty(st As RckState) As RckState
+    RckReg(st, "JSONPRETTY", 2, RckPure(Fn(vs) => JsJsonpretty(vs)), "( doc n -- str )", "The value, written out as JSON text indented n spaces per level.")
+
+Def JsJsonpretty(vs As List Of Cell) As RckWork
+    Select Case RckWholeArg("JSONPRETTY", Nth(vs, 2))
+        Case Ok(n)
+            RckVals({ CutStr(JsonPretty(JcToJson(Nth(vs, 1)), n)) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("JSONPRETTY did not answer")
+
+Rem ---- JSONLOAD -----------------------------------------------------------
+
+Def JsSeedJsonload(st As RckState) As RckState
+    RckReg(st, "JSONLOAD", 1, RckTouch(Fn(vs) => JsJsonload(vs)), "( path -- doc )", "The file, read and parsed as JSON — a refusal names why it could not be, whether that is the file or the syntax.")
+
+Def JsJsonload(vs As List Of Cell) As RckWork
+    Select Case RckTextArg("JSONLOAD", First(vs))
+        Case Ok(path)
+            JsJsonloadRead(TryReadFile(path))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("JSONLOAD did not answer")
+
+Def JsJsonloadRead(r As Result) As RckWork
+    Select Case r
+        Case Ok(text)
+            JsJsonparseRead(JsonRead(text))
+        Case Err(w, at)
+            RckWorkBad("JSONLOAD: cannot read the file")
+        Case Else
+            RckWorkBad("JSONLOAD: cannot read the file")
+
+Rem ---- JSONSAVE -----------------------------------------------------------
+Rem True/False like WRITELINES, not a refusal: the write already
+Rem happened or it did not, and the caller decides what that means
+Rem rather than losing the rest of the line to it.
+
+Def JsSeedJsonsave(st As RckState) As RckState
+    RckReg(st, "JSONSAVE", 2, RckTouch(Fn(vs) => JsJsonsave(vs)), "( path doc -- ok )", "Write the value to path as JSON text; True on success.")
+
+Def JsJsonsave(vs As List Of Cell) As RckWork
+    Select Case RckTextArg("JSONSAVE", Nth(vs, 1))
+        Case Ok(path)
+            RckVals({ CutBool(TryWriteFile(path, JsonText(JcToJson(Nth(vs, 2))))) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("JSONSAVE did not answer")
+
+Rem ---- the seed -----------------------------------------------------------
+
+Def RckSeedJson(st As RckState) As RckState
+    Let s1 = JsSeedJsonparse(RckSeeding(st, "seed-json"))
+    Let s2 = JsSeedJsontext(s1)
+    Let s3 = JsSeedJsonpretty(s2)
+    Let s4 = JsSeedJsonload(s3)
+    JsSeedJsonsave(s4)

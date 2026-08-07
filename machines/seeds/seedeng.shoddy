@@ -1,0 +1,1588 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem seedeng.shoddy — reckoner seed: eng.shoddy, converting at the
+Rem bridge
+Rem
+Rem Trigonometry the runtime does not supply, hyperbolics, complex
+Rem numbers, descriptive statistics and distributions, number theory
+Rem and combinatorics, polynomial arithmetic, sequences, unit
+Rem conversion and physical constants, and the rounding/remap
+Rem utilities. Per R4.16 there is no COMPLEX, no RECORD cell at the
+Rem keyboard:
+Rem
+Rem   EngComplex(re, im) -> a PAIR: ( re im )
+Rem   EngPolar(mag, theta) -> a PAIR: ( mag theta )
+Rem   EngDms, EngStat, EngFit, EngDivided, EngUnit, EngConst -> a dict,
+Rem     the same LIST-of-PAIR shape seeddict.shoddy already established,
+Rem     one entry per field, named for the field
+Rem     ("degs"/"mins"/"secs", "avg"/"sd"/"total",
+Rem     "intercept"/"slope"/"rfit", "quotient"/"remainder",
+Rem     "name"/"quantity"/"factor"/"offset", "cname"/"value"/"units")
+Rem
+Rem EVERY GUARD HERE MATCHES ONE eng.shoddy ITSELF STATES OR NEEDS.
+Rem ASEC/ACSC/ACOSH/ATANH/ASECH/ACOTH/NTHROOT pre-flight the exact
+Rem condition each already Errors on. SEC/CSC/COT/CSCH/COTH have no
+Rem guard of their own in eng.shoddy — each is a plain division by a
+Rem trig or hyperbolic function that can be zero — so this seed adds
+Rem the one they are missing, per R3.5(a).
+Rem
+Rem THE CALCULUS WORDS TAKE A PROGRAM. EngDeriv, EngDeriv2,
+Rem EngIntegrate, EngSumOf, EngProdOf, EngZeroOf, EngMinOf and EngMaxOf
+Rem each want a [ Number -- Number ] — a function value, not a stack
+Rem cell — and what a session can put on the stack is a PROGRAM:
+Rem [ DUP * ]. reckoner.shoddy's RckProgFn/RckProgTry pair converts one
+Rem into the other and RckPureOver is the body kind that hands a
+Rem registered word the state a program has to be run against; both were
+Rem built for this and are general rather than eng's. See the calculus
+Rem section at the foot of this file for how the 0 that a total
+Rem [ Number -- Number ] must answer on a bad program is kept out of
+Rem every answer, and for why ENGNEWTONOF alone is still not bridged.
+Rem ==================================================================
+
+Include "eng.shoddy"
+Include "cuttle.shoddy"
+Include "reckoner.shoddy"
+Include "seq.shoddy"
+
+Rem ---- shared conversions -----------------------------------------------
+
+Def EsListNum(word As String, c As Cell) As Result
+    Select Case RckListArg(word, c)
+        Case Ok(xs)
+            EsNumsAt(word, xs, { })
+        Case Err(w, at)
+            Err(w, at)
+        Case Else
+            Err(word & " did not answer", 0)
+
+Def EsNumsAt(word As String, xs As List Of Cell, acc As List Of Number) As Result
+    If IsEmpty(xs) Then
+        Ok(acc)
+    Else
+        EsNumsNext(word, xs, acc, First(xs))
+
+Def EsNumsNext(word As String, xs As List Of Cell, acc As List Of Number, c As Cell) As Result
+    Select Case c
+        Case CutNum(x)
+            EsNumsAt(word, Rest(xs), Append(acc, x))
+        Case Else
+            Err(RckKindWhy(word, "a LIST of NUMBERs", c), 0)
+
+Def EsEntry(k As String, v As Cell) As Cell
+    CutPair(Pair(CutStr(k), v))
+
+Def EsListOf(ns As List Of Number) As Cell
+    CutList(Map(ns, CutNum))
+
+Def EsComplexCell(c As EngComplex) As Cell
+    CutPair(Pair(CutNum(Re(c)), CutNum(Im(c))))
+
+Rem The other direction: a PAIR of two NUMBERs is a complex number.
+Def EsComplexOf(word As String, c As Cell) As Result
+    Select Case c
+        Case CutPair(p)
+            EsComplexPair(word, Fst(p), Snd(p))
+        Case Else
+            Err(RckKindWhy(word, "a PAIR of NUMBERs (re im)", c), 0)
+
+Def EsComplexPair(word As String, reC As Cell, imC As Cell) As Result
+    Select Case Pair(reC, imC)
+        Case Pair(CutNum(re), CutNum(im))
+            Ok(EngComplex(re, im))
+        Case Else
+            Err(word & ": NEEDS A PAIR OF NUMBERS (re im)", 0)
+
+Def EsPolarCell(p As EngPolar) As Cell
+    CutPair(Pair(CutNum(Mag(p)), CutNum(Theta(p))))
+
+Def EsDmsCell(d As EngDms) As Cell
+    CutList({ EsEntry("degs", CutNum(Degs(d))), EsEntry("mins", CutNum(Mins(d))), EsEntry("secs", CutNum(Secs(d))) })
+
+Def EsStatCell(s As EngStat) As Cell
+    CutList({ EsEntry("avg", CutNum(Avg(s))), EsEntry("sd", CutNum(Sd(s))), EsEntry("total", CutNum(Total(s))) })
+
+Def EsFitCell(f As EngFit) As Cell
+    CutList({ EsEntry("intercept", CutNum(Intercept(f))), EsEntry("slope", CutNum(Slope(f))), EsEntry("rfit", CutNum(RFit(f))) })
+
+Def EsDividedCell(d As EngDivided) As Cell
+    CutList({ EsEntry("quotient", EsListOf(Quotient(d))), EsEntry("remainder", EsListOf(Remainder(d))) })
+
+Def EsUnitCell(u As EngUnit) As Cell
+    CutList({ EsEntry("name", CutStr(Name(u))), EsEntry("quantity", CutStr(Quantity(u))), EsEntry("factor", CutNum(Factor(u))), EsEntry("offset", CutNum(Offset(u))) })
+
+Def EsUnitOf(word As String, c As Cell) As Result
+    Select Case RckListArg(word, c)
+        Case Ok(fields)
+            EsUnitFields(word, fields)
+        Case Err(w, at)
+            Err(w, at)
+        Case Else
+            Err(word & " did not answer", 0)
+
+Rem A dict built by EsUnitCell has its four entries in order, so this
+Rem reads them positionally rather than by key — cheap, and the only
+Rem shape ENGCONVERT et al. ever see is one this seed itself produced.
+Def EsUnitFields(word As String, fields As List Of Cell) As Result
+    If Length(fields) <> 4 Then
+        Err(word & ": NOT A UNIT — USE ONE OF THE UNIT WORDS OR ENGCONVERT'S OWN ANSWER", 0)
+    Else
+        EsUnitVals(word, Nth(fields, 1), Nth(fields, 2), Nth(fields, 3), Nth(fields, 4))
+
+Def EsUnitVals(word As String, nameE As Cell, qtyE As Cell, facE As Cell, offE As Cell) As Result
+    Select Case Pair(EsPairVal(nameE), EsPairVal(qtyE))
+        Case Pair(CutStr(name), CutStr(qty))
+            EsUnitNums(word, name, qty, EsPairVal(facE), EsPairVal(offE))
+        Case Else
+            Err(word & ": NOT A UNIT — USE ONE OF THE UNIT WORDS OR ENGCONVERT'S OWN ANSWER", 0)
+
+Def EsPairVal(entry As Cell) As Cell
+    Select Case entry
+        Case CutPair(p)
+            Snd(p)
+        Case Else
+            entry
+
+Def EsUnitNums(word As String, name As String, qty As String, facC As Cell, offC As Cell) As Result
+    Select Case Pair(facC, offC)
+        Case Pair(CutNum(fac), CutNum(off))
+            Ok(EngUnit(name, qty, fac, off))
+        Case Else
+            Err(word & ": NOT A UNIT — USE ONE OF THE UNIT WORDS OR ENGCONVERT'S OWN ANSWER", 0)
+
+Def EsConstCell(c As EngConst) As Cell
+    CutList({ EsEntry("cname", CutStr(CName(c))), EsEntry("value", CutNum(Value(c))), EsEntry("units", CutStr(Units(c))) })
+
+Rem ---- one-argument, always-total number words --------------------------
+
+Def EsReg1(st As RckState, name As String, effect As String, desc As String, f As Cell) As RckState
+    RckReg(st, name, 1, RckPure(Fn(vs) => f), effect, desc)
+
+Rem ---- angles -------------------------------------------------------------
+
+Def EsSeedAngles(st As RckState) As RckState
+    Let s1 = RckReg(st, "ENGRAD", 1, RckPure(Fn(vs) => EsNum1("ENGRAD", First(vs), EngRad)), "( deg -- rad )", "Degrees to radians.")
+    Let s2 = RckReg(s1, "ENGDEG", 1, RckPure(Fn(vs) => EsNum1("ENGDEG", First(vs), EngDeg)), "( rad -- deg )", "Radians to degrees.")
+    Let s3 = RckReg(s2, "ENGGRADOF", 1, RckPure(Fn(vs) => EsNum1("ENGGRADOF", First(vs), EngGradOf)), "( rad -- grad )", "Radians to gradians (400 per turn).")
+    Let s4 = RckReg(s3, "ENGFROMGRAD", 1, RckPure(Fn(vs) => EsNum1("ENGFROMGRAD", First(vs), EngFromGrad)), "( grad -- rad )", "Gradians to radians.")
+    Let s5 = RckReg(s4, "ENGDMSOF", 1, RckPure(Fn(vs) => EsDmsof(vs)), "( deg -- dms )", "Decimal degrees as a dict: degs, mins, secs.")
+    RckReg(s5, "ENGFROMDMS", 1, RckPure(Fn(vs) => EsFromdms(vs)), "( dms -- deg )", "A degs/mins/secs dict back to decimal degrees.")
+
+Def EsNum1(word As String, c As Cell, f As [ Number -- Number ]) As RckWork
+    Select Case RckNumArg(word, c)
+        Case Ok(x)
+            RckVals({ CutNum(Call(f, x)) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Def EsDmsof(vs As List Of Cell) As RckWork
+    Select Case RckNumArg("ENGDMSOF", First(vs))
+        Case Ok(deg)
+            RckVals({ EsDmsCell(EngDmsOf(deg)) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("ENGDMSOF did not answer")
+
+Def EsFromdms(vs As List Of Cell) As RckWork
+    Select Case RckListArg("ENGFROMDMS", First(vs))
+        Case Ok(fields)
+            EsFromdmsFields(fields)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("ENGFROMDMS did not answer")
+
+Def EsFromdmsFields(fields As List Of Cell) As RckWork
+    If Length(fields) <> 3 Then
+        RckWorkBad("ENGFROMDMS: NOT A DMS DICT — USE ENGDMSOF'S OWN ANSWER")
+    Else
+        EsFromdmsVals(EsPairVal(Nth(fields, 1)), EsPairVal(Nth(fields, 2)), EsPairVal(Nth(fields, 3)))
+
+Def EsFromdmsVals(d As Cell, m As Cell, s As Cell) As RckWork
+    Select Case Pair(d, Pair(m, s))
+        Case Pair(CutNum(degs), Pair(CutNum(mins), CutNum(secs)))
+            RckVals({ CutNum(EngFromDms(EngDms(degs, mins, secs))) })
+        Case Else
+            RckWorkBad("ENGFROMDMS: NOT A DMS DICT — USE ENGDMSOF'S OWN ANSWER")
+
+Rem ---- trig extras, guarded where eng.shoddy leaves a plain division ---
+
+Def EsSeedTrig(st As RckState) As RckState
+    Let s1 = RckReg(st, "ENGSEC", 1, RckPure(Fn(vs) => EsGuardDiv("ENGSEC", First(vs), Cos, EngSec)), "( x -- y )", "1 / cos x. Refuses where cos x = 0.")
+    Let s2 = RckReg(s1, "ENGCSC", 1, RckPure(Fn(vs) => EsGuardDiv("ENGCSC", First(vs), Sin, EngCsc)), "( x -- y )", "1 / sin x. Refuses where sin x = 0.")
+    Let s3 = RckReg(s2, "ENGCOT", 1, RckPure(Fn(vs) => EsGuardDiv("ENGCOT", First(vs), Tan, EngCot)), "( x -- y )", "1 / tan x. Refuses where tan x = 0.")
+    Let s4 = RckReg(s3, "ENGASEC", 1, RckPure(Fn(vs) => EsGuardAbsGe1("ENGASEC", First(vs), EngAsec)), "( x -- y )", "Inverse secant. Refuses unless |x| >= 1.")
+    Let s5 = RckReg(s4, "ENGACSC", 1, RckPure(Fn(vs) => EsGuardAbsGe1("ENGACSC", First(vs), EngAcsc)), "( x -- y )", "Inverse cosecant. Refuses unless |x| >= 1.")
+    RckReg(s5, "ENGACOT", 1, RckPure(Fn(vs) => EsNum1("ENGACOT", First(vs), EngAcot)), "( x -- y )", "Inverse cotangent.")
+
+Def EsGuardDiv(word As String, c As Cell, denomF As [ Number -- Number ], f As [ Number -- Number ]) As RckWork
+    Select Case RckNumArg(word, c)
+        Case Ok(x)
+            EsGuardDivAt(word, x, denomF, f)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Def EsGuardDivAt(word As String, x As Number, denomF As [ Number -- Number ], f As [ Number -- Number ]) As RckWork
+    If Call(denomF, x) = 0 Then
+        RckWorkBad(word & ": UNDEFINED AT THIS X")
+    Else
+        RckVals({ CutNum(Call(f, x)) })
+
+Def EsGuardAbsGe1(word As String, c As Cell, f As [ Number -- Number ]) As RckWork
+    Select Case RckNumArg(word, c)
+        Case Ok(x)
+            EsGuardAbsGe1At(word, x, f)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Def EsGuardAbsGe1At(word As String, x As Number, f As [ Number -- Number ]) As RckWork
+    If Abs(x) < 1 Then
+        RckWorkBad(word & ": NEEDS |X| >= 1")
+    Else
+        RckVals({ CutNum(Call(f, x)) })
+
+Rem ---- geometry -----------------------------------------------------------
+
+Def EsSeedGeom(st As RckState) As RckState
+    Let s1 = RckReg(st, "ENGANGLEOF", 2, RckPure(Fn(vs) => EsNum2("ENGANGLEOF", vs, EngAngleOf)), "( dx dy -- rad )", "The angle of the vector (dx, dy).")
+    Let s2 = RckReg(s1, "ENGHYPOT", 2, RckPure(Fn(vs) => EsNum2("ENGHYPOT", vs, EngHypot)), "( x y -- h )", "The hypotenuse, without overflowing on a large x or y.")
+    Let s3 = RckReg(s2, "ENGDISTOF", 4, RckPure(Fn(vs) => EsDistof(vs)), "( x0 y0 x1 y1 -- d )", "The distance between two points.")
+    Let s4 = RckReg(s3, "ENGRECTX", 2, RckPure(Fn(vs) => EsNum2("ENGRECTX", vs, EngRectX)), "( mag theta -- x )", "The x of a polar point.")
+    Let s5 = RckReg(s4, "ENGRECTY", 2, RckPure(Fn(vs) => EsNum2("ENGRECTY", vs, EngRectY)), "( mag theta -- y )", "The y of a polar point.")
+    RckReg(s5, "ENGPOLAROF", 2, RckPure(Fn(vs) => EsPolarof(vs)), "( x y -- polar )", "x, y as a polar dict: mag, theta.")
+
+Def EsNum2(word As String, vs As List Of Cell, f As [ Number Number -- Number ]) As RckWork
+    Select Case Pair(RckNumArg(word, Nth(vs, 1)), RckNumArg(word, Nth(vs, 2)))
+        Case Pair(Ok(a), Ok(b))
+            RckVals({ CutNum(Call(f, a, b)) })
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Def EsDistof(vs As List Of Cell) As RckWork
+    Select Case EsFourNums("ENGDISTOF", vs)
+        Case Ok(ns)
+            RckVals({ CutNum(EngDistOf(Nth(ns, 1), Nth(ns, 2), Nth(ns, 3), Nth(ns, 4))) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("ENGDISTOF did not answer")
+
+Def EsFourNums(word As String, vs As List Of Cell) As Result
+    EsListNum(word, CutList(vs))
+
+Def EsPolarof(vs As List Of Cell) As RckWork
+    Select Case Pair(RckNumArg("ENGPOLAROF", Nth(vs, 1)), RckNumArg("ENGPOLAROF", Nth(vs, 2)))
+        Case Pair(Ok(x), Ok(y))
+            RckVals({ EsPolarCell(EngPolarOf(x, y)) })
+        Case Else
+            RckWorkBad("ENGPOLAROF did not answer")
+
+Rem ---- hyperbolics ----------------------------------------------------
+
+Def EsSeedHyper(st As RckState) As RckState
+    Let s1 = RckReg(st, "ENGSINH", 1, RckPure(Fn(vs) => EsNum1("ENGSINH", First(vs), EngSinh)), "( x -- y )", "Hyperbolic sine.")
+    Let s2 = RckReg(s1, "ENGCOSH", 1, RckPure(Fn(vs) => EsNum1("ENGCOSH", First(vs), EngCosh)), "( x -- y )", "Hyperbolic cosine.")
+    Let s3 = RckReg(s2, "ENGSECH", 1, RckPure(Fn(vs) => EsGuardDiv("ENGSECH", First(vs), EngCosh, EngSech)), "( x -- y )", "1 / cosh x.")
+    Let s4 = RckReg(s3, "ENGCSCH", 1, RckPure(Fn(vs) => EsGuardDiv("ENGCSCH", First(vs), EngSinh, EngCsch)), "( x -- y )", "1 / sinh x. Refuses at x = 0.")
+    Let s5 = RckReg(s4, "ENGCOTH", 1, RckPure(Fn(vs) => EsGuardDiv("ENGCOTH", First(vs), Tanh, EngCoth)), "( x -- y )", "1 / tanh x. Refuses at x = 0.")
+    Let s6 = RckReg(s5, "ENGASINH", 1, RckPure(Fn(vs) => EsNum1("ENGASINH", First(vs), EngAsinh)), "( x -- y )", "Inverse hyperbolic sine.")
+    Let s7 = RckReg(s6, "ENGACOSH", 1, RckPure(Fn(vs) => EsGuardGe1("ENGACOSH", First(vs), EngAcosh)), "( x -- y )", "Inverse hyperbolic cosine. Refuses unless x >= 1.")
+    Let s8 = RckReg(s7, "ENGATANH", 1, RckPure(Fn(vs) => EsGuardAbsLt1("ENGATANH", First(vs), EngAtanh)), "( x -- y )", "Inverse hyperbolic tangent. Refuses unless |x| < 1.")
+    Let s9 = RckReg(s8, "ENGASECH", 1, RckPure(Fn(vs) => EsGuardZeroToOne("ENGASECH", First(vs), EngAsech)), "( x -- y )", "Inverse hyperbolic secant. Refuses unless 0 < x <= 1.")
+    Let s10 = RckReg(s9, "ENGACSCH", 1, RckPure(Fn(vs) => EsNum1("ENGACSCH", First(vs), EngAcsch)), "( x -- y )", "Inverse hyperbolic cosecant.")
+    RckReg(s10, "ENGACOTH", 1, RckPure(Fn(vs) => EsGuardAbsGt1("ENGACOTH", First(vs), EngAcoth)), "( x -- y )", "Inverse hyperbolic cotangent. Refuses unless |x| > 1.")
+
+Def EsGuardGe1(word As String, c As Cell, f As [ Number -- Number ]) As RckWork
+    Select Case RckNumArg(word, c)
+        Case Ok(x)
+            EsGuardGe1At(word, x, f)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Def EsGuardGe1At(word As String, x As Number, f As [ Number -- Number ]) As RckWork
+    If x < 1 Then
+        RckWorkBad(word & ": NEEDS X >= 1")
+    Else
+        RckVals({ CutNum(Call(f, x)) })
+
+Def EsGuardAbsLt1(word As String, c As Cell, f As [ Number -- Number ]) As RckWork
+    Select Case RckNumArg(word, c)
+        Case Ok(x)
+            EsGuardAbsLt1At(word, x, f)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Def EsGuardAbsLt1At(word As String, x As Number, f As [ Number -- Number ]) As RckWork
+    If Abs(x) >= 1 Then
+        RckWorkBad(word & ": NEEDS |X| < 1")
+    Else
+        RckVals({ CutNum(Call(f, x)) })
+
+Def EsGuardZeroToOne(word As String, c As Cell, f As [ Number -- Number ]) As RckWork
+    Select Case RckNumArg(word, c)
+        Case Ok(x)
+            EsGuardZeroToOneAt(word, x, f)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Def EsGuardZeroToOneAt(word As String, x As Number, f As [ Number -- Number ]) As RckWork
+    If x <= 0 Or x > 1 Then
+        RckWorkBad(word & ": NEEDS 0 < X <= 1")
+    Else
+        RckVals({ CutNum(Call(f, x)) })
+
+Def EsGuardAbsGt1(word As String, c As Cell, f As [ Number -- Number ]) As RckWork
+    Select Case RckNumArg(word, c)
+        Case Ok(x)
+            EsGuardAbsGt1At(word, x, f)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Def EsGuardAbsGt1At(word As String, x As Number, f As [ Number -- Number ]) As RckWork
+    If Abs(x) <= 1 Then
+        RckWorkBad(word & ": NEEDS |X| > 1")
+    Else
+        RckVals({ CutNum(Call(f, x)) })
+
+Rem ---- logs, exponentials, roots ------------------------------------------
+
+Def EsSeedLogs(st As RckState) As RckState
+    Let s1 = RckReg(st, "ENGLOGBASE", 2, RckPure(Fn(vs) => EsLogbase(vs)), "( base x -- y )", "Log of x to the given base. Refuses on a non-positive x or a base of 1 or less.")
+    Let s2 = RckReg(s1, "ENGLOG2", 1, RckPure(Fn(vs) => EsGuardPos("ENGLOG2", First(vs), EngLog2)), "( x -- y )", "Log base 2. Refuses unless x > 0.")
+    Let s3 = RckReg(s2, "ENGLOG1P", 1, RckPure(Fn(vs) => EsGuardGtNeg1("ENGLOG1P", First(vs), EngLog1p)), "( x -- y )", "log(1 + x), accurate near x = 0. Refuses unless x > -1.")
+    Let s4 = RckReg(s3, "ENGEXPM1", 1, RckPure(Fn(vs) => EsNum1("ENGEXPM1", First(vs), EngExpm1)), "( x -- y )", "exp(x) - 1, accurate near x = 0.")
+    RckReg(s4, "ENGNTHROOT", 2, RckPure(Fn(vs) => EsNthroot(vs)), "( x n -- y )", "The real n-th root of x. Refuses for an even root of a negative x.")
+
+Def EsLogbase(vs As List Of Cell) As RckWork
+    Select Case Pair(RckNumArg("ENGLOGBASE", Nth(vs, 1)), RckNumArg("ENGLOGBASE", Nth(vs, 2)))
+        Case Pair(Ok(base), Ok(x))
+            EsLogbaseAt(base, x)
+        Case Else
+            RckWorkBad("ENGLOGBASE did not answer")
+
+Def EsLogbaseAt(base As Number, x As Number) As RckWork
+    If x <= 0 Then
+        RckWorkBad("ENGLOGBASE: X MUST BE POSITIVE")
+    Else
+        If base <= 0 Or base = 1 Then
+            RckWorkBad("ENGLOGBASE: BASE MUST BE POSITIVE AND NOT 1")
+        Else
+            RckVals({ CutNum(EngLogBase(base, x)) })
+
+Def EsGuardPos(word As String, c As Cell, f As [ Number -- Number ]) As RckWork
+    Select Case RckNumArg(word, c)
+        Case Ok(x)
+            EsGuardPosAt(word, x, f)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Def EsGuardPosAt(word As String, x As Number, f As [ Number -- Number ]) As RckWork
+    If x <= 0 Then
+        RckWorkBad(word & ": X MUST BE POSITIVE")
+    Else
+        RckVals({ CutNum(Call(f, x)) })
+
+Def EsGuardGtNeg1(word As String, c As Cell, f As [ Number -- Number ]) As RckWork
+    Select Case RckNumArg(word, c)
+        Case Ok(x)
+            EsGuardGtNeg1At(word, x, f)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Def EsGuardGtNeg1At(word As String, x As Number, f As [ Number -- Number ]) As RckWork
+    If x <= -1 Then
+        RckWorkBad(word & ": NEEDS X > -1")
+    Else
+        RckVals({ CutNum(Call(f, x)) })
+
+Def EsNthroot(vs As List Of Cell) As RckWork
+    Select Case Pair(RckNumArg("ENGNTHROOT", Nth(vs, 1)), RckWholeArg("ENGNTHROOT", Nth(vs, 2)))
+        Case Pair(Ok(x), Ok(n))
+            EsNthrootAt(x, n)
+        Case Else
+            RckWorkBad("ENGNTHROOT did not answer")
+
+Def EsNthrootAt(x As Number, n As Number) As RckWork
+    If x < 0 And n Mod 2 = 0 Then
+        RckWorkBad("ENGNTHROOT: NO REAL EVEN ROOT OF A NEGATIVE")
+    Else
+        RckVals({ CutNum(EngNthRoot(x, n)) })
+
+Rem ---- complex numbers ----------------------------------------------------
+
+Def EsSeedComplex(st As RckState) As RckState
+    Let s1 = RckReg(st, "ENGCADD", 2, RckPure(Fn(vs) => EsC2(vs, "ENGCADD", EngCAdd)), "( a b -- c )", "Complex addition. a and b are (re im) pairs.")
+    Let s2 = RckReg(s1, "ENGCSUB", 2, RckPure(Fn(vs) => EsC2(vs, "ENGCSUB", EngCSub)), "( a b -- c )", "Complex subtraction.")
+    Let s3 = RckReg(s2, "ENGCMUL", 2, RckPure(Fn(vs) => EsC2(vs, "ENGCMUL", EngCMul)), "( a b -- c )", "Complex multiplication.")
+    Let s4 = RckReg(s3, "ENGCDIV", 2, RckPure(Fn(vs) => EsCdiv(vs)), "( a b -- c )", "Complex division. Refuses when b is zero.")
+    Let s5 = RckReg(s4, "ENGCONJ", 1, RckPure(Fn(vs) => EsC1(First(vs), "ENGCONJ", EngConj)), "( a -- a2 )", "Complex conjugate.")
+    Let s6 = RckReg(s5, "ENGCABS", 1, RckPure(Fn(vs) => EsCabs(vs)), "( a -- n )", "The complex modulus |a|.")
+    Let s7 = RckReg(s6, "ENGCARG", 1, RckPure(Fn(vs) => EsCarg(vs)), "( a -- rad )", "The complex argument (angle).")
+    Let s8 = RckReg(s7, "ENGCFROMPOLAR", 2, RckPure(Fn(vs) => EsCfrompolar(vs)), "( mag theta -- a )", "A complex number from magnitude and angle.")
+    Let s9 = RckReg(s8, "ENGCTOPOLAR", 1, RckPure(Fn(vs) => EsCtopolar(vs)), "( a -- polar )", "a as a polar dict: mag, theta.")
+    Let s10 = RckReg(s9, "ENGCEXP", 1, RckPure(Fn(vs) => EsC1(First(vs), "ENGCEXP", EngCExp)), "( a -- a2 )", "Complex exponential.")
+    Let s11 = RckReg(s10, "ENGCLOG", 1, RckPure(Fn(vs) => EsC1(First(vs), "ENGCLOG", EngCLog)), "( a -- a2 )", "The principal complex logarithm.")
+    Let s12 = RckReg(s11, "ENGCSQRT", 1, RckPure(Fn(vs) => EsC1(First(vs), "ENGCSQRT", EngCSqrt)), "( a -- a2 )", "The principal complex square root.")
+    Let s13 = RckReg(s12, "ENGCPOW", 2, RckPure(Fn(vs) => EsCpow(vs)), "( a n -- a2 )", "a raised to the whole power n.")
+    Let s14 = RckReg(s13, "ENGCNEAR", 3, RckPure(Fn(vs) => EsCnear(vs)), "( a b tol -- flag )", "Whether a and b are within tol of each other — the guarded way to compare complex numbers.")
+    RckReg(s14, "ENGCSHOW", 1, RckPure(Fn(vs) => EsCshow(vs)), "( a -- str )", "a written out as text, e.g. \"3 + 4i\".")
+
+Def EsC1(c As Cell, word As String, f As [ EngComplex -- EngComplex ]) As RckWork
+    Select Case EsComplexOf(word, c)
+        Case Ok(a)
+            RckVals({ EsComplexCell(Call(f, a)) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Def EsC2(vs As List Of Cell, word As String, f As [ EngComplex EngComplex -- EngComplex ]) As RckWork
+    Select Case EsComplexOf(word, First(vs))
+        Case Ok(a)
+            EsC2With(a, Nth(vs, 2), word, f)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Def EsC2With(a As EngComplex, bc As Cell, word As String, f As [ EngComplex EngComplex -- EngComplex ]) As RckWork
+    Select Case EsComplexOf(word, bc)
+        Case Ok(b)
+            RckVals({ EsComplexCell(Call(f, a, b)) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Def EsCdiv(vs As List Of Cell) As RckWork
+    Select Case EsComplexOf("ENGCDIV", First(vs))
+        Case Ok(a)
+            EsCdivWith(a, Nth(vs, 2))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("ENGCDIV did not answer")
+
+Def EsCdivWith(a As EngComplex, bc As Cell) As RckWork
+    Select Case EsComplexOf("ENGCDIV", bc)
+        Case Ok(b)
+            EsCdivAt(a, b)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("ENGCDIV did not answer")
+
+Def EsCdivAt(a As EngComplex, b As EngComplex) As RckWork
+    If Re(b) = 0 And Im(b) = 0 Then
+        RckWorkBad("ENGCDIV: DIVISION BY ZERO")
+    Else
+        RckVals({ EsComplexCell(EngCDiv(a, b)) })
+
+Def EsCabs(vs As List Of Cell) As RckWork
+    Select Case EsComplexOf("ENGCABS", First(vs))
+        Case Ok(a)
+            RckVals({ CutNum(EngCAbs(a)) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("ENGCABS did not answer")
+
+Def EsCarg(vs As List Of Cell) As RckWork
+    Select Case EsComplexOf("ENGCARG", First(vs))
+        Case Ok(a)
+            RckVals({ CutNum(EngCArg(a)) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("ENGCARG did not answer")
+
+Def EsCfrompolar(vs As List Of Cell) As RckWork
+    Select Case Pair(RckNumArg("ENGCFROMPOLAR", Nth(vs, 1)), RckNumArg("ENGCFROMPOLAR", Nth(vs, 2)))
+        Case Pair(Ok(mag), Ok(theta))
+            RckVals({ EsComplexCell(EngCFromPolar(mag, theta)) })
+        Case Else
+            RckWorkBad("ENGCFROMPOLAR did not answer")
+
+Def EsCtopolar(vs As List Of Cell) As RckWork
+    Select Case EsComplexOf("ENGCTOPOLAR", First(vs))
+        Case Ok(a)
+            RckVals({ EsPolarCell(EngCToPolar(a)) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("ENGCTOPOLAR did not answer")
+
+Def EsCpow(vs As List Of Cell) As RckWork
+    Select Case EsComplexOf("ENGCPOW", First(vs))
+        Case Ok(a)
+            EsCpowWith(a, Nth(vs, 2))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("ENGCPOW did not answer")
+
+Def EsCpowWith(a As EngComplex, nc As Cell) As RckWork
+    Select Case RckWholeArg("ENGCPOW", nc)
+        Case Ok(n)
+            RckVals({ EsComplexCell(EngCPow(a, n)) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("ENGCPOW did not answer")
+
+Def EsCnear(vs As List Of Cell) As RckWork
+    Select Case EsComplexOf("ENGCNEAR", First(vs))
+        Case Ok(a)
+            EsCnearWith(a, Nth(vs, 2), Nth(vs, 3))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("ENGCNEAR did not answer")
+
+Def EsCnearWith(a As EngComplex, bc As Cell, tolC As Cell) As RckWork
+    Select Case EsComplexOf("ENGCNEAR", bc)
+        Case Ok(b)
+            EsCnearTol(a, b, tolC)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("ENGCNEAR did not answer")
+
+Def EsCnearTol(a As EngComplex, b As EngComplex, tolC As Cell) As RckWork
+    Select Case RckNumArg("ENGCNEAR", tolC)
+        Case Ok(tol)
+            RckVals({ CutBool(EngCNear(a, b, tol)) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("ENGCNEAR did not answer")
+
+Def EsCshow(vs As List Of Cell) As RckWork
+    Select Case EsComplexOf("ENGCSHOW", First(vs))
+        Case Ok(a)
+            RckVals({ CutStr(EngCShow(a)) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("ENGCSHOW did not answer")
+
+Rem ---- descriptive statistics --------------------------------------------
+
+Def EsSeedStats1(st As RckState) As RckState
+    Let s1 = RckReg(st, "ENGSUM", 1, RckPure(Fn(vs) => EsL1("ENGSUM", First(vs), EngSum)), "( list -- n )", "The sum.")
+    Let s2 = RckReg(s1, "ENGSMEAN", 1, RckPure(Fn(vs) => EsL1G("ENGSMEAN", First(vs), EngMean)), "( list -- n )", "The mean. Refuses on an empty list.")
+    Let s3 = RckReg(s2, "ENGSTDDEV", 1, RckPure(Fn(vs) => EsL1G2("ENGSTDDEV", First(vs), EngStdDev)), "( list -- n )", "The sample standard deviation. Refuses on fewer than 2 values.")
+    Let s4 = RckReg(s3, "ENGSTDDEVP", 1, RckPure(Fn(vs) => EsL1G("ENGSTDDEVP", First(vs), EngStdDevP)), "( list -- n )", "The population standard deviation. Refuses on an empty list.")
+    Let s5 = RckReg(s4, "ENGSVAR", 1, RckPure(Fn(vs) => EsL1G2("ENGSVAR", First(vs), EngVar)), "( list -- n )", "The sample variance. Refuses on fewer than 2 values.")
+    Let s6 = RckReg(s5, "ENGVARP", 1, RckPure(Fn(vs) => EsL1G("ENGVARP", First(vs), EngVarP)), "( list -- n )", "The population variance. Refuses on an empty list.")
+    Let s7 = RckReg(s6, "ENGSMEDIAN", 1, RckPure(Fn(vs) => EsL1G("ENGSMEDIAN", First(vs), EngMedian)), "( list -- n )", "The median. Refuses on an empty list.")
+    Let s8 = RckReg(s7, "ENGSQUANTILE", 2, RckPure(Fn(vs) => EsQuantile(vs)), "( list p -- n )", "The p-quantile (p in [0, 1]).")
+    Let s9 = RckReg(s8, "ENGSMIN", 1, RckPure(Fn(vs) => EsL1G("ENGSMIN", First(vs), EngMinimum)), "( list -- n )", "The minimum. Refuses on an empty list.")
+    Let s10 = RckReg(s9, "ENGSMAX", 1, RckPure(Fn(vs) => EsL1G("ENGSMAX", First(vs), EngMaximum)), "( list -- n )", "The maximum. Refuses on an empty list.")
+    Let s11 = RckReg(s10, "ENGSRANGE", 1, RckPure(Fn(vs) => EsL1G("ENGSRANGE", First(vs), EngRangeOf)), "( list -- n )", "Maximum minus minimum. Refuses on an empty list.")
+    Let s12 = RckReg(s11, "ENGSKEWNESS", 1, RckPure(Fn(vs) => EsL1G2("ENGSKEWNESS", First(vs), EngSkewness)), "( list -- n )", "The sample skewness. Refuses on fewer than 2 values.")
+    Let s13 = RckReg(s12, "ENGKURTOSIS", 1, RckPure(Fn(vs) => EsL1G2("ENGKURTOSIS", First(vs), EngKurtosis)), "( list -- n )", "The excess kurtosis. Refuses on fewer than 2 values.")
+    Let s14 = RckReg(s13, "ENGWEIGHTEDMEAN", 2, RckPure(Fn(vs) => EsL2("ENGWEIGHTEDMEAN", vs, EngWeightedMean)), "( xs ws -- n )", "The mean of xs weighted by ws. Same length required.")
+    Let s15 = RckReg(s14, "ENGGEOMEAN", 1, RckPure(Fn(vs) => EsL1G("ENGGEOMEAN", First(vs), EngGeoMean)), "( list -- n )", "The geometric mean. Refuses on an empty list or a non-positive value.")
+    Let s16 = RckReg(s15, "ENGCORREL", 2, RckPure(Fn(vs) => EsL2("ENGCORREL", vs, EngCorrel)), "( xs ys -- n )", "The Pearson correlation. Same length required.")
+    Let s17 = RckReg(s16, "ENGCOV", 2, RckPure(Fn(vs) => EsL2("ENGCOV", vs, EngCov)), "( xs ys -- n )", "The sample covariance. Same length required.")
+    Let s18 = RckReg(s17, "ENGSPEARMAN", 2, RckPure(Fn(vs) => EsL2("ENGSPEARMAN", vs, EngSpearman)), "( xs ys -- n )", "The Spearman rank correlation. Same length required.")
+    RckReg(s18, "ENGSTAT1", 1, RckPure(Fn(vs) => EsStat1(vs)), "( list -- stat )", "avg, sd and total together, one pass: a dict.")
+
+Def EsL1(word As String, c As Cell, f As [ List Of Number -- Number ]) As RckWork
+    Select Case EsListNum(word, c)
+        Case Ok(xs)
+            RckVals({ CutNum(Call(f, xs)) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Rem Same as EsL1, refusing an empty list first — eng.shoddy's own
+Rem Mean/Median/etc. divide by Length(xs) or index into it with no
+Rem guard of their own.
+Def EsL1G(word As String, c As Cell, f As [ List Of Number -- Number ]) As RckWork
+    Select Case EsListNum(word, c)
+        Case Ok(xs)
+            EsL1GAt(word, xs, f)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Def EsL1GAt(word As String, xs As List Of Number, f As [ List Of Number -- Number ]) As RckWork
+    If IsEmpty(xs) Then
+        RckWorkBad(word & ": THE LIST IS EMPTY")
+    Else
+        RckVals({ CutNum(Call(f, xs)) })
+
+Rem Needs at least 2 values (a sample deviation/variance divides by n - 1).
+Def EsL1G2(word As String, c As Cell, f As [ List Of Number -- Number ]) As RckWork
+    Select Case EsListNum(word, c)
+        Case Ok(xs)
+            EsL1G2At(word, xs, f)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Def EsL1G2At(word As String, xs As List Of Number, f As [ List Of Number -- Number ]) As RckWork
+    If Length(xs) < 2 Then
+        RckWorkBad(word & ": NEEDS AT LEAST 2 VALUES")
+    Else
+        RckVals({ CutNum(Call(f, xs)) })
+
+Def EsL2(word As String, vs As List Of Cell, f As [ List Of Number List Of Number -- Number ]) As RckWork
+    Select Case EsListNum(word, First(vs))
+        Case Ok(xs)
+            EsL2With(word, xs, Nth(vs, 2), f)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Def EsL2With(word As String, xs As List Of Number, yc As Cell, f As [ List Of Number List Of Number -- Number ]) As RckWork
+    Select Case EsListNum(word, yc)
+        Case Ok(ys)
+            EsL2At(word, xs, ys, f)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Def EsL2At(word As String, xs As List Of Number, ys As List Of Number, f As [ List Of Number List Of Number -- Number ]) As RckWork
+    If Length(xs) <> Length(ys) Then
+        RckWorkBad(word & ": BOTH LISTS MUST BE THE SAME LENGTH")
+    Else
+        RckVals({ CutNum(Call(f, xs, ys)) })
+
+Def EsQuantile(vs As List Of Cell) As RckWork
+    Select Case EsListNum("ENGSQUANTILE", First(vs))
+        Case Ok(xs)
+            EsQuantileP(xs, Nth(vs, 2))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("ENGSQUANTILE did not answer")
+
+Def EsQuantileP(xs As List Of Number, pc As Cell) As RckWork
+    Select Case RckNumArg("ENGSQUANTILE", pc)
+        Case Ok(p)
+            EsQuantileAt(xs, p)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("ENGSQUANTILE did not answer")
+
+Def EsQuantileAt(xs As List Of Number, p As Number) As RckWork
+    If IsEmpty(xs) Then
+        RckWorkBad("ENGSQUANTILE: THE LIST IS EMPTY")
+    Else
+        If p < 0 Or p > 1 Then
+            RckWorkBad("ENGSQUANTILE: P MUST BE BETWEEN 0 AND 1")
+        Else
+            RckVals({ CutNum(EngQuantile(xs, p)) })
+
+Def EsStat1(vs As List Of Cell) As RckWork
+    Select Case EsListNum("ENGSTAT1", First(vs))
+        Case Ok(xs)
+            EsStat1At(xs)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("ENGSTAT1 did not answer")
+
+Def EsStat1At(xs As List Of Number) As RckWork
+    If IsEmpty(xs) Then
+        RckWorkBad("ENGSTAT1: THE LIST IS EMPTY")
+    Else
+        RckVals({ EsStatCell(EngStat1(xs)) })
+
+Rem ---- distributions --------------------------------------------------
+
+Def EsSeedDist(st As RckState) As RckState
+    Let s1 = RckReg(st, "ENGNORMPDF", 3, RckPure(Fn(vs) => EsN3("ENGNORMPDF", vs, EngNormPdf)), "( x mean sd -- y )", "The normal density at x.")
+    Let s2 = RckReg(s1, "ENGNORMCDF", 3, RckPure(Fn(vs) => EsN3("ENGNORMCDF", vs, EngNormCdf)), "( x mean sd -- p )", "The normal cumulative distribution at x.")
+    Let s3 = RckReg(s2, "ENGNORMINV", 1, RckPure(Fn(vs) => EsGuard01Open("ENGNORMINV", First(vs), EngNormInv)), "( p -- x )", "The standard normal inverse CDF. Refuses unless 0 < p < 1.")
+    Let s4 = RckReg(s3, "ENGTCDF", 2, RckPure(Fn(vs) => EsN2("ENGTCDF", vs, EngTCdf)), "( t df -- p )", "Student's t cumulative distribution.")
+    Let s5 = RckReg(s4, "ENGTINV", 2, RckPure(Fn(vs) => EsN2("ENGTINV", vs, EngTInv)), "( p df -- t )", "Student's t inverse CDF.")
+    Let s6 = RckReg(s5, "ENGCHI2CDF", 2, RckPure(Fn(vs) => EsN2("ENGCHI2CDF", vs, EngChi2Cdf)), "( x df -- p )", "The chi-squared cumulative distribution.")
+    Let s7 = RckReg(s6, "ENGFCDF", 3, RckPure(Fn(vs) => EsN3("ENGFCDF", vs, EngFCdf)), "( f d1 d2 -- p )", "The F cumulative distribution.")
+    Let s8 = RckReg(s7, "ENGBINOMPDF", 3, RckPure(Fn(vs) => EsN3("ENGBINOMPDF", vs, EngBinomPdf)), "( k n p -- y )", "The binomial probability of exactly k successes.")
+    Let s9 = RckReg(s8, "ENGBINOMCDF", 3, RckPure(Fn(vs) => EsN3("ENGBINOMCDF", vs, EngBinomCdf)), "( k n p -- y )", "The binomial cumulative distribution.")
+    Let s10 = RckReg(s9, "ENGPOISSONPDF", 2, RckPure(Fn(vs) => EsN2("ENGPOISSONPDF", vs, EngPoissonPdf)), "( k lambda -- y )", "The Poisson probability of exactly k events.")
+    Let s11 = RckReg(s10, "ENGPOISSONCDF", 2, RckPure(Fn(vs) => EsN2("ENGPOISSONCDF", vs, EngPoissonCdf)), "( k lambda -- y )", "The Poisson cumulative distribution.")
+    Let s12 = RckReg(s11, "ENGGEOMPDF", 2, RckPure(Fn(vs) => EsN2("ENGGEOMPDF", vs, EngGeomPdf)), "( k p -- y )", "The geometric probability of the first success on trial k.")
+    Let s13 = RckReg(s12, "ENGGEOMCDF", 2, RckPure(Fn(vs) => EsN2("ENGGEOMCDF", vs, EngGeomCdf)), "( k p -- y )", "The geometric cumulative distribution.")
+    Let s14 = RckReg(s13, "ENGHYPERPDF", 4, RckPure(Fn(vs) => EsN4("ENGHYPERPDF", vs, EngHyperPdf)), "( k draws wins popn -- y )", "The hypergeometric probability.")
+    RckReg(s14, "ENGEXPCDF", 2, RckPure(Fn(vs) => EsN2("ENGEXPCDF", vs, EngExpCdf)), "( x rate -- p )", "The exponential cumulative distribution.")
+
+Def EsN2(word As String, vs As List Of Cell, f As [ Number Number -- Number ]) As RckWork
+    EsNum2(word, vs, f)
+
+Def EsN3(word As String, vs As List Of Cell, f As [ Number Number Number -- Number ]) As RckWork
+    Select Case EsListNum(word, CutList(vs))
+        Case Ok(ns)
+            RckVals({ CutNum(Call(f, Nth(ns, 1), Nth(ns, 2), Nth(ns, 3))) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Def EsN4(word As String, vs As List Of Cell, f As [ Number Number Number Number -- Number ]) As RckWork
+    Select Case EsListNum(word, CutList(vs))
+        Case Ok(ns)
+            RckVals({ CutNum(Call(f, Nth(ns, 1), Nth(ns, 2), Nth(ns, 3), Nth(ns, 4))) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Def EsGuard01Open(word As String, c As Cell, f As [ Number -- Number ]) As RckWork
+    Select Case RckNumArg(word, c)
+        Case Ok(p)
+            EsGuard01OpenAt(word, p, f)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Def EsGuard01OpenAt(word As String, p As Number, f As [ Number -- Number ]) As RckWork
+    If p <= 0 Or p >= 1 Then
+        RckWorkBad(word & ": NEEDS 0 < P < 1")
+    Else
+        RckVals({ CutNum(Call(f, p)) })
+
+Rem ---- number theory and combinatorics -------------------------------
+
+Def EsSeedNumtheory(st As RckState) As RckState
+    Let s1 = RckReg(st, "ENGGCD", 2, RckPure(Fn(vs) => EsNum2("ENGGCD", vs, EngGcd)), "( a b -- n )", "The greatest common divisor.")
+    Let s2 = RckReg(s1, "ENGLCM", 2, RckPure(Fn(vs) => EsNum2("ENGLCM", vs, EngLcm)), "( a b -- n )", "The least common multiple.")
+    Let s3 = RckReg(s2, "ENGIQUOT", 2, RckPure(Fn(vs) => EsGuardNz2("ENGIQUOT", vs, EngIQuot)), "( a b -- n )", "Integer division, truncated toward zero. Refuses when b = 0.")
+    Let s4 = RckReg(s3, "ENGIREM", 2, RckPure(Fn(vs) => EsGuardNz2("ENGIREM", vs, EngIRem)), "( a b -- n )", "The remainder of ENGIQUOT. Refuses when b = 0.")
+    Let s5 = RckReg(s4, "ENGMODPOW", 3, RckPure(Fn(vs) => EsModpow(vs)), "( base e m -- n )", "base^e mod m, without the intermediate ever growing large.")
+    Let s6 = RckReg(s5, "ENGMODINV", 2, RckPure(Fn(vs) => EsModinv(vs)), "( a m -- n )", "The modular inverse of a mod m. Refuses when none exists.")
+    Let s7 = RckReg(s6, "ENGISPRIME", 1, RckPure(Fn(vs) => EsWhole1("ENGISPRIME", First(vs), EngIsPrime)), "( n -- flag )", "Whether n is prime.")
+    Let s8 = RckReg(s7, "ENGPRIMES", 1, RckPure(Fn(vs) => EsWholeList("ENGPRIMES", First(vs), EngPrimes)), "( n -- list )", "Every prime up to and including n.")
+    Let s9 = RckReg(s8, "ENGFACTORIZE", 1, RckPure(Fn(vs) => EsGuardWhole2("ENGFACTORIZE", First(vs), EngFactorize)), "( n -- list )", "n's prime factors, with multiplicity. Refuses unless n >= 2.")
+    Let s10 = RckReg(s9, "ENGDIVISORS", 1, RckPure(Fn(vs) => EsGuardWhole1("ENGDIVISORS", First(vs), EngDivisors)), "( n -- list )", "Every divisor of n, ascending. Refuses unless n >= 1.")
+    Let s11 = RckReg(s10, "ENGTOTIENT", 1, RckPure(Fn(vs) => EsGuardWhole1N("ENGTOTIENT", First(vs), EngTotient)), "( n -- count )", "Euler's totient: how many of 1..n are coprime to n. Refuses unless n >= 1.")
+    Let s12 = RckReg(s11, "ENGFACT", 1, RckPure(Fn(vs) => EsGuardWhole1N("ENGFACT", First(vs), EngFact)), "( n -- n! )", "The factorial. Refuses unless n >= 0.")
+    Let s13 = RckReg(s12, "ENGCOMB", 2, RckPure(Fn(vs) => EsCombperm(vs, "ENGCOMB", EngComb)), "( n k -- count )", "n choose k.")
+    Let s14 = RckReg(s13, "ENGPERM", 2, RckPure(Fn(vs) => EsCombperm(vs, "ENGPERM", EngPerm)), "( n k -- count )", "The number of ways to arrange k of n, order mattering.")
+    RckReg(s14, "ENGFIB", 1, RckPure(Fn(vs) => EsGuardWhole1N("ENGFIB", First(vs), EngFib)), "( n -- f )", "The n-th Fibonacci number. Refuses unless n >= 0.")
+
+Def EsGuardNz2(word As String, vs As List Of Cell, f As [ Number Number -- Number ]) As RckWork
+    Select Case Pair(RckNumArg(word, Nth(vs, 1)), RckNumArg(word, Nth(vs, 2)))
+        Case Pair(Ok(a), Ok(b))
+            EsGuardNz2At(word, a, b, f)
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Def EsGuardNz2At(word As String, a As Number, b As Number, f As [ Number Number -- Number ]) As RckWork
+    If b = 0 Then
+        RckWorkBad(word & ": DIVISION BY ZERO")
+    Else
+        RckVals({ CutNum(Call(f, a, b)) })
+
+Def EsModpow(vs As List Of Cell) As RckWork
+    Select Case EsListNum("ENGMODPOW", CutList(vs))
+        Case Ok(ns)
+            RckVals({ CutNum(EngModPow(Nth(ns, 1), Nth(ns, 2), Nth(ns, 3))) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("ENGMODPOW did not answer")
+
+Def EsModinv(vs As List Of Cell) As RckWork
+    Select Case Pair(RckNumArg("ENGMODINV", Nth(vs, 1)), RckNumArg("ENGMODINV", Nth(vs, 2)))
+        Case Pair(Ok(a), Ok(m))
+            EsModinvAt(a, m)
+        Case Else
+            RckWorkBad("ENGMODINV did not answer")
+
+Def EsModinvAt(a As Number, m As Number) As RckWork
+    If EngGcd(a, m) <> 1 Then
+        RckWorkBad("ENGMODINV: NO INVERSE — GCD(A, M) IS NOT 1")
+    Else
+        RckVals({ CutNum(EngModInv(a, m)) })
+
+Def EsWhole1(word As String, c As Cell, f As [ Number -- Boolean ]) As RckWork
+    Select Case RckWholeArg(word, c)
+        Case Ok(n)
+            RckVals({ CutBool(Call(f, n)) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Def EsWholeList(word As String, c As Cell, f As [ Number -- List Of Number ]) As RckWork
+    Select Case RckWholeArg(word, c)
+        Case Ok(n)
+            RckVals({ EsListOf(Call(f, n)) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Def EsGuardWhole2(word As String, c As Cell, f As [ Number -- List Of Number ]) As RckWork
+    Select Case RckWholeArg(word, c)
+        Case Ok(n)
+            EsGuardWhole2At(word, n, f)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Def EsGuardWhole2At(word As String, n As Number, f As [ Number -- List Of Number ]) As RckWork
+    If n < 2 Then
+        RckWorkBad(word & ": NEEDS N >= 2")
+    Else
+        RckVals({ EsListOf(Call(f, n)) })
+
+Def EsGuardWhole1(word As String, c As Cell, f As [ Number -- List Of Number ]) As RckWork
+    Select Case RckWholeArg(word, c)
+        Case Ok(n)
+            EsGuardWhole1At(word, n, f)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Def EsGuardWhole1At(word As String, n As Number, f As [ Number -- List Of Number ]) As RckWork
+    If n < 1 Then
+        RckWorkBad(word & ": NEEDS N >= 1")
+    Else
+        RckVals({ EsListOf(Call(f, n)) })
+
+Def EsGuardWhole1N(word As String, c As Cell, f As [ Number -- Number ]) As RckWork
+    Select Case RckWholeArg(word, c)
+        Case Ok(n)
+            EsGuardWhole1NAt(word, n, f)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Def EsGuardWhole1NAt(word As String, n As Number, f As [ Number -- Number ]) As RckWork
+    If n < 0 Then
+        RckWorkBad(word & ": NEEDS N >= 0")
+    Else
+        RckVals({ CutNum(Call(f, n)) })
+
+Def EsCombperm(vs As List Of Cell, word As String, f As [ Number Number -- Number ]) As RckWork
+    Select Case Pair(RckWholeArg(word, Nth(vs, 1)), RckWholeArg(word, Nth(vs, 2)))
+        Case Pair(Ok(n), Ok(k))
+            EsCombpermAt(word, n, k, f)
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Def EsCombpermAt(word As String, n As Number, k As Number, f As [ Number Number -- Number ]) As RckWork
+    If n < 0 Or k < 0 Or k > n Then
+        RckWorkBad(word & ": NEEDS 0 <= K <= N")
+    Else
+        RckVals({ CutNum(Call(f, n, k)) })
+
+Rem ---- gamma, beta and discrete distributions already have EsN2/EsN3/EsN4
+
+Def EsSeedGamma(st As RckState) As RckState
+    Let s1 = RckReg(st, "ENGGAMMA", 1, RckPure(Fn(vs) => EsNum1w("ENGGAMMA", First(vs), EngGamma)), "( x -- y )", "The gamma function.")
+    RckReg(s1, "ENGBETA", 2, RckPure(Fn(vs) => EsNum2("ENGBETA", vs, EngBeta)), "( a b -- y )", "The beta function.")
+
+Def EsNum1w(word As String, c As Cell, f As [ Number -- Number ]) As RckWork
+    EsNum1(word, c, f)
+
+Rem ---- polynomial arithmetic --------------------------------------------
+Rem Coefficients highest power first, as everywhere in this machine.
+
+Def EsSeedPoly(st As RckState) As RckState
+    Let s1 = RckReg(st, "ENGPOLYEVAL", 2, RckPure(Fn(vs) => EsPolyeval(vs)), "( coeffs x -- y )", "The polynomial's value at x.")
+    Let s2 = RckReg(s1, "ENGPOLYTRIM", 1, RckPure(Fn(vs) => EsL1L("ENGPOLYTRIM", First(vs), EngPolyTrim)), "( coeffs -- coeffs2 )", "Leading zero coefficients dropped.")
+    Let s3 = RckReg(s2, "ENGPOLYDEGREE", 1, RckPure(Fn(vs) => EsL1("ENGPOLYDEGREE", First(vs), EngPolyDegree)), "( coeffs -- n )", "The polynomial's degree.")
+    Let s4 = RckReg(s3, "ENGPOLYADD", 2, RckPure(Fn(vs) => EsL2L("ENGPOLYADD", vs, EngPolyAdd)), "( a b -- c )", "Polynomial addition.")
+    Let s5 = RckReg(s4, "ENGPOLYNEG", 1, RckPure(Fn(vs) => EsL1L("ENGPOLYNEG", First(vs), EngPolyNeg)), "( coeffs -- coeffs2 )", "Every coefficient negated.")
+    Let s6 = RckReg(s5, "ENGPOLYSUB", 2, RckPure(Fn(vs) => EsL2L("ENGPOLYSUB", vs, EngPolySub)), "( a b -- c )", "Polynomial subtraction.")
+    Let s7 = RckReg(s6, "ENGPOLYSCALE", 2, RckPure(Fn(vs) => EsPolyscale(vs)), "( coeffs k -- coeffs2 )", "Every coefficient multiplied by k.")
+    Let s8 = RckReg(s7, "ENGPOLYMUL", 2, RckPure(Fn(vs) => EsL2L("ENGPOLYMUL", vs, EngPolyMul)), "( a b -- c )", "Polynomial multiplication.")
+    Let s9 = RckReg(s8, "ENGPOLYDIV", 2, RckPure(Fn(vs) => EsPolydiv(vs)), "( a b -- divided )", "Polynomial division: a dict with quotient and remainder. Refuses when b is zero.")
+    Let s10 = RckReg(s9, "ENGPOLYDERIV", 1, RckPure(Fn(vs) => EsL1L("ENGPOLYDERIV", First(vs), EngPolyDeriv)), "( coeffs -- coeffs2 )", "The derivative's coefficients.")
+    Let s11 = RckReg(s10, "ENGPOLYINTEGRAL", 2, RckPure(Fn(vs) => EsPolyintegral(vs)), "( coeffs c0 -- coeffs2 )", "The antiderivative's coefficients, with constant term c0.")
+    Let s12 = RckReg(s11, "ENGPOLYAREA", 3, RckPure(Fn(vs) => EsPolyarea(vs)), "( coeffs a b -- n )", "The definite integral from a to b.")
+    Let s13 = RckReg(s12, "ENGQUADROOTS", 3, RckPure(Fn(vs) => EsQuadroots(vs)), "( a b c -- list )", "The roots of a x^2 + b x + c, as (re im) pairs — always two, real or complex. Refuses when a = 0.")
+    RckReg(s13, "ENGCUBICREAL", 4, RckPure(Fn(vs) => EsCubicreal(vs)), "( a b c d -- list )", "The real roots of a x^3 + b x^2 + c x + d. Refuses when a = 0.")
+
+Def EsL1L(word As String, c As Cell, f As [ List Of Number -- List Of Number ]) As RckWork
+    Select Case EsListNum(word, c)
+        Case Ok(xs)
+            RckVals({ EsListOf(Call(f, xs)) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Def EsL2L(word As String, vs As List Of Cell, f As [ List Of Number List Of Number -- List Of Number ]) As RckWork
+    Select Case EsListNum(word, First(vs))
+        Case Ok(a)
+            EsL2LWith(word, a, Nth(vs, 2), f)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Def EsL2LWith(word As String, a As List Of Number, bc As Cell, f As [ List Of Number List Of Number -- List Of Number ]) As RckWork
+    Select Case EsListNum(word, bc)
+        Case Ok(b)
+            RckVals({ EsListOf(Call(f, a, b)) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Def EsPolyeval(vs As List Of Cell) As RckWork
+    Select Case EsListNum("ENGPOLYEVAL", First(vs))
+        Case Ok(cs)
+            EsPolyevalX(cs, Nth(vs, 2))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("ENGPOLYEVAL did not answer")
+
+Def EsPolyevalX(cs As List Of Number, xc As Cell) As RckWork
+    Select Case RckNumArg("ENGPOLYEVAL", xc)
+        Case Ok(x)
+            RckVals({ CutNum(EngPolyEval(cs, x)) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("ENGPOLYEVAL did not answer")
+
+Def EsPolyscale(vs As List Of Cell) As RckWork
+    Select Case EsListNum("ENGPOLYSCALE", First(vs))
+        Case Ok(cs)
+            EsPolyscaleK(cs, Nth(vs, 2))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("ENGPOLYSCALE did not answer")
+
+Def EsPolyscaleK(cs As List Of Number, kc As Cell) As RckWork
+    Select Case RckNumArg("ENGPOLYSCALE", kc)
+        Case Ok(k)
+            RckVals({ EsListOf(EngPolyScale(cs, k)) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("ENGPOLYSCALE did not answer")
+
+Def EsPolydiv(vs As List Of Cell) As RckWork
+    Select Case EsListNum("ENGPOLYDIV", First(vs))
+        Case Ok(a)
+            EsPolydivB(a, Nth(vs, 2))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("ENGPOLYDIV did not answer")
+
+Def EsPolydivB(a As List Of Number, bc As Cell) As RckWork
+    Select Case EsListNum("ENGPOLYDIV", bc)
+        Case Ok(b)
+            EsPolydivAt(a, b)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("ENGPOLYDIV did not answer")
+
+Def EsPolydivAt(a As List Of Number, b As List Of Number) As RckWork
+    If IsEmpty(EngPolyTrim(b)) Then
+        RckWorkBad("ENGPOLYDIV: DIVISION BY THE ZERO POLYNOMIAL")
+    Else
+        RckVals({ EsDividedCell(EngPolyDiv(a, b)) })
+
+Def EsPolyintegral(vs As List Of Cell) As RckWork
+    Select Case EsListNum("ENGPOLYINTEGRAL", First(vs))
+        Case Ok(cs)
+            EsPolyintegralC0(cs, Nth(vs, 2))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("ENGPOLYINTEGRAL did not answer")
+
+Def EsPolyintegralC0(cs As List Of Number, c0c As Cell) As RckWork
+    Select Case RckNumArg("ENGPOLYINTEGRAL", c0c)
+        Case Ok(c0)
+            RckVals({ EsListOf(EngPolyIntegral(cs, c0)) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("ENGPOLYINTEGRAL did not answer")
+
+Def EsPolyarea(vs As List Of Cell) As RckWork
+    Select Case EsListNum("ENGPOLYAREA", First(vs))
+        Case Ok(cs)
+            EsPolyareaAb(cs, Nth(vs, 2), Nth(vs, 3))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("ENGPOLYAREA did not answer")
+
+Def EsPolyareaAb(cs As List Of Number, ac As Cell, bc As Cell) As RckWork
+    Select Case Pair(RckNumArg("ENGPOLYAREA", ac), RckNumArg("ENGPOLYAREA", bc))
+        Case Pair(Ok(a), Ok(b))
+            RckVals({ CutNum(EngPolyArea(cs, a, b)) })
+        Case Else
+            RckWorkBad("ENGPOLYAREA did not answer")
+
+Def EsQuadroots(vs As List Of Cell) As RckWork
+    Select Case EsListNum("ENGQUADROOTS", CutList(vs))
+        Case Ok(ns)
+            EsQuadrootsAt(Nth(ns, 1), Nth(ns, 2), Nth(ns, 3))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("ENGQUADROOTS did not answer")
+
+Def EsQuadrootsAt(a As Number, b As Number, c As Number) As RckWork
+    If a = 0 Then
+        RckWorkBad("ENGQUADROOTS: A MUST NOT BE ZERO — USE ORDINARY ARITHMETIC FOR A LINEAR EQUATION")
+    Else
+        RckVals({ CutList(Map(EngQuadRoots(a, b, c), EsComplexCell)) })
+
+Def EsCubicreal(vs As List Of Cell) As RckWork
+    Select Case EsListNum("ENGCUBICREAL", CutList(vs))
+        Case Ok(ns)
+            EsCubicrealAt(Nth(ns, 1), Nth(ns, 2), Nth(ns, 3), Nth(ns, 4))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("ENGCUBICREAL did not answer")
+
+Def EsCubicrealAt(a As Number, b As Number, c As Number, d As Number) As RckWork
+    If a = 0 Then
+        RckWorkBad("ENGCUBICREAL: A MUST NOT BE ZERO")
+    Else
+        RckVals({ EsListOf(EngCubicReal(a, b, c, d)) })
+
+Rem ---- sequences ----------------------------------------------------------
+
+Def EsSeedSeqs(st As RckState) As RckState
+    Let s1 = RckReg(st, "ENGLINSPACE", 3, RckPure(Fn(vs) => EsSpace(vs, "ENGLINSPACE", EngLinSpace)), "( lo hi n -- list )", "n evenly spaced values from lo to hi, inclusive. Refuses unless n >= 2.")
+    Let s2 = RckReg(s1, "ENGGEOMSPACE", 3, RckPure(Fn(vs) => EsGeomspace(vs)), "( lo hi n -- list )", "n geometrically spaced values from lo to hi. Refuses unless n >= 2 and lo, hi are both positive.")
+    Let s3 = RckReg(s2, "ENGCUMSUM", 1, RckPure(Fn(vs) => EsL1L("ENGCUMSUM", First(vs), EngCumSum)), "( list -- list2 )", "The running total.")
+    Let s4 = RckReg(s3, "ENGDIFF", 1, RckPure(Fn(vs) => EsL1L("ENGDIFF", First(vs), EngDiff)), "( list -- list2 )", "Consecutive differences, one shorter than the input.")
+    Let s5 = RckReg(s4, "ENGMOVAVG", 2, RckPure(Fn(vs) => EsMovavg(vs)), "( list w -- list2 )", "The moving average over a window of w. Refuses unless 1 <= w <= Length(list).")
+    Let s6 = RckReg(s5, "ENGNORMALIZE", 1, RckPure(Fn(vs) => EsL1L("ENGNORMALIZE", First(vs), EngNormalize)), "( list -- list2 )", "Rescaled to [0, 1].")
+    Let s7 = RckReg(s6, "ENGDOTOF", 2, RckPure(Fn(vs) => EsL2("ENGDOTOF", vs, EngDotOf)), "( xs ys -- n )", "The dot product. Same length required.")
+    RckReg(s7, "ENGMAGOF", 1, RckPure(Fn(vs) => EsL1("ENGMAGOF", First(vs), EngMagOf)), "( list -- n )", "The Euclidean magnitude.")
+
+Def EsSpace(vs As List Of Cell, word As String, f As [ Number Number Number -- List Of Number ]) As RckWork
+    Select Case Pair(RckNumArg(word, Nth(vs, 1)), Pair(RckNumArg(word, Nth(vs, 2)), RckWholeArg(word, Nth(vs, 3))))
+        Case Pair(Ok(lo), Pair(Ok(hi), Ok(n)))
+            EsSpaceAt(word, lo, hi, n, f)
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Def EsSpaceAt(word As String, lo As Number, hi As Number, n As Number, f As [ Number Number Number -- List Of Number ]) As RckWork
+    If n < 2 Then
+        RckWorkBad(word & ": NEEDS N >= 2")
+    Else
+        RckVals({ EsListOf(Call(f, lo, hi, n)) })
+
+Def EsGeomspace(vs As List Of Cell) As RckWork
+    Select Case Pair(RckNumArg("ENGGEOMSPACE", Nth(vs, 1)), Pair(RckNumArg("ENGGEOMSPACE", Nth(vs, 2)), RckWholeArg("ENGGEOMSPACE", Nth(vs, 3))))
+        Case Pair(Ok(lo), Pair(Ok(hi), Ok(n)))
+            EsGeomspaceAt(lo, hi, n)
+        Case Else
+            RckWorkBad("ENGGEOMSPACE did not answer")
+
+Def EsGeomspaceAt(lo As Number, hi As Number, n As Number) As RckWork
+    If n < 2 Then
+        RckWorkBad("ENGGEOMSPACE: NEEDS N >= 2")
+    Else
+        If lo <= 0 Or hi <= 0 Then
+            RckWorkBad("ENGGEOMSPACE: LO AND HI MUST BOTH BE POSITIVE")
+        Else
+            RckVals({ EsListOf(EngGeomSpace(lo, hi, n)) })
+
+Def EsMovavg(vs As List Of Cell) As RckWork
+    Select Case EsListNum("ENGMOVAVG", First(vs))
+        Case Ok(xs)
+            EsMovavgW(xs, Nth(vs, 2))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("ENGMOVAVG did not answer")
+
+Def EsMovavgW(xs As List Of Number, wc As Cell) As RckWork
+    Select Case RckWholeArg("ENGMOVAVG", wc)
+        Case Ok(w)
+            EsMovavgAt(xs, w)
+        Case Err(w2, at)
+            RckWorkBad(w2)
+        Case Else
+            RckWorkBad("ENGMOVAVG did not answer")
+
+Def EsMovavgAt(xs As List Of Number, w As Number) As RckWork
+    If w < 1 Or w > Length(xs) Then
+        RckWorkBad("ENGMOVAVG: NEEDS 1 <= W <= LENGTH(LIST)")
+    Else
+        RckVals({ EsListOf(EngMovAvg(xs, w)) })
+
+Rem ---- units ----------------------------------------------------------
+Rem Every unit constructor is arity 0 and total. ENGTOBASE/ENGFROMBASE/
+Rem ENGCONVERT take the dict a unit word answers, read back positionally
+Rem (see EsUnitOf above) since only this seed's own shape ever reaches
+Rem them.
+
+Def EsUnit0(st As RckState, name As String, desc As String, u As EngUnit) As RckState
+    RckReg(st, name, 0, RckPure(Fn(vs) => RckVals({ EsUnitCell(u) })), "( -- unit )", desc)
+
+Def EsSeedUnits(st As RckState) As RckState
+    Let s1 = EsUnit0(st, "ENGMETRE", "The metre: length's base unit.", EngMetre())
+    Let s2 = EsUnit0(s1, "ENGKILOMETRE", "The kilometre.", EngKilometre())
+    Let s3 = EsUnit0(s2, "ENGCENTIMETRE", "The centimetre.", EngCentimetre())
+    Let s4 = EsUnit0(s3, "ENGMILLIMETRE", "The millimetre.", EngMillimetre())
+    Let s5 = EsUnit0(s4, "ENGINCH", "The inch.", EngInch())
+    Let s6 = EsUnit0(s5, "ENGFOOT", "The foot.", EngFoot())
+    Let s7 = EsUnit0(s6, "ENGYARD", "The yard.", EngYard())
+    Let s8 = EsUnit0(s7, "ENGMILE", "The mile.", EngMile())
+    Let s9 = EsUnit0(s8, "ENGNAUTICALMILE", "The nautical mile.", EngNauticalMile())
+    Let s10 = EsUnit0(s9, "ENGKILOGRAM", "The kilogram: mass's base unit.", EngKilogram())
+    Let s11 = EsUnit0(s10, "ENGGRAM", "The gram.", EngGram())
+    Let s12 = EsUnit0(s11, "ENGTONNE", "The tonne.", EngTonne())
+    Let s13 = EsUnit0(s12, "ENGPOUND", "The pound (mass).", EngPound())
+    Let s14 = EsUnit0(s13, "ENGOUNCE", "The ounce.", EngOunce())
+    Let s15 = EsUnit0(s14, "ENGSTONE", "The stone.", EngStone())
+    Let s16 = EsUnit0(s15, "ENGSECOND", "The second: time's base unit.", EngSecond())
+    Let s17 = EsUnit0(s16, "ENGMINUTE", "The minute.", EngMinute())
+    Let s18 = EsUnit0(s17, "ENGHOUR", "The hour.", EngHour())
+    Let s19 = EsUnit0(s18, "ENGDAY", "The day.", EngDay())
+    Let s20 = EsUnit0(s19, "ENGKELVIN", "The kelvin: temperature's base unit.", EngKelvin())
+    Let s21 = EsUnit0(s20, "ENGCELSIUS", "Degrees Celsius.", EngCelsius())
+    Let s22 = EsUnit0(s21, "ENGFAHRENHEIT", "Degrees Fahrenheit.", EngFahrenheit())
+    Let s23 = EsUnit0(s22, "ENGPASCAL", "The pascal: pressure's base unit.", EngPascal())
+    Let s24 = EsUnit0(s23, "ENGKILOPASCAL", "The kilopascal.", EngKilopascal())
+    Let s25 = EsUnit0(s24, "ENGBAR", "The bar.", EngBar())
+    Let s26 = EsUnit0(s25, "ENGPSI", "Pounds per square inch.", EngPsi())
+    Let s27 = EsUnit0(s26, "ENGATM", "The standard atmosphere.", EngAtm())
+    Let s28 = EsUnit0(s27, "ENGJOULE", "The joule: energy's base unit.", EngJoule())
+    Let s29 = EsUnit0(s28, "ENGKILOJOULE", "The kilojoule.", EngKilojoule())
+    Let s30 = EsUnit0(s29, "ENGCALORIE", "The calorie.", EngCalorie())
+    Let s31 = EsUnit0(s30, "ENGKWH", "The kilowatt-hour.", EngKwh())
+    Let s32 = EsUnit0(s31, "ENGBTU", "The British thermal unit.", EngBtu())
+    Let s33 = EsUnit0(s32, "ENGWATT", "The watt: power's base unit.", EngWatt())
+    Let s34 = EsUnit0(s33, "ENGKILOWATT", "The kilowatt.", EngKilowatt())
+    Let s35 = EsUnit0(s34, "ENGHORSEPOWER", "Horsepower.", EngHorsepower())
+    Let s36 = EsUnit0(s35, "ENGLITRE", "The litre: volume's base unit.", EngLitre())
+    Let s37 = EsUnit0(s36, "ENGMILLILITRE", "The millilitre.", EngMillilitre())
+    Let s38 = EsUnit0(s37, "ENGCUBICMETRE", "The cubic metre.", EngCubicMetre())
+    Let s39 = EsUnit0(s38, "ENGGALLONUK", "The imperial gallon.", EngGallonUk())
+    Let s40 = EsUnit0(s39, "ENGGALLONUS", "The US gallon.", EngGallonUs())
+    Let s41 = EsUnit0(s40, "ENGMPS", "Metres per second: speed's base unit.", EngMps())
+    Let s42 = EsUnit0(s41, "ENGKPH", "Kilometres per hour.", EngKph())
+    Let s43 = EsUnit0(s42, "ENGMPH", "Miles per hour.", EngMph())
+    Let s44 = EsUnit0(s43, "ENGKNOT", "The knot.", EngKnot())
+    Let s45 = RckReg(s44, "ENGTOBASE", 2, RckPure(Fn(vs) => EsTobase(vs)), "( x unit -- base )", "x in unit, converted to that quantity's base unit.")
+    Let s46 = RckReg(s45, "ENGFROMBASE", 2, RckPure(Fn(vs) => EsFrombase(vs)), "( x unit -- y )", "x in the base unit, converted to unit.")
+    RckReg(s46, "ENGCONVERT", 3, RckPure(Fn(vs) => EsConvert(vs)), "( x src dst -- y )", "x in src, converted to dst. Refuses unless src and dst are the same quantity.")
+
+Def EsTobase(vs As List Of Cell) As RckWork
+    Select Case RckNumArg("ENGTOBASE", Nth(vs, 1))
+        Case Ok(x)
+            EsTobaseU(x, Nth(vs, 2))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("ENGTOBASE did not answer")
+
+Def EsTobaseU(x As Number, uc As Cell) As RckWork
+    Select Case EsUnitOf("ENGTOBASE", uc)
+        Case Ok(u)
+            RckVals({ CutNum(EngToBase(x, u)) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("ENGTOBASE did not answer")
+
+Def EsFrombase(vs As List Of Cell) As RckWork
+    Select Case RckNumArg("ENGFROMBASE", Nth(vs, 1))
+        Case Ok(x)
+            EsFrombaseU(x, Nth(vs, 2))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("ENGFROMBASE did not answer")
+
+Def EsFrombaseU(x As Number, uc As Cell) As RckWork
+    Select Case EsUnitOf("ENGFROMBASE", uc)
+        Case Ok(u)
+            RckVals({ CutNum(EngFromBase(x, u)) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("ENGFROMBASE did not answer")
+
+Def EsConvert(vs As List Of Cell) As RckWork
+    Select Case RckNumArg("ENGCONVERT", Nth(vs, 1))
+        Case Ok(x)
+            EsConvertSrc(x, Nth(vs, 2), Nth(vs, 3))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("ENGCONVERT did not answer")
+
+Def EsConvertSrc(x As Number, srcC As Cell, dstC As Cell) As RckWork
+    Select Case EsUnitOf("ENGCONVERT", srcC)
+        Case Ok(src)
+            EsConvertDst(x, src, dstC)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("ENGCONVERT did not answer")
+
+Def EsConvertDst(x As Number, src As EngUnit, dstC As Cell) As RckWork
+    Select Case EsUnitOf("ENGCONVERT", dstC)
+        Case Ok(dst)
+            EsConvertShaped(x, src, dst)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("ENGCONVERT did not answer")
+
+Def EsConvertShaped(x As Number, src As EngUnit, dst As EngUnit) As RckWork
+    If Quantity(src) <> Quantity(dst) Then
+        RckWorkBad("ENGCONVERT: " & Quantity(src) & " AND " & Quantity(dst) & " ARE NOT THE SAME QUANTITY")
+    Else
+        RckVals({ CutNum(EngConvert(x, src, dst)) })
+
+Rem ---- physical constants -------------------------------------------------
+
+Def EsConst0(st As RckState, name As String, desc As String, c As EngConst) As RckState
+    RckReg(st, name, 0, RckPure(Fn(vs) => RckVals({ EsConstCell(c) })), "( -- const )", desc)
+
+Def EsSeedConsts(st As RckState) As RckState
+    Let s1 = EsConst0(st, "ENGLIGHTSPEED", "The speed of light in vacuum: a dict with cname, value, units.", EngLightSpeed())
+    Let s2 = EsConst0(s1, "ENGPLANCK", "The Planck constant.", EngPlanck())
+    Let s3 = EsConst0(s2, "ENGGRAVITATION", "The gravitational constant.", EngGravitation())
+    Let s4 = EsConst0(s3, "ENGSTDGRAVITY", "Standard gravity.", EngStdGravity())
+    Let s5 = EsConst0(s4, "ENGELECTRONCHARGE", "The elementary charge.", EngElectronCharge())
+    Let s6 = EsConst0(s5, "ENGELECTRONMASS", "The electron mass.", EngElectronMass())
+    Let s7 = EsConst0(s6, "ENGPROTONMASS", "The proton mass.", EngProtonMass())
+    Let s8 = EsConst0(s7, "ENGAVOGADRO", "The Avogadro constant.", EngAvogadro())
+    Let s9 = EsConst0(s8, "ENGBOLTZMANN", "The Boltzmann constant.", EngBoltzmann())
+    Let s10 = EsConst0(s9, "ENGGASCONSTANT", "The molar gas constant.", EngGasConstant())
+    Let s11 = EsConst0(s10, "ENGSTEFANBOLTZMANN", "The Stefan-Boltzmann constant.", EngStefanBoltzmann())
+    Let s12 = EsConst0(s11, "ENGFARADAY", "The Faraday constant.", EngFaraday())
+    Let s13 = EsConst0(s12, "ENGVACUUMPERMITTIVITY", "The vacuum permittivity.", EngVacuumPermittivity())
+    Let s14 = EsConst0(s13, "ENGVACUUMPERMEABILITY", "The vacuum permeability.", EngVacuumPermeability())
+    Let s15 = RckReg(s14, "ENGE", 0, RckPure(Fn(vs) => RckVals({ CutNum(EngE()) })), "( -- e )", "Euler's number.")
+    RckReg(s15, "ENGTAU", 0, RckPure(Fn(vs) => RckVals({ CutNum(EngTau()) })), "( -- tau )", "2*pi — a full turn.")
+
+Rem ---- rounding, remapping and formatting --------------------------------
+
+Def EsSeedMisc(st As RckState) As RckState
+    Let s1 = RckReg(st, "ENGROUNDTO", 2, RckPure(Fn(vs) => EsNum2("ENGROUNDTO", vs, EngRoundTo)), "( x n -- y )", "x rounded to n decimal places.")
+    Let s2 = RckReg(s1, "ENGFRACOF", 1, RckPure(Fn(vs) => EsNum1("ENGFRACOF", First(vs), EngFracOf)), "( x -- y )", "The fractional part.")
+    Let s3 = RckReg(s2, "ENGCLAMP", 3, RckPure(Fn(vs) => EsN3("ENGCLAMP", vs, EngClamp)), "( x lo hi -- y )", "x held between lo and hi.")
+    Let s4 = RckReg(s3, "ENGLERP", 3, RckPure(Fn(vs) => EsN3("ENGLERP", vs, EngLerp)), "( a b t -- y )", "The point t of the way from a to b.")
+    Let s5 = RckReg(s4, "ENGINVLERP", 3, RckPure(Fn(vs) => EsN3("ENGINVLERP", vs, EngInvLerp)), "( a b x -- t )", "How far x is from a to b, as a fraction.")
+    Let s6 = RckReg(s5, "ENGREMAP", 5, RckPure(Fn(vs) => EsRemap(vs)), "( x inLo inHi outLo outHi -- y )", "x rescaled from one range to another.")
+    Let s7 = RckReg(s6, "ENGSMOOTHSTEP", 3, RckPure(Fn(vs) => EsN3("ENGSMOOTHSTEP", vs, EngSmoothstep)), "( edge0 edge1 x -- y )", "The smoothstep interpolation.")
+    Let s8 = RckReg(s7, "ENGSIGN", 1, RckPure(Fn(vs) => EsNum1("ENGSIGN", First(vs), EngSign)), "( x -- s )", "-1, 0 or 1.")
+    Let s9 = RckReg(s8, "ENGNEAR", 3, RckPure(Fn(vs) => EsNear(vs)), "( a b tol -- flag )", "Whether a and b are within tol.")
+    Let s10 = RckReg(s9, "ENGSIGFIG", 2, RckPure(Fn(vs) => EsNum2("ENGSIGFIG", vs, EngSigFig)), "( x n -- y )", "x rounded to n significant figures.")
+    Let s11 = RckReg(s10, "ENGSCI", 2, RckPure(Fn(vs) => EsSci(vs)), "( x p -- str )", "x in scientific notation, p digits after the point.")
+    RckReg(s11, "ENGCOMMAS", 2, RckPure(Fn(vs) => EsCommas(vs)), "( x p -- str )", "x with thousands separators, p digits after the point.")
+
+Def EsNear(vs As List Of Cell) As RckWork
+    Select Case EsListNum("ENGNEAR", CutList(vs))
+        Case Ok(ns)
+            RckVals({ CutBool(EngNear(Nth(ns, 1), Nth(ns, 2), Nth(ns, 3))) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("ENGNEAR did not answer")
+
+Def EsRemap(vs As List Of Cell) As RckWork
+    Select Case EsListNum("ENGREMAP", CutList(vs))
+        Case Ok(ns)
+            RckVals({ CutNum(EngRemap(Nth(ns, 1), Nth(ns, 2), Nth(ns, 3), Nth(ns, 4), Nth(ns, 5))) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("ENGREMAP did not answer")
+
+Def EsSci(vs As List Of Cell) As RckWork
+    Select Case Pair(RckNumArg("ENGSCI", Nth(vs, 1)), RckWholeArg("ENGSCI", Nth(vs, 2)))
+        Case Pair(Ok(x), Ok(p))
+            RckVals({ CutStr(EngSci(x, p)) })
+        Case Else
+            RckWorkBad("ENGSCI did not answer")
+
+Def EsCommas(vs As List Of Cell) As RckWork
+    Select Case Pair(RckNumArg("ENGCOMMAS", Nth(vs, 1)), RckWholeArg("ENGCOMMAS", Nth(vs, 2)))
+        Case Pair(Ok(x), Ok(p))
+            RckVals({ CutStr(EngCommas(x, p)) })
+        Case Else
+            RckWorkBad("ENGCOMMAS did not answer")
+
+Rem ---- numeric calculus, over a program cell ----------------------------
+Rem
+Rem THE WORDS THAT TAKE A FUNCTION. eng.shoddy's derivative, integrator,
+Rem range sum and product, and its two bracketed solvers all take a
+Rem [ Number -- Number ] and Call it. What a session has to give is a
+Rem PROGRAM cell — [ DUP * ] — and reckoner.shoddy's RckProgFn is what
+Rem turns one into the other, closed over the whole session, so a program
+Rem may name a word defined a line earlier and may RCL a register.
+Rem
+Rem HOW THE 0 IS KEPT OUT OF THE ANSWER. RckProgFn is total and has to
+Rem be: a [ Number -- Number ] has nowhere to put a refusal, so where the
+Rem program will not evaluate it answers 0 — a wrong number, which is the
+Rem one thing a seed exists to prevent. So no word here hands a machine a
+Rem program it has not first run, through RckProgTry, at the points the
+Rem machine is going to use:
+Rem
+Rem   * ENGDERIV, ENGDERIV2, ENGINTEGRATE, ENGSUMOF and ENGPRODOF sample
+Rem     at EXACTLY the points their formula evaluates — a central
+Rem     difference's two, a second difference's three, a Simpson rule's
+Rem     nodes, a range's integers. For these five the check is complete
+Rem     and no 0 can reach the answer.
+Rem
+Rem   * ENGZEROOF, ENGMINOF and ENGMAXOF choose their points as they go,
+Rem     but bisection and golden section both stay strictly inside the
+Rem     bracket they were given, so this samples that bracket evenly —
+Rem     EsProbes() points, endpoints included. A program defined across
+Rem     the bracket is therefore safe; a program with a hole between two
+Rem     samples can still contribute a 0 at that hole, and no finite
+Rem     sample of a real interval can promise otherwise. Saying so is the
+Rem     alternative to pretending, and the mill survives it either way.
+Rem
+Rem   The cost is that a checked point is evaluated twice, once to ask
+Rem   and once to answer. At a calculator's scale that is the right trade
+Rem   against a silent 0.
+Rem
+Rem NOT BRIDGED: ENGNEWTONOF. EngNewtonGo Errors outright when the
+Rem derivative goes to zero under it, and that is not a condition
+Rem anything can pre-flight — it depends on the iterate the search
+Rem reaches, which depends on every step before it. R3.5(a) does not
+Rem allow a bridged word that can abort the session, so it is left out
+Rem rather than wrapped and hoped for. eng.shoddy says the same thing in
+Rem its own words: Newton here is "unbracketed and therefore unguarded",
+Rem and ENGZEROOF is the safer word. ENGZEROOF is bridged.
+
+Def EsProbes() As Number
+    21
+
+Def EsSeedCalc(st As RckState) As RckState
+    Let s1 = RckReg(st, "ENGDERIV", 2, RckPureOver(Fn(sst, vs) => EsDeriv(sst, vs)), "( prog x -- y )", "The first derivative of the program at x, by central difference. Accurate to about eight digits.")
+    Let s2 = RckReg(s1, "ENGDERIV2", 2, RckPureOver(Fn(sst, vs) => EsDeriv2(sst, vs)), "( prog x -- y )", "The second derivative at x. Accurate to about four digits — a second difference cancels most of them away.")
+    Let s3 = RckReg(s2, "ENGINTEGRATE", 4, RckPureOver(Fn(sst, vs) => EsIntegrate(sst, vs)), "( prog a b n -- y )", "The integral from a to b by composite Simpson over n intervals. Refuses unless n is even and 2 or more.")
+    Let s4 = RckReg(s3, "ENGSUMOF", 3, RckPureOver(Fn(sst, vs) => EsSumOf(sst, vs)), "( prog lo hi -- y )", "The program summed over the whole numbers lo to hi.")
+    Let s5 = RckReg(s4, "ENGPRODOF", 3, RckPureOver(Fn(sst, vs) => EsProdOf(sst, vs)), "( prog lo hi -- y )", "The program multiplied over the whole numbers lo to hi.")
+    Let s6 = RckReg(s5, "ENGZEROOF", 3, RckPureOver(Fn(sst, vs) => EsZeroOf(sst, vs)), "( prog lo hi -- x )", "A root of the program between lo and hi, by bisection. Refuses unless the program changes sign across the bracket.")
+    Let s7 = RckReg(s6, "ENGMINOF", 3, RckPureOver(Fn(sst, vs) => EsMinOf(sst, vs)), "( prog lo hi -- x )", "Where the program is least between lo and hi, by golden section. Wants one minimum in the bracket; given two it finds one and does not say which.")
+    RckReg(s7, "ENGMAXOF", 3, RckPureOver(Fn(sst, vs) => EsMaxOf(sst, vs)), "( prog lo hi -- x )", "Where the program is greatest between lo and hi. The same search, and the same one-maximum caveat.")
+
+Rem ---- reading the arguments -------------------------------------------
+
+Rem Every word here is ( prog then numbers ), so the program comes off
+Rem first and the rest arrive as a list of numbers.
+Def EsProgAnd(word As String, vs As List Of Cell, f As [ List Of String List Of Number -- RckWork ]) As RckWork
+    Select Case RckProgArg(word, First(vs))
+        Case Ok(ts)
+            EsProgNums(word, ts, Rest(vs), f)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Def EsProgNums(word As String, ts As List Of String, rest As List Of Cell, f As [ List Of String List Of Number -- RckWork ]) As RckWork
+    Select Case EsListNum(word, CutList(rest))
+        Case Ok(ns)
+            Call(f, ts, ns)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Rem ---- the pre-flight ---------------------------------------------------
+
+Rem The program run at every point in xs, answering the first refusal it
+Rem meets or "" when there is none. Written over Map and Filter rather
+Rem than as a recursion, because a Simpson rule with a large n would put
+Rem one Shoddy frame per node on the stack, and a builtin Fold puts none.
+Def EsWhyAt(word As String, st As RckState, ts As List Of String, xs As List Of Number) As String
+    EsFirstWhy(Filter(Map(xs, Fn(x) => EsWhyOf(word, st, ts, x)), Fn(w) => w <> ""))
+
+Def EsWhyOf(word As String, st As RckState, ts As List Of String, x As Number) As String
+    Select Case RckProgTry(word, st, ts, x)
+        Case Ok(y)
+            ""
+        Case Err(w, at)
+            w
+        Case Else
+            word & " did not answer"
+
+Def EsFirstWhy(ws As List Of String) As String
+    If IsEmpty(ws) Then
+        ""
+    Else
+        First(ws)
+
+Rem EsProbes() points across [lo, hi], endpoints included — what the two
+Rem bracketed searches are checked over, since neither ever leaves the
+Rem bracket it was handed.
+Def EsSpread(lo As Number, hi As Number) As List Of Number
+    Map(Range(0, EsProbes() - 1), Fn(k) => lo + (hi - lo) * k / (EsProbes() - 1))
+
+Rem ---- the derivatives --------------------------------------------------
+
+Rem EngStep is eng.shoddy's own scaling of h to the size of x, and the
+Rem two scale factors below are the ones EngDeriv and EngDeriv2 use. They
+Rem are named here rather than repeated as literals so the points sampled
+Rem and the points evaluated cannot drift apart.
+Def EsDerivStep() As Number
+    0.0000001
+
+Def EsDeriv2Step() As Number
+    0.0001
+
+Def EsDeriv(st As RckState, vs As List Of Cell) As RckWork
+    EsProgAnd("ENGDERIV", vs, Fn(ts, ns) => EsDerivAt(st, ts, Nth(ns, 1)))
+
+Def EsDerivAt(st As RckState, ts As List Of String, x As Number) As RckWork
+    EsRan("ENGDERIV", st, ts, { x - EngStep(x, EsDerivStep()), x + EngStep(x, EsDerivStep()) }, Fn(f) => CutNum(EngDeriv(f, x)))
+
+Def EsDeriv2(st As RckState, vs As List Of Cell) As RckWork
+    EsProgAnd("ENGDERIV2", vs, Fn(ts, ns) => EsDeriv2At(st, ts, Nth(ns, 1)))
+
+Def EsDeriv2At(st As RckState, ts As List Of String, x As Number) As RckWork
+    EsRan("ENGDERIV2", st, ts, { x - EngStep(x, EsDeriv2Step()), x, x + EngStep(x, EsDeriv2Step()) }, Fn(f) => CutNum(EngDeriv2(f, x)))
+
+Rem The one shape all eight share: check the points, then hand the
+Rem machine a function it is now known to be safe over.
+Def EsRan(word As String, st As RckState, ts As List Of String, xs As List Of Number, f As [ [ Number -- Number ] -- Cell ]) As RckWork
+    If EsWhyAt(word, st, ts, xs) <> "" Then
+        RckWorkBad(EsWhyAt(word, st, ts, xs))
+    Else
+        RckVals({ Call(f, RckProgFn(st, ts)) })
+
+Rem ---- the integral -----------------------------------------------------
+
+Def EsIntegrate(st As RckState, vs As List Of Cell) As RckWork
+    EsProgAnd("ENGINTEGRATE", vs, Fn(ts, ns) => EsIntegrateAt(st, ts, Nth(ns, 1), Nth(ns, 2), Nth(ns, 3)))
+
+Rem EngIntegrate itself Errors unless n is even and at least 2 — an odd n
+Rem applies Simpson's alternating weights to the wrong nodes, which is
+Rem why it refuses rather than quietly answering a trapezoid. The same
+Rem test, asked first.
+Def EsIntegrateAt(st As RckState, ts As List Of String, a As Number, b As Number, n As Number) As RckWork
+    If n < 2 Or n <> Floor(n) Or n Mod 2 <> 0 Then
+        RckWorkBad("ENGINTEGRATE: N MUST BE AN EVEN WHOLE NUMBER OF 2 OR MORE")
+    Else
+        EsRan("ENGINTEGRATE", st, ts, EsNodes(a, b, n), Fn(f) => CutNum(EngIntegrate(f, a, b, n)))
+
+Rem Simpson's own nodes: both ends and the n-1 interior points.
+Def EsNodes(a As Number, b As Number, n As Number) As List Of Number
+    Concat({ a, b }, Map(Range(1, n - 1), Fn(i) => a + (b - a) / n * i))
+
+Rem ---- the range sum and product ----------------------------------------
+
+Def EsSumOf(st As RckState, vs As List Of Cell) As RckWork
+    EsOverRange("ENGSUMOF", st, vs, Fn(f, lo, hi) => CutNum(EngSumOf(f, lo, hi)))
+
+Def EsProdOf(st As RckState, vs As List Of Cell) As RckWork
+    EsOverRange("ENGPRODOF", st, vs, Fn(f, lo, hi) => CutNum(EngProdOf(f, lo, hi)))
+
+Rem Range walks whole steps, so a fractional bound would silently visit
+Rem points nobody asked for and stop somewhere unexpected. Both bounds
+Rem are checked; lo above hi is an EMPTY range rather than an error, and
+Rem answers the empty sum 0 or the empty product 1, which is what those
+Rem two are.
+Def EsOverRange(word As String, st As RckState, vs As List Of Cell, f As [ [ Number -- Number ] Number Number -- Cell ]) As RckWork
+    EsProgAnd(word, vs, Fn(ts, ns) => EsOverRangeAt(word, st, ts, Nth(ns, 1), Nth(ns, 2), f))
+
+Def EsOverRangeAt(word As String, st As RckState, ts As List Of String, lo As Number, hi As Number, f As [ [ Number -- Number ] Number Number -- Cell ]) As RckWork
+    If lo <> Floor(lo) Or hi <> Floor(hi) Then
+        RckWorkBad(word & ": LO AND HI MUST BOTH BE WHOLE NUMBERS")
+    Else
+        EsRan(word, st, ts, Range(lo, hi), Fn(g) => Call(f, g, lo, hi))
+
+Rem ---- the bracketed searches -------------------------------------------
+
+Def EsZeroOf(st As RckState, vs As List Of Cell) As RckWork
+    EsBracket("ENGZEROOF", st, vs, Fn(f, lo, hi) => EsZeroBracket(f, lo, hi))
+
+Def EsMinOf(st As RckState, vs As List Of Cell) As RckWork
+    EsBracket("ENGMINOF", st, vs, Fn(f, lo, hi) => RckVals({ CutNum(EngMinOf(f, lo, hi)) }))
+
+Def EsMaxOf(st As RckState, vs As List Of Cell) As RckWork
+    EsBracket("ENGMAXOF", st, vs, Fn(f, lo, hi) => RckVals({ CutNum(EngMaxOf(f, lo, hi)) }))
+
+Rem A bracket with its ends the same way round is the one thing all
+Rem three need and none of them checks: golden section on an inverted
+Rem bracket walks outwards, and bisection on a zero-width one answers
+Rem the point it was given whether or not it is a root.
+Def EsBracket(word As String, st As RckState, vs As List Of Cell, f As [ [ Number -- Number ] Number Number -- RckWork ]) As RckWork
+    EsProgAnd(word, vs, Fn(ts, ns) => EsBracketAt(word, st, ts, Nth(ns, 1), Nth(ns, 2), f))
+
+Def EsBracketAt(word As String, st As RckState, ts As List Of String, lo As Number, hi As Number, f As [ [ Number -- Number ] Number Number -- RckWork ]) As RckWork
+    If lo >= hi Then
+        RckWorkBad(word & ": LO MUST BE BELOW HI")
+    Else
+        EsBracketRan(word, st, ts, lo, hi, f)
+
+Def EsBracketRan(word As String, st As RckState, ts As List Of String, lo As Number, hi As Number, f As [ [ Number -- Number ] Number Number -- RckWork ]) As RckWork
+    If EsWhyAt(word, st, ts, EsSpread(lo, hi)) <> "" Then
+        RckWorkBad(EsWhyAt(word, st, ts, EsSpread(lo, hi)))
+    Else
+        Call(f, RckProgFn(st, ts), lo, hi)
+
+Rem EngZeroOf itself Errors when the bracket shows no sign change —
+Rem bisection without one converges happily on an endpoint and answers a
+Rem number that is not a root, which its own comment calls the worst
+Rem failure the machine could offer. The same test, asked here first.
+Def EsZeroBracket(f As [ Number -- Number ], lo As Number, hi As Number) As RckWork
+    If Call(f, lo) * Call(f, hi) > 0 Then
+        RckWorkBad("ENGZEROOF: THE PROGRAM DOES NOT CHANGE SIGN ACROSS THAT BRACKET, SO THERE IS NO ROOT TO FIND IN IT")
+    Else
+        RckVals({ CutNum(EngZeroOf(f, lo, hi)) })
+
+Rem ---- the seed -----------------------------------------------------------
+
+Def RckSeedEng(st As RckState) As RckState
+    Let s1 = EsSeedAngles(RckSeeding(st, "seed-eng"))
+    Let s2 = EsSeedTrig(s1)
+    Let s3 = EsSeedGeom(s2)
+    Let s4 = EsSeedHyper(s3)
+    Let s5 = EsSeedLogs(s4)
+    Let s6 = EsSeedComplex(s5)
+    Let s7 = EsSeedStats1(s6)
+    Let s8 = EsSeedDist(s7)
+    Let s9 = EsSeedNumtheory(s8)
+    Let s10 = EsSeedGamma(s9)
+    Let s11 = EsSeedPoly(s10)
+    Let s12 = EsSeedSeqs(s11)
+    Let s13 = EsSeedUnits(s12)
+    Let s14 = EsSeedConsts(s13)
+    Let s15 = EsSeedMisc(s14)
+    EsSeedCalc(s15)

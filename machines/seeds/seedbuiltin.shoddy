@@ -1,0 +1,590 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem seedbuiltin.shoddy — reckoner seed: the RUNTIME's own builtins
+Rem
+Rem THE ONE SEED THAT BRIDGES NO MACHINE. Every other seed in this
+Rem directory takes a machine and converts its types at the bridge. This
+Rem one takes the runtime: the words the engine dispatches directly,
+Rem which no machine declares and which therefore no seed had ever
+Rem carried to a prompt. There is nothing to convert — a builtin already
+Rem speaks in numbers, strings, booleans and lists — so what this seed
+Rem is made of is guards, and almost nothing else.
+Rem
+Rem WHICH BUILTINS, AND WHY THESE. Every name the runtime dispatches is
+Rem accounted for three ways: the core and the other seeds already
+Rem register some, others are deliberately unreachable, and what was left
+Rem is what is registered here. That accounting is not a comment:
+Rem tst/builtinsurfacetest.shoddy asserts the whole partition, so a
+Rem builtin that is neither claimed nor excluded nor registered here
+Rem fails the build. Read it for the current split and for the rules that
+Rem exclude the rest — a handle reaching the stack, a live device, the
+Rem engine performing no effect, no cell to answer with, no guarded twin
+Rem to build on, and a second spelling of a word the dictionary already
+Rem has.
+Rem
+Rem THREE OF THOSE RULES BIT HERE and are worth naming at the door,
+Rem because each looks like an oversight and is not:
+Rem
+Rem   * There is no PRINT. The engine performs no effect (R3.2) and
+Rem     evaluation answers LINES for a shell to print, so a PRINT word
+Rem     would write outside the transaction — the tape would not record
+Rem     it, TAPESAVE would lose it, and the screen and the tape would
+Rem     disagree.
+Rem   * There is no INPUT, INPUTLINE or INKEY, for the matching reason:
+Rem     the shell owns the prompt, and a word that blocked for input
+Rem     mid-line would be a second thing reading the same keyboard.
+Rem   * There is no SORT, no RND and no &. Each is already in the
+Rem     dictionary under the name it chose — SORTL, RANDOM, and the core
+Rem     + which joins two STRINGs. LEN is the near miss that is NOT one,
+Rem     because LENGTH is list-only and refuses a STRING outright.
+Rem
+Rem THE GUARDS ARE THE WORK, and they divide in two. Some builtins ABORT
+Rem — ASC on an empty string, NTH past the end, GAMMAP on a
+Rem non-positive A — and those are the ordinary case R3.5(a) is about.
+Rem The dangerous ones are the builtins that DO NOT abort and answer
+Rem something wrong instead:
+Rem
+Rem   VAL is strtod. It answers 0 for anything it cannot read, so
+Rem   "twelve" VAL is 0 and nothing says so. It is registered here
+Rem   refusing unless ISNUMERIC agrees, which is the question VAL does
+Rem   not ask. VALOR is the total form and is registered as it stands,
+Rem   because a caller who supplied a fallback has said what they want.
+Rem
+Rem   WHERE THAT GUARD STOPS, and it stops deliberately: ISNUMERIC is
+Rem   "would VAL succeed", not "is this wholly a number", so "3kg" VAL
+Rem   passes it and answers 3. That laxity is strtod's and it is the
+Rem   LANGUAGE's — reckoner's own tokenizer inherits it rather than
+Rem   correcting it, so 3X on an entry line is 3 as well. A seed that
+Rem   disagreed with the tokenizer about what counts as a number would
+Rem   be a worse problem than the laxity is.
+Rem
+Rem   CHR casts to a 16-bit character, so 65536 CHR wraps silently to the
+Rem   empty string rather than failing. Refused outside 0 .. 65535.
+Rem
+Rem   LEFT, RIGHT and MID clamp every argument rather than refusing, so a
+Rem   count of 2.5 truncates to 2 and a start of -3 becomes 1. The
+Rem   clamping is kept — a substring past the end is an ordinary answer —
+Rem   but a FRACTIONAL count is refused, because that is a typo and not
+Rem   an intention.
+Rem
+Rem ERROR AND ASSERT ARE INVERTED RATHER THAN DROPPED. Their whole
+Rem purpose is to abort, which looks like an automatic exclusion; but
+Rem turning an abort into a refusal is exactly what this layer is for, so
+Rem "nope" ERROR refuses with "nope" and ASSERT refuses when its flag is
+Rem false. What a program used to end the run with, a session now
+Rem answers with.
+Rem
+Rem CALL IS THE ONE NEW CAPABILITY. Everything else here is a builtin
+Rem wrapped. CALL applies a PROGRAM to a cell — ( x prog -- y ) — which
+Rem was impossible before reckoner grew RckPureOver and RckProgOn, and
+Rem which the combinators only ever offered over a whole list.
+Rem ==================================================================
+
+Include "cuttle.shoddy"
+Include "reckoner.shoddy"
+Include "seq.shoddy"
+Include "str.shoddy"
+
+Rem ---- shared shapes ----------------------------------------------------
+
+Rem A whole number that may be NEGATIVE, which RckWholeArg is not: its
+Rem whole numbers start at zero, and an offset or a count can legitimately
+Rem be below it. Refuses a fraction, which is the part that matters.
+Def BiStepArg(word As String, c As Cell) As Result
+    Select Case c
+        Case CutNum(x)
+            BiStepWhole(word, x)
+        Case Else
+            Err(RckKindWhy(word, "a NUMBER", c), 0)
+
+Def BiStepWhole(word As String, x As Number) As Result
+    If x <> Floor(x) Then
+        Err(word & " needs a whole number, got " & Str(x), 0)
+    Else
+        Ok(x)
+
+Rem One string in, one cell out — the shape half the text words have.
+Def BiOnText(word As String, c As Cell, f As [ String -- Cell ]) As RckWork
+    Select Case RckTextArg(word, c)
+        Case Ok(s)
+            RckVals({ Call(f, s) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Rem One number in, one number out — the shape the always-total
+Rem arithmetic has.
+Def BiOnNum(word As String, c As Cell, f As [ Number -- Number ]) As RckWork
+    Select Case RckNumArg(word, c)
+        Case Ok(x)
+            RckVals({ CutNum(Call(f, x)) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Rem A string and a whole count, for LEFT and RIGHT.
+Def BiTextCount(word As String, vs As List Of Cell, f As [ String Number -- String ]) As RckWork
+    Select Case RckTextArg(word, Nth(vs, 1))
+        Case Ok(s)
+            BiTextCountAt(word, s, Nth(vs, 2), f)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Def BiTextCountAt(word As String, s As String, c As Cell, f As [ String Number -- String ]) As RckWork
+    Select Case BiStepArg(word, c)
+        Case Ok(n)
+            RckVals({ CutStr(Call(f, s, n)) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Rem ---- text -------------------------------------------------------------
+
+Def BiSeedText(st As RckState) As RckState
+    Let s1 = RckReg(st, "LEN", 1, RckPure(Fn(vs) => BiOnText("LEN", First(vs), Fn(s) => CutNum(Len(s)))), "( s -- n )", "How many characters a string holds. LENGTH is the one for lists, and refuses a string.")
+    Let s2 = RckReg(s1, "LEFT", 2, RckPure(Fn(vs) => BiTextCount("LEFT", vs, Left)), "( s n -- s2 )", "The first n characters, or the whole string if it is shorter. Refuses a fractional n.")
+    Let s3 = RckReg(s2, "RIGHT", 2, RckPure(Fn(vs) => BiTextCount("RIGHT", vs, Right)), "( s n -- s2 )", "The last n characters, or the whole string if it is shorter. Refuses a fractional n.")
+    Let s4 = RckReg(s3, "MID", 3, RckPure(Fn(vs) => BiMid(vs)), "( s start len -- s2 )", "len characters from position start, counting from 1. A range past the end is trimmed to what is there.")
+    Let s5 = RckReg(s4, "INSTR", 2, RckPure(Fn(vs) => BiInstr(vs)), "( s sub -- pos )", "Where sub first appears in s, counting from 1, or 0 when it does not. An empty sub answers 0.")
+    Let s6 = RckReg(s5, "CHR", 1, RckPure(Fn(vs) => BiChr(vs)), "( n -- s )", "The character with code n. 0 answers the empty string. Refuses outside 0 to 65535, where the code would wrap silently.")
+    Let s7 = RckReg(s6, "ASC", 1, RckPure(Fn(vs) => BiAsc(vs)), "( s -- n )", "The code of the first character. Refuses on the empty string, which has none.")
+    Let s8 = RckReg(s7, "STR", 1, RckPure(Fn(vs) => BiStr(vs)), "( n -- s )", "A number written out as text, the way the stack shows it.")
+    Let s9 = RckReg(s8, "VAL", 1, RckPure(Fn(vs) => BiVal(vs)), "( s -- n )", "Text read back as a number. Refuses anything that is not one, rather than answering 0 as the builtin would.")
+    Let s10 = RckReg(s9, "VALOR", 2, RckPure(Fn(vs) => BiValor(vs)), "( s fallback -- n )", "The same, answering fallback for text that is not a number. Never refuses, because you said what to do instead.")
+    RckReg(s10, "ISNUMERIC", 1, RckPure(Fn(vs) => BiOnText("ISNUMERIC", First(vs), Fn(s) => CutBool(IsNumeric(s)))), "( s -- flag )", "Whether VAL would read this text as a number — the question VAL itself does not ask.")
+
+Rem MID clamps its start and its length rather than refusing, which is
+Rem the right behaviour for a substring: asking for more than is there
+Rem answers what is there. What is refused is a fractional start or
+Rem length, since the builtin would truncate one silently.
+Def BiMid(vs As List Of Cell) As RckWork
+    Select Case RckTextArg("MID", Nth(vs, 1))
+        Case Ok(s)
+            BiMidNums(s, Nth(vs, 2), Nth(vs, 3))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("MID did not answer")
+
+Def BiMidNums(s As String, startC As Cell, lenC As Cell) As RckWork
+    Select Case Pair(BiStepArg("MID", startC), BiStepArg("MID", lenC))
+        Case Pair(Ok(start), Ok(n))
+            RckVals({ CutStr(Mid(s, start, n)) })
+        Case Else
+            RckWorkBad(BiMidWhy(startC, lenC))
+
+Def BiMidWhy(startC As Cell, lenC As Cell) As String
+    Select Case BiStepArg("MID", startC)
+        Case Err(w, at)
+            w
+        Case Else
+            BiWhyOf("MID", BiStepArg("MID", lenC))
+
+Def BiWhyOf(word As String, r As Result) As String
+    Select Case r
+        Case Err(w, at)
+            w
+        Case Else
+            word & " did not answer"
+
+Def BiInstr(vs As List Of Cell) As RckWork
+    Select Case Pair(RckTextArg("INSTR", Nth(vs, 1)), RckTextArg("INSTR", Nth(vs, 2)))
+        Case Pair(Ok(s), Ok(sub))
+            RckVals({ CutNum(Instr(s, sub)) })
+        Case Else
+            RckWorkBad("INSTR needs two STRINGs")
+
+Rem The builtin casts to a 16-bit character, so a code above 65535 wraps
+Rem round and answers some other character, or the empty string. That is
+Rem a wrong answer and not an abort, which is exactly the kind this layer
+Rem exists to catch.
+Def BiChr(vs As List Of Cell) As RckWork
+    Select Case RckWholeArg("CHR", First(vs))
+        Case Ok(n)
+            BiChrAt(n)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("CHR did not answer")
+
+Def BiChrAt(n As Number) As RckWork
+    If n > 65535 Then
+        RckWorkBad("CHR: NEEDS A CODE FROM 0 TO 65535, AND " & Str(n) & " WOULD WRAP")
+    Else
+        RckVals({ CutStr(Chr(n)) })
+
+Def BiAsc(vs As List Of Cell) As RckWork
+    Select Case RckTextArg("ASC", First(vs))
+        Case Ok(s)
+            BiAscAt(s)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("ASC did not answer")
+
+Def BiAscAt(s As String) As RckWork
+    If s = "" Then
+        RckWorkBad("ASC: THE EMPTY STRING HAS NO FIRST CHARACTER")
+    Else
+        RckVals({ CutNum(Asc(s)) })
+
+Def BiStr(vs As List Of Cell) As RckWork
+    Select Case RckNumArg("STR", First(vs))
+        Case Ok(x)
+            RckVals({ CutStr(Str(x)) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("STR did not answer")
+
+Rem The most dangerous builtin in the runtime, at a prompt. Val is
+Rem strtod: it takes a leading number off a longer token and answers 0
+Rem for anything it cannot read at all, so "twelve" VAL is 0 and "3kg"
+Rem VAL is 3, and neither says so. IsNumeric is the question it does not
+Rem ask, so it is asked here first.
+Def BiVal(vs As List Of Cell) As RckWork
+    Select Case RckTextArg("VAL", First(vs))
+        Case Ok(s)
+            BiValAt(s)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("VAL did not answer")
+
+Def BiValAt(s As String) As RckWork
+    If Not IsNumeric(s) Then
+        RckWorkBad("VAL: " & RckQuoteMark() & s & RckQuoteMark() & " IS NOT A NUMBER — VALOR TAKES A FALLBACK FOR THIS")
+    Else
+        RckVals({ CutNum(Val(s)) })
+
+Rem No guard, deliberately: a caller who supplied a fallback has already
+Rem said what an unreadable string should answer, and refusing would
+Rem override them.
+Def BiValor(vs As List Of Cell) As RckWork
+    Select Case Pair(RckTextArg("VALOR", Nth(vs, 1)), RckNumArg("VALOR", Nth(vs, 2)))
+        Case Pair(Ok(s), Ok(d))
+            RckVals({ CutNum(ValOr(s, d)) })
+        Case Else
+            RckWorkBad("VALOR needs a STRING and a NUMBER")
+
+Rem ---- numbers ----------------------------------------------------------
+
+Def BiSeedNums(st As RckState) As RckState
+    Let s1 = RckReg(st, "NEGATE", 1, RckPure(Fn(vs) => BiOnNum("NEGATE", First(vs), Negate)), "( x -- -x )", "The number with its sign turned round.")
+    Let s2 = RckReg(s1, "ATN", 1, RckPure(Fn(vs) => BiOnNum("ATN", First(vs), Atn)), "( x -- rad )", "The arctangent, in radians. ATN2 is the one that knows which quadrant.")
+    Let s3 = RckReg(s2, "ATN2", 2, RckPure(Fn(vs) => BiAtn2(vs)), "( y x -- rad )", "The angle of the point (x, y), in radians, in the right quadrant.")
+    Let s4 = RckReg(s3, "TANH", 1, RckPure(Fn(vs) => BiOnNum("TANH", First(vs), Tanh)), "( x -- y )", "The hyperbolic tangent. Saturates towards 1 and -1, so it never overflows.")
+    Let s5 = RckReg(s4, "ERF", 1, RckPure(Fn(vs) => BiOnNum("ERF", First(vs), Erf)), "( x -- y )", "The error function: odd, and between -1 and 1.")
+    Let s6 = RckReg(s5, "GAMMAP", 2, RckPure(Fn(vs) => BiGammap(vs)), "( a x -- p )", "The regularized lower incomplete gamma. Refuses unless a is positive and x is not negative.")
+    RckReg(s6, "BETAI", 3, RckPure(Fn(vs) => BiBetai(vs)), "( a b x -- p )", "The regularized incomplete beta. Refuses unless a and b are positive and x is between 0 and 1.")
+
+Def BiAtn2(vs As List Of Cell) As RckWork
+    Select Case Pair(RckNumArg("ATN2", Nth(vs, 1)), RckNumArg("ATN2", Nth(vs, 2)))
+        Case Pair(Ok(y), Ok(x))
+            RckVals({ CutNum(Atn2(y, x)) })
+        Case Else
+            RckWorkBad("ATN2 needs two NUMBERs")
+
+Rem Both of these Error on exactly these conditions in the runtime. The
+Rem same tests, asked first.
+Def BiGammap(vs As List Of Cell) As RckWork
+    Select Case Pair(RckNumArg("GAMMAP", Nth(vs, 1)), RckNumArg("GAMMAP", Nth(vs, 2)))
+        Case Pair(Ok(a), Ok(x))
+            BiGammapAt(a, x)
+        Case Else
+            RckWorkBad("GAMMAP needs two NUMBERs")
+
+Def BiGammapAt(a As Number, x As Number) As RckWork
+    If a <= 0 Then
+        RckWorkBad("GAMMAP: A MUST BE POSITIVE")
+    Else
+        If x < 0 Then
+            RckWorkBad("GAMMAP: X MUST NOT BE NEGATIVE")
+        Else
+            RckVals({ CutNum(GammaP(a, x)) })
+
+Def BiBetai(vs As List Of Cell) As RckWork
+    Select Case Pair(RckNumArg("BETAI", Nth(vs, 1)), Pair(RckNumArg("BETAI", Nth(vs, 2)), RckNumArg("BETAI", Nth(vs, 3))))
+        Case Pair(Ok(a), Pair(Ok(b), Ok(x)))
+            BiBetaiAt(a, b, x)
+        Case Else
+            RckWorkBad("BETAI needs three NUMBERs")
+
+Def BiBetaiAt(a As Number, b As Number, x As Number) As RckWork
+    If a <= 0 Or b <= 0 Then
+        RckWorkBad("BETAI: A AND B MUST BOTH BE POSITIVE")
+    Else
+        If x < 0 Or x > 1 Then
+            RckWorkBad("BETAI: X MUST BE BETWEEN 0 AND 1")
+        Else
+            RckVals({ CutNum(BetaI(a, b, x)) })
+
+Rem ---- lists ------------------------------------------------------------
+
+Def BiSeedLists(st As RckState) As RckState
+    Let s1 = RckReg(st, "NTH", 2, RckPure(Fn(vs) => BiNth(vs)), "( list k -- v )", "The k-th element, counting from 1. Refuses an index the list does not have.")
+    Let s2 = RckReg(s1, "SETNTH", 3, RckPure(Fn(vs) => BiSetnth(vs)), "( list k v -- list2 )", "The list with its k-th element replaced. The original is unchanged. Refuses an index the list does not have.")
+    Let s3 = RckReg(s2, "ISEMPTY", 1, RckPure(Fn(vs) => BiIsempty(vs)), "( list -- flag )", "Whether the list holds nothing.")
+    Let s4 = RckReg(s3, "PREPEND", 2, RckPure(Fn(vs) => BiPrepend(vs)), "( v list -- list2 )", "The list with v put on the front. APPEND's opposite end.")
+    RckReg(s4, "DIM", 2, RckPure(Fn(vs) => BiDim(vs)), "( n init -- list )", "A list of n copies of init. Refuses a negative or fractional n.")
+
+Rem NTH and SETNTH both Error on an index outside 1..Length. Asked here
+Rem first, and the message names the range that WAS available, because
+Rem "out of range" without it is a message you have to go and count for.
+Def BiNth(vs As List Of Cell) As RckWork
+    Select Case RckListArg("NTH", Nth(vs, 1))
+        Case Ok(xs)
+            BiNthAt("NTH", xs, Nth(vs, 2), Fn(l, k) => Nth(l, k))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("NTH did not answer")
+
+Def BiNthAt(word As String, xs As List Of Cell, kc As Cell, f As [ List Of Cell Number -- Cell ]) As RckWork
+    Select Case RckWholeArg(word, kc)
+        Case Ok(k)
+            BiNthIn(word, xs, k, f)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Def BiNthIn(word As String, xs As List Of Cell, k As Number, f As [ List Of Cell Number -- Cell ]) As RckWork
+    If k < 1 Or k > Length(xs) Then
+        RckWorkBad(word & ": THERE IS NO ELEMENT " & Str(k) & " — THE LIST HOLDS " & Str(Length(xs)))
+    Else
+        RckVals({ Call(f, xs, k) })
+
+Def BiSetnth(vs As List Of Cell) As RckWork
+    Select Case RckListArg("SETNTH", Nth(vs, 1))
+        Case Ok(xs)
+            BiSetnthAt(xs, Nth(vs, 2), Nth(vs, 3))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("SETNTH did not answer")
+
+Def BiSetnthAt(xs As List Of Cell, kc As Cell, v As Cell) As RckWork
+    BiNthAt("SETNTH", xs, kc, Fn(l, k) => CutList(SetNth(l, k, v)))
+
+Def BiIsempty(vs As List Of Cell) As RckWork
+    Select Case RckListArg("ISEMPTY", First(vs))
+        Case Ok(xs)
+            RckVals({ CutBool(IsEmpty(xs)) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("ISEMPTY did not answer")
+
+Def BiPrepend(vs As List Of Cell) As RckWork
+    Select Case RckListArg("PREPEND", Nth(vs, 2))
+        Case Ok(xs)
+            RckVals({ CutList(Prepend(Nth(vs, 1), xs)) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("PREPEND did not answer")
+
+Rem The builtin builds an ARRAY, and there is no ARRAY cell at the
+Rem keyboard (R4.16), so this builds the LIST that means the same thing.
+Rem The negative size the builtin Errors on is refused first either way.
+Def BiDim(vs As List Of Cell) As RckWork
+    Select Case RckWholeArg("DIM", Nth(vs, 1))
+        Case Ok(n)
+            RckVals({ CutList(Map(Range(1, n), Fn(k) => Nth(vs, 2))) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("DIM did not answer")
+
+Rem ---- whole files ------------------------------------------------------
+
+Rem All four builtins abort on a path they cannot use, so none of them
+Rem is called. READFILE goes through TRYREADFILE, WRITEFILE through
+Rem TRYWRITEFILE and DELETEFILE through TRYDELETEFILE; APPENDFILE has no
+Rem guarded twin at all, so it reads what is there and writes it back
+Rem with the new text on the end — the same honest emulation
+Rem seedfile.shoddy's APPENDLINE already makes, and not the real
+Rem O_APPEND.
+Rem
+Rem These are the WHOLE-FILE pair to seedfile's line-oriented one:
+Rem READLINES splits, READFILE does not.
+Rem
+Rem DELETEFILE WAS THE ONE EXCLUSION HERE THAT HAS BEEN LIFTED, and it
+Rem was lifted by a runtime change rather than by a change of mind.
+Rem The rule that kept it out was "aborts on a failure it cannot
+Rem pre-flight, with no guarded twin to build on", and its whole force
+Rem came from there being no TRYDELETEFILE to build on — FILEEXISTS
+Rem narrows that window without closing it, since a file that exists can
+Rem still be locked when the delete lands, and then the session is gone.
+Rem TRYDELETEFILE now exists, so DELETEFILE is registered over it on
+Rem exactly the precedent READFILE and WRITEFILE were always registered
+Rem under, and it answers whether the file went rather than aborting
+Rem when it did not.
+
+Def BiSeedFiles(st As RckState) As RckState
+    Let s1 = RckReg(st, "READFILE", 1, RckTouch(Fn(vs) => BiReadfile(vs)), "( path -- s )", "The whole file as one string, newlines and all. READLINES is the one that splits it.")
+    Let s2 = RckReg(s1, "WRITEFILE", 2, RckTouch(Fn(vs) => BiWritefile(vs)), "( path s -- ok )", "Write the string to path, replacing what was there; True on success.")
+    Let s3 = RckReg(s2, "APPENDFILE", 2, RckTouch(Fn(vs) => BiAppendfile(vs)), "( path s -- ok )", "Add the string to the end of path, making it if it is not there; True on success.")
+    RckReg(s3, "DELETEFILE", 1, RckTouch(Fn(vs) => BiDeletefile(vs)), "( path -- ok )", "Delete the file at path; True if it went, False if it was not there or could not be removed. FILEEXISTS asks whether one is there without touching it.")
+
+Def BiDeletefile(vs As List Of Cell) As RckWork
+    Select Case RckTextArg("DELETEFILE", First(vs))
+        Case Ok(path)
+            RckVals({ CutBool(TryDeleteFile(path)) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("DELETEFILE did not answer")
+
+Def BiReadfile(vs As List Of Cell) As RckWork
+    Select Case RckTextArg("READFILE", First(vs))
+        Case Ok(path)
+            BiReadAt(TryReadFile(path))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("READFILE did not answer")
+
+Def BiReadAt(r As Result) As RckWork
+    Select Case r
+        Case Ok(text)
+            RckVals({ CutStr(text) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("READFILE did not answer")
+
+Def BiWritefile(vs As List Of Cell) As RckWork
+    BiWroteWith("WRITEFILE", vs, Fn(old, s) => s)
+
+Def BiAppendfile(vs As List Of Cell) As RckWork
+    BiWroteWith("APPENDFILE", vs, Fn(old, s) => old & s)
+
+Def BiWroteWith(word As String, vs As List Of Cell, f As [ String String -- String ]) As RckWork
+    Select Case Pair(RckTextArg(word, Nth(vs, 1)), RckTextArg(word, Nth(vs, 2)))
+        Case Pair(Ok(path), Ok(s))
+            RckVals({ CutBool(TryWriteFile(path, Call(f, BiExisting(word, path), s))) })
+        Case Else
+            RckWorkBad(word & " needs a path and a STRING")
+
+Rem What is already at the path, or nothing when there is no file or it
+Rem cannot be read. WRITEFILE never asks for this — its own combiner
+Rem drops it — so only APPENDFILE pays for the read.
+Def BiExisting(word As String, path As String) As String
+    If word = "WRITEFILE" Then
+        ""
+    Else
+        BiTextOr(TryReadFile(path))
+
+Def BiTextOr(r As Result) As String
+    Select Case r
+        Case Ok(text)
+            text
+        Case Else
+            ""
+
+Rem ---- the session it is running in -------------------------------------
+
+Rem NETALLOWED is the one word here from the socket family, and it is
+Rem here because it is the only one that carries no handle and needs no
+Rem capability. It is the QUESTION the capability answers, and it has to
+Rem stay askable when the answer is no: every other TCP builtin begins
+Rem by aborting if the network is off, so without this nothing could
+Rem tell "no network" from "no answer" without ending the run. A session
+Rem that wants to know whether the mill was started with --allow-net can
+Rem simply ask.
+Def BiSeedSession(st As RckState) As RckState
+    Let s0 = RckReg(st, "NETALLOWED", 0, RckTouch(Fn(vs) => RckVals({ CutBool(NetAllowed()) })), "( -- flag )", "Whether this mill was started with --allow-net, and so whether anything can reach the network. A session cannot turn it on; it can only ask.")
+    Let s1 = RckReg(s0, "ARGS", 0, RckTouch(Fn(vs) => RckVals({ CutList(Map(Args(), CutStr)) })), "( -- list )", "The arguments the mill itself was started with, as a list of strings.")
+    Let s2 = RckReg(s1, "CLOCK", 0, RckTouch(Fn(vs) => RckVals({ CutList(Map(ToList(Clock()), CutNum)) })), "( -- list )", "The wall clock as seven numbers: year, month, day, hour, minute, second, millisecond. STAMP is the readable one.")
+    RckReg(s2, "SLEEP", 1, RckTouch(Fn(vs) => BiSleep(vs)), "( ms -- )", "Wait that many milliseconds and answer nothing. A count of 0 or less waits not at all.")
+
+Def BiSleep(vs As List Of Cell) As RckWork
+    Select Case RckNumArg("SLEEP", First(vs))
+        Case Ok(ms)
+            BiSleptFor(ms)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("SLEEP did not answer")
+
+Def BiSleptFor(ms As Number) As RckWork
+    Sleep(ms)
+    RckVals({ })
+
+Rem ---- CALL, and the two words that used to end the run -----------------
+
+Def BiSeedCall(st As RckState) As RckState
+    RckReg(st, "CALL", 2, RckPureOver(Fn(sst, vs) => BiCall(sst, vs)), "( x prog -- y )", "Run the program on x and answer what it left. MAP does this over a whole list; this is the one element.")
+
+Rem The only word here that is not a builtin wrapped. RckProgOn runs the
+Rem program against the WHOLE session — a program may name a word
+Rem defined a line earlier and may RCL a register — and answers the one
+Rem cell it left, or the engine's own reason why it could not.
+Def BiCall(st As RckState, vs As List Of Cell) As RckWork
+    Select Case RckProgArg("CALL", Nth(vs, 2))
+        Case Ok(ts)
+            BiCallOn(st, ts, Nth(vs, 1))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("CALL did not answer")
+
+Def BiCallOn(st As RckState, ts As List Of String, x As Cell) As RckWork
+    Select Case RckProgOn("CALL", st, ts, x)
+        Case Ok(v)
+            RckVals({ v })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("CALL did not answer")
+
+Rem Inverted rather than dropped. Both exist to end the run, and turning
+Rem that into a refusal is the whole of what this layer does — so a
+Rem program that used ERROR to stop now gives a session a reason, and
+Rem the next line still evaluates.
+Def BiSeedStop(st As RckState) As RckState
+    Let s1 = RckReg(st, "ERROR", 1, RckPure(Fn(vs) => BiError(vs)), "( s -- )", "Refuse the line, giving s as the reason. In a program this ends the run; here it answers.")
+    RckReg(s1, "ASSERT", 2, RckPure(Fn(vs) => BiAssert(vs)), "( flag s -- )", "Refuse the line with reason s when flag is false, and do nothing at all when it is true.")
+
+Def BiError(vs As List Of Cell) As RckWork
+    Select Case RckTextArg("ERROR", First(vs))
+        Case Ok(s)
+            RckWorkBad(s)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("ERROR did not answer")
+
+Def BiAssert(vs As List Of Cell) As RckWork
+    Select Case Pair(RckBoolArg("ASSERT", Nth(vs, 1)), RckTextArg("ASSERT", Nth(vs, 2)))
+        Case Pair(Ok(p), Ok(s))
+            BiAssertThat(p, s)
+        Case Else
+            RckWorkBad("ASSERT needs a BOOLEAN and a STRING")
+
+Def BiAssertThat(p As Boolean, s As String) As RckWork
+    If p Then
+        RckVals({ })
+    Else
+        RckWorkBad(s)
+
+Rem ---- the seed -----------------------------------------------------------
+
+Def RckSeedBuiltin(st As RckState) As RckState
+    Let s0 = RckSeeding(st, "builtin")
+    Let s1 = BiSeedText(s0)
+    Let s2 = BiSeedNums(s1)
+    Let s3 = BiSeedLists(s2)
+    Let s4 = BiSeedFiles(s3)
+    Let s5 = BiSeedSession(s4)
+    Let s6 = BiSeedCall(s5)
+    BiSeedStop(s6)

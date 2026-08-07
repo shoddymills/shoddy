@@ -1,0 +1,272 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem seedhttps.shoddy — reckoner seed: https.shoddy, a reply taken apart
+Rem
+Rem seednet fetches a URL and hands back a wall of text. This seed is
+Rem the half that makes the wall useful: HTTPSTATUS, HTTPHEADER,
+Rem HTTPHEADERS, HTTPREASON and HTTPBODY take a reply apart, and
+Rem HTTPSGET fetches one with headers of your own choosing.
+Rem
+Rem THE EASIEST SEED IN THE DIRECTORY, and https.shoddy earned that. It
+Rem has NOT ONE Error in it, and its header states the rule the rest of
+Rem this file leans on: "PURE WHERE IT CAN BE... Building a request and
+Rem parsing a reply are functions on Strings... Only HttpsGet and
+Rem HttpsRequest reach the network."
+Rem
+Rem So five of the six words below are the machine's own, bridged
+Rem straight through with nothing but an argument check. The sixth
+Rem replaces HttpsRequest, and only because that one goes through
+Rem net.shoddy's RequestTls and the ABORTING socket builtins under it.
+Rem The request TEXT is still built by HttpRequestText — the machine's
+Rem own, byte for byte — and only the sending is done differently.
+Rem
+Rem NETBODY IS GONE, AND THIS IS WHERE IT WENT. seednet carried a
+Rem NETBODY that split a reply at the blank line, written before this
+Rem seed existed. HTTPBODY is https.shoddy's own and does the same job
+Rem properly, so keeping both would have been the second spelling of a
+Rem word the dictionary already had — the thing seedbuiltin's own rules
+Rem exist to prevent. A mill that wants replies parsed folds this seed.
+Rem
+Rem HEADERS ARE A DICT, in and out, which is seeddict's shape and
+Rem dict.shoddy's association list: { ("user-agent" "shoddy") }. Names
+Rem come back LOWERCASED because HTTP header names are case-insensitive
+Rem and https.shoddy normalises at the boundary, so DGET finds
+Rem content-type whichever way the server wrote it.
+Rem
+Rem WHAT IS NOT BRIDGED, and it is the machine's own limit rather than
+Rem this seed's: HTTP/1.0, no redirects followed, no compression. A 301
+Rem is REPORTED — HTTPSTATUS says 301 and HTTPHEADER finds the location
+Rem — because chasing one means deciding about loops, cross-host hops
+Rem and method rewriting, which https.shoddy calls the caller's policy
+Rem rather than a library's. A session is a caller like any other.
+Rem ==================================================================
+
+Include "https.shoddy"
+Include "cuttle.shoddy"
+Include "reckoner.shoddy"
+Include "seq.shoddy"
+
+Rem ---- headers, across the bridge ---------------------------------------
+
+Rem A dict cell to the List Of Pair https.shoddy wants. An empty list is
+Rem the ordinary case — most requests need no headers of their own — so
+Rem it is not an error, and a caller who wants none types { }.
+Def HsHeadersOf(word As String, c As Cell) As Result
+    Select Case RckListArg(word, c)
+        Case Ok(xs)
+            HsHeadersAt(word, xs, { })
+        Case Err(w, at)
+            Err(w, at)
+        Case Else
+            Err(word & " did not answer", 0)
+
+Def HsHeadersAt(word As String, xs As List Of Cell, acc As List Of Pair) As Result
+    If IsEmpty(xs) Then
+        Ok(acc)
+    Else
+        HsHeadersNext(word, xs, acc, HsPairOf(word, First(xs)))
+
+Def HsHeadersNext(word As String, xs As List Of Cell, acc As List Of Pair, r As Result) As Result
+    Select Case r
+        Case Ok(p)
+            HsHeadersAt(word, Rest(xs), Append(acc, p))
+        Case Err(w, at)
+            Err(w, at)
+        Case Else
+            Err(word & " did not answer", 0)
+
+Rem A header is a pair of STRINGs. A two-element LIST is accepted as
+Rem well as a PAIR, because { "accept" "text/html" } is what somebody
+Rem types before they have met the pair syntax and it is unambiguous.
+Def HsPairOf(word As String, c As Cell) As Result
+    Select Case c
+        Case CutPair(p)
+            HsPairParts(word, Fst(p), Snd(p))
+        Case CutList(xs)
+            HsPairList(word, xs)
+        Case Else
+            Err(word & ": A HEADER IS A NAME AND A VALUE, LIKE ( \"accept\" \"text/html\" )", 0)
+
+Def HsPairList(word As String, xs As List Of Cell) As Result
+    If Length(xs) <> 2 Then
+        Err(word & ": A HEADER IS A NAME AND A VALUE, AND THAT HAS " & Str(Length(xs)) & " PARTS", 0)
+    Else
+        HsPairParts(word, First(xs), Nth(xs, 2))
+
+Def HsPairParts(word As String, a As Cell, b As Cell) As Result
+    Select Case Pair(a, b)
+        Case Pair(CutStr(n), CutStr(v))
+            HsPairNamed(word, n, v)
+        Case Else
+            Err(word & ": A HEADER'S NAME AND VALUE MUST BOTH BE STRINGS", 0)
+
+Rem A newline inside a header is how a request gets split in two and a
+Rem second one smuggled in behind it. Nothing downstream would notice,
+Rem which is exactly why it is refused here.
+Def HsPairNamed(word As String, n As String, v As String) As Result
+    If HsHasBreak(n) Or HsHasBreak(v) Then
+        Err(word & ": A HEADER CANNOT CONTAIN A LINE BREAK — THAT WOULD BE TWO REQUESTS", 0)
+    Else
+        HsPairMade(word, n, v)
+
+Def HsHasBreak(s As String) As Boolean
+    (Instr(s, "\r") > 0) Or (Instr(s, "\n") > 0)
+
+Def HsPairMade(word As String, n As String, v As String) As Result
+    If n = "" Then
+        Err(word & ": A HEADER NEEDS A NAME", 0)
+    Else
+        Ok(Pair(n, v))
+
+Rem The other direction: https.shoddy's parsed headers as a dict cell.
+Def HsDictCell(hs As List Of Pair) As Cell
+    CutList(Map(hs, HsEntry))
+
+Def HsEntry(p As Pair) As Cell
+    CutPair(Pair(CutStr(Fst(p)), CutStr(Snd(p))))
+
+Rem ---- the pure half, bridged straight through ---------------------------
+
+Def HsSeedRead(st As RckState) As RckState
+    Let s1 = RckReg(st, "HTTPSTATUS", 1, RckPure(Fn(vs) => HsStatus(vs)), "( reply -- n )", "The status number of an HTTP reply — 200, 404, 301 — and 0 for something that is not a reply at all.")
+    Let s2 = RckReg(s1, "HTTPREASON", 1, RckPure(Fn(vs) => HsReason(vs)), "( reply -- str )", "The reason phrase beside the status: \"OK\", \"Not Found\".")
+    Let s3 = RckReg(s2, "HTTPBODY", 1, RckPure(Fn(vs) => HsBody(vs)), "( reply -- str )", "Everything after the blank line that ends the headers. Bytes as they arrived, one per character.")
+    Let s4 = RckReg(s3, "HTTPHEADERS", 1, RckPure(Fn(vs) => HsHeaders(vs)), "( reply -- dict )", "Every header as a dict, names lowercased. DGET reads one out.")
+    RckReg(s4, "HTTPHEADER", 3, RckPure(Fn(vs) => HsHeader(vs)), "( reply name dflt -- str )", "One header by name, or dflt when it is not there. The name is matched without regard to case.")
+
+Def HsStatus(vs As List Of Cell) As RckWork
+    HsOnReply("HTTPSTATUS", vs, Fn(r) => CutNum(HttpStatus(r)))
+
+Def HsReason(vs As List Of Cell) As RckWork
+    HsOnReply("HTTPREASON", vs, Fn(r) => CutStr(HttpReason(r)))
+
+Def HsBody(vs As List Of Cell) As RckWork
+    HsOnReply("HTTPBODY", vs, Fn(r) => CutStr(HttpBody(r)))
+
+Def HsHeaders(vs As List Of Cell) As RckWork
+    HsOnReply("HTTPHEADERS", vs, Fn(r) => HsDictCell(HttpHeaders(r)))
+
+Rem Every one of the four takes a reply and nothing else, and none of
+Rem them can fail on its contents: https.shoddy answers 0, "" or an
+Rem empty dict for text that is not a reply, which is the right answer
+Rem for a caller holding something unexpected.
+Def HsOnReply(word As String, vs As List Of Cell, f As [ String -- Cell ]) As RckWork
+    Select Case RckTextArg(word, First(vs))
+        Case Ok(reply)
+            RckVals({ Call(f, reply) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Def HsHeader(vs As List Of Cell) As RckWork
+    Select Case Pair(RckTextArg("HTTPHEADER", Nth(vs, 1)), RckTextArg("HTTPHEADER", Nth(vs, 2)))
+        Case Pair(Ok(reply), Ok(name))
+            HsHeaderDflt(reply, name, Nth(vs, 3))
+        Case Else
+            RckWorkBad("HTTPHEADER needs a reply and a header name")
+
+Def HsHeaderDflt(reply As String, name As String, dc As Cell) As RckWork
+    Select Case RckTextArg("HTTPHEADER", dc)
+        Case Ok(dflt)
+            RckVals({ CutStr(HttpHeader(reply, name, dflt)) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("HTTPHEADER did not answer")
+
+Rem ---- the one word that reaches the network -----------------------------
+
+Def HsSeedGet(st As RckState) As RckState
+    Let s1 = RckReg(st, "HTTPSGET", 3, RckTouch(Fn(vs) => HsGet(vs)), "( host path headers -- reply )", "Fetch a path from a host over TLS with headers of your own, and answer the whole raw reply. Headers are a dict: { ( \"user-agent\" \"shoddy\" ) }. Use { } for none — though a good many hosts answer 403 to a request without a user-agent.")
+    RckReg(s1, "HTTPSREQUEST", 4, RckTouch(Fn(vs) => HsRequest(vs)), "( method host path headers -- reply )", "The same for any method — GET, HEAD, DELETE. No body is sent, which is what HTTP/1.0 makes straightforward.")
+
+Def HsGet(vs As List Of Cell) As RckWork
+    HsFetch("HTTPSGET", "GET", Nth(vs, 1), Nth(vs, 2), Nth(vs, 3))
+
+Def HsRequest(vs As List Of Cell) As RckWork
+    Select Case RckTextArg("HTTPSREQUEST", Nth(vs, 1))
+        Case Ok(method)
+            HsRequestMethod("HTTPSREQUEST", method, vs)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("HTTPSREQUEST did not answer")
+
+Rem A method with a space or a break in it would put a second line into
+Rem the request, the same fault a header break would.
+Def HsRequestMethod(word As String, method As String, vs As List Of Cell) As RckWork
+    If method = "" Or HsHasBreak(method) Or Instr(method, " ") > 0 Then
+        RckWorkBad(word & ": A METHOD IS ONE WORD, LIKE \"GET\" OR \"HEAD\"")
+    Else
+        HsFetch(word, method, Nth(vs, 2), Nth(vs, 3), Nth(vs, 4))
+
+Def HsFetch(word As String, method As String, hc As Cell, pc As Cell, hdc As Cell) As RckWork
+    Select Case Pair(RckTextArg(word, hc), RckTextArg(word, pc))
+        Case Pair(Ok(host), Ok(path))
+            HsFetchHeaders(word, method, host, path, HsHeadersOf(word, hdc))
+        Case Else
+            RckWorkBad(word & " needs a host and a path")
+
+Def HsFetchHeaders(word As String, method As String, host As String, path As String, r As Result) As RckWork
+    Select Case r
+        Case Ok(hs)
+            HsFetchSound(word, method, host, path, hs)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Rem A path must start with a slash or the request line is malformed, and
+Rem a host with a break in it is the same smuggling fault as a header's.
+Def HsFetchSound(word As String, method As String, host As String, path As String, hs As List Of Pair) As RckWork
+    If host = "" Or HsHasBreak(host) Then
+        RckWorkBad(word & ": THAT IS NOT A HOST NAME")
+    Else
+        HsFetchPathed(word, method, host, path, hs)
+
+Def HsFetchPathed(word As String, method As String, host As String, path As String, hs As List Of Pair) As RckWork
+    If HsHasBreak(path) Or Instr(path, " ") > 0 Then
+        RckWorkBad(word & ": A PATH CANNOT CONTAIN A SPACE OR A LINE BREAK — ESCAPE THEM AS %20")
+    Else
+        HsFetchAt(word, method, host, HsPathOf(path), hs)
+
+Rem A bare "" or "index.html" is what somebody types before they think
+Rem about it, and both mean the same thing with a slash on the front.
+Def HsPathOf(path As String) As String
+    If path = "" Then
+        "/"
+    Else
+        If Left(path, 1) = "/" Then
+            path
+        Else
+            "/" & path
+
+Rem THE ONE PLACE THIS SEED DIFFERS FROM THE MACHINE. HttpsRequest sends
+Rem through net.shoddy's RequestTls, which is built on the aborting
+Rem socket builtins; TRYTCPREQUEST does the whole conversation and
+Rem reports. The request TEXT is still HttpRequestText's, byte for byte,
+Rem so what goes on the wire is what the machine would have sent.
+Def HsFetchAt(word As String, method As String, host As String, path As String, hs As List Of Pair) As RckWork
+    If Not NetAllowed() Then
+        RckWorkBad(word & ": THE NETWORK IS OFF — START THE MILL WITH --allow-net")
+    Else
+        HsAnswered(word, host, TryTcpRequest(host, HttpsPort(), True,
+                                             HttpRequestText(method, path, host, hs)))
+
+Def HsAnswered(word As String, host As String, r As Result) As RckWork
+    Select Case r
+        Case Ok(reply)
+            RckVals({ CutStr(reply) })
+        Case Err(w, at)
+            RckWorkBad(word & ": " & w)
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Rem ---- the seed ------------------------------------------------------------
+
+Def RckSeedHttps(st As RckState) As RckState
+    Let s1 = HsSeedRead(RckSeeding(st, "seed-https"))
+    HsSeedGet(s1)

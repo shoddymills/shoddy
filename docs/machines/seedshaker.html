@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="reckoner seed: shaker's reversible obfuscation over lists of numbers — machines/seeds/seedshaker.shoddy">
+<title>seedshaker — A Reckoner Seed | Shoddy Machines</title>
+<link rel="stylesheet" href="../style.css">
+<link rel="icon" href="../favicon.svg" type="image/svg+xml">
+<link rel="alternate icon" href="../favicon.ico" sizes="48x48">
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+</head>
+<body>
+<div class="topbar"><div class="inner">
+  <div class="row">
+    <a class="phase" href="index.html"><img class="mark" src="../media/brand/shoddy-icon.svg" alt="" width="23" height="23">Shoddy · The Machines</a>
+    <span class="spacer"></span>
+    <nav class="docnav meta" aria-label="About"><a href="../heritage.html">Heritage</a><a href="../authorship.html">Authorship</a></nav>
+  </div>
+  <nav class="docnav main" aria-label="Documentation"><a href="../tutorials/index.html">Tutorials</a><a href="../guide.html">Guide</a><a href="../quickref.html">Reference</a><span class="here">Machines</span><a href="../mills/index.html">Mills</a><a href="../stack.html">Stack</a><a href="../spec.html">Spec</a><a href="../setup.html">Setup</a><a href="../vscode.html">VS Code</a><a href="../assistants.html">AI</a><a href="../build.html">Toolchain</a><a href="../errors.html">Errors</a></nav>
+</div></div>
+<div class="wrap">
+
+
+<header class="mast has-icon"><div><p class="eyebrow"><a href="index.html#runtime-stack">The Machines &middot; Runtime stack</a></p><h1>seedshaker</h1><p class="kicker">A reckoner seed: shaker's reversible obfuscation over lists of numbers — machines/seeds/seedshaker.shoddy</p></div><img class="micon" src="../media/icons/seedshaker.svg" alt="the seedshaker machine&#39;s icon"></header>
+<nav class="pagertop" aria-label="Machines, in catalog order"><a href="seedbool.html">&larr; seedbool</a><a href="index.html">All machines</a><a href="seedjson.html">seedjson &rarr;</a></nav>
+
+<h2 id="summary">Summary</h2>
+<p><code>seedshaker</code> bridges <a href="shaker.html">shaker</a>'s
+four-round Feistel obfuscation onto the stack: <code>SHAKE</code>,
+<code>UNSHAKE</code>, <code>UNSHAKEOR</code>, <code>SHAKEOK</code> and
+<code>SHAKEMOD</code>. shaker.shoddy already deals in nothing but lists of
+numbers, so no conversion happens at the bridge beyond the usual LIST-of-Cell
+reading every seed does.</p>
+
+<h2 id="why">Why It's Useful</h2>
+<p>Almost nothing crosses this bridge, and that is the point:
+shaker.shoddy already deals in lists of whole numbers, which is what the
+stack already holds. So what the seed adds is not conversion — it is the
+three questions shaker asks with an <code>Error</code> and this asks with a
+refusal: is the key empty, is every message value a whole number inside the
+field, and does the checksum still match the body.</p>
+<p>The field is <code>SHAKEMOD</code>, and it is registered as a word rather
+than left as a number to remember, because every guard here is stated in
+terms of it. A value outside <code>0 .. SHAKEMOD - 1</code>, or one that is
+not whole, has no obfuscation defined for it at all.</p>
+
+<h2 id="guide">User's Guide</h2>
+<p>The round trip, which is the whole of it — <code>SHAKE</code> appends one
+value, a checksum, so the cipher is always one longer than the message:</p>
+<pre><code>&gt; SHAKEMOD
+x: 67108859
+&gt; CLEAR { 11 22 33 } { 42 7 } SHAKE
+x: { 23565951 8709952 16780855 52976830 }
+&gt; CLEAR { 11 22 33 } { 42 7 } SHAKE { 42 7 } UNSHAKE
+x: { 11 22 33 }
+&gt; CLEAR { 11 22 33 } { 42 7 } SHAKE SHAKEOK
+x: True</code></pre>
+<p><strong>What the checksum does and does not catch.</strong>
+<code>SHAKEOK</code> asks whether the checksum still matches the body, and
+that is a question about the <em>message</em>, not about the key — it is the
+same answer whoever asks it. So a tampered cipher is caught:</p>
+<pre><code>&gt; CLEAR { 1 2 3 } SHAKEOK
+x: False</code></pre>
+<p>but a <em>wrong key</em> is not. <code>UNSHAKE</code> under a key that
+never encrypted this message answers values rather than refusing, and they
+are simply the wrong values:</p>
+<pre><code>&gt; CLEAR { 11 22 33 } { 42 7 } SHAKE { 99 } UNSHAKE
+x: { 17450296 17399842 66970097 }</code></pre>
+<p>That is worth knowing before it is relied on: <code>UNSHAKEOR</code>'s
+default is reached when the key is empty, when a value is out of field, or
+when the checksum fails — not when the key is merely the wrong one, because
+nothing in the cipher records which key made it.</p>
+<p>The refusals, which are the guards shaker would otherwise have aborted
+on:</p>
+<pre><code>&gt; CLEAR { 11 22 33 } { 42 7 } SHAKE { } UNSHAKE
+?: UNSHAKE: THE KEY IS EMPTY
+&gt; CLEAR { 1.5 } { 42 } SHAKE
+?: SHAKE: EVERY MESSAGE VALUE MUST BE A WHOLE NUMBER IN 0 .. 67108858</code></pre>
+
+<h2 id="words">Word Reference</h2>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>SHAKE ( list keys -- cipher )</td><td>The list, obfuscated under keys — one value longer, the last a tamper checksum.</td></tr>
+<tr><td>UNSHAKE ( cipher keys -- list )</td><td>The message SHAKE produced, or a refusal if the key is empty or the checksum does not match.</td></tr>
+<tr><td>UNSHAKEOR ( cipher keys dflt -- list )</td><td>UNSHAKE, or dflt unchanged when the key is empty, out of field, or the checksum does not match.</td></tr>
+<tr><td>SHAKEOK ( list -- flag )</td><td>Whether the checksum SHAKE appended still matches the body.</td></tr>
+<tr><td>SHAKEMOD ( -- n )</td><td>The field size: every SHAKE value is a whole number in 0 .. n-1.</td></tr>
+</table>
+
+<h2 id="usedby">Who Uses It</h2>
+<table>
+<tr><th></th><th>User</th><th>How</th></tr>
+<tr><td class="uicon"><a href="../mills/halifax.html"><img src="../media/icons/halifax.svg" alt=""></a></td><td><a href="../mills/halifax.html">halifax</a></td><td>The calculator's obfuscation words: <code>SHAKE</code>, <code>UNSHAKE</code>, <code>UNSHAKEOR</code>, <code>SHAKEOK</code> and <code>SHAKEMOD</code>.</td></tr>
+</table>
+<p>A mill claims this seed by folding <code>RckSeedShaker</code> over its
+reckoner state, which is all halifax does.</p>
+
+<h2 id="uses">The Machines It Uses</h2>
+<table>
+<tr><th></th><th>Machine</th><th>Why</th></tr>
+<tr><td class="uicon"><a href="shaker.html"><img src="../media/icons/shaker.svg" alt=""></a></td><td><a href="shaker.html">shaker</a></td><td>The domain this seed bridges: <code>ShakeEncrypt</code>, <code>ShakeDecrypt</code>, <code>ShakeDecryptOr</code>, <code>ShakeVerify</code> and <code>ShakeModulus</code>.</td></tr>
+<tr><td class="uicon"><a href="cuttle.html"><img src="../media/icons/cuttle.svg" alt=""></a></td><td><a href="cuttle.html">cuttle</a></td><td>The <code>Cell</code> type every bridged word reads its arguments from and answers into.</td></tr>
+<tr><td class="uicon"><a href="reckoner.html"><img src="../media/icons/reckoner.svg" alt=""></a></td><td><a href="reckoner.html">reckoner</a></td><td><code>RckReg</code>, <code>RckSeeding</code> and the argument readers every registered word is built from.</td></tr>
+<tr><td class="uicon"><a href="seq.html"><img src="../media/icons/seq.svg" alt=""></a></td><td><a href="seq.html">seq</a></td><td>List plumbing under the LIST-of-NUMBER reader.</td></tr>
+</table>
+
+<nav class="pager" aria-label="Machines, in catalog order">
+  <a href="seedbool.html"><span class="dir">&larr; Previous machine</span><span class="ttl">seedbool</span></a>
+  <a class="next" href="seedjson.html"><span class="dir">Next machine &rarr;</span><span class="ttl">seedjson</span></a>
+</nav>
+<footer>Named for the shoddy mills of the West Riding: Useless Things Made
+Useful Through Skill (<a href="../heritage.html">the heritage of the name</a>).<br>
+&copy; 2026 Stephen Vincent Foster</footer>
+</div>
+</body>
+</html>

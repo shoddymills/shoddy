@@ -1,0 +1,244 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem seedseq.shoddy — reckoner seed: list and pair structure
+Rem
+Rem RANGE, LENGTH, REVERSE, CONCAT, FIRST, REST and SORTL work a LIST
+Rem cell; PAIR, HEAD and TAIL work a PAIR cell — "rate" 0.05 PAIR gives
+Rem records on the stack, per R2.8's note on Pair bridging. Most of
+Rem these are one line over a builtin the language already has (Range,
+Rem Length, Reverse, Concat, Sort); the seed's job is only to fence off
+Rem the cases those builtins Error on.
+Rem ==================================================================
+
+Include "cuttle.shoddy"
+Include "reckoner.shoddy"
+Include "seq.shoddy"
+
+Rem ---- RANGE ------------------------------------------------------------
+
+Def SqSeedRange(st As RckState) As RckState
+    RckReg(st, "RANGE", 2, RckPure(Fn(vs) => SqRange(vs)), "( a b -- list )", "The whole numbers from a up to b, one cell per value; empty when b is below a.")
+
+Def SqRange(vs As List Of Cell) As RckWork
+    Select Case RckNumArg("RANGE", Nth(vs, 1))
+        Case Ok(a)
+            SqRangeTo(a, Nth(vs, 2))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("RANGE did not answer")
+
+Def SqRangeTo(a As Number, c As Cell) As RckWork
+    Select Case RckNumArg("RANGE", c)
+        Case Ok(b)
+            RckVals({ CutList(Map(Range(a, b), CutNum)) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("RANGE did not answer")
+
+Rem ---- LENGTH, REVERSE -----------------------------------------------------
+Rem Both total over any list, empty included.
+
+Def SqSeedLength(st As RckState) As RckState
+    RckReg(st, "LENGTH", 1, RckPure(Fn(vs) => SqLength(vs)), "( list -- n )", "How many elements a list holds.")
+
+Def SqLength(vs As List Of Cell) As RckWork
+    Select Case RckListArg("LENGTH", First(vs))
+        Case Ok(xs)
+            RckVals({ CutNum(Length(xs)) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("LENGTH did not answer")
+
+Def SqSeedReverse(st As RckState) As RckState
+    RckReg(st, "REVERSE", 1, RckPure(Fn(vs) => SqReverse(vs)), "( list -- list )", "The list back to front.")
+
+Def SqReverse(vs As List Of Cell) As RckWork
+    Select Case RckListArg("REVERSE", First(vs))
+        Case Ok(xs)
+            RckVals({ CutList(Reverse(xs)) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("REVERSE did not answer")
+
+Rem ---- CONCAT ---------------------------------------------------------
+
+Def SqSeedConcat(st As RckState) As RckState
+    RckReg(st, "CONCAT", 2, RckPure(Fn(vs) => SqConcat(vs)), "( xs ys -- list )", "Two lists joined end to end.")
+
+Def SqConcat(vs As List Of Cell) As RckWork
+    Select Case RckListArg("CONCAT", Nth(vs, 1))
+        Case Ok(xs)
+            SqConcatY(xs, Nth(vs, 2))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("CONCAT did not answer")
+
+Def SqConcatY(xs As List Of Cell, c As Cell) As RckWork
+    Select Case RckListArg("CONCAT", c)
+        Case Ok(ys)
+            RckVals({ CutList(Concat(xs, ys)) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("CONCAT did not answer")
+
+Rem ---- FIRST, REST ----------------------------------------------------
+Rem Both abort on an empty list at the builtin, so both refuse first.
+
+Def SqSeedFirst(st As RckState) As RckState
+    RckReg(st, "FIRST", 1, RckPure(Fn(vs) => SqFirst(vs)), "( list -- x )", "The first element of a list.")
+
+Def SqFirst(vs As List Of Cell) As RckWork
+    Select Case RckListArg("FIRST", First(vs))
+        Case Ok(xs)
+            SqFirstOf(xs)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("FIRST did not answer")
+
+Def SqFirstOf(xs As List Of Cell) As RckWork
+    If IsEmpty(xs) Then
+        RckWorkBad("FIRST needs a non-empty list")
+    Else
+        RckVals({ First(xs) })
+
+Def SqSeedRest(st As RckState) As RckState
+    RckReg(st, "REST", 1, RckPure(Fn(vs) => SqRest(vs)), "( list -- list )", "The list without its first element.")
+
+Def SqRest(vs As List Of Cell) As RckWork
+    Select Case RckListArg("REST", First(vs))
+        Case Ok(xs)
+            SqRestOf(xs)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("REST did not answer")
+
+Def SqRestOf(xs As List Of Cell) As RckWork
+    If IsEmpty(xs) Then
+        RckWorkBad("REST needs a non-empty list")
+    Else
+        RckVals({ CutList(Rest(xs)) })
+
+Rem ---- SORTL ------------------------------------------------------------
+Rem A Cell is a record, so the SORT builtin (which wants raw NUMBERs or
+Rem STRINGs) cannot see through one; SORTL unwraps a homogeneous list of
+Rem one kind, sorts the raw values, and wraps the answer back up. A list
+Rem of anything else — mixed, or a kind that has no order — is refused
+Rem by name rather than reaching SORT to be Errored on.
+
+Def SqSeedSortl(st As RckState) As RckState
+    RckReg(st, "SORTL", 1, RckPure(Fn(vs) => SqSortl(vs)), "( list -- list )", "A list of numbers or a list of strings, sorted ascending.")
+
+Def SqSortl(vs As List Of Cell) As RckWork
+    Select Case RckListArg("SORTL", First(vs))
+        Case Ok(xs)
+            SqSortlOf(xs)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("SORTL did not answer")
+
+Def SqSortlOf(xs As List Of Cell) As RckWork
+    If IsEmpty(xs) Then
+        RckVals({ CutList({ }) })
+    Else
+        SqSortlKind(xs, First(xs))
+
+Def SqSortlKind(xs As List Of Cell, first As Cell) As RckWork
+    Select Case first
+        Case CutNum(x)
+            SqSortlNums(xs)
+        Case CutStr(t)
+            SqSortlStrs(xs)
+        Case Else
+            RckWorkBad("SORTL needs a list of NUMBERs or a list of STRINGs, got " & CutKindOf(first))
+
+Def SqSortlNums(xs As List Of Cell) As RckWork
+    If All(xs, SqIsNum) Then
+        RckVals({ CutList(Map(Sort(Map(xs, SqNumOf)), CutNum)) })
+    Else
+        RckWorkBad("SORTL needs every element to be the same kind")
+
+Def SqIsNum(c As Cell) As Boolean
+    Select Case c
+        Case CutNum(x)
+            True
+        Case Else
+            False
+
+Def SqNumOf(c As Cell) As Number
+    Select Case c
+        Case CutNum(x)
+            x
+        Case Else
+            0
+
+Def SqSortlStrs(xs As List Of Cell) As RckWork
+    If All(xs, SqIsStr) Then
+        RckVals({ CutList(Map(Sort(Map(xs, SqStrOf)), CutStr)) })
+    Else
+        RckWorkBad("SORTL needs every element to be the same kind")
+
+Def SqIsStr(c As Cell) As Boolean
+    Select Case c
+        Case CutStr(t)
+            True
+        Case Else
+            False
+
+Def SqStrOf(c As Cell) As String
+    Select Case c
+        Case CutStr(t)
+            t
+        Case Else
+            ""
+
+Rem ---- PAIR, HEAD, TAIL -------------------------------------------------
+Rem Records on the stack: PAIR builds one from any two cells, and HEAD
+Rem and TAIL project it back apart. Total — a PAIR cell always has both.
+
+Def SqSeedPair(st As RckState) As RckState
+    RckReg(st, "PAIR", 2, RckPure(Fn(vs) => RckVals({ CutPair(Pair(Nth(vs, 1), Nth(vs, 2))) })), "( a b -- pair )", "Two cells joined as one record.")
+
+Def SqSeedHead(st As RckState) As RckState
+    RckReg(st, "HEAD", 1, RckPure(Fn(vs) => SqHead(vs)), "( pair -- a )", "The first cell of a pair.")
+
+Def SqHead(vs As List Of Cell) As RckWork
+    Select Case First(vs)
+        Case CutPair(p)
+            RckVals({ Fst(p) })
+        Case Else
+            RckWorkBad(RckKindWhy("HEAD", "a PAIR", First(vs)))
+
+Def SqSeedTail(st As RckState) As RckState
+    RckReg(st, "TAIL", 1, RckPure(Fn(vs) => SqTail(vs)), "( pair -- b )", "The second cell of a pair.")
+
+Def SqTail(vs As List Of Cell) As RckWork
+    Select Case First(vs)
+        Case CutPair(p)
+            RckVals({ Snd(p) })
+        Case Else
+            RckWorkBad(RckKindWhy("TAIL", "a PAIR", First(vs)))
+
+Rem ---- the seed -----------------------------------------------------------
+
+Def RckSeedSeq(st As RckState) As RckState
+    Let st1 = SqSeedRange(RckSeeding(st, "seed-seq"))
+    Let st2 = SqSeedLength(st1)
+    Let st3 = SqSeedReverse(st2)
+    Let st4 = SqSeedConcat(st3)
+    Let st5 = SqSeedFirst(st4)
+    Let st6 = SqSeedRest(st5)
+    Let st7 = SqSeedSortl(st6)
+    Let st8 = SqSeedPair(st7)
+    Let st9 = SqSeedHead(st8)
+    SqSeedTail(st9)

@@ -1,0 +1,720 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem reckonertest.shoddy — test program for machines/reckoner.shoddy
+Rem
+Rem Assert-driven, in the cuttletest.shoddy / csvtest.shoddy pattern: it
+Rem prints what it is doing and stops the run at the first assertion that
+Rem fails, ending with ALL ASSERTIONS PASSED when it does not.
+Rem
+Rem THE CONTRACT UNDER TEST IS THAT NOTHING KEYABLE ABORTS THE MILL, and
+Rem the section "every guard refuses" is the machine's guard list walked
+Rem one refusal at a time. Survival is proved by the NEXT LINE and not by
+Rem the error: each abort-safety case asserts that the failing line came
+Rem back as a refusal with the state intact AND that a further line
+Rem evaluated afterwards, because "the mill did not die" is the actual
+Rem contract and only a subsequent line can show it.
+Rem
+Rem The engine is headless and knows no domain, so a test of it has to
+Rem bring its own words. The mini-seed below registers RANGE, LENGTH,
+Rem MONEY, IDENT and PAIR through the registration API — which is also
+Rem the test that a domain can arrive with zero engine changes — and one
+Rem word declared effectful, so the effect flag and its propagation into
+Rem user words have something to say. The real seeds are their own phase.
+Rem
+Rem The two worked sessions are golden rather than illustrative: the
+Rem primes session exercises register threading into sub-evaluations, a
+Rem filter inside a filter, and the degenerate range at 2 and 3 all at
+Rem once, and the spiral turns on i = 76, the first step where 300 - 4i
+Rem goes negative and the one that answers differently under MOD.
+Rem
+Rem Build (once): build.ps1 machines
+Rem Run:          bin\mill run tst\reckonertest.shoddy    (from the repo root)
+Rem ==================================================================
+
+Include "../machines/seq.shoddy"
+Include "../machines/str.shoddy"
+Include "../machines/money.shoddy"
+Include "../machines/matrix.shoddy"
+Include "../machines/cuttle.shoddy"
+Include "../machines/reckoner.shoddy"
+
+Rem ---- reading an answer ------------------------------------------------
+Rem Every one of these matches, so a test helper can never be the thing
+Rem that aborts: a bare accessor on the wrong case would.
+
+Rem The state after a line, which on a refusal is the state as it was.
+Def Ran(st As RckState, line As String) As RckState
+    Select Case RckEval(st, line)
+        Case RckNext(st2, out)
+            st2
+        Case RckStop(st2, why, out)
+            st2
+        Case Else
+            st
+
+Def Runs(st As RckState, lines As List Of String) As RckState
+    Fold(lines, st, Ran)
+
+Def Bad(st As RckState, line As String) As Boolean
+    Select Case RckEval(st, line)
+        Case RckStop(st2, why, out)
+            True
+        Case Else
+            False
+
+Def Why(st As RckState, line As String) As String
+    Select Case RckEval(st, line)
+        Case RckStop(st2, why, out)
+            why
+        Case Else
+            ""
+
+Def Says(st As RckState, line As String) As List Of String
+    Select Case RckEval(st, line)
+        Case RckNext(st2, out)
+            out
+        Case RckStop(st2, why, out)
+            out
+        Case Else
+            { }
+
+Rem The whole stack, top first, as one line: "3 | 2 | 1".
+Def Text(st As RckState) As String
+    Join(Map(CutCells(RckStack(st)), Fn(c) => CutShow(c, RckFmt(st))), " | ")
+
+Def Deep(st As RckState) As Number
+    CutDepth(RckStack(st))
+
+Rem A listing as one string. Never = between two lists: a List is a
+Rem quotation and compares by identity, exactly as CutEqual and CsvEqual
+Rem document, so two lists of the same lines are unequal under =.
+Def Lines(xs As List Of String) As String
+    Join(xs, " / ")
+
+Def TopNum(st As RckState) As Number
+    If Deep(st) < 1 Then
+        0 - 999999
+    Else
+        NumOf(First(CutCells(RckStack(st))))
+
+Def NumOf(c As Cell) As Number
+    Select Case c
+        Case CutNum(x)
+            x
+        Case Else
+            0 - 999999
+
+Rem Trig and anything transcendental is compared inside this; only
+Rem results that are exact by construction — whole numbers, money at the
+Rem cent, WRAP on integers, lengths and depths — are compared with =.
+Def Tol() As Number
+    0.000000001
+
+Def Near(a As Number, b As Number) As Boolean
+    Abs(a - b) <= Tol()
+
+Rem Whether any line of a listing holds a piece of text.
+Def Holds(lines As List Of String, sub As String) As Boolean
+    Any(lines, Fn(l) => Instr(l, sub) > 0)
+
+Def Q(s As String) As String
+    Chr(34) & s & Chr(34)
+
+Rem ---- the mini-seed ----------------------------------------------------
+Rem What a seed file does, in miniature and in a test: name a group, then
+Rem register words whose bodies are ordinary Shoddy over ordinary
+Rem machines. The engine learns nothing about seq, money or matrix from
+Rem this — it only holds the quotations it is handed.
+
+Def Seeded(st As RckState) As RckState
+    RegPair(RegIdent(RegMoney(RegLength(RegRange(RckSeeding(st, "seed-test"))))))
+
+Def RegRange(st As RckState) As RckState
+    RckReg(st, "RANGE", 2, RckPure(Fn(vs) => RangeWord(vs)), "( a b -- list )", "The whole numbers from a up to b, empty when b is below a.")
+
+Def RangeWord(vs As List Of Cell) As RckWork
+    Select Case Nth(vs, 1)
+        Case CutNum(a)
+            RangeTo(a, Nth(vs, 2))
+        Case Else
+            RckWorkBad("RANGE needs two NUMBERs, got " & CutKindOf(Nth(vs, 1)))
+
+Def RangeTo(a As Number, c As Cell) As RckWork
+    Select Case c
+        Case CutNum(b)
+            RckVals({ CutList(Map(Range(a, b), CutNum)) })
+        Case Else
+            RckWorkBad("RANGE needs two NUMBERs, got " & CutKindOf(c))
+
+Def RegLength(st As RckState) As RckState
+    RckReg(st, "LENGTH", 1, RckPure(Fn(vs) => LengthWord(vs)), "( list -- n )", "How many elements a list holds.")
+
+Def LengthWord(vs As List Of Cell) As RckWork
+    Select Case First(vs)
+        Case CutList(xs)
+            RckVals({ CutNum(Length(xs)) })
+        Case Else
+            RckWorkBad("LENGTH needs a LIST, got " & CutKindOf(First(vs)))
+
+Def RegMoney(st As RckState) As RckState
+    RckReg(st, "MONEY", 1, RckPure(Fn(vs) => MoneyWord(vs)), "( x -- money )", "Currency, exact at the cent.")
+
+Def MoneyWord(vs As List Of Cell) As RckWork
+    Select Case First(vs)
+        Case CutNum(x)
+            RckVals({ CutMoney(Dollars(x)) })
+        Case Else
+            RckWorkBad("MONEY needs a NUMBER, got " & CutKindOf(First(vs)))
+
+Def RegIdent(st As RckState) As RckState
+    RckReg(st, "IDENT", 1, RckPure(Fn(vs) => IdentWord(vs)), "( n -- matrix )", "The n by n identity matrix.")
+
+Def IdentWord(vs As List Of Cell) As RckWork
+    Select Case First(vs)
+        Case CutNum(n)
+            IdentOf(n)
+        Case Else
+            RckWorkBad("IDENT needs a NUMBER, got " & CutKindOf(First(vs)))
+
+Rem Ident aborts below 1, so the size is pre-flighted rather than hoped
+Rem for — the same discipline every real seed word owes.
+Def IdentOf(n As Number) As RckWork
+    If n < 1 Or n <> Floor(n) Then
+        RckWorkBad("IDENT needs a whole number of 1 or more, got " & Str(n))
+    Else
+        RckVals({ CutMat(Ident(n)) })
+
+Def RegPair(st As RckState) As RckState
+    RckReg(st, "PAIR", 2, RckPure(Fn(vs) => RckVals({ CutPair(Pair(Nth(vs, 1), Nth(vs, 2))) })), "( a b -- pair )", "Two cells as one.")
+
+Rem A word that DECLARES it touches the world without touching it: the
+Rem flag is what is under test, and an engine test that actually wrote a
+Rem file would be testing the file system. The real effectful words are
+Rem the file and csv seeds, and they are their own phase.
+Def RegTouchy(st As RckState) As RckState
+    RckReg(RckSeeding(st, "seed-touchy"), "TOUCHY", 1, RckTouch(Fn(vs) => RckVals({ First(vs) })), "( x -- x )", "Stands in for a word that writes something.")
+
+Def Main()
+    Let s0 = Seeded(RckNew())
+
+    Print("--- a line evaluates, in the order it was typed ---")
+    Assert(Text(Ran(s0, "3 4 + 5 *")) = "35", "3 4 + 5 * IS 35")
+    Assert(Text(Ran(s0, "2 DUP *")) = "4", "2 DUP * IS 4")
+    Assert(Deep(Ran(s0, "1 2 3")) = 3, "THREE NUMBERS MAKE A DEPTH OF THREE")
+    Assert(Text(Ran(s0, "1 2 3")) = "3 | 2 | 1", "AND THE LAST ONE TYPED IS ON TOP")
+    Rem The tokenizer's whole job past whitespace: a string may hold
+    Rem spaces, and is one cell however many words are inside it.
+    Assert(Text(Ran(s0, Q("a b c"))) = Q("a b c"), "A QUOTED STRING IS ONE TOKEN, SPACES AND ALL")
+    Assert(Deep(Ran(s0, Q("a b c"))) = 1, "AND ONE CELL")
+    Assert(Text(Ran(s0, Q(""))) = Q(""), "AND AN EMPTY ONE IS STILL A STRING")
+    Assert(Text(Ran(s0, "-340")) = "-340", "A NEGATIVE NUMBER IS A NUMBER")
+    Assert(Text(Ran(s0, "TRUE FALSE")) = "False | True", "AND THE TWO TRUTH VALUES ARE WORDS")
+    Assert(Near(TopNum(Ran(s0, "PI")), 3.14159265358979), "PI IS WHERE IT SHOULD BE")
+    Assert(Near(TopNum(Ran(s0, "E")), 2.71828182845905), "AND SO IS E")
+
+    Print("--- LastX is what the last word to take one consumed ---")
+    Assert(Text(Ran(s0, "3 4 + LASTX")) = "4 | 7", "LASTX AFTER 3 4 + IS 4")
+    Assert(Text(Ran(s0, "2 10 * LASTX")) = "10 | 20", "AND AFTER 2 10 * IS 10")
+
+    Print("--- the stack words, through the dictionary ---")
+    Assert(Text(Ran(s0, "1 2 3 DUP")) = "3 | 3 | 2 | 1", "DUP")
+    Assert(Text(Ran(s0, "1 2 3 DROP")) = "2 | 1", "DROP")
+    Assert(Text(Ran(s0, "1 2 3 SWAP")) = "2 | 3 | 1", "SWAP")
+    Assert(Text(Ran(s0, "1 2 3 OVER")) = "2 | 3 | 2 | 1", "OVER")
+    Assert(Text(Ran(s0, "1 2 3 NIP")) = "3 | 1", "NIP")
+    Assert(Text(Ran(s0, "1 2 3 TUCK")) = "3 | 2 | 3 | 1", "TUCK")
+    Assert(Text(Ran(s0, "1 2 3 ROT")) = "1 | 3 | 2", "ROT")
+    Assert(Text(Ran(s0, "1 2 3 4 3 ROLL")) = "2 | 4 | 3 | 1", "ROLL COUNTS FROM THE TOP, 1-BASED")
+    Assert(Text(Ran(s0, "1 2 3 4 2 PICK")) = "3 | 4 | 3 | 2 | 1", "AND SO DOES PICK")
+    Assert(Text(Ran(s0, "1 2 3 DEPTH")) = "3 | 3 | 2 | 1", "DEPTH COUNTS THE CELLS")
+    Assert(Deep(Ran(s0, "1 2 3 CLEAR")) = 0, "CLEAR EMPTIES IT")
+
+    Print("--- an aggregate is ONE cell ---")
+    Assert(Deep(Ran(s0, "{ 1 2 3 }")) = 1, "A THREE-ELEMENT LIST IS DEPTH 1, NOT 3")
+    Assert(Text(Ran(s0, "{ 1 2 3 }")) = "{ 1 2 3 }", "AND READS BACK AS A LIST")
+    Rem One rule inside the braces and no second grammar: the tokens are
+    Rem evaluated on a fresh sub-stack and whatever remains is the list.
+    Assert(Text(Ran(s0, "{ 1 2 + }")) = "{ 3 }", "{ 1 2 + } IS A LIST OF ONE THREE")
+    Assert(Text(Ran(s0, "{ 1 { 2 3 } }")) = "{ 1 { 2 3 } }", "AND NESTING FALLS OUT OF THE SAME RULE")
+    Assert(Text(Ran(s0, "{ }")) = "{ }", "THE EMPTY LIST IS A LIST")
+    Assert(Deep(Ran(s0, "{ 1 2 3 } { 4 5 }")) = 2, "TWO LISTS ARE TWO CELLS")
+    Assert(Text(Ran(s0, "1 2 3 3 GATHER")) = "{ 1 2 3 }", "GATHER COLLECTS THE CELLS UNDER THE COUNT")
+    Assert(Deep(Ran(s0, "1 2 3 3 GATHER")) = 1, "INTO ONE CELL")
+    Assert(Text(Ran(s0, "1 2 3 3 GATHER UNPACK")) = "3 | 3 | 2 | 1", "UNPACK SPREADS IT AND PUSHES THE COUNT")
+    Assert(Deep(Ran(s0, "1 2 3 3 GATHER UNPACK")) = 4, "WHICH IS FOUR CELLS")
+    Assert(Text(Ran(s0, "1 2 3 3 GATHER UNPACK GATHER")) = "{ 1 2 3 }", "AND UNPACK GATHER ROUND-TRIPS")
+    Assert(Text(Ran(s0, "0 GATHER")) = "{ }", "GATHERING NOTHING MAKES THE EMPTY LIST")
+
+    Print("--- a program is a cell too, and prints as it was typed ---")
+    Assert(Text(Ran(s0, "[ DUP * ]")) = "[ DUP * ]", "A QUOTED PROGRAM IS NOT EVALUATED")
+    Assert(Deep(Ran(s0, "[ DUP * ]")) = 1, "AND IS ONE CELL")
+    Assert(Text(Ran(s0, "[ ]")) = "[ ]", "AN EMPTY PROGRAM IS STILL A PROGRAM")
+    Assert(Text(Ran(s0, "[ [ DUP ] MAP ]")) = "[ [ DUP ] MAP ]", "AND PROGRAMS NEST")
+
+    Print("--- defining a word ---")
+    Let d1 = Ran(s0, ": SQ DUP * ;")
+    Assert(Holds(Says(s0, ": SQ DUP * ;"), "ok: SQ defined"), "A DEFINITION SAYS SO")
+    Assert(Text(Ran(d1, "5 SQ")) = "25", "AND THE WORD WORKS")
+    Assert(Text(Ran(d1, "VIEW SQ")) = "", "VIEW LEAVES THE STACK ALONE")
+    Assert(Holds(Says(d1, "VIEW SQ"), ": SQ DUP * ;"), "AND PRINTS THE PROGRAM BACK")
+    Assert(Bad(s0, ": BAD FROB ;"), ": BAD FROB ; IS REFUSED")
+    Assert(Why(s0, ": BAD FROB ;") = "unknown word FROB", "AT DEFINITION, NAMING FROB")
+    Assert(Not RckKnows(Ran(s0, ": BAD FROB ;"), "BAD"), "AND BAD IS NOT DEFINED AFTERWARDS")
+    Rem A definition may name only words that already exist, so the call
+    Rem graph is acyclic and : LOOP LOOP ; cannot take the mill down.
+    Assert(Bad(d1, ": SQ SQ ;"), "A WORD CANNOT BE DEFINED IN TERMS OF ITSELF")
+    Assert(Why(d1, ": LOOP LOOP ;") = "a word cannot be defined in terms of itself: LOOP", "AND SAYS SO IN THOSE WORDS")
+    Assert(Text(Ran(Ran(d1, ": LOOP LOOP ;"), "5 SQ")) = "25", "AND THE SESSION IS STILL THERE")
+
+    Print("--- the combinators run programs through this same evaluator ---")
+    Assert(Text(Ran(s0, "2 [ DUP * ] 3 TIMES")) = "256", "[ DUP * ] 3 TIMES FROM 2 IS 256")
+    Assert(Text(Ran(s0, "5 [ 1 + ] 0 TIMES")) = "5", "AND NO TIMES AT ALL LEAVES IT ALONE")
+    Assert(Text(Ran(s0, "{ 1 2 3 } [ 2 * ] MAP")) = "{ 2 4 6 }", "MAP")
+    Assert(Text(Ran(s0, "{ 1 2 3 4 } [ 2 MOD 0 = ] FILTER")) = "{ 2 4 }", "FILTER")
+    Assert(Text(Ran(s0, "{ 1 2 3 4 } 0 [ + ] FOLD")) = "10", "FOLD")
+    Assert(Text(Ran(s0, "{ } 7 [ + ] FOLD")) = "7", "AND FOLDING NOTHING IS THE STARTING VALUE")
+    Assert(Text(Ran(s0, "3 TRUE [ 2 * ] IFT")) = "6", "IFT RUNS ITS PROGRAM WHEN THE FLAG IS TRUE")
+    Assert(Text(Ran(s0, "3 FALSE [ 2 * ] IFT")) = "3", "AND LEAVES THE VALUE WHEN IT IS NOT")
+    Assert(Text(Ran(s0, "3 TRUE [ 2 * ] [ 10 * ] IFTE")) = "6", "IFTE TAKES THE FIRST PROGRAM")
+    Assert(Text(Ran(s0, "3 FALSE [ 2 * ] [ 10 * ] IFTE")) = "30", "OR THE SECOND")
+    Rem A program is a value, so it can be banked and fetched like one.
+    Assert(Text(Ran(s0, "[ 2 * ] " & Q("P") & " STO { 1 2 } " & Q("P") & " RCL MAP")) = "{ 2 4 }", "A PROGRAM CAN COME OUT OF A REGISTER")
+
+    Print("--- a sub-evaluation gets a fresh stack and threads the state ---")
+    Rem The closure substitute: STO before, RCL inside. Without the
+    Rem threading there would be no way for a program to reach a value
+    Rem that is not its element, and the primes session could not exist.
+    Assert(Text(Ran(s0, "10 " & Q("K") & " STO { 1 2 3 } [ " & Q("K") & " RCL * ] MAP")) = "{ 10 20 30 }", "A REGISTER BANKED OUTSIDE IS READ INSIDE")
+    Assert(Text(Ran(s0, "{ 1 2 } [ " & Q("R") & " STO 9 ] MAP " & Q("R") & " RCL")) = "2 | { 9 9 }", "AND A REGISTER SET INSIDE SURVIVES THE PROGRAM")
+    Rem A mode word is an ordinary word, so a program can set one — and
+    Rem the mode is still set when the program ends.
+    Let m1 = Ran(s0, "{ 1 } [ 2 FIX ] MAP DROP 1 3 /")
+    Assert(FmtMode(RckFmt(m1)) = CutModeFix(), "A MODE SET INSIDE A PROGRAM IS STILL SET AFTER IT")
+    Assert(Text(m1) = "0.33", "AND THE DISPLAY SHOWS IT")
+    Rem The stack, on the other hand, does not leak either way.
+    Assert(Text(Ran(s0, "9 { 1 2 } [ 2 * ] MAP")) = "{ 2 4 } | 9", "WHAT WAS UNDER THE LIST IS UNTOUCHED")
+
+    Print("--- a user word takes one cell and hands back what it leaves ---")
+    Let u1 = Runs(s0, { ": DOUBLE 2 * ;", ": TWICE DOUBLE DOUBLE ;" })
+    Assert(Text(Ran(u1, "5 TWICE")) = "20", "A USER WORD MAY CALL AN EARLIER ONE")
+    Assert(Text(Ran(u1, "1 2 3 DOUBLE")) = "6 | 2 | 1", "AND SEES ONLY ITS OWN ELEMENT")
+    Let u2 = Ran(u1, ": SPLIT2 DUP 2 / SWAP 3 / ;")
+    Assert(Text(Ran(u2, "6 SPLIT2")) = "2 | 3", "A WORD THAT LEAVES TWO CELLS PUSHES BOTH BACK")
+    Assert(Text(Ran(u2, "9 " & Q("W") & " STO 6 SPLIT2")) = "2 | 3", "AND THE REGISTER IS HOW A SECOND ARGUMENT ARRIVES")
+
+    Print("--- + - * dispatch on the kinds, through the dictionary ---")
+    Assert(Text(Ran(s0, "12.55 MONEY 0.45 MONEY +")) = "$13.00", "MONEY PLUS MONEY IS EXACT AT THE CENT")
+    Assert(Text(Ran(s0, "13 MONEY 0.45 MONEY -")) = "$12.55", "AND SO IS MONEY MINUS MONEY")
+    Assert(Text(Ran(s0, Q("SHOD") & " " & Q("DY") & " +")) = Q("SHODDY"), "STRING PLUS STRING CONCATENATES")
+    Assert(Text(Ran(s0, "2 IDENT 2 IDENT +")) = "2x2 { { 2 0 } { 0 2 } }", "MATRIX PLUS MATRIX ADDS")
+    Assert(Text(Ran(s0, "2 2 IDENT *")) = "2x2 { { 2 0 } { 0 2 } }", "A NUMBER TIMES A MATRIX SCALES IT")
+    Assert(Text(Ran(s0, "2 IDENT 2 IDENT *")) = "2x2 { { 1 0 } { 0 1 } }", "AND MATRIX TIMES MATRIX MULTIPLIES")
+    Assert(Bad(s0, "1 1 MONEY +"), "A NUMBER AND MONEY DO NOT ADD")
+    Assert(Why(s0, "1 1 MONEY +") = "+ is not defined for NUMBER and MONEY", "AND THE REFUSAL NAMES BOTH KINDS")
+    Assert(Bad(s0, "2 IDENT 3 IDENT +"), "AND NEITHER DO TWO MATRICES OF DIFFERENT SHAPES")
+
+    Print("--- comparison, and where there is no ordering ---")
+    Assert(Text(Ran(s0, "1 2 <")) = "True", "1 IS LESS THAN 2")
+    Assert(Text(Ran(s0, "1 2 >")) = "False", "AND NOT GREATER")
+    Assert(Text(Ran(s0, "2 2 <=")) = "True", "TWO IS NO MORE THAN TWO")
+    Assert(Text(Ran(s0, "2 2 >=")) = "True", "AND NO LESS")
+    Assert(Text(Ran(s0, "{ 1 2 } { 1 2 } =")) = "True", "EQUALITY IS STRUCTURAL, ALL THE WAY DOWN")
+    Assert(Text(Ran(s0, "1 " & Q("1") & " =")) = "False", "A NUMBER IS NOT ITS SPELLING")
+    Assert(Text(Ran(s0, "1 2 <>")) = "True", "AND <> IS THE OTHER ONE")
+    Assert(Text(Ran(s0, "TRUE FALSE AND TRUE FALSE OR NOT")) = "False | False", "AND THE LOGIC WORDS AGREE WITH THEMSELVES")
+
+    Print("--- modes are state, and ordinary words set them ---")
+    Assert(Near(TopNum(Ran(s0, "DEG 90 SIN")), 1), "DEG THEN 90 SIN IS 1")
+    Assert(Near(TopNum(Ran(s0, "RAD PI 2 / SIN")), 1), "RAD THEN PI 2 / SIN IS 1")
+    Assert(Near(TopNum(Ran(s0, "DEG 1 ASIN")), 90), "AND THE INVERSE COMES BACK IN DEGREES TOO")
+    Assert(Near(TopNum(Ran(s0, "DEG 1 1 ATAN2")), 45), "INCLUDING ATAN2")
+    Assert(RckAngle(Ran(s0, "DEG")) = "DEG", "THE MODE IS STATE")
+    Assert(RckAngle(RckNew()) = "RAD", "AND A NEW ENGINE IS IN RADIANS")
+    Assert(Text(Ran(s0, "2 FIX 1 3 /")) = "0.33", "FIX SHOWS THE PLACES ASKED FOR")
+    Assert(Text(Ran(s0, "4 SCI 12345")) = "1.2345E+04", "SCI PUTS ONE DIGIT IN FRONT")
+    Assert(Text(Ran(s0, "3 ENG 12345")) = "12.345E+03", "ENG KEEPS THE EXPONENT A MULTIPLE OF THREE")
+    Assert(Text(Ran(s0, "2 FIX STD 1 3 /")) = "0.3333333333", "AND STD PUTS IT BACK")
+
+    Print("--- the display labels the top four levels x y z t ---")
+    Assert(Lines(RckShow(Ran(s0, "1"))) = "x: 1", "AT DEPTH ONE, x ALONE")
+    Assert(Lines(RckShow(Ran(s0, "1 2"))) = "y: 1 / x: 2", "AT DEPTH TWO, y THEN x — NEWEST LAST")
+    Assert(Lines(RckShow(Ran(s0, "1 2 3 4"))) = "t: 1 / z: 2 / y: 3 / x: 4", "AND ALL FOUR NAMES AT DEPTH FOUR")
+    Rem Past four levels the render stops naming them and counts them
+    Rem instead: the marker goes at the DEEP end, above the four rows it is
+    Rem counting for, and the four that print are still the top four.
+    Assert(Lines(RckShow(Ran(s0, "1 2 3 4 5"))) = "[ depth 5 ] / t: 2 / z: 3 / y: 4 / x: 5", "PAST FOUR, THE DEPTH IS COUNTED AND THE TOP FOUR SHOWN")
+    Assert(Lines(RckShow(s0)) = "[ empty ]", "AN EMPTY STACK SAYS SO RATHER THAN PRINTING NOTHING")
+
+    Print("--- the two renders cannot disagree ---")
+    Rem One of every kind on the stack at once. RckRows is the render and
+    Rem is NOT capped: it hands back every row, which is what a graphical
+    Rem shell paints. RckShow is the scrolling shell's four, and where they
+    Rem overlap — a stack that fits — they are the same text row for row.
+    Let all8 = Ran(s0, "1 " & Q("a") & " TRUE { 1 2 } [ DUP ] " & Q("k") & " 2 PAIR 1.5 MONEY 2 IDENT")
+    Assert(Deep(all8) = 8, "EIGHT CELLS, ONE OF EVERY KIND")
+    Assert(Length(RckRows(all8)) = 8, "ROWS ANSWERS FOR EVERY CELL, HOWEVER DEEP")
+    Assert(Length(RckShow(all8)) = 5, "SHOW ANSWERS WITH FOUR AND THE DEPTH ABOVE THEM")
+    Let fits = Ran(s0, "1 " & Q("a") & " TRUE { 1 2 }")
+    Assert(Lines(Map(RckRows(fits), Fn(r) => RowLabel(r) & ": " & RowText(r))) = Lines(RckShow(fits)), "ROWS AND SHOW ARE THE SAME LINES, ROW FOR ROW")
+    Assert(Lines(Map(RckRows(all8), RowKind)) = "NUMBER / STRING / BOOLEAN / LIST / PROGRAM / PAIR / MONEY / MATRIX", "AND EVERY ROW IS TAGGED WITH ITS KIND")
+
+    Print("--- the line is the transaction ---")
+    Rem A line that fails at its third token leaves nothing behind from
+    Rem its first two: the state that stands is the one the line began
+    Rem with, which is what a shell's loop depends on.
+    Let t1 = Ran(s0, "1 2")
+    Assert(Bad(t1, "3 4 FROB"), "A LINE WITH AN UNKNOWN WORD IN IT IS REFUSED")
+    Assert(Text(Ran(t1, "3 4 FROB")) = "2 | 1", "AND NOTHING FROM THE TOKENS BEFORE IT SURVIVES")
+    Assert(Text(Ran(Ran(t1, "3 4 FROB"), "3 +")) = "5 | 1", "AND THE NEXT LINE STILL EVALUATES")
+    Rem The same at one level down: an error inside a user word's body,
+    Rem and inside a combinator's program, comes out to the line boundary
+    Rem carrying the state as it was.
+    Let t2 = Runs(s0, { ": BOOM 0 / ;", "7 8" })
+    Assert(Bad(t2, "1 BOOM"), "AN ERROR INSIDE A USER WORD REFUSES THE LINE")
+    Assert(Text(Ran(t2, "1 BOOM")) = "8 | 7", "WITH THE STACK AS IT WAS")
+    Assert(Bad(t2, "{ 1 2 } [ 0 / ] MAP"), "AND SO DOES ONE INSIDE A COMBINATOR'S PROGRAM")
+    Assert(Text(Ran(t2, "{ 1 2 } [ 0 / ] MAP")) = "8 | 7", "WITH THE STACK AS IT WAS")
+    Assert(Text(Ran(Ran(t2, "1 BOOM"), "+")) = "15", "AND THE SESSION CARRIES ON")
+
+    Print("--- undo goes back one transaction, and the tape is bounded ---")
+    Let h1 = Runs(s0, { "1", "2", "3" })
+    Assert(Text(h1) = "3 | 2 | 1", "THREE LINES, THREE CELLS")
+    Assert(Text(Ran(h1, "UNDO")) = "2 | 1", "UNDO GOES BACK ONE LINE")
+    Assert(Text(Ran(Ran(h1, "UNDO"), "UNDO")) = "1", "AND AGAIN")
+    Assert(Text(Runs(h1, { "UNDO", "UNDO", "UNDO" })) = "", "AND AGAIN, TO THE EMPTY STACK IT STARTED FROM")
+    Assert(Length(RckHist(h1)) = 3, "THE TAPE HOLDS ONE STATE PER LINE")
+    Let h2 = Pushed(s0, 60)
+    Assert(Deep(h2) = 60, "SIXTY LINES, SIXTY CELLS")
+    Assert(Length(RckHist(h2)) = 50, "AND THE TAPE STOPS AT FIFTY, OLDEST DROPPED")
+    Rem UNDO restores a stack and not the world: a word defined on the
+    Rem line before is still defined afterwards.
+    Let h3 = Runs(s0, { ": KEPT 1 + ;", "1" })
+    Assert(RckKnows(Ran(h3, "UNDO"), "KEPT"), "UNDO RESTORES A STACK, NOT THE DICTIONARY")
+
+    Print("--- a named resource is not a stack value, so UNDO cannot strand it ---")
+    Rem THIS IS THE ASSERTION THE RESOURCE TABLE EXISTS FOR. R3.5(b)
+    Rem keeps handles off the stack, and its stated ground is that UNDO
+    Rem restores the stack while the NUMBER naming an open file goes with
+    Rem it — leaving the file open and unreachable. That is a true account
+    Rem of a handle on the stack and not of one held by name: the line
+    Rem above already proves UNDO leaves the dictionary alone, and
+    Rem RckUndone touches exactly RckStack, RckHist and RckFore. So the
+    Rem test is the direct one — wind the stack all the way back and ask
+    Rem whether the resource is still there.
+    Let rpath = "tst/csv/_reckonertest_res.tmp"
+    WriteFile(rpath, "")
+    Let fh = BOpen(rpath)
+    Let r1 = RckBind(s0, "db", "recio", fh, CutStr("schema goes here"), Fn() => ShutHandle(fh))
+    Assert(RckBoundTo(r1, "db"), "A RESOURCE BINDS UNDER THE NAME IT WAS GIVEN")
+    Assert(Text(Ran(r1, "BOUND")) = "{ ( " & Q("db") & " " & Q("recio") & " ) }", "AND BOUND SHOWS IT AS A NAME/KIND PAIR")
+    Let r2 = Runs(r1, { "1", "2", "3" })
+    Assert(Text(r2) = "3 | 2 | 1", "WORK PILES UP ON THE STACK AS USUAL")
+    Let r3 = Runs(r2, { "UNDO", "UNDO", "UNDO" })
+    Assert(Text(r3) = "", "AND UNDO WINDS IT ALL THE WAY BACK TO EMPTY")
+    Assert(RckBoundTo(r3, "db"), "AND THE RESOURCE IS STILL BOUND, WHICH IS THE WHOLE POINT")
+    Assert(Text(Ran(r3, "BOUND")) = "{ ( " & Q("db") & " " & Q("recio") & " ) }", "AND STILL REACHABLE BY NAME AFTERWARDS")
+    Rem A handle never appears in any of this. BOUND answers names and
+    Rem kinds, so there is no number a session could take away and use.
+    Assert(Instr(Text(Ran(r3, "BOUND")), Str(fh)) = 0, "AND NO HANDLE NUMBER REACHED THE STACK AT ANY POINT")
+    Assert(Refuses(r3, Q("nope") & " CLOSE", "there is nothing open called nope"), "CLOSING WHAT IS NOT OPEN IS A REFUSAL, NOT AN ABORT")
+    Let r4 = Ran(r3, Q("db") & " CLOSE")
+    Assert(Not RckBoundTo(r4, "db"), "CLOSE LETS THE NAME GO")
+    Assert(Text(Ran(r4, "BOUND")) = "{ }", "AND BOUND IS EMPTY AGAIN")
+    Assert(Text(Ran(r4, "6 7 *")) = "42", "AND THE SESSION GOES ON EVALUATING")
+    Rem CLOSEALL over a table that is already empty is 0 rather than a
+    Rem refusal: "shut everything" is satisfied by there being nothing.
+    Assert(Text(Ran(r4, "CLOSEALL")) = "0", "CLOSEALL OVER NOTHING ANSWERS ZERO")
+    Let fh2 = BOpen(rpath)
+    Let r5 = RckBind(RckBind(s0, "a", "recio", fh2, CutNum(0), Fn() => ShutHandle(fh2)), "b", "plotter", 0, CutNum(0), Fn() => True)
+    Assert(Length(RckBoundNames(r5)) = 2, "TWO RESOURCES BIND SIDE BY SIDE")
+    Rem CLOSEALL really shuts things, so it is run ONCE and both
+    Rem assertions read that one answer. Re-running it the way the pure
+    Rem assertions above are re-run would close the same handle twice,
+    Rem which aborts — a fault in the test rather than in the word, and
+    Rem the one place in this file where evaluating a line again is not
+    Rem free.
+    Let r6 = Ran(r5, "CLOSEALL")
+    Assert(Text(r6) = "2", "AND CLOSEALL ANSWERS HOW MANY THERE WERE")
+    Assert(IsEmpty(RckBoundNames(r6)), "AND SHUTS THE LOT")
+    If FileExists(rpath) Then
+        DeleteFile(rpath)
+
+    Print("--- the user dictionary is text, and the shell owns the path ---")
+    Let p1 = Runs(s0, { ": SQ DUP * ;", ": CUBE DUP DUP * * ;" })
+    Assert(Lines(RckSave(p1)) = ": SQ DUP * ; / : CUBE DUP DUP * * ;", "SAVE WRITES ONE DEFINITION PER LINE")
+    Assert(Length(RckSave(s0)) = 0, "AND NOTHING WHEN NOTHING IS DEFINED")
+    Assert(Lines(RckSave(Loaded(s0, RckSave(p1)))) = Lines(RckSave(p1)), "AND LOAD READS BACK WHAT SAVE WROTE")
+    Assert(Text(Ran(Loaded(s0, RckSave(p1)), "3 CUBE")) = "27", "AND THE WORD WORKS AFTERWARDS")
+    Rem A program that sets a mode word survives the round trip whole,
+    Rem because a definition is saved as the tokens that were typed.
+    Let p2 = Ran(s0, ": SHOWCENTS 2 FIX ;")
+    Assert(Lines(RckSave(p2)) = ": SHOWCENTS 2 FIX ;", "A MODE WORD SAVES LIKE ANY OTHER TOKEN")
+    Assert(FmtMode(RckFmt(Ran(Loaded(s0, RckSave(p2)), "0 SHOWCENTS 1 3 /"))) = CutModeFix(), "AND STILL WORKS AFTER THE ROUND TRIP")
+    Rem A string with a space in it is one token on the way out and one
+    Rem on the way back, which is the whole reason the quotes are kept.
+    Let p3 = Ran(s0, ": GREET " & Q("a b") & " + ;")
+    Assert(Lines(RckSave(p3)) = ": GREET " & Q("a b") & " + ;", "A STRING TOKEN KEEPS ITS QUOTES AND ITS SPACES")
+    Assert(Text(Ran(Loaded(s0, RckSave(p3)), Q("x ") & " GREET")) = Q("x a b"), "AND MEANS THE SAME AFTER THE ROUND TRIP")
+
+    Print("--- registration, and what HELP and WORDS are built from ---")
+    Assert(RckKnows(s0, "RANGE"), "A SEED WORD IS IN THE DICTIONARY")
+    Assert(RckKnows(s0, "range"), "AND NAMES FOLD TO UPPER AT LOOKUP")
+    Assert(Text(Ran(s0, "2 5 range")) = "{ 2 3 4 5 }", "SO A LOWER-CASE LINE WORKS")
+    Assert(Not RckKnows(RckUnreg(s0, "RANGE"), "RANGE"), "UNREG TAKES A WORD AWAY")
+    Assert(Bad(RckUnreg(s0, "RANGE"), "2 5 RANGE"), "AND THE NEXT CALL DOES NOT KNOW IT")
+    Assert(Why(RckUnreg(s0, "RANGE"), "2 5 RANGE") = "unknown word RANGE", "NAMING IT")
+    Assert(Holds(RckHelp(s0, "LENGTH"), "touches nothing"), "HELP SAYS A PURE WORD TOUCHES NOTHING")
+    Assert(Holds(RckHelp(RegTouchy(s0), "TOUCHY"), "touches the world"), "AND SAYS SO WHEN IT DOES")
+    Assert(Holds(RckHelp(s0, "LENGTH"), "How many elements"), "AND CARRIES THE DESCRIPTION")
+    Assert(Holds(RckHelp(s0, "LENGTH"), "( list -- n )"), "AND THE STACK EFFECT")
+    Assert(Holds(RckHelp(s0, "FROB"), "not a word"), "AND ANSWERS FOR A WORD THAT IS NOT THERE")
+    Assert(Holds(Says(s0, "HELP LENGTH"), "( list -- n )"), "HELP NAME READS THE WORD AFTER IT")
+    Assert(Deep(Ran(s0, "HELP LENGTH")) = 0, "AND LEAVES THE STACK ALONE")
+    Assert(Holds(RckWords(s0), "-- core --"), "WORDS GROUPS BY SEED")
+    Assert(Holds(RckWords(s0), "-- seed-test --"), "INCLUDING THE ONE THIS TEST REGISTERED")
+    Assert(Holds(Says(s0, "WORDS"), "-- core --"), "AND WORDS IS A DICTIONARY WORD TOO")
+    Assert(Holds(RckWordsEffect(RegTouchy(s0)), "-- touches the world --"), "AND THE SAME LISTING GROUPS BY EFFECT")
+
+    Print("--- every registered word carries its metadata ---")
+    Rem Walked, not sampled: a word with no help is undiscoverable at
+    Rem exactly the moment someone is exploring, so the whole dictionary
+    Rem is checked rather than an example from it.
+    Let full = RegTouchy(Runs(s0, { ": SQ DUP * ;" }))
+    Assert(Length(RckDict(full)) > 70, "THE SEEDED DICTIONARY IS THE WHOLE ENGINE CORE AND MORE")
+    Assert(All(RckDict(full), Fn(e) => WordEffect(e) <> ""), "NO WORD HAS AN EMPTY STACK-EFFECT STRING")
+    Assert(All(RckDict(full), Fn(e) => WordDesc(e) <> ""), "NO WORD HAS AN EMPTY DESCRIPTION")
+    Assert(All(RckDict(full), Fn(e) => WordSeed(e) <> ""), "AND EVERY WORD KNOWS WHICH SEED IT CAME FROM")
+    Assert(All(RckDict(full), Fn(e) => Length(RckHelp(full, WordName(e))) = 3), "AND HELP ANSWERS FOR EVERY ONE OF THEM")
+    Rem The engine itself performs no effect: every word it ships with is
+    Rem flagged pure, and the flag a seed sets is the only way one is not.
+    Assert(All(Filter(RckDict(full), Fn(e) => WordSeed(e) = "core"), Fn(e) => Not RckTouches(e)), "NOTHING IN THE ENGINE CORE TOUCHES THE WORLD")
+    Rem A user word's flag is the union of the words it names, which is
+    Rem what makes an audit of a downloaded program worth reading.
+    Let tw = Ran(RegTouchy(s0), ": WRITES TOUCHY ;")
+    Assert(Holds(RckHelp(tw, "WRITES"), "touches the world"), "A USER WORD INHERITS THE FLAG OF WHAT IT CALLS")
+    Assert(Holds(RckHelp(Ran(s0, ": SQ DUP * ;"), "SQ"), "touches nothing"), "AND STAYS PURE WHEN IT CALLS NOTHING THAT DOES")
+    Assert(Holds(RckHelp(Ran(s0, ": SQ DUP * ;"), "SQ"), ": SQ DUP * ;"), "AND A USER WORD'S HELP IS ITS OWN LISTING")
+
+    Print("--- every guard refuses, and the session survives it ---")
+    Rem Nothing below aborts. This run reaching its last line is the
+    Rem proof, and every case asserts a further line as well, because
+    Rem "the mill did not die" is what is actually being claimed.
+    Let g = Ran(s0, "1 2")
+    Assert(Refuses(g, "1 0 /", "/ cannot divide by zero"), "DIVISION BY ZERO")
+    Assert(Refuses(g, "1 0 MOD", "MOD cannot take a remainder by zero"), "REMAINDER BY ZERO")
+    Assert(Refuses(g, "1 0 WRAP", "WRAP cannot wrap by zero"), "WRAP BY ZERO")
+    Assert(Refuses(g, "0 -1 ^", "^ cannot raise that base to that power"), "ZERO TO A NEGATIVE POWER")
+    Assert(Refuses(g, "-8 0.5 ^", "^ cannot raise that base to that power"), "A NEGATIVE BASE UNDER A FRACTIONAL POWER")
+    Assert(Refuses(g, "10 400 ^", "^ cannot raise that base to that power"), "AND A POWER THAT WOULD OVERFLOW")
+    Assert(Refuses(g, "-1 SQRT", "SQRT has no answer below zero"), "THE SQUARE ROOT OF A NEGATIVE")
+    Assert(Refuses(g, "0 LN", "LN has no answer at or below zero"), "THE LOGARITHM OF ZERO")
+    Assert(Refuses(g, "-1 LOG", "LOG has no answer at or below zero"), "AND OF A NEGATIVE")
+    Assert(Refuses(g, "1000 EXP", "EXP would overflow above 709"), "AN EXPONENTIAL THAT WOULD OVERFLOW")
+    Assert(Refuses(g, "2 ASIN", "ASIN has no answer outside -1 to 1"), "ASIN OUTSIDE ITS DOMAIN")
+    Assert(Refuses(g, "2 ACOS", "ACOS has no answer outside -1 to 1"), "AND ACOS")
+    Assert(Refuses(g, Q("a") & " 1 +", "+ is not defined for STRING and NUMBER"), "A KIND WITH NO ARITHMETIC")
+    Assert(Refuses(g, Q("a") & " SQRT", "SQRT needs a NUMBER, got STRING"), "A NUMBER WORD GIVEN A STRING")
+    Assert(Refuses(g, Q("a") & " 1 MIN", "MIN needs two NUMBERs, got STRING"), "AND A TWO-NUMBER WORD GIVEN ONE")
+    Assert(Refuses(g, "1 " & Q("a") & " MIN", "MIN needs two NUMBERs, got STRING"), "IN EITHER POSITION")
+    Assert(Refuses(g, "1 " & Q("a") & " <", "< is not defined for NUMBER and STRING"), "TWO KINDS THAT DO NOT ORDER")
+    Assert(Refuses(g, "{ } { } <", "< is not defined for LIST and LIST"), "AND TWO THAT NEVER DO")
+    Assert(Refuses(g, "1 NOT", "NOT needs a BOOLEAN, got NUMBER"), "A LOGIC WORD GIVEN A NUMBER")
+    Assert(Refuses(g, "1 TRUE AND", "AND needs a BOOLEAN, got NUMBER"), "IN THE FIRST POSITION")
+    Assert(Refuses(g, "TRUE 1 OR", "OR needs a BOOLEAN, got NUMBER"), "OR THE SECOND")
+    Rem Underflow is asked of an empty stack, so the count in the message
+    Rem is the count the guard actually saw.
+    Assert(Refuses(s0, "+", "+ needs 2, the stack holds 0"), "UNDERFLOW, SAYING WHAT IT NEEDED")
+    Assert(Refuses(s0, "DUP", "DUP needs 1, the stack holds 0"), "AND SO DOES A STACK WORD")
+    Assert(Refuses(s0, "1 SWAP", "SWAP needs 2, the stack holds 1"), "AT ANY DEPTH")
+    Assert(Refuses(s0, "1 2 ROT", "ROT needs 3, the stack holds 2"), "INCLUDING ROT")
+    Assert(Refuses(s0, "1 2 3 4 ROLL", "ROLL needs 4, the stack holds 3"), "AND ROLL PAST THE BOTTOM")
+    Assert(Refuses(g, "1 0 ROLL", "ROLL needs a level of 1 or more, got 0"), "A LEVEL BELOW ONE")
+    Assert(Refuses(g, "1 2.5 PICK", "PICK needs a level of 1 or more, got 2.5"), "AND A LEVEL THAT IS NOT WHOLE")
+    Assert(Refuses(g, Q("a") & " ROLL", "ROLL needs a NUMBER, got STRING"), "AND A LEVEL THAT IS NOT A NUMBER")
+    Assert(Refuses(s0, "1 2 5 GATHER", "GATHER needs 5, the stack holds 2"), "GATHERING MORE THAN IS THERE")
+    Assert(Refuses(g, "2.5 GATHER", "GATHER needs a whole number of 0 or more, got 2.5"), "AND A COUNT THAT IS NOT WHOLE")
+    Assert(Refuses(g, "1 UNPACK", "UNPACK needs a LIST, got NUMBER"), "UNPACKING SOMETHING THAT IS NOT A LIST")
+    Assert(Refuses(RckNew(), "LASTX", "LASTX has nothing yet"), "LASTX BEFORE ANY WORD HAS TAKEN AN ARGUMENT")
+    Assert(Refuses(g, "1 2 STO", "STO needs a STRING, got NUMBER"), "STORING UNDER A NAME THAT IS NOT A STRING")
+    Assert(Refuses(g, "1 RCL", "RCL needs a STRING, got NUMBER"), "AND FETCHING BY ONE")
+    Assert(Refuses(g, Q("NOPE") & " RCL", "there is nothing in register NOPE"), "FETCHING AN EMPTY REGISTER")
+    Assert(Refuses(RckNew(), "UNDO", "there is nothing to undo"), "UNDO WITH NOTHING BEHIND IT")
+    Assert(Refuses(g, "2.5 FIX", "FIX needs a whole number of 0 or more, got 2.5"), "A DIGIT COUNT THAT IS NOT WHOLE")
+    Assert(Refuses(g, "12 FIX", "FIX shows at most 11 places, not 12"), "AND ONE PAST WHAT CAN BE SHOWN")
+    Assert(Refuses(g, "12 SCI", "SCI shows at most 11 places, not 12"), "IN SCI TOO")
+    Assert(Refuses(g, "12 ENG", "ENG shows at most 11 places, not 12"), "AND ENG")
+    Assert(Refuses(g, Q("a") & " 1 ATAN2", "ATAN2 needs a NUMBER, got STRING"), "ATAN2 GIVEN A STRING")
+    Assert(Refuses(g, "1 " & Q("a") & " ATAN2", "ATAN2 needs a NUMBER, got STRING"), "IN EITHER POSITION")
+    Assert(Refuses(g, "1 1 [ 2 * ] IFT", "IFT needs a BOOLEAN, got NUMBER"), "A CONDITION THAT IS NOT A FLAG")
+    Assert(Refuses(g, "1 1 [ ] [ ] IFTE", "IFTE needs a BOOLEAN, got NUMBER"), "IN IFTE TOO")
+    Assert(Refuses(g, "1 TRUE 2 IFT", "IFT needs a PROGRAM, got NUMBER"), "A PROGRAM SLOT HOLDING SOMETHING ELSE")
+    Assert(Refuses(g, "1 2 3 TIMES", "TIMES needs a PROGRAM, got NUMBER"), "IN TIMES")
+    Assert(Refuses(g, "{ } 1 MAP", "MAP needs a PROGRAM, got NUMBER"), "IN MAP")
+    Assert(Refuses(g, "{ } 1 FILTER", "FILTER needs a PROGRAM, got NUMBER"), "IN FILTER")
+    Assert(Refuses(g, "{ } 0 1 FOLD", "FOLD needs a PROGRAM, got NUMBER"), "AND IN FOLD")
+    Assert(Refuses(g, "1 [ ] MAP", "MAP needs a LIST, got NUMBER"), "MAPPING OVER SOMETHING THAT IS NOT A LIST")
+    Assert(Refuses(g, "1 [ ] FILTER", "FILTER needs a LIST, got NUMBER"), "AND FILTERING ONE")
+    Assert(Refuses(g, "1 0 [ ] FOLD", "FOLD needs a LIST, got NUMBER"), "AND FOLDING ONE")
+    Assert(Refuses(g, "1 [ ] 2.5 TIMES", "TIMES needs a whole number of 0 or more, got 2.5"), "A COUNT THAT IS NOT WHOLE")
+    Assert(Refuses(g, "{ 1 } [ DUP ] MAP", "MAP needs its program to leave one value, it left 2"), "A PROGRAM THAT LEAVES TWO VALUES")
+    Assert(Refuses(g, "{ 1 } [ DROP ] MAP", "MAP needs its program to leave one value, it left 0"), "AND ONE THAT LEAVES NONE")
+    Assert(Refuses(g, "{ 1 } [ 2 * ] FILTER", "FILTER needs a BOOLEAN, got NUMBER"), "A FILTER THAT DOES NOT ANSWER TRUE OR FALSE")
+    Assert(Refuses(g, "FROB", "unknown word FROB"), "AN UNKNOWN WORD")
+    Assert(Refuses(g, "}", "unexpected }"), "A CLOSING BRACE ON ITS OWN")
+    Assert(Refuses(g, "]", "unexpected ]"), "A CLOSING BRACKET")
+    Assert(Refuses(g, ";", "unexpected ;"), "AND A SEMICOLON")
+    Assert(Refuses(g, "{ 1 2", "unterminated {"), "AN UNTERMINATED LIST")
+    Assert(Refuses(g, "[ 1 2", "unterminated ["), "AN UNTERMINATED PROGRAM")
+    Assert(Refuses(g, Chr(34) & "no end", "unterminated string"), "AND AN UNTERMINATED STRING")
+    Assert(Refuses(g, ":", "a definition needs a name after :"), "A DEFINITION WITH NO NAME")
+    Assert(Refuses(g, ": SQ DUP *", "a definition ends with ;"), "ONE THAT NEVER ENDS")
+    Assert(Refuses(g, ": 1 DUP ;", "a word cannot be called 1"), "ONE NAMED WITH A NUMBER")
+    Assert(Refuses(g, ": { DUP ;", "a word cannot be called {"), "OR WITH A MARK")
+    Assert(Refuses(g, ": A : B ; ;", "a definition cannot hold another definition"), "ONE INSIDE ANOTHER")
+    Assert(Refuses(g, ": A 1 } ;", "unexpected } in the body of A"), "AND ONE WITH A STRAY BRACE IN IT")
+    Assert(Refuses(g, ": A { 1 ;", "unterminated { in the body of A"), "OR AN UNBALANCED ONE")
+    Assert(Refuses(g, ": A [ FROB ] MAP ;", "unknown word FROB"), "AND A BAD WORD INSIDE A PROGRAM IN IT")
+    Assert(Refuses(g, "HELP", "HELP needs the name of a word after it"), "HELP WITH NOTHING AFTER IT")
+    Assert(Refuses(g, "VIEW", "VIEW needs the name of a word after it"), "AND VIEW")
+    Assert(Refuses(g, "5 [ DUP ] 2 TIMES", "TIMES needs its program to leave one value"), "A TIMES PROGRAM THAT LEAVES TWO VALUES")
+    Assert(Refuses(g, "{ 1 } 0 [ DROP DROP ] FOLD", "FOLD needs its program to leave one value"), "AND A FOLD PROGRAM THAT LEAVES NONE")
+    Assert(Refuses(g, "1 TRUE [ DUP ] IFT", "IFT needs its program to leave one value"), "AND AN IFT PROGRAM THAT LEAVES TWO")
+    Rem The guards the mini-seed brought with it. A seed's guards are its
+    Rem own — Ident, like MatAdd, aborts on a bad argument, so the seed
+    Rem pre-flights it rather than calling it and hoping.
+    Assert(Refuses(g, Q("a") & " LENGTH", "LENGTH needs a LIST, got STRING"), "A SEED WORD GIVEN THE WRONG KIND")
+    Assert(Refuses(g, Q("a") & " 1 RANGE", "RANGE needs two NUMBERs, got STRING"), "IN THE FIRST POSITION")
+    Assert(Refuses(g, "1 " & Q("a") & " RANGE", "RANGE needs two NUMBERs, got STRING"), "OR THE SECOND")
+    Assert(Refuses(g, Q("a") & " MONEY", "MONEY needs a NUMBER, got STRING"), "AND ANOTHER")
+    Assert(Refuses(g, Q("a") & " IDENT", "IDENT needs a NUMBER, got STRING"), "AND ANOTHER")
+    Assert(Refuses(g, "0 IDENT", "IDENT needs a whole number of 1 or more, got 0"), "AND A SIZE THE MACHINE UNDERNEATH WOULD HAVE DIED ON")
+    Rem Every refusal above left the stack exactly as the line found it.
+    Assert(Text(g) = "2 | 1", "AND THE STACK IS STILL THE ONE WE STARTED WITH")
+    Rem The two words that answer with a line rather than a refusal: a
+    Rem question about a word that is not there is a fair question.
+    Assert(Holds(Says(g, "VIEW FROB"), "not a word"), "VIEW ON A WORD THAT IS NOT THERE ANSWERS")
+    Assert(Holds(Says(g, "VIEW SQRT"), "no program to view"), "AND SAYS SO OF A BUILT-IN")
+    Assert(Not Bad(g, "HELP FROB"), "AND HELP ON ONE IS NOT A REFUSAL EITHER")
+    Rem RckDef reached directly, where the syntax cannot supply a name.
+    Assert(DefWhy(g, "", { "DUP" }) = "a definition needs a name", "A DEFINITION WITH AN EMPTY NAME IS REFUSED")
+
+    Print("--- loading refuses a bad line without half-loading the file ---")
+    Let l1 = Runs(s0, { ": SQ DUP * ;" })
+    Assert(LoadBad(s0, { ": SQ DUP * ;", ": BAD FROB ;" }), "A MALFORMED SAVED LINE REFUSES THE LOAD")
+    Assert(LoadWhy(s0, { ": SQ DUP * ;", ": BAD FROB ;" }) = "unknown word FROB", "NAMING WHAT WENT WRONG")
+    Assert(Not RckKnows(Loaded(s0, { ": SQ DUP * ;", ": BAD FROB ;" }), "SQ"), "AND THE GOOD LINE BEFORE IT IS NOT KEPT EITHER")
+    Assert(LoadWhy(s0, { ": A " & Chr(34) & "no end ;" }) = "unterminated string, there is no closing " & Chr(34), "A SAVED LINE THAT WILL NOT EVEN READ IS REFUSED TOO")
+    Assert(Text(Ran(Loaded(s0, { ": BAD FROB ;" }), "1 1 +")) = "2", "AND THE ENGINE STILL EVALUATES AFTERWARDS")
+    Assert(RckKnows(Loaded(l1, RckSave(l1)), "SQ"), "AND LOADING WHAT IS ALREADY THERE IS HARMLESS")
+
+    Print("--- WRAP is floored where MOD is truncated ---")
+    Assert(Text(Ran(s0, "296 256 WRAP")) = "40", "296 256 WRAP IS 40")
+    Rem The assertion that matters: MOD answers -84 here and agrees
+    Rem everywhere else, so a test of non-negative inputs alone would
+    Rem pass on the wrong word.
+    Assert(Text(Ran(s0, "-340 256 WRAP")) = "172", "-340 256 WRAP IS 172")
+    Assert(Text(Ran(s0, "-340 256 MOD")) = "-84", "WHERE MOD ANSWERS -84")
+
+    Print("--- the primes, a golden session ---")
+    Let pr = Runs(s0, { ": PRIME?  DUP " & Q("N") & " STO  SQRT FLOOR  2 SWAP RANGE  [ " & Q("N") & " RCL SWAP MOD 0 = ] FILTER  LENGTH 0 = ;",
+                        ": PRIMES  2 SWAP RANGE  [ PRIME? ] FILTER ;" })
+    Assert(RckKnows(pr, "PRIME?"), "A NAME MAY HOLD A QUESTION MARK: THE DICTIONARY IS NOT SHODDY")
+    Assert(Text(Ran(pr, "13 PRIME?")) = "True", "13 IS PRIME")
+    Rem 91 is 7 x 13, and the floor of its root is 9, which puts the 7 in
+    Rem range — the case a test using only small composites would miss.
+    Assert(Text(Ran(pr, "91 PRIME?")) = "False", "91 IS NOT, BEING 7 TIMES 13")
+    Rem 2 and 3 are the degenerate range: RANGE(2, 1) is empty, so the
+    Rem filter has nothing to look at and the answer is the empty one.
+    Assert(Text(Ran(pr, "2 PRIME?")) = "True", "2 IS PRIME, THROUGH AN EMPTY RANGE")
+    Assert(Text(Ran(pr, "3 PRIME?")) = "True", "AND SO IS 3")
+    Assert(Text(Ran(pr, "4 PRIME?")) = "False", "4 IS NOT")
+    Let pr100 = Ran(pr, "100 PRIMES")
+    Assert(Deep(pr100) = 1, "THE PRIMES TO 100 ARE ONE CELL")
+    Assert(Text(pr100) = "{ 2 3 5 7 11 13 17 19 23 29 31 37 41 43 47 53 59 61 67 71 73 79 83 89 97 }", "AND ARE THE TWENTY-FIVE OF THEM, ENDING 97")
+    Assert(Text(Ran(pr100, "LENGTH")) = "25", "TWENTY-FIVE, COUNTED")
+    Rem Depth never exceeds 2 in the whole session, which is the
+    Rem single-cell contract holding under a filter inside a filter.
+    Assert(Deep(Runs(pr, { "13 PRIME?", "91 PRIME?" })) = 2, "AND DEPTH NEVER EXCEEDS TWO IN THE WHOLE SESSION")
+
+    Print("--- the spiral, a golden session ---")
+    Let sp = Runs(s0, { ": RED     9 * 256 WRAP ;",
+                        ": GREEN   5 * 90 + 256 WRAP ;",
+                        ": BLUE    4 * 300 SWAP - 256 WRAP ;",
+                        ": STEP    2 * ;",
+                        ": SPIN    DUP " & Q("I") & " STO  RED  " & Q("I") & " RCL GREEN  " & Q("I") & " RCL BLUE  " & Q("I") & " RCL STEP  4 GATHER ;",
+                        ": SPIRAL  1 SWAP RANGE  [ SPIN ] MAP ;" })
+    Assert(Text(Ran(sp, "3 SPIN")) = "{ 27 105 32 6 }", "THE THIRD TURN")
+    Assert(Deep(Ran(sp, "3 SPIN")) = 1, "AT DEPTH ONE")
+    Rem i = 76 is the first step where 300 - 4i goes negative, and the
+    Rem one that comes out wrong under a truncated remainder.
+    Assert(Text(Ran(sp, "76 SPIN")) = "{ 172 214 252 152 }", "THE 76TH, WHERE THE BLUE CHANNEL TURNS NEGATIVE BEFORE IT WRAPS")
+    Let sp160 = Ran(sp, "160 SPIRAL")
+    Assert(Deep(sp160) = 1, "A HUNDRED AND SIXTY TURNS ARE ONE CELL")
+    Assert(Text(sp160) = "{ { 9 95 40 2 } { 18 100 36 4 } { 27 105 32 6 }  ... 157 more }", "RENDERED ABBREVIATED, COUNTING THE REST")
+    Assert(Text(Ran(sp160, "LENGTH")) = "160", "AND ALL HUNDRED AND SIXTY ARE THERE")
+    Assert(Text(Ran(sp, "160 SPIN")) = "{ 160 122 172 320 }", "AND THE LAST ROW IS WRAPPED, NOT TRUNCATED")
+
+    Print("--- a long list renders bounded ---")
+    Let big = Ran(s0, "1 600 RANGE [ 10 WRAP ] MAP")
+    Assert(Deep(big) = 1, "SIX HUNDRED ELEMENTS ARE ONE CELL")
+    Assert(Text(Ran(big, "LENGTH")) = "600", "ALL SIX HUNDRED OF THEM")
+    Assert(Instr(Text(big), "... 571 more") > 0, "AND THE DISPLAY SHOWS TWENTY-NINE AND COUNTS THE OTHER 571")
+    Assert(Len(Text(big)) <= CutBound(), "INSIDE THE FROZEN BOUND")
+
+    Print("")
+    Print("ALL ASSERTIONS PASSED")
+
+Rem ---- the shapes the assertions above are written in --------------------
+
+Rem The two-part abort-safety assertion, in one word: the line refuses
+Rem for the stated reason with the state as it was, AND a further line
+Rem evaluates afterwards. Only the second half proves the mill lived.
+Def Refuses(st As RckState, line As String, why As String) As Boolean
+    Bad(st, line) And Instr(Why(st, line), why) > 0 And Text(Ran(st, line)) = Text(st) And Text(Ran(Ran(st, line), "1 1 +")) = TextAfter(st)
+
+Def TextAfter(st As RckState) As String
+    Text(Ran(st, "1 1 +"))
+
+Rem A closer of the shape a machine's own OPEN word supplies: the handle
+Rem is closed over INSIDE it, so the core can shut the resource without
+Rem ever being told what a recio file is, and no number is anywhere a
+Rem session could reach. This test program stands in for that machine.
+Def ShutHandle(f As Number) As Boolean
+    BClose(f)
+    True
+
+Def Loaded(st As RckState, lines As List Of String) As RckState
+    Select Case RckLoad(st, lines)
+        Case RckNext(st2, out)
+            st2
+        Case RckStop(st2, why, out)
+            st2
+        Case Else
+            st
+
+Def LoadBad(st As RckState, lines As List Of String) As Boolean
+    Select Case RckLoad(st, lines)
+        Case RckStop(st2, why, out)
+            True
+        Case Else
+            False
+
+Def DefWhy(st As RckState, name As String, toks As List Of String) As String
+    Select Case RckDef(st, name, toks)
+        Case RckStop(st2, why, out)
+            why
+        Case Else
+            ""
+
+Def LoadWhy(st As RckState, lines As List Of String) As String
+    Select Case RckLoad(st, lines)
+        Case RckStop(st2, why, out)
+            why
+        Case Else
+            ""
+
+Rem n lines, one push each, so the history has n entries to cap.
+Def Pushed(st As RckState, n As Number) As RckState
+    Fold(Range(1, n), st, Fn(a, k) => Ran(a, Str(k)))

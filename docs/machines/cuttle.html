@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="The runtime stack — machines/cuttle.shoddy">
+<title>cuttle — The Runtime Stack | Shoddy Machines</title>
+<link rel="stylesheet" href="../style.css">
+<link rel="icon" href="../favicon.svg" type="image/svg+xml">
+<link rel="alternate icon" href="../favicon.ico" sizes="48x48">
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+</head>
+<body>
+<div class="topbar"><div class="inner">
+  <div class="row">
+    <a class="phase" href="index.html"><img class="mark" src="../media/brand/shoddy-icon.svg" alt="" width="23" height="23">Shoddy · The Machines</a>
+    <span class="spacer"></span>
+    <nav class="docnav meta" aria-label="About"><a href="../heritage.html">Heritage</a><a href="../authorship.html">Authorship</a></nav>
+  </div>
+  <nav class="docnav main" aria-label="Documentation"><a href="../tutorials/index.html">Tutorials</a><a href="../guide.html">Guide</a><a href="../quickref.html">Reference</a><span class="here">Machines</span><a href="../mills/index.html">Mills</a><a href="../stack.html">Stack</a><a href="../spec.html">Spec</a><a href="../setup.html">Setup</a><a href="../vscode.html">VS Code</a><a href="../assistants.html">AI</a><a href="../build.html">Toolchain</a><a href="../errors.html">Errors</a></nav>
+</div></div>
+<div class="wrap">
+
+
+<header class="mast has-icon"><div><p class="eyebrow"><a href="index.html#runtime-stack">The Machines &middot; Runtime stack</a></p><h1>cuttle</h1><p class="kicker">The runtime stack — machines/cuttle.shoddy</p></div><img class="micon" src="../media/icons/cuttle.svg" alt="the cuttle machine&#39;s icon"></header>
+<nav class="pagertop" aria-label="Machines, in catalog order"><a href="buzzer.html">&larr; buzzer</a><a href="index.html">All machines</a><a href="reckoner.html">reckoner &rarr;</a></nav>
+
+<h2 id="summary">Summary</h2>
+<p><code>cuttle</code> reifies Shoddy's own stack as a value a program can
+hold. Ordinarily <code>Dup Swap Rot</code> only exist inside a <code>Def</code>,
+compiled away before anything runs; this machine gives a mill a
+<strong>heterogeneous runtime stack</strong> — numbers, strings, booleans,
+lists, quoted programs, pairs, money, matrices, one cell per value — plus the
+pure algebra over it: push, pop, dup, drop, swap, over, nip, tuck, rot,
+roll(n), pick(n), depth, clear. It knows nothing about tokens or a
+dictionary; the interpreter that reads RPN lines against those is
+<a href="reckoner.html">reckoner</a>, built on top of this.</p>
+<p class="tag" style="border-left:3px solid var(--accent); padding-left:.75rem">
+<strong>Nothing here aborts.</strong> Every popping word answers a value —
+an underflow, a bad level, a kind mismatch — never raises one. A stack
+machine that kills the session on <code>SWAP</code> with one cell on it is
+unusable for the interactive purpose it exists for.</p>
+
+<h2 id="why">Why It's Useful</h2>
+<p>A stack that is only a compiler's bookkeeping cannot be handed to a
+caller, saved, undone, or driven one line at a time from a form field. Once
+it is a value — <code>CutPush</code> in, a new <code>Stack</code> out — a
+history is just a list of them, undo is picking an earlier one, and a shell
+can render the top few levels without knowing anything about how they got
+there. <code>cuttle</code> is that value and nothing else: no tokenizer, no
+registers, no notion of a word. Everything that turns typed text into calls
+against this stack lives one layer up, in <a href="reckoner.html">reckoner</a>.</p>
+
+<h2 id="name">Where the Name Comes From</h2>
+<p><strong>Cuttling</strong> is the finishing operation that folds a
+finished piece of cloth back and forth into a layered pile on the cuttling
+table — lap over lap, the last fold laid resting on top. The last fold laid
+is the first one lifted back off, which is a last-in-first-out store
+described without reaching for a metaphor from computing at all. (<a href="../heritage.html">The heritage of the name</a> has the rest of the mill.)</p>
+
+<h2 id="guide">User's Guide</h2>
+<p>Build a stack from the values it should hold, typed in the order they
+would be pushed — the last one ends up on top:</p>
+<pre><code>Include "cuttle.shoddy"
+
+Def Main()
+    Let s0 = CutOf({ CutNum(3), CutStr("hi"), CutBool(True) })
+    Print(CutDepth(s0))                          ' 3, True on top
+
+    Select Case CutPop(s0)
+        Case CutTook(v, s1)
+            Print(CutShow(v, CutFmtStd()))       ' True
+        Case CutTakeBad(why, s1)
+            Print(why)</code></pre>
+<p>Every shuffle word answers a variant rather than the bare stack, and the
+failing case always carries the stack unchanged, so a caller can match on
+success or refusal without a separate check beforehand:</p>
+<pre><code>Select Case CutSwap(CutOf({ CutNum(1) }))    ' only one cell — SWAP needs 2
+    Case CutDone(s1)
+        Print("swapped")
+    Case CutOutBad(why, s1)
+        Print(why)                            ' "SWAP needs 2, the stack holds 1"</code></pre>
+<p>A few things worth remembering:</p>
+<ul>
+<li><strong>The value set names three other machines.</strong>
+<code>CutPair</code>, <code>CutMoney</code> and <code>CutMat</code> hand back
+a bare <code>Pair</code>, <code>Money</code> or <code>Matrix</code> — this
+machine includes <a href="seq.html">seq</a>, <a href="money.html">money</a>
+and <a href="matrix.html">matrix</a> so it can name those types, but a
+caller who wants to <em>destructure</em> one of those cells (read
+<code>Cents(m)</code> off a popped <code>CutMoney</code>, say) needs the
+owning machine included too — the cell only hands back the value, and only
+<code>money.shoddy</code> knows what a <code>Money</code> is made of.</li>
+<li><strong>Levels count from the top, 1-based.</strong> <code>CutRoll(s, 1)</code>
+is a no-op, <code>CutRoll(s, 2)</code> is <code>CutSwap</code>,
+<code>CutRoll(s, 3)</code> is <code>CutRot</code>; <code>CutPick</code> is
+the copying twin of each.</li>
+<li><strong>Equality is structural, and never <code>=</code>.</strong> A
+<code>CutList</code> is a quotation under the hood, and Shoddy's own
+<code>=</code> compares a <code>List</code> by identity — so
+<code>CutEqual</code> walks the cells itself rather than falling back on the
+builtin.</li>
+<li><strong><code>+ - *</code> dispatch on kind.</strong> <code>CutAdd</code>,
+<code>CutSub</code> and <code>CutMul</code> give numbers ordinary
+arithmetic, money exact addition and subtraction, matrices addition and
+multiplication (and a number times a matrix scales it), and strings
+concatenation under <code>+</code>. Anything else is a <code>CutCalcBad</code>
+naming both kinds — this is what one stack-value type buys, and it is the
+arithmetic <a href="reckoner.html">reckoner</a>'s own <code>+ - *</code> words
+run underneath.</li>
+<li><strong>Display is one path.</strong> <code>CutShow</code> renders every
+kind under a mode and digit count the caller holds (this machine keeps no
+state of its own); long lists and quotations abbreviate past a fixed column
+width rather than eating the screen, with the exact count always one word
+away.</li>
+</ul>
+
+<h2 id="words">Word Reference</h2>
+<p class="tag">Building, shuffling, and showing</p>
+
+<h3>Building and inspecting</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>CutNew()</td><td>The empty stack.</td></tr>
+<tr><td>CutOf(values)</td><td>A stack built from a list of cells, typed order — the last value ends up on top.</td></tr>
+<tr><td>CutPush(s, c)</td><td>c pushed onto s.</td></tr>
+<tr><td>CutPop(s)</td><td><code>CutTook(v, rest)</code> or, on an empty stack, <code>CutTakeBad(why, s)</code>.</td></tr>
+<tr><td>CutDepth(s)</td><td>How many cells s holds.</td></tr>
+<tr><td>CutClear(s)</td><td>The empty stack, whatever s held.</td></tr>
+</table>
+
+<h3>The pure algebra — every one answers rather than aborting when too shallow</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>CutDup(s)</td><td>( x -- x x )</td></tr>
+<tr><td>CutDrop(s)</td><td>( x -- )</td></tr>
+<tr><td>CutSwap(s)</td><td>( x y -- y x )</td></tr>
+<tr><td>CutOver(s)</td><td>( x y -- x y x )</td></tr>
+<tr><td>CutNip(s)</td><td>( x y -- y )</td></tr>
+<tr><td>CutTuck(s)</td><td>( x y -- y x y )</td></tr>
+<tr><td>CutRot(s)</td><td>( x y z -- y z x ) — the third cell down comes to the top.</td></tr>
+<tr><td>CutRoll(s, n)</td><td>Move the cell at level n to the top, 1-based from the top; refuses n below 1 or not a whole number.</td></tr>
+<tr><td>CutPick(s, n)</td><td>Copy the cell at level n to the top.</td></tr>
+</table>
+
+<h3>Kinds, format and display</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>CutKindOf(c)</td><td>The kind name of a cell — <code>NUMBER STRING BOOLEAN LIST PROGRAM PAIR MONEY MATRIX</code>, or <code>UNKNOWN</code> for a case an older match has not been taught yet.</td></tr>
+<tr><td>CutFmtStd()</td><td>The default display format: mode <code>STD</code>, 0 digits.</td></tr>
+<tr><td>CutBound()</td><td>76 — the column width past which a list or quotation abbreviates.</td></tr>
+<tr><td>CutShow(c, f)</td><td>c rendered as text under format f — numbers per mode and digits, strings quoted, lists and quotations bracketed and abbreviated past <code>CutBound()</code>, money via <code>MoneyFmt</code>, matrices as dimensions plus rows at small sizes.</td></tr>
+</table>
+
+<h3>Equality and arithmetic across kinds</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>CutEqual(a, b)</td><td>Structural equality, all the way down; two cells of different kinds are unequal rather than an error.</td></tr>
+<tr><td>CutAdd(a, b)</td><td>( a b -- a+b ) — numbers, money, matrices of one shape, or strings joined; else a <code>CutCalcBad</code> naming both kinds.</td></tr>
+<tr><td>CutSub(a, b)</td><td>( a b -- a-b ) — numbers or money.</td></tr>
+<tr><td>CutMul(a, b)</td><td>( a b -- a*b ) — numbers, matrices, or a matrix scaled by a number.</td></tr>
+<tr><td>CutLess(a, b)</td><td>Whether a orders before b — numbers, strings and money order; the underlying word for <code>&lt; &gt; &lt;= &gt;=</code>.</td></tr>
+</table>
+
+<h2 id="seeds">The Reckoner Seeds</h2>
+<p>Thirteen files bridge the rest of the standard library into
+<a href="reckoner.html">reckoner</a>, the engine built on this stack, and
+every one of them includes this machine for its value set. None is
+catalogued in <a href="index.html">the general machines index</a>: a seed
+has no bearing on its own, only together with this stack and that engine —
+see <a href="reckoner.html#seeds">the full seed list on reckoner's own
+page</a> for what each one bridges.</p>
+
+<h2 id="usedby">Who Uses It</h2>
+<table>
+<tr><th></th><th>User</th><th>How</th></tr>
+<tr><td class="uicon"><a href="reckoner.html"><img src="../media/icons/reckoner.svg" alt=""></a></td><td><a href="reckoner.html">reckoner</a></td><td>The whole value set and pure algebra every registered word and combinator runs against.</td></tr>
+</table>
+<p>Every reckoner seed listed above also includes this machine, for the
+value set — not repeated here as thirteen identical rows.</p>
+
+<h2 id="uses">The Machines It Uses</h2>
+<table>
+<tr><th></th><th>Machine</th><th>Why</th></tr>
+<tr><td class="uicon"><a href="seq.html"><img src="../media/icons/seq.svg" alt=""></a></td><td><a href="seq.html">seq</a></td><td><code>Pair</code> is the type <code>CutPair</code> carries, and the list plumbing (<code>First</code>, <code>Rest</code>, <code>Prepend</code>, <code>DropN</code>, <code>Taken</code>) implements the stack and its shuffles.</td></tr>
+<tr><td class="uicon"><a href="str.html"><img src="../media/icons/str.svg" alt=""></a></td><td><a href="str.html">str</a></td><td><code>Join</code> and the padding words build the abbreviated list and matrix renders.</td></tr>
+<tr><td class="uicon"><a href="money.html"><img src="../media/icons/money.svg" alt=""></a></td><td><a href="money.html">money</a></td><td><code>Money</code> is the type <code>CutMoney</code> carries; <code>MoneyAdd</code>, <code>MoneySub</code> and <code>MoneyFmt</code> back its arithmetic and display.</td></tr>
+<tr><td class="uicon"><a href="matrix.html"><img src="../media/icons/matrix.svg" alt=""></a></td><td><a href="matrix.html">matrix</a></td><td><code>Matrix</code> is the type <code>CutMat</code> carries; <code>MatAdd</code>, <code>MatMul</code>, <code>Rows</code> and <code>Cols</code> back its arithmetic and display.</td></tr>
+</table>
+
+<nav class="pager" aria-label="Machines, in catalog order">
+  <a href="vt100.html"><span class="dir">&larr; Previous machine</span><span class="ttl">vt100</span></a>
+  <a class="next" href="reckoner.html"><span class="dir">Next machine &rarr;</span><span class="ttl">reckoner</span></a>
+</nav>
+<footer>Named for the shoddy mills of the West Riding: Useless Things Made
+Useful Through Skill (<a href="../heritage.html">the heritage of the name</a>).<br>
+&copy; 2026 Stephen Vincent Foster</footer>
+</div>
+</body>
+</html>

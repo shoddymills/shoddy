@@ -4,10 +4,11 @@
 #     ./build.sh capture         write the PNG, nothing on screen
 #
 # Paths below are relative to the directory tally is RUN from, and both
-# build wrappers run from the repo root - hence mills/tally/... rather
-# than files/... A spec is a small thing you keep beside your data, and
-# a path that meant different things depending on which folder the spec
-# happened to live in would be a path nobody could read.
+# build wrappers run from THIS mill's folder - hence files/... A spec is
+# a small thing you keep beside your data, and naming it the way it sits
+# beside you is what lets ./build.sh run files/grades.spec read like what
+# it does. It is the same rule demographics and iris use for their
+# dat/... paths.
 #
 # A comment is a line whose first non-space character is #. There are no
 # trailing comments: data.comment takes # as its VALUE, and a parser
@@ -18,7 +19,7 @@
 # columns by name. data.sep, data.comment and data.header are there for
 # files that are not plain comma-separated with a header row.
 
-data.file      = mills/tally/files/grades.csv
+data.file      = files/grades.csv
 data.trim      = yes
 
 # ---- 2. derive: add columns ----------------------------------------
@@ -75,5 +76,5 @@ chart.title    = HOURS AGAINST FINAL MARK
 
 window.size    = 480 320
 window.at      = 120 90
-window.capture = mills/tally/files/grades.png
+window.capture = files/grades.png
 window.show    = no

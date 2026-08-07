@@ -52,7 +52,7 @@ machines() {
     # only if Shoddy.Machines.X.dll is already built — otherwise the
     # source is spliced in and its defs re-exported, which collides with
     # the real machine downstream (duplicate definition of ANY, etc.).
-    pending=$(echo machines/*.shoddy)
+    pending=$(echo machines/*.shoddy machines/seeds/*.shoddy)
     built=" "
     while [ -n "$pending" ]; do
         progress=
@@ -61,7 +61,7 @@ machines() {
             stem=$(basename "$m" .shoddy | tr 'A-Z' 'a-z')
             unmet=
             for d in $(sed -n 's/^[[:space:]]*Include[[:space:]]*"\(.*\)\.shoddy".*/\1/p' "$m" | tr 'A-Z' 'a-z'); do
-                [ -f "machines/$d.shoddy" ] || continue
+                [ -f "machines/$d.shoddy" ] || [ -f "machines/seeds/$d.shoddy" ] || continue
                 case "$built" in *" $d "*) ;; *) unmet=1 ;; esac
             done
             if [ -z "$unmet" ]; then
@@ -93,11 +93,25 @@ machines() {
 # processes is the thing being proved, and DELETE clears up after it.
 machine_suites() {
     ensure_mill
-    for suite in csvtest htmltest jsontest nettest neuraltest \
-                 randomtest shakertest xmltest; do
+    for suite in csvtest cuttletest htmltest jsontest nettest neuraltest \
+                 randomtest reckonertest seedtest seedbuiltintest seedengtest \
+                 seedfintest seedisamtest seedneuraltest seedreciotest \
+                 seedbuzzertest seedhttpstest seednettest seedsimplextest \
+                 seedvt100test \
+                 shakertest xmltest; do
         echo "==> tst/$suite.shoddy"
         "$MILL" run "tst/$suite.shoddy" </dev/null
     done
+    # --no-window: this one really opens a scribbler, and a suite that
+    # threw a window at you mid-run would be a suite nobody ran. Hidden
+    # windows draw, blit and save exactly as visible ones do, so the PNG
+    # the suite writes and reads back is the real thing.
+    echo "==> tst/seedscribblertest.shoddy"
+    "$MILL" --no-window run tst/seedscribblertest.shoddy </dev/null
+    echo "==> tst/seedturtletest.shoddy"
+    "$MILL" --no-window run tst/seedturtletest.shoddy </dev/null
+    echo "==> tst/seedplottertest.shoddy"
+    "$MILL" --no-window run tst/seedplottertest.shoddy </dev/null
     echo "==> tst/isamtest.shoddy"
     "$MILL" run tst/isamtest.shoddy </dev/null
     echo "==> tst/isamdump.shoddy"
@@ -124,9 +138,11 @@ stage() {
     # ~5 MB of the package for messages the mill never surfaces.
     dotnet publish src/Shoddy.Mill -c Release -o "$STAGE_MILL" \
         -p:SatelliteResourceLanguages=en -p:DebugType=none
-    mkdir -p "$STAGE_LIB/bin"
+    mkdir -p "$STAGE_LIB/bin" "$STAGE_LIB/seeds/bin"
     cp machines/*.shoddy "$STAGE_LIB"
     cp machines/bin/*.dll "$STAGE_LIB/bin"
+    cp machines/seeds/*.shoddy "$STAGE_LIB/seeds"
+    cp machines/seeds/bin/*.dll "$STAGE_LIB/seeds/bin"
     # One timestamp across every staged DLL, newer than every staged
     # source. cp stamps them in the order it copies — alphabetical — and
     # a machine is stale when a DLL it depends on is newer than its own,
@@ -138,7 +154,7 @@ stage() {
     # each file, and those differ by a tick in the same alphabetical
     # order, which is all the staleness test compares.
     : > "$STAGE_LIB/bin/.stamp"
-    touch -r "$STAGE_LIB/bin/.stamp" "$STAGE_LIB"/bin/*.dll
+    touch -r "$STAGE_LIB/bin/.stamp" "$STAGE_LIB"/bin/*.dll "$STAGE_LIB"/seeds/bin/*.dll
     rm -f "$STAGE_LIB/bin/.stamp"
     # Roslyn, Silk.NET, GLFW and OpenAL Soft are redistributed in the
     # package, so their notices have to travel with it — LGPL-2.1 for
@@ -167,6 +183,13 @@ case "${1:-help}" in
         dotnet test src/Shoddy.Tests
         ensure_mill
         "$MILL" run tst/libtest.shoddy
+        # Not a machine suite: it compares the RUNTIME's builtin dispatch
+        # against the seeded dictionary, and fails if a builtin is
+        # reachable that a stated rule says must not be, or if a future
+        # seed quietly claims a name the builtin seed's work list expects
+        # to be free. Runs here, before the machine suites, because a
+        # collision it catches is one they would report somewhere else.
+        "$MILL" run tst/builtinsurfacetest.shoddy
         # fin's arithmetic is the kind that produces a plausible wrong
         # answer rather than an error, so its known-answer suite runs in
         # CI beside the golden files rather than by hand.
@@ -185,6 +208,14 @@ case "${1:-help}" in
         # recombined — and it is also the only place the alg/eng bridge
         # can be exercised, since neither machine includes the other.
         "$MILL" run tst/alg.shoddy
+        # bool is the same case once more: it is arithmetic standing in for
+        # bits, so a wrong fold or a formula that overflows 2^53 before its
+        # Mod runs returns a plausible number rather than failing. Its suite
+        # is known answers worked by hand plus the identities - De Morgan
+        # both ways, Gray codes one bit apart, a minimised cover rebuilt and
+        # compared - which is the only way to test a minimal form whose
+        # spelling is not unique.
+        "$MILL" run tst/bool.shoddy
         # The net demo is the only end-to-end exercise of the socket words:
         # it stands up a server, connects a client to it and trades lines,
         # both ends in one process on loopback. --allow-net is required
@@ -221,8 +252,23 @@ case "${1:-help}" in
         stage
         ;;
     vsix)
+        # vsce is the ONE target with a dependency outside this repo's own
+        # tools, and it is unavoidable: a .vsix is a VS Code extension
+        # package and there is no dotnet or Shoddy path to producing one.
+        # Every other target here — and every mill's own wrapper — needs
+        # nothing but this shell, dotnet, and bin/mill.
+        #
+        # It is REPORTED rather than installed. This used to run
+        # `npm install -g @vscode/vsce` when vsce was missing, which is a
+        # build script putting software on your machine, globally, without
+        # asking. CI does not need that behaviour either: release.yml
+        # installs vsce as its own explicit step before it calls this.
         command -v vsce >/dev/null 2>&1 || {
-            echo "installing @vscode/vsce (npm -g)..."; npm install -g @vscode/vsce
+            echo "vsix needs @vscode/vsce, which is not installed." >&2
+            echo "  npm install -g @vscode/vsce      (needs Node.js)" >&2
+            echo "Every other target — build, test, run, weave, machines," >&2
+            echo "stage, clean — needs only this shell and dotnet." >&2
+            exit 1
         }
         stage
         (
@@ -235,7 +281,7 @@ case "${1:-help}" in
         )
         ;;
     clean)
-        rm -rf bin artifacts machines/bin "$STAGE_MILL" "$STAGE_LIB"
+        rm -rf bin artifacts machines/bin machines/seeds/bin "$STAGE_MILL" "$STAGE_LIB"
         find src -type d \( -name bin -o -name obj \) -prune -exec rm -rf {} +
         echo "cleaned."
         ;;

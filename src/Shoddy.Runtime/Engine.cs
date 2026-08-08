@@ -824,8 +824,14 @@ public sealed partial class Engine
                 }
                 try
                 {
+                    // FileShare.None, explicitly: the default (Read) is only
+                    // enforced by the OS on Windows. On Unix, .NET only backs
+                    // a share mode with an advisory flock() when it is None —
+                    // anything looser is unenforced there, so two opens of
+                    // the same path would silently both succeed on Linux
+                    // while correctly conflicting on Windows.
                     files[slot] = new FileStream(path, FileMode.Open,
-                                                 FileAccess.ReadWrite);
+                                                 FileAccess.ReadWrite, FileShare.None);
                 }
                 catch (Exception e) when (e is not ShoddyError)
                 {

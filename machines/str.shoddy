@@ -3,7 +3,8 @@ Rem Licensed under the MIT License. See the LICENSE file in the project root.
 
 Rem ==================================================================
 Rem str.shoddy — Shoddy standard library: strings
-Rem Built on the Instr / Left / Right / Mid / Len builtins. Pure.
+Rem Built on the Instr / InstrFrom / Left / Right / Mid / Len builtins.
+Rem Pure.
 Rem Three families: surgery (Split .. StrRep), boolean conversions
 Rem (IsBool / ToBool / ToBoolOr over the primitive ToBoolOpt — the
 Rem string-to-number side lives in the IsNumeric / Val / ValOr builtins),
@@ -11,15 +12,32 @@ Rem and fixed-width formatting (PadLeft / PadRight / PadZero / ToFixed /
 Rem Commas).
 Rem ==================================================================
 
+Rem Split carries a position rather than a shrinking string. It used to
+Rem recurse on Mid(s, k + Len(sep), Len(s)) — a fresh copy of the whole
+Rem tail per field — because Instr can only search from the beginning, so
+Rem splitting into n fields copied the subject n times and Split was
+Rem quadratic. InstrFrom searches from a position without copying to it,
+Rem which leaves only the field itself to copy: the same answers, in
+Rem linear time, for the most-used word in the library.
+Rem
+Rem The refusal stays in Split and stays first, so Split(s, "") errors
+Rem before any scanning happens, exactly as it did.
 Def Split(s As String, sep As String) As List Of String
     If Len(sep) = 0 Then
         Error("SPLIT: EMPTY SEPARATOR")
     Else
-        Let k = Instr(s, sep)
-        If k = 0 Then
-            { s }
-        Else
-            Prepend(Left(s, k - 1), Split(Mid(s, k + Len(sep), Len(s)), sep))
+        SplitFrom(s, sep, 1)
+
+Def SplitFrom(s As String, sep As String, i As Number) As List Of String
+    SplitAt(s, sep, i, InstrFrom(s, sep, i))
+
+Rem A position past the end is not a mistake here: the separator ending
+Rem the subject leaves an empty last field, and Mid answers "" for it.
+Def SplitAt(s As String, sep As String, i As Number, k As Number) As List Of String
+    If k = 0 Then
+        { Mid(s, i, Len(s) - i + 1) }
+    Else
+        Prepend(Mid(s, i, k - i), SplitFrom(s, sep, k + Len(sep)))
 
 Def Join(xs As List Of String, sep As String) As String
     If IsEmpty(xs) Then
@@ -39,15 +57,32 @@ Def Trim(s As String) As String
             Else
                 s
 
+Rem Replace gets the same treatment and for the same reason: it recursed
+Rem on a copy of the tail, so every substitution copied the rest of the
+Rem subject before searching it. Carrying the position removes that copy
+Rem entirely.
+Rem
+Rem It does NOT make Replace linear, and Split's comment above should not
+Rem be read as saying so. What remains is the & chain — each level joins
+Rem its piece onto the whole result of the levels below it, which is
+Rem quadratic in the number of substitutions and cannot be otherwise
+Rem while & is how strings are assembled. Removing the tail copy roughly
+Rem halves the work; making the assembly linear is a different change and
+Rem would need a word this library does not have.
 Def Replace(s As String, old As String, new As String) As String
     If Len(old) = 0 Then
         Error("REPLACE: EMPTY PATTERN")
     Else
-        Let k = Instr(s, old)
-        If k = 0 Then
-            s
-        Else
-            Left(s, k - 1) & new & Replace(Mid(s, k + Len(old), Len(s)), old, new)
+        ReplaceFrom(s, old, new, 1)
+
+Def ReplaceFrom(s As String, old As String, new As String, i As Number) As String
+    ReplaceAt(s, old, new, i, InstrFrom(s, old, i))
+
+Def ReplaceAt(s As String, old As String, new As String, i As Number, k As Number) As String
+    If k = 0 Then
+        Mid(s, i, Len(s) - i + 1)
+    Else
+        Mid(s, i, k - i) & new & ReplaceFrom(s, old, new, k + Len(old))
 
 Def StartsWith(s As String, p As String) As Boolean
     Left(s, Len(p)) = p

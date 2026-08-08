@@ -210,18 +210,13 @@ function Invoke-MachineSuites {
         & $Mill run "tst/$suite.shoddy"
         if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     }
-    # --no-window: this one really opens a scribbler, and a suite that
-    # threw a window at you mid-run would be a suite nobody ran. Hidden
-    # windows draw, blit and save exactly as visible ones do.
-    Write-Host '==> tst/seedscribblertest.shoddy'
-    & $Mill --no-window run tst/seedscribblertest.shoddy
-    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-    Write-Host '==> tst/seedturtletest.shoddy'
-    & $Mill --no-window run tst/seedturtletest.shoddy
-    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-    Write-Host '==> tst/seedplottertest.shoddy'
-    & $Mill --no-window run tst/seedplottertest.shoddy
-    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    # seedscribblertest, seedturtletest and seedplottertest are NOT run
+    # here. --no-window hides the window, but it is still a real one, and
+    # GLFW has no platform to open it on on GitHub's hosted runners — no
+    # X server's worth of libraries even under Xvfb (v1.10.1 shipped that
+    # gate and it still failed the same way). Run them by hand, locally,
+    # on a machine with a real display: `bin/mill --no-window run
+    # tst/seedscribblertest.shoddy` and the same for turtle/plotter.
     Write-Host '==> tst/isamtest.shoddy'
     & $Mill run tst/isamtest.shoddy
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

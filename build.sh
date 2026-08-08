@@ -102,16 +102,13 @@ machine_suites() {
         echo "==> tst/$suite.shoddy"
         "$MILL" run "tst/$suite.shoddy" </dev/null
     done
-    # --no-window: this one really opens a scribbler, and a suite that
-    # threw a window at you mid-run would be a suite nobody ran. Hidden
-    # windows draw, blit and save exactly as visible ones do, so the PNG
-    # the suite writes and reads back is the real thing.
-    echo "==> tst/seedscribblertest.shoddy"
-    "$MILL" --no-window run tst/seedscribblertest.shoddy </dev/null
-    echo "==> tst/seedturtletest.shoddy"
-    "$MILL" --no-window run tst/seedturtletest.shoddy </dev/null
-    echo "==> tst/seedplottertest.shoddy"
-    "$MILL" --no-window run tst/seedplottertest.shoddy </dev/null
+    # seedscribblertest, seedturtletest and seedplottertest are NOT run
+    # here. --no-window hides the window, but it is still a real one, and
+    # GLFW has no platform to open it on on GitHub's hosted runners — no
+    # X server's worth of libraries even under Xvfb (v1.10.1 shipped that
+    # gate and it still failed the same way). Run them by hand, locally,
+    # on a machine with a real display: `bin/mill --no-window run
+    # tst/seedscribblertest.shoddy` and the same for turtle/plotter.
     echo "==> tst/isamtest.shoddy"
     "$MILL" run tst/isamtest.shoddy </dev/null
     echo "==> tst/isamdump.shoddy"

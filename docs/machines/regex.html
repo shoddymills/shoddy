@@ -1,0 +1,407 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Regular Expressions, Compiled &mdash; machines/regex.shoddy">
+<title>regex — Regular Expressions | Shoddy Machines</title>
+<link rel="stylesheet" href="../style.css">
+<link rel="icon" href="../favicon.svg" type="image/svg+xml">
+<link rel="alternate icon" href="../favicon.ico" sizes="48x48">
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+</head>
+<body>
+<div class="topbar"><div class="inner">
+  <div class="row">
+    <a class="phase" href="index.html"><img class="mark" src="../media/brand/shoddy-icon.svg" alt="" width="23" height="23">Shoddy · The Machines</a>
+    <span class="spacer"></span>
+    <nav class="docnav meta" aria-label="About"><a href="../heritage.html">Heritage</a><a href="../authorship.html">Authorship</a></nav>
+  </div>
+  <nav class="docnav main" aria-label="Documentation"><a href="../tutorials/index.html">Tutorials</a><a href="../guide.html">Guide</a><a href="../quickref.html">Reference</a><span class="here">Machines</span><a href="../mills/index.html">Mills</a><a href="../stack.html">Stack</a><a href="../spec.html">Spec</a><a href="../setup.html">Setup</a><a href="../vscode.html">VS Code</a><a href="../assistants.html">AI</a><a href="../build.html">Toolchain</a><a href="../errors.html">Errors</a></nav>
+</div></div>
+<div class="wrap">
+
+
+<header class="mast has-icon"><div><p class="eyebrow"><a href="index.html#sequences-text">The Machines &middot; Sequences &amp; text</a></p><h1>regex</h1><p class="kicker">Regular Expressions, Compiled — machines/regex.shoddy</p></div><img class="micon" src="../media/icons/regex.svg" alt="the regex machine&#39;s icon"></header>
+<nav class="pagertop" aria-label="Machines, in catalog order"><a href="str.html">&larr; str</a><a href="index.html">All machines</a><a href="bool.html">bool &rarr;</a></nav>
+
+<h2 id="summary">Summary</h2>
+<p>Until this machine there was <strong>no pattern matching anywhere in the
+tree</strong>. <a href="str.html">str</a> is literal throughout &mdash;
+<code>Split</code> cuts on a fixed separator, <code>Replace</code> swaps
+fixed text, <code>StartsWith</code> compares a fixed prefix &mdash; and the
+builtins underneath are literal too. What a caller faced was a log line, a
+CSV field to validate, a config file of <code>KEY = value</code>, a URL to
+pick apart, and an answer made of <code>Instr</code> and <code>Mid</code> and
+an off-by-one.</p>
+<p><code>regex</code> is regular expressions <strong>as a compiled
+value</strong>. <code>RxRead</code> parses a pattern to a tree, compiles the
+tree to a small instruction program, and hands it back; every match word
+takes that program, not a string. The program is run over a subject by a
+virtual machine that advances one code unit at a time and
+<strong>never backtracks</strong>.</p>
+<p>Two promises follow from that, and they are the reason to read further
+before reaching for a familiar dialect.</p>
+<p><strong>No input can end your session.</strong> There is not one call to
+<code>Error</code> in the file. A malformed pattern is
+<code>Err(why, at)</code> on the language's own <code>Result</code>; an
+absent match or an unset group is <code>None()</code> on its
+<code>Option</code>; there is no third outcome. This is the promise
+<a href="cuttle.html">cuttle</a> and <a href="reckoner.html">reckoner</a>
+already make, adopted here because these words are destined for the same
+keyboard &mdash; and it is why <a href="../errors.html">the errors page</a>
+has no row for this machine. There is nothing to put in it.</p>
+<p><strong>No input can take exponential time.</strong> Matching cost is
+bounded by pattern size times subject length. The standard witness
+<code>(a|a)*b</code> against thirty <code>a</code>s explores 2<sup>30</sup>
+paths in a backtracker; here it returns at once, because there is no
+backtracking to be exponential in.</p>
+<p>And the price, in the same breath: <strong>no backreferences, no
+lookaround</strong>. Those are not "not yet". They are the exact things a
+parallel state set structurally cannot express, and they are what buys the
+guarantee. Both are refused <em>by name</em>, at the offset where they were
+written.</p>
+
+<h2 id="why">Why It's Useful</h2>
+<p>A rule you can state is a rule you can read back. Compare a postcode check
+written with <code>Instr</code> and <code>Mid</code> and three nested
+<code>If</code>s against the same check written as
+<code>^[A-Z]{1,2}\d[A-Z\d]? \d[A-Z]{2}$</code>: the second one <em>is</em>
+the rule, and a reader who has never seen the code can tell you whether it is
+right. That is most of what this machine is for.</p>
+<p>Three shapes of work it opens up, none of which the tree could do before:</p>
+<ul>
+<li><strong>Validation with a stated rule.</strong> An ISO date, an MPS row
+name, a <code>KEY=VALUE</code> line, a version number &mdash; asked as the
+rule rather than reconstructed from primitives.</li>
+<li><strong>Field extraction from semi-structured text.</strong> Log lines,
+<code>netstat</code> output, HTTP headers already fetched by
+<a href="https.html">https</a>: anything regular that is not JSON, XML, HTML
+or CSV, all four of which the tree reads properly with their own
+machines.</li>
+<li><strong>Splitting on a rule.</strong> <code>RxSplit</code> on "runs of
+whitespace or a comma" is one call; with a literal separator it is three
+passes and a judgement call about which one wins.</li>
+</ul>
+<p>And at the keyboard, through <a href="seedregex.html">seedregex</a>: a
+calculator that can grep its own tape. <code>RckTape</code> is a
+<code>List Of String</code>, so <code>RXFINDALL</code> at a prompt makes the
+session's own record searchable.</p>
+
+<h2 id="guide">Guide</h2>
+<p><strong>Read the pattern once, match many times.</strong>
+<code>RxRead</code> is the only word here that can fail, and it answers the
+language's <code>Result</code>:</p>
+<pre class="basic"><code>Include &quot;regex.shoddy&quot;
+
+Def Main()
+    Select Case RxRead(&quot;(\w+)@(\w+\.\w+)&quot;, RxNoOpts())
+        Case Ok(p)
+            Print(RxTest(p, &quot;write to me@example.com today&quot;))    &#39; True
+            Print(RxReplace(p, &quot;a@b.c and d@e.f&quot;, &quot;&lt;$1 at $2&gt;&quot;))
+        Case Err(why, at)
+            Print(why &amp; &quot; at &quot; &amp; Str(at))</code></pre>
+<p>That <code>Select Case</code> is the whole ceremony, and it is paid
+<em>once per pattern</em> rather than once per call. There is deliberately no
+aborting twin &mdash; no <code>RxParse</code> that dies on a bad pattern so
+you can skip the match. <a href="alg.html">alg</a>,
+<a href="json.html">json</a>, <a href="xml.html">xml</a> and
+<a href="csv.html">csv</a> each pair a total reader with an aborting
+<code>*Parse</code>, and this machine knowingly departs from that house form:
+those four read documents a <em>program</em> usually hard-codes, and this
+reads patterns a <em>session</em> usually types.</p>
+<p><strong>Asking.</strong> <code>RxTest</code> answers whether there is a
+match anywhere. <code>RxFind</code> answers the leftmost one as an
+<code>Option</code>, and <strong>takes no offset at all</strong> &mdash;
+which is the point of its existing beside <code>RxFindFrom</code>: the
+overwhelmingly common call has no argument that can be out of range.
+<code>RxMatchAt</code> is anchored at exactly one offset, and
+<code>RxFindAll</code> answers every non-overlapping match.</p>
+<pre class="basic"><code>Select Case RxFind(p, s)
+    Case Some(h)
+        Print(RxHitAt(h) &amp; &quot; for &quot; &amp; RxHitLen(h) &amp; &quot;: &quot; &amp; RxHitText(h))
+    Case None
+        Print(&quot;no match&quot;)</code></pre>
+<p><strong>Captures, and the distinction worth having.</strong> A hit carries
+its span, its text, and <em>one capture per capturing group</em> &mdash;
+always exactly <code>RxCount(p)</code> of them, in group order, never a short
+list. A group that did not participate is <strong>unset</strong>, which is
+not the same as a group that matched nothing:</p>
+<table>
+<tr><th>Pattern and subject</th><th>Group 1</th><th>Group 2</th></tr>
+<tr><td><code>(a)|(b)</code> against <code>&quot;b&quot;</code></td><td><code>None()</code> &mdash; never entered</td><td><code>Some(&quot;b&quot;)</code></td></tr>
+<tr><td><code>(a?)</code> against <code>&quot;&quot;</code></td><td><code>Some(&quot;&quot;)</code> &mdash; entered, matched nothing</td><td>&mdash;</td></tr>
+</table>
+<p>"Did not participate" and "matched nothing" are different facts, and the
+type keeps them different. <code>RxGroup(h, n)</code> reads one by number and
+answers <code>Option Of String</code> accordingly; group <code>0</code> is
+the whole match, so it agrees with <code>$0</code> in a template.</p>
+<p><strong>Rewriting.</strong> <code>RxReplace</code> does every match,
+<code>RxReplaceFirst</code> only the first. In a replacement,
+<code>$0</code> is the whole match and <code>$1</code>&ndash;<code>$9</code>
+are groups; <code>$$</code> is a literal dollar; a <code>$</code> in front of
+anything else is a literal dollar. <strong>A reference to an unset or
+nonexistent group expands to the empty string</strong> &mdash; the
+alternative would make <code>RxReplace</code> answer a <code>Result</code>,
+so that every caller matched on a failure mode which only fires when a group
+legitimately did not participate. <code>RxReplaceWith</code> takes a
+quotation per hit and is the escape hatch for anything a template cannot
+say.</p>
+<pre class="basic"><code>RxReplaceWith(p, s, Fn(h) =&gt; Upper(RxHitText(h)))</code></pre>
+<p><strong>Options.</strong> <code>RxNoOpts()</code> is everything off;
+<code>RxFoldOpts()</code> turns on ASCII case folding; the record
+<code>RxOpts(fold, dotAll, multiline)</code> sets all three at once. The same
+three can be written as a prefix on the pattern itself &mdash;
+<code>(?i)</code>, <code>(?s)</code>, <code>(?m)</code> and their
+combinations &mdash; and <strong>where both are given the prefix wins,
+whole</strong>: it replaces the options argument rather than merging with it,
+because a rule that replaces is one a caller can state.</p>
+<p><strong>Escaping.</strong> <code>RxQuote</code> turns a string into a
+pattern that matches itself and nothing else, which is what you want any time
+part of a pattern came from somewhere you do not control.</p>
+<p><strong>Seeing the program.</strong> <code>RxDisasm</code> answers the
+compiled program as printable lines. It is not decoration: it is how a
+surprising answer gets diagnosed, and it is what "compiled to a program"
+actually means here.</p>
+<pre class="basic"><code>Each(RxDisasm(p), Print)     &#39; for a(b|c)*
+
+   1  SAVE   0
+   2  CHAR   97 a
+   3  SPLIT  4, 11
+   4  SAVE   2
+   5  SPLIT  6, 8
+   6  CHAR   98 b
+   7  JMP    9
+   8  CHAR   99 c
+   9  SAVE   3
+  10  JMP    3
+  11  SAVE   1
+  12  MATCH</code></pre>
+<p>Slots 0 and 1 are the whole match, so capturing group <em>k</em> uses
+<code>2k</code> and <code>2k+1</code>. A <code>SPLIT</code> always explores
+its first target first; a lazy quantifier is the same code with those two
+swapped, and that is the entire difference between greedy and lazy anywhere
+in the machine.</p>
+
+<h2 id="cannot">What This Cannot Do</h2>
+<p>The ceiling is stated here rather than discovered, and most of it is the
+price of the guarantee rather than a gap in the work.</p>
+<p><strong>Refused by name, at the offset where it was written.</strong> Each
+of these produces an <code>Err</code> that says what it is, not "unexpected
+character":</p>
+<table>
+<tr><th>Construct</th><th>Why not</th></tr>
+<tr><td>Backreferences <code>\1</code>, <code>\k&lt;n&gt;</code></td><td>The engine does not backtrack, and a backreference needs it to know where it has been in a way a parallel state set structurally cannot.</td></tr>
+<tr><td>Lookahead <code>(?=</code> <code>(?!</code></td><td>The same reason, forwards.</td></tr>
+<tr><td>Lookbehind <code>(?&lt;=</code> <code>(?&lt;!</code></td><td>The same reason, backwards; the engine reads forward only.</td></tr>
+<tr><td>Atomic groups <code>(?&gt;</code>, possessive <code>a*+</code></td><td>Both forbid backtracking that never happens.</td></tr>
+<tr><td>Named groups <code>(?&lt;name&gt;</code></td><td>Groups are numbered by opening paren, left to right, from 1.</td></tr>
+<tr><td>Conditionals, recursion <code>(?R)</code></td><td>Far past what this is; both need a second engine.</td></tr>
+<tr><td><code>\A \z \Z \G</code></td><td>Write <code>^</code> and <code>$</code>; there is no carried match anchor.</td></tr>
+<tr><td>POSIX classes <code>[:alpha:]</code>, Unicode properties <code>\p{L}</code></td><td>The character domain is ASCII-classed &mdash; below.</td></tr>
+<tr><td>The <code>x</code> (extended) flag</td><td>There is no whitespace-insensitive mode.</td></tr>
+<tr><td>Scoped inline flags <code>(?i:...)</code>, <code>a(?i)b</code></td><td>Flags are a prefix of the whole pattern and nowhere else; a scoped flag means threading a mode through the compiler and compiling classes differently per branch.</td></tr>
+</table>
+<p>Implementing them means a second engine and a per-pattern choice between
+the two &mdash; how real libraries do it, and exactly the complexity this
+machine exists instead of. Refusing by name means <strong>a caller learns the
+ceiling from the tool rather than from a wrong answer</strong>.</p>
+<p><strong>The character domain is UTF-16 code units, classed as
+ASCII.</strong> Subjects and patterns are indexed by code unit, matching
+<code>Len</code>, <code>Mid</code>, <code>Instr</code> and
+<code>Codes</code> in the runtime. A non-BMP character is two code units and
+<code>.</code> matches one of them. <code>\d</code> is
+<code>0</code>&ndash;<code>9</code>; <code>\w</code> adds
+<code>A</code>&ndash;<code>Z</code>, <code>a</code>&ndash;<code>z</code> and
+<code>_</code>; <code>\s</code> is tab, LF, VT, FF, CR and space. Case
+folding maps <code>A</code>&ndash;<code>Z</code> to
+<code>a</code>&ndash;<code>z</code> and nothing else &mdash; which is exactly
+what the runtime's own <code>Upper</code> and <code>Lower</code> do, so no
+Turkish-dotless caveat is needed here because no such folding is claimed.
+Codepoint-level matching would need a codepoint-level <code>Mid</code> in the
+runtime, which is a different proposal.</p>
+<p><strong>NUL is matchable, and a reader who knows <code>Chr(0)</code> is
+the empty string should not assume otherwise.</strong> <code>Codes</code>
+reports a NUL code unit as <code>0</code> like any other and
+<code>FromCodes</code> builds one, so a Shoddy string can carry a NUL &mdash;
+and the engine, which compares <em>numbers</em>, matches it with no special
+case at all. <code>\0</code> and <code>\x00</code> are ordinary literals
+here. The one obligation that creates falls on the machine, which never calls
+<code>Chr</code>: a code turned into a character through <code>Chr</code>
+would lose a NUL silently and put the hole back.</p>
+<p><strong>Leftmost-first, not leftmost-longest.</strong> Among matches
+starting at the earliest position, the answer is the one a backtracker would
+have found first: alternation prefers its left branch, a greedy quantifier
+prefers one more repetition, a lazy one prefers one fewer, applied
+outside-in. The one-line witness: <code>a|ab</code> against
+<code>&quot;abc&quot;</code> matches <code>&quot;a&quot;</code>, not
+<code>&quot;ab&quot;</code>. This is Perl and PCRE semantics rather than
+POSIX's, and it is what makes a lazy quantifier mean anything at all.</p>
+<p><strong>The empty-match rule, worked.</strong> A pattern that can match
+empty would otherwise make every all-matches word non-terminating. After a
+match of length 0 at <em>k</em> the next search starts at <em>k</em>+1; after
+a match of length greater than 0 ending at <em>k</em> the next search also
+starts at <em>k</em>+1, so matches never overlap. The number of matches over
+a subject of length <em>n</em> is therefore at most <em>n</em>+1, always.
+This is the one result callers find surprising, so here it is in full &mdash;
+<code>RxFindAll</code> of <code>a*</code> over <code>&quot;baa&quot;</code>
+is <strong>three</strong> hits, not two and not one:</p>
+<table>
+<tr><th>#</th><th>Search starts at</th><th>Match</th><th>Next start</th></tr>
+<tr><td>1</td><td>1</td><td><code>&quot;&quot;</code>, length 0 (the <code>b</code> is not an <code>a</code>)</td><td>2, by the empty rule</td></tr>
+<tr><td>2</td><td>2</td><td><code>&quot;aa&quot;</code>, length 2, ending at 3</td><td>4, by the non-overlap rule</td></tr>
+<tr><td>3</td><td>4</td><td><code>&quot;&quot;</code>, length 0 &mdash; position <code>Len(s) + 1</code>, past the end</td><td>5, which stops the walk</td></tr>
+</table>
+<p><code>RxFindAll</code>, <code>RxReplace</code> and <code>RxSplit</code>
+all share one match walk, so all three obey this identically. Implemented
+three times it would agree twice.</p>
+<p><strong>An out-of-range search start is clamped, and that is a contract
+rather than a mask.</strong> A start below 1 is clamped to 1 and a fractional
+one is floored; both are stated here and both produce the value the caller
+meant. A start past <code>Len(s) + 1</code> answers <code>None()</code>,
+which is a true statement: nothing starts there. The standing objection to
+silent masking is to a plausible wrong answer three words from its cause, and
+a search start below 1 has exactly one sensible reading.</p>
+<p><strong>The size ceiling is quadratic in the pattern, not in the
+subject.</strong> Per subject position the machine performs an epsilon
+closure over at most <em>m</em> instructions with a visited-set test per
+instruction, and the visited set is an array that <code>SetNth</code> clones
+&mdash; so the cost is O(<em>n</em>&nbsp;&times;&nbsp;<em>m</em>) steps and
+O(<em>n</em>&nbsp;&times;&nbsp;<em>m</em><sup>2</sup>) cell operations.
+Measured:</p>
+<table>
+<tr><th>Pattern</th><th>Subject</th><th>Time</th></tr>
+<tr><td>28 instructions &mdash; a log-line pattern with four groups</td><td>2000 characters</td><td>25&nbsp;ms</td></tr>
+<tr><td>204 instructions</td><td>1000 characters</td><td>693&nbsp;ms</td></tr>
+<tr><td>1994 instructions &mdash; <code>a{1990}b</code></td><td>1000 characters</td><td>3114&nbsp;ms</td></tr>
+</table>
+<p>So the honest statement of the ceiling is <strong>patterns of a few dozen
+instructions over subjects of a few thousand characters</strong>, which is
+the first row and is what the machine is for. Past that the
+quadratic-in-<em>m</em> term is felt. A counted repetition compiles by
+duplication, so <code>{m,n}</code> multiplies the program by <em>n</em>;
+<code>RxMaxCode()</code> caps the compiled program at 2000 instructions and
+refuses past it <em>at parse time</em>, naming the number rather than
+building a program the machine would then crawl through.
+<code>RxMaxPat()</code> caps the pattern text and <code>RxMaxDepth()</code>
+its nesting, for the same reason.</p>
+<p><strong>What is <em>not</em> on the ceiling is any input shape.</strong>
+There is no adversarial subject and no pattern that makes the machine take an
+order of magnitude longer than its size predicts. That is the trade: a modest
+constant everywhere, in exchange for no cliff anywhere.</p>
+<p><strong>And nothing here rewrites any other machine.</strong>
+<a href="json.html">json</a>, <a href="xml.html">xml</a>,
+<a href="html.html">html</a>, <a href="csv.html">csv</a> and
+<a href="mps.html">mps</a> have hand-written readers because their grammars
+are not regular; <a href="alg.html">alg</a> and
+<a href="reckoner.html">reckoner</a> likewise. None of them is a candidate,
+and none of them was changed to add this.</p>
+
+<h2 id="words">Word Reference</h2>
+<p>Every word is prefixed <code>Rx</code>, types, variants and field
+accessors included &mdash; a field accessor is an exported global word, so an
+unprefixed <code>Start</code> or <code>Min</code> would become a bare word in
+every program that includes this machine.</p>
+
+<h3>Reading a pattern</h3>
+<table>
+<tr><th>Word</th><th>What it does</th></tr>
+<tr><td>RxRead(pat, how)</td><td><strong>The only word here that can fail, and the only <code>Result</code> in the machine.</strong> <code>Ok(prog)</code>, or <code>Err(why, at)</code> with <code>at</code> the 1-based offset of the offending character &mdash; <code>0</code> where there is no meaningful position.</td></tr>
+<tr><td>RxNoOpts()</td><td>Options with everything off: the dot stops at a newline, <code>^</code> and <code>$</code> are the ends of the whole subject, case is compared exactly.</td></tr>
+<tr><td>RxFoldOpts()</td><td>The same with ASCII case folding on.</td></tr>
+<tr><td>RxOpts(fold, dotAll, multi)</td><td>The options record itself, for setting all three at once.</td></tr>
+<tr><td>RxMaxCode() / RxMaxPat() / RxMaxDepth()</td><td>The three ceilings, so a caller or a suite can ask what the limit is rather than discover it. 2000 instructions, 2000 pattern characters, 100 levels of nesting.</td></tr>
+</table>
+
+<h3>Asking</h3>
+<table>
+<tr><th>Word</th><th>What it does</th></tr>
+<tr><td>RxTest(p, s)</td><td>Whether <code>p</code> matches anywhere in <code>s</code>. <code>Boolean</code>.</td></tr>
+<tr><td>RxFind(p, s)</td><td>The leftmost match, as <code>Some(hit)</code> or <code>None()</code>. Takes no offset, which is the point of its existing beside the next one.</td></tr>
+<tr><td>RxFindFrom(p, s, from)</td><td>The leftmost match at or after <code>from</code>. A start below 1 is clamped to 1, a fractional one floored, one past the end answers <code>None()</code>.</td></tr>
+<tr><td>RxMatchAt(p, s, at)</td><td>A match anchored at exactly one offset: it starts there or nowhere.</td></tr>
+<tr><td>RxFindAll(p, s)</td><td>Every non-overlapping match, in order, as a <code>List Of RxHit</code>. Obeys the empty-match rule above.</td></tr>
+</table>
+
+<h3>Reading a hit</h3>
+<table>
+<tr><th>Word</th><th>What it does</th></tr>
+<tr><td>RxHitAt(h) / RxHitLen(h) / RxHitText(h)</td><td>The 1-based start, the length in code units, and the matched text.</td></tr>
+<tr><td>RxHitCaps(h)</td><td>The captures, as a <code>List Of RxCap</code> &mdash; always exactly <code>RxCount(p)</code> of them, in group order.</td></tr>
+<tr><td>RxGroup(h, n)</td><td>One capture by number, as <code>Option Of String</code>. Group <code>0</code> is the whole match. A group that did not participate and a group that does not exist are both <code>None()</code>; <code>RxCount</code> tells those two apart.</td></tr>
+<tr><td>RxGroupOr(h, n, dflt)</td><td>The same with a fallback, for callers that do not need the distinction.</td></tr>
+<tr><td>RxGot(at, text) / RxUnset()</td><td>The two kinds of capture. <code>RxUnset()</code> is not <code>RxGot(k, &quot;&quot;)</code>.</td></tr>
+</table>
+
+<h3>Rewriting</h3>
+<table>
+<tr><th>Word</th><th>What it does</th></tr>
+<tr><td>RxReplace(p, s, rep)</td><td>Every match replaced. <code>$0</code>&ndash;<code>$9</code> and <code>$$</code> in the template; an unset or absent group expands to the empty string.</td></tr>
+<tr><td>RxReplaceFirst(p, s, rep)</td><td>Only the leftmost match replaced.</td></tr>
+<tr><td>RxReplaceWith(p, s, f)</td><td>A quotation <code>[ RxHit -- String ]</code> run per hit &mdash; the escape hatch for anything a template cannot say.</td></tr>
+<tr><td>RxSplit(p, s)</td><td>The pieces between matches, leading and trailing empties kept. A pattern matching the whole subject gives <code>{ &quot;&quot;, &quot;&quot; }</code>. <strong>Capturing groups are not emitted into the result</strong> &mdash; Python always emits them and JavaScript sometimes does, and both make the return type "sometimes separators, sometimes not". <code>RxFindAll</code> is the word for callers who want the separators.</td></tr>
+</table>
+
+<h3>Helping</h3>
+<table>
+<tr><th>Word</th><th>What it does</th></tr>
+<tr><td>RxQuote(s)</td><td><code>s</code> escaped so that, used as a pattern, it matches itself and nothing else. Controls and NUL come back as <code>\xHH</code>.</td></tr>
+<tr><td>RxSource(p)</td><td>The pattern text the program was read from.</td></tr>
+<tr><td>RxCount(p)</td><td>How many capturing groups the pattern has.</td></tr>
+<tr><td>RxDisasm(p)</td><td>The compiled program as printable lines. It answers them; it does not print them.</td></tr>
+</table>
+
+<h2 id="story">The Story Behind the Machine</h2>
+<p>Stephen Kleene, at RAND in 1951: <em>Representation of Events in Nerve
+Nets and Finite Automata</em>. Kleene was describing what a network of
+idealised neurons could recognise, and the answer needed a notation &mdash;
+so he wrote one, and the operation that repeats an event any number of times
+still carries his name every time anyone types a star.</p>
+<p>Ken Thompson, at Bell Labs, <em>CACM</em> June 1968: <em>Regular
+Expression Search Algorithm</em>. The part worth this section is not that he
+implemented Kleene's notation but <strong>how</strong>. Thompson did not
+interpret the pattern. He <em>compiled</em> it, at run time, into IBM 7094
+machine code, and ran the input through the code. The parallel state set that
+makes the method linear is a consequence of compiling to a program rather
+than walking a tree &mdash; the states that are live are the instructions the
+processor is currently inside, and there is nowhere for a backtracker's stack
+to live because there is no backtracker.</p>
+<p>From there it went into <code>ed</code>, where the command
+<code>g/re/p</code> &mdash; globally, on lines matching this regular
+expression, print &mdash; was used often enough to be given its own name and
+its own file. Russ Cox's <em>Regular Expression Matching Can Be Simple And
+Fast</em> (2007) is the modern account, and the reason the thread-list
+variant used here is called a Pike VM.</p>
+<p>It is the right story for this tree twice over. A machine whose mill
+weaves Shoddy to C# and hands it to Roslyn is in no position to be precious
+about compiling a pattern to a program. And the ceiling this page states
+&mdash; no backreferences &mdash; is not an accident of effort or a corner
+left unfinished. <strong>It is the exact thing Thompson's construction cannot
+express, and the reason it can promise what a backtracker cannot.</strong>
+The limit and the guarantee are the same fact, read from two sides.</p>
+
+<h2 id="usedby">Who Uses It</h2>
+<table>
+<tr><th></th><th>User</th><th>How</th></tr>
+<tr><td class="uicon"><a href="seedregex.html"><img src="../media/icons/seedregex.svg" alt=""></a></td><td><a href="seedregex.html">seedregex</a></td><td>The reckoner seed: eight words that put a stated rule at the keyboard, compiling the pattern on every call because a <code>Cell</code> cannot carry a compiled program.</td></tr>
+</table>
+
+<h2 id="uses">The Machines It Uses</h2>
+<p>None &mdash; and deliberately so. Every word this machine needs is a
+builtin: <code>Codes</code> and <code>FromCodes</code> for the character
+domain, <code>Nth</code> and <code>Dim</code> and <code>SetNth</code> for the
+program and the visited set, <code>Concat</code> and <code>Prepend</code> and
+<code>Reverse</code> for the thread lists. So including <code>regex</code>
+drags nothing else into a program, and there is no machine underneath it
+whose ceiling becomes this one's.</p>
+
+<nav class="pager" aria-label="Machines, in catalog order">
+  <a href="str.html"><span class="dir">&larr; Previous machine</span><span class="ttl">str</span></a>
+  <a class="next" href="bool.html"><span class="dir">Next machine &rarr;</span><span class="ttl">bool</span></a>
+</nav>
+<footer>Named for the shoddy mills of the West Riding: Useless Things Made
+Useful Through Skill (<a href="../heritage.html">the heritage of the name</a>).<br>
+&copy; 2026 Stephen Vincent Foster</footer>
+</div>
+</body>
+</html>

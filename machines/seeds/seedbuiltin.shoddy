@@ -69,6 +69,22 @@ Rem   clamping is kept — a substring past the end is an ordinary answer —
 Rem   but a FRACTIONAL count is refused, because that is a typo and not
 Rem   an intention.
 Rem
+Rem   CODEAT is the opposite case and the reason it exists: it REFUSES
+Rem   past the end where MID trims, so the guard here says the same thing
+Rem   the builtin does rather than softening it. Asking for character 6 of
+Rem   a 5-character string is a mistake at the index, and both layers name
+Rem   the index and the length.
+Rem
+Rem THE ONE PLACE THIS SEED PAYS A COST IT IS MEANT TO SAVE. CODES answers
+Rem an ARRAY OF NUMBER, which is the whole point of the builtin — NTH on an
+Rem array is O(1) and a scanner indexes in a loop. There is no ARRAY cell
+Rem at the keyboard (R4.16), so CODES here answers the LIST that means the
+Rem same thing and FROMCODES takes one back. That is not an oversight: a
+Rem prompt is not a scanner, and the bridge conversion is what a seed is
+Rem for. FROMCODES also carries the one refusal with no builtin
+Rem counterpart, since a list at a prompt can hold any cell at all while
+Rem the builtin can only be handed numbers.
+Rem
 Rem ERROR AND ASSERT ARE INVERTED RATHER THAN DROPPED. Their whole
 Rem purpose is to abort, which looks like an automatic exclusion; but
 Rem turning an abort into a refusal is exactly what this layer is for, so
@@ -153,12 +169,16 @@ Def BiSeedText(st As RckState) As RckState
     Let s3 = RckReg(s2, "RIGHT", 2, RckPure(Fn(vs) => BiTextCount("RIGHT", vs, Right)), "( s n -- s2 )", "The last n characters, or the whole string if it is shorter. Refuses a fractional n.")
     Let s4 = RckReg(s3, "MID", 3, RckPure(Fn(vs) => BiMid(vs)), "( s start len -- s2 )", "len characters from position start, counting from 1. A range past the end is trimmed to what is there.")
     Let s5 = RckReg(s4, "INSTR", 2, RckPure(Fn(vs) => BiInstr(vs)), "( s sub -- pos )", "Where sub first appears in s, counting from 1, or 0 when it does not. An empty sub answers 0.")
-    Let s6 = RckReg(s5, "CHR", 1, RckPure(Fn(vs) => BiChr(vs)), "( n -- s )", "The character with code n. 0 answers the empty string. Refuses outside 0 to 65535, where the code would wrap silently.")
-    Let s7 = RckReg(s6, "ASC", 1, RckPure(Fn(vs) => BiAsc(vs)), "( s -- n )", "The code of the first character. Refuses on the empty string, which has none.")
-    Let s8 = RckReg(s7, "STR", 1, RckPure(Fn(vs) => BiStr(vs)), "( n -- s )", "A number written out as text, the way the stack shows it.")
-    Let s9 = RckReg(s8, "VAL", 1, RckPure(Fn(vs) => BiVal(vs)), "( s -- n )", "Text read back as a number. Refuses anything that is not one, rather than answering 0 as the builtin would.")
-    Let s10 = RckReg(s9, "VALOR", 2, RckPure(Fn(vs) => BiValor(vs)), "( s fallback -- n )", "The same, answering fallback for text that is not a number. Never refuses, because you said what to do instead.")
-    RckReg(s10, "ISNUMERIC", 1, RckPure(Fn(vs) => BiOnText("ISNUMERIC", First(vs), Fn(s) => CutBool(IsNumeric(s)))), "( s -- flag )", "Whether VAL would read this text as a number — the question VAL itself does not ask.")
+    Let s6 = RckReg(s5, "INSTRFROM", 3, RckPure(Fn(vs) => BiInstrFrom(vs)), "( s sub from -- pos )", "Where sub first appears at or after position from, or 0 when it does not.")
+    Let s7 = RckReg(s6, "CHR", 1, RckPure(Fn(vs) => BiChr(vs)), "( n -- s )", "The character with code n. 0 answers the empty string. Refuses outside 0 to 65535, where the code would wrap silently.")
+    Let s8 = RckReg(s7, "ASC", 1, RckPure(Fn(vs) => BiAsc(vs)), "( s -- n )", "The code of the first character. Refuses on the empty string, which has none.")
+    Let s9 = RckReg(s8, "CODES", 1, RckPure(Fn(vs) => BiCodes(vs)), "( s -- list )", "The code of every character, in order. An empty string answers an empty list.")
+    Let s10 = RckReg(s9, "FROMCODES", 1, RckPure(Fn(vs) => BiFromCodes(vs)), "( list -- s )", "The string those codes spell. Refuses a code outside 0 to 65535.")
+    Let s11 = RckReg(s10, "CODEAT", 2, RckPure(Fn(vs) => BiCodeAt(vs)), "( s k -- n )", "The code of the character at position k, counting from 1. Refuses past the end, where MID would trim.")
+    Let s12 = RckReg(s11, "STR", 1, RckPure(Fn(vs) => BiStr(vs)), "( n -- s )", "A number written out as text, the way the stack shows it.")
+    Let s13 = RckReg(s12, "VAL", 1, RckPure(Fn(vs) => BiVal(vs)), "( s -- n )", "Text read back as a number. Refuses anything that is not one, rather than answering 0 as the builtin would.")
+    Let s14 = RckReg(s13, "VALOR", 2, RckPure(Fn(vs) => BiValor(vs)), "( s fallback -- n )", "The same, answering fallback for text that is not a number. Never refuses, because you said what to do instead.")
+    RckReg(s14, "ISNUMERIC", 1, RckPure(Fn(vs) => BiOnText("ISNUMERIC", First(vs), Fn(s) => CutBool(IsNumeric(s)))), "( s -- flag )", "Whether VAL would read this text as a number — the question VAL itself does not ask.")
 
 Rem MID clamps its start and its length rather than refusing, which is
 Rem the right behaviour for a substring: asking for more than is there
@@ -201,6 +221,33 @@ Def BiInstr(vs As List Of Cell) As RckWork
         Case Else
             RckWorkBad("INSTR needs two STRINGs")
 
+Rem INSTR's twin, taking the position to start at. Only the LOW bound is
+Rem guarded: a start past the end answers 0 rather than refusing, because
+Rem nothing occurs there and that is an answer.
+Def BiInstrFrom(vs As List Of Cell) As RckWork
+    Select Case Pair(RckTextArg("INSTRFROM", Nth(vs, 1)), RckTextArg("INSTRFROM", Nth(vs, 2)))
+        Case Pair(Ok(s), Ok(sub))
+            BiInstrFromAt(s, sub, Nth(vs, 3))
+        Case Else
+            RckWorkBad("INSTRFROM needs two STRINGs and a position")
+
+Def BiInstrFromAt(s As String, sub As String, fromC As Cell) As RckWork
+    Select Case RckWholeArg("INSTRFROM", fromC)
+        Case Ok(from)
+            BiInstrFromOn(s, sub, from)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("INSTRFROM did not answer")
+
+Rem RckWholeArg's whole numbers start at zero, so 0 reaches here and has
+Rem to be turned away with the negatives it already caught.
+Def BiInstrFromOn(s As String, sub As String, from As Number) As RckWork
+    If from < 1 Then
+        RckWorkBad("INSTRFROM: COUNTING STARTS AT 1, AND " & Str(from) & " IS NOT A POSITION")
+    Else
+        RckVals({ CutNum(InstrFrom(s, sub, from)) })
+
 Rem The builtin casts to a 16-bit character, so a code above 65535 wraps
 Rem round and answers some other character, or the empty string. That is
 Rem a wrong answer and not an abort, which is exactly the kind this layer
@@ -234,6 +281,90 @@ Def BiAscAt(s As String) As RckWork
         RckWorkBad("ASC: THE EMPTY STRING HAS NO FIRST CHARACTER")
     Else
         RckVals({ CutNum(Asc(s)) })
+
+Rem The one word in this file with nothing to guard. CODES is total — the
+Rem empty string answers the empty list — so all that is left is the
+Rem bridge, which is the ARRAY the builtin answers written out as the LIST
+Rem a prompt can hold.
+Def BiCodes(vs As List Of Cell) As RckWork
+    BiOnText("CODES", First(vs), Fn(s) => CutList(Map(ToList(Codes(s)), CutNum)))
+
+Rem The other direction, and the only refusal in this file with no builtin
+Rem counterpart: the builtin takes an ARRAY OF NUMBER and cannot be handed
+Rem anything else, but a list at a keyboard can hold any cell at all. Every
+Rem item is checked before any is converted, so a bad one never leaves a
+Rem half-built string behind.
+Def BiFromCodes(vs As List Of Cell) As RckWork
+    Select Case RckListArg("FROMCODES", First(vs))
+        Case Ok(xs)
+            BiFromCodesOn(xs)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("FROMCODES did not answer")
+
+Def BiFromCodesOn(xs As List Of Cell) As RckWork
+    If All(xs, BiIsCode) Then
+        RckVals({ CutStr(FromCodes(ToArray(Map(xs, BiCodeOf)))) })
+    Else
+        RckWorkBad(BiCodeWhy(First(Filter(xs, Fn(c) => Not BiIsCode(c)))))
+
+Def BiIsCode(c As Cell) As Boolean
+    Select Case c
+        Case CutNum(x)
+            x = Floor(x) And x >= 0 And x <= 65535
+        Case Else
+            False
+
+Rem Only ever reached for a cell BiIsCode has already turned down, so the
+Rem two branches are the two ways of being wrong: a number out of range,
+Rem or not a number at all.
+Def BiCodeWhy(c As Cell) As String
+    Select Case c
+        Case CutNum(x)
+            "FROMCODES: NEEDS WHOLE CODES FROM 0 TO 65535, AND " & Str(x) & " IS NOT ONE"
+        Case Else
+            RckKindWhy("FROMCODES", "a LIST OF NUMBERs", c)
+
+Rem Total by construction: every caller has checked with BiIsCode first,
+Rem and a Cell that is not a number has no code to give.
+Def BiCodeOf(c As Cell) As Number
+    Select Case c
+        Case CutNum(x)
+            x
+        Case Else
+            0
+
+Rem The correctness word. MID would trim a position past the end and ASC
+Rem would then abort naming ASC, a word away from the index that was
+Rem actually wrong. Refused here at the index, naming the length.
+Def BiCodeAt(vs As List Of Cell) As RckWork
+    Select Case RckTextArg("CODEAT", Nth(vs, 1))
+        Case Ok(s)
+            BiCodeAtIn(s, Nth(vs, 2))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("CODEAT did not answer")
+
+Def BiCodeAtIn(s As String, kc As Cell) As RckWork
+    Select Case RckWholeArg("CODEAT", kc)
+        Case Ok(k)
+            BiCodeAtOn(s, k)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("CODEAT did not answer")
+
+Rem Position 0 gets past RckWholeArg, so it is turned away here with the
+Rem positions past the end — both are "there is no character there", and
+Rem the length is named because "out of range" without it is a message you
+Rem have to go and count for.
+Def BiCodeAtOn(s As String, k As Number) As RckWork
+    If k < 1 Or k > Len(s) Then
+        RckWorkBad("CODEAT: THERE IS NO CHARACTER " & Str(k) & " — THE STRING HOLDS " & Str(Len(s)))
+    Else
+        RckVals({ CutNum(CodeAt(s, k)) })
 
 Def BiStr(vs As List Of Cell) As RckWork
     Select Case RckNumArg("STR", First(vs))

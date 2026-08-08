@@ -177,6 +177,57 @@ Def Main()
     Assert(Refuses(g, "3 LEN", "needs a STRING"), "LEN OF SOMETHING THAT IS NOT TEXT")
     Assert(Refuses(g, "3 ASC", "needs a STRING"), "AND ASC OF ONE")
 
+    Print("--- character codes ---")
+    Rem CODES answers an ARRAY in the runtime, because NTH on an array is
+    Rem O(1) and a scanner indexes in a loop. There is no ARRAY cell at the
+    Rem keyboard, so the bridge writes it out as the LIST that means the
+    Rem same thing — the prompt pays the cost the builtin exists to save,
+    Rem which is right, because a prompt is not a scanner.
+    Assert(Text(Ran(s0, Q("hi") & " CODES")) = "{ 104 105 }", "CODES ANSWERS A LIST, NOT AN ARRAY")
+    Assert(Text(Ran(s0, Q("") & " CODES")) = "{ }", "AND THE EMPTY STRING ANSWERS AN EMPTY LIST RATHER THAN REFUSING")
+    Assert(Text(Ran(s0, "{ 72 73 } FROMCODES")) = Q("HI"), "FROMCODES SPELLS THE STRING BACK")
+    Assert(Text(Ran(s0, "{ } FROMCODES")) = Q(""), "AND NO CODES SPELL THE EMPTY STRING")
+    Assert(Text(Ran(s0, Q("hello") & " CODES FROMCODES")) = Q("hello"), "AND THE ROUND TRIP IS EXACT")
+    Rem The round trip is exact through a NUL, which CHR cannot express:
+    Rem 0 CHR is the empty string, so a code-by-code rebuild through CHR
+    Rem would quietly lose the character and shorten the string.
+    Assert(TopNum(Ran(s0, "{ 72 0 73 } FROMCODES LEN")) = 3, "INCLUDING THROUGH A NUL, WHICH CHR ANSWERS AS NOTHING")
+    Assert(Text(Ran(s0, "{ 72 0 73 } FROMCODES CODES")) = "{ 72 0 73 }", "AND THE NUL COMES BACK OUT AGAIN")
+    Assert(TopNum(Ran(s0, Q("hello") & " 1 CODEAT")) = 104, "CODEAT COUNTS FROM 1")
+    Assert(TopNum(Ran(s0, Q("hello") & " 5 CODEAT")) = 111, "AND REACHES THE LAST CHARACTER")
+    Assert(TopNum(Ran(s0, Q("hello") & " " & Q("l") & " 1 INSTRFROM")) = 3, "INSTRFROM FROM THE BEGINNING IS INSTR")
+    Assert(TopNum(Ran(s0, Q("hello") & " " & Q("l") & " 4 INSTRFROM")) = 4, "AND FROM A POSITION FINDS THE NEXT ONE")
+    Assert(TopNum(Ran(s0, Q("hello") & " " & Q("l") & " 5 INSTRFROM")) = 0, "AND ANSWERS 0 WHEN THERE IS NO NEXT ONE")
+    Assert(TopNum(Ran(s0, Q("hello") & " " & Q("") & " 1 INSTRFROM")) = 0, "AND AN EMPTY SUB ANSWERS 0, AS INSTR DOES")
+    Rem A start past the end is an ordinary answer and not a mistake:
+    Rem nothing occurs there. Only the low bound refuses.
+    Assert(TopNum(Ran(s0, Q("hello") & " " & Q("l") & " 99 INSTRFROM")) = 0, "AND A START PAST THE END ANSWERS 0 RATHER THAN REFUSING")
+
+    Print("--- the character-code guards, each an abort in the runtime ---")
+    Rem CODEAT is the whole reason these words exist: MID trims a position
+    Rem past the end to nothing and ASC then aborts naming ASC, a word away
+    Rem from the index that was actually wrong. Both layers name the index
+    Rem and the length instead.
+    Assert(Refuses(g, Q("hello") & " 6 CODEAT", "THERE IS NO CHARACTER 6 — THE STRING HOLDS 5"), "CODEAT PAST THE END, NAMING WHAT WAS THERE — WHERE MID WOULD HAVE TRIMMED")
+    Assert(Refuses(g, Q("hello") & " 0 CODEAT", "THERE IS NO CHARACTER 0"), "AND BEFORE THE FIRST, WHICH RCKWHOLEARG LETS THROUGH")
+    Assert(Refuses(g, Q("") & " 1 CODEAT", "THE STRING HOLDS 0"), "AND OF THE EMPTY STRING")
+    Assert(Refuses(g, Q("hello") & " 2.5 CODEAT", "whole number of 0 or more"), "AND A FRACTIONAL POSITION")
+    Assert(Refuses(g, Q("hello") & " -1 CODEAT", "whole number of 0 or more"), "AND A NEGATIVE ONE")
+    Assert(Refuses(g, "3 1 CODEAT", "needs a STRING"), "AND CODEAT OF SOMETHING THAT IS NOT TEXT")
+    Assert(Refuses(g, "3 CODES", "needs a STRING"), "AS WITH CODES, THE ONE WORD HERE THAT OTHERWISE CANNOT FAIL")
+    Assert(Refuses(g, "{ 65 65536 } FROMCODES", "IS NOT ONE"), "A CODE PAST THE 16-BIT CEILING, WHERE THE CAST WOULD WRAP")
+    Assert(Refuses(g, "{ 65 -1 } FROMCODES", "IS NOT ONE"), "AND ONE BELOW ZERO")
+    Assert(Refuses(g, "{ 1.5 } FROMCODES", "IS NOT ONE"), "AND A FRACTIONAL ONE, WHICH THE CAST WOULD TRUNCATE")
+    Rem The one refusal in this file with no builtin counterpart. The
+    Rem builtin takes an ARRAY OF NUMBER and cannot be handed anything
+    Rem else; a list at a keyboard can hold any cell at all.
+    Assert(Refuses(g, "{ 65 " & Q("B") & " } FROMCODES", "needs a LIST OF NUMBERs"), "AND A LIST WITH SOMETHING IN IT THAT IS NOT A NUMBER — A BRIDGE REFUSAL WITH NO BUILTIN BEHIND IT")
+    Assert(Refuses(g, "3 FROMCODES", "needs a LIST"), "AND FROMCODES OF SOMETHING THAT IS NOT A LIST AT ALL")
+    Assert(Refuses(g, Q("hello") & " " & Q("l") & " 0 INSTRFROM", "COUNTING STARTS AT 1"), "INSTRFROM FROM POSITION 0, WHICH IS NOT A POSITION")
+    Assert(Refuses(g, Q("hello") & " " & Q("l") & " -1 INSTRFROM", "whole number of 0 or more"), "AND FROM A NEGATIVE ONE")
+    Assert(Refuses(g, Q("hello") & " " & Q("l") & " 1.5 INSTRFROM", "whole number of 0 or more"), "AND FROM A FRACTIONAL ONE")
+    Assert(Refuses(g, "3 " & Q("l") & " 1 INSTRFROM", "needs two STRINGs and a position"), "AND OVER SOMETHING THAT IS NOT TEXT")
+
     Print("--- numbers ---")
     Assert(TopNum(Ran(s0, "5 NEGATE")) = 0 - 5, "NEGATE")
     Assert(TopNum(Ran(s0, "-5 NEGATE")) = 5, "AND BACK AGAIN")

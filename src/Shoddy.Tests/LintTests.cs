@@ -444,6 +444,101 @@ public class LintTests
         finally { Directory.Delete(dir, recursive: true); }
     }
 
+    // ---- the unused-include check, and the two ways it used to lie ------
+
+    // A machine reached ONLY by matching on its sum type. `Case LidOpen`
+    // parses to an NType.Pat carrying the name, never a Word node, so
+    // walking the bodies for Words found nothing and the check called the
+    // Include unused. It is not, and the proof is that taking the Include
+    // away fails the weave with "unknown word" on the constructor —
+    // machines/seeds/seedhtml.shoddy is the real file of this shape, which
+    // names nothing from xml.shoddy but `XOk`.
+    [Fact]
+    public void AMachineUsedOnlyInACasePatternIsNotUnused()
+    {
+        Lint.Result r = LintAgainst("lidp", J(
+            "Def Shut(l As Lid) As Number",
+            "    Select Case l",
+            "        Case LidOpen(w)",
+            "            w",
+            "        Case Else",
+            "            1",
+            "",
+            "Def Main()",
+            "    Print(1)"));
+        Assert.DoesNotContain(r.Warnings, w => w.Contains("no word or type from it is used"));
+    }
+
+    // The near miss that looks like the same bug and is NOT one. A type
+    // named only in an `As` clause does not keep its Include alive, because
+    // the parser skips annotations outright — `Def Weigh(l As Lid)` compiles
+    // and runs with no Include at all, the annotation being documentation
+    // the weave never resolves. So this warning is telling the truth and
+    // must keep firing: widening the check to count `As` clauses would
+    // silence it, which would be a regression dressed as a fix.
+    [Fact]
+    public void AMachineNamedOnlyInATypeAnnotationIsStillUnused()
+    {
+        Lint.Result r = LintAgainst("lidt", J(
+            "Def Weigh(l As Lid) As Number",
+            "    1",
+            "",
+            "Def Main()",
+            "    Print(Weigh(1))"));
+        Assert.Contains(r.Warnings, w => w.Contains("no word or type from it is used"));
+    }
+
+    // The true positive, which is the whole value of the check: teaching it
+    // to see Case patterns must not have made it toothless.
+    [Fact]
+    public void AMachineNamedNowhereAtAllStillWarns()
+    {
+        Lint.Result r = LintAgainst("lidn", J(
+            "Def Main()",
+            "    Print(1)"));
+        Assert.Contains(r.Warnings, w => w.Contains("no word or type from it is used"));
+    }
+
+    /// <summary>A one-type machine to include: a sum type, so it can be
+    /// matched on, and a Def, so the machine contributes a word as well and
+    /// the check has something to miss.
+    ///
+    /// LidOpen CARRIES A FIELD, and that is not decoration. Pat.Type is set
+    /// only for a constructor followed by `(` — a nullary `Case LidShut`
+    /// parses as an ordinary Word node and was always counted, so a fixture
+    /// built on one passes whether the Pat walk exists or not. The bug only
+    /// shows through a constructor with arguments, which is what `XOk(tree)`
+    /// is in the file that exposed it.</summary>
+    const string LidSource =
+        "Type Lid = LidOpen(Width As Number) | LidShut\n" +
+        "\n" +
+        "Def LidName(l As Lid) As String\n" +
+        "    \"LID\"\n";
+
+    /// <summary>Builds a throwaway machine named for the calling test and
+    /// lints a program that includes it. Each test needs its OWN machine
+    /// name: assemblies load by path but resolve by simple name, so two
+    /// tests sharing one name in a single process is a load conflict rather
+    /// than a fresh build — MachineTests weaves the whole standard library
+    /// into a temp workspace, which is why including a real machine here
+    /// dies with "Assembly with same name is already loaded" instead.</summary>
+    static Lint.Result LintAgainst(string machineName, string src)
+    {
+        string dir = Path.Combine(Path.GetTempPath(), "shoddy-lint-inc",
+                                  Guid.NewGuid().ToString("N"), "machines");
+        Directory.CreateDirectory(dir);
+        string sb = Path.Combine(dir, machineName + ".shoddy");
+        File.WriteAllText(sb, LidSource);
+
+        var built = new MachineSet();
+        ShoddyProgram mprog = Parser.Parse(Lexer.ReadProgram(sb, built.TryResolve));
+        Weaver.WeaveMachine(mprog, sb, built.Machines);
+
+        string f = Path.Combine(dir, "fixture.shoddy");
+        File.WriteAllText(f, $"Include \"{machineName}.shoddy\"\n\n" + src);
+        return LintFile(f, machines: true);
+    }
+
     // ---- the effects table covers every builtin -------------------------
 
     [Fact]

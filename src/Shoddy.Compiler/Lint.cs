@@ -86,16 +86,41 @@ public static class Lint
         }
     }
 
-    /// <summary>Every word named anywhere in the program's bodies.</summary>
+    /// <summary>Every word named anywhere in the program's bodies, plus the
+    /// two places a name can appear that walking the bodies for Word nodes
+    /// cannot see. Both are real uses, and the test for that is that the
+    /// compiler refuses to build without the Include that supplies them:
+    ///
+    /// A CONSTRUCTOR IN A CASE PATTERN. `Case XOk(tree)` parses to an
+    /// NType.Pat carrying the name on Pat.Type, never a Word node, so a
+    /// machine reached only by matching on its sum type looked unused.
+    /// seedhtml is exactly that shape: it names nothing from xml.shoddy but
+    /// `XOk`, and taking the Include this check told it to take away fails
+    /// the weave with "unknown word: XOK".
+    ///
+    /// A TYPE IN AN `As` CLAUSE IS DELIBERATELY *NOT* COUNTED, which looks
+    /// like the same bug and is not. The parser SKIPS type annotations
+    /// outright, so `Def F(t As Xml)` compiles and runs with no Include of
+    /// xml.shoddy at all — the annotation is documentation the weave never
+    /// resolves. Counting it would silence a warning that is telling the
+    /// truth. The test for "is this a real use" is whether the build fails
+    /// without the Include, and for an annotation alone it does not.</summary>
     static HashSet<string> UsedWords(ShoddyProgram prog)
     {
         var used = new HashSet<string>();
+        void walkPat(Pat? p)
+        {
+            if (p == null) return;
+            if (p.Type != null) used.Add(p.Type);
+            foreach (Pat s in p.Subs) walkPat(s);   // patterns nest
+        }
         void walk(Quot? q)
         {
             if (q == null) return;
             foreach (Node n in q.Items)
             {
                 if (n.T == NType.Word && n.Str != null) used.Add(n.Str);
+                walkPat(n.P);
                 walk(n.Q); walk(n.ElseQ);
             }
         }

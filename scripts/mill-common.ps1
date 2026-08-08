@@ -30,11 +30,37 @@
 $Repo = Join-Path $MillDir '../..'
 $Mill = Join-Path $Repo 'bin/mill.exe'
 
+# Run a scriptblock containing a native call with $ErrorActionPreference
+# neutralised for its duration, then judge it on its EXIT CODE alone - the
+# only honest signal a native program gives. Same reason as the Native
+# helper at the top of the repo's own build.ps1: Windows PowerShell 5.1
+# wraps every stderr line a native program writes in a NativeCommandError
+# record whenever the CALLER captures our streams, and under 'Stop' that
+# record is terminating. So mill's ordinary "machine x.shoddy is not built
+# - building" notice killed the run on a freshly cleaned tree, while the
+# identical command straight into a console was fine.
+#
+# It takes a SCRIPTBLOCK rather than a command and its arguments, because
+# the calls here are not all plain: several pipe their standard input
+# ("$null | & $Mill run test.shoddy" is this shell's `< /dev/null`, and
+# halifax feeds a transcript in with Get-Content). Wrapping the whole
+# pipeline keeps those exactly as they were.
+#
+# It lives here because every mill's build.ps1 dot-sources this file, so
+# one definition covers all twelve, whether run from the repo's build.ps1
+# or on their own.
+function Invoke-Native {
+    param([Parameter(Mandatory)][scriptblock]$Action)
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try { & $Action } finally { $ErrorActionPreference = $prev }
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+}
+
 function Assert-Mill {
     if (-not (Test-Path $Mill)) {
         Write-Host "mill toolchain not built; building it into $Repo/bin ..."
-        dotnet publish (Join-Path $Repo 'src/Shoddy.Mill') -c Release -o (Join-Path $Repo 'bin')
-        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        Invoke-Native { dotnet publish (Join-Path $Repo 'src/Shoddy.Mill') -c Release -o (Join-Path $Repo 'bin') }
     }
 }
 
@@ -43,17 +69,23 @@ function Invoke-Live {
         [Parameter(Mandatory)]$Location,
         [Parameter(Mandatory)][scriptblock]$Action
     )
+    # $ErrorActionPreference relaxed for the same reason Invoke-Native does
+    # it: what runs in here is a live native program, and a line it writes
+    # to stderr must not be mistaken for a terminating error. The exit code
+    # is left to the caller, every one of which already reads it with
+    # `exit $LASTEXITCODE` on the next line.
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
     Push-Location $Location
     try { & $Action }
-    finally { Pop-Location }
+    finally { Pop-Location; $ErrorActionPreference = $prev }
 }
 
 function Invoke-Weave {
     param([Parameter(Mandatory)][string[]]$Sources)
     Assert-Mill
     foreach ($src in $Sources) {
-        & $Mill weave $src
-        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        Invoke-Native { & $Mill weave $src }
     }
     New-Item -ItemType Directory -Path bin -Force | Out-Null
     foreach ($src in $Sources) {

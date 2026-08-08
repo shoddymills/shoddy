@@ -62,19 +62,19 @@ try {
         }
         'train' {
             if (-not (Test-Path $TrainOut)) { Invoke-BuildMill }
-            & dotnet $TrainOut
+            Invoke-Native { & dotnet $TrainOut }
             exit $LASTEXITCODE
         }
         'run' {
             if (-not (Test-Path $RunOut)) { Invoke-BuildMill }
-            & dotnet $RunOut
+            Invoke-Native { & dotnet $RunOut }
             exit $LASTEXITCODE
         }
         'test' {
             # Run from source, not from bin/: the point is to grade what is
             # in the tree. No training - test.shoddy explains why.
             Assert-Mill
-            & $Mill run test.shoddy
+            Invoke-Native { & $Mill run test.shoddy }
             exit $LASTEXITCODE
         }
         'clean' {

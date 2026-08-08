@@ -38,13 +38,13 @@ try {
     switch ($Command) {
         'run' {
             Assert-Mill
-            & $Mill run --allow-net emley-moor.shoddy
+            Invoke-Native { & $Mill run --allow-net emley-moor.shoddy }
             exit $LASTEXITCODE
         }
         'test' {
             Assert-Mill
             # $null on the pipeline is this shell's `< /dev/null`.
-            $null | & $Mill run test.shoddy
+            Invoke-Native { $null | & $Mill run test.shoddy }
             exit $LASTEXITCODE
         }
         'build' {

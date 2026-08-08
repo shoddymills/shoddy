@@ -52,18 +52,18 @@ try {
     switch ($Command) {
         'run' {
             Assert-Mill
-            & $Mill run tally.shoddy $SpecPath
+            Invoke-Native { & $Mill run tally.shoddy $SpecPath }
             exit $LASTEXITCODE
         }
         'capture' {
             Assert-Mill
-            & $Mill run --no-window tally.shoddy $SpecPath
+            Invoke-Native { & $Mill run --no-window tally.shoddy $SpecPath }
             exit $LASTEXITCODE
         }
         'test' {
             # $null on the pipeline is this shell's `< /dev/null`.
             Assert-Mill
-            $null | & $Mill run test.shoddy
+            Invoke-Native { $null | & $Mill run test.shoddy }
             exit $LASTEXITCODE
         }
         'build' {

@@ -51,12 +51,12 @@ try {
         }
         'test' {
             Assert-Mill
-            $null | & $Mill run test.shoddy
+            Invoke-Native { $null | & $Mill run test.shoddy }
             exit $LASTEXITCODE
         }
         'demo' {
             Assert-Mill
-            Get-Content files/demo.halifax | & $Mill run halifax.shoddy
+            Invoke-Native { Get-Content files/demo.halifax | & $Mill run halifax.shoddy }
             exit $LASTEXITCODE
         }
         'build' {

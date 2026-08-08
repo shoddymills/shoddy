@@ -36,13 +36,13 @@ try {
     switch ($Command) {
         'run' {
             Assert-Mill
-            & $Mill run --allow-net weather-glass.shoddy $Zip
+            Invoke-Native { & $Mill run --allow-net weather-glass.shoddy $Zip }
             exit $LASTEXITCODE
         }
         'test' {
             # $null on the pipeline is this shell's `< /dev/null`.
             Assert-Mill
-            $null | & $Mill run test.shoddy
+            Invoke-Native { $null | & $Mill run test.shoddy }
             exit $LASTEXITCODE
         }
         'build' {

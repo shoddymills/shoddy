@@ -35,14 +35,26 @@ function G {
     try { git @args } finally { $ErrorActionPreference = $prev }
     if ($LASTEXITCODE -ne 0) { Fail "git $($args -join ' ') failed (exit $LASTEXITCODE)." }
 }
+# G's twin for the calls whose EXIT CODE this script wants to INSPECT
+# rather than treat as fatal: the preconditions below, where a non-zero
+# answer is the question being asked ("is the tree dirty?"), and the two
+# mutating calls that carry their own tailored recovery. Same stderr
+# neutralisation as G and for exactly the same reason - without it,
+# `git push`, which writes its progress to stderr every single time,
+# terminated ship before its own error check could run.
+function Gq {
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try { git @args } finally { $ErrorActionPreference = $prev }
+}
 
-git rev-parse --is-inside-work-tree > $null
+Gq rev-parse --is-inside-work-tree > $null
 if ($LASTEXITCODE -ne 0) { Fail "not inside a git repository." }
-git diff --quiet
+Gq diff --quiet
 if ($LASTEXITCODE -ne 0) { Fail "unstaged changes present - commit or stash first (see git status)." }
-git diff --cached --quiet
+Gq diff --cached --quiet
 if ($LASTEXITCODE -ne 0) { Fail "staged-but-uncommitted changes present - commit or unstage first." }
-git rev-parse -q --verify MERGE_HEAD > $null
+Gq rev-parse -q --verify MERGE_HEAD > $null
 if ($LASTEXITCODE -eq 0) { Fail "a merge is in progress - finish or abort it first." }
 
 switch ($Command) {
@@ -55,9 +67,9 @@ switch ($Command) {
         }
         $Branch = "feature/$Name"
         G fetch origin --prune
-        git show-ref --verify --quiet "refs/heads/$Branch"
+        Gq show-ref --verify --quiet "refs/heads/$Branch"
         if ($LASTEXITCODE -eq 0) { Fail "$Branch already exists locally." }
-        git show-ref --verify --quiet "refs/remotes/origin/$Branch"
+        Gq show-ref --verify --quiet "refs/remotes/origin/$Branch"
         if ($LASTEXITCODE -eq 0) { Fail "$Branch already exists on origin." }
         G checkout main
         G pull --ff-only origin main
@@ -68,32 +80,32 @@ switch ($Command) {
     }
 
     'ship' {
-        $Branch = git rev-parse --abbrev-ref HEAD
+        $Branch = Gq rev-parse --abbrev-ref HEAD
         if ($Branch -notlike 'feature/*') {
             Fail "current branch is '$Branch' - ship only runs from a feature/* branch."
         }
         G fetch origin --prune
-        $count = [int](git rev-list --count origin/main..HEAD)
+        $count = [int](Gq rev-list --count origin/main..HEAD)
         if ($count -eq 0) { Fail "no commits on $Branch beyond origin/main - nothing to merge." }
         Write-Host ""
         Write-Host "Will merge these $count commit(s) from $Branch into main, then delete the branch:" -ForegroundColor Yellow
-        git log --oneline origin/main..HEAD
+        Gq log --oneline origin/main..HEAD
         if (-not $Yes) {
             $a = Read-Host "Proceed? (y/N)"
             if ($a -notmatch '^(y|yes)$') { Write-Host "aborted, nothing done."; exit 0 }
         }
         Write-Host "> git push -u origin $Branch" -ForegroundColor Cyan
-        git push -u origin $Branch
+        Gq push -u origin $Branch
         if ($LASTEXITCODE -ne 0) {
             Fail "push rejected - origin/$Branch has commits you don't have. git pull, then re-run ship."
         }
         G checkout main
         G pull --ff-only origin main
         Write-Host "> git merge --no-ff $Branch" -ForegroundColor Cyan
-        git merge --no-ff $Branch -m "Merge branch '$Branch'"
+        Gq merge --no-ff $Branch -m "Merge branch '$Branch'"
         if ($LASTEXITCODE -ne 0) {
-            git merge --abort
-            git checkout $Branch
+            Gq merge --abort
+            Gq checkout $Branch
             Fail "merge conflicts with main. On $Branch run: git merge main (resolve, commit), then re-run ship."
         }
         G push origin main

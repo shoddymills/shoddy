@@ -61,7 +61,7 @@ try {
         }
         'test' {
             Assert-Mill
-            & $Mill run test.shoddy
+            Invoke-Native { & $Mill run test.shoddy }
             exit $LASTEXITCODE
         }
         'clean' {

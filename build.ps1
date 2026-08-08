@@ -32,6 +32,32 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-Location $PSScriptRoot
 
+# Run a native program with $ErrorActionPreference neutralised for its
+# duration, and judge it on its EXIT CODE alone - the only honest signal a
+# native program gives.
+#
+# Windows PowerShell 5.1 wraps every line a native program writes to stderr
+# in a NativeCommandError record whenever the CALLER captures our streams:
+# `./build.ps1 all 2>&1 | tee log.txt`, a CI step, an assistant's shell.
+# Under 'Stop' that record is terminating, so an ordinary informational
+# line kills the run even though the program exited 0. That is what broke
+# `build.ps1 all`: clean wipes machines/bin, so the next mill prints
+# "machine seq.shoddy is not built - building" on stderr and the release
+# gate died there - while the identical command straight into a console was
+# fine, which is why it went unnoticed.
+#
+# 'Stop' stays in force everywhere else, because it is doing real work for
+# CMDLET failures: a Copy-Item that fails during stage must not go on to
+# package a broken .vsix.
+function Native {
+    $exe = $args[0]
+    $rest = @($args[1..($args.Count - 1)])
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try { & $exe @rest } finally { $ErrorActionPreference = $prev }
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+}
+
 $Mill = Join-Path 'bin' 'mill.exe'
 # Where `stage` drops the extension's own copy of the toolchain. Both are
 # build output: gitignored, and rebuilt from scratch on every stage.
@@ -39,7 +65,7 @@ $StageMill = Join-Path 'vscode-shoddy' 'mill'
 $StageLib = Join-Path 'vscode-shoddy' 'machines'
 
 function Invoke-Build {
-    dotnet publish src/Shoddy.Mill -c Release -o bin
+    Native dotnet publish src/Shoddy.Mill -c Release -o bin
 }
 
 function Assert-Mill {
@@ -77,8 +103,7 @@ function Invoke-Machines {
         }
         foreach ($f in $ready) {
             Write-Host "==> $($f.Name)"
-            & $Mill machine $f.FullName
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            Native $Mill machine $f.FullName
             [void]$built.Add($f.BaseName.ToLowerInvariant())
             $pending.Remove($f)
         }
@@ -98,9 +123,8 @@ function Invoke-Stage {
     }
     # Satellite resource assemblies are Roslyn's localized diagnostics —
     # ~5 MB of the package for messages the mill never surfaces.
-    dotnet publish src/Shoddy.Mill -c Release -o $StageMill `
+    Native dotnet publish src/Shoddy.Mill -c Release -o $StageMill `
         -p:SatelliteResourceLanguages=en -p:DebugType=none
-    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     New-Item -ItemType Directory -Path (Join-Path $StageLib 'bin') -Force | Out-Null
     New-Item -ItemType Directory -Path (Join-Path $StageLib 'seeds/bin') -Force | Out-Null
     Copy-Item machines/*.shoddy $StageLib
@@ -129,61 +153,51 @@ function Invoke-Stage {
 }
 
 function Invoke-Test {
-    dotnet test src/Shoddy.Tests
-    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    Native dotnet test src/Shoddy.Tests
     Assert-Mill
-    & $Mill run tst/libtest.shoddy
-    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    Native $Mill run tst/libtest.shoddy
     # Not a machine suite: it compares the RUNTIME's builtin dispatch against
     # the seeded dictionary, and fails if a builtin is reachable that a stated
     # rule says must not be, or if a future seed quietly claims a name the
     # builtin seed's work list expects to be free. Runs here, before the
     # machine suites, because a collision it catches is one they would report
     # somewhere else.
-    & $Mill run tst/builtinsurfacetest.shoddy
-    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    Native $Mill run tst/builtinsurfacetest.shoddy
     # fin's arithmetic is the kind that produces a plausible wrong answer
     # rather than an error, so its known-answer suite runs in CI beside the
     # golden files rather than by hand.
-    & $Mill run tst/fin.shoddy
-    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    Native $Mill run tst/fin.shoddy
     # eng and lin are the same case: a numerics library that is subtly wrong
     # still returns numbers. eng's suite is known answers, lin's is those plus
     # residuals against the defining identities — P A - L U, A v - lambda v —
     # which is the only way to test a factorisation whose parts are not unique.
-    & $Mill run tst/eng.shoddy
-    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-    & $Mill run tst/lin.shoddy
-    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    Native $Mill run tst/eng.shoddy
+    Native $Mill run tst/lin.shoddy
     # alg is the same case again and then some: a symbolic answer that is
     # subtly wrong is still a well-formed expression. Its suite tests by
     # property rather than by value -- integrals differentiated back,
     # factorisations expanded, partial fractions recombined -- and it is
     # also the only place the alg/eng bridge can be exercised, since
     # neither machine includes the other.
-    & $Mill run tst/alg.shoddy
-    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    Native $Mill run tst/alg.shoddy
     # bool is the same case once more: it is arithmetic standing in for bits,
     # so a wrong fold or a formula that overflows 2^53 before its Mod runs
     # returns a plausible number rather than failing. Its suite is known
     # answers worked by hand plus the identities -- De Morgan both ways, Gray
     # codes one bit apart, a minimised cover rebuilt and compared -- which is
     # the only way to test a minimal form whose spelling is not unique.
-    & $Mill run tst/bool.shoddy
-    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    Native $Mill run tst/bool.shoddy
     # The net demo is the only end-to-end exercise of the socket words: it
     # stands up a server, connects a client to it and trades lines, both
     # ends in one process on loopback. --allow-net is required because the
     # network is a gated capability — without the flag the first socket
     # word aborts, so this run also proves the gate opens.
-    & $Mill run --allow-net tst/net-demo.shoddy
-    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    Native $Mill run --allow-net tst/net-demo.shoddy
     # The tutorial's program is documentation that has to keep working:
     # its pure half is headless by design, so the checks run here beside
     # everything else and the tutorial cannot drift from code that no
     # longer compiles.
-    & $Mill run tutorials/spiro/test.shoddy
-    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    Native $Mill run tutorials/spiro/test.shoddy
     # Everything else the tree can prove about itself: a suite for every
     # machine that has one, and every mill's own suite. Both existed
     # before and neither ran here, which meant a release could ship a
@@ -207,8 +221,7 @@ function Invoke-MachineSuites {
                        'seedbuzzertest', 'seedfintest', 'seedhttpstest', 'seedisamtest', 'seedneuraltest', 'seednettest', 'seedreciotest', 'seedsimplextest', 'seedvt100test', 'shakertest',
                        'xmltest') {
         Write-Host "==> tst/$suite.shoddy"
-        & $Mill run "tst/$suite.shoddy"
-        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        Native $Mill run "tst/$suite.shoddy"
     }
     # seedscribblertest, seedturtletest and seedplottertest are NOT run
     # here. --no-window hides the window, but it is still a real one, and
@@ -218,11 +231,9 @@ function Invoke-MachineSuites {
     # on a machine with a real display: `bin/mill --no-window run
     # tst/seedscribblertest.shoddy` and the same for turtle/plotter.
     Write-Host '==> tst/isamtest.shoddy'
-    & $Mill run tst/isamtest.shoddy
-    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    Native $Mill run tst/isamtest.shoddy
     Write-Host '==> tst/isamdump.shoddy'
-    & $Mill run tst/isamdump.shoddy DELETE
-    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    Native $Mill run tst/isamdump.shoddy DELETE
 }
 
 # Every mill's own test target, through the mill's own build.ps1, so there
@@ -247,6 +258,9 @@ function Invoke-MillSuites {
             [Console]::Error.WriteLine("mills/$($m.Name) has no build.ps1 - every mill carries both twins.")
             exit 1
         }
+        # In-process, as before: each mill's build.ps1 protects its own
+        # native calls through the Native helper in mill-common.ps1, so it
+        # behaves the same run from here or run on its own.
         Write-Host "==> mills/$($m.Name)/build.ps1 test"
         & $script test
         if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -276,9 +290,8 @@ function Invoke-Vsix {
     Invoke-Stage
     Push-Location vscode-shoddy
     try {
-        if ($Bump) { vsce package $Bump --no-git-tag-version }
-        else { vsce package }
-        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        if ($Bump) { Native vsce package $Bump --no-git-tag-version }
+        else { Native vsce package }
     }
     finally { Pop-Location }
 }
@@ -310,14 +323,18 @@ switch ($Command) {
     'build' { Invoke-Build }
     'test' { Invoke-Test }
     'run' {
+        # Native, so a program that fails is reported as a failure: this
+        # used to leave $LASTEXITCODE unpropagated and answer 0 for a
+        # program mill had just exited 1 on, which every mill's own
+        # build.ps1 got right and this one did not.
         if (-not $File) { [Console]::Error.WriteLine('usage: ./build.ps1 run FILE.shoddy'); exit 2 }
         Assert-Mill
-        & $Mill run $File
+        Native $Mill run $File
     }
     'weave' {
         if (-not $File) { [Console]::Error.WriteLine('usage: ./build.ps1 weave FILE.shoddy'); exit 2 }
         Assert-Mill
-        & $Mill weave $File
+        Native $Mill weave $File
     }
     'machines' { Invoke-Machines }
     'stage' { Invoke-Stage }

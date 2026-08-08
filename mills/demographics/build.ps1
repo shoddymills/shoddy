@@ -54,12 +54,12 @@ try {
         }
         'train' {
             if (-not (Test-Path $TrainOut)) { Invoke-BuildMill }
-            & dotnet $TrainOut
+            Invoke-Native { & dotnet $TrainOut }
             exit $LASTEXITCODE
         }
         'run' {
             if (-not (Test-Path $RunOut)) { Invoke-BuildMill }
-            & dotnet $RunOut
+            Invoke-Native { & dotnet $RunOut }
             exit $LASTEXITCODE
         }
         'test' {
@@ -67,7 +67,7 @@ try {
             # in the tree. No training - nine minutes, and it would rewrite
             # the model being graded. test.shoddy says so at more length.
             Assert-Mill
-            & $Mill run test.shoddy
+            Invoke-Native { & $Mill run test.shoddy }
             exit $LASTEXITCODE
         }
         'clean' {

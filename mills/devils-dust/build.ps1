@@ -30,12 +30,12 @@ try {
     switch ($Command) {
         'run' {
             Assert-Mill
-            & $Mill run devils-dust.shoddy
+            Invoke-Native { & $Mill run devils-dust.shoddy }
             exit $LASTEXITCODE
         }
         'test' {
             Assert-Mill
-            & $Mill run test.shoddy
+            Invoke-Native { & $Mill run test.shoddy }
             exit $LASTEXITCODE
         }
         default {

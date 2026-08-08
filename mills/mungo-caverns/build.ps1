@@ -60,7 +60,7 @@ try {
                             ForEach-Object { 'tests/' + $_.Name })
             foreach ($suite in $suites) {
                 Write-Host "--- $suite"
-                $null | & $Mill run $suite
+                Invoke-Native { $null | & $Mill run $suite }
                 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
             }
         }

@@ -40,6 +40,16 @@ function G {
     try { git @args } finally { $ErrorActionPreference = $prev }
     if ($LASTEXITCODE -ne 0) { Fail "git $($args -join ' ') failed (exit $LASTEXITCODE)." }
 }
+# G's twin for the calls below whose EXIT CODE is the question being asked
+# rather than a failure - "is the tree dirty?", "does this tag exist?".
+# Same stderr neutralisation as G, and needed for the same reason: these
+# ran bare, so a single line on git's stderr could terminate the release
+# during its own preconditions.
+function Gq {
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try { git @args } finally { $ErrorActionPreference = $prev }
+}
 
 # --- argument ---
 if (-not $Version) { Fail "usage: scripts/shoddy-release.ps1 X.Y.Z [-Yes]   (e.g. scripts/shoddy-release.ps1 1.0.0)" }
@@ -49,29 +59,29 @@ $Tag    = "v$Version"
 $Vsix   = "vscode-shoddy/vscode-shoddy-$Version.vsix"
 
 # --- preconditions: right place, clean state ---
-git rev-parse --is-inside-work-tree > $null
+Gq rev-parse --is-inside-work-tree > $null
 if ($LASTEXITCODE -ne 0) { Fail "not inside a git repository." }
-$top = (git rev-parse --show-toplevel) -replace '/', '\'
+$top = (Gq rev-parse --show-toplevel) -replace '/', '\'
 if ((Get-Location).Path -ne $top) { Fail "run from the repo root: $top" }
 if (-not (Test-Path build.ps1) -or -not (Test-Path vscode-shoddy/package.json)) {
     Fail "this doesn't look like the shoddy repo root."
 }
-git diff --quiet
+Gq diff --quiet
 if ($LASTEXITCODE -ne 0) { Fail "unstaged changes present - commit or stash first (see git status)." }
-git diff --cached --quiet
+Gq diff --cached --quiet
 if ($LASTEXITCODE -ne 0) { Fail "staged-but-uncommitted changes present - commit or unstage first." }
-git rev-parse -q --verify MERGE_HEAD > $null
+Gq rev-parse -q --verify MERGE_HEAD > $null
 if ($LASTEXITCODE -eq 0) { Fail "a merge is in progress - finish or abort it first." }
 
 # --- preconditions: name not taken anywhere ---
 G fetch origin --tags --prune
-git show-ref --verify --quiet "refs/heads/$Branch"
+Gq show-ref --verify --quiet "refs/heads/$Branch"
 if ($LASTEXITCODE -eq 0) { Fail "branch $Branch already exists locally." }
-git show-ref --verify --quiet "refs/remotes/origin/$Branch"
+Gq show-ref --verify --quiet "refs/remotes/origin/$Branch"
 if ($LASTEXITCODE -eq 0) { Fail "branch $Branch already exists on origin." }
-git show-ref --verify --quiet "refs/tags/$Tag"
+Gq show-ref --verify --quiet "refs/tags/$Tag"
 if ($LASTEXITCODE -eq 0) { Fail "tag $Tag already exists locally." }
-git ls-remote --exit-code --tags origin $Tag > $null
+Gq ls-remote --exit-code --tags origin $Tag > $null
 if ($LASTEXITCODE -eq 0) { Fail "tag $Tag already exists on origin." }
 
 # --- confirm ---

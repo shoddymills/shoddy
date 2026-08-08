@@ -38,17 +38,43 @@ Def Session(lines As List Of String) As List Of String
     Concat(HxBanner(), SessionFrom(HxFresh(), lines))
 
 Def SessionFrom(st As RckState, lines As List Of String) As List Of String
-    Concat(RckShow(st), SessionOn(st, lines))
+    Concat(RckShow(st), SessionOn(st, "", lines))
 
-Def SessionOn(st As RckState, lines As List Of String) As List Of String
+Rem The gathering the loop does, mirrored here so a scripted session is
+Rem the same session a typed one would be. Lines running out while
+Rem something is still held is this harness's end of input: the held text
+Rem is dropped, showing nothing, exactly as HxLoop drops it.
+Def SessionOn(st As RckState, buf As String, lines As List Of String) As List Of String
     If IsEmpty(lines) Then
         { }
     Else
-        SessionStep(st, First(lines), Rest(lines))
+        SessionStep(st, buf, First(lines), Rest(lines))
 
-Def SessionStep(st As RckState, line As String, more As List Of String) As List Of String
-    Let r = Acted(st, line)
-    Concat(Prepend(HxPrompt() & line, HxShown(r)), SessionOn(HxAfter(st, r), more))
+Rem Every physical line typed shows on its own row under the prompt it was
+Rem typed at, and the ONE evaluation happens when the last of them closes
+Rem the line. So a definition split over two lines is two rows and one
+Rem result, which is what the screen looked like.
+Def SessionStep(st As RckState, buf As String, line As String, more As List Of String) As List Of String
+    Prepend(SessionMark(buf) & line, SessionAfter(st, buf, line, more))
+
+Def SessionMark(buf As String) As String
+    If buf = "" Then
+        HxPrompt()
+    Else
+        HxMorePrompt()
+
+Def SessionAfter(st As RckState, buf As String, line As String, more As List Of String) As List Of String
+    Select Case HxJoined(buf, line)
+        Case HxMore(kept)
+            SessionOn(st, kept, more)
+        Case HxReady(whole)
+            SessionRan(st, whole, more)
+        Case Else
+            { }
+
+Def SessionRan(st As RckState, whole As String, more As List Of String) As List Of String
+    Let r = Acted(st, whole)
+    Concat(HxShown(r), SessionOn(HxAfter(st, r), "", more))
 
 Rem The core's own dispatch, minus the three words that write files. A
 Rem test cannot write a file and still be the pure half's test, so SAVE,
@@ -90,6 +116,27 @@ Def Ran(st As RckState, line As String) As RckState
 Def Runs(st As RckState, lines As List Of String) As RckState
     Fold(lines, st, Ran)
 
+Rem Runs, with the gathering the loop does — so a list of physical lines
+Rem stands in for a list of things typed. Lines running out while text is
+Rem still held drops it, which is the harness's end of input.
+Def Gathers(st As RckState, lines As List Of String) As RckState
+    Gathering(st, "", lines)
+
+Def Gathering(st As RckState, buf As String, lines As List Of String) As RckState
+    If IsEmpty(lines) Then
+        st
+    Else
+        GatheringOn(st, buf, First(lines), Rest(lines))
+
+Def GatheringOn(st As RckState, buf As String, line As String, more As List Of String) As RckState
+    Select Case HxJoined(buf, line)
+        Case HxMore(kept)
+            Gathering(st, kept, more)
+        Case HxReady(whole)
+            Gathering(Ran(st, whole), "", more)
+        Case Else
+            st
+
 Def Shown(st As RckState, line As String) As List Of String
     HxShown(Acted(st, line))
 
@@ -98,6 +145,26 @@ Def Said(st As RckState, line As String) As String
 
 Def Q(s As String) As String
     RckQuoteMark() & s & RckQuoteMark()
+
+Rem Whether a rendered transcript carries a phrase, for the assertions
+Rem that care what a refusal said and not where in the rows it said it.
+Def Has(s As String, sub As String) As Boolean
+    Instr(s, sub) > 0
+
+Rem The stack as the shell would show it, on one line.
+Def Stack(st As RckState) As String
+    Join(RckShow(st), " / ")
+
+Rem HxJoined's answer as one string, so the gathering cases read as a
+Rem table of "what was held" plus "what was typed next".
+Def Joined(buf As String, line As String) As String
+    Select Case HxJoined(buf, line)
+        Case HxReady(l)
+            "ready " & l
+        Case HxMore(b)
+            "more " & b
+        Case Else
+            "?"
 
 Rem ---- the transcripts, byte for byte ----------------------------------
 
@@ -339,6 +406,14 @@ Def Main()
     Let bad = { ": VAT DUP 0.2 * + ;", ": OOPS NOSUCHWORD ;" }
     Assert(RckLoadWhy(s0, bad) = "unknown word NOSUCHWORD", "A FILE NAMING AN UNKNOWN WORD REFUSES WITH THE WORD NAMED")
     Assert(IsEmpty(RckSave(RckLoadOk(s0, bad))), "AND LEAVES THE DICTIONARY EXACTLY AS IT WAS")
+    Rem A file may be hand-written over several lines, and what SAVE
+    Rem writes is one line per word however the word arrived — so a
+    Rem continued definition round-trips to the one-line form.
+    Let hand = { ": VAT DUP", "0.2 * + ;" }
+    Assert(Join(RckSave(RckLoadOk(s0, hand)), " / ") = ": VAT DUP 0.2 * + ;", "A HAND-WRITTEN FILE MAY SPLIT A DEFINITION, AND SAVES BACK AS ONE LINE")
+    Assert(Join(RckSave(Gathers(s0, hand)), " / ") = Join(RckSave(RckLoadOk(s0, hand)), " / "), "AND LOADING IT MATCHES TYPING IT")
+    Assert(RckLoadWhy(s0, { ": VAT DUP" }) = "the file ends before this line closes", "A FILE THAT ENDS MID-DEFINITION REFUSES THE LOAD")
+    Assert(IsEmpty(RckSave(RckLoadOk(s0, { ": NET DUP 6 / - ;", ": VAT DUP" }))), "LEAVING THE DICTIONARY AS IT WAS, THE GOOD LINE INCLUDED")
 
     Print("--- the shell's five words are read from the line ---")
     Assert(Reads("SAVE " & Q("mine.halifax")) = "path SAVE mine.halifax", "SAVE WITH A QUOTED NAME")
@@ -392,6 +467,86 @@ Def Main()
 
     Print("--- every word carries its metadata, the shell's included ---")
     Assert(IsEmpty(Filter(RckDict(s0), Fn(e) => WordEffect(e) = "" Or WordDesc(e) = "")), "NO WORD IS WITHOUT AN EFFECT LINE AND A DESCRIPTION")
+
+    Print("--- an unclosed line is gathered, and everything else handed over ---")
+    Rem Closed on the line it started on: nothing to gather.
+    Assert(Joined("", ": F 1 ;") = "ready : F 1 ;", "A CLOSED DEFINITION IS READY AT ONCE")
+    Assert(Joined("", "3 4 +") = "ready 3 4 +", "AND SO IS A LINE THAT OPENS NOTHING")
+    Rem Open: held, and closed by what comes next.
+    Assert(Joined("", ": F 1") = "more : F 1", "AN OPEN DEFINITION IS GATHERED")
+    Assert(Joined(": F 1", "2 + ;") = "ready : F 1 2 + ;", "AND THE NEXT LINE CLOSES IT, JOINED BY ONE SPACE")
+    Assert(Joined(": F 1", "2") = "more : F 1 2", "AND A SECOND LINE THAT DOES NOT CLOSE IT IS GATHERED TOO")
+    Assert(Joined("", "{ 1 2") = "more { 1 2", "AN OPEN LIST IS GATHERED")
+    Assert(Joined("{ 1 2", "3 }") = "ready { 1 2 3 }", "AND CLOSES ON THE NEXT LINE")
+    Assert(Joined("", "[ DUP") = "more [ DUP", "AN OPEN PROGRAM IS GATHERED")
+    Assert(Joined("[ DUP", "]") = "ready [ DUP ]", "AND CLOSES ON THE NEXT LINE")
+    Rem Nothing is gathered that another line could not finish, so every
+    Rem refusal below is still the engine's own, worded as it is today.
+    Assert(Joined("", "3 " & Q("oops")) = "ready 3 " & Q("oops"), "AN UNTERMINATED STRING IS HANDED OVER, NOT GATHERED")
+    Assert(Joined("", "}") = "ready }", "AND SO IS A STRAY CLOSING MARK")
+    Assert(Joined("", ":") = "ready :", "AND A DEFINITION WITH NO NAME")
+    Assert(Joined("", ": F { 1 2 ;") = "ready : F { 1 2 ;", "AND A LIST LEFT OPEN INSIDE A DEFINITION THAT HAS CLOSED")
+    Rem A blank line while gathering earns a fresh prompt and nothing else.
+    Assert(Joined(": F 1", "") = "more : F 1", "A BLANK LINE DOES NOT GROW THE BUFFER")
+
+    Print("--- a line typed over several is the line it would have been ---")
+    Rem The same word, defined two ways, has to be the same word — and
+    Rem RckSave's text is the strongest way to say so, since it is built
+    Rem from the tokens the dictionary actually kept.
+    Let c1 = Gathers(s0, { ": VAT DUP", "0.2 * + ;" })
+    Assert(Join(RckSave(c1), " / ") = Join(RckSave(Ran(s0, ": VAT DUP 0.2 * + ;")), " / "), "A DEFINITION SPLIT OVER TWO LINES SAVES AS THE ONE-LINE FORM")
+    Assert(Said(c1, "250 VAT") = "x: 300", "AND WORKS")
+    Assert(Stack(Gathers(s0, { "{ 1 2", "3 }" })) = "x: { 1 2 3 }", "A LIST SPLIT OVER TWO LINES IS THE SAME LIST")
+    Assert(Stack(Gathers(s0, { "[ DUP", "* ]" })) = "x: [ DUP * ]", "A PROGRAM SPLIT OVER TWO LINES IS THE SAME PROGRAM")
+    Assert(Stack(Gathers(s0, { "{ 1", "2", "3 }" })) = "x: { 1 2 3 }", "AND THREE LINES CLOSE ON THE THIRD")
+    Rem A definition needs its whole body before it is validated, so a
+    Rem word named on a later line is found, not refused as unknown.
+    Assert(RckKnows(Gathers(s0, { ": SQ DUP", "* ;" }), "SQ"), "A BODY WORD ON A LATER LINE IS VETTED WITH THE REST")
+
+    Print("--- a continued entry is one transaction, not one per line ---")
+    Rem THE GUARD FOR THE WHOLE DESIGN. Every evaluation tapes, so the tape
+    Rem counts evaluations: a shell that ran the first line, found it
+    Rem unfinished and ran the joined line afterwards would leave TWO rows
+    Rem here, one of them a refusal. Nothing is run until it is finished,
+    Rem so there is one — and a word that had appended to a file or drawn a
+    Rem random number on that first line would have done it once, too.
+    Let c2 = Gathers(s0, { ": VAT DUP", "0.2 * + ;" })
+    Assert(Join(RckTape(c2), " / ") = "> : VAT DUP 0.2 * + ; / ok: VAT defined / [ empty ]", "A CONTINUED ENTRY TAPES ONCE, AS THE LINE IT TURNED OUT TO BE")
+    Assert(Length(RckTape(Gathers(s0, { "{ 1", "2", "3 }" }))) = Length(RckTape(Ran(s0, "{ 1 2 3 }"))), "AND A THREE-LINE ONE TAPES NO MORE THAN THE ONE-LINE FORM")
+    Rem Held text that never closes is dropped, not run and not taped.
+    Let c3 = Gathers(s0, { ": VAT DUP" })
+    Assert(Not RckKnows(c3, "VAT"), "INPUT ENDING MID-DEFINITION DEFINES NOTHING")
+    Assert(IsEmpty(RckTape(c3)), "AND TAPES NOTHING EITHER")
+    Assert(Said(c3, "3 4 +") = "x: 7", "AND THE SESSION IS OTHERWISE UNTOUCHED")
+
+    Print("--- what is gathered is body text, not another line to read ---")
+    Rem QUIT closes a session only as a line of its own. Typed as the next
+    Rem line of an open definition it is body text, and body text is where
+    Rem QUIT is an ordinary dictionary word that refuses when it is RUN —
+    Rem so the two-line form lands exactly where the one-line form does,
+    Rem and neither of them ends the session.
+    Let c4 = Gathers(s0, { ": VAT DUP", "QUIT ;" })
+    Assert(Said(c4, "3 4 +") = "x: 7", "QUIT AS A CONTINUATION LINE DOES NOT END THE SESSION")
+    Assert(Join(RckSave(c4), " / ") = Join(RckSave(Ran(s0, ": VAT DUP QUIT ;")), " / "), "IT IS BODY TEXT, AND DEFINES WHAT THE ONE-LINE FORM DEFINES")
+    Assert(Has(Said(c4, "250 VAT"), "the shell's word, not the dictionary's"), "AND REFUSES WHEN THE WORD IS RUN, AS IT DOES ON ONE LINE")
+    Assert(Has(Join(RckTape(c4), " / "), "> : VAT DUP QUIT ;"), "WITH THE WHOLE LINE THAT WAS BUILT ON THE TAPE")
+    Rem A body word that is genuinely unknown is not found until the line
+    Rem closes, and the refusal then names it and the whole line.
+    Let c5 = Gathers(s0, { ": VAT DUP", "NOSUCHWORD ;" })
+    Assert(Not RckKnows(c5, "VAT"), "AN UNKNOWN WORD ON A CONTINUATION LINE REFUSES THE DEFINITION")
+    Assert(Has(Join(RckTape(c5), " / "), "unknown word NOSUCHWORD"), "NAMING THE WORD")
+    Assert(Has(Join(RckTape(c5), " / "), "> : VAT DUP NOSUCHWORD ;"), "AND THE WHOLE LINE, NOT ONLY THE PART THAT BROKE")
+    Assert(Said(c5, "3 4 +") = "x: 7", "AND THE SESSION SURVIVES IT")
+
+    Print("--- and the screen shows one row per line typed ---")
+    SameLines(SessionFrom(s0, { ": VAT DUP", "0.2 * + ;", "250 VAT" }),
+              { "[ empty ]",
+                "> : VAT DUP",
+                ". 0.2 * + ;",
+                "ok: VAT defined",
+                "[ empty ]",
+                "> 250 VAT",
+                "x: 300" }, "the continued transcript")
 
     Print("--- nothing keyable aborts: the fuzz list ---")
     Assert(Fuzzed(s0, FuzzList()), "EVERY LINE IN THE FUZZ LIST WAS SURVIVED")

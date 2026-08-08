@@ -300,6 +300,14 @@ Type RckTaken = RckHasArgs(ArgState As RckState, ArgVals As List Of Cell) | RckA
 Rem Scanning to a closing mark: what was inside, and what came after.
 Type RckSpan = RckSpanned(SpanIn As List Of String, SpanTail As List Of String) | RckSpanBad(SpanWhy As String)
 
+Rem Whether a token list is a whole logical line, decided WITHOUT running
+Rem it. RckSealed is complete, RckAjar is waiting for a closing mark that
+Rem another line could still supply, RckWrecked can never close whatever
+Rem is added. Only RckAjar means anything to a caller: a reader that has
+Rem more input to offer gathers another line, and everything else is
+Rem evaluated exactly as it is today.
+Type RckShape = RckSealed | RckAjar(AjarOpen As String) | RckWrecked(WreckWhy As String)
+
 Rem The accumulator the combinators fold with. Carrying the break in the
 Rem accumulator rather than recursing is what keeps MAP over a
 Rem six-hundred element list from being six hundred Shoddy frames deep.
@@ -1087,6 +1095,98 @@ Def RckCloseOf(open As String) As String
         RckListClose()
     Else
         RckProgClose()
+
+Rem ---- is this line finished? ------------------------------------------
+Rem
+Rem The same walk RckWalkOne does, with the state and the effects taken
+Rem out: only the marks are looked at, so the answer costs a fold over the
+Rem tokens and changes nothing. That is the whole point. A reader that
+Rem asked "is this finished?" by RUNNING the line would have to run it
+Rem again once the rest arrived, and a line that appended to a file or
+Rem drew a random number would do it twice. Deciding on the tokens alone
+Rem is what lets a definition be typed over several lines without the
+Rem first line's words happening more than once.
+Rem
+Rem RckUpTo counts ONE pair of marks and knows nothing of the others, so
+Rem ; closes a definition even with a { still open inside it. This
+Rem inherits that exactly and then grades the body it extracted, which is
+Rem what makes : FOO { 1 2 ; wrecked rather than waiting: the definition
+Rem has shut, so no later line can reach the list. A construct that is
+Rem still OPEN is not graded inside, because both layers can still close.
+
+Def RckShapeOf(toks As List Of String) As RckShape
+    If IsEmpty(toks) Then
+        RckSealed()
+    Else
+        RckShapeOne(First(toks), Rest(toks))
+
+Def RckShapeOne(t As String, more As List Of String) As RckShape
+    Select Case t
+        Case ":"
+            RckShapeDef(more)
+        Case "{", "["
+            RckShapeSpan(t, RckCloseOf(t), more)
+        Case "}", "]", ";"
+            RckWrecked("unexpected " & t)
+        Case Else
+            RckShapeOf(more)
+
+Rem A definition with no name after it is refused by RckDefine before the
+Rem scanner is ever reached, so it can never be finished by another line.
+Def RckShapeDef(more As List Of String) As RckShape
+    If IsEmpty(more) Then
+        RckWrecked("a definition needs a name after " & RckDefMark())
+    Else
+        RckShapeSpan(RckDefMark(), RckEndMark(), Rest(more))
+
+Def RckShapeSpan(open As String, close As String, more As List Of String) As RckShape
+    Select Case RckUpTo(more, open, close)
+        Case RckSpanned(inner, tail)
+            RckShapeIn(RckShapeOf(inner), tail)
+        Case RckSpanBad(w)
+            RckAjar(open)
+        Case Else
+            RckWrecked("the span did not scan")
+
+Rem An inner construct left open inside one that has already closed is
+Rem the one case that looks like waiting and is not.
+Def RckShapeIn(inner As RckShape, tail As List Of String) As RckShape
+    Select Case inner
+        Case RckSealed
+            RckShapeOf(tail)
+        Case RckAjar(open)
+            RckWrecked("unterminated " & open)
+        Case Else
+            inner
+
+Rem The question a reader with more input actually asks, from the text
+Rem rather than the tokens: should the next line be taken with this one?
+Rem ONLY an ajar line answers yes. A line that will not tokenize does
+Rem not, which is what keeps an unterminated string out of this: joining
+Rem it would turn the line break inside it into a space, where a space is
+Rem content and not separation.
+Def RckWants(line As String) As Boolean
+    Select Case RckTokens(line)
+        Case Ok(toks)
+            RckAjarly(RckShapeOf(toks))
+        Case Else
+            False
+
+Def RckAjarly(found As RckShape) As Boolean
+    Select Case found
+        Case RckAjar(open)
+            True
+        Case Else
+            False
+
+Rem Physical lines joined the way the tokenizer reads them: one space.
+Rem RckTokens separates on runs of whitespace and does not count them, so
+Rem this is the same token stream the one-line form would have given.
+Def RckJoinLines(buf As String, line As String) As String
+    If buf = "" Then
+        line
+    Else
+        Trim(buf & " " & line)
 
 Rem ---- the evaluator ---------------------------------------------------
 Rem One token at a time, threading a state and the output lines a shell
@@ -2243,13 +2343,33 @@ Rem typing the identical lines at a prompt works. RckHist is not the
 Rem tape: RckLoad still writes no tape rows of its own (below), only
 Rem history for UNDO/REDO to step through.
 Def RckLoad(st As RckState, lines As List Of String) As RckLine
-    RckLoadOn(st, st, lines, { })
+    RckLoadOn(st, st, "", lines, { })
 
-Def RckLoadOn(orig As RckState, st As RckState, lines As List Of String, out As List Of String) As RckLine
+Rem A file may write a definition, a list or a program over several lines
+Rem exactly as they may be typed over several, so the loader carries what
+Rem it has read and not yet closed. A FILE THAT ENDS MID-LINE REFUSES,
+Rem where a session that ends mid-line simply closes: a file is a finished
+Rem thing with a mistake in it, and a half-read definition is the mistake.
+Def RckLoadOn(orig As RckState, st As RckState, buf As String, lines As List Of String, out As List Of String) As RckLine
     If IsEmpty(lines) Then
+        RckLoadEnd(orig, st, buf, out)
+    Else
+        RckLoadStep(orig, st, RckJoinLines(buf, First(lines)), Rest(lines), out)
+
+Def RckLoadStep(orig As RckState, st As RckState, joined As String, more As List Of String, out As List Of String) As RckLine
+    If RckWants(joined) Then
+        RckLoadOn(orig, st, joined, more, out)
+    Else
+        RckLoadLine(orig, st, joined, more, out)
+
+Def RckLoadEnd(orig As RckState, st As RckState, buf As String, out As List Of String) As RckLine
+    If buf = "" Then
         RckNext(st, out)
     Else
-        RckLoadLine(orig, st, First(lines), Rest(lines), out)
+        RckStop(orig, RckLoadShort(), Concat(out, RckLoadFailRow(st, buf, { }, RckLoadShort())))
+
+Def RckLoadShort() As String
+    "the file ends before this line closes"
 
 Def RckLoadLine(orig As RckState, st As RckState, line As String, more As List Of String, out As List Of String) As RckLine
     Select Case RckTokens(line)
@@ -2263,7 +2383,7 @@ Def RckLoadLine(orig As RckState, st As RckState, line As String, more As List O
 Def RckLoadRan(orig As RckState, before As RckState, line As String, r As RckRun, more As List Of String, out As List Of String) As RckLine
     Select Case r
         Case RckWent(st2, said)
-            RckLoadOn(orig, st2, more, Concat(out, RckLoadOkRow(st2, line, said)))
+            RckLoadOn(orig, st2, "", more, Concat(out, RckLoadOkRow(st2, line, said)))
         Case RckBroke(w, said)
             RckStop(orig, w, Concat(out, RckLoadFailRow(before, line, said, w)))
         Case Else

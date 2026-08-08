@@ -609,6 +609,48 @@ Def Main()
     Assert(Text(Ran(Loaded(s0, { ": BAD FROB ;" }), "1 1 +")) = "2", "AND THE ENGINE STILL EVALUATES AFTERWARDS")
     Assert(RckKnows(Loaded(l1, RckSave(l1)), "SQ"), "AND LOADING WHAT IS ALREADY THERE IS HARMLESS")
 
+    Print("--- a loaded file may write one line over several ---")
+    Assert(RckKnows(Loaded(s0, { ": SQ DUP", "* ;" }), "SQ"), "A DEFINITION SPLIT OVER TWO LINES LOADS")
+    Assert(Join(RckSave(Loaded(s0, { ": SQ DUP", "* ;" })), " / ") = Join(RckSave(Loaded(s0, { ": SQ DUP * ;" })), " / "), "AND IS THE WORD THE ONE-LINE FORM WOULD HAVE MADE")
+    Assert(RckKnows(Loaded(s0, { ": SQ", "DUP", "* ;" }), "SQ"), "AND THREE LINES CLOSE ON THE THIRD")
+    Rem A file is a finished thing, so one that stops mid-definition is a
+    Rem file with a mistake in it and refuses whole — where a SESSION that
+    Rem stops mid-definition has simply ended and closes quietly.
+    Assert(LoadBad(s0, { ": SQ DUP" }), "A FILE THAT ENDS MID-DEFINITION REFUSES THE LOAD")
+    Assert(LoadWhy(s0, { ": SQ DUP" }) = "the file ends before this line closes", "SAYING SO")
+    Assert(Not RckKnows(Loaded(s0, { ": ID ;", ": SQ DUP" }), "ID"), "AND THE GOOD LINE BEFORE IT IS NOT KEPT EITHER")
+    Assert(Text(Ran(Loaded(s0, { ": SQ DUP" }), "1 1 +")) = "2", "AND THE ENGINE STILL EVALUATES AFTERWARDS")
+    Rem Gathering never hides a refusal: the joined line is vetted whole.
+    Assert(LoadWhy(s0, { ": SQ DUP", "FROB ;" }) = "unknown word FROB", "A BAD WORD ON A LATER LINE STILL REFUSES, NAMING IT")
+
+    Print("--- whether a line is finished, decided without running it ---")
+    Rem Complete lines, including the ones with nothing open at all.
+    Assert(Shape("{ 1 2 }") = "sealed", "A CLOSED LIST IS SEALED")
+    Assert(Shape("[ 1 2 ]") = "sealed", "A CLOSED PROGRAM IS SEALED")
+    Assert(Shape(": F 1 ;") = "sealed", "A CLOSED DEFINITION IS SEALED")
+    Assert(Shape("3 4 +") = "sealed", "AND SO IS A LINE THAT OPENS NOTHING")
+    Assert(Shape("") = "sealed", "AND SO IS AN EMPTY ONE")
+    Rem Waiting: another line could still close each of these.
+    Assert(Shape("{ 1 2") = "ajar {", "AN OPEN LIST IS AJAR, NAMING THE MARK")
+    Assert(Shape("[ 1 2") = "ajar [", "AN OPEN PROGRAM IS AJAR, NAMING THE MARK")
+    Assert(Shape(": F 1") = "ajar :", "AN OPEN DEFINITION IS AJAR, NAMING THE MARK")
+    Assert(Shape(": F { 1 2") = "ajar :", "AND TWO LAYERS OPEN NAMES THE OUTER ONE")
+    Rem Unclosable: no later line reaches these, so nothing waits for one.
+    Assert(Shape("}") = "wrecked", "A STRAY } IS WRECKED, NOT WAITING")
+    Assert(Shape("]") = "wrecked", "A STRAY ] IS WRECKED, NOT WAITING")
+    Assert(Shape(";") = "wrecked", "A STRAY ; IS WRECKED, NOT WAITING")
+    Assert(Shape(":") = "wrecked", "AND A DEFINITION WITH NO NAME IS WRECKED, NOT WAITING")
+    Rem The case that looks like waiting and is not: the definition has
+    Rem shut on its ;, so no later line can reach the list still open
+    Rem inside it. RckVetSpan is what refuses this when it is evaluated.
+    Assert(Shape(": F { 1 2 ;") = "wrecked", "AN INNER MARK LEFT OPEN INSIDE A CLOSED DEFINITION IS WRECKED")
+    Assert(Shape("{ [ 1 }") = "wrecked", "AND INSIDE A CLOSED LIST TOO")
+    Rem Nesting, and that what follows a closed span is walked as well.
+    Assert(Shape("{ { 1 } 2 }") = "sealed", "NESTING CLOSES FROM THE INSIDE OUT")
+    Assert(Shape("{ { 1 } 2") = "ajar {", "AND THE OUTER ONE IS WHAT IS STILL AJAR")
+    Assert(Shape(": F 1 ; 2 3") = "sealed", "WHAT FOLLOWS A CLOSED DEFINITION IS WALKED TOO")
+    Assert(Shape(": F 1 ; }") = "wrecked", "AND IS WHERE A LATER STRAY MARK IS CAUGHT")
+
     Print("--- WRAP is floored where MOD is truncated ---")
     Assert(Text(Ran(s0, "296 256 WRAP")) = "40", "296 256 WRAP IS 40")
     Rem The assertion that matters: MOD answers -84 here and agrees
@@ -714,6 +756,25 @@ Def LoadWhy(st As RckState, lines As List Of String) As String
             why
         Case Else
             ""
+
+Rem The shape of a line as one word, so the assertions above read as the
+Rem three answers rather than as a Select Case each. A line that will not
+Rem tokenize has no shape at all — RckShapeOf never sees it.
+Def Shape(line As String) As String
+    Select Case RckTokens(line)
+        Case Ok(toks)
+            Shaped(RckShapeOf(toks))
+        Case Else
+            "did not read"
+
+Def Shaped(s As RckShape) As String
+    Select Case s
+        Case RckSealed
+            "sealed"
+        Case RckAjar(open)
+            "ajar " & open
+        Case Else
+            "wrecked"
 
 Rem n lines, one push each, so the history has n entries to cap.
 Def Pushed(st As RckState, n As Number) As RckState

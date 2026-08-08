@@ -47,6 +47,13 @@ public static class Lexer
     const string Openers = "([{";
     const string Closers = ")]}";
 
+    /// <summary>Characters that are operators on their own and therefore
+    /// never part of a word. <c>'</c> and <c>-</c> are deliberately absent:
+    /// <c>y'</c> is a name a beginner reaches for the moment they want a
+    /// second version of <c>y</c>, and a leading <c>-</c> is unary minus,
+    /// split off below.</summary>
+    static readonly char[] OperatorChars = ['*', '+', '/', '<', '>', '=', '^', '&'];
+
     /// <summary>Reads a program with Include splicing (include-once,
     /// resolved relative to the including file, then $SHODDYLIB).
     /// When <paramref name="externalInclude"/> is given, it is offered
@@ -297,6 +304,25 @@ public static class Lexer
                 if (tok.IndexOfAny(['!', '%', '#', '$', '?']) >= 0)
                     throw new ShoddyError(lineno,
                         $"'{tok}': the characters ! % # $ ? are reserved and may not appear in words");
+                // Nothing in the language spells ; or \, so they are out of
+                // words outright, exactly as the sigils are. A string
+                // literal's \ escape never reaches here — it was consumed
+                // by the quoted branch above.
+                if (tok.IndexOfAny([';', '\\']) >= 0)
+                    throw new ShoddyError(lineno,
+                        $"'{tok}': the characters ; \\ are reserved and may not appear in words");
+                // An operator written hard against a name — count+1, x>y —
+                // is a single word to a lexer that splits only on
+                // whitespace, and dies much later as an undefined word,
+                // which says nothing about the missing space. Standalone
+                // operators cannot trip this: not one of + - * / = <> < >
+                // <= >= ^ & carries an alphanumeric. Number literals are
+                // exempt because 1E+10 is a number, not a name with a + in
+                // it — the one legitimate word that mixes the two.
+                int op = tok.IndexOfAny(OperatorChars);
+                if (op >= 0 && HasAlnum(tok) && !IsNumber(tok, out _))
+                    throw new ShoddyError(lineno,
+                        $"'{tok}': '{tok[op]}' is an operator and must be spaced away from the name, as in 'count + 1'");
                 // -N is unary minus on N (but -3 is a number literal and
                 // -- belongs to stack-effect signatures)
                 if (tok.Length > 1 && tok[0] == '-' && tok[1] != '-' &&
@@ -353,6 +379,16 @@ public static class Lexer
         foreach (char c in s)
             if (!(c is (>= 'A' and <= 'Z') or (>= '0' and <= '9') or '_')) return false;
         return true;
+    }
+
+    /// <summary>Does this word carry a letter or digit? What separates a
+    /// name with an operator jammed into it from the operator itself: the
+    /// word <c>&lt;=</c> is all operator, <c>x&lt;=y</c> is not.</summary>
+    static bool HasAlnum(string s)
+    {
+        foreach (char c in s)
+            if (char.IsLetterOrDigit(c)) return true;
+        return false;
     }
 
     /// <summary>ASCII-only case fold, matching C toupper in the C locale.</summary>

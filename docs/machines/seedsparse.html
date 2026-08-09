@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="A reckoner seed: sparse's column-stored matrices, as a dict — machines/seeds/seedsparse.shoddy">
+<title>seedsparse — A reckoner seed for sparse | Shoddy Machines</title>
+<link rel="stylesheet" href="../style.css">
+<link rel="icon" href="../favicon.svg" type="image/svg+xml">
+<link rel="alternate icon" href="../favicon.ico" sizes="48x48">
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+</head>
+<body>
+<div class="topbar"><div class="inner">
+  <div class="row">
+    <a class="phase" href="index.html"><img class="mark" src="../media/brand/shoddy-icon.svg" alt="" width="23" height="23">Shoddy · The Machines</a>
+    <span class="spacer"></span>
+    <nav class="docnav meta" aria-label="About"><a href="../heritage.html">Heritage</a><a href="../authorship.html">Authorship</a></nav>
+  </div>
+  <nav class="docnav main" aria-label="Documentation"><a href="../tutorials/index.html">Tutorials</a><a href="../guide.html">Guide</a><a href="../quickref.html">Reference</a><span class="here">Machines</span><a href="../mills/index.html">Mills</a><a href="../stack.html">Stack</a><a href="../spec.html">Spec</a><a href="../setup.html">Setup</a><a href="../vscode.html">VS Code</a><a href="../assistants.html">AI</a><a href="../build.html">Toolchain</a><a href="../errors.html">Errors</a></nav>
+</div></div>
+<div class="wrap">
+
+
+<header class="mast has-icon"><div><p class="eyebrow"><a href="index.html#runtime-stack">The Machines &middot; Runtime stack</a></p><h1>seedsparse</h1><p class="kicker">A reckoner seed: sparse's column-stored matrices, as a dict — machines/seeds/seedsparse.shoddy</p></div><img class="micon" src="../media/icons/seedsparse.svg" alt="the seedsparse machine&#39;s icon"></header>
+<nav class="pagenav pagenav-top" aria-label="Machines, in catalog order"><a href="seedregex.html" class="prev"><span class="pnwrap"><span class="dir">&larr; Previous machine</span><span class="ttl">seedregex</span></span></a><a href="index.html" class="all">All machines</a><a class="next" href="seedmip.html"><span class="pnwrap"><span class="ttl">seedmip</span><span class="dir">Next machine &rarr;</span></span></a></nav>
+
+<h2 id="summary">Summary</h2>
+<p><code>seedsparse</code> bridges <a href="sparse.html">sparse</a>: thirteen
+words for matrices that are mostly zeros. A sparse matrix at the keyboard is a
+<strong>dict</strong>, not a cell of its own — the same call
+<a href="seedsimplex.html">seedsimplex</a> made for a problem and its solution,
+and for the same reason. <a href="cuttle.html">cuttle</a>'s
+<code>Cell</code> carries a <code>MATRIX</code> because a dense grid is the
+beginner-facing form and every seed that touches one speaks it; a second
+matrix cell would put a choice in front of a reader at the moment they least
+want one. So a sparse matrix arrives and leaves as</p>
+<pre><code>{ ( "rows" 4 ) ( "cols" 3 )
+  ( "colix" { { 2 4 } { 1 } { 3 4 } } )
+  ( "colvs" { { 5 1 } { 2 } { 7 3 } } ) }</code></pre>
+<p>which <code>DGET</code> reads like any other dict, and which shows what the
+storage actually <em>is</em>: a row index and a value per stored entry, and
+nothing at all for the gaps.</p>
+
+<h2 id="why">Why It's Useful</h2>
+<p>The keyboard's <code>MATRIX</code> is the right thing for a grid you are
+going to look at. It stops being the right thing when the grid is large and
+nearly empty — a constraint matrix out of an MPS file, an adjacency table, a
+transition matrix over states that only step to their neighbours — because
+every zero costs the same to keep and to read as a real number does.
+<code>SPARSE</code> crosses a <code>MATRIX</code> over, <code>SPNNZ</code>
+tells you what that saved, and <code>SPDENSE</code> brings it back when you
+want to look at it.</p>
+<p>The other reason is that the sparse form is what the solver actually walks.
+<a href="simplex.html">simplex</a> prices a linear program one column at a
+time, and a session that can inspect those columns — <code>SPCOLIX</code>,
+<code>SPCOLVS</code>, <code>SPCOLDOT</code> — can watch the arithmetic the
+solver is doing rather than take its word for the answer.</p>
+
+<h3>Nothing here aborts</h3>
+<p><a href="sparse.html">sparse</a> refuses a malformed column at
+construction: indices and values that do not pair up, an index outside the
+stated rows, indices that do not ascend. Those are the right refusals for a
+program and the wrong ones for a keyboard, where an abort ends the session and
+takes the stack with it. So every one of those questions is asked here first,
+by <code>SpsRead</code>, which either hands back a matrix known to be well
+formed or says which rule was broken. Nothing past it can fail.</p>
+<p>The same goes for the dimension checks <code>SpMatVec</code> and
+<code>SpVecMat</code> make, and for every column index: reaching a column is a
+bare <code>Nth</code> by design, and <code>Nth</code> aborts past the end of an
+array, so <code>SPCOLIX 9</code> on a three-column matrix is the seed's own
+question to answer.</p>
+<p>Two of the checks have no counterpart in the machine at all. A triplet of
+the wrong length, and a fractional row or column index: <code>SpFromEnts</code>
+would not notice either, and neither names a cell anybody meant to type.</p>
+
+<h2 id="guide">User's Guide</h2>
+<p>A four-by-three grid with five numbers in it, crossed over, inspected, and
+multiplied:</p>
+<pre><code>&gt; 4 3 { 0 2 0  5 0 0  0 0 7  1 0 3 } MAT SPARSE
+x: { ( "rows" 4 ) ( "cols" 3 ) ( "colix" { { 2 4 } { 1 } { 3 4 } } )  ... 1 more }
+&gt; DUP SPNNZ
+x: 5
+&gt; DUP 1 SPCOLIX
+x: { 2 4 }
+&gt; DUP 1 1 SPGET
+x: 0
+&gt; { 1 2 3 } SPMATVEC
+x: { 4 5 21 10 }</code></pre>
+<p>Or built straight from triplets, which is how a matrix arrives when you are
+reading it off something rather than typing it out:</p>
+<pre><code>&gt; 2 2 { { 1 1 3 } { 1 1 4 } { 2 2 5 } } SPENTS SPNNZ
+x: 2</code></pre>
+<p>Two triplets naming one cell are added together — three and four make
+seven — and a cell adding up to zero is not stored at all, because a zero here
+is an absence rather than a number.</p>
+<p>And what a malformed one gets, in place of an ended session:</p>
+<pre><code>?: SPADDCOL: COLUMN 1 NAMES A ROW OUTSIDE 1 TO 3
+?: SPADDCOL: COLUMN 1 DOES NOT HAVE ITS ROW INDICES IN ASCENDING ORDER
+?: SPCOLIX: THERE IS NO COLUMN 9 — THIS MATRIX HAS 3
+?: SPMATVEC: THE VECTOR HAS 2 NUMBERS AND THE MATRIX IS 3 WIDE
+?: SPENTS: TRIPLET 1 NAMES ROW 1.5, AND THE ROWS ARE 1 TO 2</code></pre>
+
+<h2 id="words">Word Reference</h2>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>SPARSE ( matrix -- sparse )</td><td>The same matrix stored by column, keeping only its nonzero cells. Worth it when the zeros outnumber the numbers and the grid is big; for a small full one the MATRIX is cheaper and clearer.</td></tr>
+<tr><td>SPDENSE ( sparse -- matrix )</td><td>Back to an ordinary MATRIX, zeros and all. Exact: across and back changes nothing.</td></tr>
+<tr><td>SPENTS ( rows cols list -- sparse )</td><td>Build from a LIST of { row col value } triplets. Two triplets naming one cell are added together, and a cell adding up to zero is not stored at all.</td></tr>
+<tr><td>SPNNZ ( sparse -- n )</td><td>How many numbers are actually stored, as against how many cells the grid has.</td></tr>
+<tr><td>SPGET ( sparse r c -- n )</td><td>The number in row r, column c — zero if nothing is stored there, which is what a gap means.</td></tr>
+<tr><td>SPCOLIX ( sparse j -- list )</td><td>Which rows column j fills, ascending.</td></tr>
+<tr><td>SPCOLVS ( sparse j -- list )</td><td>The values column j holds, in the positions SPCOLIX names.</td></tr>
+<tr><td>SPCOLDOT ( sparse j list -- n )</td><td>Column j against a vector, touching only what is stored. This is the kernel the simplex method spends most of its time in.</td></tr>
+<tr><td>SPMATVEC ( sparse list -- list )</td><td>The matrix times a vector, one number per row. The vector must be as long as the matrix is wide.</td></tr>
+<tr><td>SPVECMAT ( list sparse -- list )</td><td>A vector times the matrix, one number per column. The vector must be as long as the matrix is tall.</td></tr>
+<tr><td>SPTRANSP ( sparse -- sparse )</td><td>The transpose: rows become columns, in one pass over what is stored.</td></tr>
+<tr><td>SPADDROW ( sparse list list -- sparse )</td><td>A new row on the bottom, holding the given values in the given columns. Only the columns named are touched, so a row with one number in it — a bound, a branch — costs almost nothing.</td></tr>
+<tr><td>SPADDCOL ( sparse list list -- sparse )</td><td>A new column on the end, holding the given values in the given rows, ascending.</td></tr>
+</table>
+
+<h2 id="usedby">Who Uses It</h2>
+<table>
+<tr><th></th><th>User</th><th>How</th></tr>
+<tr><td class="uicon"><a href="../mills/halifax.html"><img src="../media/icons/halifax.svg" alt=""></a></td><td><a href="../mills/halifax.html">halifax</a></td><td>The calculator's sparse-matrix words, under their own WORDS heading.</td></tr>
+</table>
+<p>A mill claims this seed by folding <code>RckSeedSparse</code> over its
+reckoner state, which is all halifax does.</p>
+
+<h2 id="uses">The Machines It Uses</h2>
+<table>
+<tr><th></th><th>Machine</th><th>Why</th></tr>
+<tr><td class="uicon"><a href="sparse.html"><img src="../media/icons/sparse.svg" alt=""></a></td><td><a href="sparse.html">sparse</a></td><td>The domain this seed bridges: the <code>Sparse</code> type and every kernel over it.</td></tr>
+<tr><td class="uicon"><a href="matrix.html"><img src="../media/icons/matrix.svg" alt=""></a></td><td><a href="matrix.html">matrix</a></td><td>The <code>Matrix</code> cell <code>SPARSE</code> reads and <code>SPDENSE</code> answers.</td></tr>
+<tr><td class="uicon"><a href="cuttle.html"><img src="../media/icons/cuttle.svg" alt=""></a></td><td><a href="cuttle.html">cuttle</a></td><td>The <code>Cell</code> type every bridged word reads its arguments from and answers into.</td></tr>
+<tr><td class="uicon"><a href="reckoner.html"><img src="../media/icons/reckoner.svg" alt=""></a></td><td><a href="reckoner.html">reckoner</a></td><td><code>RckReg</code> and the argument readers every registered word is built from.</td></tr>
+<tr><td class="uicon"><a href="seq.html"><img src="../media/icons/seq.svg" alt=""></a></td><td><a href="seq.html">seq</a></td><td><code>All</code> asks a column's three shape questions, and <code>Append</code> gathers the lists the dict converters build.</td></tr>
+</table>
+
+<nav class="pagenav pagenav-bottom" aria-label="Machines, in catalog order">
+  <a href="seedregex.html" class="prev"><span class="pnwrap"><span class="dir">&larr; Previous machine</span><span class="ttl">seedregex</span></span></a>
+  <a href="index.html" class="all">All machines</a>
+  <a class="next" href="seedmip.html"><span class="pnwrap"><span class="ttl">seedmip</span><span class="dir">Next machine &rarr;</span></span></a>
+</nav>
+<footer>Named for the shoddy mills of the West Riding: Useless Things Made
+Useful Through Skill (<a href="../heritage.html">the heritage of the name</a>).<br>
+&copy; 2026 Stephen Vincent Foster</footer>
+</div>
+</body>
+</html>

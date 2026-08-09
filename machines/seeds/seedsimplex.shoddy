@@ -230,16 +230,23 @@ Rem constraint rows it has seen, how many COLUMNS entries, and the first
 Rem thing wrong. Once ChkWhy is set every later line passes through
 Rem untouched, so the reason reported is the FIRST one — reading a file
 Rem top to bottom is how someone will fix it.
+Rem ChkCols is carried because BOUNDS names columns and BndRows Errors
+Rem on one COLUMNS never declared - a question that cannot be asked
+Rem without remembering what was declared. ChkInts says whether the
+Rem word that asked can answer an integer file: the same marker is a
+Rem refusal for MPSPARSE and ordinary reading for MPSMIP.
 Type LpChk
     ChkSec  As String
     ChkObjs As Number
     ChkRows As Number
     ChkEnts As Number
+    ChkCols As List Of String
     ChkZero As Boolean
+    ChkInts As Boolean
     ChkWhy  As String
 
-Def LpChkNew(zeroLower As Boolean) As LpChk
-    LpChk("", 0, 0, 0, zeroLower, "")
+Def LpChkNew(zeroLower As Boolean, ints As Boolean) As LpChk
+    LpChk("", 0, 0, 0, { }, zeroLower, ints, "")
 
 Def LpBad(c As LpChk, why As String) As LpChk
     With(c, ChkWhy = why)
@@ -250,7 +257,14 @@ Rem least one variable. AssembleProblem Errors on the first of those and
 Rem builds a matrix with no rows or no columns for the other two, which
 Rem Optimize has nothing to do with.
 Def MpsWhy(text As String, zeroLower As Boolean) As String
-    LpChkEnd(Fold(Split(text, Chr(10)), LpChkNew(zeroLower), LpChkStep))
+    MpsWhyMode(text, zeroLower, False)
+
+Rem The same walk, told whether integer columns are something the
+Rem caller can be handed. seedmip.shoddy's words pass True; everything
+Rem that answers a plain linear program passes False and gets the
+Rem refusal that names them.
+Def MpsWhyMode(text As String, zeroLower As Boolean, ints As Boolean) As String
+    LpChkEnd(Fold(Split(text, Chr(10)), LpChkNew(zeroLower, ints), LpChkStep))
 
 Def LpChkEnd(c As LpChk) As String
     If ChkWhy(c) <> "" Then
@@ -293,25 +307,23 @@ Def LpChkLine(c As LpChk, line As String, toks As List Of String) As LpChk
 
 Rem Mirrors Header. BOUNDS is the one section whose answer depends on
 Rem which word was typed: MPSPARSEZERO forces x >= 0 on every variable
-Rem and skips it, MPSPARSE will not guess.
+Rem and skips the section, MPSPARSE reads it as the rows it is.
 Def LpChkHeader(c As LpChk, w As String) As LpChk
     Select Case Upper(w)
         Case "NAME", "ENDATA"
             With(c, ChkSec = "")
-        Case "ROWS", "COLUMNS", "RHS", "OBJSENSE"
-            With(c, ChkSec = Upper(w))
-        Case "BOUNDS"
-            LpChkBounds(c)
+        Case "ROWS", "COLUMNS", "RHS", "OBJSENSE", "BOUNDS"
+            LpChkOpen(c, Upper(w))
         Case "RANGES"
             LpBad(c, "MPS: RANGES SECTION NOT SUPPORTED")
         Case Else
             LpBad(c, "MPS: UNKNOWN SECTION " & w)
 
-Def LpChkBounds(c As LpChk) As LpChk
-    If ChkZero(c) Then
+Def LpChkOpen(c As LpChk, sec As String) As LpChk
+    If sec = "BOUNDS" And ChkZero(c) Then
         With(c, ChkSec = LpMpsSkip())
     Else
-        LpBad(c, "MPS: BOUNDS SECTION NOT SUPPORTED — USE MPSPARSEZERO OR MPSLOADZERO TO FORCE X >= 0 ON EVERY VARIABLE")
+        With(c, ChkSec = sec)
 
 Def LpChkData(c As LpChk, toks As List Of String) As LpChk
     Select Case ChkSec(c)
@@ -321,6 +333,8 @@ Def LpChkData(c As LpChk, toks As List Of String) As LpChk
             LpChkCol(c, toks)
         Case "RHS"
             LpChkRhs(c, toks)
+        Case "BOUNDS"
+            LpChkBnd(c, toks)
         Case "OBJSENSE"
             LpChkSense(c, toks)
         Case Else
@@ -354,10 +368,30 @@ Rem Mirrors ColLine, plus IsNumeric on the value fields. ColLine reads
 Rem them through Val, which answers 0 for text — a coefficient silently
 Rem dropped from the program rather than a file refused.
 Def LpChkCol(c As LpChk, toks As List Of String) As LpChk
-    If Contains(toks, "'MARKER'") Then
-        LpBad(c, "MPS: INTEGER MARKERS NOT SUPPORTED — EVERY VARIABLE HERE IS CONTINUOUS")
+    If Contains(toks, "'MARKER'") Or Contains(toks, "MARKER") Then
+        LpChkMarker(c, toks)
     Else
-        LpChkColWide(c, toks)
+        LpChkColWide(LpChkColName(c, First(toks)), toks)
+
+Rem The column names are remembered for BOUNDS to check itself against,
+Rem in the order and by the rule AddCol uses.
+Def LpChkColName(c As LpChk, name As String) As LpChk
+    If Contains(ChkCols(c), name) Then
+        c
+    Else
+        With(c, ChkCols = Concat(ChkCols(c), { name }))
+
+Rem Mirrors MarkerLine, and its first question is not that word's: an
+Rem integer file is a different problem than a linear program, so only
+Rem the words that can answer one accept the marker at all.
+Def LpChkMarker(c As LpChk, toks As List Of String) As LpChk
+    If Not ChkInts(c) Then
+        LpBad(c, "MPS: THIS FILE MARKS COLUMNS INTEGER — MPSMIP AND MPSMIPLOAD READ THAT, AND EVERY VARIABLE HERE IS CONTINUOUS")
+    Else
+        If Marked(toks, "INTORG") Or Marked(toks, "INTEND") Then
+            c
+        Else
+            LpBad(c, "MPS: A MARKER LINE MUST SAY INTORG OR INTEND")
 
 Def LpChkColWide(c As LpChk, toks As List Of String) As LpChk
     If Length(toks) = 3 Then
@@ -377,6 +411,95 @@ Def LpChkRhs(c As LpChk, toks As List Of String) As LpChk
 Def LpEverySecond(toks As List Of String) As List Of String
     Map(Range(1, Length(toks) / 2), Fn(k) => Nth(toks, k * 2))
 
+Rem Mirrors BndOf and BndRows. A bound is a row now, so a file with a
+Rem BOUNDS section is readable rather than refused - but only the types
+Rem that leave every variable at zero or above, and only naming a
+Rem column COLUMNS actually declared, which BndRows Errors on.
+Rem
+Rem Three fields are ambiguous between "no set name, with a value" and
+Rem "set name, no value", and BndOf settles it by asking whether the
+Rem last field is a number. This asks the same question the same way,
+Rem because a disagreement here is a line read as a different bound.
+
+Def LpBndHasAmt(toks As List Of String) As Boolean
+    If Length(toks) = 4 Then
+        True
+    Else
+        If Length(toks) = 3 Then
+            IsNumeric(Nth(toks, 3))
+        Else
+            False
+
+Def LpBndCol(toks As List Of String) As String
+    Select Case Length(toks)
+        Case 2
+            Nth(toks, 2)
+        Case 3
+            LpBndCol3(toks)
+        Case Else
+            Nth(toks, 3)
+
+Def LpBndCol3(toks As List Of String) As String
+    If IsNumeric(Nth(toks, 3)) Then
+        Nth(toks, 2)
+    Else
+        Nth(toks, 3)
+
+Def LpChkBnd(c As LpChk, toks As List Of String) As LpChk
+    If Length(toks) < 2 Or Length(toks) > 4 Then
+        LpBad(c, "MPS: A BOUNDS LINE IS A TYPE, AN OPTIONAL SET NAME, A COLUMN AND SOMETIMES A VALUE — 2 TO 4 FIELDS, NOT " & Str(Length(toks)))
+    Else
+        If Length(toks) = 4 And Not IsNumeric(Nth(toks, 4)) Then
+            LpBad(c, "MPS: A BOUNDS LINE HAS " & Nth(toks, 4) & " WHERE A NUMBER SHOULD BE")
+        Else
+            LpChkBndCol(c, toks, Upper(First(toks)), LpBndCol(toks))
+
+Def LpChkBndCol(c As LpChk, toks As List Of String, kind As String, col As String) As LpChk
+    If Not Contains(ChkCols(c), col) Then
+        LpBad(c, "MPS: A BOUNDS LINE NAMES " & col & ", WHICH THE COLUMNS SECTION NEVER DECLARED")
+    Else
+        LpChkBndKind(c, toks, kind, LpBndHasAmt(toks))
+
+Def LpChkBndKind(c As LpChk, toks As List Of String, kind As String, hasAmt As Boolean) As LpChk
+    Select Case kind
+        Case "LO", "FX"
+            LpChkBndValued(c, toks, kind, hasAmt)
+        Case "UP"
+            LpChkBndUp(c, toks, hasAmt)
+        Case "BV"
+            LpChkBndBv(c)
+        Case "PL"
+            c
+        Case "MI", "FR"
+            LpBad(c, "MPS: A " & kind & " BOUND LETS A VARIABLE GO NEGATIVE, AND EVERY VARIABLE HERE IS ZERO OR ABOVE")
+        Case Else
+            LpBad(c, "MPS: BOUND TYPE " & kind & " NOT SUPPORTED — LO, UP, FX, BV AND PL ARE")
+
+Def LpChkBndValued(c As LpChk, toks As List Of String, kind As String, hasAmt As Boolean) As LpChk
+    If hasAmt Then
+        c
+    Else
+        LpBad(c, "MPS: A " & kind & " BOUND NEEDS A VALUE, AND THIS LINE HAS NONE")
+
+Rem A negative UP means a free lower bound in the wider MPS world, which
+Rem is the same breach written less plainly, and mps.shoddy refuses it.
+Def LpChkBndUp(c As LpChk, toks As List Of String, hasAmt As Boolean) As LpChk
+    If Not hasAmt Then
+        LpBad(c, "MPS: A UP BOUND NEEDS A VALUE, AND THIS LINE HAS NONE")
+    Else
+        If Val(Nth(toks, Length(toks))) < 0 Then
+            LpBad(c, "MPS: A NEGATIVE UP BOUND FREES THE LOWER BOUND, AND EVERY VARIABLE HERE IS ZERO OR ABOVE")
+        Else
+            c
+
+Rem BV is a binary variable, which is an integer declaration wearing a
+Rem bound's clothes, so it goes the way a marker goes.
+Def LpChkBndBv(c As LpChk) As LpChk
+    If ChkInts(c) Then
+        c
+    Else
+        LpBad(c, "MPS: A BV BOUND MAKES A VARIABLE INTEGER — MPSMIP AND MPSMIPLOAD READ THAT, AND EVERY VARIABLE HERE IS CONTINUOUS")
+
 Def LpChkNums(c As LpChk, sec As String, vals As List Of String) As LpChk
     If All(vals, IsNumeric) Then
         c
@@ -393,7 +516,7 @@ Rem ---- the five words ---------------------------------------------------
 
 Def LpSeedMps(st As RckState) As RckState
     Let s1 = RckReg(st, "MPSPARSE", 1, RckPure(Fn(vs) => LpMpsText("MPSPARSE", vs, False)), "( text -- problem )", "MPS text as a problem, normalised to a x >= rhs. Refuses, naming the first line at fault, rather than reading a file it does not fully understand.")
-    Let s2 = RckReg(s1, "MPSPARSEZERO", 1, RckPure(Fn(vs) => LpMpsText("MPSPARSEZERO", vs, True)), "( text -- problem )", "The same, forcing x >= 0 on every variable so a BOUNDS section is skipped instead of refused.")
+    Let s2 = RckReg(s1, "MPSPARSEZERO", 1, RckPure(Fn(vs) => LpMpsText("MPSPARSEZERO", vs, True)), "( text -- problem )", "The same, forcing x >= 0 on every variable so a BOUNDS section is skipped instead of read as rows.")
     Let s3 = RckReg(s2, "MPSLOAD", 1, RckTouch(Fn(vs) => LpMpsFile("MPSLOAD", vs, False)), "( path -- problem )", "Read an MPS file and parse it, the guarded way throughout.")
     Let s4 = RckReg(s3, "MPSLOADZERO", 1, RckTouch(Fn(vs) => LpMpsFile("MPSLOADZERO", vs, True)), "( path -- problem )", "The same, forcing x >= 0 on every variable.")
     RckReg(s4, "MPSNAMES", 1, RckPure(Fn(vs) => LpMpsNames(vs)), "( text -- dict )", "What the problem's columns and rows were called: a dict with vars and cons. An E row appears as its NAME+ and NAME- pair, matching how it was split.")
@@ -430,8 +553,13 @@ Def LpMpsRead(word As String, r As Result, zeroLower As Boolean) As RckWork
 
 Rem The one gate: nothing reaches ParseMps that MpsWhy has not passed.
 Def LpMpsChecked(word As String, text As String, zeroLower As Boolean, f As [ String -- Cell ]) As RckWork
-    If MpsWhy(text, zeroLower) <> "" Then
-        RckWorkBad(MpsWhy(text, zeroLower))
+    LpMpsCheckedMode(word, text, zeroLower, False, f)
+
+Rem The same gate for a word that can be handed integer columns, which
+Rem is what seedmip.shoddy's MPS words call.
+Def LpMpsCheckedMode(word As String, text As String, zeroLower As Boolean, ints As Boolean, f As [ String -- Cell ]) As RckWork
+    If MpsWhyMode(text, zeroLower, ints) <> "" Then
+        RckWorkBad(MpsWhyMode(text, zeroLower, ints))
     Else
         RckVals({ Call(f, text) })
 
@@ -441,13 +569,18 @@ Def LpMpsProblemCell(text As String, zeroLower As Boolean) As Cell
 Def LpProblemOfMps(p As Problem) As Cell
     LpProblemCell(ToList(Costs(p)), A(p), ToList(Rhs(p)))
 
-Rem MPSNAMES reads BOUNDS the forgiving way, because a caller asking
-Rem what the columns are called is asking about the file rather than
-Rem about a program they are going to solve.
+Rem MPSNAMES used to read BOUNDS the forgiving way - skipping the
+Rem section - because a caller asking what things are called is asking
+Rem about the file rather than about a program. That stopped being
+Rem harmless when a bound became a ROW: skipping the section would
+Rem answer three labels for a problem MPSPARSE builds with five, and a
+Rem label list that does not line up with the rows it labels is worse
+Rem than a refusal. It reads the same way MPSPARSE does now, so the
+Rem names always describe the problem beside them.
 Def LpMpsNames(vs As List Of Cell) As RckWork
     Select Case RckTextArg("MPSNAMES", First(vs))
         Case Ok(text)
-            LpMpsChecked("MPSNAMES", text, True, Fn(t) => LpNamesCell(ParseMpsModel(t, True)))
+            LpMpsChecked("MPSNAMES", text, False, Fn(t) => LpNamesCell(ParseMpsModel(t, False)))
         Case Err(w, at)
             RckWorkBad(w)
         Case Else

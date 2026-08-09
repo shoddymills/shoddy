@@ -1,0 +1,274 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem seedmip.shoddy — reckoner seed: mip.shoddy, converting at the
+Rem bridge
+Rem
+Rem MIPPROBLEM, MIPSOLVE and MIPFIXED, all speaking the dict shapes
+Rem seedsimplex.shoddy already established — which is why this seed
+Rem includes that one rather than restating what a problem looks like.
+Rem A keyboard with two spellings of "linear program" on it is a
+Rem keyboard where MIPFIXED's answer does not go into LPSOLVE, and that
+Rem round trip is the whole point of MIPFIXED.
+Rem
+Rem   { ("costs" list) ("a" matrix) ("rhs" list) } { 1 2 } MIPPROBLEM
+Rem     -> { ("prob" problem) ("ints" list) }
+Rem   MIPSOLVE
+Rem     -> { ("status" s) ("x" list) ("cost" n) ("nodes" n)
+Rem          ("iterations" n) }
+Rem
+Rem NO SHADOW PRICES ON THAT ANSWER, and the omission is the point.
+Rem The duals of whichever node finished last are that node's
+Rem sensitivities and not the integer problem's. MIPFIXED pins every
+Rem integer where the search left it and hands back an ordinary
+Rem problem, which LPSOLVE reads like any other and whose duals do
+Rem mean something. The refusal is a door, not a dead end.
+Rem
+Rem NOTHING HERE ABORTS. mip.shoddy Errors on an Ints entry naming a
+Rem variable that does not exist, and MipFixed Errors when handed a
+Rem solution that never found an optimum to pin anything at; the LP
+Rem underneath Errors on a problem whose matrix does not match its
+Rem costs and right-hand side. All three are asked here first.
+Rem
+Rem A LONG SEARCH IS NOT AN ABORT, AND IT IS NOT CAPPED HERE EITHER.
+Rem Branch and bound solves a linear program per node and may want
+Rem many; the machine stops at a hundred thousand of them and answers
+Rem MAXNODES. Wiring a smaller cap in at the keyboard would make this
+Rem word answer something other than what mip.shoddy answers, which is
+Rem the one thing a bridge must not do. LPSOLVE has the same shape of
+Rem risk and the same non-answer to it.
+Rem ==================================================================
+
+Include "mip.shoddy"
+Include "mps.shoddy"
+Include "simplex.shoddy"
+Include "sparse.shoddy"
+Include "matrix.shoddy"
+Include "cuttle.shoddy"
+Include "reckoner.shoddy"
+Include "seedsimplex.shoddy"
+Include "seq.shoddy"
+
+Rem ---- reading a problem dict back --------------------------------------
+Rem LpFind and LpListNum are seedsimplex's, and using them is what
+Rem keeps the two seeds agreeing about what a problem is.
+
+Def MipProbRead(word As String, c As Cell) As Result
+    Select Case RckListArg(word, c)
+        Case Ok(members)
+            MipProbShaped(word, members)
+        Case Err(w, at)
+            Err(word & ": NOT A PROBLEM — BUILD ONE WITH LPPROBLEM OR MPSPARSE", at)
+        Case Else
+            Err(word & " did not answer", 0)
+
+Def MipProbShaped(word As String, members As List Of Cell) As Result
+    Select Case Pair(LpFind(members, "costs"), Pair(LpFind(members, "a"), LpFind(members, "rhs")))
+        Case Pair(CutList(costsC), Pair(CutMat(a), CutList(rhsC)))
+            MipProbTyped(word, costsC, a, rhsC)
+        Case Else
+            Err(word & ": NOT A PROBLEM — BUILD ONE WITH LPPROBLEM OR MPSPARSE", 0)
+
+Def MipProbTyped(word As String, costsC As List Of Cell, a As Matrix, rhsC As List Of Cell) As Result
+    Select Case Pair(LpListNum(word, CutList(costsC)), LpListNum(word, CutList(rhsC)))
+        Case Pair(Ok(costs), Ok(rhs))
+            MipProbSized(word, costs, a, rhs)
+        Case Pair(Err(w, at), other)
+            Err(w, at)
+        Case Pair(other, Err(w, at))
+            Err(w, at)
+        Case Else
+            Err(word & " did not answer", 0)
+
+Rem SpOptimize Errors on a problem whose matrix does not match, and the
+Rem shapes are checked here for that reason rather than for tidiness.
+
+Def MipProbSized(word As String, costs As List Of Number, a As Matrix, rhs As List Of Number) As Result
+    If Length(costs) <> Cols(a) Then
+        Err(word & ": COSTS HAS " & Str(Length(costs)) & " ENTRIES, A HAS " & Str(Cols(a)) & " COLUMNS", 0)
+    Else
+        If Length(rhs) <> Rows(a) Then
+            Err(word & ": RHS HAS " & Str(Length(rhs)) & " ENTRIES, A HAS " & Str(Rows(a)) & " ROWS", 0)
+        Else
+            Ok(SpProblem(ToArray(costs), SpFromMat(a), ToArray(rhs)))
+
+Rem ---- reading a mipproblem dict back -----------------------------------
+
+Def MipRead(word As String, c As Cell) As Result
+    Select Case RckListArg(word, c)
+        Case Ok(members)
+            MipReadParts(word, LpFind(members, "prob"), LpFind(members, "ints"))
+        Case Err(w, at)
+            Err(word & ": NOT AN INTEGER PROBLEM — BUILD ONE WITH MIPPROBLEM", at)
+        Case Else
+            Err(word & " did not answer", 0)
+
+Def MipReadParts(word As String, probC As Cell, intsC As Cell) As Result
+    Select Case Pair(MipProbRead(word, probC), LpListNum(word, intsC))
+        Case Pair(Ok(p), Ok(ints))
+            MipReadInts(word, p, ints)
+        Case Pair(Err(w, at), other)
+            Err(w, at)
+        Case Pair(other, Err(w, at))
+            Err(w, at)
+        Case Else
+            Err(word & ": NOT AN INTEGER PROBLEM — BUILD ONE WITH MIPPROBLEM", 0)
+
+Rem MipOptimize Errors on an index outside the variables, and a
+Rem fractional index would name no variable at all.
+
+Def MipReadInts(word As String, p As SpProblem, ints As List Of Number) As Result
+    Let n = Length(Costs(p))
+    If All(ints, Fn(k) => k >= 1 And k <= n And k = Floor(k)) Then
+        Ok(MipProblem(p, ints))
+    Else
+        Err(word & ": AN INTEGER VARIABLE IS NAMED THAT DOES NOT EXIST — THERE ARE " & Str(n), 0)
+
+Rem ---- writing the answers back -----------------------------------------
+
+Def MipProbCell(p As SpProblem) As Cell
+    LpProblemCell(ToList(Costs(p)), SpToMat(SA(p)), ToList(Rhs(p)))
+
+Def MipCell(mp As MipProblem) As Cell
+    CutList({ LpEntry("prob", MipProbCell(Prob(mp))),
+              LpEntry("ints", CutList(Map(Ints(mp), CutNum))) })
+
+Def MipSolCell(sol As MipSolution) As Cell
+    CutList({ LpEntry("status", CutStr(Status(sol))),
+              LpEntry("x", CutList(Map(ToList(X(sol)), CutNum))),
+              LpEntry("cost", CutNum(Cost(sol))),
+              LpEntry("nodes", CutNum(Nodes(sol))),
+              LpEntry("iterations", CutNum(Iterations(sol))) })
+
+Rem ---- MIPPROBLEM ---------------------------------------------------------
+
+Def MipSeedProblem(st As RckState) As RckState
+    RckReg(st, "MIPPROBLEM", 2, RckPure(Fn(vs) => MipMipproblem(vs)), "( problem ints -- mipproblem )", "A linear program whose named variables have to come out whole. ints is a LIST of variable positions, counting from 1; an empty one is just the linear program again.")
+
+Def MipMipproblem(vs As List Of Cell) As RckWork
+    Select Case Pair(MipProbRead("MIPPROBLEM", Nth(vs, 1)), LpListNum("MIPPROBLEM", Nth(vs, 2)))
+        Case Pair(Ok(p), Ok(ints))
+            MipMipproblemAt(p, ints)
+        Case Pair(Err(w, at), other)
+            RckWorkBad(w)
+        Case Pair(other, Err(w, at))
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("MIPPROBLEM did not answer")
+
+Def MipMipproblemAt(p As SpProblem, ints As List Of Number) As RckWork
+    Select Case MipReadInts("MIPPROBLEM", p, ints)
+        Case Ok(mp)
+            RckVals({ MipCell(mp) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("MIPPROBLEM did not answer")
+
+Rem ---- MIPSOLVE -----------------------------------------------------------
+
+Def MipSeedSolve(st As RckState) As RckState
+    RckReg(st, "MIPSOLVE", 1, RckPure(Fn(vs) => MipMipsolve(vs)), "( mipproblem -- solution )", "The best whole answer, by branch and bound. status is OPTIMAL, INFEASIBLE, UNBOUNDED-OR-INFEASIBLE, MAXITER or MAXNODES; nodes and iterations say what the search cost. No shadow prices — an integer problem has none. Use MIPFIXED for the ones it does have.")
+
+Def MipMipsolve(vs As List Of Cell) As RckWork
+    Select Case MipRead("MIPSOLVE", First(vs))
+        Case Ok(mp)
+            RckVals({ MipSolCell(MipOptimize(mp)) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("MIPSOLVE did not answer")
+
+Rem ---- MIPFIXED -----------------------------------------------------------
+
+Def MipSeedFixed(st As RckState) As RckState
+    RckReg(st, "MIPFIXED", 2, RckPure(Fn(vs) => MipMipfixed(vs)), "( mipproblem solution -- problem )", "The linear program left when every integer is pinned where the search left it, as a pair of rows apiece. LPSOLVE it and its shadow prices are the sensitivity of everything else, given those decisions. Refuses a solution that never reached an optimum.")
+
+Def MipMipfixed(vs As List Of Cell) As RckWork
+    Select Case MipRead("MIPFIXED", Nth(vs, 1))
+        Case Ok(mp)
+            MipMipfixedSol(mp, Nth(vs, 2))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("MIPFIXED did not answer")
+
+Def MipMipfixedSol(mp As MipProblem, c As Cell) As RckWork
+    Select Case RckListArg("MIPFIXED", c)
+        Case Ok(members)
+            MipMipfixedParts(mp, LpFind(members, "status"), LpFind(members, "x"))
+        Case Err(w, at)
+            RckWorkBad("MIPFIXED: NOT A SOLUTION — MIPSOLVE ANSWERS ONE")
+        Case Else
+            RckWorkBad("MIPFIXED did not answer")
+
+Def MipMipfixedParts(mp As MipProblem, statusC As Cell, xC As Cell) As RckWork
+    Select Case Pair(statusC, LpListNum("MIPFIXED", xC))
+        Case Pair(CutStr(status), Ok(xs))
+            MipMipfixedAt(mp, status, xs)
+        Case Pair(other, Err(w, at))
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("MIPFIXED: NOT A SOLUTION — MIPSOLVE ANSWERS ONE")
+
+Rem MipFixed Errors on anything but an optimum, and reads X at each
+Rem integer position, so both are settled before it is called.
+
+Def MipMipfixedAt(mp As MipProblem, status As String, xs As List Of Number) As RckWork
+    If status <> "OPTIMAL" Then
+        RckWorkBad("MIPFIXED: THIS SOLUTION IS " & status & ", SO THERE IS NO OPTIMUM TO PIN THE INTEGERS AT")
+    Else
+        If Length(xs) <> Length(Costs(Prob(mp))) Then
+            RckWorkBad("MIPFIXED: THE SOLUTION HAS " & Str(Length(xs)) & " VARIABLES AND THE PROBLEM HAS " & Str(Length(Costs(Prob(mp)))))
+        Else
+            RckVals({ MipProbCell(MipFixed(mp, MipSolution("OPTIMAL", ToArray(xs), 0, 0, 0))) })
+
+Rem ---- MPSMIP and MPSMIPLOAD ----------------------------------------------
+Rem The MPS words live here rather than beside their siblings in
+Rem seedsimplex.shoddy because what they answer is a mipproblem, and
+Rem this seed is where that shape is written down. What they borrow is
+Rem the validator: LpMpsCheckedMode is seedsimplex's own gate, told
+Rem that integer columns are something these two can be handed.
+
+Def MipSeedMps(st As RckState) As RckState
+    Let s1 = RckReg(st, "MPSMIP", 1, RckPure(Fn(vs) => MipMpsText(vs)), "( text -- mipproblem )", "MPS text as an integer problem: the program, plus whichever columns the file marked whole with an INTORG marker or a BV bound. A file that marks none is simply a problem with nothing to branch on.")
+    RckReg(s1, "MPSMIPLOAD", 1, RckTouch(Fn(vs) => MipMpsFile(vs)), "( path -- mipproblem )", "Read an MPS file and parse it as an integer problem, the guarded way throughout.")
+
+Def MipMpsText(vs As List Of Cell) As RckWork
+    Select Case RckTextArg("MPSMIP", First(vs))
+        Case Ok(text)
+            LpMpsCheckedMode("MPSMIP", text, False, True, Fn(t) => MipCell(ParseMpsMip(t)))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("MPSMIP did not answer")
+
+Rem Through TRYREADFILE rather than mps.shoddy's own LoadMpsMip, for the
+Rem reason seedfile.shoddy gives: that word is ReadFile underneath and
+Rem ReadFile aborts on a path that is not there.
+Def MipMpsFile(vs As List Of Cell) As RckWork
+    Select Case RckTextArg("MPSMIPLOAD", First(vs))
+        Case Ok(path)
+            MipMpsRead(TryReadFile(path))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("MPSMIPLOAD did not answer")
+
+Def MipMpsRead(r As Result) As RckWork
+    Select Case r
+        Case Ok(text)
+            LpMpsCheckedMode("MPSMIPLOAD", text, False, True, Fn(t) => MipCell(ParseMpsMip(t)))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("MPSMIPLOAD did not answer")
+
+Rem ---- the seed -----------------------------------------------------------
+
+Def RckSeedMip(st As RckState) As RckState
+    Let s1 = MipSeedProblem(RckSeeding(st, "seed-mip"))
+    Let s2 = MipSeedSolve(s1)
+    Let s3 = MipSeedFixed(s2)
+    MipSeedMps(s3)

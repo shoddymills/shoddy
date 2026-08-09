@@ -97,6 +97,7 @@ machine_suites() {
                  randomtest reckonertest regextest seedtest seedbuiltintest seedengtest \
                  seedfintest seedisamtest seedneuraltest seedreciotest \
                  seedbuzzertest seedhttpstest seednettest seedregextest seedsimplextest \
+                 seedsparsetest seedmiptest \
                  seedvt100test \
                  shakertest xmltest; do
         echo "==> tst/$suite.shoddy"

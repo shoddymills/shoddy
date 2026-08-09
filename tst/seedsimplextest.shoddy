@@ -157,9 +157,9 @@ Def Main()
     Assert(Refuses(g, Q(Lines({ "ROWS", " N C", " N D" })) & " MPSPARSE", "MULTIPLE OBJECTIVE ROWS"), "A SECOND OBJECTIVE ROW")
     Assert(Refuses(g, Q(Lines({ "ROWS", " Z BAD" })) & " MPSPARSE", "BAD ROW SENSE Z"), "A ROW SENSE THAT IS NOT ONE, NAMING IT")
     Assert(Refuses(g, Q("RANGES") & " MPSPARSE", "RANGES SECTION NOT SUPPORTED"), "THE RANGES SECTION")
-    Assert(Refuses(g, Q("BOUNDS") & " MPSPARSE", "BOUNDS SECTION NOT SUPPORTED"), "THE BOUNDS SECTION, WHICH THE PLAIN SPELLING WILL NOT GUESS AT")
     Assert(Refuses(g, Q("WOBBLE") & " MPSPARSE", "UNKNOWN SECTION WOBBLE"), "A SECTION HEADER THAT IS NOT A SECTION")
-    Assert(Refuses(g, Q(Tiny({ "COLUMNS", " MARK 'MARKER' 'INTORG'" })) & " MPSPARSE", "INTEGER MARKERS NOT SUPPORTED"), "AN INTEGER MARKER")
+    Assert(Refuses(g, Q(Tiny({ "BOUNDS", " UP BND Z 9" })) & " MPSPARSE", "WHICH THE COLUMNS SECTION NEVER DECLARED"), "A BOUND ON A COLUMN THAT IS NOT THERE, WHICH BNDROWS ERRORS ON")
+    Assert(Refuses(g, Q(Tiny({ "COLUMNS", " MARK 'MARKER' 'INTORG'" })) & " MPSPARSE", "MPSMIP AND MPSMIPLOAD READ THAT"), "AN INTEGER MARKER, NAMING THE WORDS THAT DO READ ONE")
     Assert(Refuses(g, Q(Lines({ "ROWS", " N C", " G R", "COLUMNS", " X C 1 R" })) & " MPSPARSE", "3 OR 5 FIELDS, NOT 4"), "A COLUMNS LINE OF THE WRONG WIDTH, NAMING THE WIDTH IT HAS")
     Assert(Refuses(g, Q(Lines({ "OBJSENSE", " MAX" })) & " MPSPARSE", "ONLY MINIMIZE IS SUPPORTED"), "A MAXIMIZE OBJECTIVE")
     Assert(Refuses(g, Q(Lines({ "ROWS", " G R", "COLUMNS", " X R 1" })) & " MPSPARSE", "THERE IS NO OBJECTIVE (N) ROW"), "A FILE WITH NOTHING TO MINIMIZE")
@@ -178,11 +178,31 @@ Def Main()
     Assert(Refuses(g, Q(Lines({ "ROWS", " N C", " G R" })) & " MPSPARSE", "THE PROBLEM HAS NO VARIABLES"), "AND ONE WITH ROWS AND NO COLUMNS")
     Assert(Refuses(g, "3 MPSPARSE", "needs a STRING, got NUMBER"), "AND A CELL THAT IS NOT TEXT AT ALL")
 
-    Print("--- the ZERO spelling forgives BOUNDS, and only BOUNDS ---")
-    Let bnd = Tiny({ "BOUNDS", " UP BND X 9", "ENDATA" })
-    Assert(Bad(s0, Q(bnd) & " MPSPARSE"), "MPSPARSE STILL REFUSES A BOUNDS SECTION")
-    Assert(Not Bad(s0, Q(bnd) & " MPSPARSEZERO"), "AND MPSPARSEZERO SKIPS IT")
-    Assert(Text(Ran(s0, Q(bnd) & " MPSPARSEZERO LPSOLVE " & Q("cost") & " DGET")) = "1", "AND SOLVES THE PROBLEM UNDERNEATH IT")
+    Print("--- BOUNDS, which are rows now, and the ZERO spelling that skips them ---")
+    Rem This block used to assert that MPSPARSE REFUSED a BOUNDS section,
+    Rem and it was the drift the second scanner's own header warns about:
+    Rem mps.shoddy learned to read one as rows and this had not, so the
+    Rem keyboard was refusing files the machine underneath could answer.
+    Let bnd = Tiny({ "BOUNDS", " LO BND X 3", "ENDATA" })
+    Assert(Not Bad(s0, Q(bnd) & " MPSPARSE"), "MPSPARSE READS A BOUNDS SECTION")
+    Assert(Text(Ran(s0, Q(bnd) & " MPSPARSE " & Q("rhs") & " DGET")) = "{ 1 3 }", "AND A LO BOUND IS A ROW OF ITS OWN, RIGHT-HAND SIDE AND ALL")
+    Assert(Text(Ran(s0, Q(bnd) & " MPSNAMES " & Q("cons") & " DGET")) = "{ " & Q("R") & " " & Q("X.LO") & " }", "NAMED FOR THE VARIABLE IT HOLDS AND WHICH END IT HOLDS")
+    Assert(Text(Ran(s0, Q(bnd) & " MPSPARSE LPSOLVE " & Q("cost") & " DGET")) = "3", "AND THE FLOOR IT PUTS UNDER X IS WHAT THE ANSWER COSTS")
+    Rem An FX is both ends at once, so it is two rows, not one.
+    Let fx = Tiny({ "BOUNDS", " FX BND X 4", "ENDATA" })
+    Assert(Text(Ran(s0, Q(fx) & " MPSNAMES " & Q("cons") & " DGET")) = "{ " & Q("R") & " " & Q("X.LO") & " " & Q("X.UP") & " }", "AN FX PINS FROM BOTH SIDES, AND SAYS SO TWICE")
+    Assert(Text(Ran(s0, Q(fx) & " MPSPARSE LPSOLVE " & Q("cost") & " DGET")) = "4", "AND PINS THE ANSWER WHERE IT SAYS")
+    Rem The ZERO spelling is unchanged: it skips the section outright.
+    Assert(Not Bad(s0, Q(bnd) & " MPSPARSEZERO"), "MPSPARSEZERO SKIPS THE SECTION")
+    Assert(Text(Ran(s0, Q(bnd) & " MPSPARSEZERO LPSOLVE " & Q("cost") & " DGET")) = "1", "AND SOLVES THE PROBLEM UNDERNEATH IT, WITHOUT THE FLOOR")
+    Rem What a bound still may not do, each refused rather than aborted.
+    Assert(Refuses(g, Q(Tiny({ "BOUNDS", " MI BND X" })) & " MPSPARSE", "LETS A VARIABLE GO NEGATIVE"), "AN MI BOUND, WHICH BREAKS THE FRAME EVERY WORD HERE ASSUMES")
+    Assert(Refuses(g, Q(Tiny({ "BOUNDS", " FR BND X" })) & " MPSPARSE", "LETS A VARIABLE GO NEGATIVE"), "AND A FREE ONE")
+    Assert(Refuses(g, Q(Tiny({ "BOUNDS", " UP BND X -9" })) & " MPSPARSE", "FREES THE LOWER BOUND"), "AND A NEGATIVE UP, WHICH MEANS THE SAME THING LESS PLAINLY")
+    Assert(Refuses(g, Q(Tiny({ "BOUNDS", " UP BND X" })) & " MPSPARSE", "NEEDS A VALUE"), "AND AN UP WITH NOTHING TO BE AT MOST")
+    Assert(Refuses(g, Q(Tiny({ "BOUNDS", " ZZ BND X 1" })) & " MPSPARSE", "BOUND TYPE ZZ NOT SUPPORTED"), "AND A TYPE THAT IS NOT ONE, NAMING IT")
+    Assert(Refuses(g, Q(Tiny({ "BOUNDS", " BV BND X" })) & " MPSPARSE", "MPSMIP AND MPSMIPLOAD READ THAT"), "AND BV, WHICH IS AN INTEGER DECLARATION IN A BOUND'S CLOTHING")
+    Assert(Refuses(g, Q(Tiny({ "BOUNDS", " UP BND X oops" })) & " MPSPARSE", "WHERE A NUMBER SHOULD BE"), "AND A BOUND WHOSE VALUE VAL WOULD HAVE READ AS ZERO")
     Assert(Refuses(g, Q(Lines({ "RANGES" })) & " MPSPARSEZERO", "RANGES SECTION NOT SUPPORTED"), "WHILE RANGES IS STILL REFUSED BY BOTH SPELLINGS")
 
     Print("--- the file words, over the guarded read ---")

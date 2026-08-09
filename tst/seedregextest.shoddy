@@ -1,0 +1,212 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem seedregextest.shoddy — test program for seedregex.shoddy
+Rem
+Rem Assert-driven, in the seedsimplextest / seedhttpstest pattern: it
+Rem prints what it is doing and stops the run at the first assertion
+Rem that fails, ending with ALL ASSERTIONS PASSED when it does not.
+Rem
+Rem WHAT IS GRADED HERE IS THE BRIDGE AND NOT THE ENGINE.
+Rem tst/regextest.shoddy grades regex.shoddy — the dialect, the
+Rem semantics, and a thousand differential cells against a second
+Rem matcher. This file grades the eight lines of glue between that
+Rem machine and a keyboard, which is a different and much smaller thing:
+Rem does the right cell come back, does a wrong cell refuse instead of
+Rem aborting, and does the session survive.
+Rem
+Rem THE GUARD LIST IS THE TEST LIST. Every refusal the seed can produce
+Rem is walked exactly once:
+Rem
+Rem   * each word given a cell that is not a STRING, which RckKindWhy
+Rem     names;
+Rem   * each word given a pattern that does not read, which comes back
+Rem     as RxRead's own reason and offset.
+Rem
+Rem AND SURVIVAL IS PROVED BY THE NEXT LINE, never by the refusal. The
+Rem Refuses helper below asserts three things at once: the line was
+Rem refused, the stack is untouched by it, and a further line evaluated
+Rem afterwards answers exactly what it would have answered if the bad
+Rem line had never been typed. A refusal that quietly ate a cell would
+Rem pass the first of those and fail the third, which is the whole
+Rem reason the third is there.
+Rem
+Rem THE SEED CANNOT ABORT, AND THIS IS NOT AN ACHIEVEMENT OF THE SEED.
+Rem regex.shoddy has not one call to Error in it, so there is no
+Rem aborting path into the machine for this file to have to avoid. That
+Rem is seedhttps's situation and better: its own note is that
+Rem https.shoddy "has not one Error in it", which is what made it the
+Rem easiest of them all. This machine was written that way from the
+Rem start, deliberately, because these words go on a keyboard whose mill
+Rem asserts that nothing keyable aborts.
+Rem
+Rem THE DOCUMENTED LOSS IS ASSERTED AS A LOSS. RXGROUPS flattens an
+Rem unset group to "", because a Cell cannot carry the difference. The
+Rem assertion below says so in its own text rather than reading as
+Rem correct behaviour, so nobody later mistakes it for the contract
+Rem regex.shoddy actually keeps.
+Rem
+Rem Nothing here touches a file, a socket or a window.
+Rem
+Rem Run: bin\mill run tst\seedregextest.shoddy    (from the repo root)
+Rem ==================================================================
+
+Include "../machines/cuttle.shoddy"
+Include "../machines/reckoner.shoddy"
+Include "../machines/seq.shoddy"
+Include "../machines/str.shoddy"
+Include "../machines/seeds/seedregex.shoddy"
+
+Rem ---- reading an answer ----------------------------------------------
+
+Def Ran(st As RckState, line As String) As RckState
+    Select Case RckEval(st, line)
+        Case RckNext(st2, out)
+            st2
+        Case RckStop(st2, why, out)
+            st2
+        Case Else
+            st
+
+Def Bad(st As RckState, line As String) As Boolean
+    Select Case RckEval(st, line)
+        Case RckStop(st2, why, out)
+            True
+        Case Else
+            False
+
+Def Why(st As RckState, line As String) As String
+    Select Case RckEval(st, line)
+        Case RckStop(st2, why, out)
+            why
+        Case Else
+            ""
+
+Def Text(st As RckState) As String
+    Join(Map(CutCells(RckStack(st)), Fn(c) => CutShow(c, RckFmt(st))), " | ")
+
+Rem What one line leaves on an empty stack, as a string.
+Def Said(line As String) As String
+    Text(Ran(RckSeedRegex(RckNew()), line))
+
+Rem Refused, with the reason naming what is wrong; the stack untouched;
+Rem and a further line afterwards answering as though nothing happened.
+Def Refuses(st As RckState, line As String, why As String) As Boolean
+    Bad(st, line) And Instr(Why(st, line), why) > 0 And Text(Ran(st, line)) = Text(st) And Text(Ran(Ran(st, line), "1 1 +")) = Text(Ran(st, "1 1 +"))
+
+Def Qm() As String
+    RckQuoteMark()
+
+Def Q(s As String) As String
+    Qm() & s & Qm()
+
+Rem A ( s pat -- ) line, which is six of the eight words.
+Def Two(subj As String, pat As String, word As String) As String
+    Q(subj) & " " & Q(pat) & " " & word
+
+Rem A LIST cell as the reckoner renders one, so an expected answer below
+Rem reads as the list it is rather than as a wall of escaped quotes.
+Def Lst(xs As List Of String) As String
+    If IsEmpty(xs) Then
+        "{ }"
+    Else
+        "{ " & Join(Map(xs, Q), " ") & " }"
+
+Def Main()
+    Let s0 = RckSeedRegex(RckNew())
+
+    Print("--- the eight words are registered, with their metadata ---")
+    Assert(RckKnows(s0, "RXTEST") And RckKnows(s0, "RXFIND") And RckKnows(s0, "RXFINDALL") And RckKnows(s0, "RXGROUPS"), "THE FOUR ASKING WORDS ARE IN THE DICTIONARY")
+    Assert(RckKnows(s0, "RXREPLACE") And RckKnows(s0, "RXSPLIT") And RckKnows(s0, "RXQUOTE") And RckKnows(s0, "RXWHY"), "AND THE FOUR THAT REWRITE, ESCAPE AND EXPLAIN")
+    Rem The seed's own eight, picked out of the dictionary the core has
+    Rem already filled, so what follows is about this seed and not about
+    Rem what it was folded into.
+    Let mine = Filter(RckDict(s0), Fn(e) => WordSeed(e) = "seed-regex")
+    Assert(Length(mine) = 8, "EIGHT WORDS, AND NOT A NINTH")
+    Assert(IsEmpty(Filter(mine, Fn(e) => WordEffect(e) = "" Or WordDesc(e) = "")), "AND NOT ONE OF THEM IS WITHOUT AN EFFECT LINE AND A DESCRIPTION")
+    Assert(All(mine, Fn(e) => Not RckTouches(e)), "EVERY WORD HERE IS PURE — NOTHING IN THIS SEED TOUCHES THE WORLD")
+    Assert(All(mine, Fn(e) => StartsWith(WordName(e), "RX")), "AND EVERY ONE IS PREFIXED RX, WHICH IS FREE ACROSS THE WHOLE REGISTERED DICTIONARY")
+
+    Print("--- RXTEST ---")
+    Assert(Said(Two("xxabcyy", "abc", "RXTEST")) = "True", "A PATTERN THAT MATCHES ANSWERS TRUE")
+    Assert(Said(Two("xxx", "abc", "RXTEST")) = "False", "AND ONE THAT DOES NOT ANSWERS FALSE")
+    Assert(Said(Two("2026-08-08", "^\\d{4}-\\d{2}-\\d{2}$", "RXTEST")) = "True", "A STATED RULE, READ AS THE RULE IT IS")
+    Assert(Said(Two("2026-8-8", "^\\d{4}-\\d{2}-\\d{2}$", "RXTEST")) = "False", "AND THE SAME RULE SAYING NO")
+
+    Print("--- RXFIND pushes two cells, always ---")
+    Rem Text renders the stack TOP FIRST, so a start of 1 and a length
+    Rem of 3 reads "3 | 1". The word pushes the start and then the
+    Rem length, which is the order the effect line states.
+    Assert(Said(Two("xxabcyy", "abc", "RXFIND")) = "3 | 3", "THE 1-BASED START AND THE LENGTH")
+    Assert(Said(Two("xxx", "abc", "RXFIND")) = "0 | 0", "AND 0 0 WHERE THERE IS NO MATCH — TWO CELLS EITHER WAY, WHICH IS WHAT UNDO'S ACCOUNTING NEEDS")
+    Assert(Said(Two("aaa", "a*", "RXFIND")) = "3 | 1", "AN EMPTY-CAPABLE PATTERN STILL ANSWERS ITS LONGEST LEFTMOST MATCH")
+
+    Print("--- RXFINDALL ---")
+    Assert(Said(Two("a1b22c333", "\\d+", "RXFINDALL")) = Lst({ "1", "22", "333" }), "EVERY NON-OVERLAPPING MATCH, IN ORDER")
+    Assert(Said(Two("xxx", "\\d", "RXFINDALL")) = Lst({ }), "AND AN EMPTY LIST WHERE THERE ARE NONE")
+    Assert(Said(Two("baa", "a*", "RXFINDALL")) = Lst({ "", "aa", "" }), "AND THE EMPTY-MATCH RULE GIVES THREE OVER baa, TWO OF THEM EMPTY")
+
+    Print("--- RXGROUPS, and the distinction the bridge cannot carry ---")
+    Assert(Said(Two("me@here", "(\\w+)@(\\w+)", "RXGROUPS")) = Lst({ "me@here", "me", "here" }), "THE WHOLE MATCH FIRST, THEN ONE ITEM PER GROUP")
+    Assert(Said(Two("xxx", "(a)", "RXGROUPS")) = Lst({ }), "AND AN EMPTY LIST WHERE THERE IS NO MATCH")
+    Rem THE DOCUMENTED LOSS. RxGroup answers None() for group 1 here and
+    Rem Some("b") for group 2; a Cell cannot carry None, so both arrive
+    Rem as STRINGs and the unset one is "".
+    Assert(Said(Two("b", "(a)|(b)", "RXGROUPS")) = Lst({ "b", "", "b" }), "AN UNSET GROUP ARRIVES AS AN EMPTY STRING — THE DISTINCTION RxGroup KEEPS DOES NOT SURVIVE THE Cell TYPE, AND THAT IS THE DOCUMENTED LOSS AND NOT THE CONTRACT")
+
+    Print("--- RXREPLACE ---")
+    Assert(Said(Q("banana") & " " & Q("[aeiou]") & " " & Q("-") & " RXREPLACE") = Q("b-n-n-"), "EVERY MATCH REPLACED")
+    Assert(Said(Q("me@here") & " " & Q("(\\w+)@(\\w+)") & " " & Q("$2/$1") & " RXREPLACE") = Q("here/me"), "AND A TEMPLATE READS ITS GROUPS")
+    Assert(Said(Q("ab") & " " & Q("b") & " " & Q("$$") & " RXREPLACE") = Q("a$"), "AND $$ IS A LITERAL DOLLAR")
+
+    Print("--- RXSPLIT ---")
+    Assert(Said(Two("a, b,c", ",\\s*", "RXSPLIT")) = Lst({ "a", "b", "c" }), "CUT APART ON A PATTERN, WHICH IS THREE PASSES WITH A LITERAL SEPARATOR")
+    Assert(Said(Two("abc", "abc", "RXSPLIT")) = Lst({ "", "" }), "A PATTERN MATCHING THE WHOLE SUBJECT GIVES TWO EMPTY PIECES")
+    Assert(Said(Two("a,b", "(,)", "RXSPLIT")) = Lst({ "a", "b" }), "AND A CAPTURING GROUP DOES NOT PUT ITS SEPARATOR INTO THE RESULT")
+
+    Print("--- RXQUOTE ---")
+    Assert(Said(Q("a.b*c") & " RXQUOTE") = Q("a\\.b\\*c"), "THE METACHARACTERS ESCAPED")
+    Assert(Said(Q("a.b*c") & " RXQUOTE " & Q("a.b*c") & " SWAP RXTEST") = "True", "AND WHAT COMES BACK MATCHES THE ORIGINAL")
+    Assert(Said(Q("a.b*c") & " RXQUOTE " & Q("axbbbc") & " SWAP RXTEST") = "False", "AND NOT WHAT THE ORIGINAL LOOKED LIKE")
+
+    Print("--- RXWHY ---")
+    Assert(Said(Q("a(b)c") & " RXWHY") = Q(""), "A PATTERN THAT READS HAS NOTHING WRONG WITH IT")
+    Assert(Instr(Said(Q("(a") & " RXWHY"), "UNMATCHED (") > 0, "AND ONE THAT DOES NOT SAYS WHY")
+    Assert(Instr(Said(Q("(a") & " RXWHY"), "(at 1)") > 0, "AND WHERE — WHICH IS WHAT TURNS A MISTYPED PATTERN INTO A FIXED ONE")
+    Assert(Instr(Said(Q("(a)\\1") & " RXWHY"), "BACKREFERENCES") > 0, "AND A REFUSED CONSTRUCT IS NAMED RATHER THAN CALLED UNEXPECTED")
+
+    Print("--- every word refuses a cell that is not a STRING ---")
+    Rem One line per word, and the helper proves the mill survived each.
+    Let s1 = Ran(s0, "1 2")
+    Assert(Refuses(s1, "3 4 RXTEST", "RXTEST needs"), "RXTEST")
+    Assert(Refuses(s1, "3 4 RXFIND", "RXFIND needs"), "RXFIND")
+    Assert(Refuses(s1, "3 4 RXFINDALL", "RXFINDALL needs"), "RXFINDALL")
+    Assert(Refuses(s1, "3 4 RXGROUPS", "RXGROUPS needs"), "RXGROUPS")
+    Assert(Refuses(s1, "3 4 5 RXREPLACE", "RXREPLACE needs"), "RXREPLACE")
+    Assert(Refuses(s1, "3 4 RXSPLIT", "RXSPLIT needs"), "RXSPLIT")
+    Assert(Refuses(s1, "3 RXQUOTE", "RXQUOTE needs"), "RXQUOTE")
+    Assert(Refuses(s1, "3 RXWHY", "RXWHY needs"), "RXWHY")
+    Rem And with only the SECOND argument wrong, which is a different
+    Rem arm of the same guard.
+    Assert(Refuses(s1, Q("abc") & " 4 RXTEST", "RXTEST needs"), "AND WHEN IT IS THE PATTERN THAT IS NOT A STRING")
+    Assert(Refuses(s1, Q("abc") & " " & Q("a") & " 5 RXREPLACE", "RXREPLACE needs"), "AND WHEN IT IS THE REPLACEMENT")
+
+    Print("--- every word refuses a pattern that does not read ---")
+    Assert(Refuses(s1, Two("abc", "(", "RXTEST"), "UNMATCHED ("), "RXTEST")
+    Assert(Refuses(s1, Two("abc", "(", "RXFIND"), "UNMATCHED ("), "RXFIND")
+    Assert(Refuses(s1, Two("abc", "[", "RXFINDALL"), "UNTERMINATED ["), "RXFINDALL")
+    Assert(Refuses(s1, Two("abc", "*", "RXGROUPS"), "NOTHING TO REPEAT"), "RXGROUPS")
+    Assert(Refuses(s1, Q("abc") & " " & Q("(a") & " " & Q("x") & " RXREPLACE", "UNMATCHED ("), "RXREPLACE")
+    Assert(Refuses(s1, Two("abc", "a{9999}", "RXSPLIT"), "TOO MANY REPETITIONS"), "RXSPLIT")
+    Rem RXQUOTE takes no pattern, and RXWHY answers rather than refuses —
+    Rem which is the point of RXWHY existing at all.
+    Assert(Not Bad(s1, Q("(a") & " RXWHY"), "RXWHY DOES NOT REFUSE A BAD PATTERN — IT REPORTS ONE, WHICH IS WHY IT IS THERE")
+    Assert(Refuses(s1, Two("abc", "(?=a)", "RXTEST"), "LOOKAHEAD"), "AND A CONSTRUCT PAST THE CEILING IS REFUSED BY NAME AT THE KEYBOARD TOO")
+    Assert(Refuses(s1, Two("abc", "a{9999}", "RXTEST"), "2000"), "AND THE SIZE CAP NAMES ITS NUMBER AT THE KEYBOARD TOO")
+
+    Print("--- and the mill is still answering ---")
+    Assert(Text(Ran(s1, "3 4 +")) = "7 | 2 | 1", "3 4 + STILL ANSWERS 7, AFTER EVERY REFUSAL ABOVE")
+
+    Print("")
+    Print("ALL ASSERTIONS PASSED")

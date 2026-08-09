@@ -201,6 +201,9 @@ Include "../../machines/seeds/seedturtle.shoddy"
 Include "../../machines/seeds/seedplotter.shoddy"
 Include "../../machines/seeds/seedbuzzer.shoddy"
 Include "../../machines/seeds/seedhttps.shoddy"
+Include "../../machines/seeds/seedregex.shoddy"
+Include "../../machines/seeds/seedsparse.shoddy"
+Include "../../machines/seeds/seedmip.shoddy"
 
 Rem ---- what a typed line turns out to be -------------------------------
 
@@ -210,6 +213,35 @@ Rem including a line that will not even tokenize: the engine's refusal for
 Rem an unterminated string is the one everyone should see, and a second
 Rem tokenizer here would be a second answer to the same question.
 Type HxAsk = HxEval(AskLine As String) | HxPath(PathWord As String, PathName As String) | HxPlain(PlainWord As String) | HxAskBad(AskWhy As String)
+
+Rem ---- one line, or the start of one -----------------------------------
+
+Rem A definition, a list or a program that has not closed by the end of
+Rem the line is not wrong, it is unfinished, and a reader with more input
+Rem to offer should offer it. HxJoined is the whole of that decision:
+Rem hold what has been typed so far, take the next physical line, and say
+Rem whether there is now a line to hand over or still a line to gather.
+Rem
+Rem THERE IS NO REFUSAL CASE HERE, deliberately, for the reason the note
+Rem above HxAsk gives: a line the shell cannot finish is handed to the
+Rem engine whole, and the engine's own refusal is the one everyone should
+Rem see. So a stray }, a definition that can never close, an unterminated
+Rem string — all of them are HxReady, and every message they produce is
+Rem the message they produce today. The ONLY thing this changes is when a
+Rem line is handed over, never what happens to it once it is.
+Type HxJoin = HxReady(ReadyLine As String) | HxMore(MoreBuf As String)
+
+Rem The joining and the deciding are both the engine's — RckJoinLines and
+Rem RckWants — so the prompt and LOAD cannot disagree about what one line
+Rem is. All this adds is which of the two answers the shell acts on.
+Def HxJoined(buf As String, line As String) As HxJoin
+    HxJoinedAs(RckJoinLines(buf, line))
+
+Def HxJoinedAs(joined As String) As HxJoin
+    If RckWants(joined) Then
+        HxMore(joined)
+    Else
+        HxReady(joined)
 
 Def HxSaveWord() As String
     "SAVE"
@@ -352,7 +384,19 @@ Def HxFresh() As RckState
     Let s30 = RckSeedPlotter(s29)
     Let s31 = RckSeedBuzzer(s30)
     Let s32 = RckSeedHttps(s31)
-    HxShellSeed(s32)
+    Rem Appended, not inserted beside seed-str where it belongs by
+    Rem subject: this fold's order is chronological — the order someone
+    Rem built the dictionary in — and it is the order WORDS prints its
+    Rem group headings in, which test.shoddy asserts from an ordered
+    Rem list. Appending moves nothing; inserting would move thirty
+    Rem existing groups in the listing to buy a tidier neighbourhood.
+    Let s33 = RckSeedRegex(s32)
+    Rem Appended for the same reason, though these two belong beside
+    Rem seed-simplex by subject: sparse is the matrix its solver walks
+    Rem and mip is the search built on that solver.
+    Let s34 = RckSeedSparse(s33)
+    Let s35 = RckSeedMip(s34)
+    HxShellSeed(s35)
 
 Def HxShellName() As String
     "shell"
@@ -368,8 +412,8 @@ Def HxShellSeed(st As RckState) As RckState
     Let s1 = RckReg(s0, HxSaveWord(), 0, RckTouch(Fn(vs) => HxShellOnly(HxSaveWord())), "( -- )", "Write the words you have defined to a file: SAVE " & RckQuoteMark() & "mine.halifax" & RckQuoteMark() & ".")
     Let s2 = RckReg(s1, HxLoadWord(), 0, RckTouch(Fn(vs) => HxShellOnly(HxLoadWord())), "( -- )", "Read a file of definitions back in; one bad line refuses the whole file.")
     Let s3 = RckReg(s2, HxTapeSaveWord(), 0, RckTouch(Fn(vs) => HxShellOnly(HxTapeSaveWord())), "( -- )", "Write the tape to a file, exactly as it was shown.")
-    Let s4 = RckReg(s3, HxQuitWord(), 0, RckTouch(Fn(vs) => HxShellOnly(HxQuitWord())), "( -- )", "Leave. Nothing is saved for you; SAVE first if you want your words kept.")
-    Let s5 = RckReg(s4, HxExitWord(), 0, RckTouch(Fn(vs) => HxShellOnly(HxExitWord())), "( -- )", "Leave, exactly like QUIT. Nothing is saved for you; SAVE first if you want your words kept.")
+    Let s4 = RckReg(s3, HxQuitWord(), 0, RckTouch(Fn(vs) => HxShellOnly(HxQuitWord())), "( -- )", "Leave. Nothing is saved for you; SAVE first if you want your words kept. Only as a whole line: typed under a " & HxMorePrompt() & " prompt it is body text of the line still being written.")
+    Let s5 = RckReg(s4, HxExitWord(), 0, RckTouch(Fn(vs) => HxShellOnly(HxExitWord())), "( -- )", "Leave, exactly like QUIT. Nothing is saved for you; SAVE first if you want your words kept. Only as a whole line, as QUIT is.")
     Let s6 = RckReg(s5, HxResetWord(), 0, RckPure(Fn(vs) => HxShellOnly(HxResetWord())), "( -- )", "Start again: empty stack, no history, no tape, and only the words you started with.")
     RckSeeding(s6, RckUserName())
 
@@ -387,6 +431,15 @@ Rem with what was typed after it, so a saved tape reads back as the
 Rem session it was.
 Def HxPrompt() As String
     RckTapeMark()
+
+Rem The prompt for a line that is still being gathered. Two characters
+Rem like HxPrompt, so what is typed after it lands in the same column as
+Rem what is typed after an ordinary prompt — a definition split over
+Rem three lines reads down the page only if the three line up. It is not
+Rem a tape mark and does not live with them in the engine: a continued
+Rem entry tapes ONCE, under HxPrompt, as the one line it turned out to be.
+Def HxMorePrompt() As String
+    ". "
 
 Rem A transaction: the lines to show, and the state to carry on from. Both
 Rem cases of RckLine are covered here and nowhere else, so the shell never

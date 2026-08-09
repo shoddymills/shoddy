@@ -1,0 +1,1802 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem regex.shoddy — Shoddy standard library: regular expressions
+Rem
+Rem A pattern is READ ONCE into a compiled program and matched many
+Rem times. RxRead parses the pattern to a tree, the tree is compiled to
+Rem a small instruction program, and the program is run over a subject
+Rem by a virtual machine that advances one code unit at a time and
+Rem NEVER BACKTRACKS.
+Rem
+Rem     Select Case RxRead("([0-9]+)-([0-9]+)", RxNoOpts())
+Rem         Case Ok(p)
+Rem             RxTest(p, "order 1234-5678 shipped")     Rem True
+Rem         Case Err(why, at)
+Rem             Print(why & " at " & Str(at))
+Rem
+Rem NOTHING HERE ABORTS. A malformed pattern is Err(why, at) on the
+Rem language's own Result; an absent match or an unset group is None()
+Rem on its Option; there is no third outcome and there is not one
+Rem call to Error in this file. That is the contract cuttle.shoddy and
+Rem reckoner.shoddy hold to, and these words are destined for the same
+Rem keyboard: a word that can end a session cannot be seeded.
+Rem
+Rem THE ENGINE IS A PIKE VM, NOT A BACKTRACKER. Matching cost is
+Rem bounded by pattern size times subject length. There is no input
+Rem that makes (a|a)*b take exponential time, because there is no
+Rem backtracking to be exponential in.
+Rem
+Rem THE CEILING IS THE PRICE OF THE GUARANTEE. No backreferences and no
+Rem lookaround — not "not yet", but the exact things a parallel state
+Rem set structurally cannot express. Both are refused BY NAME at their
+Rem offset, so a caller learns the ceiling from the tool rather than
+Rem from a wrong answer.
+Rem
+Rem Conventions, all of them load-bearing:
+Rem
+Rem   * CHR IS NEVER CALLED, AND NEITHER IS ASC. CHR of zero is the empty
+Rem     string, so any path that decodes an escape to a code and then
+Rem     builds a character with Chr silently loses a NUL. Where this
+Rem     machine must turn a code back into text it uses FromCodes,
+Rem     which is Codes' exact inverse and admits 0 — which is why the
+Rem     \0 and \x00 escapes are ordinary literals in this dialect and
+Rem     match a real NUL with no special case at all. The engine
+Rem     compares NUMBERS.
+Rem
+Rem   * EVERY READ OF A CHARACTER IS BOUNDS-CHECKED BY THE CALLER. Nth,
+Rem     CodeAt and Asc all abort outside their domain, and Mid clamps
+Rem     instead, which puts the abort a word away from the mistake. The
+Rem     pattern and the subject are both read through RxUnitAt, which
+Rem     answers 0 - 1 outside 1 .. n, and the program is read only after
+Rem     a range test on the counter. The two greps tst/regextest.shoddy
+Rem     names in its header — for a call to ERROR and for a call to CHR,
+Rem     both of which must count zero in this file — are necessary and
+Rem     NOT sufficient; THIS is the rest of the totality argument, and no
+Rem     grep can check it.
+Rem
+Rem   * THE CHARACTER DOMAIN IS UTF-16 CODE UNITS, CLASSED AS ASCII.
+Rem     Subjects and patterns are indexed by code unit, matching Len,
+Rem     Mid, Instr and Codes in the runtime, so a non-BMP character is
+Rem     two code units and a dot matches one of them. The digit class is
+Rem     0-9; the word class adds A-Z a-z and underscore; the space class
+Rem     is tab LF VT FF CR space. Case folding maps A-Z to a-z and
+Rem     nothing else — which is exactly what the runtime's own Upper and
+Rem     Lower do, so no Turkish-dotless caveat is needed here because no
+Rem     such folding is claimed.
+Rem
+Rem   * LEFTMOST-FIRST, NOT LEFTMOST-LONGEST. Among matches starting at
+Rem     the earliest position the answer is the one a backtracker would
+Rem     have found first: alternation prefers its left branch, a greedy
+Rem     quantifier one more repetition, a lazy one fewer, applied
+Rem     outside-in. a|ab against "abc" matches "a". This is Perl's rule,
+Rem     not POSIX's, and it is what makes a lazy quantifier mean
+Rem     anything at all.
+Rem
+Rem   * AN UNSET GROUP IS NOT AN EMPTY ONE. RxUnset and RxGot(at, text)
+Rem     are different values, because "did not participate" and "matched
+Rem     nothing" are different facts. A hit's capture list always has
+Rem     exactly RxCount(p) entries, one per capturing group, in order.
+Rem
+Rem   * THE SIZE CAP IS A REFUSAL, NOT A PAUSE. A counted repetition
+Rem     compiles by duplication, so a{100000} would be a hundred
+Rem     thousand instructions. RxMaxCode() bounds the program,
+Rem     RxMaxPat() the pattern text, RxMaxDepth() the nesting, and each
+Rem     refusal names its number.
+Rem
+Rem   * THE VISITED SET IS WHAT MAKES (a*)* TERMINATE. An epsilon loop
+Rem     revisits a program counter it has already reached at this
+Rem     position and is cut. It is not an optimisation; without it the
+Rem     closure does not terminate.
+Rem
+Rem Pure throughout: nothing here reads a file, writes one, or prints.
+Rem RxDisasm returns lines; it does not print them. NO INCLUDES — every
+Rem word this machine needs is a builtin, so its "uses" table is empty
+Rem and it drags nothing into a program that reaches for it.
+Rem ==================================================================
+
+Rem ---- the code units this file names ---------------------------------
+Rem Private to this file: a top-level Let declares a value, not a word,
+Rem so nothing here crosses the manifest. Spelling them out is what lets
+Rem the parser below read as prose instead of as a table of magic
+Rem numbers, and it is why neither Asc nor Chr appears anywhere.
+
+Let rxLf = 10
+Let rxBang = 33
+Let rxHash = 35
+Let rxDollar = 36
+Let rxTick = 39
+Let rxLpar = 40
+Let rxRpar = 41
+Let rxStar = 42
+Let rxPlus = 43
+Let rxComma = 44
+Let rxDash = 45
+Let rxDot = 46
+Let rxZero = 48
+Let rxNine = 57
+Let rxColon = 58
+Let rxLt = 60
+Let rxEq = 61
+Let rxGt = 62
+Let rxQuery = 63
+Let rxUpA = 65
+Let rxUpZ = 90
+Let rxLbrack = 91
+Let rxBslash = 92
+Let rxRbrack = 93
+Let rxCaret = 94
+Let rxUnder = 95
+Let rxLoA = 97
+Let rxLoZ = 122
+Let rxLbrace = 123
+Let rxPipe = 124
+Let rxRbrace = 125
+
+Rem The escape and flag letters, by code, so the dispatches below can
+Rem name what they are looking at.
+
+Let rxUcB = 66
+Let rxUcD = 68
+Let rxUcE = 69
+Let rxUcG = 71
+Let rxUcN = 78
+Let rxUcP = 80
+Let rxUcQ = 81
+Let rxUcR = 82
+Let rxUcS = 83
+Let rxUcW = 87
+Let rxLcB = 98
+Let rxLcC = 99
+Let rxLcD = 100
+Let rxLcF = 102
+Let rxLcI = 105
+Let rxLcK = 107
+Let rxLcM = 109
+Let rxLcN = 110
+Let rxLcP = 112
+Let rxLcR = 114
+Let rxLcS = 115
+Let rxLcT = 116
+Let rxLcU = 117
+Let rxLcV = 118
+Let rxLcW = 119
+Let rxLcX = 120
+
+Rem ---- what a pattern is asked to do ----------------------------------
+Rem Three Booleans, and the compiler bakes all three into the emitted
+Rem instructions, so the virtual machine never consults them.
+
+Type RxOpts
+    RxFold   As Boolean
+    RxDotAll As Boolean
+    RxMulti  As Boolean
+
+Rem A run of code units, low and high inclusive. Over NUMBERS and not
+Rem over one-character strings: the inner loop compares numbers, and the
+Rem subject arrives from Codes already as numbers.
+
+Type RxRange
+    RxLo As Number
+    RxHi As Number
+
+Rem ---- the parsed pattern ---------------------------------------------
+Rem One line, because a sum type spread over several lines is unexpected
+Rem indent at top level. RxNil is not optional: concatenation needs an
+Rem identity and (?:) has to parse to something. A non-capturing group
+Rem parses to its body and leaves no node behind; RxGrp is capturing
+Rem only, and carries the number it was given at its opening paren.
+Rem Unbounded repetition is spelled as a max of 0 - 1.
+
+Type RxNode = RxNil | RxLit(RxLitCode As Number) | RxCls(RxClsNeg As Boolean, RxClsRanges As List Of RxRange) | RxAny | RxBol | RxEol | RxWb(RxWbNeg As Boolean) | RxCat(RxCatL As RxNode, RxCatR As RxNode) | RxAlt(RxAltL As RxNode, RxAltR As RxNode) | RxRep(RxRepBody As RxNode, RxRepMin As Number, RxRepMax As Number, RxRepLazy As Boolean) | RxGrp(RxGrpBody As RxNode, RxGrpNum As Number)
+
+Rem ---- the compiled program -------------------------------------------
+Rem Thompson's instruction set, with absolute targets. Slots 0 and 1 are
+Rem the whole match, so capturing group k uses 2k and 2k+1 — the
+Rem standard layout, and the reason a hit's capture list can be built by
+Rem one pass over the slot array.
+
+Type RxInst = RxIChar(RxICode As Number) | RxICls(RxIClsNeg As Boolean, RxIClsRs As List Of RxRange) | RxIAny(RxIAll As Boolean) | RxISplit(RxISpX As Number, RxISpY As Number) | RxIJmp(RxIJTo As Number) | RxISave(RxISlot As Number) | RxIBol(RxIBMulti As Boolean) | RxIEol(RxIEMulti As Boolean) | RxIWb(RxIWbNeg As Boolean) | RxIMatch
+
+Rem The compiled pattern as a value. The options field is RxHow and not
+Rem RxOpts, because a field accessor is an exported global word and the
+Rem options record already owns that name.
+
+Type RxProg
+    RxSrc  As String
+    RxCode As Array Of RxInst
+    RxNCap As Number
+    RxHow  As RxOpts
+
+Rem ---- what a match answers with --------------------------------------
+Rem RxUnset is not RxGot(k, ""). (a)|(b) against "b" leaves group 1
+Rem unset and group 2 got, carrying "b"; (a?) against "" leaves group 1
+Rem GOT, carrying "". Two different facts, kept different by the type.
+
+Type RxCap = RxUnset | RxGot(RxCapAt As Number, RxCapText As String)
+
+Type RxHit
+    RxHitAt   As Number
+    RxHitLen  As Number
+    RxHitText As String
+    RxHitCaps As List Of RxCap
+
+Rem ---- what the parser hands back at each step ------------------------
+Rem Nothing is mutable, so the group counter threads through the parse
+Rem and comes back alongside the node. RxTkGrp is how many capturing
+Rem groups have been opened so far; at the top it is RxCount.
+
+Type RxTake = RxTook(RxTkNode As RxNode, RxTkNext As Number, RxTkGrp As Number) | RxTkBad(RxTkWhy As String, RxTkAt As Number)
+
+Type RxCTake = RxCTook(RxCtRs As List Of RxRange, RxCtNext As Number) | RxCtBad(RxCtWhy As String, RxCtAt As Number)
+
+Type RxQTake = RxQTook(RxQtMin As Number, RxQtMax As Number, RxQtNext As Number) | RxQtBad(RxQtWhy As String, RxQtAt As Number)
+
+Type RxItem = RxItCode(RxItC As Number, RxItNext As Number) | RxItRs(RxItRanges As List Of RxRange, RxItRNext As Number) | RxItBad(RxItWhy As String, RxItAt As Number)
+
+Type RxPre = RxPreOk(RxPrHow As RxOpts, RxPrNext As Number) | RxPreBad(RxPrWhy As String, RxPrAt As Number)
+
+Rem ---- what the virtual machine carries -------------------------------
+Rem A thread is a program counter and its own copy of the capture slots.
+Rem Threads must not share one array: SetNth clones, so a slot write on
+Rem one thread cannot be seen by another, which is the whole reason
+Rem (a)|(b) can leave one group unset while the other is got.
+
+Type RxThread
+    RxThPc    As Number
+    RxThSlots As Array Of Number
+
+Type RxAdds
+    RxAdList As List Of RxThread
+    RxAdSeen As Array Of Boolean
+
+Type RxStep
+    RxStPend As List Of RxThread
+    RxStBest As Array Of Number
+
+Rem ---- the classes the shorthands stand for ---------------------------
+Rem Written out rather than complemented at run time, so \D \W and \S
+Rem contribute ranges inside a class exactly as \d \w and \s do, with no
+Rem negation machinery in the class parser at all.
+
+Let rxDigitRs = { RxRange(48, 57) }
+Let rxNotDigitRs = { RxRange(0, 47), RxRange(58, 65535) }
+Let rxWordRs = { RxRange(48, 57), RxRange(65, 90), RxRange(95, 95), RxRange(97, 122) }
+Let rxNotWordRs = { RxRange(0, 47), RxRange(58, 64), RxRange(91, 94), RxRange(96, 96), RxRange(123, 65535) }
+Let rxSpaceRs = { RxRange(9, 13), RxRange(32, 32) }
+Let rxNotSpaceRs = { RxRange(0, 8), RxRange(14, 31), RxRange(33, 65535) }
+
+Rem ---- the ceilings, each named in the refusal that cites it ----------
+Rem Zero-arg Defs and not top-level Lets, because these DO cross the
+Rem manifest: a caller and a suite both want to ask what the limit is.
+
+Rem The compiled program's instruction count. Past this a counted
+Rem repetition is refused at parse time rather than built and crawled
+Rem through.
+Rem
+Rem CHOSEN AGAINST Ticks, AND THE MEASUREMENTS ARE WORTH WRITING DOWN
+Rem because the shape of the cost is not what a reader expects:
+Rem
+Rem     28 instructions over 2000 characters      25 ms
+Rem     204 instructions over 1000 characters    693 ms
+Rem     1994 instructions over 1000 characters  3114 ms
+Rem
+Rem So the ceiling is not a cliff, it is a slope, and the cap sits where
+Rem a pattern nobody would write by hand meets a wait nobody would sit
+Rem through. The first line is the real case — an ordinary pattern over
+Rem an ordinary subject — and it is what the machine is for. The last is
+Rem a{1990}b, which is the cap doing its job by never being reached.
+Def RxMaxCode() As Number
+    2000
+
+Rem The pattern text, in code units. Separate from RxMaxCode because a
+Rem pattern can be long and compile to nothing — (?:) repeated is four
+Rem characters and no instructions — and because bounding the text is
+Rem what bounds the parser's own recursion.
+Def RxMaxPat() As Number
+    2000
+
+Rem How deeply groups and alternations may nest. The grammar below is
+Rem mutual recursion, which costs stack in this runtime, so the depth is
+Rem refused rather than discovered.
+Def RxMaxDepth() As Number
+    100
+
+Rem ---- reading a character, once, in one place ------------------------
+Rem THE WHOLE BOUNDS DISCIPLINE IS HERE. Nth aborts outside 1 .. n, so
+Rem every read of the pattern and of the subject goes through this word,
+Rem which answers 0 - 1 instead. A code unit is 0 .. 65535, so 0 - 1 is
+Rem a value no character can have and no comparison below can match by
+Rem accident. Mid is deliberately not used for this: Mid CLAMPS, which
+Rem would hand back a real character for a position past the end.
+
+Def RxUnitAt(cs As Array Of Number, n As Number, k As Number) As Number
+    If k < 1 Or k > n Then
+        0 - 1
+    Else
+        Nth(cs, k)
+
+Rem ---- the ASCII classes, stated once ---------------------------------
+
+Def RxIsDigitC(c As Number) As Boolean
+    c >= rxZero And c <= rxNine
+
+Def RxIsAlpha(c As Number) As Boolean
+    (c >= rxUpA And c <= rxUpZ) Or (c >= rxLoA And c <= rxLoZ)
+
+Def RxIsAlnum(c As Number) As Boolean
+    RxIsDigitC(c) Or RxIsAlpha(c)
+
+Def RxIsWordCh(c As Number) As Boolean
+    RxIsAlnum(c) Or c = rxUnder
+
+Def RxHexVal(c As Number) As Number
+    If RxIsDigitC(c) Then
+        c - rxZero
+    Else
+        If c >= rxLoA And c <= rxLoA + 5 Then
+            c - rxLoA + 10
+        Else
+            If c >= rxUpA And c <= rxUpA + 5 Then
+                c - rxUpA + 10
+            Else
+                0 - 1
+
+Rem The metacharacters, which is exactly the set RxQuote escapes.
+
+Def RxIsMeta(c As Number) As Boolean
+    c = rxDot Or c = rxStar Or c = rxPlus Or c = rxQuery Or c = rxLpar Or c = rxRpar Or c = rxLbrack Or c = rxRbrack Or c = rxLbrace Or c = rxRbrace Or c = rxPipe Or c = rxCaret Or c = rxDollar Or c = rxBslash Or c = rxDash
+
+Rem The class shorthands, and the ranges each stands for.
+
+Def RxIsShort(c As Number) As Boolean
+    c = rxLcD Or c = rxUcD Or c = rxLcW Or c = rxUcW Or c = rxLcS Or c = rxUcS
+
+Def RxShortRs(c As Number) As List Of RxRange
+    Select Case c
+        Case 100
+            rxDigitRs
+        Case 68
+            rxNotDigitRs
+        Case 119
+            rxWordRs
+        Case 87
+            rxNotWordRs
+        Case 115
+            rxSpaceRs
+        Case Else
+            rxNotSpaceRs
+
+Rem The control escapes. Note \0 answers 0 and 0 is a real code unit, so
+Rem the test at every call site is "is this at least 0", never "is this
+Rem true" — a NUL is not an absence here.
+
+Def RxCtrlCode(c As Number) As Number
+    Select Case c
+        Case 110
+            10
+        Case 116
+            9
+        Case 114
+            13
+        Case 102
+            12
+        Case 118
+            11
+        Case 48
+            0
+        Case Else
+            0 - 1
+
+Rem ---- the constructs refused BY NAME ---------------------------------
+Rem A pattern that silently means something other than what it says is
+Rem the failure mode this machine exists to avoid, so every one of these
+Rem is named where it is written rather than reported as an unexpected
+Rem character. Answering "" means "not one of these".
+
+Def RxRefused(c As Number) As String
+    Select Case c
+        Case 49 To 57
+            "REGEX: BACKREFERENCES ARE NOT SUPPORTED — THE ENGINE DOES NOT BACKTRACK"
+        Case 107
+            "REGEX: NAMED BACKREFERENCES ARE NOT SUPPORTED — THE ENGINE DOES NOT BACKTRACK"
+        Case 112, 80
+            "REGEX: UNICODE PROPERTIES ARE NOT SUPPORTED — THE DOMAIN IS UTF-16 CODE UNITS CLASSED AS ASCII"
+        Case 65
+            "REGEX: " & RxBs() & "A IS NOT SUPPORTED — WRITE ^ FOR THE START OF THE SUBJECT"
+        Case 122, 90
+            "REGEX: " & RxBs() & "z AND " & RxBs() & "Z ARE NOT SUPPORTED — WRITE $ FOR THE END OF THE SUBJECT"
+        Case 71
+            "REGEX: " & RxBs() & "G IS NOT SUPPORTED — THERE IS NO CARRIED MATCH ANCHOR"
+        Case 81, 69
+            "REGEX: " & RxBs() & "Q AND " & RxBs() & "E QUOTING IS NOT SUPPORTED — RxQuote ESCAPES A STRING INSTEAD"
+        Case 82
+            "REGEX: " & RxBs() & "R IS NOT SUPPORTED"
+        Case 78
+            "REGEX: " & RxBs() & "N IS NOT SUPPORTED"
+        Case 117
+            "REGEX: " & RxBs() & "u IS NOT SUPPORTED — A CODE UNIT BELOW 256 IS WRITTEN " & RxBs() & "xHH"
+        Case 99
+            "REGEX: " & RxBs() & "cX CONTROL ESCAPES ARE NOT SUPPORTED"
+        Case Else
+            ""
+
+Rem One backslash, as a string. Written once so no message below has to
+Rem carry a doubled backslash and be misread as two.
+Def RxBs() As String
+    "\\"
+
+Rem ---- the options ----------------------------------------------------
+
+Rem Nothing on: the dot stops at a newline, ^ and $ are the ends of the
+Rem whole subject, and case is compared exactly.
+Def RxNoOpts() As RxOpts
+    RxOpts(False, False, False)
+
+Rem ASCII case folding on, and nothing else.
+Def RxFoldOpts() As RxOpts
+    RxOpts(True, False, False)
+
+Rem ---- reading a pattern ----------------------------------------------
+Rem THE ONLY WORD IN THIS MACHINE THAT CAN FAIL, and the only Result in
+Rem it. Every match word below takes a compiled program, which can only
+Rem have come from an Ok — so they are total by construction, because
+Rem there is no argument left that can be wrong.
+
+Def RxRead(pat As String, how As RxOpts) As Result
+    If Len(pat) > RxMaxPat() Then
+        Err("REGEX: THE PATTERN IS " & Str(Len(pat)) & " CHARACTERS AND THE LIMIT IS " & Str(RxMaxPat()), 0)
+    Else
+        RxReadPre(pat, Codes(pat), Len(pat), how)
+
+Def RxReadPre(pat As String, cs As Array Of Number, n As Number, how As RxOpts) As Result
+    Select Case RxPrefix(cs, n, how)
+        Case RxPreBad(w, a)
+            Err(w, a)
+        Case RxPreOk(h2, k0)
+            RxReadBody(pat, cs, n, h2, k0)
+        Case Else
+            Err("REGEX: THE PATTERN COULD NOT BE READ", 0)
+
+Def RxReadBody(pat As String, cs As Array Of Number, n As Number, how As RxOpts, k0 As Number) As Result
+    Select Case RxPAlt(cs, n, k0, 0, 0, how)
+        Case RxTkBad(w, a)
+            Err(w, a)
+        Case RxTook(t, k2, g2)
+            If k2 <= n Then
+                RxReadLeft(cs, n, k2)
+            Else
+                RxBuild(pat, t, g2, how)
+        Case Else
+            Err("REGEX: THE PATTERN COULD NOT BE READ", 0)
+
+Rem The grammar stops at a ) it cannot account for and at nothing else,
+Rem so text left over means exactly one thing.
+Def RxReadLeft(cs As Array Of Number, n As Number, k2 As Number) As Result
+    If RxUnitAt(cs, n, k2) = rxRpar Then
+        Err("REGEX: UNMATCHED ) — THERE IS NO GROUP OPEN HERE", k2)
+    Else
+        Err("REGEX: THE PATTERN DID NOT READ TO ITS END", k2)
+
+Rem ---- the flag prefix, stripped before the grammar runs --------------
+Rem (?i) (?s) (?m) and their combinations, at offset 1 and nowhere else.
+Rem Written as a tiny reader in front of the grammar so the grammar
+Rem itself stays flag-free, and refused BY NAME anywhere later.
+Rem
+Rem WHERE BOTH ARE GIVEN THE PREFIX WINS, WHOLE. A prefix does not merge
+Rem with the options argument, it replaces it: (?i) on a pattern read
+Rem with RxOpts(False, True, False) is folding ON and dot-all OFF. The
+Rem pattern is closer to the intent than the call site, and a rule that
+Rem replaces is one a caller can state; a rule that merges is one they
+Rem have to work out.
+
+Rem The guard is the whole of what makes this reader safe to put in
+Rem front of the grammar: it claims the text ONLY when it is (? then
+Rem flag letters then ), so (?: and (?= and (?i: all fall through
+Rem untouched and are refused by name where they are written.
+Def RxPrefix(cs As Array Of Number, n As Number, how As RxOpts) As RxPre
+    If RxUnitAt(cs, n, 1) = rxLpar And RxUnitAt(cs, n, 2) = rxQuery And RxIsFlagCh(RxUnitAt(cs, n, 3)) And RxUnitAt(cs, n, RxFlagEnd(cs, n, 3)) = rxRpar Then
+        RxPrefixScan(cs, n, 3, False, False, False)
+    Else
+        RxPreOk(how, 1)
+
+Def RxIsFlagCh(c As Number) As Boolean
+    c = rxLcI Or c = rxLcS Or c = rxLcM Or c = rxLcX
+
+Def RxPrefixScan(cs As Array Of Number, n As Number, i As Number, f As Boolean, s As Boolean, m As Boolean) As RxPre
+    Let c = RxUnitAt(cs, n, i)
+    If c = rxLcI Then
+        RxPrefixScan(cs, n, i + 1, True, s, m)
+    Else
+        If c = rxLcS Then
+            RxPrefixScan(cs, n, i + 1, f, True, m)
+        Else
+            If c = rxLcM Then
+                RxPrefixScan(cs, n, i + 1, f, s, True)
+            Else
+                If c = rxLcX Then
+                    RxPreBad("REGEX: THE x FLAG IS NOT SUPPORTED — THERE IS NO WHITESPACE-INSENSITIVE MODE", i)
+                Else
+                    If c = rxRpar Then
+                        RxPreOk(RxOpts(f, s, m), i + 1)
+                    Else
+                        RxPreBad("REGEX: A FLAG GROUP MAY ONLY CONTAIN i, s AND m", i)
+
+Rem ==================================================================
+Rem THE PARSER
+Rem
+Rem Recursive descent over a 1-based offset, the shape alg.shoddy and
+Rem json.shoddy already use. Precedence, lowest first:
+Rem
+Rem     alt   := cat ( "|" cat )*
+Rem     cat   := rep*
+Rem     rep   := atom ( "*" | "+" | "?" | "{" ... "}" ) "?"?
+Rem     atom  := "(" ( "?:" )? alt ")" | "[" class "]" | "." | "^" | "$"
+Rem            | escape | literal
+Rem
+Rem GROUP NUMBERING IS BY OPENING PAREN, LEFT TO RIGHT, assigned as the
+Rem parser descends — so ((a)(b)) numbers the outer 1. A compiler that
+Rem numbered as it emitted would get that wrong the moment an
+Rem alternation reordered emission.
+Rem ==================================================================
+
+Rem Alternation is right-nested, so a|b|c is RxAlt(a, RxAlt(b, c)) and
+Rem the left branch is always the higher priority — which is leftmost-
+Rem first, spelled in the tree.
+Def RxPAlt(cs As Array Of Number, n As Number, k As Number, g As Number, d As Number, how As RxOpts) As RxTake
+    If d > RxMaxDepth() Then
+        RxTkBad("REGEX: THE PATTERN NESTS MORE THAN " & Str(RxMaxDepth()) & " DEEP", k)
+    Else
+        RxPAltGo(cs, n, k, g, d, how)
+
+Def RxPAltGo(cs As Array Of Number, n As Number, k As Number, g As Number, d As Number, how As RxOpts) As RxTake
+    Select Case RxPCat(cs, n, k, g, d, how)
+        Case RxTkBad(w, a)
+            RxTkBad(w, a)
+        Case RxTook(l, k2, g2)
+            If RxUnitAt(cs, n, k2) = rxPipe Then
+                RxPAltMore(cs, n, k2, g2, d, how, l)
+            Else
+                RxTook(l, k2, g2)
+        Case Else
+            RxTkBad("REGEX: THE PATTERN COULD NOT BE READ", k)
+
+Def RxPAltMore(cs As Array Of Number, n As Number, k As Number, g As Number, d As Number, how As RxOpts, l As RxNode) As RxTake
+    Select Case RxPAlt(cs, n, k + 1, g, d + 1, how)
+        Case RxTkBad(w, a)
+            RxTkBad(w, a)
+        Case RxTook(r, k3, g3)
+            RxTook(RxAlt(l, r), k3, g3)
+        Case Else
+            RxTkBad("REGEX: THE PATTERN COULD NOT BE READ", k)
+
+Rem Concatenation runs until | or ) or the end of the pattern.
+Def RxPCat(cs As Array Of Number, n As Number, k As Number, g As Number, d As Number, how As RxOpts) As RxTake
+    RxPCatGo(cs, n, k, g, d, how, RxNil())
+
+Def RxPCatGo(cs As Array Of Number, n As Number, k As Number, g As Number, d As Number, how As RxOpts, acc As RxNode) As RxTake
+    Let c = RxUnitAt(cs, n, k)
+    If c = 0 - 1 Or c = rxPipe Or c = rxRpar Then
+        RxTook(acc, k, g)
+    Else
+        If RxIsQuantCh(c) Then
+            RxPNothing(c, k)
+        Else
+            RxPCatStep(cs, n, k, g, d, how, acc)
+
+Rem A quantifier at the START of a term has nothing in front of it. This
+Rem is where *abc and a** and {2}x are caught, and where a brace that
+Rem was meant literally is told what to write instead.
+Def RxIsQuantCh(c As Number) As Boolean
+    c = rxStar Or c = rxPlus Or c = rxQuery Or c = rxLbrace
+
+Def RxPNothing(c As Number, k As Number) As RxTake
+    If c = rxLbrace Then
+        RxTkBad("REGEX: NOTHING TO REPEAT — WRITE " & RxBs() & "{ FOR A LITERAL BRACE", k)
+    Else
+        RxTkBad("REGEX: NOTHING TO REPEAT", k)
+
+Def RxPCatStep(cs As Array Of Number, n As Number, k As Number, g As Number, d As Number, how As RxOpts, acc As RxNode) As RxTake
+    Select Case RxPRep(cs, n, k, g, d, how)
+        Case RxTkBad(w, a)
+            RxTkBad(w, a)
+        Case RxTook(t, k2, g2)
+            RxPCatGo(cs, n, k2, g2, d, how, RxCatOf(acc, t))
+        Case Else
+            RxTkBad("REGEX: THE PATTERN COULD NOT BE READ", k)
+
+Rem One atom, then at most one quantifier, then at most one lazy mark.
+Def RxPRep(cs As Array Of Number, n As Number, k As Number, g As Number, d As Number, how As RxOpts) As RxTake
+    Select Case RxPAtom(cs, n, k, g, d, how)
+        Case RxTkBad(w, a)
+            RxTkBad(w, a)
+        Case RxTook(t, k2, g2)
+            RxPQuant(cs, n, k2, g2, t)
+        Case Else
+            RxTkBad("REGEX: THE PATTERN COULD NOT BE READ", k)
+
+Def RxPQuant(cs As Array Of Number, n As Number, k As Number, g As Number, t As RxNode) As RxTake
+    Let c = RxUnitAt(cs, n, k)
+    If c = rxStar Then
+        RxPLazy(cs, n, k + 1, g, t, 0, 0 - 1)
+    Else
+        If c = rxPlus Then
+            RxPLazy(cs, n, k + 1, g, t, 1, 0 - 1)
+        Else
+            If c = rxQuery Then
+                RxPLazy(cs, n, k + 1, g, t, 0, 1)
+            Else
+                If c = rxLbrace Then
+                    RxPCounted(cs, n, k, g, t)
+                Else
+                    RxTook(t, k, g)
+
+Rem A ? after a quantifier makes it lazy; a + after one would make it
+Rem possessive, which needs the engine to refuse to give ground it has
+Rem taken — and there is no ground taken to give back here.
+Def RxPLazy(cs As Array Of Number, n As Number, k As Number, g As Number, t As RxNode, lo As Number, hi As Number) As RxTake
+    Let c = RxUnitAt(cs, n, k)
+    If c = rxPlus Then
+        RxTkBad("REGEX: POSSESSIVE QUANTIFIERS ARE NOT SUPPORTED — THE ENGINE DOES NOT BACKTRACK", k)
+    Else
+        If c = rxQuery Then
+            RxTook(RxRep(t, lo, hi, True), k + 1, g)
+        Else
+            RxTook(RxRep(t, lo, hi, False), k, g)
+
+Rem ---- counted repetition, and the size cap ---------------------------
+Rem A counted repetition compiles by duplication, so the refusal has to
+Rem happen HERE, at parse time, with the offset of the brace and the
+Rem number named — not after building a program the machine would then
+Rem crawl through.
+
+Def RxPCounted(cs As Array Of Number, n As Number, k As Number, g As Number, t As RxNode) As RxTake
+    Select Case RxPBraces(cs, n, k)
+        Case RxQtBad(w, a)
+            RxTkBad(w, a)
+        Case RxQTook(lo, hi, k2)
+            RxPCountCap(cs, n, k, k2, g, t, lo, hi)
+        Case Else
+            RxTkBad("REGEX: THE COUNTED REPETITION COULD NOT BE READ", k)
+
+Def RxPCountCap(cs As Array Of Number, n As Number, k As Number, k2 As Number, g As Number, t As RxNode, lo As Number, hi As Number) As RxTake
+    Let need = RxRepSize(RxSize(t), lo, hi)
+    If need > RxMaxCode() Then
+        RxTkBad("REGEX: " & RxBraceText(lo, hi) & " IS TOO MANY REPETITIONS — IT WOULD COMPILE TO " & Str(need) & " INSTRUCTIONS AND THE LIMIT IS " & Str(RxMaxCode()), k)
+    Else
+        If RxUnitAt(cs, n, k2) = rxQuery Then
+            RxTook(RxRep(t, lo, hi, True), k2 + 1, g)
+        Else
+            RxTook(RxRep(t, lo, hi, False), k2, g)
+
+Def RxBraceText(lo As Number, hi As Number) As String
+    If hi = 0 - 1 Then
+        "{" & Str(lo) & ",}"
+    Else
+        If hi = lo Then
+            "{" & Str(lo) & "}"
+        Else
+            "{" & Str(lo) & "," & Str(hi) & "}"
+
+Rem {m} {m,} {m,n}, starting at the brace.
+Def RxPBraces(cs As Array Of Number, n As Number, k As Number) As RxQTake
+    Let e1 = RxDigitEnd(cs, n, k + 1)
+    If e1 = k + 1 Then
+        RxQtBad("REGEX: A COUNTED REPETITION NEEDS A NUMBER — WRITE {2}, {2,} OR {2,5}", k)
+    Else
+        RxPBraces2(cs, n, k, e1, RxNumAt(cs, n, k + 1, e1, 0))
+
+Def RxPBraces2(cs As Array Of Number, n As Number, k As Number, e1 As Number, lo As Number) As RxQTake
+    Let c = RxUnitAt(cs, n, e1)
+    If c = rxRbrace Then
+        RxQTook(lo, lo, e1 + 1)
+    Else
+        If c = rxComma Then
+            RxPBraces3(cs, n, k, e1, lo)
+        Else
+            RxQtBad("REGEX: UNTERMINATED { — A COUNTED REPETITION NEEDS A CLOSING }", k)
+
+Def RxPBraces3(cs As Array Of Number, n As Number, k As Number, e1 As Number, lo As Number) As RxQTake
+    Let e2 = RxDigitEnd(cs, n, e1 + 1)
+    If e2 = e1 + 1 Then
+        If RxUnitAt(cs, n, e2) = rxRbrace Then
+            RxQTook(lo, 0 - 1, e2 + 1)
+        Else
+            RxQtBad("REGEX: UNTERMINATED { — A COUNTED REPETITION NEEDS A CLOSING }", k)
+    Else
+        RxPBraces4(cs, n, k, e2, lo, RxNumAt(cs, n, e1 + 1, e2, 0))
+
+Def RxPBraces4(cs As Array Of Number, n As Number, k As Number, e2 As Number, lo As Number, hi As Number) As RxQTake
+    If RxUnitAt(cs, n, e2) <> rxRbrace Then
+        RxQtBad("REGEX: UNTERMINATED { — A COUNTED REPETITION NEEDS A CLOSING }", k)
+    Else
+        If hi < lo Then
+            RxQtBad("REGEX: " & RxBraceText(lo, hi) & " IS BACKWARDS — THE LOW COUNT MUST NOT EXCEED THE HIGH", k)
+        Else
+            RxQTook(lo, hi, e2 + 1)
+
+Def RxDigitEnd(cs As Array Of Number, n As Number, i As Number) As Number
+    If RxIsDigitC(RxUnitAt(cs, n, i)) Then
+        RxDigitEnd(cs, n, i + 1)
+    Else
+        i
+
+Def RxNumAt(cs As Array Of Number, n As Number, i As Number, j As Number, acc As Number) As Number
+    If i >= j Then
+        acc
+    Else
+        RxNumAt(cs, n, i + 1, j, acc * 10 + (RxUnitAt(cs, n, i) - rxZero))
+
+Rem ---- one atom -------------------------------------------------------
+
+Def RxPAtom(cs As Array Of Number, n As Number, k As Number, g As Number, d As Number, how As RxOpts) As RxTake
+    If d > RxMaxDepth() Then
+        RxTkBad("REGEX: THE PATTERN NESTS MORE THAN " & Str(RxMaxDepth()) & " DEEP", k)
+    Else
+        RxPAtomAt(cs, n, k, g, d, how, RxUnitAt(cs, n, k))
+
+Def RxPAtomAt(cs As Array Of Number, n As Number, k As Number, g As Number, d As Number, how As RxOpts, c As Number) As RxTake
+    If c = 0 - 1 Then
+        RxTkBad("REGEX: THE PATTERN ENDS WHERE SOMETHING TO MATCH WAS EXPECTED", k)
+    Else
+        If c = rxLpar Then
+            RxPGroup(cs, n, k, g, d, how)
+        Else
+            If c = rxLbrack Then
+                RxPClass(cs, n, k, g)
+            Else
+                If c = rxDot Then
+                    RxTook(RxAny(), k + 1, g)
+                Else
+                    If c = rxCaret Then
+                        RxTook(RxBol(), k + 1, g)
+                    Else
+                        If c = rxDollar Then
+                            RxTook(RxEol(), k + 1, g)
+                        Else
+                            If c = rxBslash Then
+                                RxPEscape(cs, n, k, g)
+                            Else
+                                RxTook(RxLit(c), k + 1, g)
+
+Rem ---- groups ---------------------------------------------------------
+
+Def RxPGroup(cs As Array Of Number, n As Number, k As Number, g As Number, d As Number, how As RxOpts) As RxTake
+    If RxUnitAt(cs, n, k + 1) = rxQuery Then
+        RxPGroupQ(cs, n, k, g, d, how, RxUnitAt(cs, n, k + 2))
+    Else
+        RxPGroupCap(cs, n, k, g + 1, d, how)
+
+Rem The number is this group's, taken at the opening paren and BEFORE
+Rem descending, so an inner group can only be given a higher one.
+Def RxPGroupCap(cs As Array Of Number, n As Number, k As Number, gn As Number, d As Number, how As RxOpts) As RxTake
+    Select Case RxPAlt(cs, n, k + 1, gn, d + 1, how)
+        Case RxTkBad(w, a)
+            RxTkBad(w, a)
+        Case RxTook(b, k2, g2)
+            If RxUnitAt(cs, n, k2) = rxRpar Then
+                RxTook(RxGrp(b, gn), k2 + 1, g2)
+            Else
+                RxTkBad("REGEX: UNMATCHED ( — THIS GROUP NEVER CLOSES", k)
+        Case Else
+            RxTkBad("REGEX: THE GROUP COULD NOT BE READ", k)
+
+Rem A non-capturing group parses to its body and leaves no node behind.
+Def RxPGroupPlain(cs As Array Of Number, n As Number, k As Number, g As Number, d As Number, how As RxOpts) As RxTake
+    Select Case RxPAlt(cs, n, k + 3, g, d + 1, how)
+        Case RxTkBad(w, a)
+            RxTkBad(w, a)
+        Case RxTook(b, k2, g2)
+            If RxUnitAt(cs, n, k2) = rxRpar Then
+                RxTook(b, k2 + 1, g2)
+            Else
+                RxTkBad("REGEX: UNMATCHED ( — THIS GROUP NEVER CLOSES", k)
+        Case Else
+            RxTkBad("REGEX: THE GROUP COULD NOT BE READ", k)
+
+Rem Everything (? can open, and what this dialect says about each one.
+Rem The point of naming them is that a caller learns the ceiling from
+Rem the tool instead of from a wrong answer three words later.
+Def RxPGroupQ(cs As Array Of Number, n As Number, k As Number, g As Number, d As Number, how As RxOpts, c As Number) As RxTake
+    If c = rxColon Then
+        RxPGroupPlain(cs, n, k, g, d, how)
+    Else
+        If c = rxEq Then
+            RxTkBad("REGEX: LOOKAHEAD IS NOT SUPPORTED — A PARALLEL STATE SET CANNOT LOOK AHEAD", k)
+        Else
+            If c = rxBang Then
+                RxTkBad("REGEX: NEGATIVE LOOKAHEAD IS NOT SUPPORTED — A PARALLEL STATE SET CANNOT LOOK AHEAD", k)
+            Else
+                If c = rxLt Then
+                    RxPGroupLt(cs, n, k, RxUnitAt(cs, n, k + 3))
+                Else
+                    RxPGroupQ2(cs, n, k, c)
+
+Def RxPGroupLt(cs As Array Of Number, n As Number, k As Number, c4 As Number) As RxTake
+    If c4 = rxEq Then
+        RxTkBad("REGEX: LOOKBEHIND IS NOT SUPPORTED — THE ENGINE READS FORWARD ONLY", k)
+    Else
+        If c4 = rxBang Then
+            RxTkBad("REGEX: NEGATIVE LOOKBEHIND IS NOT SUPPORTED — THE ENGINE READS FORWARD ONLY", k)
+        Else
+            RxTkBad("REGEX: NAMED GROUPS ARE NOT SUPPORTED — GROUPS ARE NUMBERED BY OPENING PAREN", k)
+
+Def RxPGroupQ2(cs As Array Of Number, n As Number, k As Number, c As Number) As RxTake
+    If c = rxTick Or c = rxUcP Then
+        RxTkBad("REGEX: NAMED GROUPS ARE NOT SUPPORTED — GROUPS ARE NUMBERED BY OPENING PAREN", k)
+    Else
+        If c = rxGt Then
+            RxTkBad("REGEX: ATOMIC GROUPS ARE NOT SUPPORTED — THERE IS NO BACKTRACKING TO FORBID", k)
+        Else
+            If c = rxHash Then
+                RxTkBad("REGEX: COMMENT GROUPS ARE NOT SUPPORTED", k)
+            Else
+                If c = rxLpar Then
+                    RxTkBad("REGEX: CONDITIONALS ARE NOT SUPPORTED", k)
+                Else
+                    If c = rxUcR Or RxIsDigitC(c) Then
+                        RxTkBad("REGEX: RECURSION AND SUBROUTINE CALLS ARE NOT SUPPORTED", k)
+                    Else
+                        RxPGroupQ3(cs, n, k, c)
+
+Rem Flag letters here mean the pattern put (?i) somewhere other than the
+Rem front. Which of the two refusals it gets depends on what closes it,
+Rem because a scoped flag group and a misplaced one are different
+Rem mistakes and deserve different sentences.
+Def RxPGroupQ3(cs As Array Of Number, n As Number, k As Number, c As Number) As RxTake
+    If Not RxIsFlagCh(c) Then
+        RxTkBad("REGEX: (? DOES NOT OPEN ANYTHING THIS DIALECT KNOWS", k)
+    Else
+        RxPGroupQ4(k, RxUnitAt(cs, n, RxFlagEnd(cs, n, k + 2)))
+
+Rem What closes the flag letters says which mistake this is, and the
+Rem three are worth different sentences: a scoped flag group asks for
+Rem something the compiler does not do, a closed one is in the wrong
+Rem place, and anything else is not a flag group at all.
+Def RxPGroupQ4(k As Number, term As Number) As RxTake
+    If term = rxColon Then
+        RxTkBad("REGEX: SCOPED INLINE FLAGS ARE NOT SUPPORTED — FLAGS GO AT THE FRONT OF THE WHOLE PATTERN", k)
+    Else
+        If term = rxRpar Then
+            RxTkBad("REGEX: INLINE FLAGS ARE ONLY ALLOWED AT THE START OF A PATTERN", k)
+        Else
+            RxTkBad("REGEX: A FLAG GROUP MAY ONLY CONTAIN i, s AND m", k)
+
+Def RxFlagEnd(cs As Array Of Number, n As Number, i As Number) As Number
+    If RxIsFlagCh(RxUnitAt(cs, n, i)) Then
+        RxFlagEnd(cs, n, i + 1)
+    Else
+        i
+
+Rem ---- escapes outside a class ----------------------------------------
+
+Def RxPEscape(cs As Array Of Number, n As Number, k As Number, g As Number) As RxTake
+    RxPEsc1(cs, n, k, g, RxUnitAt(cs, n, k + 1))
+
+Def RxPEsc1(cs As Array Of Number, n As Number, k As Number, g As Number, c As Number) As RxTake
+    If c = 0 - 1 Then
+        RxTkBad("REGEX: A PATTERN MAY NOT END WITH A BACKSLASH", k)
+    Else
+        If RxIsShort(c) Then
+            RxTook(RxCls(False, RxShortRs(c)), k + 2, g)
+        Else
+            If c = rxLcB Then
+                RxTook(RxWb(False), k + 2, g)
+            Else
+                If c = rxUcB Then
+                    RxTook(RxWb(True), k + 2, g)
+                Else
+                    If c = rxLcX Then
+                        RxPEscHex(cs, n, k, g)
+                    Else
+                        RxPEsc2(cs, n, k, g, c)
+
+Def RxPEscHex(cs As Array Of Number, n As Number, k As Number, g As Number) As RxTake
+    Let h1 = RxHexVal(RxUnitAt(cs, n, k + 2))
+    Let h2 = RxHexVal(RxUnitAt(cs, n, k + 3))
+    If h1 < 0 Or h2 < 0 Then
+        RxTkBad("REGEX: " & RxBs() & "x NEEDS TWO HEX DIGITS", k)
+    Else
+        RxTook(RxLit(16 * h1 + h2), k + 4, g)
+
+Rem \0 answers a code of 0 and 0 is a real code unit, which is why the
+Rem test is "at least 0" and not "is true". FromCodes can build a NUL,
+Rem so a NUL is an ordinary literal here and matches like any other.
+Def RxPEsc2(cs As Array Of Number, n As Number, k As Number, g As Number, c As Number) As RxTake
+    Let v = RxCtrlCode(c)
+    If v >= 0 Then
+        RxTook(RxLit(v), k + 2, g)
+    Else
+        If RxRefused(c) <> "" Then
+            RxTkBad(RxRefused(c), k)
+        Else
+            If RxIsAlnum(c) Then
+                RxTkBad("REGEX: " & RxBs() & FromCodes({ c }) & " IS NOT AN ESCAPE THIS DIALECT KNOWS", k)
+            Else
+                RxTook(RxLit(c), k + 2, g)
+
+Rem ---- character classes ----------------------------------------------
+Rem Where the fiddly rules live: ] first is a literal ], - first or last
+Rem is a literal -, a shorthand inside contributes its ranges, and a
+Rem backwards range is refused at the offset of the dash.
+
+Def RxPClass(cs As Array Of Number, n As Number, k As Number, g As Number) As RxTake
+    RxPClass2(cs, n, k, g, RxUnitAt(cs, n, k + 1) = rxCaret)
+
+Def RxPClass2(cs As Array Of Number, n As Number, k As Number, g As Number, neg As Boolean) As RxTake
+    If neg Then
+        RxPClass3(cs, n, k, g, neg, k + 2)
+    Else
+        RxPClass3(cs, n, k, g, neg, k + 1)
+
+Def RxPClass3(cs As Array Of Number, n As Number, k As Number, g As Number, neg As Boolean, i As Number) As RxTake
+    If RxUnitAt(cs, n, i) = rxRbrack Then
+        RxPClassEnd(cs, n, k, g, neg, RxClsGo(cs, n, k, i + 1, { RxRange(93, 93) }))
+    Else
+        RxPClassEnd(cs, n, k, g, neg, RxClsGo(cs, n, k, i, { }))
+
+Def RxPClassEnd(cs As Array Of Number, n As Number, k As Number, g As Number, neg As Boolean, r As RxCTake) As RxTake
+    Select Case r
+        Case RxCtBad(w, a)
+            RxTkBad(w, a)
+        Case RxCTook(rs, k2)
+            RxTook(RxCls(neg, rs), k2, g)
+        Case Else
+            RxTkBad("REGEX: THE CHARACTER CLASS COULD NOT BE READ", k)
+
+Def RxClsGo(cs As Array Of Number, n As Number, k As Number, i As Number, acc As List Of RxRange) As RxCTake
+    Let c = RxUnitAt(cs, n, i)
+    If c = 0 - 1 Then
+        RxCtBad("REGEX: UNTERMINATED [ — A CHARACTER CLASS NEEDS A CLOSING ]", k)
+    Else
+        If c = rxRbrack Then
+            RxCTook(acc, i + 1)
+        Else
+            If c = rxLbrack And RxUnitAt(cs, n, i + 1) = rxColon Then
+                RxCtBad("REGEX: POSIX CHARACTER CLASSES ARE NOT SUPPORTED", i)
+            Else
+                RxClsItem1(cs, n, k, i, acc, RxClsItem(cs, n, i))
+
+Def RxClsItem1(cs As Array Of Number, n As Number, k As Number, i As Number, acc As List Of RxRange, it As RxItem) As RxCTake
+    Select Case it
+        Case RxItBad(w, a)
+            RxCtBad(w, a)
+        Case RxItRs(rs, j)
+            RxClsGo(cs, n, k, j, Concat(acc, rs))
+        Case RxItCode(c1, j)
+            RxClsDash(cs, n, k, acc, c1, j)
+        Case Else
+            RxCtBad("REGEX: THE CHARACTER CLASS COULD NOT BE READ", i)
+
+Rem A dash that is neither first nor last opens a range; anywhere else
+Rem it is an ordinary character, which is why [a-] and [-a] both read.
+Def RxClsDash(cs As Array Of Number, n As Number, k As Number, acc As List Of RxRange, c1 As Number, j As Number) As RxCTake
+    If RxUnitAt(cs, n, j) = rxDash And RxUnitAt(cs, n, j + 1) <> rxRbrack And RxUnitAt(cs, n, j + 1) <> 0 - 1 Then
+        RxClsRange(cs, n, k, acc, c1, j, RxClsItem(cs, n, j + 1))
+    Else
+        RxClsGo(cs, n, k, j, Concat(acc, { RxRange(c1, c1) }))
+
+Def RxClsRange(cs As Array Of Number, n As Number, k As Number, acc As List Of RxRange, c1 As Number, j As Number, it As RxItem) As RxCTake
+    Select Case it
+        Case RxItBad(w, a)
+            RxCtBad(w, a)
+        Case RxItRs(rs, j2)
+            RxCtBad("REGEX: A CLASS SHORTHAND CANNOT BE THE FAR END OF A RANGE", j + 1)
+        Case RxItCode(c2, j2)
+            If c2 < c1 Then
+                RxCtBad("REGEX: THE RANGE IS BACKWARDS — THE LOW END MUST NOT EXCEED THE HIGH", j)
+            Else
+                RxClsGo(cs, n, k, j2, Concat(acc, { RxRange(c1, c2) }))
+        Case Else
+            RxCtBad("REGEX: THE CHARACTER CLASS COULD NOT BE READ", j)
+
+Def RxClsItem(cs As Array Of Number, n As Number, i As Number) As RxItem
+    If RxUnitAt(cs, n, i) = rxBslash Then
+        RxClsEsc(cs, n, i, RxUnitAt(cs, n, i + 1))
+    Else
+        RxItCode(RxUnitAt(cs, n, i), i + 1)
+
+Def RxClsEsc(cs As Array Of Number, n As Number, i As Number, c As Number) As RxItem
+    If c = 0 - 1 Then
+        RxItBad("REGEX: A PATTERN MAY NOT END WITH A BACKSLASH", i)
+    Else
+        If RxIsShort(c) Then
+            RxItRs(RxShortRs(c), i + 2)
+        Else
+            If c = rxLcX Then
+                RxClsHex(cs, n, i)
+            Else
+                RxClsEsc2(cs, n, i, c)
+
+Def RxClsHex(cs As Array Of Number, n As Number, i As Number) As RxItem
+    Let h1 = RxHexVal(RxUnitAt(cs, n, i + 2))
+    Let h2 = RxHexVal(RxUnitAt(cs, n, i + 3))
+    If h1 < 0 Or h2 < 0 Then
+        RxItBad("REGEX: " & RxBs() & "x NEEDS TWO HEX DIGITS", i)
+    Else
+        RxItCode(16 * h1 + h2, i + 4)
+
+Rem \b inside a class means a backspace in some dialects and a word
+Rem boundary in none of them. Two meanings for one spelling is exactly
+Rem what this machine refuses to have, so it is named and refused.
+Def RxClsEsc2(cs As Array Of Number, n As Number, i As Number, c As Number) As RxItem
+    Let v = RxCtrlCode(c)
+    If v >= 0 Then
+        RxItCode(v, i + 2)
+    Else
+        If c = rxLcB Or c = rxUcB Then
+            RxItBad("REGEX: " & RxBs() & "b IS A WORD BOUNDARY AND HAS NO MEANING INSIDE A CLASS", i)
+        Else
+            If RxRefused(c) <> "" Then
+                RxItBad(RxRefused(c), i)
+            Else
+                If RxIsAlnum(c) Then
+                    RxItBad("REGEX: " & RxBs() & FromCodes({ c }) & " IS NOT AN ESCAPE THIS DIALECT KNOWS", i)
+                Else
+                    RxItCode(c, i + 2)
+
+Rem ==================================================================
+Rem THE COMPILER
+Rem
+Rem Thompson's construction, emitted with ABSOLUTE JUMP TARGETS COMPUTED
+Rem FROM LENGTHS. A two-pass "emit then patch" would need a SetNth per
+Rem patch, and SetNth clones the whole sequence; asking each node how
+Rem long it is costs nothing and is what makes the emit one pass.
+Rem
+Rem RxSize is therefore load-bearing twice over: it places every jump,
+Rem and it is what lets a counted repetition be refused BEFORE it is
+Rem built, by arithmetic on a tree that has not been expanded.
+Rem ==================================================================
+
+Def RxSize(t As RxNode) As Number
+    Select Case t
+        Case RxNil
+            0
+        Case RxCat(l, r)
+            RxSize(l) + RxSize(r)
+        Case RxAlt(l, r)
+            RxSize(l) + RxSize(r) + 2
+        Case RxGrp(b, gn)
+            RxSize(b) + 2
+        Case RxRep(b, lo, hi, lz)
+            RxRepSize(RxSize(b), lo, hi)
+        Case Else
+            1
+
+Rem What a repetition costs, without expanding it. Unbounded from zero
+Rem is a star (split, body, jump); unbounded from m is m - 1 copies and
+Rem a plus; bounded is m copies and n - m nested optionals, each of
+Rem which is one split in front of a copy.
+Def RxRepSize(sb As Number, lo As Number, hi As Number) As Number
+    If hi = 0 - 1 Then
+        If lo = 0 Then
+            sb + 2
+        Else
+            lo * sb + 1
+    Else
+        lo * sb + (hi - lo) * (sb + 1)
+
+Rem Concatenation that drops the identity, so (?:) costs nothing and a
+Rem chain of optionals ends cleanly. RxSize is unaffected either way,
+Rem which is what keeps the arithmetic above honest.
+Def RxCatOf(l As RxNode, r As RxNode) As RxNode
+    Select Case l
+        Case RxNil
+            r
+        Case Else
+            RxCatOf2(l, r)
+
+Def RxCatOf2(l As RxNode, r As RxNode) As RxNode
+    Select Case r
+        Case RxNil
+            l
+        Case Else
+            RxCat(l, r)
+
+Rem A counted repetition, rewritten into the three primitive ones. Only
+Rem ever reached for a shape that is not already primitive, and never
+Rem answers the shape it was given, so the emitter below cannot loop.
+Def RxExpand(b As RxNode, lo As Number, hi As Number, lz As Boolean) As RxNode
+    If hi = 0 - 1 Then
+        RxSeqOf(b, lo - 1, RxRep(b, 1, 0 - 1, lz))
+    Else
+        RxSeqOf(b, lo, RxOptChain(b, hi - lo, lz))
+
+Def RxSeqOf(b As RxNode, k As Number, tail As RxNode) As RxNode
+    If k <= 0 Then
+        tail
+    Else
+        RxCatOf(b, RxSeqOf(b, k - 1, tail))
+
+Rem NESTED and not flat: x{2,4} is xx(x(x)?)? and not xx x? x?. For a
+Rem body that can match empty the two differ, and the nested form is
+Rem the one every other engine agrees with.
+Def RxOptChain(b As RxNode, j As Number, lz As Boolean) As RxNode
+    If j <= 0 Then
+        RxNil()
+    Else
+        RxRep(RxCatOf(b, RxOptChain(b, j - 1, lz)), 0, 1, lz)
+
+Rem ---- emission -------------------------------------------------------
+Rem base is the absolute index the node's first instruction will sit at.
+
+Def RxEmitAt(t As RxNode, base As Number, how As RxOpts) As List Of RxInst
+    Select Case t
+        Case RxNil
+            { }
+        Case RxLit(c)
+            RxEmitLit(c, how)
+        Case RxCls(neg, rs)
+            RxEmitCls(neg, rs, how)
+        Case RxAny
+            { RxIAny(RxDotAll(how)) }
+        Case RxBol
+            { RxIBol(RxMulti(how)) }
+        Case RxEol
+            { RxIEol(RxMulti(how)) }
+        Case RxWb(nb)
+            { RxIWb(nb) }
+        Case RxCat(l, r)
+            Concat(RxEmitAt(l, base, how), RxEmitAt(r, base + RxSize(l), how))
+        Case RxAlt(l, r)
+            RxEmitAlt(l, r, base, how)
+        Case RxGrp(b, gn)
+            Concat(Concat({ RxISave(2 * gn) }, RxEmitAt(b, base + 1, how)), { RxISave(2 * gn + 1) })
+        Case RxRep(b, lo, hi, lz)
+            RxEmitRep(b, lo, hi, lz, base, how)
+        Case Else
+            { }
+
+Rem split(left, right), left, jump(past), right. The split ALWAYS
+Rem explores its first target first, and priority is list order and
+Rem nothing else — which is the whole of how leftmost-first is spelled.
+Def RxEmitAlt(l As RxNode, r As RxNode, base As Number, how As RxOpts) As List Of RxInst
+    Let sl = RxSize(l)
+    Let sr = RxSize(r)
+    Concat(Concat(Concat({ RxISplit(base + 1, base + 2 + sl) }, RxEmitAt(l, base + 1, how)), { RxIJmp(base + 2 + sl + sr) }), RxEmitAt(r, base + 2 + sl, how))
+
+Rem The three primitive repetitions, and the general one by rewriting.
+Rem A LAZY QUANTIFIER IS THE SAME CODE WITH THE SPLIT'S TWO TARGETS
+Rem SWAPPED, and that is the entire difference between greedy and lazy
+Rem anywhere in this machine.
+Def RxEmitRep(b As RxNode, lo As Number, hi As Number, lz As Boolean, base As Number, how As RxOpts) As List Of RxInst
+    If hi = 0 - 1 And lo = 0 Then
+        RxEmitStar(b, lz, base, how)
+    Else
+        If hi = 0 - 1 And lo = 1 Then
+            RxEmitPlus(b, lz, base, how)
+        Else
+            If lo = 0 And hi = 1 Then
+                RxEmitOpt(b, lz, base, how)
+            Else
+                RxEmitAt(RxExpand(b, lo, hi, lz), base, how)
+
+Def RxEmitStar(b As RxNode, lz As Boolean, base As Number, how As RxOpts) As List Of RxInst
+    Let sb = RxSize(b)
+    Concat(Concat({ RxSplitOf(lz, base + 1, base + 2 + sb) }, RxEmitAt(b, base + 1, how)), { RxIJmp(base) })
+
+Def RxEmitPlus(b As RxNode, lz As Boolean, base As Number, how As RxOpts) As List Of RxInst
+    Let sb = RxSize(b)
+    Concat(RxEmitAt(b, base, how), { RxSplitOf(lz, base, base + sb + 1) })
+
+Def RxEmitOpt(b As RxNode, lz As Boolean, base As Number, how As RxOpts) As List Of RxInst
+    Let sb = RxSize(b)
+    Concat({ RxSplitOf(lz, base + 1, base + 1 + sb) }, RxEmitAt(b, base + 1, how))
+
+Rem Greedy prefers the first target, lazy the second.
+Def RxSplitOf(lz As Boolean, pref As Number, other As Number) As RxInst
+    If lz Then
+        RxISplit(other, pref)
+    Else
+        RxISplit(pref, other)
+
+Rem ---- folding, baked in at compile time ------------------------------
+Rem The virtual machine never sees an option: a folded literal compiles
+Rem to a two-element class and a folded class carries its own twins, so
+Rem the inner loop is one range test either way. A negated folded class
+Rem is right by construction — [^a] with folding excludes both a and A,
+Rem because the twins go in before the negation is applied.
+
+Def RxEmitLit(c As Number, how As RxOpts) As List Of RxInst
+    If RxFold(how) And RxHasCase(c) Then
+        { RxICls(False, RxCaseBoth(c)) }
+    Else
+        { RxIChar(c) }
+
+Def RxHasCase(c As Number) As Boolean
+    (c >= rxUpA And c <= rxUpZ) Or (c >= rxLoA And c <= rxLoZ)
+
+Def RxCaseBoth(c As Number) As List Of RxRange
+    If c >= rxLoA Then
+        { RxRange(c, c), RxRange(c - 32, c - 32) }
+    Else
+        { RxRange(c, c), RxRange(c + 32, c + 32) }
+
+Def RxEmitCls(neg As Boolean, rs As List Of RxRange, how As RxOpts) As List Of RxInst
+    If RxFold(how) Then
+        { RxICls(neg, RxFoldRanges(rs)) }
+    Else
+        { RxICls(neg, rs) }
+
+Def RxFoldRanges(rs As List Of RxRange) As List Of RxRange
+    RxFoldGo(rs, rs)
+
+Def RxFoldGo(rs As List Of RxRange, acc As List Of RxRange) As List Of RxRange
+    If IsEmpty(rs) Then
+        acc
+    Else
+        RxFoldGo(Rest(rs), Concat(acc, RxCaseTwins(First(rs))))
+
+Def RxCaseTwins(r As RxRange) As List Of RxRange
+    Concat(RxTwinDown(r), RxTwinUp(r))
+
+Rem The part of the range inside A-Z, moved to a-z.
+Def RxTwinDown(r As RxRange) As List Of RxRange
+    Let lo = Max(RxLo(r), rxUpA)
+    Let hi = Min(RxHi(r), rxUpZ)
+    If lo > hi Then
+        { }
+    Else
+        { RxRange(lo + 32, hi + 32) }
+
+Rem The part of the range inside a-z, moved to A-Z.
+Def RxTwinUp(r As RxRange) As List Of RxRange
+    Let lo = Max(RxLo(r), rxLoA)
+    Let hi = Min(RxHi(r), rxLoZ)
+    If lo > hi Then
+        { }
+    Else
+        { RxRange(lo - 32, hi - 32) }
+
+Rem ---- the whole program ----------------------------------------------
+Rem save(0), the pattern, save(1), match. Slots 0 and 1 are the whole
+Rem match, so the wrapper is what makes RxHitAt and RxHitLen fall out of
+Rem the same pass that fills the capture slots.
+
+Def RxBuild(pat As String, t As RxNode, ncap As Number, how As RxOpts) As Result
+    Let need = RxSize(t) + 3
+    If need > RxMaxCode() Then
+        Err("REGEX: THE COMPILED PROGRAM WOULD BE " & Str(need) & " INSTRUCTIONS AND THE LIMIT IS " & Str(RxMaxCode()), 0)
+    Else
+        Ok(RxProg(pat, ToArray(Concat(Concat({ RxISave(0) }, RxEmitAt(t, 2, how)), { RxISave(1), RxIMatch() })), ncap, how))
+
+Rem ==================================================================
+Rem THE VIRTUAL MACHINE
+Rem
+Rem One pass over Codes(s), k from 1 to Len(s) + 1. Two ordered thread
+Rem lists — the one running at k and the one being built for k + 1 —
+Rem and per position a visited set over program counters.
+Rem
+Rem Per position:
+Rem
+Rem   1. If nothing has matched yet, a new thread is added at the END of
+Rem      the current list — LOWEST priority, which is what makes the
+Rem      answer leftmost rather than merely a match.
+Rem   2. The list is walked IN ORDER. Each thread follows its epsilon
+Rem      instructions immediately, adding reached counters to the
+Rem      visited set and cutting any branch whose counter has already
+Rem      been reached at this position.
+Rem   3. A thread reaching match records its slots and CUTS EVERY
+Rem      LOWER-PRIORITY THREAD — they can only be worse under
+Rem      leftmost-first. Without this the semantics silently become
+Rem      leftmost-longest, and nothing else in the machine would say so.
+Rem   4. A thread reaching a consuming instruction tests the code unit
+Rem      at k; on success it goes onto the next list at pc + 1, on
+Rem      failure it dies.
+Rem   5. When the next list is empty and a match has been recorded, the
+Rem      walk stops early.
+Rem
+Rem THE WALK OVER POSITIONS AND THE WALK OVER A LIST ARE BOTH SELF-TAIL-
+Rem RECURSIVE, and neither recurses into the other, so the mill compiles
+Rem each to a loop and a long subject costs no stack. The epsilon
+Rem closure is the one place that recurses, and the visited set bounds
+Rem it by the program's length.
+Rem ==================================================================
+
+Def RxCodeLen(p As RxProg) As Number
+    Length(RxCode(p))
+
+Rem ---- the position tests ---------------------------------------------
+Rem A line here is one ended by LF and nothing else. CR LF leaves the CR
+Rem inside the line, which is the same choice Instr and Split make.
+
+Def RxIsBolAt(cs As Array Of Number, n As Number, k As Number, m As Boolean) As Boolean
+    If k = 1 Then
+        True
+    Else
+        m And RxUnitAt(cs, n, k - 1) = rxLf
+
+Def RxIsEolAt(cs As Array Of Number, n As Number, k As Number, m As Boolean) As Boolean
+    If k = n + 1 Then
+        True
+    Else
+        m And RxUnitAt(cs, n, k) = rxLf
+
+Rem A boundary is where wordness changes. RxUnitAt answers 0 - 1 off
+Rem either end and 0 - 1 is not a word character, so the ends of the
+Rem subject fall out with no special case.
+Def RxIsWbAt(cs As Array Of Number, n As Number, k As Number) As Boolean
+    RxIsWordCh(RxUnitAt(cs, n, k - 1)) <> RxIsWordCh(RxUnitAt(cs, n, k))
+
+Def RxInSet(c As Number, rs As List Of RxRange) As Boolean
+    If IsEmpty(rs) Then
+        False
+    Else
+        If c >= RxLo(First(rs)) And c <= RxHi(First(rs)) Then
+            True
+        Else
+            RxInSet(c, Rest(rs))
+
+Rem ---- the epsilon closure --------------------------------------------
+Rem Answers the position's threads in priority order, each parked on a
+Rem consuming instruction or on match. Built with Prepend and reversed
+Rem once: a List in this runtime is not a cons cell, so every push
+Rem copies the spine either way and one Reverse is the cheaper end.
+
+Def RxClose(p As RxProg, cs As Array Of Number, n As Number, k As Number, ts As List Of RxThread) As List Of RxThread
+    Reverse(RxAdList(RxCloseGo(p, cs, n, k, ts, RxAdds({ }, Dim(RxCodeLen(p), False)))))
+
+Def RxCloseGo(p As RxProg, cs As Array Of Number, n As Number, k As Number, ts As List Of RxThread, st As RxAdds) As RxAdds
+    If IsEmpty(ts) Then
+        st
+    Else
+        RxCloseGo(p, cs, n, k, Rest(ts), RxAddT(p, cs, n, k, st, RxThPc(First(ts)), RxThSlots(First(ts))))
+
+Rem THE VISITED TEST IS WHAT MAKES (a*)* TERMINATE, and it is also what
+Rem makes the higher-priority thread win a counter both reach: the first
+Rem arrival marks it, and the second is dropped with its slots.
+Def RxAddT(p As RxProg, cs As Array Of Number, n As Number, k As Number, st As RxAdds, pc As Number, slots As Array Of Number) As RxAdds
+    If pc < 1 Or pc > RxCodeLen(p) Then
+        st
+    Else
+        If Nth(RxAdSeen(st), pc) Then
+            st
+        Else
+            RxAddI(p, cs, n, k, RxAdds(RxAdList(st), SetNth(RxAdSeen(st), pc, True)), pc, slots, Nth(RxCode(p), pc))
+
+Def RxAddI(p As RxProg, cs As Array Of Number, n As Number, k As Number, st As RxAdds, pc As Number, slots As Array Of Number, ins As RxInst) As RxAdds
+    Select Case ins
+        Case RxISplit(x, y)
+            RxAddT(p, cs, n, k, RxAddT(p, cs, n, k, st, x, slots), y, slots)
+        Case RxIJmp(t)
+            RxAddT(p, cs, n, k, st, t, slots)
+        Case RxISave(sl)
+            RxAddT(p, cs, n, k, st, pc + 1, SetNth(slots, sl + 1, k))
+        Case RxIBol(m)
+            RxAddIf(p, cs, n, k, st, pc, slots, RxIsBolAt(cs, n, k, m))
+        Case RxIEol(m)
+            RxAddIf(p, cs, n, k, st, pc, slots, RxIsEolAt(cs, n, k, m))
+        Case RxIWb(nb)
+            RxAddIf(p, cs, n, k, st, pc, slots, RxIsWbAt(cs, n, k) <> nb)
+        Case Else
+            RxAdds(Prepend(RxThread(pc, slots), RxAdList(st)), RxAdSeen(st))
+
+Rem An assertion consumes nothing: it either lets the thread through to
+Rem the next instruction or ends it.
+Def RxAddIf(p As RxProg, cs As Array Of Number, n As Number, k As Number, st As RxAdds, pc As Number, slots As Array Of Number, held As Boolean) As RxAdds
+    If held Then
+        RxAddT(p, cs, n, k, st, pc + 1, slots)
+    Else
+        st
+
+Rem ---- the consuming step ---------------------------------------------
+
+Def RxEats(p As RxProg, cs As Array Of Number, n As Number, k As Number, pc As Number) As Boolean
+    If k > n Then
+        False
+    Else
+        RxEatsI(Nth(RxCode(p), pc), Nth(cs, k))
+
+Def RxEatsI(ins As RxInst, c As Number) As Boolean
+    Select Case ins
+        Case RxIChar(cc)
+            c = cc
+        Case RxICls(neg, rs)
+            RxInSet(c, rs) <> neg
+        Case RxIAny(all)
+            all Or c <> rxLf
+        Case Else
+            False
+
+Def RxIsMatchAt(p As RxProg, pc As Number) As Boolean
+    Select Case Nth(RxCode(p), pc)
+        Case RxIMatch
+            True
+        Case Else
+            False
+
+Rem Walks the position's threads in priority order. Reaching match ends
+Rem the walk with that thread's slots: every thread still behind it is
+Rem lower priority and cannot improve on it.
+Def RxStepGo(p As RxProg, cs As Array Of Number, n As Number, k As Number, cl As List Of RxThread, st As RxStep) As RxStep
+    If IsEmpty(cl) Then
+        st
+    Else
+        Let th = First(cl)
+        Let pc = RxThPc(th)
+        If pc < 1 Or pc > RxCodeLen(p) Then
+            RxStepGo(p, cs, n, k, Rest(cl), st)
+        Else
+            If RxIsMatchAt(p, pc) Then
+                RxStep(RxStPend(st), RxThSlots(th))
+            Else
+                If RxEats(p, cs, n, k, pc) Then
+                    RxStepGo(p, cs, n, k, Rest(cl), RxStep(Prepend(RxThread(pc + 1, RxThSlots(th)), RxStPend(st)), RxStBest(st)))
+                Else
+                    RxStepGo(p, cs, n, k, Rest(cl), st)
+
+Rem ---- the walk over positions ----------------------------------------
+Rem best is the slot array of the best match so far. Slot 1 is where the
+Rem whole match started, and a start is always at least 1, so 0 there
+Rem means "nothing has matched yet" — a sentinel that no real answer can
+Rem collide with, and the only one in the machine.
+
+Def RxBlank(p As RxProg) As Array Of Number
+    Dim(2 * RxNCap(p) + 2, 0)
+
+Def RxGo(p As RxProg, cs As Array Of Number, n As Number, k As Number, pend As List Of RxThread, best As Array Of Number, from As Number, anchored As Boolean) As Array Of Number
+    If k > n + 1 Then
+        best
+    Else
+        Let seed = Nth(best, 1) = 0 And (Not anchored Or k = from)
+        If IsEmpty(pend) And Not seed Then
+            best
+        Else
+            Let st = RxStepGo(p, cs, n, k, RxClose(p, cs, n, k, RxSeeded(p, pend, seed)), RxStep({ }, best))
+            RxGo(p, cs, n, k + 1, Reverse(RxStPend(st)), RxStBest(st), from, anchored)
+
+Rem The new thread goes at the END of the list, which is what makes an
+Rem earlier start beat a later one at every position.
+Def RxSeeded(p As RxProg, pend As List Of RxThread, seed As Boolean) As List Of RxThread
+    If seed Then
+        Concat(pend, { RxThread(1, RxBlank(p)) })
+    Else
+        pend
+
+Rem ---- from slots to an answer ----------------------------------------
+
+Def RxRunIn(p As RxProg, cs As Array Of Number, n As Number, from As Number, anchored As Boolean) As Array Of Number
+    RxGo(p, cs, n, RxFromOf(from), { }, RxBlank(p), RxFromOf(from), anchored)
+
+Rem A start below 1 is clamped to 1 and a fractional one is floored.
+Rem THIS IS A CONTRACT AND NOT A MASK: it is stated here, stated on the
+Rem docs page, and the value it produces is the value the caller meant.
+Rem A start past Len(s) + 1 needs no clamp — the walk ends at once and
+Rem answers None, which is a true statement: nothing starts there.
+Def RxFromOf(from As Number) As Number
+    Max(1, Floor(from))
+
+Def RxHitFrom(p As RxProg, s As String, best As Array Of Number) As RxHit
+    RxHit(Nth(best, 1), Nth(best, 2) - Nth(best, 1), Mid(s, Nth(best, 1), Nth(best, 2) - Nth(best, 1)), RxCapsOf(p, s, best, 1, { }))
+
+Def RxHitOf(p As RxProg, s As String, best As Array Of Number) As Option
+    If Nth(best, 1) = 0 Then
+        None()
+    Else
+        Some(RxHitFrom(p, s, best))
+
+Rem Exactly RxCount(p) entries, always, in group order. A hit never
+Rem carries a short list, so a caller counting them is counting groups.
+Def RxCapsOf(p As RxProg, s As String, best As Array Of Number, gn As Number, acc As List Of RxCap) As List Of RxCap
+    If gn > RxNCap(p) Then
+        Reverse(acc)
+    Else
+        RxCapsOf(p, s, best, gn + 1, Prepend(RxCapFor(s, best, gn), acc))
+
+Def RxCapFor(s As String, best As Array Of Number, gn As Number) As RxCap
+    Let a = Nth(best, 2 * gn + 1)
+    Let b = Nth(best, 2 * gn + 2)
+    If a = 0 Or b = 0 Then
+        RxUnset()
+    Else
+        RxGot(a, Mid(s, a, b - a))
+
+Rem ==================================================================
+Rem THE WORD SURFACE
+Rem
+Rem Every word below takes a COMPILED PROGRAM, which can only have come
+Rem from an Ok. There is no argument left that can be wrong, which is
+Rem what makes all of them total without a Result between them and the
+Rem caller.
+Rem ==================================================================
+
+Rem ---- asking ---------------------------------------------------------
+
+Def RxTest(p As RxProg, s As String) As Boolean
+    Nth(RxRunIn(p, Codes(s), Len(s), 1, False), 1) <> 0
+
+Rem RxFind TAKES NO OFFSET AT ALL, and that is the point of its existing
+Rem beside RxFindFrom: the common call has no argument that can be out
+Rem of range, so the clamp is a rule about the one word that needs it
+Rem rather than a rule about the surface.
+Def RxFind(p As RxProg, s As String) As Option
+    RxHitOf(p, s, RxRunIn(p, Codes(s), Len(s), 1, False))
+
+Def RxFindFrom(p As RxProg, s As String, from As Number) As Option
+    RxHitOf(p, s, RxRunIn(p, Codes(s), Len(s), from, False))
+
+Rem Anchored at exactly one offset: it either starts there or nowhere.
+Def RxMatchAt(p As RxProg, s As String, at As Number) As Option
+    RxHitOf(p, s, RxRunIn(p, Codes(s), Len(s), at, True))
+
+Rem ---- every match ----------------------------------------------------
+Rem ONE WALK, SHARED. RxFindAll, RxReplace, RxReplaceFirst,
+Rem RxReplaceWith and RxSplit all come through here, so the empty-match
+Rem rule below is implemented once. Implemented three times it would
+Rem agree twice.
+Rem
+Rem THE EMPTY-MATCH RULE. A pattern that can match empty would otherwise
+Rem make every all-matches word non-terminating:
+Rem
+Rem   * after a match of length 0 at k, the next search starts at k + 1;
+Rem   * after a match of length > 0 ending at k, the next search starts
+Rem     at k + 1 as well, so matches never overlap.
+Rem
+Rem The number of matches over a subject of length n is therefore at
+Rem most n + 1, always. Worked, because it is the one result callers
+Rem find surprising — RxFindAll of a* over "baa" is THREE hits:
+Rem
+Rem   1. search at 1: "" (the b is not an a), length 0, so next is 2
+Rem   2. search at 2: "aa", length 2, ending at 3, so next is 4
+Rem   3. search at 4: "" at Len(s) + 1, past the end, so next is 5,
+Rem      which stops the walk
+
+Def RxFindAll(p As RxProg, s As String) As List Of RxHit
+    RxWalk(p, s, Codes(s), Len(s), 1, { })
+
+Def RxWalk(p As RxProg, s As String, cs As Array Of Number, n As Number, k As Number, acc As List Of RxHit) As List Of RxHit
+    If k > n + 1 Then
+        Reverse(acc)
+    Else
+        Let best = RxGo(p, cs, n, k, { }, RxBlank(p), k, False)
+        If Nth(best, 1) = 0 Then
+            Reverse(acc)
+        Else
+            Let h = RxHitFrom(p, s, best)
+            RxWalk(p, s, cs, n, RxNextStart(h), Prepend(h, acc))
+
+Def RxNextStart(h As RxHit) As Number
+    If RxHitLen(h) = 0 Then
+        RxHitAt(h) + 1
+    Else
+        RxHitAt(h) + RxHitLen(h)
+
+Rem ---- reading a hit --------------------------------------------------
+
+Rem Group 0 is the whole match, so RxGroup and a $0 in a template agree.
+Rem A group that does not exist and a group that did not participate are
+Rem both None; RxCount answers how many exist if the caller needs to
+Rem tell those two apart.
+Def RxGroup(h As RxHit, gn As Number) As Option
+    If gn = 0 Then
+        Some(RxHitText(h))
+    Else
+        If gn < 1 Or gn > Length(RxHitCaps(h)) Then
+            None()
+        Else
+            RxCapOpt(Nth(RxHitCaps(h), gn))
+
+Def RxCapOpt(c As RxCap) As Option
+    Select Case c
+        Case RxGot(a, t)
+            Some(t)
+        Case Else
+            None()
+
+Def RxGroupOr(h As RxHit, gn As Number, dflt As String) As String
+    Select Case RxGroup(h, gn)
+        Case Some(t)
+            t
+        Case Else
+            dflt
+
+Rem ---- asking about the program ---------------------------------------
+
+Def RxSource(p As RxProg) As String
+    RxSrc(p)
+
+Def RxCount(p As RxProg) As Number
+    RxNCap(p)
+
+Rem ---- rewriting ------------------------------------------------------
+Rem Within a replacement, $0 is the whole match and $1 to $9 are groups;
+Rem $$ is a literal $; a $ followed by anything else is a literal $.
+Rem A REFERENCE TO AN UNSET OR NONEXISTENT GROUP EXPANDS TO THE EMPTY
+Rem STRING. The alternative is to make RxReplace answer a Result, so
+Rem every caller matches on a failure mode that only fires when a group
+Rem legitimately did not participate — a worse trade, and RxReplaceWith
+Rem is the escape hatch for anything a template cannot say.
+
+Def RxReplace(p As RxProg, s As String, rep As String) As String
+    RxRepGo(s, rep, RxFindAll(p, s), 1, "")
+
+Def RxRepGo(s As String, rep As String, hs As List Of RxHit, at As Number, acc As String) As String
+    If IsEmpty(hs) Then
+        acc & Mid(s, at, Len(s) - at + 1)
+    Else
+        Let h = First(hs)
+        RxRepGo(s, rep, Rest(hs), RxHitAt(h) + RxHitLen(h), acc & Mid(s, at, RxHitAt(h) - at) & RxExpandTpl(rep, h))
+
+Def RxReplaceFirst(p As RxProg, s As String, rep As String) As String
+    Select Case RxFind(p, s)
+        Case Some(h)
+            Mid(s, 1, RxHitAt(h) - 1) & RxExpandTpl(rep, h) & Mid(s, RxHitAt(h) + RxHitLen(h), Len(s))
+        Case Else
+            s
+
+Def RxReplaceWith(p As RxProg, s As String, f As [ RxHit -- String ]) As String
+    RxRepWGo(s, f, RxFindAll(p, s), 1, "")
+
+Def RxRepWGo(s As String, f As [ RxHit -- String ], hs As List Of RxHit, at As Number, acc As String) As String
+    If IsEmpty(hs) Then
+        acc & Mid(s, at, Len(s) - at + 1)
+    Else
+        Let h = First(hs)
+        RxRepWGo(s, f, Rest(hs), RxHitAt(h) + RxHitLen(h), acc & Mid(s, at, RxHitAt(h) - at) & Call(f, h))
+
+Def RxExpandTpl(rep As String, h As RxHit) As String
+    RxTplGo(rep, Codes(rep), Len(rep), h, 1, "")
+
+Def RxTplGo(rep As String, rc As Array Of Number, m As Number, h As RxHit, i As Number, acc As String) As String
+    If i > m Then
+        acc
+    Else
+        Let c = Nth(rc, i)
+        If c <> rxDollar Then
+            RxTplGo(rep, rc, m, h, i + 1, acc & Mid(rep, i, 1))
+        Else
+            Let c2 = RxUnitAt(rc, m, i + 1)
+            If c2 = rxDollar Then
+                RxTplGo(rep, rc, m, h, i + 2, acc & "$")
+            Else
+                If RxIsDigitC(c2) Then
+                    RxTplGo(rep, rc, m, h, i + 2, acc & RxGroupOr(h, c2 - rxZero, ""))
+                Else
+                    RxTplGo(rep, rc, m, h, i + 1, acc & "$")
+
+Rem ---- splitting ------------------------------------------------------
+Rem The pieces between matches, in order, including leading and trailing
+Rem empty ones — so a pattern matching the whole subject gives two empty
+Rem pieces and not none. A PATTERN WITH CAPTURING GROUPS DOES NOT EMIT
+Rem THEM INTO THE RESULT: Python always does and JavaScript sometimes
+Rem does, and both make the return type "sometimes separators, sometimes
+Rem not". RxFindAll is the word for callers who want the separators.
+
+Def RxSplit(p As RxProg, s As String) As List Of String
+    RxSplitGo(s, RxFindAll(p, s), 1, { })
+
+Def RxSplitGo(s As String, hs As List Of RxHit, at As Number, acc As List Of String) As List Of String
+    If IsEmpty(hs) Then
+        Reverse(Prepend(Mid(s, at, Len(s) - at + 1), acc))
+    Else
+        Let h = First(hs)
+        RxSplitGo(s, Rest(hs), RxHitAt(h) + RxHitLen(h), Prepend(Mid(s, at, RxHitAt(h) - at), acc))
+
+Rem ---- escaping -------------------------------------------------------
+Rem s escaped so that it matches itself and nothing else. The text is
+Rem taken from the subject with Mid rather than rebuilt from its code,
+Rem so a character outside ASCII passes through untouched; a NUL and the
+Rem other controls are written as \xHH, which is why the result is safe
+Rem to paste into a pattern typed at a prompt.
+
+Def RxQuote(s As String) As String
+    RxQuoteGo(s, Codes(s), Len(s), 1, "")
+
+Def RxQuoteGo(s As String, cs As Array Of Number, n As Number, k As Number, acc As String) As String
+    If k > n Then
+        acc
+    Else
+        RxQuoteGo(s, cs, n, k + 1, acc & RxQuoteOne(s, Nth(cs, k), k))
+
+Def RxQuoteOne(s As String, c As Number, k As Number) As String
+    If RxIsMeta(c) Then
+        RxBs() & Mid(s, k, 1)
+    Else
+        If c < 32 Or c = 127 Then
+            RxBs() & "x" & RxHex2(c)
+        Else
+            Mid(s, k, 1)
+
+Def RxHex2(c As Number) As String
+    RxHexDigit(Floor(c / 16)) & RxHexDigit(c - 16 * Floor(c / 16))
+
+Def RxHexDigit(v As Number) As String
+    Mid("0123456789ABCDEF", v + 1, 1)
+
+Rem ---- the compiled program, as printable lines -----------------------
+Rem It earns its place twice: it is how the docs page shows what
+Rem "compiled to a program" means, and it is how a disagreeing test cell
+Rem gets diagnosed. It answers lines; it does not print them.
+
+Def RxDisasm(p As RxProg) As List Of String
+    RxDisGo(p, 1, { })
+
+Def RxDisGo(p As RxProg, i As Number, acc As List Of String) As List Of String
+    If i > RxCodeLen(p) Then
+        Reverse(acc)
+    Else
+        RxDisGo(p, i + 1, Prepend(RxPad(Str(i), 4) & "  " & RxShowI(Nth(RxCode(p), i)), acc))
+
+Def RxPad(s As String, w As Number) As String
+    If Len(s) >= w Then
+        s
+    Else
+        RxPad(" " & s, w)
+
+Def RxShowI(ins As RxInst) As String
+    Select Case ins
+        Case RxIChar(c)
+            "CHAR   " & RxShowCode(c)
+        Case RxICls(neg, rs)
+            RxClsWord(neg) & RxShowRs(rs)
+        Case RxIAny(all)
+            RxAnyWord(all)
+        Case RxISplit(x, y)
+            "SPLIT  " & Str(x) & ", " & Str(y)
+        Case RxIJmp(t)
+            "JMP    " & Str(t)
+        Case RxISave(sl)
+            "SAVE   " & Str(sl)
+        Case RxIBol(m)
+            RxBolWord(m)
+        Case RxIEol(m)
+            RxEolWord(m)
+        Case RxIWb(nb)
+            RxWbWord(nb)
+        Case Else
+            "MATCH"
+
+Def RxClsWord(neg As Boolean) As String
+    If neg Then
+        "NCLASS "
+    Else
+        "CLASS  "
+
+Def RxAnyWord(all As Boolean) As String
+    If all Then
+        "ANY    (dot-all)"
+    Else
+        "ANY    (not a newline)"
+
+Def RxBolWord(m As Boolean) As String
+    If m Then
+        "BOL    (line)"
+    Else
+        "BOL"
+
+Def RxEolWord(m As Boolean) As String
+    If m Then
+        "EOL    (line)"
+    Else
+        "EOL"
+
+Def RxWbWord(nb As Boolean) As String
+    If nb Then
+        "NWORDB"
+    Else
+        "WORDB"
+
+Rem A code, and its character where that character can be shown. This is
+Rem the machine's one use of FromCodes, and it is deliberate: Chr would
+Rem answer the empty string for a NUL and the line would lie.
+Def RxShowCode(c As Number) As String
+    If c >= 32 And c <= 126 Then
+        Str(c) & " " & FromCodes({ c })
+    Else
+        Str(c)
+
+Def RxShowRs(rs As List Of RxRange) As String
+    If IsEmpty(rs) Then
+        ""
+    Else
+        If IsEmpty(Rest(rs)) Then
+            RxShowR(First(rs))
+        Else
+            RxShowR(First(rs)) & " " & RxShowRs(Rest(rs))
+
+Def RxShowR(r As RxRange) As String
+    If RxLo(r) = RxHi(r) Then
+        Str(RxLo(r))
+    Else
+        Str(RxLo(r)) & "-" & Str(RxHi(r))

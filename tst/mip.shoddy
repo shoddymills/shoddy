@@ -1,0 +1,121 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem mip.shoddy — test program for machines/mip.shoddy
+Rem
+Rem Assert-driven, in the lin.shoddy / sparse.shoddy pattern: it prints
+Rem what it is doing, stops at the first failed assertion, and ends
+Rem with ALL ASSERTIONS PASSED when none fail.
+Rem
+Rem The knapsack is the case worth having, because it fails three ways
+Rem at once if branch and bound is not really running: its integer
+Rem answer is not the relaxation's answer, it is not the relaxation
+Rem rounded down, and it is not the greedy pick either. Taking two of
+Rem the item with the better value-per-weight is worth 8; taking one of
+Rem each is worth 9; the relaxation says 10 and takes two and a half.
+Rem
+Rem What cannot be tested here: the aborting half of every guard, and
+Rem two statuses that need a hundred thousand of something.
+Rem
+Rem   MipOptimize  INTEGER VARIABLE INDEX OUT OF RANGE, on an Ints
+Rem                entry below 1 or past the variable count
+Rem   MipFixed     THERE IS NO OPTIMUM TO PIN THE INTEGERS AT, on any
+Rem                solution whose Status is not OPTIMAL
+Rem   MAXITER      a node LP that runs past 100000 pivots
+Rem   MAXNODES     a tree that reaches 100000 nodes
+Rem
+Rem The last two are read rather than run: a problem large enough to
+Rem reach either cap is far larger than a test should be, and wiring a
+Rem smaller cap in for testing would mean testing something other than
+Rem the machine that ships. Their arms are three lines each, beside the
+Rem statuses that are exercised below.
+Rem ==================================================================
+
+Include "../machines/sparse.shoddy"
+Include "../machines/simplex.shoddy"
+Include "../machines/mip.shoddy"
+
+Def Close(a As Number, b As Number) As Boolean
+    Abs(a - b) <= 0.000001
+
+Rem maximize 5a + 4b subject to 6a + 4b <= 10, as this machine states
+Rem it: minimize -5a - 4b subject to -6a - 4b >= -10.
+
+Def Knapsack() As SpProblem
+    SpProblem(ToArray({ 0 - 5, 0 - 4 }),
+              SpFromEnts(1, 2, { SpEnt(1, 1, 0 - 6), SpEnt(1, 2, 0 - 4) }),
+              ToArray({ 0 - 10 }))
+
+Rem 2x >= 1 and 2x <= 1 together pin x at a half, which is feasible for
+Rem the relaxation and impossible for an integer.
+
+Def Halved() As SpProblem
+    SpProblem(ToArray({ 1 }),
+              SpFromEnts(2, 1, { SpEnt(1, 1, 2), SpEnt(2, 1, 0 - 2) }),
+              ToArray({ 1, 0 - 1 }))
+
+Rem minimize -x subject to x >= 1: nothing holds x down.
+
+Def Runaway() As SpProblem
+    SpProblem(ToArray({ 0 - 1 }), SpFromEnts(1, 1, { SpEnt(1, 1, 1) }), ToArray({ 1 }))
+
+Def Main()
+    Print("--- THE RELAXATION FIRST, SO THE INTEGER ANSWER HAS SOMETHING TO DIFFER FROM ---")
+    Let kp = Knapsack()
+    Let lp = SpOptimize(kp)
+    Print("relaxation " & Status(lp) & ", cost " & Str(Cost(lp)) & ", x " & Str(Nth(X(lp), 1)) & " " & Str(Nth(X(lp), 2)))
+    Assert(Status(lp) = "OPTIMAL", "THE RELAXATION SOLVES")
+    Assert(Close(Cost(lp), 0 - 10), "TO MINUS TEN")
+    Assert(Close(Nth(X(lp), 2), 2.5), "TAKING TWO AND A HALF OF THE SECOND ITEM")
+
+    Print("--- AND THE INTEGER ANSWER, WHICH IS A DIFFERENT CORNER ENTIRELY ---")
+    Let mp = MipProblem(kp, { 1, 2 })
+    Let ms = MipOptimize(mp)
+    Print("mip " & Status(ms) & ", cost " & Str(Cost(ms)) & ", nodes " & Str(Nodes(ms))
+          & ", iterations " & Str(Iterations(ms)))
+    Assert(Status(ms) = "OPTIMAL", "THE KNAPSACK HAS AN INTEGER OPTIMUM")
+    Assert(Close(Cost(ms), 0 - 9), "WORTH NINE, NOT THE RELAXATION'S TEN")
+    Assert(Close(Nth(X(ms), 1), 1) And Close(Nth(X(ms), 2), 1), "ONE OF EACH ITEM")
+    Rem Rounding the relaxation down would have answered 8, and that is
+    Rem the wrong answer a solver that is not really searching gives.
+    Assert(Cost(ms) < 0 - 8.5, "WHICH IS BETTER THAN ROUNDING THE RELAXATION DOWN WOULD HAVE BEEN")
+    Assert(Nodes(ms) > 1, "IT TOOK MORE THAN THE ROOT NODE")
+    Assert(Iterations(ms) >= Nodes(ms), "AND EVERY NODE'S PIVOTS ARE COUNTED IN")
+    Rem Purity: branching built new problems, it did not grow this one.
+    Assert(Rows(SA(kp)) = 1, "AND THE PROBLEM HANDED IN STILL HAS ITS ONE ROW")
+
+    Print("--- NO INTEGERS ASKED FOR IS JUST THE LINEAR PROGRAM ---")
+    Let none = MipOptimize(MipProblem(kp, { }))
+    Assert(Status(none) = "OPTIMAL" And Close(Cost(none), 0 - 10), "THE RELAXATION'S OWN ANSWER")
+    Assert(Nodes(none) = 1, "IN ONE NODE")
+
+    Print("--- FEASIBLE FOR THE RELAXATION, IMPOSSIBLE FOR AN INTEGER ---")
+    Let hs = SpOptimize(Halved())
+    Assert(Status(hs) = "OPTIMAL" And Close(Nth(X(hs), 1), 0.5), "THE RELAXATION SETTLES ON A HALF")
+    Let hm = MipOptimize(MipProblem(Halved(), { 1 }))
+    Print("halved " & Status(hm) & ", nodes " & Str(Nodes(hm)))
+    Assert(Status(hm) = "INFEASIBLE", "AND THE INTEGER PROBLEM SAYS SO PLAINLY")
+    Assert(Nodes(hm) = 3, "AFTER THE ROOT AND BOTH OF ITS CHILDREN, AND NO FURTHER")
+
+    Print("--- AN UNBOUNDED RELAXATION PROVES NOTHING, AND SAYS THAT ---")
+    Let rm = MipOptimize(MipProblem(Runaway(), { 1 }))
+    Print("runaway " & Status(rm))
+    Assert(Status(rm) = "UNBOUNDED-OR-INFEASIBLE", "THE LP'S OWN WORD FOR IT, PASSED ON UNCHANGED")
+    Assert(Length(X(rm)) = 0, "WITH NO VECTOR PRETENDING OTHERWISE")
+
+    Print("--- SENSITIVITY, ONCE THE INTEGER DECISIONS ARE TAKEN ---")
+    Rem MipSolution carries no duals on purpose. MipFixed pins the
+    Rem integers where the search left them and hands back the LP that
+    Rem remains, and THAT has shadow prices worth reading.
+    Let fx = MipFixed(mp, ms)
+    Let fs = SpOptimize(fx)
+    Print("fixed " & Status(fs) & ", cost " & Str(Cost(fs)))
+    Assert(Status(fs) = "OPTIMAL", "THE PINNED PROBLEM SOLVES")
+    Assert(Close(Cost(fs), Cost(ms)), "TO THE SAME COST THE SEARCH REPORTED")
+    Assert(Close(Nth(X(fs), 1), 1) And Close(Nth(X(fs), 2), 1), "AT THE SAME POINT")
+    Assert(Rows(SA(fx)) = 5, "PINNING TWO VARIABLES ADDED FOUR ONE-ENTRY ROWS TO THE ONE THERE WAS")
+    Assert(Length(DualPrices(fs)) = 5, "A SHADOW PRICE PER ROW, WHICH IS WHAT WAS MISSING BEFORE")
+    Assert(Length(Reduced(fs)) = 2, "AND A REDUCED COST PER VARIABLE")
+
+    Print("ALL ASSERTIONS PASSED")

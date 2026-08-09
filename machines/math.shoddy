@@ -5,17 +5,159 @@ Rem ==================================================================
 Rem math.shoddy — Shoddy standard library: the derived math layer.
 Rem
 Rem The runtime supplies the primitives that need native precision or
-Rem native state: + - * / MOD WRAP, ABS SGN NEGATE, MIN MAX, FLOOR CEIL
-Rem ROUND FIX, ^ SQR EXP LOG LOG10, SIN COS TAN ATN ATN2 ASIN ACOS TANH,
-Rem PI, RND SEED. Everything below is expressed on top of them, the way
+Rem native state, and all thirty are documented one by one immediately
+Rem below: + - * / MOD WRAP, ABS SGN NEGATE, MIN MAX, FLOOR CEIL ROUND
+Rem FIX, ^ SQR EXP LOG LOG10, SIN COS TAN ATN ATN2 ASIN ACOS TANH, PI,
+Rem and SEED. Everything after them is expressed on top of them, the way
 Rem clock.shoddy is derived from the Ticks builtin — no runtime support
 Rem of its own. Standalone: it includes nothing, so a program can pull in
 Rem math alone.
+Rem
+Rem RND IS NOT HERE, THOUGH THIS FILE CALLS IT. RandRange, RandInt,
+Rem Pick and Chance below are all Rnd underneath — but a builtin is
+Rem documented in ONE machine, and Rnd's is random.shoddy, whose whole
+Rem header is a claim on it ("built directly on the Rnd builtin") where
+Rem this file's four uses are game-flavoured convenience. See
+Rem random.shoddy for what Rnd answers and why it is impure.
+Rem
+Rem SEED IS HERE, and the split from Rnd is deliberate rather than
+Rem tidy. random.shoddy is seedless BY CONSTRUCTION — its header says
+Rem in as many words that there is no seed to create, store or thread
+Rem through your program — so the one word that reseeds the generator
+Rem would contradict the machine it otherwise belongs beside. It is
+Rem documented here instead, with the arithmetic primitives it sits
+Rem among in the runtime, and it reseeds random.shoddy's words just as
+Rem it reseeds this file's.
 Rem
 Rem Naming: no Def here may shadow a builtin (a Def silently outranks
 Rem one), which is why the base-10 log stays the LOG10 builtin and this
 Rem file adds only Log2/LogBase.
 Rem ==================================================================
+
+Rem ---- the builtins this machine is built on -------------------------
+Rem
+Rem NOT Defs. The engine dispatches these, and a Def whose name is a
+Rem builtin is refused; they are written here because math.shoddy is
+Rem where a reader goes looking for them. The flat reference is section
+Rem 10 of docs/spec.html, and the stack effects below are the ones the
+Rem compiler's own Effects.cs table declares.
+Rem
+Rem NUMBER IS THE ONLY NUMERIC TYPE — a double. There is no integer
+Rem type, so "whole number" everywhere below means a double with no
+Rem fractional part, exact to 2^53. Angles are RADIANS at every
+Rem boundary; Rad and Deg below convert. Every one of these is pure
+Rem except SEED.
+
+Rem ---- arithmetic ----
+
+Rem a + b   a - b   a * b   a / b                     ( a b -- c )
+Rem     The four operators. + also joins two STRINGs, which is why the
+Rem     reckoner's dictionary needs no separate word for &.
+
+Rem a Mod b As Number                                 ( a b -- r )
+Rem     The remainder, taking its sign from a — the truncated form, as
+Rem     in BASIC and C. Wrap is the one that does not.
+
+Rem Wrap(a As Number, b As Number) As Number          ( a b -- r )
+Rem     FLOORED modulo: the answer takes its sign from b, so
+Rem     Wrap(-1, 360) is 359 where -1 Mod 360 is -1. This is the one for
+Rem     angles, ring buffers and anything that comes round again.
+
+Rem a ^ b As Number                                   ( a b -- c )
+Rem     a raised to the power b. Tightest-binding operator there is.
+
+Rem Negate(x As Number) As Number                     ( x -- -x )
+Rem     The number with its sign turned round.
+
+Rem Abs(x As Number) As Number                        ( x -- y )
+Rem     Its magnitude, sign discarded.
+
+Rem Sgn(x As Number) As Number                        ( x -- s )
+Rem     -1, 0 or 1, according to the sign.
+
+Rem Min(a As Number, b As Number) As Number           ( a b -- c )
+Rem Max(a As Number, b As Number) As Number           ( a b -- c )
+Rem     The smaller and the larger of the two. Clamp below is both at
+Rem     once, and is what a bounded value actually wants.
+
+Rem Sqr(x As Number) As Number                        ( x -- y )
+Rem     The square root. Named for BASIC's SQR and not for squaring —
+Rem     squaring is x ^ 2, or x * x.
+
+Rem ---- rounding, and there are four of them ----
+Rem
+Rem THE DIFFERENCE MATTERS AND IS EASY TO GET WRONG. Floor and Ceil go
+Rem one way each regardless of sign; Fix goes towards zero, so it and
+Rem Floor differ on every negative number; Round goes to the nearest.
+
+Rem Floor(x As Number) As Number                      ( x -- n )
+Rem     Down, towards minus infinity. Floor(-2.5) is -3.
+
+Rem Ceil(x As Number) As Number                       ( x -- n )
+Rem     Up, towards plus infinity. Ceil(-2.5) is -2.
+
+Rem Round(x As Number) As Number                      ( x -- n )
+Rem     To the nearest whole number. RoundTo below rounds to a given
+Rem     number of places, and ToFixed in str.shoddy formats.
+
+Rem Fix(x As Number) As Number                        ( x -- n )
+Rem     Towards zero — the fractional part simply dropped. Fix(-2.5) is
+Rem     -2, where Floor(-2.5) is -3.
+
+Rem ---- exponential and logarithmic ----
+
+Rem Exp(x As Number) As Number                        ( x -- y )
+Rem     e raised to the power x.
+
+Rem Log(x As Number) As Number                        ( x -- y )
+Rem     The NATURAL logarithm, base e. The name is BASIC's, and it is
+Rem     the one people misread: base ten is Log10.
+
+Rem Log10(x As Number) As Number                      ( x -- y )
+Rem     The base-ten logarithm. Log2 and LogBase below are derived from
+Rem     these two, since the runtime supplies no other base.
+
+Rem ---- trigonometry, in radians ----
+
+Rem Sin(x As Number) As Number                        ( rad -- y )
+Rem Cos(x As Number) As Number                        ( rad -- y )
+Rem Tan(x As Number) As Number                        ( rad -- y )
+Rem     The three, taking radians. Rad below converts from degrees.
+
+Rem Atn(x As Number) As Number                        ( x -- rad )
+Rem     The arctangent, in radians. Atn2 is the one that knows which
+Rem     quadrant the point is in.
+
+Rem Atn2(y As Number, x As Number) As Number          ( y x -- rad )
+Rem     The angle of the point (x, y), in radians, in the right
+Rem     quadrant. Note the argument order: y first, as in C's atan2.
+
+Rem Asin(x As Number) As Number                       ( x -- rad )
+Rem Acos(x As Number) As Number                       ( x -- rad )
+Rem     The inverse sine and cosine, in radians. Outside -1 .. 1 there
+Rem     is no real answer.
+
+Rem Tanh(x As Number) As Number                       ( x -- y )
+Rem     The hyperbolic tangent. Saturates towards 1 and -1, so it never
+Rem     overflows — which is why neural.shoddy uses it as its activation
+Rem     function. The other eleven hyperbolics are eng.shoddy's.
+
+Rem Pi() As Number                                    ( -- pi )
+Rem     The constant. Tau below is two of them, and E is eng's and
+Rem     this file's rather than the runtime's — Exp(1) is where it comes
+Rem     from.
+
+Rem ---- the one impure word here ----
+
+Rem Seed(n As Number)                                 ( n -- )
+Rem     Reseed the engine's random generator, so that Rnd — and
+Rem     everything built on it, including random.shoddy's Random,
+Rem     RandomRange, RandomInt, Shuffle and Sample, and this file's own
+Rem     RandRange, RandInt, Pick and Chance — answers reproducibly from
+Rem     here on. The only word in this file with an effect, and the
+Rem     reason the game-flavoured randomness below is not pure.
+
+Rem ---- this machine's own words --------------------------------------
 
 Rem ---- constants -----------------------------------------------------
 

@@ -1,0 +1,175 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem seedsparsetest.shoddy — test program for seedsparse.shoddy
+Rem
+Rem Assert-driven, in the seedsimplextest / seedtest pattern: it prints
+Rem what it is doing and stops the run at the first assertion that
+Rem fails, ending with ALL ASSERTIONS PASSED when it does not.
+Rem
+Rem THE GUARD LIST IS THE TEST LIST. sparse.shoddy refuses a malformed
+Rem column at construction and Nth aborts past the end of an array, and
+Rem a keyboard cannot afford either, so SpsRead asks every one of those
+Rem questions first. Every refusal it can answer is walked below
+Rem exactly once, and each is checked with Refuses, which asserts three
+Rem things at a stroke: the word said no, it said why, and the session
+Rem came through it with its stack and its arithmetic intact.
+Rem
+Rem THE ARITHMETIC IS GRADED AGAINST THE DENSE MACHINE, not against
+Rem numbers typed in here. SPARSE of a MATRIX and SPDENSE back is the
+Rem round trip, and SPMATVEC is checked against the same product
+Rem MATVEC gives — a sparse kernel that is wrong still returns numbers,
+Rem and the only witness that will not agree with a plausible wrong one
+Rem is the dense machine computing the same thing the long way.
+Rem
+Rem Run: bin\mill run tst\seedsparsetest.shoddy   (from the repo root)
+Rem ==================================================================
+
+Include "../machines/cuttle.shoddy"
+Include "../machines/reckoner.shoddy"
+Include "../machines/seq.shoddy"
+Include "../machines/str.shoddy"
+Include "../machines/seeds/seedsparse.shoddy"
+Include "../machines/seeds/seedmatrix.shoddy"
+Include "../machines/seeds/seeddict.shoddy"
+
+Def Ran(st As RckState, line As String) As RckState
+    Select Case RckEval(st, line)
+        Case RckNext(st2, out)
+            st2
+        Case RckStop(st2, why, out)
+            st2
+        Case Else
+            st
+
+Def Bad(st As RckState, line As String) As Boolean
+    Select Case RckEval(st, line)
+        Case RckStop(st2, why, out)
+            True
+        Case Else
+            False
+
+Def Why(st As RckState, line As String) As String
+    Select Case RckEval(st, line)
+        Case RckStop(st2, why, out)
+            why
+        Case Else
+            ""
+
+Def Text(st As RckState) As String
+    Join(Map(CutCells(RckStack(st)), Fn(c) => CutShow(c, RckFmt(st))), " | ")
+
+Def Q(s As String) As String
+    Chr(34) & s & Chr(34)
+
+Def Refuses(st As RckState, line As String, why As String) As Boolean
+    Bad(st, line) And Instr(Why(st, line), why) > 0 And Text(Ran(st, line)) = Text(st) And Text(Ran(Ran(st, line), "1 1 +")) = Text(Ran(st, "1 1 +"))
+
+Rem The witness matrix, as the keyboard builds one: 4 x 3, five numbers
+Rem in twelve cells. A column with one entry, a column with two, and no
+Rem row or column empty enough to make an off-by-one look right.
+Rem
+Rem   0 2 0
+Rem   5 0 0
+Rem   0 0 7
+Rem   1 0 3
+
+Def Wit() As String
+    "4 3 { 0 2 0 5 0 0 0 0 7 1 0 3 } MAT SPARSE"
+
+Def Main()
+    Let s0 = RckSeedDict(RckSeedMatrix(RckSeedSparse(RckNew())))
+    Let g = Ran(s0, "1 2")
+
+    Print("--- the thirteen words are registered and carry their metadata ---")
+    Assert(RckKnows(s0, "SPARSE") And RckKnows(s0, "SPDENSE") And RckKnows(s0, "SPENTS"), "THE THREE THAT BUILD ONE")
+    Assert(RckKnows(s0, "SPNNZ") And RckKnows(s0, "SPGET") And RckKnows(s0, "SPCOLIX") And RckKnows(s0, "SPCOLVS"), "THE FOUR THAT READ ONE")
+    Assert(RckKnows(s0, "SPCOLDOT") And RckKnows(s0, "SPMATVEC") And RckKnows(s0, "SPVECMAT") And RckKnows(s0, "SPTRANSP"), "THE FOUR THAT DO ARITHMETIC")
+    Assert(RckKnows(s0, "SPADDROW") And RckKnows(s0, "SPADDCOL"), "AND THE TWO THAT GROW ONE")
+    Assert(All(RckDict(s0), Fn(e) => WordEffect(e) <> "" And WordDesc(e) <> ""), "NO WORD IS WITHOUT AN EFFECT LINE AND A DESCRIPTION")
+    Assert(All(RckDict(s0), Fn(e) => Length(RckHelp(s0, WordName(e))) = 3), "AND HELP ANSWERS FOR EVERY ONE OF THEM")
+    Rem Nothing here reads a file or draws anything, so nothing here may
+    Rem claim to touch the world.
+    Assert(All(RckDict(s0), Fn(e) => Instr(Lower(WordEffect(e)), "handle") = 0), "NO WORD'S EFFECT STRING MENTIONS A HANDLE")
+
+    Print("--- across from a MATRIX, and back, unchanged ---")
+    Assert(Not Bad(s0, Wit()), "A MATRIX CROSSES OVER")
+    Assert(Text(Ran(s0, Wit() & " " & Q("rows") & " DGET")) = "4", "KEEPING ITS ROW COUNT")
+    Assert(Text(Ran(s0, Wit() & " " & Q("cols") & " DGET")) = "3", "AND ITS COLUMN COUNT")
+    Assert(Text(Ran(s0, Wit() & " SPNNZ")) = "5", "AND STORING FIVE NUMBERS, NOT TWELVE CELLS")
+    Assert(Text(Ran(s0, Wit() & " SPDENSE")) = "4x3 { { 0 2 0 } { 5 0 0 } { 0 0 7 } { 1 0 3 } }", "AND BACK IS THE GRID IT STARTED AS")
+
+    Print("--- the storage is visible, which is the point of a dict ---")
+    Assert(Text(Ran(s0, Wit() & " 1 SPCOLIX")) = "{ 2 4 }", "COLUMN 1 FILLS ROWS 2 AND 4")
+    Assert(Text(Ran(s0, Wit() & " 1 SPCOLVS")) = "{ 5 1 }", "HOLDING 5 AND 1")
+    Assert(Text(Ran(s0, Wit() & " 2 SPCOLIX")) = "{ 1 }", "AND COLUMN 2 HOLDS ONE ENTRY")
+    Assert(Text(Ran(s0, Wit() & " 1 2 SPGET")) = "2", "SPGET READS WHERE THERE IS SOMETHING")
+    Assert(Text(Ran(s0, Wit() & " 1 1 SPGET")) = "0", "AND ANSWERS ZERO WHERE THERE IS NOT, WHICH IS WHAT A GAP MEANS")
+
+    Print("--- triplets in, with duplicates added and a cancellation dropped ---")
+    Let t = "2 2 { { 1 1 3 } { 2 1 2 } { 1 1 4 } { 2 1 -2 } { 2 2 5 } } SPENTS"
+    Assert(Text(Ran(s0, t & " 1 1 SPGET")) = "7", "THREE AND FOUR AT ONE CELL MAKE SEVEN")
+    Assert(Text(Ran(s0, t & " 2 1 SPGET")) = "0", "AND TWO AND MINUS TWO MAKE A CELL THAT IS NOT THERE")
+    Assert(Text(Ran(s0, t & " SPNNZ")) = "2", "SO TWO ENTRIES ARE STORED, NOT FIVE")
+    Rem Order in, order out: the kernels all rely on ascending indices.
+    Assert(Text(Ran(s0, "3 1 { { 3 1 30 } { 1 1 10 } { 2 1 20 } } SPENTS 1 SPCOLIX")) = "{ 1 2 3 }", "SCRAMBLED TRIPLETS COME BACK IN ROW ORDER")
+
+    Print("--- the arithmetic, against the dense machine's own answer ---")
+    Assert(Text(Ran(s0, Wit() & " 1 { 10 20 30 40 } SPCOLDOT")) = "140", "SPCOLDOT IS THE COLUMN DOT: 20 TIMES 5 AND 40 TIMES 1")
+    Assert(Text(Ran(s0, Wit() & " { 1 2 3 } SPMATVEC")) = "{ 4 5 21 10 }", "SPMATVEC IS THE MATRIX TIMES A VECTOR")
+    Assert(Text(Ran(s0, "{ 10 20 30 40 } " & Wit() & " SPVECMAT")) = "{ 140 20 330 }", "SPVECMAT GOES THE OTHER WAY, ONE NUMBER PER COLUMN")
+    Assert(Text(Ran(s0, Wit() & " SPTRANSP SPDENSE")) = "3x4 { { 0 5 0 1 } { 2 0 0 0 } { 0 0 7 3 } }", "AND SPTRANSP IS THE DENSE TRANSPOSE, CELL FOR CELL")
+    Rem Against the dense machine rather than against a number typed
+    Rem here: seedmatrix's own TRANSP is an independent witness, and a
+    Rem sparse kernel with a swapped index would disagree with it.
+    Assert(Text(Ran(s0, Wit() & " SPTRANSP SPDENSE")) = Text(Ran(s0, "4 3 { 0 2 0 5 0 0 0 0 7 1 0 3 } MAT TRANSP")),
+           "WHICH IS WHAT THE DENSE MACHINE ANSWERS FOR THE SAME GRID")
+    Assert(Text(Ran(s0, Wit() & " SPTRANSP SPTRANSP SPDENSE")) = Text(Ran(s0, Wit() & " SPDENSE")), "TWICE OVER GETS BACK WHERE IT STARTED")
+
+    Print("--- growing one, which is what a bound or a branch does ---")
+    Assert(Text(Ran(s0, Wit() & " { 2 } { 9 } SPADDROW " & Q("rows") & " DGET")) = "5", "A ROW APPENDED IS ONE MORE ROW")
+    Assert(Text(Ran(s0, Wit() & " { 2 } { 9 } SPADDROW SPNNZ")) = "6", "AND ONE MORE STORED NUMBER")
+    Assert(Text(Ran(s0, Wit() & " { 2 } { 9 } SPADDROW 5 2 SPGET")) = "9", "WHICH READS BACK WHERE IT WAS PUT")
+    Assert(Text(Ran(s0, Wit() & " { 2 } { 9 } SPADDROW 1 SPCOLIX")) = "{ 2 4 }", "AND THE COLUMNS THE ROW DID NOT NAME ARE THE COLUMNS THEY WERE")
+    Assert(Text(Ran(s0, Wit() & " { 1 4 } { 6 8 } SPADDCOL " & Q("cols") & " DGET")) = "4", "A COLUMN APPENDED IS ONE MORE COLUMN")
+    Assert(Text(Ran(s0, Wit() & " { 1 4 } { 6 8 } SPADDCOL SPNNZ")) = "7", "CARRYING ITS OWN TWO NUMBERS")
+
+    Print("--- every abort sparse.shoddy has, refused instead ---")
+    Rem SpOkCol's three, which a hand-built dict can still break.
+    Let d3 = "3 1 { { 1 1 1 } { 2 1 2 } } SPENTS"
+    Assert(Refuses(g, d3 & " { 1 2 } { 5 } SPADDCOL", "INDICES AND"), "A COLUMN WHOSE INDICES AND VALUES DO NOT PAIR UP")
+    Assert(Refuses(g, d3 & " { 9 } { 5 } SPADDCOL", "NAMES A ROW OUTSIDE 1 TO 3"), "AN INDEX PAST THE LAST ROW, NAMING THE RANGE")
+    Assert(Refuses(g, d3 & " { 0 } { 5 } SPADDCOL", "NAMES A ROW OUTSIDE 1 TO 3"), "AND ONE BELOW THE FIRST")
+    Assert(Refuses(g, d3 & " { 2 1 } { 5 6 } SPADDCOL", "ASCENDING ORDER"), "AND INDICES THAT DO NOT ASCEND, WHICH EVERY KERNEL HERE RELIES ON")
+    Rem SpFromEnts' one, plus the two it would not have noticed: a
+    Rem triplet of the wrong length, and a fractional index that names no
+    Rem cell at all.
+    Assert(Refuses(g, "2 2 { { 3 1 1 } } SPENTS", "NAMES ROW 3"), "A TRIPLET OUTSIDE THE STATED DIMENSIONS")
+    Assert(Refuses(g, "2 2 { { 1 3 1 } } SPENTS", "NAMES COLUMN 3"), "AND ONE OUTSIDE THEM THE OTHER WAY")
+    Assert(Refuses(g, "2 2 { { 1 1 } } SPENTS", "HAS 2 NUMBERS, NOT THREE"), "A TRIPLET THAT IS NOT ONE, NAMING ITS LENGTH")
+    Assert(Refuses(g, "2 2 { { 1.5 1 1 } } SPENTS", "NAMES ROW 1.5"), "AND A FRACTIONAL INDEX, WHICH NAMES NO CELL")
+    Rem Reaching a column is a bare Nth by design, so the column index is
+    Rem the seed's own question.
+    Assert(Refuses(g, Wit() & " 9 SPCOLIX", "THERE IS NO COLUMN 9"), "A COLUMN THAT IS NOT THERE, SAYING HOW MANY THERE ARE")
+    Assert(Refuses(g, Wit() & " 0 SPCOLVS", "THERE IS NO COLUMN 0"), "AND COLUMN ZERO, WHICH 1-BASED INDEXING HAS NONE OF")
+    Assert(Refuses(g, Wit() & " 1 4 SPGET", "THERE IS NO COLUMN 4"), "AND SPGET PAST THE LAST COLUMN")
+    Rem The dimension checks SpMatVec and SpVecMat make.
+    Assert(Refuses(g, Wit() & " { 1 2 } SPMATVEC", "THE MATRIX IS 3 WIDE"), "A VECTOR THAT DOES NOT FIT THE WIDTH")
+    Assert(Refuses(g, "{ 1 2 } " & Wit() & " SPVECMAT", "THE MATRIX IS 4 TALL"), "AND ONE THAT DOES NOT FIT THE HEIGHT")
+    Assert(Refuses(g, Wit() & " 1 { 1 2 } SPCOLDOT", "THE MATRIX HAS 4 ROWS"), "AND ONE SPCOLDOT CANNOT LINE UP")
+
+    Print("--- and a cell that is not a sparse matrix at all ---")
+    Assert(Refuses(g, "3 SPNNZ", "NOT A SPARSE MATRIX"), "A NUMBER WHERE A SPARSE MATRIX SHOULD BE")
+    Assert(Refuses(g, "{ 1 2 3 } SPDENSE", "NOT A SPARSE MATRIX"), "AND A LIST THAT IS NOT ONE")
+    Assert(Refuses(g, "3 SPARSE", "needs a MATRIX, got NUMBER"), "AND SPARSE ON SOMETHING THAT IS NOT A MATRIX")
+    Rem A dict of the right shape whose colix says one thing and whose
+    Rem cols says another is the case a hand-built one falls into.
+    Assert(Refuses(g, "{ ( " & Q("rows") & " 2 ) ( " & Q("cols") & " 2 ) ( " & Q("colix") & " { { 1 } } ) ( " & Q("colvs") & " { { 1 } } ) } SPNNZ", "COLS SAYS 2 BUT THERE ARE 1"),
+           "A DICT WHOSE COLUMN COUNT AND COLUMNS DISAGREE")
+
+    Print("--- nothing above cost the session anything ---")
+    Assert(Text(Ran(g, "1 1 +")) = "2 | 2 | 1", "THE STACK IS STILL THERE AND STILL EVALUATING")
+
+    Print("")
+    Print("ALL ASSERTIONS PASSED")

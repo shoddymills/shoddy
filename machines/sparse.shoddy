@@ -1,0 +1,273 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem sparse.shoddy — Shoddy standard library: sparse matrices
+Rem
+Rem A Sparse is column-major: the Rows and Cols counts, plus two
+Rem parallel outer arrays indexed by column — ColIx, whose every entry
+Rem is an Array Of Number of 1-based row indices in ascending order,
+Rem and ColVs, the matching values. Nothing else is kept: a zero is an
+Rem absence, and an empty column is a pair of empty arrays.
+Rem
+Rem The public surface:
+Rem
+Rem   SpFromEnts(r, c, es)     build from SpEnt triplets; duplicates at
+Rem                            one (row, col) are summed and a sum of
+Rem                            zero is dropped
+Rem   SpFromCols(r, ixs, vss)  build from ready-made columns
+Rem   SpFromMat / SpToMat      the dense bridges, exact both ways
+Rem   SpGet, SpNnz             read a cell, count what is stored
+Rem   SpColIx, SpColVs         a column's indices and values, o(1)
+Rem   SpColDot(s, j, y)        y . a_j, the pricing kernel
+Rem   SpMatVec(s, x)           A x        SpVecMat(y, s)   y' A
+Rem   SpTransp(s)              the row view, for the one caller that
+Rem                            wants rows out of a column-major store
+Rem   SpAddCol, SpAddRow       grow one
+Rem   SpShow(s)                display (the one effect; call from Main)
+Rem
+Rem Why column-major. The revised simplex consumes columns — pricing
+Rem wants a_j, FTRAN wants a_e — and Shoddy's arrays are persistent by
+Rem cloning, so appending a column copies the outer spine of references
+Rem and shares every inner array untouched. That is the one genuinely
+Rem cheap way to grow a matrix here, and it is the one the solver and
+Rem the branch & bound layer above it need.
+Rem
+Rem This machine owns the structure only, on the matrix/lin precedent.
+Rem matrix.shoddy is untouched and stays the dense, everyday grid;
+Rem simplex.shoddy is the algorithm over this one. Sparse pays only
+Rem where the zeros dominate and the dimensions are big enough for the
+Rem interpreter to feel them — for a small dense grid, Matrix is
+Rem cheaper and clearer, and it is what you should reach for.
+Rem
+Rem Refusals are at construction: a column whose indices and values
+Rem do not pair up, or run outside the stated row count, or do not
+Rem ascend, is refused there rather than answered wrongly later.
+Rem
+Rem Pure throughout apart from SpShow: every word answers a new value.
+Rem ==================================================================
+
+Include "seq.shoddy"
+Include "matrix.shoddy"
+
+Type Sparse
+    Rows  As Number
+    Cols  As Number
+    ColIx As Array Of Array Of Number
+    ColVs As Array Of Array Of Number
+
+Rem The interchange form: a numeric, index-keyed triplet. Deliberately
+Rem not mps.shoddy's MpsEnt, which is name-keyed — turning names into
+Rem indices is exactly the assembly step between the two.
+
+Type SpEnt
+    EntRow As Number
+    EntCol As Number
+    EntVal As Number
+
+Rem ---- refusing a malformed column ------------------------------------
+
+Def SpAscends(ix As Array Of Number) As Boolean
+    All(Range(2, Length(ix)), Fn(k) => Nth(ix, k) > Nth(ix, k - 1))
+
+Def SpWithin(ix As Array Of Number, n As Number) As Boolean
+    All(ix, Fn(i) => i >= 1 And i <= n)
+
+Rem Answers the indices it was given, so the check sits on the path
+Rem that builds the column rather than beside it.
+
+Def SpOkCol(ix As Array Of Number, vs As Array Of Number, n As Number) As Array Of Number
+    If Length(ix) <> Length(vs) Then
+        Error("SPARSE: INDEX AND VALUE COUNTS DIFFER")
+    Else
+        If Not SpWithin(ix, n) Then
+            Error("SPARSE: INDEX OUT OF RANGE")
+        Else
+            If Not SpAscends(ix) Then
+                Error("SPARSE: INDICES NOT ASCENDING")
+            Else
+                ix
+
+Rem ---- construction ----------------------------------------------------
+
+Def SpFromCols(r As Number, ixs As List, vss As List) As Sparse
+    If Length(ixs) <> Length(vss) Then
+        Error("SPARSE: COLUMN COUNTS DIFFER")
+    Else
+        Sparse(r, Length(ixs),
+               ToArray(Map(Range(1, Length(ixs)), Fn(j) => SpOkCol(Nth(ixs, j), Nth(vss, j), r))),
+               ToArray(vss))
+
+Def SpEntOk(e As SpEnt, r As Number, c As Number) As SpEnt
+    If EntRow(e) < 1 Or EntRow(e) > r Or EntCol(e) < 1 Or EntCol(e) > c Then
+        Error("SPARSE: ENTRY OUTSIDE THE STATED DIMENSIONS")
+    Else
+        e
+
+Rem One column's entries, kept ascending as they arrive. A repeat of a
+Rem row index adds to what is already there, left to right, which is
+Rem the same order (and so the same last bit) a dense assembly summing
+Rem the entry list would have reached.
+
+Def SpIns(ps As List, i As Number, v As Number) As List
+    If IsEmpty(ps) Then
+        { Pair(i, v) }
+    Else
+        Select Case Sgn(i - Fst(First(ps)))
+            Case -1
+                Prepend(Pair(i, v), ps)
+            Case 0
+                Prepend(Pair(i, Snd(First(ps)) + v), Rest(ps))
+            Case Else
+                Prepend(First(ps), SpIns(Rest(ps), i, v))
+
+Def SpBucket(bs As Array Of List, e As SpEnt) As Array Of List
+    SetNth(bs, EntCol(e), SpIns(Nth(bs, EntCol(e)), EntRow(e), EntVal(e)))
+
+Def SpFromEnts(r As Number, c As Number, es As List) As Sparse
+    Let bs = Fold(Map(es, Fn(e) => SpEntOk(e, r, c)), Dim(c, { }), SpBucket)
+    Let ks = Map(ToList(bs), Fn(ps) => Filter(ps, Fn(p) => Snd(p) <> 0))
+    SpFromCols(r, Map(ks, Fn(ps) => ToArray(Map(ps, Fst))),
+                  Map(ks, Fn(ps) => ToArray(Map(ps, Snd))))
+
+Rem ---- the dense bridges ------------------------------------------------
+
+Def SpMatColIx(m As Matrix, c As Number) As List
+    Filter(Range(1, Rows(m)), Fn(r) => MatGet(m, r, c) <> 0)
+
+Def SpFromMat(m As Matrix) As Sparse
+    Let ixs = Map(Range(1, Cols(m)), Fn(c) => SpMatColIx(m, c))
+    SpFromCols(Rows(m), Map(ixs, ToArray),
+               Map(Range(1, Cols(m)), Fn(c) => ToArray(Map(Nth(ixs, c), Fn(r) => MatGet(m, r, c)))))
+
+Rem ---- reading ---------------------------------------------------------
+
+Def SpColIx(s As Sparse, j As Number) As Array Of Number
+    Nth(ColIx(s), j)
+
+Def SpColVs(s As Sparse, j As Number) As Array Of Number
+    Nth(ColVs(s), j)
+
+Def SpNnz(s As Sparse) As Number
+    Fold(ColIx(s), 0, Fn(a, ix) => a + Length(ix))
+
+Rem The position of row r in an ascending index array, 0 for absent —
+Rem and absent is decided the moment the indices step past r.
+
+Def SpFind(ix As Array Of Number, r As Number, k As Number) As Number
+    If k > Length(ix) Then
+        0
+    Else
+        Select Case Sgn(Nth(ix, k) - r)
+            Case 0
+                k
+            Case 1
+                0
+            Case Else
+                SpFind(ix, r, k + 1)
+
+Def SpGet(s As Sparse, r As Number, c As Number) As Number
+    Let k = SpFind(SpColIx(s, c), r, 1)
+    If k = 0 Then
+        0
+    Else
+        Nth(SpColVs(s, c), k)
+
+Rem ---- arithmetic -------------------------------------------------------
+
+Rem Ascending through the stored entries, which is the same order a
+Rem dense dot would take with the zeros left in — and a zero term
+Rem changes no bit of the running sum, so this answers what the dense
+Rem product answers, to the last place.
+
+Def SpDotAt(ix As Array Of Number, vs As Array Of Number, y As Array Of Number, k As Number, acc As Number) As Number
+    If k > Length(ix) Then
+        acc
+    Else
+        SpDotAt(ix, vs, y, k + 1, acc + Nth(y, Nth(ix, k)) * Nth(vs, k))
+
+Def SpColDot(s As Sparse, j As Number, y As Array Of Number) As Number
+    SpDotAt(SpColIx(s, j), SpColVs(s, j), y, 1, 0)
+
+Def SpVecMat(y As Array Of Number, s As Sparse) As Array Of Number
+    If Length(y) <> Rows(s) Then
+        Error("SPVECMAT: DIMENSION MISMATCH")
+    Else
+        ToArray(Map(Range(1, Cols(s)), Fn(j) => SpColDot(s, j, y)))
+
+Def SpEntsOf(ix As Array Of Number, vs As Array Of Number, j As Number) As List
+    Map(Range(1, Length(ix)), Fn(k) => SpEnt(Nth(ix, k), j, Nth(vs, k)))
+
+Def SpColEnts(s As Sparse, j As Number) As List
+    SpEntsOf(SpColIx(s, j), SpColVs(s, j), j)
+
+Def SpEnts(s As Sparse) As List
+    Flatten(Map(Range(1, Cols(s)), Fn(j) => SpColEnts(s, j)))
+
+Def SpTransp(s As Sparse) As Sparse
+    SpFromEnts(Cols(s), Rows(s), Map(SpEnts(s), Fn(e) => SpEnt(EntCol(e), EntRow(e), EntVal(e))))
+
+Rem A x, by taking the row view once and dotting x against each row.
+
+Def SpMatVec(s As Sparse, x As Array Of Number) As Array Of Number
+    If Length(x) <> Cols(s) Then
+        Error("SPMATVEC: DIMENSION MISMATCH")
+    Else
+        SpVecMat(x, SpTransp(s))
+
+Rem ---- back to a dense Matrix ------------------------------------------
+
+Def SpDense(ix As Array Of Number, vs As Array Of Number, n As Number) As Array Of Number
+    Fold(Range(1, Length(ix)), Dim(n, 0), Fn(a, k) => SetNth(a, Nth(ix, k), Nth(vs, k)))
+
+Def SpToMat(s As Sparse) As Matrix
+    If Rows(s) = 0 Then
+        Matrix(0, Cols(s), Dim(0, 0))
+    Else
+        Let t = SpTransp(s)
+        MatFromRows(Map(Range(1, Rows(s)), Fn(i) => SpDense(SpColIx(t, i), SpColVs(t, i), Cols(s))))
+
+Rem ---- growing one ------------------------------------------------------
+
+Rem A new column clones the two outer spines and shares every inner
+Rem array, which is what makes appending cheap.
+
+Def SpAddCol(s As Sparse, ix As Array Of Number, vs As Array Of Number) As Sparse
+    Sparse(Rows(s), Cols(s) + 1,
+           Concat(ColIx(s), Dim(1, SpOkCol(ix, vs, Rows(s)))),
+           Concat(ColVs(s), Dim(1, vs)))
+
+Def SpPutEnd(s As Sparse, j As Number, i As Number, v As Number) As Sparse
+    With(s, ColIx = SetNth(ColIx(s), j, Concat(SpColIx(s, j), Dim(1, i))),
+            ColVs = SetNth(ColVs(s), j, Concat(SpColVs(s, j), Dim(1, v))))
+
+Def SpPutCell(s As Sparse, j As Number, i As Number, v As Number) As Sparse
+    If v = 0 Then
+        s
+    Else
+        SpPutEnd(s, j, i, v)
+
+Rem A new row is the last row, so every entry lands at the end of its
+Rem column and the ascending order holds without a search. Only the
+Rem columns named are touched — for a branch or bound row, exactly one.
+
+Def SpAddRow(s As Sparse, ix As Array Of Number, vs As Array Of Number) As Sparse
+    Let js = SpOkCol(ix, vs, Cols(s))
+    Let i = Rows(s) + 1
+    Let grown = Fold(Range(1, Length(js)), s, Fn(a, k) => SpPutCell(a, Nth(js, k), i, Nth(vs, k)))
+    With(grown, Rows = i)
+
+Rem ---- display (effectful; call from Main) -----------------------------
+
+Def SpColTxt(ix As Array Of Number, vs As Array Of Number) As String
+    Fold(Range(1, Length(ix)), "", Fn(a, k) => a & " " & Str(Nth(ix, k)) & ":" & Str(Nth(vs, k)))
+
+Def SpShowCol(s As Sparse, j As Number)
+    Print("  COL " & Str(j) & SpColTxt(SpColIx(s, j), SpColVs(s, j)))
+
+Rem Column by column, because that is how it is stored — a row-by-row
+Rem picture of a sparse matrix is mostly zeros that are not there.
+
+Def SpShow(s As Sparse)
+    Print("SPARSE " & Str(Rows(s)) & " X " & Str(Cols(s)) & ", " & Str(SpNnz(s)) & " STORED")
+    Each(Range(1, Cols(s)), Fn(j) => SpShowCol(s, j))

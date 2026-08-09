@@ -25,6 +25,14 @@ Rem typing a lot. So QUIT is decided by a pure test BEFORE the turn
 Rem rather than by the turn handing back a stop, and the price is reading
 Rem the line twice, which costs a tokenize.
 Rem
+Rem GATHERING AN UNFINISHED LINE IS UNDER THE SAME RULE. HxLoop carries
+Rem the text typed so far as a second argument rather than recursing into
+Rem a gathering Def, so a definition split over three lines is three jumps
+Rem and no frames, exactly as three separate lines would be. Everything
+Rem that decides what to do next — the prompt to show, whether the line
+Rem was a quit, whether what is held is finished — happens in HxNext,
+Rem which answers and returns before the tail call is made.
+Rem
 Rem ---- what QUIT does not do ---------------------------------------
 Rem
 Rem Nothing is saved on the way out. The tape and the words you defined
@@ -52,8 +60,8 @@ Rem prompt. InputLine reports the two separately; this lifts its flat
 Rem carrier into an answer that can be matched.
 Type HxIn = HxEof | HxTyped(HxText As String)
 
-Def HxAsked() As HxIn
-    HxAskedOf(InputLine(HxPrompt()))
+Def HxAsked(prompt As String) As HxIn
+    HxAskedOf(InputLine(prompt))
 
 Def HxAskedOf(r As Array) As HxIn
     If Nth(r, 1) Then
@@ -63,15 +71,64 @@ Def HxAskedOf(r As Array) As HxIn
 
 Rem ---- the loop --------------------------------------------------------
 
-Def HxLoop(st As RckState)
-    Select Case HxAsked()
-        Case HxTyped(line)
-            If HxQuits(line) Then
-                HxDone(st)
-            Else
-                HxLoop(HxTurn(st, line))
+Rem What the loop does next, so that reading a line, deciding whether it
+Rem was a quit, and deciding whether it is finished can all happen OUTSIDE
+Rem HxLoop and leave it calling nothing but itself. HxStop is both ways
+Rem out — QUIT and end of input — because HxDone is what both do.
+Type HxStep = HxGo(GoLine As String) | HxHold(HoldBuf As String) | HxStop
+
+Rem The loop carries what has been typed so far and not yet closed: "" at
+Rem an ordinary prompt, and the gathered text while a definition, a list
+Rem or a program is still open. Both arms below are a call to HxLoop
+Rem itself, in tail position, which is the whole of the note above.
+Def HxLoop(st As RckState, buf As String)
+    Select Case HxNext(buf)
+        Case HxGo(line)
+            HxLoop(HxTurn(st, line), "")
+        Case HxHold(more)
+            HxLoop(st, more)
         Case Else
             HxDone(st)
+
+Def HxNext(buf As String) As HxStep
+    HxStepOf(buf, HxAsked(HxPromptFor(buf)))
+
+Def HxPromptFor(buf As String) As String
+    If buf = "" Then
+        HxPrompt()
+    Else
+        HxMorePrompt()
+
+Def HxStepOf(buf As String, r As HxIn) As HxStep
+    Select Case r
+        Case HxTyped(line)
+            HxStepOn(buf, line)
+        Case Else
+            HxStop()
+
+Rem QUIT is a whole line and nothing else, so it is only a quit when
+Rem nothing is being gathered. Typed as the next line of an open
+Rem definition it is an ordinary token in that definition's body, and
+Rem earns the refusal any unknown word in a body earns — which is why
+Rem there is no way to leave a session by accident half way through one.
+Rem
+Rem END OF INPUT IS STILL THE END, whatever is being gathered. A script
+Rem that stops mid-definition closes the session exactly as one that stops
+Rem anywhere else does: the part-built line is dropped, not run, not taped.
+Def HxStepOn(buf As String, line As String) As HxStep
+    If buf = "" And HxQuits(line) Then
+        HxStop()
+    Else
+        HxStepJoined(HxJoined(buf, line))
+
+Def HxStepJoined(j As HxJoin) As HxStep
+    Select Case j
+        Case HxReady(line)
+            HxGo(line)
+        Case HxMore(more)
+            HxHold(more)
+        Case Else
+            HxStop()
 
 Rem Shut whatever the session left open, both ways out — QUIT and end of
 Rem input. This is NOT the "nothing is saved on the way out" rule being
@@ -263,4 +320,4 @@ Def HxOpened() As RckState
 
 Def Main()
     Each(HxBanner(), Print)
-    HxLoop(HxOpened())
+    HxLoop(HxOpened(), "")

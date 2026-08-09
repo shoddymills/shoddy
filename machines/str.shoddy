@@ -3,23 +3,137 @@ Rem Licensed under the MIT License. See the LICENSE file in the project root.
 
 Rem ==================================================================
 Rem str.shoddy — Shoddy standard library: strings
-Rem Built on the Instr / Left / Right / Mid / Len builtins. Pure.
-Rem Three families: surgery (Split .. StrRep), boolean conversions
-Rem (IsBool / ToBool / ToBoolOr over the primitive ToBoolOpt — the
-Rem string-to-number side lives in the IsNumeric / Val / ValOr builtins),
-Rem and fixed-width formatting (PadLeft / PadRight / PadZero / ToFixed /
-Rem Commas).
+Rem Built on the eighteen string builtins, each documented one by one
+Rem immediately below: & Len Left Right Mid Instr InstrFrom Upper Lower
+Rem Chr Asc Codes FromCodes CodeAt Str Val ValOr IsNumeric. Pure.
+Rem Three families of its own: surgery (Split .. StrRep), boolean
+Rem conversions (IsBool / ToBool / ToBoolOr over the primitive
+Rem ToBoolOpt — the string-to-number side lives in the IsNumeric / Val /
+Rem ValOr builtins), and fixed-width formatting (PadLeft / PadRight /
+Rem PadZero / ToFixed / Commas).
 Rem ==================================================================
 
+Rem ---- the builtins this machine is built on -------------------------
+Rem
+Rem NOT Defs. The engine dispatches these, and a Def whose name is a
+Rem builtin is refused; they are written here because str.shoddy is
+Rem where a reader goes looking for them. The flat reference is section
+Rem 10 of docs/spec.html, and the stack effects below are the ones the
+Rem compiler's own Effects.cs table declares.
+Rem
+Rem Positions and lengths count from 1, and every one of these is pure.
+
+Rem s1 & s2 As String                                 ( s1 s2 -- s )
+Rem     The two strings joined. The one string word with no name — it is
+Rem     an operator, and it adds numbers too.
+
+Rem Len(s As String) As Number                        ( s -- n )
+Rem     How many characters the string holds. Length is the LIST word and
+Rem     refuses a string outright, so the two are not a near miss.
+
+Rem Left(s As String, n As Number) As String          ( s n -- s2 )
+Rem     The first n characters, or the whole string if it is shorter.
+Rem     A fractional n truncates rather than refusing.
+
+Rem Right(s As String, n As Number) As String         ( s n -- s2 )
+Rem     The last n characters, or the whole string if it is shorter.
+
+Rem Mid(s As String, start As Number, n As Number) As String
+Rem                                                   ( s start n -- s2 )
+Rem     n characters from position start. A range past the end is trimmed
+Rem     to what is there rather than refused, which is what makes CodeAt
+Rem     worth having.
+
+Rem Instr(s As String, sub As String) As Number       ( s sub -- pos )
+Rem     Where sub first appears in s, or 0 when it does not. An empty sub
+Rem     answers 0.
+
+Rem InstrFrom(s As String, sub As String, from As Number) As Number
+Rem                                                   ( s sub from -- pos )
+Rem     The same search begun at position from, without copying the
+Rem     subject to get there. Split and Replace below are linear in their
+Rem     subject because of this word; a from past the end answers 0.
+
+Rem Upper(s As String) As String                      ( s -- s2 )
+Rem     The string case-folded up. The language folds word names the same
+Rem     way, which is why reckoner.shoddy calls this at every lookup.
+
+Rem Lower(s As String) As String                      ( s -- s2 )
+Rem     The string case-folded down.
+
+Rem Chr(n As Number) As String                        ( n -- s )
+Rem     The character with code n. Chr(0) is the EMPTY STRING and not a
+Rem     NUL — FromCodes is how a NUL is built. A code above 65535 casts
+Rem     to 16 bits and wraps silently rather than failing.
+
+Rem Asc(s As String) As Number                        ( s -- n )
+Rem     The code of the first character. Aborts on the empty string,
+Rem     which has none.
+
+Rem Codes(s As String) As Array Of Number             ( s -- codes )
+Rem     The code of every character, in order, as an ARRAY — so a scanner
+Rem     indexes with Nth in O(1) rather than walking a list. An empty
+Rem     string answers an empty array. Total.
+
+Rem FromCodes(codes As Array Of Number) As String     ( codes -- s )
+Rem     The string those codes spell. Codes' exact inverse, NUL included,
+Rem     which is the one string Chr cannot build.
+
+Rem CodeAt(s As String, k As Number) As Number        ( s k -- n )
+Rem     The code of the character at position k. It REFUSES past the end
+Rem     where Mid trims, and that is the point of it: Asc(Mid(s, k, 1))
+Rem     reads the wrong character and then aborts naming Asc, a word away
+Rem     from the index that was actually wrong.
+
+Rem Str(x As Number) As String                        ( x -- s )
+Rem     A number written out as text, the way the stack shows it — ten
+Rem     significant digits, so an arbitrary double does not round-trip
+Rem     bit-exactly.
+
+Rem Val(s As String) As Number                        ( s -- x )
+Rem     Text read back as a number, and the most dangerous builtin in
+Rem     this file. It is strtod: it answers 0 for text it cannot read at
+Rem     all, and takes a leading number off a longer token — so "twelve"
+Rem     is 0 and "3kg" is 3, and neither says so. Ask IsNumeric first, or
+Rem     reach for ValOr.
+
+Rem ValOr(s As String, fallback As Number) As Number  ( s fallback -- x )
+Rem     The same read, answering fallback for text that is not a number.
+Rem     The total form of the pair.
+
+Rem IsNumeric(s As String) As Boolean                 ( s -- flag )
+Rem     Whether Val would read this text as a number — the question Val
+Rem     itself does not ask. It means "would VAL succeed", not "is this
+Rem     wholly a number", so "3kg" passes it.
+
+Rem ---- this machine's own words --------------------------------------
+
+Rem Split carries a position rather than a shrinking string. It used to
+Rem recurse on Mid(s, k + Len(sep), Len(s)) — a fresh copy of the whole
+Rem tail per field — because Instr can only search from the beginning, so
+Rem splitting into n fields copied the subject n times and Split was
+Rem quadratic. InstrFrom searches from a position without copying to it,
+Rem which leaves only the field itself to copy: the same answers, in
+Rem linear time, for the most-used word in the library.
+Rem
+Rem The refusal stays in Split and stays first, so Split(s, "") errors
+Rem before any scanning happens, exactly as it did.
 Def Split(s As String, sep As String) As List Of String
     If Len(sep) = 0 Then
         Error("SPLIT: EMPTY SEPARATOR")
     Else
-        Let k = Instr(s, sep)
-        If k = 0 Then
-            { s }
-        Else
-            Prepend(Left(s, k - 1), Split(Mid(s, k + Len(sep), Len(s)), sep))
+        SplitFrom(s, sep, 1)
+
+Def SplitFrom(s As String, sep As String, i As Number) As List Of String
+    SplitAt(s, sep, i, InstrFrom(s, sep, i))
+
+Rem A position past the end is not a mistake here: the separator ending
+Rem the subject leaves an empty last field, and Mid answers "" for it.
+Def SplitAt(s As String, sep As String, i As Number, k As Number) As List Of String
+    If k = 0 Then
+        { Mid(s, i, Len(s) - i + 1) }
+    Else
+        Prepend(Mid(s, i, k - i), SplitFrom(s, sep, k + Len(sep)))
 
 Def Join(xs As List Of String, sep As String) As String
     If IsEmpty(xs) Then
@@ -39,15 +153,32 @@ Def Trim(s As String) As String
             Else
                 s
 
+Rem Replace gets the same treatment and for the same reason: it recursed
+Rem on a copy of the tail, so every substitution copied the rest of the
+Rem subject before searching it. Carrying the position removes that copy
+Rem entirely.
+Rem
+Rem It does NOT make Replace linear, and Split's comment above should not
+Rem be read as saying so. What remains is the & chain — each level joins
+Rem its piece onto the whole result of the levels below it, which is
+Rem quadratic in the number of substitutions and cannot be otherwise
+Rem while & is how strings are assembled. Removing the tail copy roughly
+Rem halves the work; making the assembly linear is a different change and
+Rem would need a word this library does not have.
 Def Replace(s As String, old As String, new As String) As String
     If Len(old) = 0 Then
         Error("REPLACE: EMPTY PATTERN")
     Else
-        Let k = Instr(s, old)
-        If k = 0 Then
-            s
-        Else
-            Left(s, k - 1) & new & Replace(Mid(s, k + Len(old), Len(s)), old, new)
+        ReplaceFrom(s, old, new, 1)
+
+Def ReplaceFrom(s As String, old As String, new As String, i As Number) As String
+    ReplaceAt(s, old, new, i, InstrFrom(s, old, i))
+
+Def ReplaceAt(s As String, old As String, new As String, i As Number, k As Number) As String
+    If k = 0 Then
+        Mid(s, i, Len(s) - i + 1)
+    Else
+        Mid(s, i, k - i) & new & ReplaceFrom(s, old, new, k + Len(old))
 
 Def StartsWith(s As String, p As String) As Boolean
     Left(s, Len(p)) = p

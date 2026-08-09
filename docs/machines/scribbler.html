@@ -23,7 +23,7 @@
 
 
 <header class="mast has-icon"><div><p class="eyebrow"><a href="index.html#graphics-interaction">The Machines &middot; Graphics &amp; interaction</a></p><h1>scribbler</h1><p class="kicker">A Pixel Buffer in a Window — machines/scribbler.shoddy</p></div><img class="micon" src="../media/icons/scribbler.svg" alt="the scribbler machine&#39;s icon"></header>
-<nav class="pagertop" aria-label="Machines, in catalog order"><a href="https.html">&larr; https</a><a href="index.html">All machines</a><a href="turtle.html">turtle &rarr;</a></nav>
+<nav class="pagenav pagenav-top" aria-label="Machines, in catalog order"><a href="https.html" class="prev"><span class="pnwrap"><span class="dir">&larr; Previous machine</span><span class="ttl">https</span></span></a><a href="index.html" class="all">All machines</a><a class="next" href="turtle.html"><span class="pnwrap"><span class="ttl">turtle</span><span class="dir">Next machine &rarr;</span></span></a></nav>
 
 <h2 id="summary">Summary</h2>
 <p><code>scribbler</code> is Shoddy's drawing surface: a rectangle of pixels
@@ -215,6 +215,92 @@ from colliding. The event timestamp field is <code>At</code>, not
 accessor. Small deliberate choices — the kind that keep the useless useful.
 Shoddy by name.</p>
 
+<h2 id="builtins">Builtins</h2>
+<p class="tag">The eighteen <code>Scribbler*</code> words the runtime
+dispatches &mdash; not defined here, documented here</p>
+<p>These are not <code>scribbler</code>'s <code>Def</code>s. The engine
+dispatches them, and a <code>Def</code> whose name is a builtin is refused.
+They are listed on this page because <code>scribbler</code> is the derived
+layer over exactly these eighteen, and they need no <code>Include</code>. The
+same eighteen are documented in <code>machines/scribbler.shoddy</code>'s own
+header block.</p>
+<p><strong>Coordinates count from 0</strong> and are clamped to the buffer;
+colours are 0–255 per channel. <strong>Every word leaves exactly one
+value</strong> — the mutators return the scribbler itself, which is what lets
+<code>Let sc = …</code> chains read functionally even though the buffer is
+mutated in place. <strong>Nothing shows until <code>ScribblerBlit</code></strong>:
+a frame is assembled off-screen and arrives at once.</p>
+
+<h3>The window</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>ScribblerOpen(w, h)</td><td>Open a window <code>w</code> by
+<code>h</code> pixels. Requires the window backend — <code>mill run</code> or
+<code>mill dap</code>; woven output run through bare <code>dotnet</code>
+<em>aborts</em> here. Everything that only touches the buffer works
+headless.</td></tr>
+<tr><td>ScribblerClose(sc)</td><td>Shut the window.</td></tr>
+<tr><td>ScribblerTitle(sc, s)</td><td>Put <code>s</code> in the title
+bar.</td></tr>
+<tr><td>ScribblerWidth(sc) / ScribblerHeight(sc)</td><td>The buffer's size in
+pixels. Both work headless.</td></tr>
+<tr><td>ScribblerPlace(sc, x, y)</td><td>Ask for the window's top-left corner
+in desktop pixels. A window manager may ignore it, and nothing reads it
+back.</td></tr>
+</table>
+
+<h3>Drawing</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>ScribblerPixel(sc, x, y, r, g, b)</td><td>Set one pixel. <strong>The
+one drawing primitive</strong> — every line, rectangle, circle and fill in the
+reference below is built on it and nothing else.</td></tr>
+<tr><td>ScribblerGetPixel(sc, x, y)</td><td>The colour at <code>x, y</code> as
+a 3-element array. Works headless, and is what <code>FloodFill</code> reads to
+find its region.</td></tr>
+<tr><td>ScribblerFill(sc, r, g, b)</td><td>Fill the whole buffer with one
+colour — the usual first call of a frame.</td></tr>
+<tr><td>ScribblerText(sc, x, y, scale, r, g, b, s)</td><td>Draw <code>s</code>
+in the built-in 8×8 font, <code>scale</code> times its own size. A scale of 1
+is eight pixels tall.</td></tr>
+<tr><td>ScribblerBlit(sc)</td><td>Show what has been drawn. Until this is
+called the window does not change.</td></tr>
+<tr><td>ScribblerSave(sc, path)</td><td>Write the buffer to a PNG — eight-bit
+truecolour, alpha dropped, no window consulted, so it works headless and under
+<code>--no-window</code>.</td></tr>
+</table>
+
+<h3>Events</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>ScribblerSetInterval(sc, ms)</td><td>Ask for tick events every
+<code>ms</code> milliseconds; 0 turns them off. <code>SetFps</code> below is
+this in the units a frame loop thinks in.</td></tr>
+<tr><td>ScribblerPoll(sc)</td><td>The next pending event as a raw 8-element
+array, kind 0 meaning none. Never blocks. <code>DecodeEvent</code> below turns
+it into the <code>ScribblerEvent</code> type — a builtin cannot reach a
+<code>Type</code>, so the lifting is this machine's job.</td></tr>
+<tr><td>ScribblerWait(sc)</td><td>The same, but <strong>blocks</strong> until
+an event arrives — at zero CPU, which is what makes an idle program idle. It
+<em>aborts</em> headless, since nothing would ever wake it.</td></tr>
+</table>
+
+<h3>And three that reach a window by slot number</h3>
+<p>A <code>Scribbler</code> is its own value kind, so unlike a file handle it
+cannot be carried by a number — and a reckoner seed needs exactly that, since
+a resource held in reckoner's named table is found again by an integer the
+binding carries. These three exist for that caller. An ordinary program takes
+its window from <code>ScribblerOpen</code> and never sees a slot.</p>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>TryScribblerOpen(w, h)</td><td><code>ScribblerOpen</code> with both of
+its deaths reported rather than fatal — no window backend, and a size below
+1×1 — answering <code>Ok(slot)</code> rather than the window itself.</td></tr>
+<tr><td>ScribblerOf(n)</td><td>The window that slot names.</td></tr>
+<tr><td>ScribblerShut(n)</td><td>Close it and free the slot, answering False
+for one already let go — so closing twice cannot end a run.</td></tr>
+</table>
+
 <h2 id="words">Word Reference</h2>
 <p class="tag">Every word, plus the ScribblerEvent and Point types</p>
 
@@ -330,9 +416,10 @@ the sprites and the event loop of the shell.</td></tr>
 event layer (<code>Last</code>).</td></tr>
 </table>
 
-<nav class="pager" aria-label="Machines, in catalog order">
-  <a href="buzzer.html"><span class="dir">&larr; Previous machine</span><span class="ttl">buzzer</span></a>
-  <a class="next" href="turtle.html"><span class="dir">Next machine &rarr;</span><span class="ttl">turtle</span></a>
+<nav class="pagenav pagenav-bottom" aria-label="Machines, in catalog order">
+  <a href="https.html" class="prev"><span class="pnwrap"><span class="dir">&larr; Previous machine</span><span class="ttl">https</span></span></a>
+  <a href="index.html" class="all">All machines</a>
+  <a class="next" href="turtle.html"><span class="pnwrap"><span class="ttl">turtle</span><span class="dir">Next machine &rarr;</span></span></a>
 </nav>
 <footer>Named for the shoddy mills of the West Riding: Useless Things Made
 Useful Through Skill (<a href="../heritage.html">the heritage of the name</a>).<br>

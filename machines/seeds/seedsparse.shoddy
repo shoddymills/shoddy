@@ -1,0 +1,510 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem seedsparse.shoddy — reckoner seed: sparse.shoddy, converting at
+Rem the bridge
+Rem
+Rem A sparse matrix at the keyboard is a DICT, not a cell of its own —
+Rem the same call seedsimplex.shoddy made for Problem and Solution, and
+Rem for the same reason. cuttle.shoddy's Cell carries a MATRIX because
+Rem a dense grid is the beginner-facing form and every seed that
+Rem touches one speaks it; adding a second matrix cell would put a
+Rem choice in front of a reader at the moment they least want one. So
+Rem a Sparse arrives and leaves as
+Rem
+Rem   { ("rows" n) ("cols" n) ("colix" { {r...} ... }) ("colvs" { {v...} ... }) }
+Rem
+Rem which DGET reads like any other dict, and which shows what the
+Rem storage actually is: a row index and a value per stored entry, and
+Rem nothing at all for the gaps.
+Rem
+Rem   SPARSE SPDENSE          across to and from a MATRIX cell
+Rem   SPENTS                  build from { row col value } triplets
+Rem   SPNNZ SPGET             what is stored, and one cell of it
+Rem   SPCOLIX SPCOLVS         one column's row indices and values
+Rem   SPCOLDOT SPMATVEC SPVECMAT SPTRANSP     the arithmetic
+Rem   SPADDROW SPADDCOL       grow one
+Rem
+Rem NOTHING HERE ABORTS. sparse.shoddy refuses a malformed column at
+Rem construction — mismatched index and value counts, an index outside
+Rem the stated rows, indices that do not ascend — and a keyboard cannot
+Rem afford an abort, so every one of those questions is asked here
+Rem first and answered as a refusal. SpsRead is where that happens: it
+Rem walks a dict cell and either hands back a Sparse known to be
+Rem well formed or says which rule it broke. Nothing past it can fail.
+Rem
+Rem The dimension checks SpMatVec and SpVecMat make are asked here too,
+Rem and so is every column index, since Nth aborts past the end of an
+Rem array and reaching a column is a bare Nth by design.
+Rem ==================================================================
+
+Include "sparse.shoddy"
+Include "matrix.shoddy"
+Include "cuttle.shoddy"
+Include "reckoner.shoddy"
+Include "seq.shoddy"
+
+Rem ---- reading arguments off the stack ---------------------------------
+
+Def SpsEntry(k As String, v As Cell) As Cell
+    CutPair(Pair(CutStr(k), v))
+
+Def SpsNumsAt(word As String, xs As List Of Cell, acc As List Of Number) As Result
+    If IsEmpty(xs) Then
+        Ok(acc)
+    Else
+        SpsNumsNext(word, xs, acc, First(xs))
+
+Def SpsNumsNext(word As String, xs As List Of Cell, acc As List Of Number, c As Cell) As Result
+    Select Case c
+        Case CutNum(x)
+            SpsNumsAt(word, Rest(xs), Append(acc, x))
+        Case Else
+            Err(RckKindWhy(word, "a LIST of NUMBERs", c), 0)
+
+Def SpsNums(word As String, c As Cell) As Result
+    Select Case RckListArg(word, c)
+        Case Ok(xs)
+            SpsNumsAt(word, xs, { })
+        Case Err(w, at)
+            Err(w, at)
+        Case Else
+            Err(word & " did not answer", 0)
+
+Rem A LIST of LISTs of numbers, which is what a column store is made of.
+
+Def SpsRowsAt(word As String, xs As List Of Cell, acc As List) As Result
+    If IsEmpty(xs) Then
+        Ok(acc)
+    Else
+        SpsRowsNext(word, xs, acc, SpsNums(word, First(xs)))
+
+Def SpsRowsNext(word As String, xs As List Of Cell, acc As List, r As Result) As Result
+    Select Case r
+        Case Ok(ns)
+            SpsRowsAt(word, Rest(xs), Append(acc, ns))
+        Case Err(w, at)
+            Err(w, at)
+        Case Else
+            Err(word & " did not answer", 0)
+
+Def SpsLists(word As String, c As Cell) As Result
+    Select Case RckListArg(word, c)
+        Case Ok(xs)
+            SpsRowsAt(word, xs, { })
+        Case Err(w, at)
+            Err(w, at)
+        Case Else
+            Err(word & " did not answer", 0)
+
+Rem ---- reading the dict back as a Sparse --------------------------------
+Rem seeddict's shape is a LIST of CutPair cells, so this walks it by
+Rem hand exactly as seedsimplex.shoddy's LpFind does rather than
+Rem reaching for dict.shoddy's DictGet, which reads a different thing.
+
+Def SpsFind(members As List Of Cell, key As String) As Cell
+    If IsEmpty(members) Then
+        CutBool(False)
+    Else
+        SpsFindAt(members, key, First(members))
+
+Def SpsFindAt(members As List Of Cell, key As String, c As Cell) As Cell
+    Select Case c
+        Case CutPair(p)
+            SpsFindKeyed(members, key, Fst(p), Snd(p))
+        Case Else
+            SpsFind(Rest(members), key)
+
+Def SpsFindKeyed(members As List Of Cell, key As String, k As Cell, v As Cell) As Cell
+    Select Case k
+        Case CutStr(ks)
+            If ks = key Then
+                v
+            Else
+                SpsFind(Rest(members), key)
+        Case Else
+            SpsFind(Rest(members), key)
+
+Rem The rules sparse.shoddy would Error on, asked as questions. One
+Rem column: its two arrays the same length, every index a whole number
+Rem inside the row count, and the indices ascending.
+
+Def SpsColWhy(word As String, ix As List Of Number, vs As List Of Number, nr As Number, j As Number) As String
+    If Length(ix) <> Length(vs) Then
+        word & ": COLUMN " & Str(j) & " HAS " & Str(Length(ix)) & " INDICES AND " & Str(Length(vs)) & " VALUES"
+    Else
+        If Not All(ix, Fn(i) => i >= 1 And i <= nr And i = Floor(i)) Then
+            word & ": COLUMN " & Str(j) & " NAMES A ROW OUTSIDE 1 TO " & Str(nr)
+        Else
+            If Not SpsAscends(ix) Then
+                word & ": COLUMN " & Str(j) & " DOES NOT HAVE ITS ROW INDICES IN ASCENDING ORDER"
+            Else
+                ""
+
+Def SpsAscends(ix As List Of Number) As Boolean
+    All(Range(2, Length(ix)), Fn(k) => Nth(ix, k) > Nth(ix, k - 1))
+
+Def SpsColsWhy(word As String, ixs As List, vss As List, nr As Number, j As Number) As String
+    If j > Length(ixs) Then
+        ""
+    Else
+        SpsColsNext(word, ixs, vss, nr, j, SpsColWhy(word, Nth(ixs, j), Nth(vss, j), nr, j))
+
+Def SpsColsNext(word As String, ixs As List, vss As List, nr As Number, j As Number, why As String) As String
+    If why <> "" Then
+        why
+    Else
+        SpsColsWhy(word, ixs, vss, nr, j + 1)
+
+Rem The four fields, in the shape SpsCell writes them.
+
+Def SpsShaped(word As String, members As List Of Cell) As Result
+    Select Case Pair(Pair(SpsFind(members, "rows"), SpsFind(members, "cols")),
+                     Pair(SpsFind(members, "colix"), SpsFind(members, "colvs")))
+        Case Pair(Pair(CutNum(nr), CutNum(nc)), Pair(CutList(ixC), CutList(vsC)))
+            SpsFields(word, nr, nc, ixC, vsC)
+        Case Else
+            Err(word & ": NOT A SPARSE MATRIX — BUILD ONE WITH SPARSE OR SPENTS", 0)
+
+Def SpsFields(word As String, nr As Number, nc As Number, ixC As List Of Cell, vsC As List Of Cell) As Result
+    Select Case Pair(SpsLists(word, CutList(ixC)), SpsLists(word, CutList(vsC)))
+        Case Pair(Ok(ixs), Ok(vss))
+            SpsChecked(word, nr, nc, ixs, vss)
+        Case Pair(Err(w, at), other)
+            Err(w, at)
+        Case Pair(other, Err(w, at))
+            Err(w, at)
+        Case Else
+            Err(word & " did not answer", 0)
+
+Def SpsChecked(word As String, nr As Number, nc As Number, ixs As List, vss As List) As Result
+    If Length(ixs) <> nc Or Length(vss) <> nc Then
+        Err(word & ": COLS SAYS " & Str(nc) & " BUT THERE ARE " & Str(Length(ixs)) & " COLUMNS STORED", 0)
+    Else
+        SpsCheckedCols(word, nr, nc, ixs, vss, SpsColsWhy(word, ixs, vss, nr, 1))
+
+Def SpsCheckedCols(word As String, nr As Number, nc As Number, ixs As List, vss As List, why As String) As Result
+    If why <> "" Then
+        Err(why, 0)
+    Else
+        Rem Every rule sparse.shoddy would have refused has been asked,
+        Rem so the record is built directly rather than through
+        Rem SpFromCols, which would ask them all a second time.
+        Ok(Sparse(nr, nc, ToArray(Map(ixs, ToArray)), ToArray(Map(vss, ToArray))))
+
+Def SpsRead(word As String, c As Cell) As Result
+    Select Case RckListArg(word, c)
+        Case Ok(members)
+            SpsShaped(word, members)
+        Case Err(w, at)
+            Err(word & ": NOT A SPARSE MATRIX — BUILD ONE WITH SPARSE OR SPENTS", at)
+        Case Else
+            Err(word & " did not answer", 0)
+
+Rem ---- writing one back -------------------------------------------------
+
+Def SpsNumList(ns As List Of Number) As Cell
+    CutList(Map(ns, CutNum))
+
+Def SpsCell(s As Sparse) As Cell
+    CutList({ SpsEntry("rows", CutNum(Rows(s))),
+              SpsEntry("cols", CutNum(Cols(s))),
+              SpsEntry("colix", CutList(Map(Range(1, Cols(s)), Fn(j) => SpsNumList(ToList(SpColIx(s, j)))))),
+              SpsEntry("colvs", CutList(Map(Range(1, Cols(s)), Fn(j) => SpsNumList(ToList(SpColVs(s, j)))))) })
+
+Rem ---- SPARSE and SPDENSE: across to the dense grid and back ------------
+
+Def SpsSeedAcross(st As RckState) As RckState
+    Let s1 = RckReg(st, "SPARSE", 1, RckPure(Fn(vs) => SpsSparse(vs)), "( matrix -- sparse )", "The same matrix stored by column, keeping only its nonzero cells. Worth it when the zeros outnumber the numbers and the grid is big; for a small full one the MATRIX is cheaper and clearer.")
+    RckReg(s1, "SPDENSE", 1, RckPure(Fn(vs) => SpsDense(vs)), "( sparse -- matrix )", "Back to an ordinary MATRIX, zeros and all. Exact: across and back changes nothing.")
+
+Def SpsSparse(vs As List Of Cell) As RckWork
+    Select Case First(vs)
+        Case CutMat(m)
+            RckVals({ SpsCell(SpFromMat(m)) })
+        Case Else
+            RckWorkBad(RckKindWhy("SPARSE", "a MATRIX", First(vs)))
+
+Def SpsDense(vs As List Of Cell) As RckWork
+    Select Case SpsRead("SPDENSE", First(vs))
+        Case Ok(s)
+            RckVals({ CutMat(SpToMat(s)) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("SPDENSE did not answer")
+
+Rem ---- SPENTS: from { row col value } triplets --------------------------
+
+Def SpsSeedEnts(st As RckState) As RckState
+    RckReg(st, "SPENTS", 3, RckPure(Fn(vs) => SpsEnts(vs)), "( rows cols list -- sparse )", "Build from a LIST of { row col value } triplets. Two triplets naming one cell are added together, and a cell adding up to zero is not stored at all.")
+
+Def SpsEnts(vs As List Of Cell) As RckWork
+    Select Case Pair(RckNumArg("SPENTS", Nth(vs, 1)), RckNumArg("SPENTS", Nth(vs, 2)))
+        Case Pair(Ok(nr), Ok(nc))
+            SpsEntsAt(nr, nc, Nth(vs, 3))
+        Case Pair(Err(w, at), other)
+            RckWorkBad(w)
+        Case Pair(other, Err(w, at))
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("SPENTS did not answer")
+
+Def SpsEntsAt(nr As Number, nc As Number, c As Cell) As RckWork
+    Select Case SpsLists("SPENTS", c)
+        Case Ok(ts)
+            SpsEntsWhy(nr, nc, ts, SpsTripsWhy(nr, nc, ts, 1))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("SPENTS did not answer")
+
+Rem Every triplet is three whole numbers and names a cell that exists.
+Rem SpFromEnts would Error on the last of those; the first two it would
+Rem not notice at all, and a row index of 2.5 is not a matrix anyone
+Rem meant to type.
+
+Def SpsTripsWhy(nr As Number, nc As Number, ts As List, k As Number) As String
+    If k > Length(ts) Then
+        ""
+    Else
+        SpsTripsNext(nr, nc, ts, k, SpsTripWhy(nr, nc, Nth(ts, k), k))
+
+Def SpsTripsNext(nr As Number, nc As Number, ts As List, k As Number, why As String) As String
+    If why <> "" Then
+        why
+    Else
+        SpsTripsWhy(nr, nc, ts, k + 1)
+
+Def SpsTripWhy(nr As Number, nc As Number, t As List Of Number, k As Number) As String
+    If Length(t) <> 3 Then
+        "SPENTS: TRIPLET " & Str(k) & " HAS " & Str(Length(t)) & " NUMBERS, NOT THREE"
+    Else
+        If Nth(t, 1) < 1 Or Nth(t, 1) > nr Or Nth(t, 1) <> Floor(Nth(t, 1)) Then
+            "SPENTS: TRIPLET " & Str(k) & " NAMES ROW " & Str(Nth(t, 1)) & ", AND THE ROWS ARE 1 TO " & Str(nr)
+        Else
+            If Nth(t, 2) < 1 Or Nth(t, 2) > nc Or Nth(t, 2) <> Floor(Nth(t, 2)) Then
+                "SPENTS: TRIPLET " & Str(k) & " NAMES COLUMN " & Str(Nth(t, 2)) & ", AND THE COLUMNS ARE 1 TO " & Str(nc)
+            Else
+                ""
+
+Def SpsEntsWhy(nr As Number, nc As Number, ts As List, why As String) As RckWork
+    If why <> "" Then
+        RckWorkBad(why)
+    Else
+        RckVals({ SpsCell(SpFromEnts(nr, nc, Map(ts, Fn(t) => SpEnt(Nth(t, 1), Nth(t, 2), Nth(t, 3))))) })
+
+Rem ---- reading one ------------------------------------------------------
+
+Def SpsSeedRead(st As RckState) As RckState
+    Let s1 = RckReg(st, "SPNNZ", 1, RckPure(Fn(vs) => SpsNnz(vs)), "( sparse -- n )", "How many numbers are actually stored, as against how many cells the grid has.")
+    Let s2 = RckReg(s1, "SPGET", 3, RckPure(Fn(vs) => SpsGet(vs)), "( sparse r c -- n )", "The number in row r, column c — zero if nothing is stored there, which is what a gap means.")
+    Let s3 = RckReg(s2, "SPCOLIX", 2, RckPure(Fn(vs) => SpsColIx(vs)), "( sparse j -- list )", "Which rows column j fills, ascending.")
+    RckReg(s3, "SPCOLVS", 2, RckPure(Fn(vs) => SpsColVs(vs)), "( sparse j -- list )", "The values column j holds, in the positions SPCOLIX names.")
+
+Def SpsNnz(vs As List Of Cell) As RckWork
+    Select Case SpsRead("SPNNZ", First(vs))
+        Case Ok(s)
+            RckVals({ CutNum(SpNnz(s)) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("SPNNZ did not answer")
+
+Def SpsGet(vs As List Of Cell) As RckWork
+    Select Case SpsRead("SPGET", Nth(vs, 1))
+        Case Ok(s)
+            SpsGetAt(s, RckNumArg("SPGET", Nth(vs, 2)), RckNumArg("SPGET", Nth(vs, 3)))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("SPGET did not answer")
+
+Def SpsGetAt(s As Sparse, r As Result, c As Result) As RckWork
+    Select Case Pair(r, c)
+        Case Pair(Ok(ri), Ok(ci))
+            SpsGetIn(s, ri, ci)
+        Case Pair(Err(w, at), other)
+            RckWorkBad(w)
+        Case Pair(other, Err(w, at))
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("SPGET did not answer")
+
+Def SpsGetIn(s As Sparse, r As Number, c As Number) As RckWork
+    If c < 1 Or c > Cols(s) Then
+        RckWorkBad(SpsNoCol("SPGET", c, s))
+    Else
+        RckVals({ CutNum(SpGet(s, r, c)) })
+
+Def SpsNoCol(word As String, j As Number, s As Sparse) As String
+    word & ": THERE IS NO COLUMN " & Str(j) & " — THIS MATRIX HAS " & Str(Cols(s))
+
+Def SpsColIx(vs As List Of Cell) As RckWork
+    SpsColumn("SPCOLIX", vs, Fn(s, j) => SpsNumList(ToList(SpColIx(s, j))))
+
+Def SpsColVs(vs As List Of Cell) As RckWork
+    SpsColumn("SPCOLVS", vs, Fn(s, j) => SpsNumList(ToList(SpColVs(s, j))))
+
+Def SpsColumn(word As String, vs As List Of Cell, f As [ Sparse Number -- Cell ]) As RckWork
+    Select Case SpsRead(word, Nth(vs, 1))
+        Case Ok(s)
+            SpsColumnAt(word, s, RckNumArg(word, Nth(vs, 2)), f)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Def SpsColumnAt(word As String, s As Sparse, j As Result, f As [ Sparse Number -- Cell ]) As RckWork
+    Select Case j
+        Case Ok(ji)
+            If ji < 1 Or ji > Cols(s) Then
+                RckWorkBad(SpsNoCol(word, ji, s))
+            Else
+                RckVals({ Call(f, s, ji) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Rem ---- the arithmetic ---------------------------------------------------
+
+Def SpsSeedMath(st As RckState) As RckState
+    Let s1 = RckReg(st, "SPCOLDOT", 3, RckPure(Fn(vs) => SpsColDot(vs)), "( sparse j list -- n )", "Column j against a vector, touching only what is stored. This is the kernel the simplex method spends most of its time in.")
+    Let s2 = RckReg(s1, "SPMATVEC", 2, RckPure(Fn(vs) => SpsMatVec(vs)), "( sparse list -- list )", "The matrix times a vector, one number per row. The vector must be as long as the matrix is wide.")
+    Let s3 = RckReg(s2, "SPVECMAT", 2, RckPure(Fn(vs) => SpsVecMat(vs)), "( list sparse -- list )", "A vector times the matrix, one number per column. The vector must be as long as the matrix is tall.")
+    RckReg(s3, "SPTRANSP", 1, RckPure(Fn(vs) => SpsTransp(vs)), "( sparse -- sparse )", "The transpose: rows become columns, in one pass over what is stored.")
+
+Def SpsColDot(vs As List Of Cell) As RckWork
+    Select Case SpsRead("SPCOLDOT", Nth(vs, 1))
+        Case Ok(s)
+            SpsColDotAt(s, RckNumArg("SPCOLDOT", Nth(vs, 2)), SpsNums("SPCOLDOT", Nth(vs, 3)))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("SPCOLDOT did not answer")
+
+Def SpsColDotAt(s As Sparse, j As Result, y As Result) As RckWork
+    Select Case Pair(j, y)
+        Case Pair(Ok(ji), Ok(ys))
+            SpsColDotIn(s, ji, ys)
+        Case Pair(Err(w, at), other)
+            RckWorkBad(w)
+        Case Pair(other, Err(w, at))
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("SPCOLDOT did not answer")
+
+Def SpsColDotIn(s As Sparse, j As Number, ys As List Of Number) As RckWork
+    If j < 1 Or j > Cols(s) Then
+        RckWorkBad(SpsNoCol("SPCOLDOT", j, s))
+    Else
+        If Length(ys) <> Rows(s) Then
+            RckWorkBad("SPCOLDOT: THE VECTOR HAS " & Str(Length(ys)) & " NUMBERS AND THE MATRIX HAS " & Str(Rows(s)) & " ROWS")
+        Else
+            RckVals({ CutNum(SpColDot(s, j, ToArray(ys))) })
+
+Def SpsMatVec(vs As List Of Cell) As RckWork
+    Select Case SpsRead("SPMATVEC", Nth(vs, 1))
+        Case Ok(s)
+            SpsMatVecAt(s, SpsNums("SPMATVEC", Nth(vs, 2)))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("SPMATVEC did not answer")
+
+Def SpsMatVecAt(s As Sparse, x As Result) As RckWork
+    Select Case x
+        Case Ok(xs)
+            If Length(xs) <> Cols(s) Then
+                RckWorkBad("SPMATVEC: THE VECTOR HAS " & Str(Length(xs)) & " NUMBERS AND THE MATRIX IS " & Str(Cols(s)) & " WIDE")
+            Else
+                RckVals({ SpsNumList(ToList(SpMatVec(s, ToArray(xs)))) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("SPMATVEC did not answer")
+
+Def SpsVecMat(vs As List Of Cell) As RckWork
+    Select Case SpsRead("SPVECMAT", Nth(vs, 2))
+        Case Ok(s)
+            SpsVecMatAt(s, SpsNums("SPVECMAT", Nth(vs, 1)))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("SPVECMAT did not answer")
+
+Def SpsVecMatAt(s As Sparse, y As Result) As RckWork
+    Select Case y
+        Case Ok(ys)
+            If Length(ys) <> Rows(s) Then
+                RckWorkBad("SPVECMAT: THE VECTOR HAS " & Str(Length(ys)) & " NUMBERS AND THE MATRIX IS " & Str(Rows(s)) & " TALL")
+            Else
+                RckVals({ SpsNumList(ToList(SpVecMat(ToArray(ys), s))) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("SPVECMAT did not answer")
+
+Def SpsTransp(vs As List Of Cell) As RckWork
+    Select Case SpsRead("SPTRANSP", First(vs))
+        Case Ok(s)
+            RckVals({ SpsCell(SpTransp(s)) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("SPTRANSP did not answer")
+
+Rem ---- growing one ------------------------------------------------------
+
+Def SpsSeedGrow(st As RckState) As RckState
+    Let s1 = RckReg(st, "SPADDROW", 3, RckPure(Fn(vs) => SpsAddRow(vs)), "( sparse list list -- sparse )", "A new row on the bottom, holding the given values in the given columns. Only the columns named are touched, so a row with one number in it — a bound, a branch — costs almost nothing.")
+    RckReg(s1, "SPADDCOL", 3, RckPure(Fn(vs) => SpsAddCol(vs)), "( sparse list list -- sparse )", "A new column on the end, holding the given values in the given rows, ascending.")
+
+Def SpsAddRow(vs As List Of Cell) As RckWork
+    SpsGrow("SPADDROW", vs, Fn(s, ix, xs) => SpsCell(SpAddRow(s, ToArray(ix), ToArray(xs))), Fn(s) => Cols(s))
+
+Def SpsAddCol(vs As List Of Cell) As RckWork
+    SpsGrow("SPADDCOL", vs, Fn(s, ix, xs) => SpsCell(SpAddCol(s, ToArray(ix), ToArray(xs))), Fn(s) => Rows(s))
+
+Rem Both words take the same shape of argument and break the same three
+Rem rules, so they ask them once: SPADDROW's indices are columns and
+Rem SPADDCOL's are rows, and the only difference is which count they
+Rem have to fall inside.
+
+Def SpsGrow(word As String, vs As List Of Cell, f As [ Sparse List List -- Cell ], lim As [ Sparse -- Number ]) As RckWork
+    Select Case SpsRead(word, Nth(vs, 1))
+        Case Ok(s)
+            SpsGrowAt(word, s, SpsNums(word, Nth(vs, 2)), SpsNums(word, Nth(vs, 3)), f, lim)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Def SpsGrowAt(word As String, s As Sparse, ix As Result, xs As Result, f As [ Sparse List List -- Cell ], lim As [ Sparse -- Number ]) As RckWork
+    Select Case Pair(ix, xs)
+        Case Pair(Ok(ixs), Ok(vals))
+            SpsGrowIn(word, s, ixs, vals, f, Call(lim, s))
+        Case Pair(Err(w, at), other)
+            RckWorkBad(w)
+        Case Pair(other, Err(w, at))
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Def SpsGrowIn(word As String, s As Sparse, ix As List Of Number, xs As List Of Number, f As [ Sparse List List -- Cell ], n As Number) As RckWork
+    Let why = SpsColWhy(word, ix, xs, n, 1)
+    If why <> "" Then
+        RckWorkBad(why)
+    Else
+        RckVals({ Call(f, s, ix, xs) })
+
+Rem ---- the seed -----------------------------------------------------------
+
+Def RckSeedSparse(st As RckState) As RckState
+    Let s1 = SpsSeedAcross(RckSeeding(st, "seed-sparse"))
+    Let s2 = SpsSeedEnts(s1)
+    Let s3 = SpsSeedRead(s2)
+    Let s4 = SpsSeedMath(s3)
+    SpsSeedGrow(s4)

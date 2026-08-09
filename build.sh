@@ -94,9 +94,10 @@ machines() {
 machine_suites() {
     ensure_mill
     for suite in csvtest cuttletest htmltest jsontest nettest neuraltest \
-                 randomtest reckonertest seedtest seedbuiltintest seedengtest \
+                 randomtest reckonertest regextest seedtest seedbuiltintest seedengtest \
                  seedfintest seedisamtest seedneuraltest seedreciotest \
-                 seedbuzzertest seedhttpstest seednettest seedsimplextest \
+                 seedbuzzertest seedhttpstest seednettest seedregextest seedsimplextest \
+                 seedsparsetest seedmiptest \
                  seedvt100test \
                  shakertest xmltest; do
         echo "==> tst/$suite.shoddy"
@@ -213,6 +214,14 @@ case "${1:-help}" in
         # compared - which is the only way to test a minimal form whose
         # spelling is not unique.
         "$MILL" run tst/bool.shoddy
+        # sparse and mip are the same case a third time, and the sparse
+        # one has a witness the others do not: every kernel is checked
+        # against matrix.shoddy computing the same thing densely, so a
+        # wrong index shows up as a disagreement rather than as a
+        # plausible number. mip's knapsack is chosen so that the integer
+        # answer is neither the relaxation's nor the relaxation rounded.
+        "$MILL" run tst/sparse.shoddy
+        "$MILL" run tst/mip.shoddy
         # The net demo is the only end-to-end exercise of the socket words:
         # it stands up a server, connects a client to it and trades lines,
         # both ends in one process on loopback. --allow-net is required

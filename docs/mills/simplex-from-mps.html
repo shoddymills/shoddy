@@ -22,7 +22,7 @@
 <div class="wrap">
 
 <header class="mast has-icon"><div><p class="eyebrow"><a href="index.html#optimization">The Mills &middot; Optimization</a></p><h1>simplex-from-mps</h1><p class="kicker">An LP solver from an MPS file — mills/simplex-from-mps</p></div><img class="micon" src="../media/simplex-blend.svg" alt="Terminal output solving the BLEND linear program"></header>
-<nav class="pagertop" aria-label="Mills, in catalog order"><a href="demographics.html">&larr; demographics</a><a href="index.html">All mills</a><a href="tally.html">tally &rarr;</a></nav>
+<nav class="pagenav pagenav-top" aria-label="Mills, in catalog order"><a href="demographics.html" class="prev"><span class="pnwrap"><span class="dir">&larr; Previous mill</span><span class="ttl">demographics</span></span></a><a href="index.html" class="all">All mills</a><a class="next" href="tally.html"><span class="pnwrap"><span class="ttl">tally</span><span class="dir">Next mill &rarr;</span></span></a></nav>
 
 <h2 id="summary">Summary</h2>
 <p><code>simplex-from-mps</code> is the smallest mill and the most
@@ -34,7 +34,15 @@ variables, and the sensitivity analysis: shadow prices per normalised
 constraint row (an equality row appears as its +/&minus; pair) and reduced
 costs per variable. The <code>-z</code> (or <code>--zero-lower</code>)
 switch forces a zero lower bound — <code>x &ge; 0</code> — on every
-variable, skipping a BOUNDS section instead of rejecting it.</p>
+variable, skipping a BOUNDS section instead of reading it as rows.</p>
+<p>If the file marks any of its columns as whole numbers, the mill notices
+and answers it by branch and bound with the
+<a href="../machines/mip.html">mip</a> machine instead, reporting the
+relaxation's answer, the integer one, and how many nodes and pivots the
+search took. Shadow prices for an integer answer are not the integer
+problem's — no linear-programming dual is — so they are reported from the
+LP that remains once every integer is pinned where the search left it,
+which is a question that does have an answer.</p>
 
 <h2 id="history">The Format and the Problem</h2>
 <p>MPS is the FORTRAN punch card that refused to die: the input format of
@@ -46,7 +54,10 @@ serious solver reads it, and the classic test problems circulate in it. The
 bundled <code>files/blend.mps</code> is one of those classics — the BLEND
 oil-refinery blending problem from Bruce Murtagh's <em>Advanced Linear
 Programming</em> — and <code>files/mix.mps</code> is a smaller worked
-example to read first.</p>
+example to read first. <code>files/bales.mps</code> is the integer one:
+three variables, an answer worked out by hand in its own header, and a
+relaxation that recommends buying a fraction of a bale and taking a job lot
+that turns out not to be worth having.</p>
 
 <h2 id="run">Running It</h2>
 <p>From <code>mills/simplex-from-mps/</code> — the wrapper is
@@ -57,18 +68,26 @@ example to read first.</p>
 <p>Like demographics, this mill is <em>woven</em>: once built it is a
 self-contained command-line program that runs with no toolchain —</p>
 <pre><code>dotnet bin/simplex-mps.dll files/blend.mps
-dotnet bin/simplex-mps.dll files/mix.mps -z</code></pre>
+dotnet bin/simplex-mps.dll files/mix.mps -z
+dotnet bin/simplex-mps.dll files/bales.mps</code></pre>
 <p>The FILE argument is required; the run aborts without one.</p>
 
 <h2 id="built">How It's Built</h2>
-<p>At 74 lines, this mill is mostly a demonstration of how much the machines
-already do: <a href="../machines/mps.html">mps</a> parses the file into a
-model and hands it to <a href="../machines/simplex.html">simplex</a>, and
-what remains here is the reporting — filtering the solution down to its
-nonzero entries and printing shadow prices and reduced costs against their
-row and column names. It's the pattern to copy when you want a Shoddy
-program that behaves like a classic Unix tool: arguments in, report out,
-woven once to a <code>.dll</code> and run anywhere .NET runs.</p>
+<p>Short as it is, this mill is mostly a demonstration of how much the
+machines already do: <a href="../machines/mps.html">mps</a> parses the file
+into a model and hands it to <a href="../machines/simplex.html">simplex</a>
+or, if the file wants whole numbers, to
+<a href="../machines/mip.html">mip</a>, and what remains here is the
+reporting — filtering the solution down to its nonzero entries and printing
+shadow prices and reduced costs against their row and column names. It's the
+pattern to copy when you want a Shoddy program that behaves like a classic
+Unix tool: arguments in, report out, woven once to a <code>.dll</code> and
+run anywhere .NET runs.</p>
+<p>The file is read once, whichever kind it turns out to be. An MPS file
+with no integer columns parses perfectly well to a <code>MipProblem</code>
+that simply has nothing to branch on, so the mill asks for that, looks at
+whether the integer list is empty, and picks its reporter — rather than
+parsing once to find out and again to do the work.</p>
 <p>It is also the only single-source-file mill, and that's not an accident:
 the other mills split so that their pure model can be tested apart from
 their I/O, but here the pure model — parsing and solving — lives entirely
@@ -78,28 +97,39 @@ and there's nothing to split.</p>
 <h2 id="machines">The Machines It Uses</h2>
 <table>
 <tr><th></th><th>Machine</th><th>Why</th></tr>
-<tr><td class="uicon"><a href="../machines/mps.html"><img src="../media/icons/mps.svg" alt=""></a></td><td><a href="../machines/mps.html">mps</a></td><td>The program's one
-<code>Include</code>: parses the <code>ROWS</code> / <code>COLUMNS</code> /
-<code>RHS</code> / <code>BOUNDS</code> sections into a model, normalises
-the rows, and hands back the solved result with names attached — plus the
-<code>-z</code> zero-lower-bound behaviour.</td></tr>
-<tr><td class="uicon"><a href="../machines/simplex.html"><img src="../media/icons/simplex.svg" alt=""></a></td><td><a href="../machines/simplex.html">simplex</a></td><td>Arrives
-through mps (which includes it), so one <code>Include</code> brings both
-the parser and the solver: the simplex method itself, the solution status
-and objective, and the sensitivity numbers — shadow prices and reduced
-costs — the report prints. (<a href="../machines/str.html">str</a> and
-<a href="../machines/seq.html">seq</a> ride along the same way: mps parses
-its lines with str, and the mill itself borrows str's
-<code>StartsWith</code> and seq's <code>Contains</code> to read its
-command-line flags.)</td></tr>
-<tr><td class="uicon"><a href="../machines/matrix.html"><img src="../media/icons/matrix.svg" alt=""></a></td><td><a href="../machines/matrix.html">matrix</a></td><td><code>MatFromRows</code>
-assembles the parsed constraint rows into the matrix <code>Optimize</code> is
-handed. Named here rather than borrowed from mps, whose includes are its own.</td></tr>
+<tr><td class="uicon"><a href="../machines/mps.html"><img src="../media/icons/mps.svg" alt=""></a></td><td><a href="../machines/mps.html">mps</a></td><td>Parses the
+<code>ROWS</code> / <code>COLUMNS</code> / <code>RHS</code> /
+<code>BOUNDS</code> sections into a model, normalises the rows, turns a
+bound into a row of its own, and hands it all back with names attached —
+plus the <code>-z</code> zero-lower-bound behaviour.</td></tr>
+<tr><td class="uicon"><a href="../machines/simplex.html"><img src="../media/icons/simplex.svg" alt=""></a></td><td><a href="../machines/simplex.html">simplex</a></td><td><code>SpOptimize</code>
+solves what the file describes: the solution status and objective, and the
+sensitivity numbers — shadow prices and reduced costs — the report
+prints.</td></tr>
+<tr><td class="uicon"><a href="../machines/mip.html"><img src="../media/icons/mip.svg" alt=""></a></td><td><a href="../machines/mip.html">mip</a></td><td>For a file with
+integer columns: <code>MipOptimize</code> for the answer and its node and
+pivot counts, then <code>MipFixed</code> for the sensitivity that is
+honestly available once the whole numbers are settled.</td></tr>
+<tr><td class="uicon"><a href="../machines/sparse.html"><img src="../media/icons/sparse.svg" alt=""></a></td><td><a href="../machines/sparse.html">sparse</a></td><td>The form the
+constraints stay in from file to solver. <code>SpNnz</code> is what lets the
+report say how many numbers a problem actually holds against how many cells
+it would have taken.</td></tr>
+<tr><td class="uicon"><a href="../machines/str.html"><img src="../media/icons/str.svg" alt=""></a></td><td><a href="../machines/str.html">str</a></td><td><code>StartsWith</code>
+reads the command-line flags, and <code>Join</code> builds the little MPS
+text the test suite checks the BOUNDS translation against.</td></tr>
+<tr><td class="uicon"><a href="../machines/seq.html"><img src="../media/icons/seq.svg" alt=""></a></td><td><a href="../machines/seq.html">seq</a></td><td><code>Contains</code>
+spots <code>-z</code> among the arguments, and <code>Flatten</code> builds
+the labels for the pinning rows <code>MipFixed</code> adds.</td></tr>
+<tr><td class="uicon"><a href="../machines/matrix.html"><img src="../media/icons/matrix.svg" alt=""></a></td><td><a href="../machines/matrix.html">matrix</a></td><td>The dense
+<code>Matrix</code> a plain <code>Problem</code> carries, which the test
+suite names so it can check the sparse road and the dense one arrive at the
+same place.</td></tr>
 </table>
 
-<nav class="pager" aria-label="Mills, in catalog order">
-  <a href="iris.html"><span class="dir">&larr; Previous mill</span><span class="ttl">iris</span></a>
-  <a class="next" href="index.html"><span class="dir">Back to the catalog &rarr;</span><span class="ttl">All mills</span></a>
+<nav class="pagenav pagenav-bottom" aria-label="Mills, in catalog order">
+  <a href="demographics.html" class="prev"><span class="pnwrap"><span class="dir">&larr; Previous mill</span><span class="ttl">demographics</span></span></a>
+  <a href="index.html" class="all">All mills</a>
+  <a class="next" href="tally.html"><span class="pnwrap"><span class="ttl">tally</span><span class="dir">Next mill &rarr;</span></span></a>
 </nav>
 <footer>Named for the shoddy mills of the West Riding: Useless Things Made
 Useful Through Skill (<a href="../heritage.html">the heritage of the name</a>).<br>

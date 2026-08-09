@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Sparse Matrices — machines/sparse.shoddy">
+<title>sparse — Sparse Matrices | Shoddy Machines</title>
+<link rel="stylesheet" href="../style.css">
+<link rel="icon" href="../favicon.svg" type="image/svg+xml">
+<link rel="alternate icon" href="../favicon.ico" sizes="48x48">
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+</head>
+<body>
+<div class="topbar"><div class="inner">
+  <div class="row">
+    <a class="phase" href="index.html"><img class="mark" src="../media/brand/shoddy-icon.svg" alt="" width="23" height="23">Shoddy · The Machines</a>
+    <span class="spacer"></span>
+    <nav class="docnav meta" aria-label="About"><a href="../heritage.html">Heritage</a><a href="../authorship.html">Authorship</a></nav>
+  </div>
+  <nav class="docnav main" aria-label="Documentation"><a href="../tutorials/index.html">Tutorials</a><a href="../guide.html">Guide</a><a href="../quickref.html">Reference</a><span class="here">Machines</span><a href="../mills/index.html">Mills</a><a href="../stack.html">Stack</a><a href="../spec.html">Spec</a><a href="../setup.html">Setup</a><a href="../vscode.html">VS Code</a><a href="../assistants.html">AI</a><a href="../build.html">Toolchain</a><a href="../errors.html">Errors</a></nav>
+</div></div>
+<div class="wrap">
+
+
+<header class="mast has-icon"><div><p class="eyebrow"><a href="index.html#algebra">The Machines &middot; Algebra</a></p><h1>sparse</h1><p class="kicker">Sparse Matrices — machines/sparse.shoddy</p></div><img class="micon" src="../media/icons/sparse.svg" alt="the sparse machine&#39;s icon"></header>
+<nav class="pagenav pagenav-top" aria-label="Machines, in catalog order"><a href="matrix.html" class="prev"><span class="pnwrap"><span class="dir">&larr; Previous machine</span><span class="ttl">matrix</span></span></a><a href="index.html" class="all">All machines</a><a class="next" href="lin.html"><span class="pnwrap"><span class="ttl">lin</span><span class="dir">Next machine &rarr;</span></span></a></nav>
+
+<h2 id="summary">Summary</h2>
+<p><code>sparse</code> is a grid of numbers for the case where nearly all of
+them are zero. The <a href="matrix.html">matrix</a> machine keeps every cell,
+which is the right thing to do when the cells are all carrying something. But
+plenty of real grids are mostly empty — a hundred rows and a hundred columns
+holding four hundred actual numbers and nine thousand six hundred zeros — and
+storing those zeros means paying for them twice: once in memory, and again
+every time an operation walks over them multiplying by nothing. This machine
+stores only what is there. A <code>Sparse</code> remembers its size, and then,
+column by column, just the row numbers that hold something and the values that
+sit in them. A zero is not a stored zero; it is an absence, and reading a cell
+nobody filled in gives you <code>0</code> because nothing is there to say
+otherwise.</p>
+
+<p class="note"><strong>Small grid? Use <a href="matrix.html">matrix</a>.</strong>
+This machine only wins when the zeros dominate <em>and</em> the grid is big
+enough for the difference to show. For a 3&times;3 rotation or a little system
+of equations, the dense <a href="matrix.html">Matrix</a> is faster, shorter to
+read, and the one everything else in the tree speaks. Sparse is the working
+form for the big thin problems — which in this tree means linear programming
+and the machines built on it.</p>
+
+<h2 id="why">Why It's Useful</h2>
+<p>The moment a problem is built out of <em>parts that only touch their
+neighbours</em>, its matrix goes mostly empty. A road network's connection grid
+has a row and a column for every junction, and each junction meets three or
+four others — the rest of that row is zeros. A blending problem has a column
+per ingredient and a row per specification, and any one ingredient affects a
+handful of specifications, not all of them. A structural model, a Markov
+chain over states that only step to adjacent states, a page of a spreadsheet
+where most cells are blank: the same shape every time. The published
+<a href="../mills/simplex-from-mps.html">BLEND</a> problem this tree ships is a
+good example — 83 variables, 117 normalised constraint rows, and 789 numbers
+in a grid with 9,711 cells. Storing it densely means carrying nearly nine
+thousand zeros and reading them, over and over, on every pass of the solver.
+Reach for <code>sparse</code> when your grid is big and your zeros outnumber
+your numbers; leave it alone when they don't.</p>
+
+<h2 id="history">A Brief History of Not Storing Zeros</h2>
+<p>Sparse storage was born of desperation rather than elegance. In the late
+1950s and through the 1960s, computers had memories measured in tens of
+thousands of words, and the problems people most wanted to solve — power grids,
+oil refinery blending, structural frames, national economic plans — had
+matrices with millions of cells and only a scattering of numbers in them.
+Storing the whole grid was not slow, it was simply <em>impossible</em>; the
+matrix did not fit. So the practitioners of the day stopped storing the grid
+and started storing a list of what was in it.</p>
+<p>What settled out of that, and is still what everyone uses, is the pair of
+compressed formats: <strong>compressed sparse column</strong> and its mirror
+image, compressed sparse row. The idea is exactly the one this machine uses.
+Take the matrix a column at a time. For each column, write down the row numbers
+that hold something, in order, and the matching values. That's it. Nothing
+records where the zeros are, because the zeros are just the gaps between what
+was written down. To find a cell you look in its column and see whether its row
+number is listed; if it isn't, the answer is zero and you knew that without
+looking anything up.</p>
+<p>The third form worth knowing is the <strong>triplet</strong> — a plain list
+of (row, column, value) records, in no particular order. It is a terrible
+working format, because finding a column means reading the whole list, but it
+is the natural <em>interchange</em> format: it is exactly how a file states a
+matrix, and exactly what a program has to hand while it is still discovering
+the numbers. So the pattern, then and now, is: gather triplets, then compress
+them once into columns and work from those. That is what
+<code>SpFromEnts</code> does here, and it is why <code>SpEnt</code> exists as a
+type of its own.</p>
+<p>Why column-major rather than row-major, when <a href="matrix.html">matrix</a>
+chose rows? Because the algorithm that asked for this machine wants columns.
+The revised simplex method prices a linear program by taking one column of the
+constraint matrix at a time, and solves for a direction using another single
+column. It never wants a row. Layouts should follow their readers, and this
+one's reader reads down.</p>
+
+<h2 id="guide">User's Guide</h2>
+<p>There are three ways in. <code>SpFromEnts</code> takes the dimensions and a
+list of <code>SpEnt(row, col, value)</code> triplets, which is the usual way
+when the numbers are arriving from a file or a calculation.
+<code>SpFromCols</code> takes ready-made columns when you already know them.
+<code>SpFromMat</code> converts a dense <a href="matrix.html">Matrix</a>, which
+is the easy way to try something out and the bridge back to everything else.
+Indexes are 1-based throughout, like the rest of Shoddy.</p>
+<pre><code>Include "matrix.shoddy"
+Include "sparse.shoddy"
+
+Def Main()
+    ' A 4x3 grid with five numbers in it and seven holes.
+    Let s = SpFromEnts(4, 3, { SpEnt(1, 2, 2), SpEnt(2, 1, 5),
+                               SpEnt(3, 3, 7), SpEnt(4, 1, 1), SpEnt(4, 3, 3) })
+
+    Print(SpNnz(s))                 ' 5   — five stored, not twelve cells
+    Print(SpGet(s, 2, 1))           ' 5   — something is there
+    Print(SpGet(s, 1, 1))           ' 0   — nothing is, so zero
+    Print(SpColIx(s, 1))            ' { 2, 4 }  — column 1 fills rows 2 and 4
+    Print(SpColVs(s, 1))            ' { 5, 1 }  — with these values
+
+    Print(SpColDot(s, 1, { 10, 20, 30, 40 }))   ' 140 — 20*5 + 40*1
+    Print(SpMatVec(s, { 1, 2, 3 }))             ' { 4, 5, 21, 10 }
+
+    MatShow(SpToMat(s))             ' the same grid, spelled out in full
+    SpShow(s)                       ' the same grid, as what is stored</code></pre>
+<p>A few things worth remembering:</p>
+<ul>
+<li><strong>Duplicates add up, and a cancelling pair disappears.</strong> If
+two triplets name the same cell, <code>SpFromEnts</code> sums them — which is
+what every matrix file format means by repeating a coefficient. And if the sum
+comes to zero, nothing is stored, because a zero is an absence here and storing
+one explicitly would be a lie about what the matrix holds.</li>
+<li><strong>Everything is pure.</strong> <code>SpAddRow</code> and
+<code>SpAddCol</code> hand back a new matrix and leave yours exactly as it
+was, the same way <code>MatSet</code> does.</li>
+<li><strong>Appending a column is the cheap operation.</strong> It copies the
+outer list of columns and shares every column's actual numbers, untouched.
+Appending a <em>row</em> is nearly as cheap when the row is mostly empty: only
+the columns the row actually names are rebuilt. A one-number row — which is
+what a bound or a branch constraint is — touches exactly one of them.</li>
+<li><strong>Shapes are checked when you build, not when you read.</strong> A
+column whose row numbers and values don't pair up, or that names a row outside
+the matrix, or whose row numbers aren't in ascending order, is refused at
+construction with a plain error. That ordering is not fussiness — every kernel
+here relies on it, and a column out of order would give quietly wrong answers
+rather than loud ones.</li>
+<li><strong>The dense round trip is exact.</strong>
+<code>SpToMat(SpFromMat(m))</code> is <code>m</code>, cell for cell, and
+<code>SpMatVec</code> agrees with <code>MatVec</code> to the last bit — leaving
+out a term that was zero changes nothing about a sum.</li>
+</ul>
+
+<h2 id="hood">Under the Hood: Two Arrays Per Column</h2>
+<p>You don't need any of this to use the machine — it's here for the curious.</p>
+<p>A <code>Sparse</code> is a record with four fields: <code>Rows</code> and
+<code>Cols</code>, the dimensions, and then <code>ColIx</code> and
+<code>ColVs</code>. Those last two are arrays with one entry per column, and
+each of <em>those</em> entries is itself an <code>Array Of Number</code>:
+<code>ColIx</code>'s holds the row numbers that column fills, ascending, and
+<code>ColVs</code>'s holds the values in the matching positions. Column 3's
+third stored number sits at <code>Nth(Nth(ColVs(s), 3), 3)</code> and belongs
+in row <code>Nth(Nth(ColIx(s), 3), 3)</code>. That is the whole structure.</p>
+<p><strong>Why two parallel arrays instead of a list of pairs.</strong>
+Reaching a column is one array lookup, and walking it is a straight march down
+two arrays — no records to unpack per entry, in a language where every value is
+boxed and every unpacking is interpreted. The pricing kernel
+<code>SpColDot</code> is that march and nothing else.</p>
+<p><strong>Why growing is cheap, and exactly how cheap.</strong> Shoddy arrays
+are persistent: writing to one copies it. That sounds like it would make a
+growing matrix expensive, and it would, if the matrix were one flat block of
+cells — appending would copy every number in it. Here the outer arrays hold
+<em>references</em> to the per-column arrays, so appending a column copies a
+list of references the length of the column count and shares every actual
+number in the matrix. Appending a row is a write into the outer arrays plus a
+rebuild of just the columns named. This is the one structural reason the
+machine is shaped the way it is, and the reason
+<a href="mip.html">mip</a> can add a constraint per level of its search
+without the cost compounding.</p>
+<p><strong>Building from triplets without a quadratic pass.</strong>
+<code>SpFromEnts</code> folds the triplets once into a bucket per column,
+inserting each into its column's list in row order and adding to what is
+already at that row. Insertion keeps the ordering the kernels need without a
+sort, and the summing is left to right through the entry list — deliberately
+the same order a dense assembly adding up the same repeats would use, so the
+two agree bit for bit and not merely closely.</p>
+<p><strong>The transpose is the one row view.</strong> A column-major store
+cannot hand you a row cheaply, so <code>SpTransp</code> turns the whole matrix
+around instead, by re-emitting every entry with its row and column swapped and
+rebuilding. It is one pass over what is stored, and it is what
+<code>SpMatVec</code> and <code>SpToMat</code> use — both of those want rows,
+so they take the row view once rather than hunting for rows one at a time.</p>
+
+<h2 id="words">Word Reference</h2>
+<p class="tag">The surface, plus the Sparse and SpEnt types</p>
+
+<h3>The types</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>Sparse</td><td>A grid stored by column: <code>Rows</code> and
+<code>Cols</code> counts, plus <code>ColIx</code> and <code>ColVs</code>, two
+parallel arrays with one entry per column. Each entry of <code>ColIx</code> is
+an <code>Array Of Number</code> of the row numbers that column fills, in
+ascending order; the matching entry of <code>ColVs</code> holds the values.
+Build one with <code>SpFromEnts</code> and friends rather than by hand.</td></tr>
+<tr><td>SpEnt(EntRow, EntCol, EntVal)</td><td>One cell, as a triplet: which row,
+which column, what value. The interchange form — how a matrix arrives before it
+is compressed into columns.</td></tr>
+</table>
+
+<h3>Building one</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>SpFromEnts(r, c, es)</td><td>An <code>r</code>&times;<code>c</code>
+matrix from a list of <code>SpEnt</code> triplets. Two triplets naming the same
+cell are added together; a cell that adds up to zero is not stored. An entry
+outside the stated dimensions stops the program.</td></tr>
+<tr><td>SpFromCols(r, ixs, vss)</td><td>A matrix from ready-made columns:
+<code>ixs</code> is a list of row-index arrays, <code>vss</code> the matching
+list of value arrays, one of each per column. Every column is checked as it
+goes in.</td></tr>
+<tr><td>SpFromMat(m)</td><td>A dense <a href="matrix.html">Matrix</a> converted,
+keeping only its nonzero cells.</td></tr>
+<tr><td>SpToMat(s)</td><td>Back the other way: the full dense
+<a href="matrix.html">Matrix</a>, zeros and all. Exact — the round trip through
+both changes nothing.</td></tr>
+</table>
+
+<h3>Reading one</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>SpGet(s, r, c)</td><td>The number in row <code>r</code>, column
+<code>c</code> — <code>0</code> if nothing is stored there. Costs a short walk
+down the column, which stops early once the row numbers pass the one you
+asked for.</td></tr>
+<tr><td>SpColIx(s, j)</td><td>Column <code>j</code>'s row numbers, ascending, as
+a flat <code>Array Of Number</code>. Reaching the column is a single
+lookup.</td></tr>
+<tr><td>SpColVs(s, j)</td><td>Column <code>j</code>'s values, in the positions
+matching <code>SpColIx</code>.</td></tr>
+<tr><td>SpNnz(s)</td><td>How many numbers are actually stored — the honest size
+of the matrix, as against <code>Rows &times; Cols</code>.</td></tr>
+<tr><td>SpEnts(s)</td><td>Everything stored, as a list of <code>SpEnt</code>
+triplets, column by column.</td></tr>
+</table>
+
+<h3>Arithmetic</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>SpColDot(s, j, y)</td><td>The dot product of column <code>j</code> with
+the vector <code>y</code>, touching only what is stored. This is the kernel
+the simplex method spends most of its time in.</td></tr>
+<tr><td>SpMatVec(s, x)</td><td><code>A x</code>: the matrix times a vector,
+giving one number per row. Refuses unless <code>x</code> is as long as the
+matrix is wide.</td></tr>
+<tr><td>SpVecMat(y, s)</td><td><code>y' A</code>: a vector times the matrix,
+giving one number per column — a <code>SpColDot</code> down each of them.
+Refuses unless <code>y</code> is as long as the matrix is tall.</td></tr>
+<tr><td>SpTransp(s)</td><td>The transpose: rows become columns. An
+<code>r</code>&times;<code>c</code> matrix comes back
+<code>c</code>&times;<code>r</code>, in one pass over what is stored.</td></tr>
+</table>
+
+<h3>Growing one</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>SpAddCol(s, ix, vs)</td><td>A new matrix with one more column on the
+end, holding values <code>vs</code> at row numbers <code>ix</code>. Copies the
+outer arrays and shares every column already there.</td></tr>
+<tr><td>SpAddRow(s, ix, vs)</td><td>A new matrix with one more row on the
+bottom, holding values <code>vs</code> in columns <code>ix</code>. Only the
+columns named are touched, so a row with one number in it — a bound, a branch
+constraint — costs one column's rebuild. A zero in the new row is not
+stored.</td></tr>
+</table>
+
+<h3>Showing one <span class="tag">effectful; call from Main</span></h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>SpShow(s)</td><td>Prints the dimensions and the stored count, then one
+line per column listing its <code>row:value</code> pairs. Column by column,
+because that is how it is kept — a row-by-row picture would be mostly zeros
+that aren't there. The only word here that does anything visible.</td></tr>
+</table>
+
+
+<h2 id="usedby">Who Uses It</h2>
+<table>
+<tr><th></th><th>User</th><th>How</th></tr>
+<tr><td class="uicon"><a href="simplex.html"><img src="../media/icons/simplex.svg" alt=""></a></td><td><a href="simplex.html">simplex</a></td><td>The working form of
+the whole solver: the dual matrix is a <code>Sparse</code>, pricing is
+<code>SpColDot</code> down each column, and <code>SpTransp</code> turns the
+primal round once to build it.</td></tr>
+<tr><td class="uicon"><a href="mip.html"><img src="../media/icons/mip.svg" alt=""></a></td><td><a href="mip.html">mip</a></td><td>Every branch is one
+<code>SpAddRow</code> with a single number in it, which is what makes a deep
+search affordable.</td></tr>
+<tr><td class="uicon"><a href="mps.html"><img src="../media/icons/mps.svg" alt=""></a></td><td><a href="mps.html">mps</a></td><td>A COLUMNS section is
+already a list of triplets, so assembly is <code>SpFromEnts</code> and nothing
+is ever densified — <code>SpToMat</code> is the bridge the dense words answer
+through.</td></tr>
+<tr><td class="uicon"><a href="../mills/simplex-from-mps.html"><img src="../media/simplex-blend.svg" alt=""></a></td><td><a href="../mills/simplex-from-mps.html">simplex-from-mps</a></td><td>Reports how
+many entries a file's matrix actually stores against how many cells it
+would have taken.</td></tr>
+<tr><td class="uicon"><a href="seedsparse.html"><img src="../media/icons/seedsparse.svg" alt=""></a></td><td><a href="seedsparse.html">seedsparse</a></td><td>The domain this
+seed bridges: the whole surface at the reckoner keyboard, with a
+<code>Sparse</code> carried as a dict rather than as a cell of its
+own.</td></tr>
+<tr><td class="uicon"><a href="seedmip.html"><img src="../media/icons/seedmip.svg" alt=""></a></td><td><a href="seedmip.html">seedmip</a></td><td><code>SpFromMat</code>
+and <code>SpToMat</code>, the crossings between the keyboard's dense
+<code>MATRIX</code> and the form the solver walks.</td></tr>
+</table>
+
+<h2 id="uses">The Machines It Uses</h2>
+<table>
+<tr><th></th><th>Machine</th><th>Why</th></tr>
+<tr><td class="uicon"><a href="matrix.html"><img src="../media/icons/matrix.svg" alt=""></a></td><td><a href="matrix.html">matrix</a></td><td>The dense
+bridges: <code>SpFromMat</code> reads a <code>Matrix</code> and
+<code>SpToMat</code> builds one.</td></tr>
+<tr><td class="uicon"><a href="seq.html"><img src="../media/icons/seq.svg" alt=""></a></td><td><a href="seq.html">seq</a></td><td><code>All</code> checks a
+column's shape, <code>Flatten</code> gathers its entries, and
+<code>Pair</code> holds them while they are being sorted into columns.</td></tr>
+</table>
+
+<nav class="pagenav pagenav-bottom" aria-label="Machines, in catalog order">
+  <a href="matrix.html" class="prev"><span class="pnwrap"><span class="dir">&larr; Previous machine</span><span class="ttl">matrix</span></span></a>
+  <a href="index.html" class="all">All machines</a>
+  <a class="next" href="lin.html"><span class="pnwrap"><span class="ttl">lin</span><span class="dir">Next machine &rarr;</span></span></a>
+</nav>
+<footer>Named for the shoddy mills of the West Riding: Useless Things Made
+Useful Through Skill (<a href="../heritage.html">the heritage of the name</a>).<br>
+&copy; 2026 Stephen Vincent Foster</footer>
+</div>
+</body>
+</html>

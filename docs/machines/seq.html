@@ -23,7 +23,7 @@
 
 
 <header class="mast has-icon"><div><p class="eyebrow"><a href="index.html#sequences-text">The Machines &middot; Sequences &amp; text</a></p><h1>seq</h1><p class="kicker">Sequences — machines/seq.shoddy</p></div><img class="micon" src="../media/icons/seq.svg" alt="the seq machine&#39;s icon"></header>
-<nav class="pagertop" aria-label="Machines, in catalog order"><a href="csv.html">&larr; csv</a><a href="index.html">All machines</a><a href="str.html">str &rarr;</a></nav>
+<nav class="pagenav pagenav-top" aria-label="Machines, in catalog order"><a href="csv.html" class="prev"><span class="pnwrap"><span class="dir">&larr; Previous machine</span><span class="ttl">csv</span></span></a><a href="index.html" class="all">All machines</a><a class="next" href="str.html"><span class="pnwrap"><span class="ttl">str</span><span class="dir">Next machine &rarr;</span></span></a></nav>
 
 <h2 id="summary">Summary</h2>
 <p><code>seq</code> is the workhorse toolbox for the <em>structure</em> of
@@ -121,6 +121,86 @@ underneath a lot of other machines &mdash; anywhere a machine needs to
 search, filter, or slice, it tends to <code>Include</code> this one rather
 than roll its own.</p>
 
+<h2 id="builtins">Builtins</h2>
+<p class="tag">The nineteen sequence and higher-order words the runtime
+dispatches &mdash; not defined here, documented here</p>
+<p>These are not <code>seq</code>'s <code>Def</code>s. The engine dispatches
+them, and a <code>Def</code> whose name is a builtin is refused. They are
+listed on this page because <code>seq</code> is the sequences machine and
+everything it declares is written over them, and they need no
+<code>Include</code>. The same nineteen are documented in
+<code>machines/seq.shoddy</code>'s own header block.</p>
+<p><strong>Two sequence kinds, and the difference is the whole design.</strong>
+A <strong>List</strong> is a linked list: <code>First</code> and
+<code>Rest</code> are free, <code>Nth</code> walks. An <strong>Array</strong>
+is contiguous: <code>Nth</code> is O(1), and <code>Rest</code> would have to
+copy. Recurse over lists; index into arrays; <code>ToArray</code> and
+<code>ToList</code> convert. Everything here counts from 1, and all nineteen
+are pure — including <code>SetNth</code>, which answers a <em>new</em>
+sequence and leaves the original alone.</p>
+
+<h3>Higher-order</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>Map(xs, f)</td><td>Every element through <code>f</code>. Poly: an
+array maps to an array.</td></tr>
+<tr><td>Filter(xs, p)</td><td>The elements <code>p</code> answers True for, in
+order.</td></tr>
+<tr><td>Fold(xs, init, f)</td><td>Left fold: the accumulator starts at
+<code>init</code> and <code>f</code> sees it first. Almost every word in the
+reference below is <code>Fold</code> underneath.</td></tr>
+<tr><td>Each(xs, f)</td><td><code>f</code> applied to every element for its
+<em>effect</em>, answering nothing. The one word in this group that exists
+only for impure work.</td></tr>
+<tr><td>Times(n, f)</td><td><code>f</code> applied to 1, 2, … <code>n</code>,
+for effect. The counted loop.</td></tr>
+<tr><td>Range(lo, hi)</td><td>The whole numbers from <code>lo</code> to
+<code>hi</code> inclusive. An empty list when <code>hi</code> is below
+<code>lo</code>, so a loop over an empty range simply does nothing.</td></tr>
+</table>
+
+<h3>Asking about a sequence</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>Length(xs)</td><td>How many elements. <strong>List and array
+only</strong> — it <em>refuses</em> a string outright, which is why
+<a href="str.html">str</a>'s <code>Len</code> is a separate word and not a
+near miss for this one.</td></tr>
+<tr><td>IsEmpty(xs)</td><td>Whether it holds nothing.</td></tr>
+<tr><td>First(xs)</td><td>The first element. Aborts on an empty
+sequence.</td></tr>
+<tr><td>Rest(xs)</td><td>Everything after the first. <strong>Lists
+only</strong>: on an array it would have to copy, and the point of an array is
+that it does not.</td></tr>
+<tr><td>Nth(xs, k)</td><td>The <code>k</code>-th element, counting from 1.
+Aborts outside the range. O(1) on an array, a walk on a list.</td></tr>
+</table>
+
+<h3>Building a new one</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>Prepend(v, xs)</td><td><code>xs</code> with <code>v</code> on the
+front. <strong>Lists only</strong>, and free — this is the pair to
+<code>First</code>/<code>Rest</code> that structural recursion is written
+with.</td></tr>
+<tr><td>SetNth(xs, k, v)</td><td>A sequence with its <code>k</code>-th element
+replaced. <strong>The original is unchanged.</strong> Aborts outside the
+range.</td></tr>
+<tr><td>Reverse(xs)</td><td>The same elements, back to front.</td></tr>
+<tr><td>Concat(xs, ys)</td><td>The two joined. <code>Append</code> and
+<code>Flatten</code> below are written over it.</td></tr>
+<tr><td>Sort(xs)</td><td>Ascending, over all-numbers or all-strings. Mixed
+kinds have no order and are refused. It is a sequence operation and so it is
+documented here, though <a href="stats.html">stats</a> is its heaviest caller
+— every median, quantile and rank goes through it.</td></tr>
+<tr><td>Dim(n, init)</td><td>An <strong>Array</strong> of <code>n</code> copies
+of <code>init</code>. The way an array is made, since there is no array
+literal.</td></tr>
+<tr><td>ToArray(xs) / ToList(arr)</td><td>Between the two kinds. The usual
+shape is: build with list recursion, <code>ToArray</code> once, then
+index.</td></tr>
+</table>
+
 <h2 id="words">Word Reference</h2>
 <p class="tag">Every word, plus the Pair type</p>
 
@@ -190,9 +270,7 @@ results. <code>Zip</code> is just <code>ZipWith</code> with
 <h2 id="usedby">Who Uses It</h2>
 <table>
 <tr><th></th><th>User</th><th>How</th></tr>
-<tr><td class="uicon"><a href="alg.html"><img src="../media/icons/alg.svg" alt=""></a></td><td><a href="alg.html">alg</a></td><td><code>Flatten</code> is the whole of expansion and variable collection, <code>All</code> and <code>Any</code> carry the invariants, <code>Append</code> and <code>Taken</code> build the coefficient lists, and <code>IndexOf</code> looks up a binding.</td></tr>
-<tr><td class="uicon"><a href="seedalg.html"><img src="../media/icons/seedalg.svg" alt=""></a></td><td><a href="seedalg.html">seedalg</a></td><td>List plumbing under the root/factor list converters.</td></tr>
-<tr><td class="uicon"><a href="seedeng.html"><img src="../media/icons/seedeng.svg" alt=""></a></td><td><a href="seedeng.html">seedeng</a></td><td>List plumbing under every dict and list converter.</td></tr>
+<tr><td class="uicon"><a href="alg.html"><img src="../media/icons/alg.svg" alt=""></a></td><td><a href="alg.html">alg</a></td><td><code>Flatten</code> is the whole of expansion and variable collection, <code>All</code> and <code>Any</code> carry the invariants, <code>Append</code> and <code>Taken</code> build the coefficient lists, and <code>IndexOf</code> looks up a binding.</td></tr><tr><td class="uicon"><a href="seedeng.html"><img src="../media/icons/seedeng.svg" alt=""></a></td><td><a href="seedeng.html">seedeng</a></td><td>List plumbing under every dict and list converter.</td></tr>
 <tr><td class="uicon"><a href="seedfin.html"><img src="../media/icons/seedfin.svg" alt=""></a></td><td><a href="seedfin.html">seedfin</a></td><td>List plumbing under every dict and list converter.</td></tr>
 <tr><td class="uicon"><a href="seedjson.html"><img src="../media/icons/seedjson.svg" alt=""></a></td><td><a href="seedjson.html">seedjson</a></td><td>List plumbing under the JSON&harr;Cell converters.</td></tr>
 <tr><td class="uicon"><a href="seedlin.html"><img src="../media/icons/seedlin.svg" alt=""></a></td><td><a href="seedlin.html">seedlin</a></td><td>List plumbing under the dict converters.</td></tr>
@@ -257,11 +335,15 @@ named column, and <code>All</code> and <code>Append</code> carry the scanner.</t
 is joined once rather than copied per chunk.</td></tr>
 <tr><td class="uicon"><a href="json.html"><img src="../media/icons/json.svg" alt=""></a></td><td><a href="json.html">json</a></td><td><code>Zip</code> pairs keys with values, and <code>All</code> checks a document
 before it is written.</td></tr>
-<tr><td class="uicon"><a href="mps.html"><img src="../media/icons/mps.svg" alt=""></a></td><td><a href="mps.html">mps</a></td><td><code>Contains</code> tests a row name against the sections already seen.</td></tr>
+<tr><td class="uicon"><a href="mps.html"><img src="../media/icons/mps.svg" alt=""></a></td><td><a href="mps.html">mps</a></td><td><code>Contains</code> tests a row name against the sections already seen, and <code>IndexOf</code> turns a name into the column it stands for.</td></tr>
 <tr><td class="uicon"><a href="neural.html"><img src="../media/icons/neural.svg" alt=""></a></td><td><a href="neural.html">neural</a></td><td><code>ZipWith</code> walks a layer's weights against its inputs.</td></tr>
 <tr><td class="uicon"><a href="plotter.html"><img src="../media/icons/plotter.svg" alt=""></a></td><td><a href="plotter.html">plotter</a></td><td><code>Zip</code> pairs the series, <code>Taken</code> trims it to the axis,
 and <code>Any</code> and <code>CountIf</code> decide the ticks.</td></tr>
-<tr><td class="uicon"><a href="simplex.html"><img src="../media/icons/simplex.svg" alt=""></a></td><td><a href="simplex.html">simplex</a></td><td><code>Contains</code> tests an index against the current basis.</td></tr>
+<tr><td class="uicon"><a href="simplex.html"><img src="../media/icons/simplex.svg" alt=""></a></td><td><a href="simplex.html">simplex</a></td><td><code>Filter</code> picks out the rows that need an artificial variable.</td></tr>
+<tr><td class="uicon"><a href="sparse.html"><img src="../media/icons/sparse.svg" alt=""></a></td><td><a href="sparse.html">sparse</a></td><td><code>All</code> checks a column's shape, <code>Flatten</code> gathers its entries, and <code>Pair</code> holds them while they are sorted into columns.</td></tr>
+<tr><td class="uicon"><a href="mip.html"><img src="../media/icons/mip.svg" alt=""></a></td><td><a href="mip.html">mip</a></td><td><code>Any</code> checks the integer list against the variables that exist.</td></tr>
+<tr><td class="uicon"><a href="seedsparse.html"><img src="../media/icons/seedsparse.svg" alt=""></a></td><td><a href="seedsparse.html">seedsparse</a></td><td><code>All</code> asks a column's three shape questions before the machine can abort on them, and <code>Append</code> gathers the dict converters' lists.</td></tr>
+<tr><td class="uicon"><a href="seedmip.html"><img src="../media/icons/seedmip.svg" alt=""></a></td><td><a href="seedmip.html">seedmip</a></td><td><code>All</code> checks the integer list against the variables that exist, before MipOptimize would abort on it.</td></tr>
 <tr><td class="uicon"><a href="xml.html"><img src="../media/icons/xml.svg" alt=""></a></td><td><a href="xml.html">xml</a></td><td><code>Zip</code> and <code>Append</code> build the attribute list;
 <code>Any</code> and <code>All</code> walk the tree.</td></tr>
 <tr><td class="uicon"><a href="fin.html"><img src="../media/icons/fin.svg" alt=""></a></td><td><a href="fin.html">fin</a></td><td><code>Flatten</code> expands a cash-flow list; <code>Taken</code> walks the
@@ -282,9 +364,10 @@ running cash position.</td></tr>
 <p>None — seq is the trunk. It stands on the list builtins alone, which is
 why half the library can lean on it without dragging anything else in.</p>
 
-<nav class="pager" aria-label="Machines, in catalog order">
-  <a href="csv.html"><span class="dir">&larr; Previous machine</span><span class="ttl">csv</span></a>
-  <a class="next" href="str.html"><span class="dir">Next machine &rarr;</span><span class="ttl">str</span></a>
+<nav class="pagenav pagenav-bottom" aria-label="Machines, in catalog order">
+  <a href="csv.html" class="prev"><span class="pnwrap"><span class="dir">&larr; Previous machine</span><span class="ttl">csv</span></span></a>
+  <a href="index.html" class="all">All machines</a>
+  <a class="next" href="str.html"><span class="pnwrap"><span class="ttl">str</span><span class="dir">Next machine &rarr;</span></span></a>
 </nav>
 <footer>Named for the shoddy mills of the West Riding: Useless Things Made
 Useful Through Skill (<a href="../heritage.html">the heritage of the name</a>).<br>

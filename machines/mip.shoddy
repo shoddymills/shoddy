@@ -1,0 +1,188 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem mip.shoddy — Shoddy standard library: integer programming
+Rem
+Rem The public surface:
+Rem
+Rem   MipProblem(Prob As SpProblem, Ints As List Of Number)
+Rem       a linear program, plus the 1-based indices of the variables
+Rem       that have to come out whole
+Rem   MipOptimize(mp As MipProblem) As MipSolution
+Rem   MipFixed(mp As MipProblem, sol As MipSolution) As SpProblem
+Rem
+Rem   MipSolution: Status ("OPTIMAL" | "INFEASIBLE" |
+Rem                "UNBOUNDED-OR-INFEASIBLE" | "MAXITER" | "MAXNODES"),
+Rem                X, Cost, Nodes, Iterations (the node LPs' summed).
+Rem
+Rem Branch and bound over simplex.shoddy's SpOptimize. Solve the
+Rem relaxation; if every integer variable has landed within 0.000001 of
+Rem a whole number the node is a candidate answer; otherwise split the
+Rem worst offender in two — x <= Floor(v) down one branch, x >= Floor(v)
+Rem + 1 down the other — and solve both. A branch that cannot beat the
+Rem best answer so far is not explored, which is the "bound" half and
+Rem the only reason this finishes at all.
+Rem
+Rem Depth first, most-fractional variable, floor child first, and every
+Rem node re-solved from scratch. Why that is not as wasteful as it
+Rem sounds: the solver optimises the dual, so its basis is as wide as
+Rem the variable count and takes no notice of how many constraints
+Rem there are. A branch is one more constraint — in the dual, one more
+Rem single-entry column — so a node forty deep pivots on exactly the
+Rem same size of inverse as the root, and the sparse form appends that
+Rem column by sharing every column already there.
+Rem
+Rem No shadow prices here, and that is deliberate. The duals of the
+Rem last node's LP are the sensitivities of that node, not of the
+Rem integer problem, and an integer problem's true sensitivities are
+Rem not linear-programming duals at all. MipFixed is the honest way to
+Rem the useful half: it pins every integer variable at the answer's
+Rem value and hands back the LP that remains, whose duals and reduced
+Rem costs are exactly the sensitivity of the continuous variables given
+Rem the decisions taken.
+Rem
+Rem Ceiling: the LP under it is a hundreds-of-variables solver, and
+Rem branch and bound multiplies that by however many nodes the tree
+Rem takes. Pure throughout; effects stay with the caller.
+Rem ==================================================================
+
+Include "seq.shoddy"
+Include "sparse.shoddy"
+Include "simplex.shoddy"
+
+Type MipProblem
+    Prob As SpProblem
+    Ints As List Of Number
+
+Type MipSolution
+    Status     As String
+    X          As Array Of Number
+    Cost       As Number
+    Nodes      As Number
+    Iterations As Number
+
+Rem The walk's running state (internal plumbing). Found says whether
+Rem BestX and BestC mean anything yet; Halt is empty while the search
+Rem may continue and carries the status that stopped it if it could
+Rem not.
+
+Type MipState
+    Found As Boolean
+    BestX As Array Of Number
+    BestC As Number
+    Nodes As Number
+    Iters As Number
+    Halt  As String
+
+Rem ---- branching rows ---------------------------------------------------
+Rem A bound on one variable is a one-entry row: the sparse form appends
+Rem it by touching that single column and sharing the rest.
+
+Rem (The bound's own right-hand side is named `at` rather than `rhs`:
+Rem words are case-insensitive here, so a parameter spelled rhs would
+Rem take the Rhs accessor's place inside this Def and quietly break it.)
+
+Def MipBound(p As SpProblem, k As Number, coef As Number, at As Number) As SpProblem
+    SpProblem(Costs(p), SpAddRow(SA(p), Dim(1, k), Dim(1, coef)), Concat(Rhs(p), Dim(1, at)))
+
+Rem ---- choosing what to split on ---------------------------------------
+
+Def MipFracOf(v As Number) As Number
+    Min(v - Floor(v), Floor(v) + 1 - v)
+
+Rem The integer variable standing furthest from a whole number, 0 when
+Rem they are all within tolerance of one. Strict improvement, so a tie
+Rem stays with the one that came first in Ints - which MipOptimize
+Rem sorts, making that the lowest index.
+
+Def MipWorstAt(xs As Array Of Number, ints As List Of Number, i As Number, bestK As Number, bestF As Number) As Number
+    If i > Length(ints) Then
+        bestK
+    Else
+        Let f = MipFracOf(Nth(xs, Nth(ints, i)))
+        If f > 0.000001 And f > bestF Then
+            MipWorstAt(xs, ints, i + 1, Nth(ints, i), f)
+        Else
+            MipWorstAt(xs, ints, i + 1, bestK, bestF)
+
+Def MipWorst(xs As Array Of Number, ints As List Of Number) As Number
+    MipWorstAt(xs, ints, 1, 0, 0)
+
+Rem ---- the walk ---------------------------------------------------------
+Rem One self-recursive word, threading the incumbent and the counts
+Rem through. The first child is called for its answer and the second in
+Rem tail position, so the live depth is the depth of the tree and not
+Rem the number of nodes in it.
+Rem
+Rem Below the root, a relaxation that comes back UNBOUNDED-OR-INFEASIBLE
+Rem is pruned rather than passed on: a child's feasible region sits
+Rem inside its parent's, and the parent had an optimum, so the child
+Rem cannot be unbounded - it is empty, and empty is a prune. At the
+Rem root there is no such parent, and the status is the honest answer.
+
+Def MipSearch(p As SpProblem, ints As List Of Number, depth As Number, st As MipState) As MipState
+    If Halt(st) <> "" Then
+        st
+    Else
+        If Nodes(st) >= 100000 Then
+            With(st, Halt = "MAXNODES")
+        Else
+            Let sol = SpOptimize(p)
+            Let st1 = With(st, Nodes = Nodes(st) + 1, Iters = Iters(st) + Iterations(sol))
+            Select Case Status(sol)
+                Case "OPTIMAL"
+                    If Found(st1) And Cost(sol) >= BestC(st1) - 0.000001 Then
+                        Rem this branch cannot beat the answer in hand
+                        st1
+                    Else
+                        Let k = MipWorst(X(sol), ints)
+                        If k = 0 Then
+                            With(st1, Found = True, BestX = X(sol), BestC = Cost(sol))
+                        Else
+                            Let f = Floor(Nth(X(sol), k))
+                            Let below = MipSearch(MipBound(p, k, 0 - 1, 0 - f), ints, depth + 1, st1)
+                            MipSearch(MipBound(p, k, 1, f + 1), ints, depth + 1, below)
+                Case "MAXITER"
+                    With(st1, Halt = "MAXITER")
+                Case "INFEASIBLE"
+                    st1
+                Case Else
+                    If depth = 0 Then
+                        With(st1, Halt = Status(sol))
+                    Else
+                        st1
+
+Def MipAnswer(st As MipState) As MipSolution
+    If Halt(st) <> "" Then
+        MipSolution(Halt(st), Dim(0, 0), 0, Nodes(st), Iters(st))
+    Else
+        If Found(st) Then
+            MipSolution("OPTIMAL", BestX(st), BestC(st), Nodes(st), Iters(st))
+        Else
+            Rem the tree was walked out and nothing whole was found
+            MipSolution("INFEASIBLE", Dim(0, 0), 0, Nodes(st), Iters(st))
+
+Def MipOptimize(mp As MipProblem) As MipSolution
+    If Any(Ints(mp), Fn(k) => k < 1 Or k > Length(Costs(Prob(mp)))) Then
+        Error("MIP: INTEGER VARIABLE INDEX OUT OF RANGE")
+    Else
+        MipAnswer(MipSearch(Prob(mp), Sort(Ints(mp)), 0,
+                            MipState(False, Dim(0, 0), 0, 0, 0, "")))
+
+Rem ---- sensitivity, after the decisions are taken -----------------------
+Rem Every integer variable pinned at the value the answer gave it, as
+Rem the pair of one-entry rows an MPS FX bound would have been. Solve
+Rem what comes back and its shadow prices and reduced costs are the
+Rem sensitivity of the continuous variables given those decisions,
+Rem which is a question with a real answer - unlike the sensitivity of
+Rem the integer problem itself, which no LP dual reports.
+
+Def MipPin(p As SpProblem, k As Number, v As Number) As SpProblem
+    MipBound(MipBound(p, k, 1, v), k, 0 - 1, 0 - v)
+
+Def MipFixed(mp As MipProblem, sol As MipSolution) As SpProblem
+    If Status(sol) <> "OPTIMAL" Then
+        Error("MIPFIXED: THERE IS NO OPTIMUM TO PIN THE INTEGERS AT")
+    Else
+        Fold(Ints(mp), Prob(mp), Fn(p, k) => MipPin(p, k, Round(Nth(X(sol), k))))

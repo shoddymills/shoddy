@@ -23,7 +23,7 @@
 
 
 <header class="mast has-icon"><div><p class="eyebrow"><a href="index.html#optimization">The Machines &middot; Optimization</a></p><h1>simplex</h1><p class="kicker">Linear Programming — machines/simplex.shoddy</p></div><img class="micon" src="../media/icons/simplex.svg" alt="the simplex machine&#39;s icon"></header>
-<nav class="pagertop" aria-label="Machines, in catalog order"><a href="plotter.html">&larr; plotter</a><a href="index.html">All machines</a><a href="mps.html">mps &rarr;</a></nav>
+<nav class="pagenav pagenav-top" aria-label="Machines, in catalog order"><a href="plotter.html" class="prev"><span class="pnwrap"><span class="dir">&larr; Previous machine</span><span class="ttl">plotter</span></span></a><a href="index.html" class="all">All machines</a><a class="next" href="mps.html"><span class="pnwrap"><span class="ttl">mps</span><span class="dir">Next machine &rarr;</span></span></a></nav>
 
 <h2 id="summary">Summary</h2>
 <p><code>simplex</code> solves the kind of problem where you're trying to do
@@ -37,7 +37,19 @@ requirement — the exact amounts to use, the total cost, and a little extra
 bookkeeping that tells you how sensitive that answer is to the numbers you
 gave it. Under the covers it runs the <em>simplex method</em>, the
 seventy-year-old workhorse algorithm for exactly this shape of problem, built
-on top of the <a href="matrix.html">matrix</a> machine for the arithmetic.</p>
+on the <a href="sparse.html">sparse</a> machine for the constraints and the
+<a href="matrix.html">matrix</a> machine for the small dense square at the
+heart of it.</p>
+
+<p class="note"><strong>Two doors, one solver.</strong> <code>Optimize</code>
+takes a <code>Problem</code> with an ordinary dense
+<a href="matrix.html">Matrix</a> and is the one to learn first.
+<code>SpOptimize</code> takes an <code>SpProblem</code> holding the same
+constraints in <a href="sparse.html">sparse</a> form, for the big thin problems
+where writing every zero down would be the expensive part. They are not two
+implementations: <code>Optimize</code> converts and calls
+<code>SpOptimize</code>, so both walk the same pivots and answer the same
+numbers. Integer answers are <a href="mip.html">mip</a>, one floor up.</p>
 
 <h2 id="why">Why It's Useful</h2>
 <p>An enormous number of real decisions have the same shape: you have some
@@ -153,6 +165,12 @@ either target would cost you one more. That's the "sensitivity analysis"
 managers pay real money for: it tells you which constraint is really pinching.
 <code>Reduced</code> does the mirror-image thing per variable, and
 <code>Iterations</code> reports how many corners the method had to walk.</li>
+<li><strong>For a big problem, come in the sparse door.</strong> If your
+constraint grid is large and mostly zeros — which is what a real problem read
+out of a file usually is — build an <code>SpProblem</code> and call
+<code>SpOptimize</code>. It is the same solver and the same answer, with the
+zeros never written down. The <a href="mps.html">mps</a> machine's
+<code>LoadMpsSp</code> hands you one directly.</li>
 </ul>
 
 <h2 id="hood">Under the Hood: Walking the Corners</h2>
@@ -182,6 +200,18 @@ zero first, and that's the one that leaves. Swap the two, update the basis
 inverse, and step to the next corner. When no variable has a positive reduced
 cost, there's no downhill edge left: you're on the answer, and the loop reads
 the optimal basis back out.</p>
+<p><strong>Pricing is where the sparsity pays, and it pays exactly.</strong>
+Pricing is the bulk of the work — it visits every column on every step — and in
+a real problem most of what it visits is zeros. So the dual matrix is a
+<a href="sparse.html">Sparse</a>: its slack and artificial columns are single
+stored numbers rather than a materialised identity, and
+<code>SpColDot</code> multiplies only what is actually there. The same goes for
+<code>FTran</code>, which forms the step direction by reaching into just the
+rows the entering column occupies. This changes no answer, and that is not a
+hope but a property: a term that was zero contributed nothing to the sum, so
+leaving it out moves not one bit of the result. The pivots, the iteration
+count, and the last decimal place are all what they were when every zero was
+written down and read back.</p>
 <p><strong>Getting a feasible start with big-M.</strong> The simplex method has
 to begin standing on <em>some</em> valid corner, and finding one isn't always
 free. If every cost is zero or positive, the obvious slack start is already
@@ -204,9 +234,19 @@ from the big-M start undone. Everything is pure: <code>Optimize</code> reads its
 <code>Problem</code>, does its arithmetic, and hands back a <code>Solution</code>,
 touching nothing outside itself. Shoddy by name — but the algorithm inside is
 the real thing.</p>
+<p><strong>How big is too big.</strong> The basis inverse is kept whole and
+dense, and it is <code>n</code>&times;<code>n</code> where <code>n</code> is the
+number of <em>variables</em> — not constraints. Every pivot rewrites all of it,
+so that square is the ceiling: this is a solver for problems with hundreds of
+variables, and it does not mind how many constraints they have. (Constraints
+are cheap now in a way they were not: each is one sparse column in the dual.)
+Past that, the answer the field reached long ago is to stop keeping the inverse
+whole — the product form of the inverse, or a sparse LU with the update
+mathematics that goes with it. Both are real machinery and neither is here.
+They would fit behind these same two words if the day came.</p>
 
 <h2 id="words">Word Reference</h2>
-<p class="tag">Every word, plus the Problem and Solution types</p>
+<p class="tag">Every word, plus the Problem, SpProblem and Solution types</p>
 
 <h3>The types</h3>
 <table>
@@ -217,6 +257,11 @@ the real thing.</p>
 and one column per variable. <code>Rhs</code> is an array of numbers, one per
 constraint. The problem is read as: minimise <code>Costs . x</code> subject to
 <code>A x &gt;= Rhs</code> and <code>x &gt;= 0</code>.</td></tr>
+<tr><td>SpProblem(Costs, SA, Rhs)</td><td>The same statement of the same
+problem, with <code>SA</code> a <a href="sparse.html">Sparse</a> instead of a
+dense <code>Matrix</code>. What to build when the grid is large and mostly
+zeros; <a href="mps.html">mps</a> and <a href="mip.html">mip</a> both speak
+this one.</td></tr>
 <tr><td>Solution(Status, X, Cost, DualPrices, Reduced, Iterations)</td><td>What
 <code>Optimize</code> hands back. <code>Status</code> is a string
 (<code>"OPTIMAL"</code>, <code>"INFEASIBLE"</code>,
@@ -234,11 +279,20 @@ or meaningless.</td></tr>
 <table>
 <tr><th>Word</th><th>Description</th></tr>
 <tr><td>Optimize(p)</td><td>Solves the <code>Problem</code> <code>p</code> and
-returns a <code>Solution</code>. Runs the revised simplex method internally;
-pure, with no side effects. Always check <code>Status</code> before trusting the
-rest. This is the whole public surface of the machine — everything else is
-internal plumbing.</td></tr>
+returns a <code>Solution</code>. Pure, with no side effects. Always check
+<code>Status</code> before trusting the rest. Internally it converts
+<code>A</code> to sparse and calls <code>SpOptimize</code>, so it is the same
+walk to the same answer.</td></tr>
+<tr><td>SpOptimize(p)</td><td>The same, for an <code>SpProblem</code> — the
+solver proper, and the one to call when the problem is big enough that
+building a dense <code>Matrix</code> first would be the expensive part.
+Refuses a problem whose matrix does not match the length of its costs and its
+right-hand side.</td></tr>
 </table>
+<p class="note">Those two are the whole public surface. Everything else in the
+file — the pricing scan, the ratio test, the basis-inverse update, the dual
+construction — is internal plumbing, described above for the curious rather
+than offered as words to call.</p>
 
 
 <h2 id="usedby">Who Uses It</h2>
@@ -246,8 +300,13 @@ internal plumbing.</td></tr>
 <tr><th></th><th>User</th><th>How</th></tr>
 <tr><td class="uicon"><a href="mps.html"><img src="../media/icons/mps.svg" alt=""></a></td><td><a href="mps.html">mps</a></td><td>Builds its output to
 fit — <code>LoadMpsModel</code> returns exactly the problem
-<code>Optimize</code> consumes.</td></tr>
+<code>Optimize</code> consumes, and <code>LoadMpsSp</code> the one
+<code>SpOptimize</code> does.</td></tr>
+<tr><td class="uicon"><a href="mip.html"><img src="../media/icons/mip.svg" alt=""></a></td><td><a href="mip.html">mip</a></td><td>Every node of its search
+is an <code>SpOptimize</code>, and the <code>Solution</code> that comes back
+decides whether to branch, prune, or keep the answer.</td></tr>
 <tr><td class="uicon"><a href="seedsimplex.html"><img src="../media/icons/seedsimplex.svg" alt=""></a></td><td><a href="seedsimplex.html">seedsimplex</a></td><td><code>Problem</code>, <code>Optimize</code> and <code>Solution</code>, bridged onto the reckoner stack, both records as dicts.</td></tr>
+<tr><td class="uicon"><a href="seedmip.html"><img src="../media/icons/seedmip.svg" alt=""></a></td><td><a href="seedmip.html">seedmip</a></td><td><code>SpProblem</code> is what an integer problem is built around at the keyboard, and <code>SpOptimize</code> is what <code>LPSOLVE</code> runs on the problem <code>MIPFIXED</code> hands back.</td></tr>
 <tr><td class="uicon"><a href="../mills/simplex-from-mps.html"><img src="../media/simplex-blend.svg" alt=""></a></td><td><a href="../mills/simplex-from-mps.html">simplex-from-mps</a></td><td><code>Optimize</code>
 solves what the MPS file describes; the report prints its status, objective
 and sensitivity numbers.</td></tr>
@@ -256,15 +315,21 @@ and sensitivity numbers.</td></tr>
 <h2 id="uses">The Machines It Uses</h2>
 <table>
 <tr><th></th><th>Machine</th><th>Why</th></tr>
-<tr><td class="uicon"><a href="matrix.html"><img src="../media/icons/matrix.svg" alt=""></a></td><td><a href="matrix.html">matrix</a></td><td>The tableau is
-a matrix — <code>Ident</code>, <code>MatFromRows</code>, <code>Dot</code>,
-<code>MatVec</code>.</td></tr>
-<tr><td class="uicon"><a href="seq.html"><img src="../media/icons/seq.svg" alt=""></a></td><td><a href="seq.html">seq</a></td><td><code>Contains</code> tests an index against the current basis.</td></tr>
+<tr><td class="uicon"><a href="sparse.html"><img src="../media/icons/sparse.svg" alt=""></a></td><td><a href="sparse.html">sparse</a></td><td>The constraint
+matrix the solver actually walks — <code>SpColDot</code> prices a column,
+<code>SpTransp</code> turns the primal round once to build the dual, and
+<code>SpFromMat</code> is how a dense <code>Problem</code> gets in.</td></tr>
+<tr><td class="uicon"><a href="matrix.html"><img src="../media/icons/matrix.svg" alt=""></a></td><td><a href="matrix.html">matrix</a></td><td>The basis inverse
+is a dense matrix — <code>Ident</code>, <code>MatFromRows</code>,
+<code>MatGet</code>, <code>Dot</code> — as is the <code>A</code> a
+<code>Problem</code> states.</td></tr>
+<tr><td class="uicon"><a href="seq.html"><img src="../media/icons/seq.svg" alt=""></a></td><td><a href="seq.html">seq</a></td><td><code>Filter</code> picks out the rows that need an artificial variable.</td></tr>
 </table>
 
-<nav class="pager" aria-label="Machines, in catalog order">
-  <a href="neural.html"><span class="dir">&larr; Previous machine</span><span class="ttl">neural</span></a>
-  <a class="next" href="mps.html"><span class="dir">Next machine &rarr;</span><span class="ttl">mps</span></a>
+<nav class="pagenav pagenav-bottom" aria-label="Machines, in catalog order">
+  <a href="plotter.html" class="prev"><span class="pnwrap"><span class="dir">&larr; Previous machine</span><span class="ttl">plotter</span></span></a>
+  <a href="index.html" class="all">All machines</a>
+  <a class="next" href="mps.html"><span class="pnwrap"><span class="ttl">mps</span><span class="dir">Next machine &rarr;</span></span></a>
 </nav>
 <footer>Named for the shoddy mills of the West Riding: Useless Things Made
 Useful Through Skill (<a href="../heritage.html">the heritage of the name</a>).<br>

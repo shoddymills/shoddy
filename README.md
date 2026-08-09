@@ -242,6 +242,7 @@ batteries included. Full word references in
   <tr>
     <td align="left" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/seq.html"><img src="docs/media/icons/seq.svg" alt="seq" width="120"></a><br><b>seq</b><br><sub>Map, Filter, Fold and friends</sub></td>
     <td align="left" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/str.html"><img src="docs/media/icons/str.svg" alt="str" width="120"></a><br><b>str</b><br><sub>string helpers</sub></td>
+    <td align="left" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/regex.html"><img src="docs/media/icons/regex.svg" alt="regex" width="120"></a><br><b>regex</b><br><sub>regular expressions, compiled</sub></td>
   </tr>
 </table>
 
@@ -270,6 +271,7 @@ batteries included. Full word references in
 <table>
   <tr>
     <td align="left" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/matrix.html"><img src="docs/media/icons/matrix.svg" alt="matrix" width="120"></a><br><b>matrix</b><br><sub>flat row-major matrices</sub></td>
+    <td align="left" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/sparse.html"><img src="docs/media/icons/sparse.svg" alt="sparse" width="120"></a><br><b>sparse</b><br><sub>matrices that are mostly zeros</sub></td>
     <td align="left" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/lin.html"><img src="docs/media/icons/lin.svg" alt="lin" width="120"></a><br><b>lin</b><br><sub>solve, factor, eigenvalues</sub></td>
     <td align="left" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/alg.html"><img src="docs/media/icons/alg.svg" alt="alg" width="120"></a><br><b>alg</b><br><sub>formulae as values</sub></td>
   </tr>
@@ -292,6 +294,7 @@ batteries included. Full word references in
   <tr>
     <td align="left" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/simplex.html"><img src="docs/media/icons/simplex.svg" alt="simplex" width="120"></a><br><b>simplex</b><br><sub>linear programming</sub></td>
     <td align="left" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/mps.html"><img src="docs/media/icons/mps.svg" alt="mps" width="120"></a><br><b>mps</b><br><sub>the LP file format</sub></td>
+    <td align="left" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/mip.html"><img src="docs/media/icons/mip.svg" alt="mip" width="120"></a><br><b>mip</b><br><sub>answers that must be whole</sub></td>
   </tr>
 </table>
 
@@ -312,6 +315,7 @@ batteries included. Full word references in
     <td align="left" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/turtle.html"><img src="docs/media/icons/turtle.svg" alt="turtle" width="120"></a><br><b>turtle</b><br><sub>purely functional turtles</sub></td>
     <td align="left" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/keys.html"><img src="docs/media/icons/keys.svg" alt="keys" width="120"></a><br><b>keys</b><br><sub>key codes to GameKeys</sub></td>
     <td align="left" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/vt100.html"><img src="docs/media/icons/vt100.svg" alt="vt100" width="120"></a><br><b>vt100</b><br><sub>terminal control codes</sub></td>
+    <td align="left" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/terminal.html"><img src="docs/media/icons/terminal.svg" alt="terminal" width="120"></a><br><b>terminal</b><br><sub>the raw console builtins</sub></td>
     <td align="left" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/buzzer.html"><img src="docs/media/icons/buzzer.svg" alt="buzzer" width="120"></a><br><b>buzzer</b><br><sub>notes, MML tunes, three waves</sub></td>
   </tr>
 </table>
@@ -322,10 +326,11 @@ batteries included. Full word references in
   <tr>
     <td align="left" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/cuttle.html"><img src="docs/media/icons/cuttle.svg" alt="cuttle" width="120"></a><br><b>cuttle</b><br><sub>a runtime stack, reified</sub></td>
     <td align="left" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/reckoner.html"><img src="docs/media/icons/reckoner.svg" alt="reckoner" width="120"></a><br><b>reckoner</b><br><sub>RPN lines against a dictionary</sub></td>
+    <td align="left" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/lineshaft.html"><img src="docs/media/icons/lineshaft.svg" alt="lineshaft" width="120"></a><br><b>lineshaft</b><br><sub>Call, Ifte, Error, Assert</sub></td>
   </tr>
 </table>
 
-Thirteen *reckoner seeds* bridge the rest of the standard library into that
+*Reckoner seeds* bridge the rest of the standard library into that
 engine; they have no bearing outside it, so they aren't tiled here — see
 [the seed list on reckoner's own page](https://shoddymills.github.io/shoddy/machines/reckoner.html#seeds).
 
@@ -357,7 +362,7 @@ is in [the heritage of the name](https://shoddymills.github.io/shoddy/heritage.h
 |-------|-------------------------------------------------------------|
 | `src/`| The .NET solution: `Shoddy.Runtime` · `Shoddy.Devil` (front-end) · `Shoddy.Mill` · `Shoddy.Compiler` · `Shoddy.Tests` |
 | `bin/`| Build output — the published `mill` toolchain lands here after `dotnet publish` (not committed; build it, then run `bin/mill`) |
-| `machines/`| Standard library (the machines): `seq` `str` `bool` `math` `matrix` `stats` `random` `neural` `money` `file` `recio` `dict` `isam` `net` `simplex` `mps` `clock` `vt100` `keys` `scribbler` `turtle` `plotter` `buzzer` |
+| `machines/`| Standard library (the machines): `seq` `str` `regex` `bool` `math` `matrix` `stats` `random` `neural` `money` `file` `recio` `dict` `isam` `net` `simplex` `mps` `clock` `vt100` `keys` `scribbler` `turtle` `plotter` `buzzer` |
 | `mills/`| Complete example programs (the mills), each with its own build wrapper: `mungo-caverns` (Colossal Cave Adventure) · `oregon` (overland-trail game, after MECC's 1971 original) · `pac-vt100` · `invaders` · `demographics` (neural income model, regression) · `iris` (neural species classifier, ~4s to train) · `simplex-from-mps` (LP solver) |
 | `docs/`| `index.html` (start here) · `guide.html` · `tutorials/` (three build-alongs) · `setup.html` (one-time machine setup) · `vscode.html` (editor) · `build.html` (the toolchain) · `stack.html` (the stack, traced) · `spec.html` · `quickref.html` · `errors.html` (every message and its cause) · `assistants.html` (grounding an AI) · `heritage.html` (the name) · `machines/` and `mills/` (one page each) |
 | `tst/`| `libtest.shoddy` (assertion suite) · `examples.shoddy` · `gradebook.shoddy` · `simplex.shoddy` · demos (`scribbler-` `turtle-` `plotter-` `buzzer-` `net-demo.shoddy`) · `golden/` (the constitution) |

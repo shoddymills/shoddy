@@ -57,6 +57,104 @@ Rem ==================================================================
 
 Include "str.shoddy"
 
+Rem ---- the builtins this machine is built on -------------------------
+Rem
+Rem NOT Defs. The engine dispatches these, and a Def whose name is a
+Rem builtin is refused; they are written here because net.shoddy is
+Rem where a reader goes looking for them. The flat reference is section
+Rem 10 of docs/spec.html, and the stack effects below are the ones the
+Rem compiler's own Effects.cs table declares.
+Rem
+Rem HANDLES ARE NUMBERS, drawn from the same table of sixteen that
+Rem binary files use. Payloads are Strings carrying ONE BYTE PER
+Rem CHARACTER — the Latin-1 convention, the same one ReadFile uses.
+Rem
+Rem THE WHOLE FAMILY IS GATED behind --allow-net, with two exceptions
+Rem that exist so it can be reached from guarded code at all:
+Rem NetAllowed, which has to stay askable when the answer is no, and
+Rem TryTcpConnect, which reports rather than dies. Everything else
+Rem aborts if the network is off.
+Rem
+Rem ON A PLAIN SOCKET NOTHING BLOCKS. A secured one is the deliberate
+Rem exception, and the header above says what changes.
+
+Rem NetAllowed() As Boolean                           ( -- flag )
+Rem     Whether this mill was started with --allow-net. NOT itself
+Rem     gated, and that is the point: without it nothing could tell "no
+Rem     network" from "no answer" without ending the run. A program
+Rem     cannot turn the capability on; it can only ask.
+
+Rem TCPConnect(host As String, port As Number) As Number
+Rem                                                   ( host port -- h )
+Rem     Connect and answer the handle. Bounded 10-second handshake;
+Rem     aborts if unreachable, if the network is off, or if all sixteen
+Rem     handles are taken.
+
+Rem TryTcpConnect(host As String, port As Number) As Result
+Rem                                                   ( host port -- result )
+Rem     TCPConnect with all three of those deaths reported instead:
+Rem     Ok(handle), or Err(why, 0) where why is CANNOT REACH
+Rem     'host:port' (…) ending in one of NETWORK IS DISABLED, TOO MANY
+Rem     OPEN SOCKETS, TIMED OUT or NO SUCH HOST OR REFUSED — a closed
+Rem     set of Shoddy's own, never the platform's socket text.
+
+Rem TryTcpRequest(host As String, port As Number, secure As Boolean, msg As String) As Result
+Rem                                                   ( host port secure msg -- result )
+Rem     A WHOLE CONVERSATION in one word: connect, optionally secure,
+Rem     send, read to the end of the reply, close — answering Ok(reply)
+Rem     or the same shape of Err. It exists because guarding the STEPS
+Rem     is not enough: Send and Recv die eight ways between them on
+Rem     ordinary network faults, so a caller composing guarded parts
+Rem     would have to close the socket on each of a dozen error paths
+Rem     and would leak it on the one it missed. Here the socket cannot
+Rem     outlive the word. It is also the only network read that CANNOT
+Rem     HANG — it is bounded by a deadline, where a poll-until-closed
+Rem     loop never returns against a keep-alive peer.
+
+Rem TCPListen(host As String, port As Number) As Number
+Rem                                                   ( host port -- h )
+Rem     Bind and listen, answering the listening handle. The host is an
+Rem     IP literal: "127.0.0.1" for loopback, "0.0.0.0" for any.
+
+Rem TCPAccept(h As Number) As Number                  ( h -- h2 )
+Rem     A connection handle, or 0 when none is waiting. Never blocks,
+Rem     which is what WaitAccept below polls around.
+
+Rem TCPSend(h As Number, s As String)                 ( h s -- )
+Rem     Send the bytes.
+
+Rem TCPRecv(h As Number, max As Number) As String     ( h max -- s )
+Rem     Up to max bytes; "" when nothing is pending OR the peer has
+Rem     closed. TCPEof is what tells those two apart, and the pair is
+Rem     why a drain loop needs both.
+
+Rem TCPEof(h As Number) As Boolean                    ( h -- flag )
+Rem     Whether the peer has closed. On a secured handle this reads a
+Rem     flag rather than polling.
+
+Rem TCPPoll(h As Number) As Boolean                   ( h -- flag )
+Rem     Whether Recv or Accept would find something right now. REFUSED
+Rem     on a secured handle: once TLS records wrap the stream a
+Rem     TCP-level poll cannot answer honestly about plaintext, so it
+Rem     aborts rather than lie.
+
+Rem TCPPeer(h As Number) As String                    ( h -- s )
+Rem     The remote end as "ip:port".
+
+Rem TCPClose(h As Number)                             ( h -- )
+Rem     Close the handle and free its slot.
+
+Rem TCPSecure(h As Number, host As String)            ( h host -- )
+Rem     Upgrade a connected socket to TLS IN PLACE. The host drives both
+Rem     SNI and certificate name validation, and a failed handshake
+Rem     closes the handle. From this moment that handle follows the
+Rem     secured contract above — Recv blocks, Poll refuses. A program
+Rem     cannot ask a handle whether it is secured, so know which kind
+Rem     you are holding; in practice you always do, because you secured
+Rem     it. Server-side TLS is not supported.
+
+Rem ---- this machine's own words --------------------------------------
+
 Rem ---- client ------------------------------------------------------
 
 Def Connect(host As String, port As Number) As Number

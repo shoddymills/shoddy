@@ -137,12 +137,14 @@ where the name comes from — it will end up in the comments.&gt;
 
 <h2 id="facts">3. The fact sheet</h2>
 
-<p>Copy this into the brief's <b>Facts</b> section. These are the things that
-make Shoddy code idiomatic rather than merely valid, and the places a
-confident guess goes wrong. Nothing here is obscure — it's all in the
-<a href="../guide.html">guide</a>, the <a href="../spec.html">spec</a> and
-the <a href="../quickref.html">quick reference</a> — but an assistant that
-has it up front writes the right thing the first time.</p>
+<p>Copy this into the brief's <b>Facts</b> section. Notice what it does
+<em>not</em> contain: no list of machines, no table of word names, no argument
+orders. Those live in the sources, and a copy of them in a brief is a copy
+that is wrong the first time a machine gains a word. What is written out here
+is only the <b>shape</b> of the language — the facts a confident guess gets
+wrong — because <em>an assistant cannot look up what it doesn't know it is
+missing</em>. It will write a <code>For</code> loop fluently and never reach
+for a link. These facts are here to make it reach.</p>
 
 <p class="note"><span class="lab">Tip</span> The same facts, packaged as a
 standing instructions file your tools load by themselves — plus worked
@@ -152,39 +154,43 @@ project and this section becomes a reminder rather than a paste.</p>
 
 <pre><code>## Facts — do not re-derive these
 
+This section is the SHAPE of the language, and nothing else. No word list,
+no machine list, no argument orders: those are in the sources at the bottom
+and you are to read them there rather than work from anything I paste. What
+is written out here is only what you would otherwise get confidently wrong
+without ever knowing to check.
+
 Purity and shape
 - Nothing mutates. `Let` binds a name once; "updating" a record returns a
   new record (`With(r, Field = v)`). There is no assignment and no `goto`.
-- There is no `for` loop. Iteration is recursion, or Map / Filter / Fold /
-  Each / Times over a list. `Fold` is the workhorse: thread a value through.
-- Indentation is structure — no `end`, no braces, no semicolons.
-- A Def's last line is its result; there is no `return`.
+- There is no `For`, `While`, `Do`, `Next` or `Wend`. Iteration is
+  recursion, or Map / Filter / Fold / Each / Times. `Fold` is the workhorse:
+  it threads a value through a sequence.
+- Indentation is structure — no `End`, no braces, no semicolons.
+- A Def's last line is its result; there is no `Return`.
 - Effects live at the edge: Print and Input belong in Main, not in the
-  functions that compute.
+  words that compute.
 
 Facts that decide a design
 - `Number` is an IEEE double and the ONLY numeric type. No integers, and no
-  bitwise operators — bit work is `bool.shoddy`'s words (`BoolBitAnd`,
-  `BoolShl`, `BoolMask`), never `&amp;` or `&lt;&lt;`; a design that wants the
-  operators themselves is the wrong design here.
-- The network is gated behind <code>--allow-net</code>. A plain socket never
-  blocks; a secured socket blocks on <code>Recv</code> and REFUSES
-  <code>Ready</code>, because a poll cannot see through TLS records.
-- A picture does not need a screen. <code>ScribblerSave(sc, path)</code> writes
-  the buffer to a PNG with no window involved, and <code>mill run
-  --no-window</code> opens every scribbler hidden — together, how a program
-  draws a chart into a file from a script.
+  bitwise operators — bit work is a machine's words, never `&amp;` or
+  `&lt;&lt;`; a design that wants the operators themselves is the wrong design
+  here.
+- No exceptions. `Error(msg)` aborts with a line number. Anything a caller
+  should be able to handle comes back as a VALUE: the predeclared `Option`
+  (`Some`/`None`) and `Result` (`Ok`/`Err`), neither needing an Include.
 - Arrays are fixed-length with O(1) `Nth`; lists are cons cells built for
   recursion. Index into arrays, recurse over lists. `SetNth` returns a copy.
 - Self-tail-recursion compiles to a loop; MUTUAL recursion consumes stack.
-- No exceptions. `Error(msg)` aborts. Anything a caller should handle must
-  come back as a value.
+- The network is gated behind `--allow-net`. A plain socket never blocks; a
+  secured socket is the deliberate exception and blocks on its read.
 
 Names and types
 - Names are case-insensitive: `total`, `Total` and `TOTAL` are one word.
-- Declaring `Type T` creates a constructor plus one accessor function per
+- Declaring `Type T` creates a constructor plus one accessor word per
   field. Fields are POSITIONAL — inserting one mid-record shifts every
-  later argument silently. Records compare structurally with `=`.
+  later argument silently. Records compare structurally with `=`; lists
+  compare by identity.
 - An accessor loses every naming contest, so never name a local, parameter
   or Def after a field the program reads by accessor.
 - Booleans are not numbers. `If n Then` is an error; write `If n <> 0 Then`.
@@ -197,7 +203,19 @@ Syntax that surprises
 - A line continues onto the next only inside open brackets; parenthesize a
   wrapped condition.
 - A bare name in argument position is passed as a function, not called:
-  `Map(xs, Double)`.
+  `Map(xs, Double)`. An operator with its trailing argument pre-loaded is
+  the same thing: `Filter(xs, &gt;=(100))`.
+
+House style — narrower than the language allows
+- Defs are SMALL: the mean body across the standard library is four lines.
+  Past that, write another named Def rather than nesting deeper.
+- `Select Case` to take a sum type apart or match a range; plain `If` for a
+  two-way test. `Case Type(a, b)` destructures a record and binds its fields.
+- A word that aborts usually has a total twin answering `Result` or
+  `Option`, with the aborting one defined OVER the total one so there is one
+  set of rules and not two.
+- Point-free pipelines are legal but the library hardly uses them. Nested
+  calls and named helpers are the house style.
 
 Structure and tooling
 - Split every program: a pure core (`NAME-core.shoddy`) that computes and
@@ -210,16 +228,20 @@ Structure and tooling
   including stats does not hand you seq's `ZipWith`.
 - The linter runs on every compile and warns about stack-effect mistakes,
   shadowed accessors, and operator sections. A clean build prints nothing.
-- Programs that open a window run under `mill run`; console programs can
-  also be woven to a .NET assembly.
 
 Sources — read these instead of guessing
+- `machines/*` — the standard library in readable Shoddy: the definitive
+  answer on any library word's name, arguments and types, and the house
+  style to write in. Never guess which machines exist — list the directory.
+- `mills/*` — complete programs built core-shell-test, like this one.
 - `docs/*` — the documentation: `quickref.html` (the language on one page),
   `spec.html` (grammar and semantics), `errors.html` (every message with its
-  cause and fix), `machines/*.html` (a word reference per machine).
-- `machines/*` — the standard library in readable Shoddy: the definitive
-  answer on any library word, and the house style to write in.
-- `mills/*` — complete programs built core-shell-test, like this one.</code></pre>
+  cause and fix), `machines/index.html` (the catalogue) and
+  `machines/NAME.html` (one machine's words).
+- Not in a checkout? The same material is published:
+  https://shoddymills.github.io/shoddy/quickref.html , /spec.html ,
+  /machines/index.html , and https://github.com/shoddymills/shoddy for
+  `machines/` and `mills/` as source.</code></pre>
 
 <h2 id="plan">4. Demand a plan, and read the questions</h2>
 

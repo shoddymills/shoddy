@@ -52,6 +52,8 @@ public static class Effects
         ["VAL"] = new(1, 1), ["ISNUMERIC"] = new(1, 1), ["VALOR"] = new(2, 1),
         ["LEFT"] = new(2, 1), ["RIGHT"] = new(2, 1), ["MID"] = new(3, 1),
         ["CHR"] = new(1, 1), ["ASC"] = new(1, 1),
+        ["CODES"] = new(1, 1), ["FROMCODES"] = new(1, 1),
+        ["CODEAT"] = new(2, 1), ["INSTRFROM"] = new(3, 1),
         ["UPPER"] = new(1, 1), ["LOWER"] = new(1, 1),
         // console and files
         ["PRINT"] = new(1, 0), ["READFILE"] = new(1, 1),

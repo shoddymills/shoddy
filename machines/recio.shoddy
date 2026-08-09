@@ -18,7 +18,83 @@ Rem     PutRec(f, 2, 20, wrstudent, Student("GRACE", 91))
 Rem     GetRec(f, 2, 20, rdstudent)
 Rem
 Rem Records are numbered from 1. Effectful, like all file words.
+Rem
+Rem The twelve binary builtins it is a layer over are documented one by
+Rem one immediately below: BOpen TryBOpen BClose Seek BPos BSize PutNum
+Rem GetNum PutBool GetBool PutStr GetStr.
 Rem ==================================================================
+
+Rem ---- the builtins this machine is built on -------------------------
+Rem
+Rem NOT Defs. The engine dispatches these, and a Def whose name is a
+Rem builtin is refused; they are written here because recio.shoddy is
+Rem where a reader goes looking for them. The flat reference is section
+Rem 10 of docs/spec.html, and the stack effects below are the ones the
+Rem compiler's own Effects.cs table declares.
+Rem
+Rem CLASSIC BASIC RECORD FILES. A handle is a Number, drawn from the
+Rem same table of sixteen that sockets use. Byte positions are 1-BASED,
+Rem like everything else in this language. Every transfer word advances
+Rem the position by exactly the width it moved, which is what makes
+Rem record layouts computable: a Name(12) + Score(8) record is 20 bytes,
+Rem so record k starts at 1 + (k - 1) * 20 — which is RecPos below, and
+Rem the whole of what this machine adds.
+Rem
+Rem READING PAST END OF FILE ABORTS. So does over-running a PutStr
+Rem field. Everything here is effectful — Main's side of the program.
+
+Rem BOpen(path As String) As Number                   ( path -- h )
+Rem     Open path read/write and answer its handle, CREATING the file if
+Rem     it is absent. Up to 16 handles may be open at once. Aborts if it
+Rem     cannot open.
+Rem
+Rem     THE OPEN-OR-CREATE IS A TRAP WORTH NAMING: asking whether a
+Rem     binary file is there by opening it leaves an empty file behind
+Rem     when it was not. TryBOpen is the word for that question.
+
+Rem TryBOpen(path As String) As Result                ( path -- result )
+Rem     Ok(handle), or Err(why, 0) with why = CANNOT OPEN 'path' (…)
+Rem     from the same closed set TryReadFile uses, plus TOO MANY OPEN
+Rem     FILES. It differs from BOpen twice over and both differences are
+Rem     the point: the failure is REPORTED rather than fatal, and it
+Rem     opens an EXISTING FILE ONLY. Since nothing can learn a file's
+Rem     size or its leading bytes without opening it, this is the only
+Rem     way to pre-flight a binary read at all.
+
+Rem BClose(h As Number)                               ( h -- )
+Rem     Close the handle and free its slot.
+
+Rem Seek(h As Number, pos As Number)                  ( h pos -- )
+Rem     Move to byte position pos, counting from 1.
+
+Rem BPos(h As Number) As Number                       ( h -- pos )
+Rem     Where the handle is now, counting from 1.
+
+Rem BSize(h As Number) As Number                      ( h -- bytes )
+Rem     How many bytes the file holds. RecCount below is this divided by
+Rem     the record size.
+
+Rem PutNum(h As Number, x As Number)                  ( h x -- )
+Rem     Write x as an 8-byte IEEE double and advance 8.
+
+Rem GetNum(h As Number) As Number                     ( h -- x )
+Rem     Read an 8-byte double and advance 8.
+
+Rem PutBool(h As Number, b As Boolean)                ( h b -- )
+Rem     Write b as one byte and advance 1.
+
+Rem GetBool(h As Number) As Boolean                   ( h -- b )
+Rem     Read one byte as a Boolean and advance 1.
+
+Rem PutStr(h As Number, s As String, width As Number) ( h s width -- )
+Rem     Write EXACTLY width bytes: s, zero-padded out to the field. An
+Rem     over-length string ABORTS rather than being silently truncated,
+Rem     which is what keeps a fixed layout honest.
+
+Rem GetStr(h As Number, width As Number) As String    ( h width -- s )
+Rem     Read exactly width bytes and strip the zero padding back off.
+
+Rem ---- this machine's own words --------------------------------------
 
 Def RecPos(k As Number, size As Number) As Number
     1 + (k - 1) * size

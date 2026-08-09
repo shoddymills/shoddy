@@ -1,0 +1,749 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem regextest.shoddy — test program for machines/regex.shoddy
+Rem
+Rem Assert-driven, in the xmltest.shoddy / jsontest.shoddy pattern: it
+Rem prints what it is doing and stops the run at the first assertion
+Rem that fails, ending with ALL ASSERTIONS PASSED when it does not.
+Rem
+Rem EVERY EXPECTED VALUE HERE IS A KNOWN ANSWER, WORKED BY HAND. Not one
+Rem was recorded from a run, because a recorded span proves what the
+Rem implementation did and not what it should have done.
+Rem
+Rem THE CENTREPIECE IS THE DIFFERENTIAL GRID. This file carries a
+Rem SECOND, INDEPENDENT MATCHER — a naive recursive backtracker over the
+Rem same parsed tree, written for obviousness with no regard for speed.
+Rem It is the oracle. A grid of hand-written patterns is run against a
+Rem grid of hand-written subjects and the two matchers are asserted to
+Rem agree on the span AND on every capture, in every cell. This is what
+Rem property-based testing looks like in this tree: tst/alg.shoddy tests
+Rem integrals by differentiating them back rather than by memorised
+Rem forms, and this tests a matcher by a second matcher for the same
+Rem reason.
+Rem
+Rem It works as an oracle only because R4.3 fixes LEFTMOST-FIRST
+Rem semantics, which is exactly what a naive backtracker has. Under
+Rem POSIX leftmost-longest the engine would have no independent grader
+Rem at all. THE ENGINE THAT MUST NOT SHIP IS THE ONE THAT GRADES THE
+Rem ENGINE THAT DOES.
+Rem
+Rem The oracle is depth-capped and iteration-capped, and BOTH CAPS ARE
+Rem ASSERTED NEVER TO BE REACHED by the grid — an oracle that silently
+Rem gives up is worse than none. Patterns whose repetition body can
+Rem match empty are deliberately kept out of the grid, because a
+Rem backtracker loops on them where the virtual machine's visited set
+Rem does not; those are asserted against the machine alone, and against
+Rem hand-worked answers.
+Rem
+Rem THERE IS NO "WHAT CANNOT BE TESTED HERE" PARAGRAPH, AND THAT IS A
+Rem RESULT AND NOT AN OVERSIGHT. Every other machine suite in this tree
+Rem carries one: Shoddy has no catchable errors, so the aborting half of
+Rem each guard pair cannot be exercised without killing the run, and is
+Rem verified by hand and named in the header instead. This file has none
+Rem to name. regex.shoddy contains no Error, so every refusal it can
+Rem produce is a VALUE this file asserts on both arms, and 100% of the
+Rem failure surface is under test.
+Rem
+Rem That sentence is also an acceptance check, and it is greppable:
+Rem
+Rem     grep -c "Error(" machines/regex.shoddy      must be 0
+Rem     grep -c "Chr("   machines/regex.shoddy      must be 0
+Rem
+Rem If either ever is not, this header is a lie and the paragraph has to
+Rem come back. Neither grep is sufficient on its own — every read of a
+Rem character in that machine is bounds-checked by its caller, and no
+Rem grep can check that.
+Rem
+Rem LIST-VALUED RESULTS ARE NEVER COMPARED WITH =. A List compares by
+Rem identity in this runtime, so two structurally identical lists are
+Rem not equal and an assertion that says they are proves nothing.
+Rem Everything list-valued here is compared with ToArray(...) =
+Rem ToArray(...), which compares structurally, or element-wise by Nth.
+Rem This is the trap most likely to produce a green suite that says
+Rem nothing, and tst/neuraltest.shoddy is the precedent.
+Rem
+Rem CASE IS FOLDED BY THE MILL, so a Case binder named p shadows a Def
+Rem named P for the todo of the body. Every helper here is named at
+Rem least three letters long for that reason.
+Rem
+Rem Nothing here touches a file, a socket, a window, or the terminal
+Rem beyond Print.
+Rem
+Rem Build (once): build.ps1 build
+Rem Run:          bin\mill run tst\regextest.shoddy    (from the repo root)
+Rem ==================================================================
+
+Include "../machines/regex.shoddy"
+
+Rem ---- reading a pattern, for a suite full of literal patterns --------
+Rem With no aborting twin (and there is deliberately none — see D11), a
+Rem suite of literal patterns would be a suite of Select Case. This is
+Rem the one convenience, and it lives HERE rather than in the machine:
+Rem a bad pattern in this file is a BROKEN TEST, and Assert says so with
+Rem the pattern and the reason named, where Error would only say that
+Rem the program died.
+
+Def Reads(pat As String) As RxProg
+    ReadsAs(pat, RxNoOpts())
+
+Def ReadsAs(pat As String, how As RxOpts) As RxProg
+    Select Case RxRead(pat, how)
+        Case Ok(prg)
+            prg
+        Case Err(wy, ofs)
+            AssertBad(pat, wy, ofs)
+        Case Else
+            AssertBad(pat, "RxRead ANSWERED NEITHER Ok NOR Err", 0)
+
+Def AssertBad(pat As String, wy As String, ofs As Number) As RxProg
+    Assert(False, "THE TEST'S OWN PATTERN " & pat & " DID NOT READ: " & wy & " AT " & Str(ofs))
+    Reads("x")
+
+Rem ---- the two halves of a refusal, read without a match at each call --
+
+Def Why(pat As String) As String
+    Select Case RxRead(pat, RxNoOpts())
+        Case Err(wy, ofs)
+            wy
+        Case Else
+            ""
+
+Def Ats(pat As String) As Number
+    Select Case RxRead(pat, RxNoOpts())
+        Case Err(wy, ofs)
+            ofs
+        Case Else
+            0 - 1
+
+Rem Whether a refusal names the construct. Contains is seq.shoddy's, and
+Rem this file does not include seq, so the test is Instr — which is a
+Rem builtin and answers 0 for absent.
+Def Names(pat As String, phrase As String) As Boolean
+    Instr(Why(pat), phrase) > 0
+
+Rem ---- reading a hit without a match at each call ---------------------
+Rem A miss answers 0 for the start, which no real hit can, so a suite
+Rem line can assert a start and a length as two numbers.
+
+Def HitAt(opt As Option) As Number
+    Select Case opt
+        Case Some(hit)
+            RxHitAt(hit)
+        Case Else
+            0
+
+Def HitLen(opt As Option) As Number
+    Select Case opt
+        Case Some(hit)
+            RxHitLen(hit)
+        Case Else
+            0 - 1
+
+Def HitText(opt As Option) As String
+    Select Case opt
+        Case Some(hit)
+            RxHitText(hit)
+        Case Else
+            ""
+
+Def Missed(opt As Option) As Boolean
+    Select Case opt
+        Case Some(hit)
+            False
+        Case Else
+            True
+
+Rem A group as a printable answer, with unset and empty told apart —
+Rem which is the whole point of R4.2 and would be invisible if both came
+Rem back as "".
+Def GrpOf(opt As Option, gn As Number) As String
+    Select Case opt
+        Case Some(hit)
+            GrpShow(RxGroup(hit, gn))
+        Case Else
+            "<no match>"
+
+Def GrpShow(opt As Option) As String
+    Select Case opt
+        Case Some(txt)
+            "[" & txt & "]"
+        Case Else
+            "<unset>"
+
+Rem ---- list-valued answers, compared structurally ---------------------
+Rem Never with =. Starts and lengths are pulled out as Arrays Of Number
+Rem so a whole RxFindAll can be asserted in one line.
+
+Def Starts(hs As List Of RxHit) As Array Of Number
+    ToArray(Map(hs, RxHitAt))
+
+Def Lens(hs As List Of RxHit) As Array Of Number
+    ToArray(Map(hs, RxHitLen))
+
+Def Texts(hs As List Of RxHit) As Array Of String
+    ToArray(Map(hs, RxHitText))
+
+Rem ==================================================================
+Rem THE ORACLE — a second, independent matcher
+Rem
+Rem A naive recursive backtracker over the SAME parsed tree the machine
+Rem compiles, written for obviousness with no regard for speed. It is
+Rem the thing regex.shoddy exists NOT to be, which is exactly what makes
+Rem it a fair grader: it reaches leftmost-first semantics by construction
+Rem — try the alternatives in written order, take as much as you can and
+Rem give it back a character at a time — where the machine reaches the
+Rem same answer by a completely different route.
+Rem
+Rem It matches with an explicit CONTINUATION LIST: the nodes still to be
+Rem matched after this one. A group opens by writing its start slot and
+Rem pushing a shut marker onto that list, which is how the end slot gets
+Rem written at exactly the right moment on exactly the right path.
+Rem
+Rem Two caps, both asserted never to be reached by the grid:
+Rem
+Rem   * OMaxDepth bounds the recursion, because a backtracker that runs
+Rem     away takes the run with it.
+Rem   * An unbounded repetition is given a concrete ceiling of the
+Rem     characters actually left, which is exact for any body that must
+Rem     consume something and is what keeps a body that need not consume
+Rem     from looping forever. Patterns of the second kind are kept OUT
+Rem     of the grid and asserted against the machine alone.
+Rem ==================================================================
+
+Def OMaxDepth() As Number
+    400
+
+Type ONode = ONil | OLit(OLitC As Number) | OCls(OClsNeg As Boolean, OClsRs As List Of RxRange) | OAny | OBol | OEol | OWb(OWbNeg As Boolean) | OCat(OCatL As ONode, OCatR As ONode) | OAlt(OAltL As ONode, OAltR As ONode) | ORep(ORepB As ONode, ORepLo As Number, ORepHi As Number, ORepLz As Boolean) | OGrp(OGrpB As ONode, OGrpN As Number) | OShut(OShutN As Number)
+
+Type OSt = OWin(OWEnd As Number, OWCaps As Array Of Number) | OLose | ODeep
+
+Type OPat
+    OPRoot As ONode
+    OPCaps As Number
+
+Rem The translation bakes folding exactly as the compiler does, so the
+Rem two matchers are compared on the same dialect and not on two.
+
+Def OOf(t As RxNode, how As RxOpts) As ONode
+    Select Case t
+        Case RxNil
+            ONil()
+        Case RxLit(lc)
+            OLitOf(lc, how)
+        Case RxCls(neg, rs)
+            OClsOf(neg, rs, how)
+        Case RxAny
+            OAny()
+        Case RxBol
+            OBol()
+        Case RxEol
+            OEol()
+        Case RxWb(nb)
+            OWb(nb)
+        Case RxCat(lf, rt)
+            OCat(OOf(lf, how), OOf(rt, how))
+        Case RxAlt(lf, rt)
+            OAlt(OOf(lf, how), OOf(rt, how))
+        Case RxRep(bd, lo, hi, lz)
+            ORep(OOf(bd, how), lo, hi, lz)
+        Case RxGrp(bd, gn)
+            OGrp(OOf(bd, how), gn)
+        Case Else
+            ONil()
+
+Def OLitOf(lc As Number, how As RxOpts) As ONode
+    If RxFold(how) And RxHasCase(lc) Then
+        OCls(False, RxCaseBoth(lc))
+    Else
+        OLit(lc)
+
+Def OClsOf(neg As Boolean, rs As List Of RxRange, how As RxOpts) As ONode
+    If RxFold(how) Then
+        OCls(neg, RxFoldRanges(rs))
+    Else
+        OCls(neg, rs)
+
+Def OPatOf(pat As String, how As RxOpts) As OPat
+    Select Case RxPAlt(Codes(pat), Len(pat), 1, 0, 0, how)
+        Case RxTook(nd, nx, ng)
+            OPat(OOf(nd, how), ng)
+        Case Else
+            OPat(ONil(), 0)
+
+Rem ---- the matcher ----------------------------------------------------
+
+Def OM(cs As Array Of Number, n As Number, how As RxOpts, t As ONode, k As Number, caps As Array Of Number, todo As List Of ONode, d As Number) As OSt
+    If d > OMaxDepth() Then
+        ODeep()
+    Else
+        OM2(cs, n, how, t, k, caps, todo, d)
+
+Def OM2(cs As Array Of Number, n As Number, how As RxOpts, t As ONode, k As Number, caps As Array Of Number, todo As List Of ONode, d As Number) As OSt
+    Select Case t
+        Case ONil
+            OGo(cs, n, how, k, caps, todo, d)
+        Case OLit(lc)
+            OEat(cs, n, how, k, caps, todo, d, k <= n And RxUnitAt(cs, n, k) = lc)
+        Case OCls(neg, rs)
+            OEat(cs, n, how, k, caps, todo, d, k <= n And (RxInSet(RxUnitAt(cs, n, k), rs) <> neg))
+        Case OAny
+            OEat(cs, n, how, k, caps, todo, d, k <= n And (RxDotAll(how) Or RxUnitAt(cs, n, k) <> 10))
+        Case OBol
+            OHold(cs, n, how, k, caps, todo, d, RxIsBolAt(cs, n, k, RxMulti(how)))
+        Case OEol
+            OHold(cs, n, how, k, caps, todo, d, RxIsEolAt(cs, n, k, RxMulti(how)))
+        Case OWb(nb)
+            OHold(cs, n, how, k, caps, todo, d, RxIsWbAt(cs, n, k) <> nb)
+        Case OCat(lf, rt)
+            OM(cs, n, how, lf, k, caps, Prepend(rt, todo), d + 1)
+        Case OAlt(lf, rt)
+            OAltGo(cs, n, how, lf, rt, k, caps, todo, d)
+        Case OGrp(bd, gn)
+            OM(cs, n, how, bd, k, SetNth(caps, 2 * gn + 1, k), Prepend(OShut(gn), todo), d + 1)
+        Case OShut(gn)
+            OGo(cs, n, how, k, SetNth(caps, 2 * gn + 2, k), todo, d)
+        Case ORep(bd, lo, hi, lz)
+            ORepGo(cs, n, how, bd, lo, ORepCeil(n, k, lo, hi), lz, k, caps, todo, d)
+        Case Else
+            OLose()
+
+Rem One character consumed, or the branch dies.
+Def OEat(cs As Array Of Number, n As Number, how As RxOpts, k As Number, caps As Array Of Number, todo As List Of ONode, d As Number, ate As Boolean) As OSt
+    If ate Then
+        OGo(cs, n, how, k + 1, caps, todo, d)
+    Else
+        OLose()
+
+Rem An assertion consumes nothing.
+Def OHold(cs As Array Of Number, n As Number, how As RxOpts, k As Number, caps As Array Of Number, todo As List Of ONode, d As Number, held As Boolean) As OSt
+    If held Then
+        OGo(cs, n, how, k, caps, todo, d)
+    Else
+        OLose()
+
+Def OGo(cs As Array Of Number, n As Number, how As RxOpts, k As Number, caps As Array Of Number, todo As List Of ONode, d As Number) As OSt
+    If IsEmpty(todo) Then
+        OWin(k, caps)
+    Else
+        OM(cs, n, how, First(todo), k, caps, Rest(todo), d + 1)
+
+Rem The left branch is tried first and the right only if it loses, which
+Rem is leftmost-first spelled as control flow. A depth answer propagates
+Rem rather than falling through, or a give-up would read as a refusal.
+Def OAltGo(cs As Array Of Number, n As Number, how As RxOpts, lf As ONode, rt As ONode, k As Number, caps As Array Of Number, todo As List Of ONode, d As Number) As OSt
+    OAltGo2(cs, n, how, rt, k, caps, todo, d, OM(cs, n, how, lf, k, caps, todo, d + 1))
+
+Def OAltGo2(cs As Array Of Number, n As Number, how As RxOpts, rt As ONode, k As Number, caps As Array Of Number, todo As List Of ONode, d As Number, got As OSt) As OSt
+    Select Case got
+        Case OLose
+            OM(cs, n, how, rt, k, caps, todo, d + 1)
+        Case Else
+            got
+
+Rem An unbounded max becomes the characters actually left, never fewer
+Rem than the minimum. Exact for a body that must consume something.
+Def ORepCeil(n As Number, k As Number, lo As Number, hi As Number) As Number
+    If hi = 0 - 1 Then
+        Max(lo, n - k + 1)
+    Else
+        hi
+
+Def ORepGo(cs As Array Of Number, n As Number, how As RxOpts, bd As ONode, lo As Number, hiE As Number, lz As Boolean, k As Number, caps As Array Of Number, todo As List Of ONode, d As Number) As OSt
+    If lo > 0 Then
+        OM(cs, n, how, bd, k, caps, Prepend(ORep(bd, lo - 1, hiE - 1, lz), todo), d + 1)
+    Else
+        If hiE <= 0 Then
+            OGo(cs, n, how, k, caps, todo, d)
+        Else
+            If lz Then
+                ORepLess(cs, n, how, bd, hiE, lz, k, caps, todo, d)
+            Else
+                ORepMore(cs, n, how, bd, hiE, lz, k, caps, todo, d)
+
+Rem Greedy: one more repetition first, the continuation only if that
+Rem whole path loses.
+Def ORepMore(cs As Array Of Number, n As Number, how As RxOpts, bd As ONode, hiE As Number, lz As Boolean, k As Number, caps As Array Of Number, todo As List Of ONode, d As Number) As OSt
+    ORepMore2(cs, n, how, k, caps, todo, d, OM(cs, n, how, bd, k, caps, Prepend(ORep(bd, 0, hiE - 1, lz), todo), d + 1))
+
+Def ORepMore2(cs As Array Of Number, n As Number, how As RxOpts, k As Number, caps As Array Of Number, todo As List Of ONode, d As Number, got As OSt) As OSt
+    Select Case got
+        Case OLose
+            OGo(cs, n, how, k, caps, todo, d)
+        Case Else
+            got
+
+Rem Lazy: the continuation first, one more repetition only if it loses.
+Def ORepLess(cs As Array Of Number, n As Number, how As RxOpts, bd As ONode, hiE As Number, lz As Boolean, k As Number, caps As Array Of Number, todo As List Of ONode, d As Number) As OSt
+    ORepLess2(cs, n, how, bd, hiE, lz, k, caps, todo, d, OGo(cs, n, how, k, caps, todo, d))
+
+Def ORepLess2(cs As Array Of Number, n As Number, how As RxOpts, bd As ONode, hiE As Number, lz As Boolean, k As Number, caps As Array Of Number, todo As List Of ONode, d As Number, got As OSt) As OSt
+    Select Case got
+        Case OLose
+            OM(cs, n, how, bd, k, caps, Prepend(ORep(bd, 0, hiE - 1, lz), todo), d + 1)
+        Case Else
+            got
+
+Rem ---- the leftmost search, and the two renderings compared -----------
+
+Def OFind(op As OPat, subj As String, how As RxOpts) As OSt
+    OFindGo(op, Codes(subj), Len(subj), how, 1)
+
+Def OFindGo(op As OPat, cs As Array Of Number, n As Number, how As RxOpts, k As Number) As OSt
+    If k > n + 1 Then
+        OLose()
+    Else
+        OFindGo2(op, cs, n, how, k, OM(cs, n, how, OPRoot(op), k, SetNth(Dim(2 * OPCaps(op) + 2, 0), 1, k), { }, 0))
+
+Def OFindGo2(op As OPat, cs As Array Of Number, n As Number, how As RxOpts, k As Number, got As OSt) As OSt
+    Select Case got
+        Case OWin(en, cps)
+            OWin(en, SetNth(cps, 2, en))
+        Case ODeep
+            ODeep()
+        Case Else
+            OFindGo(op, cs, n, how, k + 1)
+
+Rem The span and every capture, as one line. Comparing renderings rather
+Rem than values is deliberate: a disagreeing cell prints what each side
+Rem said, which is the whole diagnostic.
+
+Def VmShow(prg As RxProg, subj As String) As String
+    Select Case RxFind(prg, subj)
+        Case Some(hit)
+            Str(RxHitAt(hit)) & ":" & Str(RxHitLen(hit)) & CapsShow(hit, 1, RxCount(prg))
+        Case Else
+            "-"
+
+Def CapsShow(hit As RxHit, gn As Number, ncap As Number) As String
+    If gn > ncap Then
+        ""
+    Else
+        " " & GrpShow(RxGroup(hit, gn)) & CapsShow(hit, gn + 1, ncap)
+
+Def OrcShow(op As OPat, subj As String, how As RxOpts) As String
+    Select Case OFind(op, subj, how)
+        Case OWin(en, cps)
+            Str(Nth(cps, 1)) & ":" & Str(en - Nth(cps, 1)) & OCapsShow(subj, cps, 1, OPCaps(op))
+        Case ODeep
+            "<THE ORACLE GAVE UP>"
+        Case Else
+            "-"
+
+Def OCapsShow(subj As String, cps As Array Of Number, gn As Number, ncap As Number) As String
+    If gn > ncap Then
+        ""
+    Else
+        " " & OCapShow(subj, Nth(cps, 2 * gn + 1), Nth(cps, 2 * gn + 2)) & OCapsShow(subj, cps, gn + 1, ncap)
+
+Def OCapShow(subj As String, a As Number, b As Number) As String
+    If a = 0 Or b = 0 Then
+        "<unset>"
+    Else
+        "[" & Mid(subj, a, b - a) & "]"
+
+Rem ---- the grid -------------------------------------------------------
+Rem Sized so the whole suite stays well under a second. The patterns
+Rem cover alternation nesting, quantifier nesting, classes, anchors,
+Rem boundaries, lazy forms and counted repetition; the subjects cover
+Rem the empty string, one character, and strings that match at the
+Rem start, the end, the middle and not at all.
+Rem
+Rem NOT ONE PATTERN HERE HAS A REPETITION WHOSE BODY CAN MATCH EMPTY.
+Rem A backtracker loops on those and the machine does not, so they are
+Rem asserted against the machine alone, further down, against answers
+Rem worked by hand. Keeping them out is what lets the oracle's caps be
+Rem asserted never to be reached rather than merely hoped for.
+
+Def GridPats() As List Of String
+    { "a", "ab", "abc", "a|b", "a|ab", "ab|a", "a*", "a+", "a?",
+      "a*b", "a+b", "a?b", "a*?b", "a+?b", ".", ".*", ".+", "a.*b",
+      "a.*?b", "a.b", "[ab]", "[ab]+", "[^a]", "[^a]+", "[a-c]+",
+      "\\d", "\\d+", "\\w+", "\\s", "\\W", "^a", "a$", "^a$", "\\ba\\b",
+      "\\Ba", "(a)", "(a)(b)", "((a)b)", "(a|b)", "(a|b)+", "(ab)+",
+      "(a|b)(c|d)", "x(a|b)?y", "(a?)b", "a{2}", "a{1,2}", "a{1,2}?",
+      "a{2,}", "(ab|a)(b?)c", "[ab]{2,3}" }
+
+Def GridSubjs() As List Of String
+    { "", "a", "b", "ab", "ba", "aab", "abb", "abc", "xaby", "aaa",
+      "bbb", "xyz", "a b", "a\nb", "cab", "abcabc", "aabbcc", "ab12",
+      "  a", "a-b" }
+
+Def GridGo(pats As List Of String, subs As List Of String, how As RxOpts, cells As Number) As Number
+    If IsEmpty(pats) Then
+        cells
+    Else
+        GridGo(Rest(pats), subs, how, GridPat(First(pats), subs, how, cells))
+
+Def GridPat(pat As String, subs As List Of String, how As RxOpts, cells As Number) As Number
+    GridPatGo(ReadsAs(pat, how), OPatOf(pat, how), pat, subs, how, cells)
+
+Def GridPatGo(prg As RxProg, op As OPat, pat As String, subs As List Of String, how As RxOpts, cells As Number) As Number
+    If IsEmpty(subs) Then
+        cells
+    Else
+        GridPatGo(prg, op, pat, Rest(subs), how, cells + GridCell(prg, op, pat, First(subs), how))
+
+Def GridCell(prg As RxProg, op As OPat, pat As String, subj As String, how As RxOpts) As Number
+    Assert(Instr(OrcShow(op, subj, how), "GAVE UP") = 0, "THE ORACLE'S CAPS ARE NEVER REACHED — " & pat & " OVER " & Shown(subj))
+    Assert(VmShow(prg, subj) = OrcShow(op, subj, how), "THE VM AND THE ORACLE AGREE ON " & pat & " OVER " & Shown(subj) & " — VM SAID " & VmShow(prg, subj) & ", ORACLE SAID " & OrcShow(op, subj, how))
+    1
+
+Rem A subject with its newlines made visible, so a failing cell names
+Rem something a reader can find.
+Def Shown(subj As String) As String
+    RxReplace(Reads("\\n"), Quoted(subj), "\\n")
+
+Def Quoted(subj As String) As String
+    "'" & subj & "'"
+
+Rem ==================================================================
+Rem THE SUITE
+Rem ==================================================================
+
+Def Main()
+    Print("=== regextest: machines/regex.shoddy ===")
+    Print("")
+
+    Print("--- parsing: every accepted form ---")
+    Rem One line per row of the dialect table, on the ACCEPTING arm:
+    Rem each form reads, compiles, and matches what it says it matches.
+    Assert(RxTest(Reads("abc"), "xxabcyy"), "LITERAL CHARACTERS")
+    Assert(RxTest(Reads("a.c"), "abc") And Not RxTest(Reads("a.c"), "a\nc"), "DOT IS ANY CHARACTER EXCEPT A NEWLINE")
+    Assert(RxTest(ReadsAs("a.c", RxOpts(False, True, False)), "a\nc"), "AND ANY CHARACTER AT ALL UNDER DOT-ALL")
+    Assert(RxTest(Reads("[abc]"), "zzbzz") And Not RxTest(Reads("[abc]"), "zzz"), "A CLASS")
+    Assert(RxTest(Reads("[a-z]"), "9m9") And Not RxTest(Reads("[a-z]"), "999"), "A RANGE")
+    Assert(RxTest(Reads("[^a-z]"), "ab9cd") And Not RxTest(Reads("[^a-z]"), "abcd"), "A NEGATED CLASS")
+    Assert(RxTest(Reads("[a-z0-9_]+"), "ok_9") And Not RxTest(Reads("[a-z0-9_]"), "-"), "SEVERAL RANGES AT ONCE")
+    Assert(RxTest(Reads("[]a]"), "]") And RxTest(Reads("[]a]"), "a"), "A CLOSING BRACKET FIRST IS A LITERAL ONE")
+    Assert(RxTest(Reads("[-a]"), "-") And RxTest(Reads("[a-]"), "-"), "A DASH FIRST OR LAST IS A LITERAL ONE")
+    Assert(RxTest(Reads("\\d"), "x7") And Not RxTest(Reads("\\d"), "xx"), "THE DIGIT CLASS")
+    Assert(RxTest(Reads("\\D"), "x7x") And Not RxTest(Reads("\\D"), "77"), "AND ITS NEGATION")
+    Assert(RxTest(Reads("\\w"), "-_-") And Not RxTest(Reads("\\w"), "---"), "THE WORD CLASS")
+    Assert(RxTest(Reads("\\W"), "a-a") And Not RxTest(Reads("\\W"), "aaa"), "AND ITS NEGATION")
+    Assert(RxTest(Reads("\\s"), "a b") And Not RxTest(Reads("\\s"), "ab"), "THE SPACE CLASS")
+    Assert(RxTest(Reads("\\S"), "  x  ") And Not RxTest(Reads("\\S"), "     "), "AND ITS NEGATION")
+    Assert(RxTest(Reads("a\\nb"), "a\nb") And RxTest(Reads("a\\tb"), "a\tb") And RxTest(Reads("a\\rb"), "a\rb"), "THE CONTROL ESCAPES")
+    Assert(RxTest(Reads("\\x41"), "xAx") And RxTest(Reads("\\x7A"), "z"), "A CODE UNIT BY TWO HEX DIGITS")
+    Assert(RxTest(Reads("a\\.b"), "a.b") And Not RxTest(Reads("a\\.b"), "axb"), "AN ESCAPED METACHARACTER IS LITERAL")
+    Assert(RxTest(Reads("\\{\\}\\[\\]\\(\\)\\*\\+\\?\\|\\^\\$\\-\\\\"), "{}[]()*+?|^$-\\"), "EVERY ONE OF THEM, IN ONE PATTERN")
+    Assert(HitAt(RxFind(Reads("^ab"), "abab")) = 1 And Missed(RxFind(Reads("^b"), "ab")), "CARET IS THE START OF THE SUBJECT")
+    Assert(HitAt(RxFind(Reads("ab$"), "abab")) = 3 And Missed(RxFind(Reads("a$"), "ab")), "DOLLAR IS THE END OF IT")
+    Assert(RxTest(ReadsAs("^b", RxOpts(False, False, True)), "a\nb"), "AND UNDER MULTILINE THEY ARE THE ENDS OF A LINE")
+    Assert(RxTest(ReadsAs("a$", RxOpts(False, False, True)), "a\nb"), "BOTH OF THEM")
+    Assert(RxTest(Reads("\\bcat\\b"), "a cat sat") And Not RxTest(Reads("\\bcat\\b"), "concatenate"), "A WORD BOUNDARY")
+    Assert(RxTest(Reads("\\Bcat"), "concat") And Not RxTest(Reads("\\Bcat"), "a cat"), "AND ITS NEGATION")
+    Assert(RxCount(Reads("(a)(b)")) = 2 And RxCount(Reads("(?:a)(b)")) = 1, "A CAPTURING GROUP COUNTS AND A NON-CAPTURING ONE DOES NOT")
+    Assert(RxTest(Reads("(?:ab)+c"), "ababc"), "AND A NON-CAPTURING GROUP STILL GROUPS")
+    Assert(RxTest(ReadsAs("(?i)abc", RxNoOpts()), "ABC"), "AN INLINE FLAG PREFIX")
+    Assert(RxTest(ReadsAs("(?s)a.c", RxNoOpts()), "a\nc"), "ANY OF THE THREE")
+    Assert(RxTest(ReadsAs("(?ims)a.c", RxNoOpts()), "A\nC"), "AND ALL THREE AT ONCE")
+    Assert(HitText(RxFind(Reads("a|b"), "zzbzz")) = "b", "ALTERNATION")
+    Assert(HitLen(RxFind(Reads("ab*"), "abbb")) = 4 And HitLen(RxFind(Reads("ab+"), "abbb")) = 4 And HitLen(RxFind(Reads("ab?"), "abbb")) = 2, "THE GREEDY QUANTIFIERS")
+    Assert(HitLen(RxFind(Reads("ab*?"), "abbb")) = 1 And HitLen(RxFind(Reads("ab+?"), "abbb")) = 2 And HitLen(RxFind(Reads("ab??"), "abbb")) = 1, "AND THE LAZY ONES")
+    Assert(HitLen(RxFind(Reads("a{3}"), "aaaaa")) = 3, "A COUNT")
+    Assert(HitLen(RxFind(Reads("a{2,}"), "aaaaa")) = 5, "A MINIMUM")
+    Assert(HitLen(RxFind(Reads("a{2,4}"), "aaaaa")) = 4, "A RANGE OF COUNTS, GREEDY")
+    Assert(HitLen(RxFind(Reads("a{2,4}?"), "aaaaa")) = 2, "AND LAZY")
+    Assert(RxTest(Reads("(?:)"), "anything"), "THE EMPTY GROUP PARSES AND MATCHES NOTHING, ANYWHERE")
+
+    Print("--- parsing: every refusal, by reason and offset ---")
+    Rem Both arms of every refusal in the dialect: the reason NAMES the
+    Rem construct, and the offset is the 1-based place it was written.
+    Assert(Names("(a)\\1", "BACKREFERENCES") And Ats("(a)\\1") = 4, "BACKREFERENCES, BY NAME AND AT THE BACKSLASH")
+    Assert(Names("\\k<n>", "NAMED BACKREFERENCES"), "AND NAMED ONES")
+    Assert(Names("(?=a)", "LOOKAHEAD") And Ats("(?=a)") = 1, "LOOKAHEAD")
+    Assert(Names("(?!a)", "NEGATIVE LOOKAHEAD"), "NEGATIVE LOOKAHEAD")
+    Assert(Names("(?<=a)", "LOOKBEHIND") And Ats("(?<=a)") = 1, "LOOKBEHIND")
+    Assert(Names("(?<!a)", "NEGATIVE LOOKBEHIND"), "NEGATIVE LOOKBEHIND")
+    Assert(Names("(?<nm>a)", "NAMED GROUPS") And Names("(?P<nm>a)", "NAMED GROUPS") And Names("(?'nm'a)", "NAMED GROUPS"), "NAMED GROUPS, ALL THREE SPELLINGS")
+    Assert(Names("(?>a)", "ATOMIC GROUPS"), "ATOMIC GROUPS")
+    Assert(Names("a*+", "POSSESSIVE") And Ats("a*+") = 3, "POSSESSIVE QUANTIFIERS, AT THE PLUS")
+    Assert(Names("(?(1)a)", "CONDITIONALS"), "CONDITIONALS")
+    Assert(Names("(?R)", "RECURSION") And Names("(?1)", "RECURSION"), "RECURSION AND SUBROUTINE CALLS")
+    Assert(Names("\\Aa", "^") And Names("a\\z", "$") And Names("a\\Z", "$") And Names("\\Ga", "MATCH ANCHOR"), "THE FOUR ANCHOR ESCAPES, EACH POINTED AT WHAT TO WRITE INSTEAD")
+    Assert(Names("[[:alpha:]]", "POSIX") And Ats("[[:alpha:]]") = 2, "POSIX CLASSES, AT THE INNER BRACKET")
+    Assert(Names("\\p{L}", "UNICODE PROPERTIES") And Names("\\P{L}", "UNICODE PROPERTIES"), "UNICODE PROPERTIES")
+    Assert(Names("(?x)a", "x FLAG"), "THE EXTENDED FLAG")
+    Assert(Names("\\Qa\\E", "QUOTING"), "\\Q AND \\E, POINTED AT RxQuote")
+    Assert(Names("(a", "UNMATCHED (") And Ats("(a") = 1, "AN UNBALANCED PAREN, AT THE ONE THAT NEVER CLOSES")
+    Assert(Names("a)", "UNMATCHED )") And Ats("a)") = 2, "AND THE OTHER DIRECTION, AT THE STRAY ONE")
+    Assert(Names("[abc", "UNTERMINATED [") And Ats("[abc") = 1, "AN UNBALANCED BRACKET")
+    Assert(Names("*a", "NOTHING TO REPEAT") And Ats("*a") = 1, "A QUANTIFIER WITH NOTHING TO REPEAT")
+    Assert(Names("a**", "NOTHING TO REPEAT") And Ats("a**") = 3, "INCLUDING ONE AFTER ANOTHER QUANTIFIER")
+    Assert(Names("[z-a]", "BACKWARDS") And Ats("[z-a]") = 3, "AN INVERTED RANGE, AT THE DASH")
+    Assert(Names("a{2", "UNTERMINATED {") And Ats("a{2") = 2, "AN UNTERMINATED BRACE, AT THE BRACE")
+    Assert(Names("a{3,2}", "BACKWARDS"), "AND A BACKWARDS COUNT")
+    Assert(Names("a(?i)b", "ONLY ALLOWED AT THE START") And Ats("a(?i)b") = 2, "AN INLINE FLAG MID-PATTERN")
+    Assert(Names("(?i:ab)", "SCOPED INLINE FLAGS"), "AND A SCOPED ONE, WHICH IS A DIFFERENT MISTAKE")
+    Assert(Names("a\\", "MAY NOT END WITH A BACKSLASH"), "A TRAILING BACKSLASH")
+    Assert(Names("\\q", "NOT AN ESCAPE THIS DIALECT KNOWS"), "AN ESCAPE THAT SPELLS NOTHING")
+    Assert(Names("[\\b]", "WORD BOUNDARY"), "AND \\b INSIDE A CLASS, WHICH WOULD OTHERWISE MEAN TWO THINGS")
+    Assert(Names("\\xZZ", "TWO HEX DIGITS"), "A SHORT HEX ESCAPE")
+    Assert(Names("[a-\\d]", "FAR END OF A RANGE"), "A SHORTHAND AS THE END OF A RANGE")
+    Assert(Names("a{3000}", "TOO MANY REPETITIONS") And Instr(Why("a{3000}"), "2000") > 0, "A COUNT PAST THE CAP, REFUSED AT PARSE TIME AND NAMING THE NUMBER")
+    Assert(Names("(a{100}){100}", "TOO MANY REPETITIONS"), "AND A NESTED ONE, WHICH IS THE SHAPE THAT ACTUALLY BLOWS UP")
+    Assert(Why("abc") = "" And Ats("abc") = 0 - 1, "AND A GOOD PATTERN REFUSES NOTHING")
+
+    Print("--- the character domain ---")
+    Rem ASCII folding, asserted IN THE NEGATIVE as well as the positive:
+    Rem the negative half is the one that would otherwise be assumed.
+    Assert(RxTest(ReadsAs("abc", RxFoldOpts()), "ABC") And RxTest(ReadsAs("ABC", RxFoldOpts()), "abc"), "FOLDING MATCHES A WITH a")
+    Assert(RxTest(ReadsAs("[a-z]+", RxFoldOpts()), "ABC"), "AND CARRIES INTO A CLASS")
+    Assert(Not RxTest(ReadsAs("[^a]", RxFoldOpts()), "A"), "AND INTO A NEGATED ONE, WHICH IS WHERE IT WOULD GO WRONG")
+    Assert(Not RxTest(ReadsAs(FromCodes({ 196 }), RxFoldOpts()), FromCodes({ 228 })), "AND DOES NOT MATCH A-DIAERESIS WITH ITS LOWER CASE — THE FOLDING IS ASCII, EXACTLY")
+    Assert(Not RxTest(ReadsAs("abc", RxNoOpts()), "ABC"), "AND WITHOUT THE OPTION CASE IS COMPARED EXACTLY")
+    Rem A non-BMP character is TWO code units and the dot matches one.
+    Let pair = FromCodes({ 55357, 56832 })
+    Assert(Len(pair) = 2, "A NON-BMP CHARACTER IS TWO CODE UNITS")
+    Assert(HitLen(RxFind(Reads("^..$"), pair)) = 2, "AND TWO DOTS MATCH IT WHOLE")
+    Assert(HitLen(RxFind(Reads("."), pair)) = 1, "AND ONE DOT MATCHES ONE OF THEM")
+    Rem NUL. This is the assertion that would have to be deleted if the
+    Rem runtime ever went back on FromCodes.
+    Let withNul = FromCodes({ 65, 0, 66 })
+    Assert(Len(withNul) = 3, "A STRING CAN CARRY A NUL, BECAUSE FromCodes CAN BUILD ONE")
+    Assert(RxTest(Reads("A\\x00B"), withNul), "AND \\x00 MATCHES IT")
+    Assert(RxTest(Reads("A\\0B"), withNul), "AND SO DOES \\0")
+    Assert(RxTest(Reads("A[\\0]B"), withNul), "AND SO DOES A NUL INSIDE A CLASS")
+    Assert(Length(RxFindAll(Reads("\\0"), withNul)) = 1, "AND RxFindAll OF \\0 OVER IT FINDS EXACTLY ONE")
+    Assert(Not RxTest(Reads("A\\0B"), "AB"), "AND A NUL IS NOT NOTHING — AB IS NOT A NUL B")
+
+    Print("--- leftmost-first ---")
+    Assert(HitAt(RxFind(Reads("a|ab"), "abc")) = 1 And HitLen(RxFind(Reads("a|ab"), "abc")) = 1, "a|ab AGAINST abc MATCHES a — THIS IS PERL AND NOT POSIX")
+    Assert(HitLen(RxFind(Reads("ab|a"), "abc")) = 2, "AND ab|a AGAINST THE SAME MATCHES ab, BECAUSE THE LEFT BRANCH IS PREFERRED")
+    Assert(HitLen(RxFind(Reads("a.*b"), "axbxb")) = 5 And HitLen(RxFind(Reads("a.*?b"), "axbxb")) = 3, "GREEDY TAKES ALL FIVE AND LAZY TAKES THREE")
+    Assert(HitAt(RxFind(Reads("b"), "abab")) = 2, "AND THE MATCH IS AT THE SMALLEST OFFSET AT WHICH ANY MATCH EXISTS")
+    Assert(HitLen(RxFind(Reads("(?:a|ab)(?:c|bcd)"), "abcd")) = 4, "OUTSIDE-IN: THE FIRST GROUP GIVES GROUND SO THE SECOND CAN MATCH")
+
+    Print("--- captures ---")
+    Rem UNSET IS NOT EMPTY, and the type is what keeps them apart.
+    Assert(GrpOf(RxFind(Reads("(a)|(b)"), "b"), 1) = "<unset>", "A GROUP THAT DID NOT PARTICIPATE IS UNSET")
+    Assert(GrpOf(RxFind(Reads("(a)|(b)"), "b"), 2) = "[b]", "AND THE ONE THAT DID IS GOT, CARRYING ITS TEXT")
+    Assert(GrpOf(RxFind(Reads("(a?)"), ""), 1) = "[]", "AND A GROUP THAT MATCHED NOTHING IS GOT, CARRYING NOTHING")
+    Assert(GrpOf(RxFind(Reads("(a)"), "a"), 2) = "<unset>", "A GROUP THAT DOES NOT EXIST IS ALSO NONE — RxCount IS HOW THE TWO ARE TOLD APART")
+    Assert(RxCount(Reads("(a)|(b)")) = 2, "AND RxCount ANSWERS HOW MANY EXIST")
+    Rem ARITY: exactly RxCount entries, even when one cannot participate.
+    Assert(CapCount(RxFind(Reads("(a)(b)|(c)"), "ab")) = 3 And RxCount(Reads("(a)(b)|(c)")) = 3, "A HIT'S CAPTURE LIST HAS EXACTLY RxCount ENTRIES, NEVER A SHORT ONE")
+    Assert(GrpOf(RxFind(Reads("(a)(b)|(c)"), "ab"), 3) = "<unset>", "AND THE ONE THAT COULD NOT PARTICIPATE IS THE UNSET ONE")
+    Rem NUMBERED BY OPENING PAREN, LEFT TO RIGHT.
+    Assert(GrpOf(RxFind(Reads("((a)(b))"), "ab"), 1) = "[ab]", "GROUPS ARE NUMBERED BY OPENING PAREN: THE OUTER ONE IS 1")
+    Assert(GrpOf(RxFind(Reads("((a)(b))"), "ab"), 2) = "[a]" And GrpOf(RxFind(Reads("((a)(b))"), "ab"), 3) = "[b]", "AND THE INNER TWO ARE 2 AND 3, IN WRITTEN ORDER")
+    Rem A counted repetition duplicates its body's saves, so the LAST
+    Rem iteration wins. That is what every other engine does, and it is
+    Rem stated because the duplicated saves otherwise read as a bug.
+    Assert(GrpOf(RxFind(Reads("(?:(\\w)){3}"), "abc"), 1) = "[c]", "IN A COUNTED REPETITION THE LAST ITERATION'S CAPTURE WINS")
+    Assert(GrpOf(RxFind(Reads("(?:(\\w))+"), "abc"), 1) = "[c]", "AND THE SAME IN AN UNBOUNDED ONE")
+    Assert(RxSource(Reads("a(b)c")) = "a(b)c", "AND A PROGRAM REMEMBERS THE PATTERN IT WAS READ FROM")
+
+    Print("--- the empty-match rule ---")
+    Rem THE WORKED TABLE, WHICH IS THE ONE RESULT CALLERS FIND
+    Rem SURPRISING AND THE ONE AN IMPLEMENTATION GETS WRONG SILENTLY.
+    Rem
+    Rem   search at 1: "" (the b is not an a), length 0, next is 2
+    Rem   search at 2: "aa", length 2, ending at 3, next is 4
+    Rem   search at 4: "" at Len(s) + 1, past the end, next is 5, stop
+    Assert(Length(RxFindAll(Reads("a*"), "baa")) = 3, "RxFindAll OF a* OVER baa IS EXACTLY THREE HITS")
+    Assert(Starts(RxFindAll(Reads("a*"), "baa")) = ToArray({ 1, 2, 4 }), "AT 1, 2 AND 4")
+    Assert(Lens(RxFindAll(Reads("a*"), "baa")) = ToArray({ 0, 2, 0 }), "OF LENGTHS 0, 2 AND 0")
+    Assert(Length(RxFindAll(Reads("(?:)"), "abc")) = 4, "AND A PATTERN THAT ONLY EVER MATCHES EMPTY GIVES n + 1 HITS OVER A SUBJECT OF LENGTH n")
+    Assert(Length(RxFindAll(Reads("x?"), "")) = 1, "INCLUDING ONE HIT OVER THE EMPTY SUBJECT")
+    Assert(Starts(RxFindAll(Reads("ab"), "ababab")) = ToArray({ 1, 3, 5 }), "AND MATCHES OF LENGTH ARE NON-OVERLAPPING")
+    Assert(Starts(RxFindAll(Reads("aa"), "aaaa")) = ToArray({ 1, 3 }), "WHICH IS WHY aa OVER aaaa IS TWO AND NOT THREE")
+
+    Print("--- out of range, and not aborting ---")
+    Rem A start below 1 is clamped, a fractional one floored, and one
+    Rem past the end answers None. Each is the documented value, and the
+    Rem suite reaching the next line is half the assertion.
+    Assert(HitAt(RxFindFrom(Reads("a"), "xax", 0)) = 2, "A SEARCH START OF 0 IS CLAMPED TO 1")
+    Assert(HitAt(RxFindFrom(Reads("a"), "xax", 0 - 5)) = 2, "AND SO IS ONE OF -5")
+    Assert(HitAt(RxFindFrom(Reads("a"), "xax", 2.7)) = 2, "A FRACTIONAL START IS FLOORED")
+    Assert(Missed(RxFindFrom(Reads("a"), "xax", 3 + 99)), "AND ONE PAST THE END ANSWERS None — NOTHING STARTS THERE")
+    Assert(Missed(RxFindFrom(Reads("a"), "xax", 3)), "A SEARCH FROM 3 DOES NOT FIND THE a AT 2")
+    Assert(HitAt(RxMatchAt(Reads("a"), "xax", 2)) = 2 And Missed(RxMatchAt(Reads("a"), "xax", 1)), "AND RxMatchAt IS ANCHORED AT EXACTLY ONE OFFSET")
+    Assert(Missed(RxFind(Reads("a"), "")), "A MISS OVER THE EMPTY SUBJECT IS None AND NOT AN ABORT")
+    Assert(RxTest(Reads("^$"), ""), "AND THE EMPTY SUBJECT IS BOTH THE START AND THE END")
+    Assert(3 + 4 = 7, "AND THE SUITE IS STILL RUNNING, WHICH IS THE OTHER HALF OF EVERY LINE ABOVE")
+
+    Print("--- rewriting ---")
+    Assert(RxReplace(Reads("[aeiou]"), "banana", "-") = "b-n-n-", "EVERY MATCH REPLACED")
+    Assert(RxReplaceFirst(Reads("[aeiou]"), "banana", "-") = "b-nana", "AND ONLY THE FIRST, WHERE THAT IS ASKED FOR")
+    Assert(RxReplace(Reads("x"), "banana", "-") = "banana", "AND A PATTERN THAT NEVER MATCHES CHANGES NOTHING")
+    Assert(RxReplace(Reads("(\\w+)@(\\w+)"), "me@here", "$2/$1") = "here/me", "A TEMPLATE READS ITS GROUPS")
+    Assert(RxReplace(Reads("\\w+@\\w+"), "me@here", "<$0>") = "<me@here>", "$0 IS THE WHOLE MATCH")
+    Assert(RxReplace(Reads("b"), "ab", "$$") = "a$", "$$ IS A LITERAL DOLLAR")
+    Assert(RxReplace(Reads("b"), "ab", "$") = "a$", "AND A LONE $ IS ONE TOO")
+    Assert(RxReplace(Reads("b"), "ab", "$x") = "a$x", "AS IS A $ IN FRONT OF ANYTHING THAT IS NOT A DIGIT")
+    Assert(RxReplace(Reads("(a)"), "a", "[$7]") = "[]", "A REFERENCE TO A GROUP THAT DOES NOT EXIST EXPANDS TO NOTHING")
+    Assert(RxReplace(Reads("(a)|(b)"), "b", "[$1]") = "[]", "AND SO DOES ONE TO A GROUP THAT DID NOT PARTICIPATE")
+    Assert(RxReplace(Reads("a*"), "baa", "-") = "-b--", "AND THE EMPTY-MATCH RULE IS THE SAME ONE RxFindAll USES")
+    Assert(RxReplaceWith(Reads("[a-z]+"), "ab CD ef", Fn(hit) => Upper(RxHitText(hit))) = "AB CD EF", "A QUOTATION PER HIT IS THE ESCAPE HATCH A TEMPLATE CANNOT BE")
+    Rem SPLIT: the pieces between matches, leading and trailing empties
+    Rem kept, and capturing groups NOT emitted into the result.
+    Assert(ToArray(RxSplit(Reads("abc"), "abc")) = ToArray({ "", "" }), "A PATTERN MATCHING THE WHOLE SUBJECT GIVES TWO EMPTY PIECES")
+    Assert(ToArray(RxSplit(Reads(","), "a,b,c")) = ToArray({ "a", "b", "c" }), "AND AN ORDINARY SPLIT GIVES THE PIECES")
+    Assert(ToArray(RxSplit(Reads(",\\s*"), "a, b,c")) = ToArray({ "a", "b", "c" }), "ON A PATTERN, WHICH IS THREE PASSES WITH A LITERAL SEPARATOR")
+    Assert(ToArray(RxSplit(Reads("(,)"), "a,b")) = ToArray({ "a", "b" }), "A CAPTURING GROUP DOES NOT PUT ITS SEPARATOR INTO THE RESULT")
+    Assert(ToArray(RxSplit(Reads(","), ",a,")) = ToArray({ "", "a", "" }), "AND LEADING AND TRAILING EMPTY PIECES ARE KEPT")
+    Assert(ToArray(RxSplit(Reads("x"), "abc")) = ToArray({ "abc" }), "A PATTERN THAT NEVER MATCHES GIVES THE WHOLE SUBJECT BACK, IN ONE PIECE")
+    Rem QUOTE: escaped so it matches itself and nothing else.
+    Assert(RxQuote("a.b*c") = "a\\.b\\*c", "RxQuote ESCAPES THE METACHARACTERS")
+    Assert(RxTest(Reads(RxQuote("a.b*c")), "a.b*c") And Not RxTest(Reads(RxQuote("a.b*c")), "axbbbc"), "AND WHAT IT ANSWERS MATCHES ITSELF AND NOT WHAT IT LOOKED LIKE")
+    Assert(RxTest(Reads(RxQuote(withNul)), withNul), "INCLUDING A SUBJECT WITH A NUL IN IT")
+    Assert(Why(RxQuote("[]()\\{}*+?|^$-.")) = "", "AND EVERY METACHARACTER AT ONCE STILL READS")
+
+    Print("--- the differential grid: the VM against a backtracking oracle ---")
+    Rem THE ENGINE THAT MUST NOT SHIP IS THE ONE THAT GRADES THE ENGINE
+    Rem THAT DOES. Both matchers walk the same parsed tree and must agree
+    Rem on the span and on every capture, in every cell.
+    Let plainCells = GridGo(GridPats(), GridSubjs(), RxNoOpts(), 0)
+    Assert(plainCells = Length(GridPats()) * Length(GridSubjs()), "EVERY CELL OF THE GRID WAS VISITED")
+    Print("  " & Str(plainCells) & " cells agreed, span and every capture")
+    Let foldCells = GridGo(GridPats(), GridSubjs(), RxFoldOpts(), 0)
+    Assert(foldCells = plainCells, "AND THE WHOLE GRID AGAIN UNDER CASE FOLDING")
+    Print("  " & Str(foldCells) & " more under folding, on the same tree compiled two ways")
+
+    Print("--- it always returns ---")
+    Rem The witnesses that hang a backtracker. REACHING THE NEXT LINE IS
+    Rem THE ASSERTION — no timing is asserted anywhere, because a
+    Rem wall-clock number in a suite is a flaky test on someone else's
+    Rem machine.
+    Assert(Not RxTest(Reads("(a|a)*b"), Runs("a", 30)), "(a|a)*b OVER THIRTY a's ANSWERS")
+    Assert(Not RxTest(Reads("(a*)*b"), Runs("a", 30)), "(a*)*b OVER THIRTY a's ANSWERS")
+    Assert(Not RxTest(Reads("(a+)+b"), Runs("a", 30)), "(a+)+b OVER THIRTY a's ANSWERS")
+    Assert(Not RxTest(Reads("a?a?a?a?a?a?a?a?a?a?a?a?a?a?a?a?a?a?a?a?aaaaaaaaaaaaaaaaaaaa"), Runs("a", 19)), "AND THE a? TIMES n, a TIMES n WITNESS ANSWERS TOO")
+    Assert(RxTest(Reads("(a*)*"), Runs("a", 30)), "AND A STAR OVER A STAR STILL MATCHES WHAT IT SHOULD — THE VISITED SET CUTS THE LOOP, IT DOES NOT CUT THE ANSWER")
+    Assert(Length(RxFindAll(Reads("(a*)*"), "aa")) = 2, "INCLUDING UNDER THE EMPTY-MATCH RULE")
+    Assert(3 + 4 = 7, "AND THE SUITE IS STILL RUNNING")
+
+    Print("--- the compiled program ---")
+    Rem RxDisasm is how the docs page shows what "compiled to a program"
+    Rem means, and how a disagreeing grid cell gets diagnosed.
+    Assert(Length(RxDisasm(Reads("a"))) = 4, "save, char, save, match IS FOUR INSTRUCTIONS")
+    Assert(Instr(Nth(RxDisasm(Reads("a")), 2), "CHAR") > 0, "AND THE SECOND ONE IS THE CHARACTER")
+    Assert(Instr(Nth(RxDisasm(Reads("a")), 4), "MATCH") > 0, "AND THE LAST IS THE MATCH")
+    Assert(Length(RxDisasm(Reads("a|b"))) = 7, "AN ALTERNATION ADDS A SPLIT AND A JUMP")
+    Assert(Instr(Nth(RxDisasm(Reads("a|b")), 2), "SPLIT") > 0, "WITH THE SPLIT IN FRONT")
+    Assert(Length(RxDisasm(Reads("a{4}"))) = 7, "AND A COUNTED REPETITION COMPILES BY DUPLICATION — FOUR COPIES AND THE WRAPPER")
+    Assert(Length(RxDisasm(Reads("(?:)"))) = 3, "WHILE THE EMPTY GROUP COMPILES TO NOTHING AT ALL")
+    Assert(RxCount(Reads("((a)(b))")) = 3 And RxCount(Reads("(?:a)")) = 0 And RxCount(Reads("a")) = 0, "AND RxCount COUNTS OPENING CAPTURING PARENS AND NOTHING ELSE")
+
+    Print("")
+    Print("ALL ASSERTIONS PASSED")
+
+Rem ---- two more file-local helpers ------------------------------------
+
+Def CapCount(opt As Option) As Number
+    Select Case opt
+        Case Some(hit)
+            Length(RxHitCaps(hit))
+        Case Else
+            0 - 1
+
+Rem n copies of s, built without str.shoddy's StrRep, which this file
+Rem does not include.
+Def Runs(s As String, n As Number) As String
+    If n <= 0 Then
+        ""
+    Else
+        s & Runs(s, n - 1)

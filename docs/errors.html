@@ -359,6 +359,42 @@ Def IsBlank(xs As List Of t) As Boolean
 </div>
 
 <div class="err">
+<p class="emsg"><code>'{word}': '{char}' is an operator and must be spaced away from the name, as in 'count + 1'</code></p>
+<p>Words split on whitespace and nothing else, so <code>count+1</code> is one
+long name rather than an addition — and without this check it would survive
+lexing and die much later as an undefined word, which says nothing about the
+missing space. Put spaces around the operator. The operators themselves are
+unaffected, and so are number literals: <code>1E+10</code> is still a number.</p>
+<div class="fixpair">
+<div class="bad"><b>Broken</b><pre><code>Def Next(count As Number) As Number
+    If count&gt;0 Then
+        count+1
+    Else
+        0</code></pre></div>
+<div class="good"><b>Fixed</b><pre><code>Def Next(count As Number) As Number
+    If count &gt; 0 Then
+        count + 1
+    Else
+        0</code></pre></div>
+</div>
+</div>
+
+<div class="err">
+<p class="emsg"><code>'{word}': the characters ; \ are reserved and may not appear in words</code></p>
+<p>Neither character spells anything in Shoddy: layout ends a statement, so
+there are no semicolons, and <code>\</code> is only a string escape. Inside a
+string literal it keeps that meaning — this is about words.</p>
+<div class="fixpair">
+<div class="bad"><b>Broken</b><pre><code>Def Main()
+    Print("HELLO");
+    Print(C:\notes.txt)</code></pre></div>
+<div class="good"><b>Fixed</b><pre><code>Def Main()
+    Print("HELLO")
+    Print("C:\\notes.txt")</code></pre></div>
+</div>
+</div>
+
+<div class="err">
 <p class="emsg"><code>expected INCLUDE "FILE" or INCLUDE "FILE" AS NAMESPACE …</code>
 <code>'{tok}' is not usable as a namespace — …</code>
 <code>'{file}' is included twice under different namespaces …</code></p>
@@ -1304,6 +1340,56 @@ character.</p>
 <div class="good"><b>Fixed</b><pre><code>Def Main()
     Print(Sort({ 3, 2, 1 }))
     Print(Sort({ "C", "B", "A" }))</code></pre></div>
+</div>
+</div>
+
+<div class="err">
+<p class="emsg"><code>CODEAT: position {k} is past the end of a {n}-character string</code>
+<code>CODEAT: position must be a whole number from 1</code></p>
+<p>Reading a character that is not there — and this is the message
+<code>Asc(Mid(s, k, 1))</code> will not give you. <code>Mid</code>
+<em>clamps</em> a start past the end to the empty string without
+complaint, and <code>Asc</code> then aborts naming itself, so the report
+blames <code>Asc</code> while the mistake is in whatever computed
+<code>k</code> — possibly several Defs away, and only on inputs long
+enough to reach the end. <code>CodeAt</code> refuses at the index
+instead, and names both the position and the length so the off-by-one is
+visible. The two bounds are separate messages deliberately: below 1 is a
+counting mistake, past the end is a length mistake. A caller that wants
+neither checks against <code>Len</code> first, or converts once with
+<code>Codes</code> and walks the numbers.</p>
+<div class="fixpair">
+<div class="bad"><b>Broken</b><pre><code>Def Main()
+    Let s = "HELLO"
+    Print(Asc(Mid(s, 6, 1)))      ' aborts naming ASC, not the 6</code></pre></div>
+<div class="good"><b>Fixed</b><pre><code>Def Main()
+    Let s = "HELLO"
+    Print(CodeAt(s, 5))           ' 79 — and 6 would name the index
+    Print(Nth(Codes(s), 5))       ' the same, when walking the whole string</code></pre></div>
+</div>
+</div>
+
+<div class="err">
+<p class="emsg"><code>FROMCODES: code {c} is outside 0 to 65535</code>
+<code>FROMCODES: code {c} is not a whole number</code>
+<code>INSTRFROM: start must be a whole number from 1</code></p>
+<p>A code that is not a character, or a position to search from that is
+not a position. <code>FromCodes</code> refuses the same range
+<code>Chr</code> does, and for the same reason: the cast to a 16-bit
+character wraps silently, so 65536 would answer some other character
+rather than failing. It refuses a fraction for the same reason again —
+the cast would truncate it. <code>InstrFrom</code> counts from 1 like
+every other position in the language. Note what is <em>not</em> an
+error: a start past the end of the subject answers <code>0</code>,
+because nothing occurs there and that is an answer.</p>
+<div class="fixpair">
+<div class="bad"><b>Broken</b><pre><code>Def Main()
+    Print(FromCodes(ToArray({ 72, 65536 })))
+    Print(InstrFrom("HELLO", "L", 0))</code></pre></div>
+<div class="good"><b>Fixed</b><pre><code>Def Main()
+    Print(FromCodes(ToArray({ 72, 73 })))    ' HI
+    Print(InstrFrom("HELLO", "L", 1))        ' 3
+    Print(InstrFrom("HELLO", "L", 9))        ' 0, not an error</code></pre></div>
 </div>
 </div>
 

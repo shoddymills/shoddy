@@ -530,6 +530,20 @@ public sealed partial class Engine
                 PushNum(s.IndexOf(subs, StringComparison.Ordinal) + 1);
                 return true;
             }
+            case "INSTRFROM":                   // ( s sub from -- pos ), 0 if absent
+            {
+                double from = PopNum(line, w);
+                string subs = PopStr(line, w), s = PopStr(line, w);
+                if (from < 1 || from != Math.Floor(from))
+                    throw Die(line, "INSTRFROM: start must be a whole number from 1");
+                // A start past the end is an ordinary answer — nothing occurs
+                // there — but IndexOf throws on it, so the guard is the answer
+                // and not tidiness. Ordinal to match INSTR above, without which
+                // InstrFrom(s, sub, 1) would disagree with Instr(s, sub).
+                if (subs.Length == 0 || from > s.Length) { PushNum(0); return true; }
+                PushNum(s.IndexOf(subs, (int)from - 1, StringComparison.Ordinal) + 1);
+                return true;
+            }
 
             /* ---- comparison ---- */
             case "=":
@@ -621,6 +635,48 @@ public sealed partial class Engine
                 string s = PopStr(line, w);
                 if (s.Length == 0) throw Die(line, "ASC of empty string");
                 PushNum(s[0]); return true;
+            }
+            case "CODES":                       // ( s -- arr ), total
+            {
+                string s = PopStr(line, w);
+                var res = new Value[s.Length];
+                for (int i = 0; i < s.Length; i++) res[i] = Value.OfNum(s[i]);
+                Push(Value.OfArr(res)); return true;
+            }
+            case "CODEAT":                      // ( s k -- n ), 1-based
+            {
+                double k = PopNum(line, w);
+                string s = PopStr(line, w);
+                // Two bounds, two messages. Below 1 is a counting mistake;
+                // past the end is a length mistake, and carries the length so
+                // the caller can see the off-by-one. MID clamps here instead,
+                // which is what puts the abort a word away from the mistake.
+                if (k < 1 || k != Math.Floor(k))
+                    throw Die(line, "CODEAT: position must be a whole number from 1");
+                if (k > s.Length)
+                    throw Die(line, $"CODEAT: position {Format.Num(k)} is past the end of a {s.Length}-character string");
+                PushNum(s[(int)k - 1]); return true;
+            }
+            case "FROMCODES":                   // ( seq -- s ), the inverse of CODES
+            {
+                Value a = PopSeq(line, w);
+                int n = SeqLen(a);
+                var sb = new StringBuilder(n);
+                for (int i = 0; i < n; i++)
+                {
+                    Value v = SeqItem(a, i, line, w);
+                    if (v.T != VType.Num)
+                        throw Die(line, $"{w} expects a NUMBER, got {Value.TypeName(v.T)}");
+                    // Checked before the cast, never after: (char) on a double
+                    // truncates and wraps silently, which is the bug CHR's own
+                    // 0..65535 refusal exists to prevent.
+                    if (v.Num != Math.Floor(v.Num))
+                        throw Die(line, $"FROMCODES: code {Format.Num(v.Num)} is not a whole number");
+                    if (v.Num < 0 || v.Num > 65535)
+                        throw Die(line, $"FROMCODES: code {Format.Num(v.Num)} is outside 0 to 65535");
+                    sb.Append((char)v.Num);     // 0 appends a real NUL, unlike CHR
+                }
+                PushStr(sb.ToString()); return true;
             }
             case "UPPER":
             case "LOWER":
@@ -2077,6 +2133,7 @@ public sealed partial class Engine
         "=", "<>", "<", ">", "<=", ">=",
         "AND", "OR", "NOT", "TRUE", "FALSE",
         "&", "LEN", "STR", "VAL", "ISNUMERIC", "VALOR", "LEFT", "RIGHT", "MID", "CHR", "ASC",
+        "CODES", "FROMCODES", "CODEAT", "INSTRFROM",
         "UPPER", "LOWER",
         "PRINT", "READFILE", "TRYREADFILE", "WRITEFILE", "APPENDFILE",
         "TRYWRITEFILE", "FILEEXISTS",

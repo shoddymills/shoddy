@@ -1,0 +1,179 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem seedmiptest.shoddy — test program for seedmip.shoddy
+Rem
+Rem Assert-driven, in the seedsimplextest / seedsparsetest pattern: it
+Rem prints what it is doing and stops the run at the first assertion
+Rem that fails, ending with ALL ASSERTIONS PASSED when it does not.
+Rem
+Rem THE BALES PROBLEM IS THE CASE WORTH HAVING, and it is the one the
+Rem mill ships as files/bales.mps. Its relaxation buys a fraction of a
+Rem bale; rounding that up costs 12; the greedy whole-bale filler costs
+Rem 10; the answer is 9. A search that is not really running gets one
+Rem of the other three, so the number 9 is doing real work here.
+Rem
+Rem THE ROUND TRIP IS THE OTHER HALF. MIPFIXED hands back an ordinary
+Rem problem, and the assertion that matters is that LPSOLVE reads it —
+Rem that is the whole reason this seed speaks seedsimplex's dict shapes
+Rem instead of inventing its own.
+Rem
+Rem THE GUARD LIST IS THE TEST LIST. mip.shoddy Errors on an integer
+Rem index naming no variable and on MipFixed handed a non-optimum, and
+Rem the LP under it Errors on a problem whose parts do not line up.
+Rem Each is walked once below through Refuses, which also asserts the
+Rem session survived being told no.
+Rem
+Rem NOT TESTED, AND NAMED HERE INSTEAD: MAXITER and MAXNODES, which
+Rem need a hundred thousand of something apiece. A problem big enough
+Rem to reach either is far larger than a test should be, and capping
+Rem the keyboard lower than the machine would mean testing something
+Rem other than what ships.
+Rem
+Rem Run: bin\mill run tst\seedmiptest.shoddy   (from the repo root)
+Rem ==================================================================
+
+Include "../machines/cuttle.shoddy"
+Include "../machines/reckoner.shoddy"
+Include "../machines/seq.shoddy"
+Include "../machines/str.shoddy"
+Include "../machines/seeds/seedmip.shoddy"
+Include "../machines/seeds/seedsimplex.shoddy"
+Include "../machines/seeds/seedmatrix.shoddy"
+Include "../machines/seeds/seeddict.shoddy"
+
+Def Ran(st As RckState, line As String) As RckState
+    Select Case RckEval(st, line)
+        Case RckNext(st2, out)
+            st2
+        Case RckStop(st2, why, out)
+            st2
+        Case Else
+            st
+
+Def Bad(st As RckState, line As String) As Boolean
+    Select Case RckEval(st, line)
+        Case RckStop(st2, why, out)
+            True
+        Case Else
+            False
+
+Def Why(st As RckState, line As String) As String
+    Select Case RckEval(st, line)
+        Case RckStop(st2, why, out)
+            why
+        Case Else
+            ""
+
+Def Text(st As RckState) As String
+    Join(Map(CutCells(RckStack(st)), Fn(c) => CutShow(c, RckFmt(st))), " | ")
+
+Def Q(s As String) As String
+    Chr(34) & s & Chr(34)
+
+Def Refuses(st As RckState, line As String, why As String) As Boolean
+    Bad(st, line) And Instr(Why(st, line), why) > 0 And Text(Ran(st, line)) = Text(st) And Text(Ran(Ran(st, line), "1 1 +")) = Text(Ran(st, "1 1 +"))
+
+Def Nl() As String
+    Chr(10)
+
+Def Lines(xs As List Of String) As String
+    Join(xs, Nl())
+
+Rem Bales of fibre, as the mill's files/bales.mps states it: minimize
+Rem 5A + 4B + 2C subject to 6A + 4B + 3C >= 10, with A and B whole and
+Rem C binary. Written out here as an MPS text so MPSMIP is exercised on
+Rem the marker AND the BV bound in one file.
+
+Def BalesText() As String
+    Lines({ "NAME BALES", "ROWS", " N COST", " G FIBRE", "COLUMNS",
+            "    MARKER                 'MARKER'                 'INTORG'",
+            " A COST 5 FIBRE 6", " B COST 4 FIBRE 4",
+            "    MARKER                 'MARKER'                 'INTEND'",
+            " C COST 2 FIBRE 3", "RHS", " RHS FIBRE 10",
+            "BOUNDS", " BV BND C", "ENDATA" })
+
+Rem The same problem built by hand, for the words that take one that
+Rem way: two variables, 6A + 4B >= 10, both whole.
+
+Def ByHand() As String
+    "{ 5 4 } 1 2 { 6 4 } MAT { 10 } LPPROBLEM { 1 2 } MIPPROBLEM"
+
+Def Main()
+    Let s0 = RckSeedDict(RckSeedMatrix(RckSeedMip(RckSeedSimplex(RckNew()))))
+    Let g = Ran(s0, "1 2")
+
+    Print("--- the five words are registered and carry their metadata ---")
+    Assert(RckKnows(s0, "MIPPROBLEM") And RckKnows(s0, "MIPSOLVE") And RckKnows(s0, "MIPFIXED"), "THE THREE THAT STATE, SOLVE AND PIN")
+    Assert(RckKnows(s0, "MPSMIP") And RckKnows(s0, "MPSMIPLOAD"), "AND THE TWO THAT READ AN INTEGER FILE")
+    Assert(All(RckDict(s0), Fn(e) => WordEffect(e) <> "" And WordDesc(e) <> ""), "NO WORD IS WITHOUT AN EFFECT LINE AND A DESCRIPTION")
+    Assert(All(RckDict(s0), Fn(e) => Length(RckHelp(s0, WordName(e))) = 3), "AND HELP ANSWERS FOR EVERY ONE OF THEM")
+    Assert(All(RckDict(s0), Fn(e) => Instr(Lower(WordEffect(e)), "handle") = 0), "NO WORD'S EFFECT STRING MENTIONS A HANDLE")
+
+    Print("--- a problem built by hand, relaxed and then made whole ---")
+    Assert(Text(Ran(s0, ByHand() & " " & Q("ints") & " DGET")) = "{ 1 2 }", "THE INTEGER VARIABLES ARE REMEMBERED")
+    Rem The relaxation first, so the integer answer has something to
+    Rem differ from: all A, one and two thirds of it, costing 8.3333.
+    Assert(Text(Ran(s0, ByHand() & " " & Q("prob") & " DGET LPSOLVE " & Q("cost") & " DGET 10000 * ROUND")) = "83333",
+           "THE RELAXATION BUYS A FRACTION OF A BALE FOR 8.3333")
+    Assert(Text(Ran(s0, ByHand() & " MIPSOLVE " & Q("status") & " DGET")) = Q("OPTIMAL"), "AND WHOLE BALES CAN BE BOUGHT")
+    Assert(Text(Ran(s0, ByHand() & " MIPSOLVE " & Q("cost") & " DGET")) = "9", "FOR 9, WHICH IS NEITHER THE RELAXATION NOR THE RELAXATION ROUNDED")
+    Assert(Text(Ran(s0, ByHand() & " MIPSOLVE " & Q("x") & " DGET")) = "{ 1 1 }", "ONE OF EACH BALE")
+    Assert(Not Bad(s0, ByHand() & " MIPSOLVE " & Q("nodes") & " DGET"), "THE SEARCH REPORTS WHAT IT COST")
+    Assert(Text(Ran(s0, ByHand() & " MIPSOLVE " & Q("nodes") & " DGET 1 >")) = "True", "AND IT TOOK MORE THAN THE ROOT NODE")
+
+    Print("--- an empty integer list is just the linear program again ---")
+    Assert(Text(Ran(s0, "{ 5 4 } 1 2 { 6 4 } MAT { 10 } LPPROBLEM { } MIPPROBLEM MIPSOLVE " & Q("nodes") & " DGET")) = "1",
+           "NOTHING TO BRANCH ON, SO ONE NODE")
+
+    Print("--- MIPFIXED, and the round trip that is its whole point ---")
+    Rem MIPSOLVE answers no shadow prices, deliberately. MIPFIXED pins
+    Rem the integers and hands back a problem LPSOLVE reads like any
+    Rem other, and THAT has prices worth reading.
+    Assert(Text(Ran(s0, ByHand() & " MIPSOLVE " & Q("dualprices") & " DHAS")) = "False", "A MIP SOLUTION CARRIES NO SHADOW PRICES AT ALL, NOT EVEN AN EMPTY ONE")
+    Assert(Text(Ran(s0, ByHand() & " MIPSOLVE " & Q("reduced") & " DHAS")) = "False", "AND NO REDUCED COSTS EITHER")
+    Assert(Text(Ran(s0, ByHand() & " MIPSOLVE " & Q("nodes") & " DHAS")) = "True", "WHAT IT CARRIES INSTEAD IS WHAT THE SEARCH COST")
+    Let fx = ByHand() & " DUP MIPSOLVE MIPFIXED"
+    Assert(Text(Ran(s0, fx & " LPSOLVE " & Q("status") & " DGET")) = Q("OPTIMAL"), "THE PINNED PROBLEM IS A PROBLEM LPSOLVE READS")
+    Assert(Text(Ran(s0, fx & " LPSOLVE " & Q("cost") & " DGET")) = "9", "TO THE COST THE SEARCH REPORTED")
+    Assert(Text(Ran(s0, fx & " " & Q("rhs") & " DGET")) = "{ 10 1 -1 1 -1 }", "PINNING TWO VARIABLES ADDED TWO ROWS APIECE TO THE ONE THERE WAS")
+    Assert(Not Bad(s0, fx & " LPSOLVE " & Q("dualprices") & " DGET"), "AND ITS SHADOW PRICES ARE THERE TO READ")
+
+    Print("--- an integer MPS file, marker and BV bound in one ---")
+    Assert(Not Bad(s0, Q(BalesText()) & " MPSMIP"), "MPSMIP READS A FILE THE PLAIN WORDS REFUSE")
+    Assert(Text(Ran(s0, Q(BalesText()) & " MPSMIP " & Q("ints") & " DGET")) = "{ 1 2 3 }", "TWO COLUMNS FROM THE MARKER AND ONE FROM THE BV BOUND")
+    Assert(Text(Ran(s0, Q(BalesText()) & " MPSMIP MIPSOLVE " & Q("cost") & " DGET")) = "9", "AND IT SOLVES TO THE ANSWER ITS OWN HEADER WORKS OUT BY HAND")
+    Assert(Text(Ran(s0, Q(BalesText()) & " MPSMIP MIPSOLVE " & Q("x") & " DGET")) = "{ 1 1 0 }", "LEAVING THE CHEAP-LOOKING JOB LOT ON THE SHELF")
+    Assert(Text(Ran(s0, Q("mills/simplex-from-mps/files/bales.mps") & " MPSMIPLOAD MIPSOLVE " & Q("cost") & " DGET")) = "9",
+           "AND THE COMMITTED FIXTURE SOLVES THE SAME WAY OFF DISK")
+    Rem A file with no integer columns is a mipproblem with nothing to
+    Rem branch on, which is what lets one word read any file.
+    Assert(Text(Ran(s0, Q(Lines({ "ROWS", " N C", " G R", "COLUMNS", " X C 1 R 1", "RHS", " RHS R 1", "ENDATA" })) & " MPSMIP " & Q("ints") & " DGET")) = "{ }",
+           "AND A FILE THAT MARKS NOTHING READS AS A PROBLEM WITH NO INTEGERS")
+
+    Print("--- every abort mip.shoddy has, refused instead ---")
+    Assert(Refuses(g, "{ 5 4 } 1 2 { 6 4 } MAT { 10 } LPPROBLEM { 3 } MIPPROBLEM", "DOES NOT EXIST — THERE ARE 2"), "AN INTEGER VARIABLE THAT IS NOT THERE, SAYING HOW MANY ARE")
+    Assert(Refuses(g, "{ 5 4 } 1 2 { 6 4 } MAT { 10 } LPPROBLEM { 0 } MIPPROBLEM", "DOES NOT EXIST"), "AND VARIABLE ZERO, WHICH 1-BASED COUNTING HAS NONE OF")
+    Assert(Refuses(g, "{ 5 4 } 1 2 { 6 4 } MAT { 10 } LPPROBLEM { 1.5 } MIPPROBLEM", "DOES NOT EXIST"), "AND A FRACTIONAL ONE, WHICH NAMES NO VARIABLE")
+    Rem MipFixed Errors on anything that is not an optimum. An
+    Rem infeasible problem is the way to get one honestly: 2X >= 1 and
+    Rem 2X <= 1 pin X at a half, which no integer reaches.
+    Let half = "{ 1 } 2 1 { 2 -2 } MAT { 1 -1 } LPPROBLEM { 1 } MIPPROBLEM"
+    Assert(Text(Ran(s0, half & " MIPSOLVE " & Q("status") & " DGET")) = Q("INFEASIBLE"), "A PROBLEM WITH NO WHOLE ANSWER SAYS SO PLAINLY")
+    Assert(Refuses(g, half & " DUP MIPSOLVE MIPFIXED", "THIS SOLUTION IS INFEASIBLE"), "AND PINNING ONE'S INTEGERS IS REFUSED, NAMING THE STATUS")
+
+    Print("--- and every shape that is not what the word wants ---")
+    Assert(Refuses(g, "3 { 1 } MIPPROBLEM", "NOT A PROBLEM"), "A NUMBER WHERE A PROBLEM SHOULD BE")
+    Assert(Refuses(g, "{ 5 4 } 1 2 { 6 4 } MAT { 10 } LPPROBLEM 3 MIPPROBLEM", "needs a LIST"), "AND A NUMBER WHERE THE INTEGER LIST SHOULD BE")
+    Assert(Refuses(g, "3 MIPSOLVE", "NOT AN INTEGER PROBLEM"), "A NUMBER WHERE A MIPPROBLEM SHOULD BE")
+    Assert(Refuses(g, ByHand() & " 3 MIPFIXED", "NOT A SOLUTION"), "AND A NUMBER WHERE A SOLUTION SHOULD BE")
+    Assert(Refuses(g, "3 MPSMIP", "needs a STRING, got NUMBER"), "AND A CELL THAT IS NOT TEXT AT ALL")
+    Assert(Refuses(g, Q("tst/csv/does-not-exist.mps") & " MPSMIPLOAD", "CANNOT READ"), "A PATH THAT IS NOT THERE")
+    Assert(Refuses(g, Q(Lines({ "RANGES" })) & " MPSMIP", "RANGES SECTION NOT SUPPORTED"), "AND THE VALIDATOR STILL GUARDS THE INTEGER WORDS TOO")
+
+    Print("--- nothing above cost the session anything ---")
+    Assert(Text(Ran(g, "1 1 +")) = "2 | 2 | 1", "THE STACK IS STILL THERE AND STILL EVALUATING")
+
+    Print("")
+    Print("ALL ASSERTIONS PASSED")

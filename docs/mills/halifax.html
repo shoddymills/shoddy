@@ -22,7 +22,7 @@
 <div class="wrap">
 
 <header class="mast has-icon"><div><p class="eyebrow"><a href="index.html#data">The Mills &middot; Data &amp; statistics</a></p><h1>halifax</h1><p class="kicker">A programmable RPN calculator on the runtime stack — mills/halifax</p></div><img class="micon" src="../media/halifax.svg" alt="A terminal showing the labelled stack rows of an RPN calculator above a traced cascade, each nested row stepped one indent further right"></header>
-<nav class="pagertop" aria-label="Mills, in catalog order"><a href="tally.html">&larr; tally</a><a href="index.html">All mills</a><a href="index.html">All mills &rarr;</a></nav>
+<nav class="pagenav pagenav-top" aria-label="Mills, in catalog order"><a href="tally.html" class="prev"><span class="pnwrap"><span class="dir">&larr; Previous mill</span><span class="ttl">tally</span></span></a><a href="index.html" class="all all-last">All mills</a></nav>
 
 <h2 id="summary">Summary</h2>
 <p>A calculator at a prompt. Numbers go on a stack of no fixed depth, words
@@ -124,6 +124,45 @@ down and loading it is reading them back through the same evaluator that would
 have run them typed. A definition that names a word the dictionary has not got
 is refused when it is defined rather than when it is run, so a file that will
 not load says so before it has loaded any of it.</p>
+
+<h3 id="continuation">A line may be written over several</h3>
+<p>A definition that has not reached its <code>;</code> by the end of the line
+is not wrong, it is unfinished, and the prompt says so by changing to
+<code>.</code> and waiting for the rest. The same goes for a <code>{ … }</code>
+list and a <code>[ … ]</code> program.</p>
+<pre><code>&gt; : VAT DUP
+. 0.2 * + ;
+ok: VAT defined
+[ empty ]
+&gt; 250 VAT
+x: 300</code></pre>
+<p>What you get is the line you would have typed on one row: it is joined with
+a single space, evaluated <em>once</em>, and recorded on the tape once, as the
+whole line. Nothing runs until the closing mark arrives — so a first line that
+appended to a file or drew a random number does it once, not once per attempt.
+<code>SAVE</code> is unaffected either way, since it writes one line per word
+however the word was written.</p>
+<p>Two things follow from a continuation line being the <em>tail</em> of what
+you are still writing, rather than a line of its own:</p>
+<ul>
+<li><strong><code>QUIT</code> and <code>EXIT</code> are body text there.</strong>
+Typed under a <code>.</code> prompt they do not leave — they go into the
+definition you are writing, and refuse when that word is run, exactly as
+<code>: VAT DUP QUIT ;</code> typed on one line does. There is no way to leave
+by accident half way through a definition.</li>
+<li><strong>A mistake is reported when the line closes</strong>, not when the
+line carrying it was typed, because until then there is no line to judge. The
+refusal names the whole thing you built, not just the part it broke on.</li>
+</ul>
+<p>Only a construct that another line could still close waits. A stray
+<code>}</code>, a <code>:</code> with no name, a list left open inside a
+definition that has already closed, and an unterminated string are all handed
+straight to the engine and refuse at once, worded exactly as they always were.
+Ending the input while a line is unfinished — the end of a redirected script —
+closes the session quietly and throws the part-built line away. A
+<em>file</em> that ends that way is a different matter: <code>LOAD</code>
+refuses it whole, because a file is a finished thing and a half-written
+definition in one is a mistake in it.</p>
 
 <h3 id="onecell">A user word takes exactly one cell</h3>
 <p>This is the one thing about programming this calculator that surprises
@@ -234,10 +273,10 @@ whole line:</p>
 <table>
 <tr><th>Word</th><th>What it does</th></tr>
 <tr><td><code>SAVE "file"</code></td><td>Writes the words you have defined, as <code>: NAME … ;</code> text.</td></tr>
-<tr><td><code>LOAD "file"</code></td><td>Reads such a file back. One bad line refuses the whole file.</td></tr>
+<tr><td><code>LOAD "file"</code></td><td>Reads such a file back. One bad line refuses the whole file, and so does a file that ends part way through a definition.</td></tr>
 <tr><td><code>TAPESAVE "file"</code></td><td>Writes the tape, exactly as it was shown.</td></tr>
 <tr><td><code>RESET</code></td><td>Starts again: empty stack, no history, no tape, only the words you started with.</td></tr>
-<tr><td><code>QUIT</code></td><td>Leaves. Nothing is saved for you.</td></tr>
+<tr><td><code>QUIT</code></td><td>Leaves. Nothing is saved for you. Only as a whole line — under a <code>.</code> prompt it is <a href="#continuation">body text of the line you are still writing</a>.</td></tr>
 <tr><td><code>EXIT</code></td><td>A second spelling of <code>QUIT</code>. Same effect, same refusal if it turns up mid-line.</td></tr>
 </table>
 <p>They are still <em>registered</em> in the dictionary, for their metadata
@@ -343,11 +382,17 @@ shell's and are effects.</p>
 <tr><td class="uicon"><a href="../machines/seedplotter.html"><img src="../media/icons/seedplotter.svg" alt=""></a></td><td><a href="../machines/seedplotter.html">seedplotter</a></td><td><code>PLOTHISTOGRAM</code>, <code>PLOTBAR</code>, <code>PLOTPIE</code>, <code>PLOTSAVE</code> — a chart of whatever numbers the session has to hand.</td></tr>
 <tr><td class="uicon"><a href="../machines/seedbuzzer.html"><img src="../media/icons/seedbuzzer.svg" alt=""></a></td><td><a href="../machines/seedbuzzer.html">seedbuzzer</a></td><td><code>BUZZPLAY</code>, <code>BUZZFREQ</code>, <code>BUZZLENGTH</code> — an MML tune typed at the prompt.</td></tr>
 <tr><td class="uicon"><a href="../machines/seedhttps.html"><img src="../media/icons/seedhttps.svg" alt=""></a></td><td><a href="../machines/seedhttps.html">seedhttps</a></td><td><code>HTTPSGET</code>, <code>HTTPSTATUS</code>, <code>HTTPHEADER</code>, <code>HTTPBODY</code> — a fetch with headers, and the reply taken apart.</td></tr>
+<tr><td class="uicon"><a href="../machines/seedregex.html"><img src="../media/icons/seedregex.svg" alt=""></a></td><td><a href="../machines/seedregex.html">seedregex</a></td><td><code>RXTEST</code>, <code>RXFIND</code>, <code>RXFINDALL</code>, <code>RXGROUPS</code>, <code>RXREPLACE</code>, <code>RXSPLIT</code>, <code>RXQUOTE</code>, <code>RXWHY</code> — a stated rule about a string on the stack, and <code>RXWHY</code> to find out what is wrong with a pattern without needing a subject to try it on.</td></tr>
+<tr><td class="uicon"><a href="../machines/seedsparse.html"><img src="../media/icons/seedsparse.svg" alt=""></a></td><td><a href="../machines/seedsparse.html">seedsparse</a></td><td><code>SPARSE</code>, <code>SPENTS</code>, <code>SPNNZ</code>, <code>SPCOLDOT</code>, <code>SPADDROW</code> and the rest — matrices that are mostly zeros, carried as a dict so the storage itself is readable.</td></tr>
+<tr><td class="uicon"><a href="../machines/seedmip.html"><img src="../media/icons/seedmip.svg" alt=""></a></td><td><a href="../machines/seedmip.html">seedmip</a></td><td><code>MIPPROBLEM</code>, <code>MIPSOLVE</code>, <code>MIPFIXED</code>, <code>MPSMIP</code>, <code>MPSMIPLOAD</code> — answers that have to be whole numbers, and the pinned linear program that is the honest way to a shadow price once they are. Folded last, so it is the last heading <code>WORDS</code> prints.</td></tr>
 <tr><td class="uicon"><a href="../machines/seq.html"><img src="../media/icons/seq.svg" alt=""></a></td><td><a href="../machines/seq.html">seq</a></td><td><code>Contains</code> reads the shell-word tables, <code>DropN</code> takes the last rows for the tape pane, and <code>Append</code> builds the shown lines.</td></tr>
 <tr><td class="uicon"><a href="../machines/str.html"><img src="../media/icons/str.svg" alt=""></a></td><td><a href="../machines/str.html">str</a></td><td><code>Join</code> and <code>Split</code> turn a list of rows into a file and back; <code>Trim</code> takes the carriage return off a line written on another platform.</td></tr>
 </table>
 
-<nav class="pager" aria-label="Mills, in catalog order"><a href="tally.html">&larr; tally</a><a href="index.html">All mills</a><a href="index.html">All mills &rarr;</a></nav>
+<nav class="pagenav pagenav-bottom" aria-label="Mills, in catalog order">
+  <a href="tally.html" class="prev"><span class="pnwrap"><span class="dir">&larr; Previous mill</span><span class="ttl">tally</span></span></a>
+  <a href="index.html" class="all all-last">All mills</a>
+</nav>
 
 <footer>Named for the shoddy mills of the West Riding: Useless Things Made
 Useful Through Skill (<a href="../heritage.html">the heritage of the name</a>).<br>

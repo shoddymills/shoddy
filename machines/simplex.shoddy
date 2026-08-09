@@ -10,13 +10,17 @@ Rem   Problem(Costs, A, Rhs)      minimize Costs . x
 Rem                               s.t. A x >= Rhs,  x >= 0
 Rem   Optimize(p As Problem) As Solution
 Rem
+Rem   SpProblem(Costs, SA, Rhs)   the same problem with a Sparse
+Rem                               constraint matrix, for big thin ones
+Rem   SpOptimize(p As SpProblem) As Solution
+Rem
 Rem   Solution: Status ("OPTIMAL" | "UNBOUNDED" | "MAXITER"),
 Rem             X (the primal variables), Cost,
 Rem             DualPrices (shadow price per constraint — the change in
 Rem             Cost per unit of Rhs; the sensitivity analysis),
 Rem             Reduced (reduced cost per variable), Iterations.
 Rem
-Rem Revised simplex over the Matrix machine, solved via the dual
+Rem Revised simplex over the Sparse machine, solved via the dual
 Rem (max Rhs.y s.t. Transp(A) y <= Costs): at optimality the simplex
 Rem multipliers are exactly the primal x. Negative objective
 Rem coefficients make the dual's slack start infeasible, so those rows
@@ -27,14 +31,42 @@ Rem dual is unbounded (the primal has no feasible point) and
 Rem "UNBOUNDED-OR-INFEASIBLE" when artificials cannot be driven out
 Rem (the dual is infeasible). Pure throughout; effects stay with the
 Rem caller.
+Rem
+Rem There is one solver. Optimize is SpOptimize with the dense matrix
+Rem crossed over at the door, and both walk the same pivots: pricing
+Rem skips a stored zero that a dense scan would have multiplied by
+Rem nothing and added, so the two agree to the last bit, iteration
+Rem count included.
+Rem
+Rem What is sparse and what is not. The dual matrix is sparse: its
+Rem slack and artificial columns are single entries, never a
+Rem materialised identity, and pricing walks the stored entries of a
+Rem column instead of every cell of one. The basis inverse is a dense
+Rem n x n Matrix updated in place-of-a-kind by an eta step, n being the
+Rem number of PRIMAL VARIABLES — so that, and not the constraint count,
+Rem is the ceiling: this is a solver for hundreds of variables with as
+Rem many constraints as you like. Product-form inverses and sparse LU
+Rem are what a thousand variables would want, and both fit behind these
+Rem same words if that day comes.
 Rem ==================================================================
 
 Include "seq.shoddy"
 Include "matrix.shoddy"
+Include "sparse.shoddy"
 
 Type Problem
     Costs As Array Of Number
     A     As Matrix
+    Rhs   As Array Of Number
+
+Rem The same statement of the same problem, holding its constraints
+Rem sparsely. A Problem crosses to one of these at the door of
+Rem Optimize; a caller with a big thin matrix — an MPS file, a branch
+Rem and bound node — builds one directly and never densifies at all.
+
+Type SpProblem
+    Costs As Array Of Number
+    SA    As Sparse
     Rhs   As Array Of Number
 
 Type Solution
@@ -50,7 +82,7 @@ Rem structural dual variables (primal constraints); Flip records which
 Rem dual rows were negated for the big-M start (multiplier signs).
 
 Type Dual
-    DA      As Matrix
+    DA      As Sparse
     DCost   As Array Of Number
     DRhs    As Array Of Number
     NStruct As Number
@@ -63,12 +95,6 @@ Def SignFor(v As Number) As Number
         -1
     Else
         1
-
-Def OneIf(i As Number, j As Number) As Number
-    If i = j Then
-        1
-    Else
-        0
 
 Def MaxAbs(xs As Array Of Number) As Number
     Fold(xs, 0, Fn(a, v) => Max(a, Abs(v)))
@@ -85,20 +111,28 @@ Def BasisSlot(i As Number, flip As Array Of Number, m As Number, n As Number, ar
     Else
         m + n + PosOf(arts, i, 1)
 
+Rem Which columns are in the basis, as a flag per column. Pricing asks
+Rem this of every column on every pass, and asking a flat array is a
+Rem lookup where searching the basis for the column's number was a scan
+Rem of the whole basis - and a fresh list to scan - per column.
+
+Def BasisFlags(basis As Array Of Number, ncols As Number) As Array Of Number
+    Fold(basis, Dim(ncols, 0), Fn(a, j) => SetNth(a, j, 1))
+
 Rem ---- pricing: entering column (most positive reduced cost) --------
 
-Def PickEnter(j As Number, bestJ As Number, bestR As Number, basis As Array Of Number, y As Array Of Number, du As Dual) As Number
+Def PickEnter(j As Number, bestJ As Number, bestR As Number, inb As Array Of Number, y As Array Of Number, du As Dual) As Number
     If j > Length(DCost(du)) Then
         bestJ
     Else
-        If Contains(ToList(basis), j) Then
-            PickEnter(j + 1, bestJ, bestR, basis, y, du)
+        If Nth(inb, j) > 0 Then
+            PickEnter(j + 1, bestJ, bestR, inb, y, du)
         Else
-            Let r = Nth(DCost(du), j) - Dot(y, MatCol(DA(du), j))
+            Let r = Nth(DCost(du), j) - SpColDot(DA(du), j, y)
             If r > bestR + 0.000001 Then
-                PickEnter(j + 1, j, r, basis, y, du)
+                PickEnter(j + 1, j, r, inb, y, du)
             Else
-                PickEnter(j + 1, bestJ, bestR, basis, y, du)
+                PickEnter(j + 1, bestJ, bestR, inb, y, du)
 
 Rem ---- ratio test: leaving row (0 means unbounded) -------------------
 
@@ -115,6 +149,30 @@ Def PickLeave(i As Number, bestI As Number, bestRatio As Number, xb As Array Of 
         Else
             PickLeave(i + 1, bestI, bestRatio, xb, d)
 
+Rem ---- the two solves against the basis inverse ------------------------
+Rem BTran answers y = Transp(binv) . cb without building the transpose:
+Rem column i of binv, down the rows, is row i of its transpose.
+
+Def BTranAt(binv As Matrix, i As Number, cb As Array Of Number) As Number
+    Fold(Range(1, Length(cb)), 0, Fn(s, k) => s + MatGet(binv, k, i) * Nth(cb, k))
+
+Def BTran(binv As Matrix, cb As Array Of Number) As Array Of Number
+    ToArray(Map(Range(1, Cols(binv)), Fn(i) => BTranAt(binv, i, cb)))
+
+Rem FTran answers d = binv . a_e, reaching only the columns of binv the
+Rem entering column actually has an entry in: o(n . nnz(a_e)) where the
+Rem dense product was o(n squared), and the same sum in the same order,
+Rem because the terms left out were the ones worth nothing.
+
+Def FTranAt(binv As Matrix, i As Number, ix As Array Of Number, vs As Array Of Number, k As Number, acc As Number) As Number
+    If k > Length(ix) Then
+        acc
+    Else
+        FTranAt(binv, i, ix, vs, k + 1, acc + MatGet(binv, i, Nth(ix, k)) * Nth(vs, k))
+
+Def FTran(binv As Matrix, ix As Array Of Number, vs As Array Of Number) As Array Of Number
+    ToArray(Map(Range(1, Rows(binv)), Fn(i) => FTranAt(binv, i, ix, vs, 1, 0)))
+
 Rem ---- eta-style basis inverse update ---------------------------------
 
 Def UpdRow(i As Number, r As Number, binv As Matrix, d As Array Of Number, pivRow As Array Of Number) As Array Of Number
@@ -126,6 +184,25 @@ Def UpdRow(i As Number, r As Number, binv As Matrix, d As Array Of Number, pivRo
 Def UpdateBinv(binv As Matrix, d As Array Of Number, r As Number) As Matrix
     Let pivRow = VScale(MatRow(binv, r), 1 / Nth(d, r))
     MatFromRows(Map(Range(1, Rows(binv)), Fn(i) => UpdRow(i, r, binv, d, pivRow)))
+
+Rem ---- the basic solution ----------------------------------------------
+Rem xb = binv . DRhs, read straight out of the inverse rather than
+Rem through MatVec, which would cut a fresh row array loose on every
+Rem row of every iteration to dot it once and drop it.
+Rem
+Rem Riding the eta step instead - updating xb alongside binv, the way
+Rem the inverse itself is updated - was tried and put back. It walks
+Rem the same 117 pivots on BLEND and answers the same X, but Cost and
+Rem the duals come out a bit or two adrift, because it accumulates its
+Rem own rounding across the pivots where this re-reads the inverse. An
+Rem explicit inverse is kept here anyway; reading it is both the exact
+Rem answer and the same o(n squared) the inverse update already costs.
+
+Def BasisSolAt(binv As Matrix, i As Number, rhs As Array Of Number) As Number
+    Fold(Range(1, Length(rhs)), 0, Fn(s, k) => s + MatGet(binv, i, k) * Nth(rhs, k))
+
+Def BasisSol(binv As Matrix, rhs As Array Of Number) As Array Of Number
+    ToArray(Map(Range(1, Rows(binv)), Fn(i) => BasisSolAt(binv, i, rhs)))
 
 Rem ---- reading the optimal basis: the value of dual variable k --------
 
@@ -143,15 +220,15 @@ Rem At optimality the dual's structural variables (1..m) are the primal
 Rem constraints' shadow prices; its slacks (m+1..m+n) are the primal
 Rem variables' reduced costs.
 
-Def Solve(basis As Array Of Number, binv As Matrix, iter As Number, du As Dual) As Solution
+Def Solve(basis As Array Of Number, inb As Array Of Number, binv As Matrix, iter As Number, du As Dual) As Solution
     If iter > 100000 Then
         Solution("MAXITER", Dim(0, 0), 0, Dim(0, 0), Dim(0, 0), iter)
     Else
         Let cb = Map(basis, Fn(j) => Nth(DCost(du), j))
-        Let y = MatVec(Transp(binv), cb)
-        Let e = PickEnter(1, 0, 0, basis, y, du)
+        Let y = BTran(binv, cb)
+        Let xb = BasisSol(binv, DRhs(du))
+        Let e = PickEnter(1, 0, 0, inb, y, du)
         If e = 0 Then
-            Let xb = MatVec(binv, DRhs(du))
             Let n = Length(DRhs(du))
             Let m = NStruct(du)
             Let aSum = Fold(Range(m + n + 1, Length(DCost(du))), 0, Fn(a, k) => a + BasisVal(k, 1, basis, xb))
@@ -165,32 +242,52 @@ Def Solve(basis As Array Of Number, binv As Matrix, iter As Number, du As Dual) 
                 Let px = ToArray(Map(Range(1, n), Fn(i) => Nth(y, i) * Nth(Flip(du), i)))
                 Solution(Status = "OPTIMAL", X = px, Cost = Dot(cb, xb), DualPrices = duals, Reduced = red, Iterations = iter)
         Else
-            Let d = MatVec(binv, MatCol(DA(du), e))
-            Let xBasic = MatVec(binv, DRhs(du))
-            Let r = PickLeave(1, 0, 999999999, xBasic, d)
+            Let d = FTran(binv, SpColIx(DA(du), e), SpColVs(DA(du), e))
+            Let r = PickLeave(1, 0, 999999999, xb, d)
             If r = 0 Then
                 Rem the dual is unbounded, so the primal has no feasible point
                 Solution("INFEASIBLE", Dim(0, 0), 0, Dim(0, 0), Dim(0, 0), iter)
             Else
-                Solve(SetNth(basis, r, e), UpdateBinv(binv, d, r), iter + 1, du)
+                Solve(SetNth(basis, r, e), SetNth(SetNth(inb, Nth(basis, r), 0), e, 1),
+                      UpdateBinv(binv, d, r), iter + 1, du)
 
-Rem ---- the public entry: primal in, full result out --------------------
+Rem ---- building the dual, one sparse column at a time ------------------
+Rem Column j of the dual, for j a primal constraint, is primal row j
+Rem with each entry scaled by its own row's flip - which is why the
+Rem primal is transposed once, here, and never again.
 
-Def Optimize(p As Problem) As Solution
+Def FlipVs(ix As Array Of Number, vs As Array Of Number, flips As Array Of Number) As Array Of Number
+    ToArray(Map(Range(1, Length(ix)), Fn(k) => Nth(vs, k) * Nth(flips, Nth(ix, k))))
+
+Rem ---- the public entries: primal in, full result out ------------------
+
+Def SpOptimize(p As SpProblem) As Solution
     Let n = Length(Costs(p))
     Let m = Length(Rhs(p))
-    Let at = Transp(A(p))
-    Let idn = Ident(n)
-    Rem Rows whose rhs (a primal cost) is negative are negated for a
-    Rem feasible start and get a big-M artificial; a clean problem gets
-    Rem none and computes exactly as the classic slack start.
-    Let flips = ToArray(Map(Range(1, n), Fn(i) => SignFor(Nth(Costs(p), i))))
-    Let arts = Filter(Range(1, n), Fn(i) => Nth(flips, i) < 0)
-    Let bigM = 1000 * (1 + MaxAbs(Rhs(p)))
-    Let rows0 = Map(Range(1, n), Fn(i) => VScale(Concat(MatRow(at, i), MatRow(idn, i)), Nth(flips, i)))
-    Let rowsA = Map(Range(1, n), Fn(i) => Concat(Nth(rows0, i), ToArray(Map(arts, Fn(j) => OneIf(i, j)))))
-    Let dco = Concat(Concat(Rhs(p), Dim(n, 0)), Dim(Length(arts), 0 - bigM))
-    Let drh = ToArray(Map(Range(1, n), Fn(i) => Nth(Costs(p), i) * Nth(flips, i)))
-    Let du = Dual(MatFromRows(rowsA), dco, drh, m, flips)
-    Let basis = ToArray(Map(Range(1, n), Fn(i) => BasisSlot(i, flips, m, n, arts)))
-    Solve(basis, Ident(n), 1, du)
+    If Rows(SA(p)) <> m Or Cols(SA(p)) <> n Then
+        Error("SIMPLEX: MATRIX DOES NOT MATCH ITS COSTS AND RHS")
+    Else
+        Let ta = SpTransp(SA(p))
+        Rem Rows whose rhs (a primal cost) is negative are negated for a
+        Rem feasible start and get a big-M artificial; a clean problem gets
+        Rem none and computes exactly as the classic slack start.
+        Let flips = ToArray(Map(Range(1, n), Fn(i) => SignFor(Nth(Costs(p), i))))
+        Let arts = Filter(Range(1, n), Fn(i) => Nth(flips, i) < 0)
+        Let bigM = 1000 * (1 + MaxAbs(Rhs(p)))
+        Rem The dual's columns: one per primal constraint, then one
+        Rem single-entry slack per dual row, then one single-entry
+        Rem artificial per flipped row. No identity is ever built.
+        Let ix = Concat(Concat(Map(Range(1, m), Fn(j) => SpColIx(ta, j)),
+                               Map(Range(1, n), Fn(i) => Dim(1, i))),
+                        Map(arts, Fn(i) => Dim(1, i)))
+        Let vs = Concat(Concat(Map(Range(1, m), Fn(j) => FlipVs(SpColIx(ta, j), SpColVs(ta, j), flips)),
+                               Map(Range(1, n), Fn(i) => Dim(1, Nth(flips, i)))),
+                        Map(arts, Fn(i) => Dim(1, 1)))
+        Let dco = Concat(Concat(Rhs(p), Dim(n, 0)), Dim(Length(arts), 0 - bigM))
+        Let drh = ToArray(Map(Range(1, n), Fn(i) => Nth(Costs(p), i) * Nth(flips, i)))
+        Let du = Dual(SpFromCols(n, ix, vs), dco, drh, m, flips)
+        Let basis = ToArray(Map(Range(1, n), Fn(i) => BasisSlot(i, flips, m, n, arts)))
+        Solve(basis, BasisFlags(basis, Length(dco)), Ident(n), 1, du)
+
+Def Optimize(p As Problem) As Solution
+    SpOptimize(SpProblem(Costs(p), SpFromMat(A(p)), Rhs(p)))

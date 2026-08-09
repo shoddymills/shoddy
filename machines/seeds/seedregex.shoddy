@@ -1,0 +1,253 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem seedregex.shoddy — reckoner seed: regex.shoddy at the keyboard
+Rem
+Rem RXTEST, RXFIND, RXFINDALL, RXGROUPS, RXREPLACE, RXSPLIT, RXQUOTE and
+Rem RXWHY. Eight words, all pure, so a calculator can ask a stated rule
+Rem about a string it is holding:
+Rem
+Rem     "GET 200 /index.html" "^(\w+) (\d+)" RXGROUPS
+Rem     "a, b,,c" ",\s*" RXSPLIT
+Rem     "2026-08-08" "^\d{4}-\d{2}-\d{2}$" RXTEST
+Rem
+Rem THE PATTERN IS A STRING AND IS COMPILED ON EVERY CALL. That is a
+Rem deliberate cost and not an oversight. A compiled program is a
+Rem machine type, and Cell in cuttle.shoddy has eight kinds of which
+Rem none is one: adding a ninth would change the file every seed
+Rem includes, and would need a text form for the tape, an equality and a
+Rem rendering for a value that has none of those naturally. Against that,
+Rem A LINE IS TYPED BY A PERSON — the pattern is a dozen characters and
+Rem the compile is microseconds against a keystroke. Where a program
+Rem wants the pattern compiled once, it uses RxRead and the machine
+Rem directly; that is what the machine is for.
+Rem
+Rem WHAT THE BRIDGE LOSES, SAID OUT LOUD. RXGROUPS answers a LIST of
+Rem STRINGs, so A GROUP THAT DID NOT PARTICIPATE ARRIVES AS "" — exactly
+Rem the distinction regex.shoddy is built to preserve, flattened by the
+Rem Cell type on the way to the stack. (a)|(b) against "b" gives
+Rem { "b", "", "b" } and nothing in that list says which "" is a group
+Rem that matched nothing and which is a group that was never entered.
+Rem RxGroup is where the distinction still lives, and a program that
+Rem needs it must go to the machine. A BRIDGE THAT QUIETLY FLATTENS A
+Rem TYPE IS THE THING WORTH WRITING DOWN.
+Rem
+Rem RxReplaceWith is NOT seeded: it takes a quotation per hit and a Cell
+Rem cannot carry one. Running a user-defined reckoner word per match is
+Rem a real idea and its own proposal — it needs a seed to call back into
+Rem RckEval mid-word, which no seed does today.
+Rem
+Rem GUARDED BY CONSTRUCTION. regex.shoddy has not one call to Error in
+Rem it: RxRead answers the language's Result and every match word takes
+Rem a compiled program, which can only have come from an Ok. So there is
+Rem no aborting path into the machine from anywhere, and this seed does
+Rem not have to find one and avoid it. Every guard below is therefore
+Rem about the SHAPE OF THE STACK — a cell that is not a STRING — plus
+Rem one Select Case over RxRead, and that is the whole of it.
+Rem ==================================================================
+
+Include "regex.shoddy"
+Include "cuttle.shoddy"
+Include "reckoner.shoddy"
+
+Rem ---- the guards, written once ---------------------------------------
+Rem Six of the eight words are ( s pat -- ... ), so their whole guard is
+Rem one chain: the subject is a STRING, the pattern is a STRING, and the
+Rem pattern reads. What is left after that is a subject and a compiled
+Rem program, and nothing that can be wrong.
+
+Def RgWith(word As String, vs As List Of Cell, f As [ String RxProg -- RckWork ]) As RckWork
+    Select Case RckTextArg(word, Nth(vs, 1))
+        Case Ok(s)
+            RgWith2(word, s, Nth(vs, 2), f)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Def RgWith2(word As String, s As String, c As Cell, f As [ String RxProg -- RckWork ]) As RckWork
+    Select Case RckTextArg(word, c)
+        Case Ok(pat)
+            RgWith3(word, s, pat, f)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Def RgWith3(word As String, s As String, pat As String, f As [ String RxProg -- RckWork ]) As RckWork
+    Select Case RxRead(pat, RxNoOpts())
+        Case Ok(prg)
+            Call(f, s, prg)
+        Case Err(w, at)
+            RckWorkBad(RgWhyAt(w, at))
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Rem The refusal a person sees is the machine's reason and the place in
+Rem the pattern it was written, which is the only thing that turns a
+Rem mistyped pattern into a fixed one.
+Def RgWhyAt(w As String, at As Number) As String
+    If at = 0 Then
+        w
+    Else
+        w & " (at " & Str(at) & ")"
+
+Rem ---- RXTEST ---------------------------------------------------------
+
+Def RgSeedTest(st As RckState) As RckState
+    RckReg(st, "RXTEST", 2, RckPure(Fn(vs) => RgWith("RXTEST", vs, RgTestGo)), "( s pat -- flag )", "Whether pat matches anywhere in s.")
+
+Def RgTestGo(s As String, prg As RxProg) As RckWork
+    RckVals({ CutBool(RxTest(prg, s)) })
+
+Rem ---- RXFIND ---------------------------------------------------------
+Rem TWO CELLS, ALWAYS, and 0 0 where there is no match. A word that
+Rem pushed a variable number of cells would break UNDO's accounting, so
+Rem the miss is a pair of zeros rather than nothing — and 0 is a start
+Rem no real match can have, since the subject is 1-based.
+
+Def RgSeedFind(st As RckState) As RckState
+    RckReg(st, "RXFIND", 2, RckPure(Fn(vs) => RgWith("RXFIND", vs, RgFindGo)), "( s pat -- at len )", "The leftmost match's 1-based start and its length; 0 0 when there is none.")
+
+Def RgFindGo(s As String, prg As RxProg) As RckWork
+    Select Case RxFind(prg, s)
+        Case Some(h)
+            RckVals({ CutNum(RxHitAt(h)), CutNum(RxHitLen(h)) })
+        Case Else
+            RckVals({ CutNum(0), CutNum(0) })
+
+Rem ---- RXFINDALL ------------------------------------------------------
+
+Def RgSeedFindAll(st As RckState) As RckState
+    RckReg(st, "RXFINDALL", 2, RckPure(Fn(vs) => RgWith("RXFINDALL", vs, RgFindAllGo)), "( s pat -- list )", "Every non-overlapping match, in order, as a LIST of STRINGs.")
+
+Def RgFindAllGo(s As String, prg As RxProg) As RckWork
+    RckVals({ CutList(Map(RxFindAll(prg, s), RgHitCell)) })
+
+Def RgHitCell(h As RxHit) As Cell
+    CutStr(RxHitText(h))
+
+Rem ---- RXGROUPS -------------------------------------------------------
+Rem The first match only: the whole match, then one item per capturing
+Rem group, in group order. An unset group arrives as "" — see the header.
+
+Def RgSeedGroups(st As RckState) As RckState
+    RckReg(st, "RXGROUPS", 2, RckPure(Fn(vs) => RgWith("RXGROUPS", vs, RgGroupsGo)), "( s pat -- list )", "The first match as a LIST: the whole match, then one item per group. An unset group arrives as an empty string.")
+
+Def RgGroupsGo(s As String, prg As RxProg) As RckWork
+    Select Case RxFind(prg, s)
+        Case Some(h)
+            RckVals({ CutList(Prepend(CutStr(RxHitText(h)), RgCapsOf(h, RxCount(prg), 1, { }))) })
+        Case Else
+            RckVals({ CutList({ }) })
+
+Def RgCapsOf(h As RxHit, ncap As Number, gn As Number, acc As List Of Cell) As List Of Cell
+    If gn > ncap Then
+        Reverse(acc)
+    Else
+        RgCapsOf(h, ncap, gn + 1, Prepend(CutStr(RxGroupOr(h, gn, "")), acc))
+
+Rem ---- RXREPLACE ------------------------------------------------------
+Rem Three strings, so this one guards its own stack rather than sharing
+Rem the pair guard above.
+
+Def RgSeedReplace(st As RckState) As RckState
+    RckReg(st, "RXREPLACE", 3, RckPure(Fn(vs) => RgReplace(vs)), "( s pat rep -- s )", "Every match of pat in s replaced by rep, where $0 to $9 stand for the match and its groups and $$ is a literal dollar.")
+
+Def RgReplace(vs As List Of Cell) As RckWork
+    Select Case RckTextArg("RXREPLACE", Nth(vs, 1))
+        Case Ok(s)
+            RgReplace2(s, Nth(vs, 2), Nth(vs, 3))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("RXREPLACE did not answer")
+
+Def RgReplace2(s As String, cpat As Cell, crep As Cell) As RckWork
+    Select Case RckTextArg("RXREPLACE", cpat)
+        Case Ok(pat)
+            RgReplace3(s, pat, crep)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("RXREPLACE did not answer")
+
+Def RgReplace3(s As String, pat As String, crep As Cell) As RckWork
+    Select Case RckTextArg("RXREPLACE", crep)
+        Case Ok(rep)
+            RgReplace4(s, pat, rep)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("RXREPLACE did not answer")
+
+Def RgReplace4(s As String, pat As String, rep As String) As RckWork
+    Select Case RxRead(pat, RxNoOpts())
+        Case Ok(prg)
+            RckVals({ CutStr(RxReplace(prg, s, rep)) })
+        Case Err(w, at)
+            RckWorkBad(RgWhyAt(w, at))
+        Case Else
+            RckWorkBad("RXREPLACE did not answer")
+
+Rem ---- RXSPLIT --------------------------------------------------------
+
+Def RgSeedSplit(st As RckState) As RckState
+    RckReg(st, "RXSPLIT", 2, RckPure(Fn(vs) => RgWith("RXSPLIT", vs, RgSplitGo)), "( s pat -- list )", "s cut apart at every match of pat, as a LIST of STRINGs, leading and trailing empty pieces kept.")
+
+Def RgSplitGo(s As String, prg As RxProg) As RckWork
+    RckVals({ CutList(Map(RxSplit(prg, s), CutStr)) })
+
+Rem ---- RXQUOTE --------------------------------------------------------
+Rem One string, and nothing that can fail: every string has an escaping.
+
+Def RgSeedQuote(st As RckState) As RckState
+    RckReg(st, "RXQUOTE", 1, RckPure(Fn(vs) => RgQuote(vs)), "( s -- pat )", "s escaped so that, used as a pattern, it matches itself and nothing else.")
+
+Def RgQuote(vs As List Of Cell) As RckWork
+    Select Case RckTextArg("RXQUOTE", First(vs))
+        Case Ok(s)
+            RckVals({ CutStr(RxQuote(s)) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("RXQUOTE did not answer")
+
+Rem ---- RXWHY ----------------------------------------------------------
+Rem The one word here that is about the pattern rather than about a
+Rem subject: it answers "" when the pattern reads, and the reason with
+Rem its offset when it does not. It is how a person finds out what is
+Rem wrong with a pattern WITHOUT having to have a subject to try it on.
+
+Def RgSeedWhy(st As RckState) As RckState
+    RckReg(st, "RXWHY", 1, RckPure(Fn(vs) => RgWhy(vs)), "( pat -- s )", "An empty string if pat reads; otherwise why it does not, and where.")
+
+Def RgWhy(vs As List Of Cell) As RckWork
+    Select Case RckTextArg("RXWHY", First(vs))
+        Case Ok(pat)
+            RgWhyOf(pat)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("RXWHY did not answer")
+
+Def RgWhyOf(pat As String) As RckWork
+    Select Case RxRead(pat, RxNoOpts())
+        Case Err(w, at)
+            RckVals({ CutStr(RgWhyAt(w, at)) })
+        Case Else
+            RckVals({ CutStr("") })
+
+Rem ---- the seed -------------------------------------------------------
+
+Def RckSeedRegex(st As RckState) As RckState
+    Let s0 = RckSeeding(st, "seed-regex")
+    Let s1 = RgSeedTest(s0)
+    Let s2 = RgSeedFind(s1)
+    Let s3 = RgSeedFindAll(s2)
+    Let s4 = RgSeedGroups(s3)
+    Let s5 = RgSeedReplace(s4)
+    Let s6 = RgSeedSplit(s5)
+    Let s7 = RgSeedQuote(s6)
+    RgSeedWhy(s7)

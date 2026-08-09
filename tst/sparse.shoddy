@@ -1,0 +1,154 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem sparse.shoddy — test program for machines/sparse.shoddy
+Rem
+Rem Assert-driven, in the lin.shoddy / eng.shoddy pattern: it prints
+Rem what it is doing, stops at the first failed assertion, and ends
+Rem with ALL ASSERTIONS PASSED when none fail.
+Rem
+Rem It includes BOTH matrix.shoddy and sparse.shoddy, because that is
+Rem what a program using sparse has to do, and because the whole test
+Rem strategy here is comparison against the dense answer: a sparse
+Rem kernel that is wrong still returns numbers, and the only witness
+Rem that will not agree with a plausible wrong one is matrix.shoddy
+Rem computing the same thing the long way round.
+Rem
+Rem What cannot be tested here: the aborting half of every guard.
+Rem Shoddy has no catchable errors, so these are verified by hand and
+Rem named instead —
+Rem
+Rem   SpOkCol      INDEX AND VALUE COUNTS DIFFER, on a column whose two
+Rem                arrays are different lengths
+Rem                INDEX OUT OF RANGE, on a row index below 1 or past
+Rem                the stated Rows
+Rem                INDICES NOT ASCENDING, on a column out of order or
+Rem                carrying the same row twice
+Rem   SpFromCols   COLUMN COUNTS DIFFER
+Rem   SpFromEnts   ENTRY OUTSIDE THE STATED DIMENSIONS
+Rem   SpVecMat     DIMENSION MISMATCH, and SpMatVec the same
+Rem ==================================================================
+
+Include "../machines/seq.shoddy"
+Include "../machines/matrix.shoddy"
+Include "../machines/sparse.shoddy"
+
+Rem The witness matrix: 4 x 3, five nonzeros out of twelve cells, with
+Rem a column that has one entry, a column that has two, and no row or
+Rem column empty enough to make an off-by-one look right by accident.
+
+Def Witness() As Matrix
+    Mat(4, 3, { 0, 2, 0,
+                5, 0, 0,
+                0, 0, 7,
+                1, 0, 3 })
+
+Def Close(a As Number, b As Number) As Boolean
+    Abs(a - b) <= 0.0000000001
+
+Def SameVec(xs As Array Of Number, ys As Array Of Number) As Boolean
+    If Length(xs) <> Length(ys) Then
+        False
+    Else
+        All(Range(1, Length(xs)), Fn(k) => Close(Nth(xs, k), Nth(ys, k)))
+
+Rem Every cell of a Sparse against every cell of a Matrix, which is the
+Rem only comparison that cannot be fooled by a stored zero or a missing
+Rem one. The cells run row-major, so k unpacks into a row and a column
+Rem the same way matrix.shoddy's own arithmetic unpacks it.
+
+Def SameAsDense(s As Sparse, m As Matrix) As Boolean
+    If Rows(s) <> Rows(m) Or Cols(s) <> Cols(m) Then
+        False
+    Else
+        All(Range(1, Rows(m) * Cols(m)),
+            Fn(k) => Close(SpGet(s, Floor((k - 1) / Cols(m)) + 1, ((k - 1) Mod Cols(m)) + 1),
+                           Nth(Cells(m), k)))
+
+Def Main()
+    Let m = Witness()
+    Let s = SpFromMat(m)
+
+    Print("--- THE DENSE BRIDGE, BOTH WAYS ---")
+    Assert(Rows(s) = 4 And Cols(s) = 3, "THE DIMENSIONS SURVIVE THE CROSSING")
+    Assert(SpNnz(s) = 5, "AND ONLY THE FIVE NONZEROS ARE STORED, NOT THE TWELVE CELLS")
+    Assert(SameAsDense(s, m), "EVERY CELL AGREES WITH THE DENSE ORIGINAL")
+    Assert(SpToMat(s) = m, "AND THE ROUND TRIP IS EXACT, CELL FOR CELL")
+    Rem An all-zero matrix is the degenerate case both ways: nothing is
+    Rem stored, and nothing is what comes back.
+    Let z = MatFill(2, 2, 0)
+    Assert(SpNnz(SpFromMat(z)) = 0, "AN ALL-ZERO MATRIX STORES NOTHING")
+    Assert(SpToMat(SpFromMat(z)) = z, "AND STILL COMES BACK WHOLE")
+
+    Print("--- COLUMNS ---")
+    Assert(SpColIx(s, 1) = ToArray({ 2, 4 }), "COLUMN 1 IS ROWS 2 AND 4")
+    Assert(SpColVs(s, 1) = ToArray({ 5, 1 }), "HOLDING 5 AND 1")
+    Assert(Length(SpColIx(s, 2)) = 1, "COLUMN 2 HOLDS ONE ENTRY")
+    Assert(SpGet(s, 1, 2) = 2, "READ WHERE THERE IS SOMETHING")
+    Assert(SpGet(s, 1, 1) = 0, "AND ZERO WHERE THERE IS NOT")
+    Assert(SpGet(s, 3, 1) = 0, "INCLUDING PAST THE LAST STORED ROW OF A COLUMN")
+
+    Print("--- TRIPLETS: DUPLICATES SUM, AND A SUM OF ZERO IS NOT STORED ---")
+    Rem (1,1) arrives twice and must add up; (2,1) arrives twice and
+    Rem cancels, which is a cell that must not be stored at all.
+    Let t = SpFromEnts(2, 2, { SpEnt(1, 1, 3), SpEnt(2, 1, 2), SpEnt(1, 1, 4),
+                               SpEnt(2, 1, 0 - 2), SpEnt(2, 2, 5) })
+    Assert(SpGet(t, 1, 1) = 7, "THREE AND FOUR AT ONE CELL MAKE SEVEN")
+    Assert(SpGet(t, 2, 1) = 0, "AND TWO AND MINUS TWO MAKE A CELL THAT IS NOT THERE")
+    Assert(SpNnz(t) = 2, "SO TWO ENTRIES ARE STORED, NOT FIVE")
+    Assert(SpColIx(t, 1) = ToArray({ 1 }), "AND THE CANCELLED ROW IS GONE FROM THE INDEX")
+    Rem Order in, order out: entries may arrive in any order and the
+    Rem indices still come back ascending, which every kernel relies on.
+    Let u = SpFromEnts(3, 1, { SpEnt(3, 1, 30), SpEnt(1, 1, 10), SpEnt(2, 1, 20) })
+    Assert(SpColIx(u, 1) = ToArray({ 1, 2, 3 }), "SCRAMBLED TRIPLETS COME BACK IN ROW ORDER")
+    Assert(SpColVs(u, 1) = ToArray({ 10, 20, 30 }), "WITH THEIR VALUES STILL ATTACHED")
+
+    Print("--- THE ARITHMETIC, AGAINST ITS DENSE COUNTERPART ---")
+    Let y = ToArray({ 10, 20, 30, 40 })
+    Let x = ToArray({ 1, 2, 3 })
+    Assert(All(Range(1, 3), Fn(j) => Close(SpColDot(s, j, y), Dot(MatCol(m, j), y))),
+           "SPCOLDOT IS THE DENSE COLUMN DOT, COLUMN BY COLUMN")
+    Assert(SameVec(SpMatVec(s, x), MatVec(m, x)), "SPMATVEC IS MATVEC")
+    Assert(SameVec(SpVecMat(y, s), ToArray(Map(Range(1, 3), Fn(j) => Dot(MatCol(m, j), y)))),
+           "AND SPVECMAT IS THE VECTOR AGAINST EVERY COLUMN")
+    Rem The transpose is the one row view in the machine, and the one
+    Rem place an index could quietly swap its meaning.
+    Let tr = SpTransp(s)
+    Assert(Rows(tr) = 3 And Cols(tr) = 4, "THE TRANSPOSE TURNS 4 X 3 INTO 3 X 4")
+    Assert(SpNnz(tr) = 5, "STORING THE SAME FIVE ENTRIES")
+    Assert(SpToMat(tr) = Transp(m), "AND IT IS THE DENSE TRANSPOSE, CELL FOR CELL")
+    Assert(SpToMat(SpTransp(tr)) = m, "TWICE OVER GETS BACK WHERE IT STARTED")
+
+    Print("--- GROWING ONE ---")
+    Rem A branch or bound row is a single-nonzero row, so that is the
+    Rem case worth pinning down: one column touched, the rest equal to
+    Rem what they were, and the original left alone.
+    Let r = SpAddRow(s, ToArray({ 2 }), ToArray({ 9 }))
+    Assert(Rows(r) = 5 And Cols(r) = 3, "A ROW APPENDED IS ONE MORE ROW, NO MORE COLUMNS")
+    Assert(SpNnz(r) = 6, "AND ONE MORE STORED ENTRY")
+    Assert(SpGet(r, 5, 2) = 9, "THE NEW CELL READS BACK")
+    Assert(SpColIx(r, 2) = ToArray({ 1, 5 }), "APPENDED AT THE END, SO THE INDEX STILL ASCENDS")
+    Rem Sharing is not observable from Shoddy - what is observable is
+    Rem that the untouched columns are unchanged and the original is
+    Rem untouched, which is the promise a caller can actually use.
+    Assert(SpColIx(r, 1) = SpColIx(s, 1) And SpColIx(r, 3) = SpColIx(s, 3),
+           "THE COLUMNS THE ROW DID NOT NAME ARE THE COLUMNS THEY WERE")
+    Assert(Rows(s) = 4 And SpNnz(s) = 5, "AND THE MATRIX PASSED IN IS UNCHANGED")
+    Rem A zero in a new row is an absence like any other zero.
+    Let r0 = SpAddRow(s, ToArray({ 1, 3 }), ToArray({ 0, 4 }))
+    Assert(SpNnz(r0) = 6, "A ZERO IN AN APPENDED ROW IS NOT STORED")
+    Assert(SpGet(r0, 5, 1) = 0 And SpGet(r0, 5, 3) = 4, "THOUGH IT READS BACK AS ZERO ALL THE SAME")
+
+    Let c = SpAddCol(s, ToArray({ 1, 4 }), ToArray({ 6, 8 }))
+    Assert(Rows(c) = 4 And Cols(c) = 4, "A COLUMN APPENDED IS ONE MORE COLUMN")
+    Assert(SpNnz(c) = 7, "CARRYING ITS OWN TWO ENTRIES")
+    Assert(SpGet(c, 1, 4) = 6 And SpGet(c, 4, 4) = 8, "WHICH READ BACK")
+    Assert(SpColIx(c, 1) = SpColIx(s, 1), "AND THE COLUMNS ALREADY THERE ARE UNTOUCHED")
+    Assert(Cols(s) = 3, "AS IS THE MATRIX PASSED IN")
+    Rem An empty column is a legal column: a pair of empty arrays.
+    Let e = SpAddCol(s, Dim(0, 0), Dim(0, 0))
+    Assert(Cols(e) = 4 And SpNnz(e) = 5, "AN EMPTY COLUMN ADDS A COLUMN AND NO ENTRIES")
+    Assert(SpGet(e, 2, 4) = 0, "AND READS AS ZERO THROUGHOUT")
+
+    Print("ALL ASSERTIONS PASSED")

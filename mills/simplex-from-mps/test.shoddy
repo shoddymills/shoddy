@@ -3,7 +3,7 @@ Rem Licensed under the MIT License. See the LICENSE file in the project root.
 
 Rem ==================================================================
 Rem test.shoddy — the MPS reader and the solver behind it, graded
-Rem against two files whose answers are published.
+Rem against three files whose answers are published.
 Rem
 Rem     ./build.sh test        (from here)
 Rem
@@ -18,13 +18,31 @@ Rem optimum is a published number: -30.81214985. A linear program that
 Rem is subtly wrong still returns a vector, and a solver that has lost
 Rem two decimal places still says OPTIMAL, so the objective is asserted
 Rem to eight figures rather than to a tolerance anyone could pass.
+Rem files/bales.mps is the integer one, and its header works its answer
+Rem out by hand too.
+Rem
+Rem BLEND's iteration count is asserted, not just its answer. The
+Rem solver's pricing and its FTRAN were rewritten to walk stored
+Rem entries instead of whole columns, on the promise that skipping a
+Rem term worth nothing changes nothing; a count that moved would say
+Rem the promise had been broken, and would say it long before any
+Rem objective drifted far enough to fail a tolerance.
 Rem
 Rem What is left untested here is Report and the argument handling in
-Rem simplex-mps.shoddy, which are Print and Args around this arithmetic.
+Rem simplex-mps.shoddy, which are Print and Args around this
+Rem arithmetic, and the refusals, which abort rather than answer:
+Rem
+Rem   LoadMps / LoadMpsSp on files/bales.mps   THIS FILE DECLARES
+Rem       INTEGER COLUMNS - USE LoadMpsMip OR ParseMpsMip
+Rem   a MI or FR bound, and a negative UP    the frame is X >= 0
+Rem   a RANGES section                        still not supported
 Rem ==================================================================
 
+Include "str.shoddy"
 Include "matrix.shoddy"
+Include "sparse.shoddy"
 Include "simplex.shoddy"
+Include "mip.shoddy"
 Include "mps.shoddy"
 
 Def NamedValue(names As List Of String, xs As Array Of Number, want As String) As Number
@@ -32,6 +50,44 @@ Def NamedValue(names As List Of String, xs As Array Of Number, want As String) A
 
 Def CountNonzero(xs As Array Of Number) As Number
     Length(Filter(ToList(xs), Fn(v) => Abs(v) > 0.0000005))
+
+Def Close(a As Number, b As Number) As Boolean
+    Abs(a - b) < 0.0000001
+
+Rem Two Solutions agreeing on every field they carry, to the last bit -
+Rem which is the point of the comparison, so no tolerance here.
+
+Def SameSolution(a As Solution, b As Solution) As Boolean
+    If Status(a) <> Status(b) Or Iterations(a) <> Iterations(b) Then
+        False
+    Else
+        If Cost(a) <> Cost(b) Or Not (X(a) = X(b)) Then
+            False
+        Else
+            DualPrices(a) = DualPrices(b) And Reduced(a) = Reduced(b)
+
+Rem A bounds section as text, so the LO / UP / FX translation can be
+Rem checked without a fixture file per case. Minimize X + 3Y + Z with
+Rem X + Y + Z >= 4, X at most 3, Y at least a half, Z pinned at 2.
+Rem Z takes 2 of the 4 wanted; the rest goes to X, the cheap one, until
+Rem Y's floor stops it: X = 1.5, Y = 0.5, Z = 2, costing 5.
+
+Def BoundsText() As String
+    Join({ "NAME BNDS",
+           "ROWS",
+           " N COST",
+           " G NEED",
+           "COLUMNS",
+           " X COST 1 NEED 1",
+           " Y COST 3 NEED 1",
+           " Z COST 1 NEED 1",
+           "RHS",
+           " RHS NEED 4",
+           "BOUNDS",
+           " UP BND X 3",
+           " LO BND Y 0.5",
+           " FX BND Z 2",
+           "ENDATA" }, Chr(10))
 
 Def Main()
     Print("--- the small one, whose answer is in its own header ---")
@@ -73,6 +129,7 @@ Def Main()
     Assert(Status(blendS) = "OPTIMAL", "BLEND SOLVES")
     Assert(Abs(Cost(blendS) - (0 - 30.81214985)) < 0.00000005, "TO ITS PUBLISHED OPTIMUM, TO EIGHT FIGURES")
     Assert(CountNonzero(X(blendS)) = 54, "WITH 54 OF THE 83 VARIABLES NONZERO")
+    Assert(Iterations(blendS) = 117, "IN THE 117 PIVOTS IT HAS ALWAYS TAKEN")
     Assert(Length(VarNames(blend)) = 83 And Length(ConNames(blend)) = 117,
            "AND A NAME FOR EVERY COLUMN AND EVERY NORMALISED ROW")
 
@@ -84,5 +141,68 @@ Def Main()
     Let blendZ = Optimize(Prob(LoadMpsModel("files/blend.mps", True)))
     Assert(Cost(blendZ) = Cost(blendS), "SAME OBJECTIVE UNDER -z, TO THE LAST BIT")
     Assert(X(blendZ) = X(blendS), "AND THE SAME VECTOR")
+
+    Print("--- the sparse road and the dense one arrive at the same place ---")
+    Rem The dense words assemble sparsely and cross over at the door,
+    Rem and the solver crosses straight back, so these are the same
+    Rem computation reached two ways. Anything less than bit equality
+    Rem here means one of the two crossings is lossy.
+    Let mixSp = LoadMpsSp("files/mix.mps")
+    Assert(SpToMat(SA(mixSp)) = A(mixP), "THE SPARSE MATRIX IS THE DENSE ONE, CELL FOR CELL")
+    Assert(SameSolution(SpOptimize(mixSp), mixS), "AND SOLVING EITHER ANSWERS THE SAME SOLUTION")
+    Let blendSp = LoadMpsSp("files/blend.mps")
+    Print(Str(SpNnz(SA(blendSp))) & " stored entries of "
+          & Str(Rows(SA(blendSp)) * Cols(SA(blendSp))) & " cells")
+    Assert(SpNnz(SA(blendSp)) = 789, "BLEND STORES 789 ENTRIES, NOT ITS 9711 CELLS")
+    Assert(SpToMat(SA(blendSp)) = A(blendP), "AND STILL SPELLS OUT THE SAME DENSE MATRIX")
+    Assert(SameSolution(SpOptimize(blendSp), blendS),
+           "SPOPTIMIZE ANSWERS WHAT OPTIMIZE ANSWERS, ITERATION COUNT AND ALL")
+
+    Print("--- bounds, which are rows once you are in this frame ---")
+    Let bm = ParseMpsSpModel(BoundsText(), False)
+    Assert(Rows(SA(Prob(bm))) = 5, "ONE CONSTRAINT ROW PLUS FOUR FROM THE BOUNDS")
+    Assert(Nth(ConNames(bm), 2) = "X.UP" And Nth(ConNames(bm), 3) = "Y.LO",
+           "AN UP AND A LO, EACH NAMED FOR THE VARIABLE IT HOLDS")
+    Assert(Nth(ConNames(bm), 4) = "Z.LO" And Nth(ConNames(bm), 5) = "Z.UP",
+           "AND AN FX, WHICH IS BOTH ENDS AT ONCE")
+    Assert(SpNnz(SA(Prob(bm))) = 7, "THREE ENTRIES IN THE REAL ROW AND ONE IN EACH BOUND ROW")
+    Let bs = SpOptimize(Prob(bm))
+    Print("bounded " & Status(bs) & ", cost " & Str(Cost(bs)) & ", x " & Str(Nth(X(bs), 1))
+          & " y " & Str(Nth(X(bs), 2)) & " z " & Str(Nth(X(bs), 3)))
+    Assert(Status(bs) = "OPTIMAL" And Close(Cost(bs), 5), "AND THE BOUNDED PROBLEM COSTS 5")
+    Assert(Close(Nth(X(bs), 1), 1.5), "X STOPS SHORT OF ITS CEILING BECAUSE Y HAS A FLOOR")
+    Assert(Close(Nth(X(bs), 2), 0.5), "Y SITS EXACTLY ON THAT FLOOR")
+    Assert(Close(Nth(X(bs), 3), 2), "AND Z IS PINNED WHERE FX PUT IT")
+    Rem -z is the escape hatch, and it must skip the whole section.
+    Let bz = ParseMpsSpModel(BoundsText(), True)
+    Assert(Rows(SA(Prob(bz))) = 1, "UNDER -z THE BOUNDS ARE NOT READ AT ALL")
+    Assert(Close(Cost(SpOptimize(Prob(bz))), 4), "AND THE UNBOUNDED PROBLEM IS CHEAPER, AS IT SHOULD BE")
+
+    Print("--- bales, which you cannot buy half of ---")
+    Let bl = LoadMpsMipModel("files/bales.mps", False)
+    Let blp = Prob(bl)
+    Assert(Length(Ints(blp)) = 3, "TWO MARKED COLUMNS AND ONE MADE INTEGER BY ITS BV BOUND")
+    Assert(Rows(SA(Prob(blp))) = 2, "THE FIBRE ROW, PLUS THE BV BOUND AS A ROW")
+    Assert(Nth(ConNames(bl), 2) = "C.UP", "WHICH IS THE JOB LOT'S CEILING OF ONE")
+    Let relax = SpOptimize(Prob(blp))
+    Print("relaxation " & Status(relax) & ", cost " & Str(Cost(relax)))
+    Assert(Close(Cost(relax), 7.8333333333), "THE RELAXATION BUYS A FRACTION OF A BALE FOR 7.8333333")
+    Let bsol = MipOptimize(blp)
+    Print("integer " & Status(bsol) & ", cost " & Str(Cost(bsol)) & ", nodes " & Str(Nodes(bsol))
+          & ", iterations " & Str(Iterations(bsol)))
+    Assert(Status(bsol) = "OPTIMAL", "AND WHOLE BALES CAN BE BOUGHT")
+    Assert(Close(Cost(bsol), 9), "FOR 9, WHICH THE FILE'S HEADER WORKS OUT BY HAND")
+    Assert(Close(NamedValue(VarNames(bl), X(bsol), "A"), 1), "ONE OF A")
+    Assert(Close(NamedValue(VarNames(bl), X(bsol), "B"), 1), "ONE OF B")
+    Assert(Close(NamedValue(VarNames(bl), X(bsol), "C"), 0), "AND THE CHEAP-LOOKING JOB LOT LEFT ON THE SHELF")
+    Assert(Nodes(bsol) > 1 And Iterations(bsol) > Nodes(bsol), "IT SEARCHED, AND COUNTED WHAT THE SEARCH COST")
+
+    Print("--- and the sensitivity that IS available once the integers are settled ---")
+    Let fixed = MipFixed(blp, bsol)
+    Let fs = SpOptimize(fixed)
+    Assert(Status(fs) = "OPTIMAL", "THE PINNED PROBLEM SOLVES")
+    Assert(Close(Cost(fs), Cost(bsol)), "TO THE COST THE SEARCH REPORTED")
+    Assert(Rows(SA(fixed)) = 8, "WITH TWO PINNING ROWS PER INTEGER ON TOP OF THE TWO IT HAD")
+    Assert(Length(DualPrices(fs)) = 8, "AND A SHADOW PRICE FOR EVERY ONE OF THEM")
 
     Print("ALL SIMPLEX-FROM-MPS CHECKS PASSED")

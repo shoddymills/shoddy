@@ -271,6 +271,7 @@ batteries included. Full word references in
 <table>
   <tr>
     <td align="left" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/matrix.html"><img src="docs/media/icons/matrix.svg" alt="matrix" width="120"></a><br><b>matrix</b><br><sub>flat row-major matrices</sub></td>
+    <td align="left" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/sparse.html"><img src="docs/media/icons/sparse.svg" alt="sparse" width="120"></a><br><b>sparse</b><br><sub>matrices that are mostly zeros</sub></td>
     <td align="left" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/lin.html"><img src="docs/media/icons/lin.svg" alt="lin" width="120"></a><br><b>lin</b><br><sub>solve, factor, eigenvalues</sub></td>
     <td align="left" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/alg.html"><img src="docs/media/icons/alg.svg" alt="alg" width="120"></a><br><b>alg</b><br><sub>formulae as values</sub></td>
   </tr>
@@ -293,6 +294,7 @@ batteries included. Full word references in
   <tr>
     <td align="left" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/simplex.html"><img src="docs/media/icons/simplex.svg" alt="simplex" width="120"></a><br><b>simplex</b><br><sub>linear programming</sub></td>
     <td align="left" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/mps.html"><img src="docs/media/icons/mps.svg" alt="mps" width="120"></a><br><b>mps</b><br><sub>the LP file format</sub></td>
+    <td align="left" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/mip.html"><img src="docs/media/icons/mip.svg" alt="mip" width="120"></a><br><b>mip</b><br><sub>answers that must be whole</sub></td>
   </tr>
 </table>
 

@@ -10,30 +10,54 @@ Rem   LoadMps(path As String) As Problem      read a file and parse it
 Rem   ParseMps(text As String) As Problem     parse MPS text
 Rem   LoadMpsZeroLower(path)  /  ParseMpsZeroLower(text)
 Rem       as above, but force a zero lower bound (x >= 0) on every
-Rem       variable: a BOUNDS section is skipped instead of rejected
+Rem       variable: a BOUNDS section is skipped instead of read
+Rem   LoadMpsSp(path)  /  ParseMpsSp(text)  As SpProblem
+Rem       the same problem with its constraints left sparse, which is
+Rem       how they arrive in the file and what the solver wants
 Rem   LoadMpsModel(path, zeroLower) / ParseMpsModel(text, zeroLower)
 Rem       As MpsModel: the Problem plus the variable names and the
 Rem       normalised constraint labels (an E row appears as its
 Rem       NAME+ / NAME- pair) - for reporting tools
+Rem   LoadMpsSpModel / ParseMpsSpModel   the same, As MpsSpModel
+Rem   LoadMpsMip(path) / ParseMpsMip(text) As MipProblem
+Rem   LoadMpsMipModel / ParseMpsMipModel As MpsMipModel
+Rem       for a file whose integer columns are marked: the problem,
+Rem       plus which variables have to come out whole
 Rem
-Rem The result is a Problem for the simplex machine's Optimize: rows are
+Rem The result is a problem for the simplex machine: rows are
 Rem normalised to the machine's  A x >= Rhs  form (L rows are negated,
 Rem E rows become a >= pair), the first N row is the objective, and
 Rem unmentioned coefficients and right-hand sides default to zero.
+Rem There is one assembly and it is sparse; the dense words answer it
+Rem crossed back over at the door.
 Rem
 Rem Free-format reading: fields are whitespace-separated; a section
 Rem header starts in column 1, data lines are indented; * comments and
 Rem blank lines are skipped; an RHS line with an even field count has a
-Rem blank set name (as in tst/dat/blend.mps). Supported sections: NAME,
-Rem OBJSENSE (MIN only), ROWS, COLUMNS, RHS, ENDATA. RANGES, BOUNDS and
-Rem integer MARKERs are rejected honestly - variables are non-negative,
-Rem exactly as Optimize assumes.
+Rem blank set name (as in mills/simplex-from-mps/files/blend.mps).
+Rem Supported sections: NAME, OBJSENSE (MIN only), ROWS, COLUMNS, RHS,
+Rem BOUNDS, ENDATA.
+Rem
+Rem BOUNDS become rows, which is what a bound is once you are in the
+Rem A x >= Rhs frame and costs one entry apiece in the sparse form:
+Rem LO is x >= l, UP is -x >= -u, FX is both, BV is UP 1 and integer,
+Rem PL states the default and does nothing. MI and FR are refused -
+Rem they let a variable go negative, and every word here assumes it
+Rem cannot. A negative UP is refused too: in the wider MPS world it
+Rem quietly means the lower bound is free, which is the same breach
+Rem written less plainly. RANGES is refused outright.
+Rem
+Rem Integer MARKERs ('MARKER' / 'INTORG' / 'INTEND') are read, and so
+Rem is BV, but only the Mip words answer them. The plain words refuse
+Rem an integer file rather than relax it into a different problem, and
+Rem say which word to use instead.
 Rem ==================================================================
 
-Include "matrix.shoddy"
 Include "seq.shoddy"
 Include "str.shoddy"
+Include "sparse.shoddy"
 Include "simplex.shoddy"
+Include "mip.shoddy"
 
 Rem ---- parse state: one record folded over the lines -----------------
 
@@ -45,15 +69,47 @@ Type MpsSt
     Cols    As List Of String
     Ents    As List
     RhsEs   As List
+    Bnds    As List
+    Ints    As List Of String
+    IntOn   As Boolean
     ZeroLo  As Boolean
+
+Rem A COLUMNS entry, keyed by NAME - which is what makes it a different
+Rem thing from sparse.shoddy's SpEnt, keyed by index. Turning one into
+Rem the other is the assembly step below.
 
 Type MpsEnt
     Col As String
     Row As String
     Amt As Number
 
+Rem A BOUNDS line, and the row it turns into: a column index, its one
+Rem coefficient, the right-hand side, and the label the row reports
+Rem under.
+
+Type MpsBnd
+    BKind As String
+    BCol  As String
+    BAmt  As Number
+
+Type MpsBRow
+    BAt   As Number
+    BCoef As Number
+    BRhs  As Number
+    BLab  As String
+
 Type MpsModel
     Prob     As Problem
+    VarNames As List Of String
+    ConNames As List Of String
+
+Type MpsSpModel
+    Prob     As SpProblem
+    VarNames As List Of String
+    ConNames As List Of String
+
+Type MpsMipModel
+    Prob     As MipProblem
     VarNames As List Of String
     ConNames As List Of String
 
@@ -72,7 +128,7 @@ Def Header(st As MpsSt, w As String) As MpsSt
             If ZeroLo(st) Then
                 With(st, Sec = "SKIP")
             Else
-                Error("MPS: BOUNDS SECTION NOT SUPPORTED (use LoadMpsZeroLower to force x >= 0)")
+                With(st, Sec = "BOUNDS")
         Case "RANGES"
             Error("MPS: RANGES SECTION NOT SUPPORTED")
         Case Else
@@ -90,18 +146,43 @@ Def RowLine(st As MpsSt, toks As List Of String) As MpsSt
         Case Else
             Error("MPS: BAD ROW SENSE " & First(toks))
 
+Def MarkInt(st As MpsSt, cname As String) As MpsSt
+    If Contains(Ints(st), cname) Then
+        st
+    Else
+        With(st, Ints = Concat(Ints(st), { cname }))
+
 Def AddCol(st As MpsSt, cname As String) As MpsSt
     If Contains(Cols(st), cname) Then
         st
     Else
-        With(st, Cols = Concat(Cols(st), { cname }))
+        If IntOn(st) Then
+            MarkInt(With(st, Cols = Concat(Cols(st), { cname })), cname)
+        Else
+            With(st, Cols = Concat(Cols(st), { cname }))
 
 Def AddEnt(st As MpsSt, cname As String, rname As String, v As String) As MpsSt
     With(st, Ents = Prepend(MpsEnt(cname, rname, Val(v)), Ents(st)))
 
+Rem A marker line opens or closes the run of integer columns. The
+Rem quotes are conventional rather than required, so both spellings
+Rem are read.
+
+Def Marked(toks As List Of String, w As String) As Boolean
+    Contains(toks, "'" & w & "'") Or Contains(toks, w)
+
+Def MarkerLine(st As MpsSt, toks As List Of String) As MpsSt
+    If Marked(toks, "INTORG") Then
+        With(st, IntOn = True)
+    Else
+        If Marked(toks, "INTEND") Then
+            With(st, IntOn = False)
+        Else
+            Error("MPS: A MARKER LINE MUST SAY INTORG OR INTEND")
+
 Def ColLine(st As MpsSt, toks As List Of String) As MpsSt
-    If Contains(toks, "'MARKER'") Then
-        Error("MPS: INTEGER MARKERS NOT SUPPORTED")
+    If Contains(toks, "'MARKER'") Or Contains(toks, "MARKER") Then
+        MarkerLine(st, toks)
     Else
         If Length(toks) = 3 Then
             AddEnt(AddCol(st, First(toks)), First(toks), Nth(toks, 2), Nth(toks, 3))
@@ -123,6 +204,32 @@ Def RhsLine(st As MpsSt, toks As List Of String) As MpsSt
     Else
         RhsPairs(st, Rest(toks))
 
+Rem A BOUNDS line is TYPE, an optional set name, the column, and - for
+Rem the types that take one - a value. Three fields are ambiguous
+Rem between "no set name, with a value" and "set name, no value", and
+Rem the value settles it: only one of the two ends in a number.
+
+Def BndOf(toks As List Of String) As MpsBnd
+    Select Case Length(toks)
+        Case 2
+            MpsBnd(Upper(First(toks)), Nth(toks, 2), 0)
+        Case 3
+            If IsNumeric(Nth(toks, 3)) Then
+                MpsBnd(Upper(First(toks)), Nth(toks, 2), Val(Nth(toks, 3)))
+            Else
+                MpsBnd(Upper(First(toks)), Nth(toks, 3), 0)
+        Case 4
+            MpsBnd(Upper(First(toks)), Nth(toks, 3), Val(Nth(toks, 4)))
+        Case Else
+            Error("MPS: BAD BOUNDS LINE")
+
+Def BndLine(st As MpsSt, toks As List Of String) As MpsSt
+    Let b = BndOf(toks)
+    If BKind(b) = "BV" Then
+        MarkInt(With(st, Bnds = Concat(Bnds(st), { b })), BCol(b))
+    Else
+        With(st, Bnds = Concat(Bnds(st), { b }))
+
 Def Step(st As MpsSt, line As String) As MpsSt
     Let toks = Fields(line)
     If IsEmpty(toks) Then
@@ -141,6 +248,8 @@ Def Step(st As MpsSt, line As String) As MpsSt
                         ColLine(st, toks)
                     Case "RHS"
                         RhsLine(st, toks)
+                    Case "BOUNDS"
+                        BndLine(st, toks)
                     Case "OBJSENSE"
                         If Upper(First(toks)) = "MIN" Or Upper(First(toks)) = "MINIMIZE" Then
                             st
@@ -149,7 +258,7 @@ Def Step(st As MpsSt, line As String) As MpsSt
                     Case Else
                         st
 
-Rem ---- assembly: names and entries to dense Problem data --------------
+Rem ---- assembly: names and entries to sparse problem data -------------
 
 Def ColAmt(e As MpsEnt, cname As String) As Number
     If Col(e) = cname Then
@@ -169,23 +278,71 @@ Def RowAmt(e As MpsEnt, rname As String) As Number
 Def RowSum(es As List, rname As String) As Number
     Fold(es, 0, Fn(a, e) => a + RowAmt(e, rname))
 
-Def RowVec(ents As List, cnames As List Of String, rid As String) As Array Of Number
-    Let re = Filter(ents, Fn(e) => Row(e) = rid)
-    ToArray(Map(cnames, Fn(c) => SumCol(re, c)))
+Rem G rows pass through, L rows negate, E rows become a >= pair. Which
+Rem normalised row a source row starts at, and how many it takes, is
+Rem the one piece of bookkeeping the whole assembly turns on.
 
-Rem G rows pass through, L rows negate, E rows become a >= pair.
+Def NormWidth(s As String) As Number
+    If s = "E" Then
+        2
+    Else
+        1
 
-Def SenseRows(sens As List Of String, dense As List, i As Number, acc As List) As List
-    If i > Length(dense) Then
+Def NormCount(sens As List Of String) As Number
+    Fold(sens, 0, Fn(a, s) => a + NormWidth(s))
+
+Def RowBases(sens As List Of String, i As Number, at As Number, acc As List) As List
+    If i > Length(sens) Then
         acc
     Else
-        Select Case Nth(sens, i)
-            Case "G"
-                SenseRows(sens, dense, i + 1, Concat(acc, { Nth(dense, i) }))
-            Case "L"
-                SenseRows(sens, dense, i + 1, Concat(acc, { VScale(Nth(dense, i), -1) }))
-            Case Else
-                SenseRows(sens, dense, i + 1, Concat(acc, { Nth(dense, i), VScale(Nth(dense, i), -1) }))
+        RowBases(sens, i + 1, at + NormWidth(Nth(sens, i)), Concat(acc, { at }))
+
+Def SenseScale(s As String) As Number
+    If s = "L" Then
+        -1
+    Else
+        1
+
+Rem Where a name sits in a list of names, 0 for absent - by position
+Rem over an ARRAY, deliberately not by seq's IndexOf. That word
+Rem recurses on Rest, and Rest copies the tail it hands back, so a
+Rem lookup that should cost one walk costs a walk's worth of copying
+Rem per step. On a file's worth of entries that is the difference
+Rem between assembling in a moment and assembling noticeably. Here
+Rem every step is an o(1) Nth, and the word is self-tail-recursive, so
+Rem it runs as a loop.
+
+Def NameAt(names As Array Of String, want As String, k As Number) As Number
+    If k > Length(names) Then
+        0
+    Else
+        If Nth(names, k) = want Then
+            k
+        Else
+            NameAt(names, want, k + 1)
+
+Def NameIx(names As Array Of String, want As String) As Number
+    NameAt(names, want, 1)
+
+Rem One COLUMNS entry with its names resolved: the SOURCE row index in
+Rem EntRow and the column index in EntCol, the amount untouched. An
+Rem entry naming the objective row, or a row that ROWS never declared,
+Rem answers row 0 and the caller drops it - the same silence the dense
+Rem assembly kept. Resolving happens once per entry here; the two
+Rem normalised triplets below are built from the result.
+
+Def NamedTrip(e As MpsEnt, cols As Array Of String, rids As Array Of String) As SpEnt
+    Let k = NameIx(rids, Row(e))
+    If k = 0 Then
+        SpEnt(0, 0, 0)
+    Else
+        SpEnt(k, NameIx(cols, Col(e)), Amt(e))
+
+Def BaseTrip(t As SpEnt, bases As Array Of Number, scales As Array Of Number) As SpEnt
+    SpEnt(Nth(bases, EntRow(t)), EntCol(t), EntVal(t) * Nth(scales, EntRow(t)))
+
+Def PairTrip(t As SpEnt, bases As Array Of Number) As SpEnt
+    SpEnt(Nth(bases, EntRow(t)) + 1, EntCol(t), 0 - EntVal(t))
 
 Def SenseRhs(sens As List Of String, vals As List, i As Number, acc As List) As List
     If i > Length(vals) Then
@@ -200,7 +357,8 @@ Def SenseRhs(sens As List Of String, vals As List, i As Number, acc As List) As 
                 SenseRhs(sens, vals, i + 1, Concat(acc, { Nth(vals, i), 0 - Nth(vals, i) }))
 
 Rem The normalised constraint labels: G and L rows keep their name, an
-Rem E row doubles into NAME+ and NAME-.
+Rem E row doubles into NAME+ and NAME-, and a bound row is named for
+Rem the variable it bounds and which end it holds.
 
 Def ConLabels(sens As List Of String, rids As List Of String, i As Number, acc As List) As List
     If i > Length(rids) Then
@@ -212,29 +370,104 @@ Def ConLabels(sens As List Of String, rids As List Of String, i As Number, acc A
             Case Else
                 ConLabels(sens, rids, i + 1, Concat(acc, { Nth(rids, i) }))
 
+Rem ---- bounds, as the rows they are -----------------------------------
+
+Def BndRows(b As MpsBnd, cnames As List Of String) As List
+    Let j = IndexOf(cnames, BCol(b))
+    If j = 0 Then
+        Error("MPS: BOUNDS NAMES A COLUMN THAT COLUMNS NEVER DECLARED: " & BCol(b))
+    Else
+        Select Case BKind(b)
+            Case "LO"
+                { MpsBRow(j, 1, BAmt(b), BCol(b) & ".LO") }
+            Case "UP"
+                If BAmt(b) < 0 Then
+                    Error("MPS: A NEGATIVE UP BOUND FREES THE LOWER BOUND, AND THIS MACHINE'S FRAME IS X >= 0")
+                Else
+                    { MpsBRow(j, 0 - 1, 0 - BAmt(b), BCol(b) & ".UP") }
+            Case "FX"
+                { MpsBRow(j, 1, BAmt(b), BCol(b) & ".LO"),
+                  MpsBRow(j, 0 - 1, 0 - BAmt(b), BCol(b) & ".UP") }
+            Case "BV"
+                { MpsBRow(j, 0 - 1, 0 - 1, BCol(b) & ".UP") }
+            Case "PL"
+                Rem no upper bound is the default; the line states it
+                { }
+            Case "MI", "FR"
+                Error("MPS: A " & BKind(b) & " BOUND LETS A VARIABLE GO NEGATIVE, AND THIS MACHINE'S FRAME IS X >= 0")
+            Case Else
+                Error("MPS: BOUND TYPE " & BKind(b) & " NOT SUPPORTED (LO, UP, FX, BV and PL are)")
+
+Def BndTrip(br As MpsBRow, at As Number) As SpEnt
+    SpEnt(at, BAt(br), BCoef(br))
+
 Rem ---- the public surface ---------------------------------------------
 
 Def RunParse(text As String, zeroLower As Boolean) As MpsSt
-    Fold(Split(text, Chr(10)), MpsSt("", "", { }, { }, { }, { }, { }, zeroLower), Step)
+    Fold(Split(text, Chr(10)), MpsSt("", "", { }, { }, { }, { }, { }, { }, { }, False, zeroLower), Step)
 
-Def AssembleProblem(st As MpsSt) As Problem
+Def AssembleSp(st As MpsSt) As SpProblem
     If ObjName(st) = "" Then
         Error("MPS: NO OBJECTIVE (N) ROW")
     Else
         Let cnames = Cols(st)
+        Let sens = Senses(st)
+        Rem Arrays, not lists, for everything the per-entry passes index
+        Rem into: Nth is o(1) on an array and a walk on a list.
+        Let carr = ToArray(cnames)
+        Let rarr = ToArray(RowIds(st))
+        Let sarr = ToArray(sens)
+        Let bases = ToArray(RowBases(sens, 1, 1, { }))
+        Let scales = ToArray(Map(sens, SenseScale))
+        Let nrows = NormCount(sens)
+        Let brows = Flatten(Map(Bnds(st), Fn(b) => BndRows(b, cnames)))
         Let es = Ents(st)
         Let objEs = Filter(es, Fn(e) => Row(e) = ObjName(st))
-        Let costs = ToArray(Map(cnames, Fn(c) => SumCol(objEs, c)))
-        Let dense = Map(RowIds(st), Fn(rid) => RowVec(es, cnames, rid))
+        Rem (Named cvec and bvec, not costs and rhs: words are
+        Rem case-insensitive, so either of those would stand in front of
+        Rem the accessor of the same name for the rest of the Def.)
+        Let cvec = ToArray(Map(cnames, Fn(c) => SumCol(objEs, c)))
+        Rem Names resolved once, then the normalised triplets read off.
+        Rem The pair rows an E row needs follow the base rows rather
+        Rem than interleaving with them, which changes no cell: two
+        Rem entries only ever meet inside one normalised row, and no row
+        Rem is in both passes.
+        Let named = Filter(Map(es, Fn(e) => NamedTrip(e, carr, rarr)), Fn(t) => EntRow(t) > 0)
+        Let trips = Concat(Concat(Map(named, Fn(t) => BaseTrip(t, bases, scales)),
+                                  Map(Filter(named, Fn(t) => Nth(sarr, EntRow(t)) = "E"),
+                                      Fn(t) => PairTrip(t, bases))),
+                           Map(Range(1, Length(brows)), Fn(i) => BndTrip(Nth(brows, i), nrows + i)))
         Let rvals = Map(RowIds(st), Fn(rid) => RowSum(RhsEs(st), rid))
-        Problem(costs, MatFromRows(SenseRows(Senses(st), dense, 1, { })), ToArray(SenseRhs(Senses(st), rvals, 1, { })))
+        Let bvec = Concat(ToArray(SenseRhs(sens, rvals, 1, { })), ToArray(Map(brows, BRhs)))
+        SpProblem(cvec, SpFromEnts(nrows + Length(brows), Length(cnames), trips), bvec)
+
+Def AssembleLabels(st As MpsSt) As List
+    Concat(ConLabels(Senses(st), RowIds(st), 1, { }),
+           Map(Flatten(Map(Bnds(st), Fn(b) => BndRows(b, Cols(st)))), BLab))
+
+Def AssembleProblem(st As MpsSt) As Problem
+    Let sp = AssembleSp(st)
+    Problem(Costs(sp), SpToMat(SA(sp)), Rhs(sp))
+
+Rem An integer file answers a different question than a linear program
+Rem does, so the words that answer linear programs refuse it and name
+Rem the ones that do not.
+
+Def NoInts(st As MpsSt) As MpsSt
+    If IsEmpty(Ints(st)) Then
+        st
+    Else
+        Error("MPS: THIS FILE DECLARES INTEGER COLUMNS - USE LoadMpsMip OR ParseMpsMip")
+
+Def AssembleMip(st As MpsSt) As MipProblem
+    MipProblem(AssembleSp(st), Map(Ints(st), Fn(c) => IndexOf(Cols(st), c)))
 
 Def ParseMpsB(text As String, zeroLower As Boolean) As Problem
-    AssembleProblem(RunParse(text, zeroLower))
+    AssembleProblem(NoInts(RunParse(text, zeroLower)))
 
 Def ParseMpsModel(text As String, zeroLower As Boolean) As MpsModel
-    Let st = RunParse(text, zeroLower)
-    MpsModel(AssembleProblem(st), Cols(st), ConLabels(Senses(st), RowIds(st), 1, { }))
+    Let st = NoInts(RunParse(text, zeroLower))
+    MpsModel(AssembleProblem(st), Cols(st), AssembleLabels(st))
 
 Def LoadMpsModel(path As String, zeroLower As Boolean) As MpsModel
     ParseMpsModel(ReadFile(path), zeroLower)
@@ -250,3 +483,39 @@ Def LoadMps(path As String) As Problem
 
 Def LoadMpsZeroLower(path As String) As Problem
     ParseMpsB(ReadFile(path), True)
+
+Rem ---- the sparse words, which is what the assembly natively answers --
+
+Def ParseMpsSp(text As String) As SpProblem
+    AssembleSp(NoInts(RunParse(text, False)))
+
+Def LoadMpsSp(path As String) As SpProblem
+    ParseMpsSp(ReadFile(path))
+
+Def ParseMpsSpModel(text As String, zeroLower As Boolean) As MpsSpModel
+    Let st = NoInts(RunParse(text, zeroLower))
+    MpsSpModel(AssembleSp(st), Cols(st), AssembleLabels(st))
+
+Def LoadMpsSpModel(path As String, zeroLower As Boolean) As MpsSpModel
+    ParseMpsSpModel(ReadFile(path), zeroLower)
+
+Rem ---- and the integer words ------------------------------------------
+
+Def ParseMpsMip(text As String) As MipProblem
+    AssembleMip(RunParse(text, False))
+
+Def LoadMpsMip(path As String) As MipProblem
+    ParseMpsMip(ReadFile(path))
+
+Def ParseMpsMipModel(text As String, zeroLower As Boolean) As MpsMipModel
+    Let st = RunParse(text, zeroLower)
+    MpsMipModel(AssembleMip(st), Cols(st), AssembleLabels(st))
+
+Def LoadMpsMipModel(path As String, zeroLower As Boolean) As MpsMipModel
+    ParseMpsMipModel(ReadFile(path), zeroLower)
+
+Rem Whether a file needs the integer words at all, without parsing it
+Rem twice at the call site: a reporting tool reads this and picks.
+
+Def MpsHasInts(text As String) As Boolean
+    Not IsEmpty(Ints(RunParse(text, False)))

@@ -9,19 +9,28 @@ Rem Just run:      dotnet bin\simplex-mps.dll files\blend.mps
 Rem
 Rem FILE is required — the run aborts without one. files/blend.mps is
 Rem Bruce Murtagh's BLEND problem; files/mix.mps is a smaller worked
-Rem example. The -z (or --zero-lower) switch
+Rem example; files/bales.mps is a small integer one. The -z (or
+Rem --zero-lower) switch
 Rem forces a zero lower bound (x >= 0) on every variable, skipping a
-Rem BOUNDS section instead of rejecting it. Solves with the simplex
-Rem machine and reports status, objective, the nonzero variables, and
-Rem the sensitivity analysis: shadow prices per normalised constraint
-Rem row (an E row appears as its +/- pair) and reduced costs per
-Rem variable.
+Rem BOUNDS section instead of reading it as rows. Solves with the
+Rem simplex machine and reports status, objective, the nonzero
+Rem variables, and the sensitivity analysis: shadow prices per
+Rem normalised constraint row (an E row appears as its +/- pair, a
+Rem bound as its .LO or .UP row) and reduced costs per variable.
+Rem
+Rem A file whose columns are marked integer is answered by branch and
+Rem bound instead, and reports its node and iteration counts. Shadow
+Rem prices for an integer answer are not the integer problem's - no
+Rem linear-programming dual is - so they are reported from the LP that
+Rem remains with every integer pinned where the search left it, which
+Rem is a question that does have an answer.
 Rem ==================================================================
 
-Include "matrix.shoddy"
-Include "simplex.shoddy"
 Include "seq.shoddy"
 Include "str.shoddy"
+Include "sparse.shoddy"
+Include "simplex.shoddy"
+Include "mip.shoddy"
 Include "mps.shoddy"
 
 Def ShowVar(names As List Of String, xs As Array Of Number, i As Number)
@@ -35,22 +44,67 @@ Def ShowPrice(names As List Of String, vs As Array Of Number, i As Number)
 Def CountNonzero(xs As Array Of Number) As Number
     Length(Filter(ToList(xs), Fn(v) => Abs(v) > 0.0000005))
 
-Def Report(mo As MpsModel)
-    Let p = Prob(mo)
-    Print("PROBLEM: " & Str(Length(Costs(p))) & " VARIABLES, " & Str(Rows(A(p))) & " CONSTRAINT ROWS (NORMALISED TO >=)")
-    Let s = Optimize(p)
+Def Density(s As Sparse) As String
+    Str(SpNnz(s)) & " STORED ENTRIES OF " & Str(Rows(s) * Cols(s)) & " CELLS"
+
+Def Shape(p As SpProblem) As String
+    Str(Length(Costs(p))) & " VARIABLES, " & Str(Rows(SA(p))) & " CONSTRAINT ROWS (NORMALISED TO >=), " & Density(SA(p))
+
+Def ShowVars(names As List Of String, xs As Array Of Number)
+    Print("VARIABLES (" & Str(CountNonzero(xs)) & " NONZERO OF " & Str(Length(xs)) & "):")
+    Each(Range(1, Length(xs)), Fn(i) => ShowVar(names, xs, i))
+
+Def ShowSensitivity(vnames As List Of String, cnames As List Of String, s As Solution)
+    Print("SHADOW PRICES - CHANGE IN OBJECTIVE PER UNIT OF RHS (" & Str(CountNonzero(DualPrices(s))) & " NONZERO):")
+    Each(Range(1, Length(DualPrices(s))), Fn(i) => ShowPrice(cnames, DualPrices(s), i))
+    Print("")
+    Print("REDUCED COSTS - PENALTY FOR FORCING IN A ZERO VARIABLE (" & Str(CountNonzero(Reduced(s))) & " NONZERO):")
+    Each(Range(1, Length(Reduced(s))), Fn(i) => ShowPrice(vnames, Reduced(s), i))
+
+Rem ---- the linear case -------------------------------------------------
+
+Def LpReport(mo As MpsMipModel)
+    Let p = Prob(Prob(mo))
+    Print("PROBLEM: " & Shape(p))
+    Let s = SpOptimize(p)
     Print("STATUS: " & Status(s) & "   ITERATIONS: " & Str(Iterations(s)))
     If Status(s) = "OPTIMAL" Then
         Print("OBJECTIVE: " & Str(Cost(s)))
         Print("")
-        Print("VARIABLES (" & Str(CountNonzero(X(s))) & " NONZERO OF " & Str(Length(X(s))) & "):")
-        Each(Range(1, Length(X(s))), Fn(i) => ShowVar(VarNames(mo), X(s), i))
+        ShowVars(VarNames(mo), X(s))
         Print("")
-        Print("SHADOW PRICES - CHANGE IN OBJECTIVE PER UNIT OF RHS (" & Str(CountNonzero(DualPrices(s))) & " NONZERO):")
-        Each(Range(1, Length(DualPrices(s))), Fn(i) => ShowPrice(ConNames(mo), DualPrices(s), i))
+        ShowSensitivity(VarNames(mo), ConNames(mo), s)
+    Else
+        Print("NO OPTIMUM REPORTED - SEE STATUS")
+
+Rem ---- the integer case ------------------------------------------------
+Rem The pinned problem carries two extra rows per integer variable, so
+Rem it needs two extra labels apiece to report under.
+
+Def PinLabels(names As List Of String, ints As List Of Number) As List
+    Flatten(Map(ints, Fn(k) => { Nth(names, k) & ".PIN+", Nth(names, k) & ".PIN-" }))
+
+Def ShowPinned(mo As MpsMipModel, ms As MipSolution)
+    Let fs = SpOptimize(MipFixed(Prob(mo), ms))
+    Print("SENSITIVITY OF THE LINEAR PART, WITH EVERY INTEGER PINNED WHERE THE SEARCH LEFT IT")
+    If Status(fs) = "OPTIMAL" Then
+        ShowSensitivity(VarNames(mo), Concat(ConNames(mo), PinLabels(VarNames(mo), Ints(Prob(mo)))), fs)
+    Else
+        Print("  THE PINNED PROBLEM DID NOT SOLVE - " & Status(fs))
+
+Def MipReport(mo As MpsMipModel)
+    Let mp = Prob(mo)
+    Print("PROBLEM: " & Shape(Prob(mp)) & ", " & Str(Length(Ints(mp))) & " INTEGER")
+    Let lp = SpOptimize(Prob(mp))
+    Print("RELAXATION: " & Status(lp) & "   OBJECTIVE: " & Str(Cost(lp)))
+    Let ms = MipOptimize(mp)
+    Print("STATUS: " & Status(ms) & "   NODES: " & Str(Nodes(ms)) & "   ITERATIONS: " & Str(Iterations(ms)))
+    If Status(ms) = "OPTIMAL" Then
+        Print("OBJECTIVE: " & Str(Cost(ms)))
         Print("")
-        Print("REDUCED COSTS - PENALTY FOR FORCING IN A ZERO VARIABLE (" & Str(CountNonzero(Reduced(s))) & " NONZERO):")
-        Each(Range(1, Length(Reduced(s))), Fn(i) => ShowPrice(VarNames(mo), Reduced(s), i))
+        ShowVars(VarNames(mo), X(ms))
+        Print("")
+        ShowPinned(mo, ms)
     Else
         Print("NO OPTIMUM REPORTED - SEE STATUS")
 
@@ -66,8 +120,15 @@ Def ModeName(zl As Boolean) As String
     Else
         "STRICT"
 
+Rem One parse either way: a file with no integer columns is a MipProblem
+Rem with nothing to branch on, which is the linear program itself.
+
 Def Main()
     Let files = Filter(Args(), Fn(t) => Not StartsWith(t, "-"))
     Let zl = Contains(Args(), "-z") Or Contains(Args(), "--zero-lower")
     Print("FILE: " & PathOf(files) & "   BOUNDS MODE: " & ModeName(zl))
-    Report(LoadMpsModel(PathOf(files), zl))
+    Let mo = ParseMpsMipModel(ReadFile(PathOf(files)), zl)
+    If IsEmpty(Ints(Prob(mo))) Then
+        LpReport(mo)
+    Else
+        MipReport(mo)

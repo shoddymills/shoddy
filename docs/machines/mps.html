@@ -23,7 +23,7 @@
 
 
 <header class="mast has-icon"><div><p class="eyebrow"><a href="index.html#optimization">The Machines &middot; Optimization</a></p><h1>mps</h1><p class="kicker">MPS Linear-Programming Files — machines/mps.shoddy</p></div><img class="micon" src="../media/icons/mps.svg" alt="the mps machine&#39;s icon"></header>
-<nav class="pagenav pagenav-top" aria-label="Machines, in catalog order"><a href="simplex.html" class="prev"><span class="pnwrap"><span class="dir">&larr; Previous machine</span><span class="ttl">simplex</span></span></a><a href="index.html" class="all">All machines</a><a class="next" href="net.html"><span class="pnwrap"><span class="ttl">net</span><span class="dir">Next machine &rarr;</span></span></a></nav>
+<nav class="pagenav pagenav-top" aria-label="Machines, in catalog order"><a href="simplex.html" class="prev"><span class="pnwrap"><span class="dir">&larr; Previous machine</span><span class="ttl">simplex</span></span></a><a href="index.html" class="all">All machines</a><a class="next" href="mip.html"><span class="pnwrap"><span class="ttl">mip</span><span class="dir">Next machine &rarr;</span></span></a></nav>
 
 <h2 id="summary">Summary</h2>
 <p><code>mps</code> reads a linear-programming problem out of a text file and
@@ -36,7 +36,11 @@ gives you back a <code>Problem</code>, the exact value the
 other words, <code>mps</code> is the loading dock and <code>simplex</code> is
 the factory floor: one reads the order, the other fills it. There's nothing to
 configure and nothing to write out by hand — <code>LoadMps("thing.mps")</code>
-and you have a solvable problem.</p>
+and you have a solvable problem. <code>LoadMpsSp</code> hands you the same
+problem in <a href="sparse.html">sparse</a> form for a big one, and
+<code>LoadMpsMip</code> handles a file whose columns are marked as whole
+numbers, which is <a href="mip.html">mip</a>'s question rather than
+<code>simplex</code>'s.</p>
 
 <h2 id="why">Why It's Useful</h2>
 <p>Linear programs have a way of getting large. A serious one might have
@@ -130,25 +134,51 @@ just get a <code>Problem</code> that means the same thing your file did.</li>
 <li><strong>Files and strings, plain and zero-lower.</strong> Use
 <code>LoadMps</code> to read from a path, or <code>ParseMps</code> if you already
 have the text in hand. Their <code>...ZeroLower</code> cousins do the same but
-forgive a <code>BOUNDS</code> section — quietly skipping it and forcing every
-variable to the standard <code>x &gt;= 0</code> — which is handy for files that
-carry bounds the plain reader would refuse.</li>
+skip a <code>BOUNDS</code> section entirely, forcing every variable to the
+plain <code>x &gt;= 0</code> — which is the escape hatch when you want the
+problem without the bounds the file states.</li>
+<li><strong>Bounds are read, and they become rows.</strong> A
+<code>BOUNDS</code> section says things like "X is at most 3" or "Y is exactly
+2", and in this machine's world — where everything is
+<code>A x &gt;= Rhs</code> — that is just another constraint. So
+<code>LO</code> becomes <code>x &gt;= l</code>, <code>UP</code> becomes
+<code>-x &gt;= -u</code>, <code>FX</code> becomes both at once, and
+<code>BV</code> (binary) becomes a ceiling of one plus a note that the variable
+is an integer. Each is a row with a single number in it, which the sparse
+assembly stores as a single number. They appear in the labels as
+<code>X.UP</code>, <code>Y.LO</code> and so on, so a shadow price on a bound is
+readable as such. <code>PL</code> states the default and does nothing.</li>
+<li><strong>Integer files go to <a href="mip.html">mip</a>, and the plain words
+say so.</strong> A file that marks columns integer — with
+<code>'MARKER'</code>/<code>'INTORG'</code>, or with a <code>BV</code> bound —
+is asking a different question than a linear program answers.
+<code>LoadMpsMip</code> and <code>ParseMpsMip</code> answer it, returning a
+<a href="mip.html">MipProblem</a>. The plain words refuse such a file and name
+those two, because reading it as a linear program would mean quietly dropping
+the requirement that made it interesting.</li>
 <li><strong>It refuses what it can't honour, out loud.</strong> This reader
 covers the sections that matter for a non-negative LP:
 <code>NAME</code>, <code>OBJSENSE</code>, <code>ROWS</code>,
-<code>COLUMNS</code>, <code>RHS</code>, and <code>ENDATA</code>. It does
-<em>not</em> silently mishandle the rest: a <code>RANGES</code> section, a
-<code>BOUNDS</code> section (unless you asked for zero-lower), or an integer
-<code>'MARKER'</code> all stop with a clear error rather than a wrong answer.
-<code>OBJSENSE</code> may only say <code>MIN</code> — the simplex machine
-minimises, and a maximise request is refused rather than quietly flipped.</li>
+<code>COLUMNS</code>, <code>RHS</code>, <code>BOUNDS</code>, and
+<code>ENDATA</code>. It does <em>not</em> silently mishandle the rest. A
+<code>RANGES</code> section stops with a clear error. So do the bound types
+that would let a variable go negative — <code>MI</code>, <code>FR</code>, and a
+<code>UP</code> with a negative value, which in the wider MPS world quietly
+means the lower bound is free — because every word here assumes
+<code>x &gt;= 0</code> and answering as though it didn't would be answering a
+different problem. <code>OBJSENSE</code> may only say <code>MIN</code> — the
+simplex machine minimises, and a maximise request is refused rather than
+quietly flipped.</li>
 <li><strong>When you need the names back, ask for the model.</strong>
 <code>LoadMpsModel</code> and <code>ParseMpsModel</code> return an
 <code>MpsModel</code> instead of a bare <code>Problem</code>: same problem,
 plus the variable names and the constraint labels, so a reporting tool can say
 "MEAT = 4" instead of "variable 1 = 4". Because an <code>E</code> row was split
 in two, it shows up in the labels as its <code>NAME+</code> / <code>NAME-</code>
-pair, matching the two rows it became.</li>
+pair, matching the two rows it became. There is a model word per flavour:
+<code>LoadMpsSpModel</code> for the sparse problem and
+<code>LoadMpsMipModel</code> for the integer one, all three carrying the same
+two lists of names.</li>
 </ul>
 
 <h2 id="hood">Under the Hood: From Text to Matrix</h2>
@@ -174,23 +204,31 @@ detects by counting: an even field count means the name was left off (as real
 files sometimes do), an odd one means it's there and gets dropped. Numbers are
 read with <code>Val</code>; the machine leans on the <a href="str.html">str</a>
 machine for the splitting and text work.</p>
-<p><strong>Sparse in, dense out.</strong> MPS lists only the non-zero numbers,
-one column at a time, which is a <em>sparse</em> description. The simplex machine
-wants a <em>dense</em> <a href="matrix.html">matrix</a> — every cell, zeros
-included. So <code>AssembleProblem</code> does the transpose in meaning: for each
-constraint row it walks the column names in order and sums up whatever entries
-mention that row and column, defaulting to zero, building a full row vector. The
-objective is just the row named by the first <code>N</code>. Then the sense
-translation runs — <code>G</code> keeps its row, <code>L</code> negates it,
-<code>E</code> emits the <code>&gt;=</code>/<code>&lt;=</code> pair — over both
-the coefficient rows and the right-hand sides in lockstep, and the finished
-<code>Problem</code> drops out. Every word is pure: the loaders touch the disk to
-read, the parsers touch nothing at all.</p>
+<p><strong>Sparse in, sparse out.</strong> MPS lists only the non-zero numbers,
+one column at a time, which is exactly a list of
+<a href="sparse.html">triplets</a> — and that is what the assembly keeps.
+<code>AssembleSp</code> turns each <code>COLUMNS</code> entry's row and column
+<em>names</em> into indices, applies the sense translation to the entry rather
+than to a whole row (<code>G</code> keeps its number, <code>L</code> negates it,
+<code>E</code> emits a second entry one row down, negated), appends one entry
+per bound row, and hands the lot to <code>SpFromEnts</code>. The objective is
+just the row named by the first <code>N</code>. The right-hand sides go through
+the same translation in lockstep, so row <em>k</em> of the matrix and entry
+<em>k</em> of the vector always mean the same constraint.</p>
+<p>Nothing is ever densified on the way. <code>LoadMps</code> and the other
+dense words are the same assembly with <code>SpToMat</code> at the end — one
+code path, dense only at the door, for the callers who want an ordinary
+<a href="matrix.html">Matrix</a>. It used to be the other way round: the reader
+built full row vectors by walking every column name for every row and summing
+the entries that mentioned both, which cost a scan of the entry list per cell
+and produced a grid that was mostly the zeros the file had gone to the trouble
+of not mentioning. Every word is pure: the loaders touch the disk to read, the
+parsers touch nothing at all.</p>
 
 <h2 id="words">Word Reference</h2>
-<p class="tag">Every word, plus the MpsModel type</p>
+<p class="tag">Every word, plus the three model types</p>
 
-<h3>The type</h3>
+<h3>The types</h3>
 <table>
 <tr><th>Word</th><th>Description</th></tr>
 <tr><td>MpsModel(Prob, VarNames, ConNames)</td><td>A parsed problem together
@@ -200,7 +238,17 @@ with its labels, for reporting tools. <code>Prob</code> is the
 <code>ConNames</code> is the list of normalised constraint labels — a
 <code>G</code> or <code>L</code> row keeps its name, an <code>E</code> row
 appears as its <code>NAME+</code> / <code>NAME-</code> pair, matching the two
-rows the equality became.</td></tr>
+rows the equality became, and a bound appears as
+<code>VARIABLE.LO</code> or <code>VARIABLE.UP</code>.</td></tr>
+<tr><td>MpsSpModel(Prob, VarNames, ConNames)</td><td>The same, with
+<code>Prob</code> an <a href="simplex.html">SpProblem</a> for
+<code>SpOptimize</code>.</td></tr>
+<tr><td>MpsMipModel(Prob, VarNames, ConNames)</td><td>The same again, with
+<code>Prob</code> a <a href="mip.html">MipProblem</a> for
+<code>MipOptimize</code>. A file with no integer columns still parses to one of
+these quite happily — it is a <code>MipProblem</code> with nothing to branch on,
+which is how a reporting tool can read any file once and then decide which
+solver it needs.</td></tr>
 </table>
 
 <h3>Reading a file into a Problem</h3>
@@ -208,11 +256,13 @@ rows the equality became.</td></tr>
 <tr><th>Word</th><th>Description</th></tr>
 <tr><td>LoadMps(path)</td><td>Reads the MPS file at <code>path</code> and
 returns a <a href="simplex.html">Problem</a> ready for <code>Optimize</code>.
-Rejects <code>BOUNDS</code>, <code>RANGES</code>, integer markers, and
-non-<code>MIN</code> objectives with a clear error.</td></tr>
+Reads <code>BOUNDS</code> as extra rows. Rejects <code>RANGES</code>, integer
+files (naming the <code>Mip</code> words), the bound types that break
+<code>x &gt;= 0</code>, and non-<code>MIN</code> objectives, each with a clear
+error.</td></tr>
 <tr><td>LoadMpsZeroLower(path)</td><td>Same as <code>LoadMps</code>, but a
-<code>BOUNDS</code> section is skipped rather than rejected, forcing the
-standard <code>x &gt;= 0</code> on every variable.</td></tr>
+<code>BOUNDS</code> section is skipped rather than read, forcing the
+plain <code>x &gt;= 0</code> on every variable.</td></tr>
 <tr><td>ParseMps(text)</td><td>Same as <code>LoadMps</code>, but parses MPS
 <code>text</code> you already have in hand instead of reading from
 disk.</td></tr>
@@ -233,6 +283,37 @@ it.</td></tr>
 <tr><td>ParseMpsModel(text, zeroLower)</td><td>Same as <code>LoadMpsModel</code>,
 but parses MPS <code>text</code> in hand instead of reading from
 disk.</td></tr>
+</table>
+
+<h3>Reading it sparsely <span class="tag">what the assembly natively answers</span></h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>LoadMpsSp(path)</td><td>Reads the file and returns an
+<a href="simplex.html">SpProblem</a> — the same problem with its constraints
+left <a href="sparse.html">sparse</a>, which is how the file states them and
+what <code>SpOptimize</code> wants. Nothing is densified anywhere along the
+way; the dense words are this one with a conversion on the end.</td></tr>
+<tr><td>ParseMpsSp(text)</td><td>The same, from text in hand.</td></tr>
+<tr><td>LoadMpsSpModel(path, zeroLower)</td><td>An <code>MpsSpModel</code>: the
+sparse problem plus the names.</td></tr>
+<tr><td>ParseMpsSpModel(text, zeroLower)</td><td>The same, from text in
+hand.</td></tr>
+</table>
+
+<h3>Reading an integer file</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>LoadMpsMip(path)</td><td>Reads the file and returns a
+<a href="mip.html">MipProblem</a> — the problem, plus which variables the file
+marked as integer, ready for <code>MipOptimize</code>. Integer columns are
+those between an <code>'INTORG'</code> and an <code>'INTEND'</code> marker,
+plus any given a <code>BV</code> bound. A file with none parses fine and simply
+has nothing to branch on.</td></tr>
+<tr><td>ParseMpsMip(text)</td><td>The same, from text in hand.</td></tr>
+<tr><td>LoadMpsMipModel(path, zeroLower)</td><td>An <code>MpsMipModel</code>:
+the integer problem plus the names.</td></tr>
+<tr><td>ParseMpsMipModel(text, zeroLower)</td><td>The same, from text in
+hand.</td></tr>
 </table>
 
 
@@ -256,16 +337,19 @@ sections.</td></tr>
 <tr><td class="uicon"><a href="simplex.html"><img src="../media/icons/simplex.svg" alt=""></a></td><td><a href="simplex.html">simplex</a></td><td><code>LoadMpsModel</code>
 builds exactly the problem <code>Optimize</code> consumes, and one
 <code>Include</code> of mps brings the solver along.</td></tr>
-<tr><td class="uicon"><a href="seq.html"><img src="../media/icons/seq.svg" alt=""></a></td><td><a href="seq.html">seq</a></td><td><code>Contains</code> tests a row name against the sections already seen.</td></tr>
-<tr><td class="uicon"><a href="matrix.html"><img src="../media/icons/matrix.svg" alt=""></a></td><td><a href="matrix.html">matrix</a></td><td><code>MatFromRows</code> builds the constraint matrix the solver is
-handed. mps reached it through simplex until a machine's includes stopped
-being part of its surface.</td></tr>
+<tr><td class="uicon"><a href="seq.html"><img src="../media/icons/seq.svg" alt=""></a></td><td><a href="seq.html">seq</a></td><td><code>Contains</code> tests a row name against the sections already seen, and <code>IndexOf</code> turns a name into the column it stands for.</td></tr>
+<tr><td class="uicon"><a href="sparse.html"><img src="../media/icons/sparse.svg" alt=""></a></td><td><a href="sparse.html">sparse</a></td><td>A COLUMNS section is
+a list of triplets already, so <code>SpFromEnts</code> is the assembly and
+<code>SpToMat</code> the bridge the dense words answer through.</td></tr>
+<tr><td class="uicon"><a href="mip.html"><img src="../media/icons/mip.svg" alt=""></a></td><td><a href="mip.html">mip</a></td><td>A file with integer
+markers parses to a <code>MipProblem</code>, which is mip's type to
+declare.</td></tr>
 </table>
 
 <nav class="pagenav pagenav-bottom" aria-label="Machines, in catalog order">
   <a href="simplex.html" class="prev"><span class="pnwrap"><span class="dir">&larr; Previous machine</span><span class="ttl">simplex</span></span></a>
   <a href="index.html" class="all">All machines</a>
-  <a class="next" href="net.html"><span class="pnwrap"><span class="ttl">net</span><span class="dir">Next machine &rarr;</span></span></a>
+  <a class="next" href="mip.html"><span class="pnwrap"><span class="ttl">mip</span><span class="dir">Next machine &rarr;</span></span></a>
 </nav>
 <footer>Named for the shoddy mills of the West Riding: Useless Things Made
 Useful Through Skill (<a href="../heritage.html">the heritage of the name</a>).<br>

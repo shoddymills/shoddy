@@ -67,129 +67,177 @@ same content to more than one of these. They are small, and an unread file
 costs nothing. If your tool reads none of them, paste the block below as the
 first message of each session — it is short enough.</p>
 
-<p>Here is the file. It says what Shoddy is, how to behave, and the facts a
-confident guess gets wrong. Copy it whole:</p>
+<p>Here is the file. It is deliberately built in two halves, and knowing which
+half is which is the whole trick to keeping it useful as the language grows.
+The first half is the <b>shape</b> of Shoddy: the handful of facts that make a
+confident guess wrong. It is written out in full because <em>you cannot look
+up what you don't know you're missing</em> — left alone, an assistant writes
+<code>For i = 1 To 10</code> fluently and never suspects there is anything to
+check. Those facts exist to manufacture doubt in the right places. The second
+half is <b>where the answers are</b>: every word name, argument order and
+machine list lives in the sources, not in the file, because a copied detail is
+a detail that goes stale. Copy it whole:</p>
 
 <pre><code># Shoddy — how to help in this project
 
 Shoddy is a small, purely functional BASIC that compiles to .NET. It looks
 like BASIC and does not behave like it. You have not seen this language
-before, so do not pattern-match to VB.NET, VBA or QBasic.
+before. Do not pattern-match to VB.NET, VBA, QBasic, Python or F#.
 
-## How to answer
-- If you are unsure of a word or its arguments, say so and ask, or check
-  the sources listed at the bottom. Do not invent a plausible name.
-- Prefer the shortest idiomatic form over a clever one.
-- Every answer must be code that compiles. When you are done, say how to
-  run it: `mill run FILE.shoddy`.
+## This file is two halves, and they are different kinds of thing
 
-## The rules that are not BASIC
-- Nothing mutates. `Let` binds a name once. There is no assignment, no
-  `Dim x = 0` variable, no `x = x + 1`, no `goto`.
+The FIRST half is the SHAPE of the language. It is written out because you
+cannot look up what you do not know you are missing: left alone you will
+write `For i = 1 To 10` fluently and never suspect there is anything to
+check. These facts are here to make you uncertain in the right places.
+
+The SECOND half is WHERE THE ANSWERS ARE. Every word name, argument order,
+machine list and behavioural detail lives in the sources named there and
+deliberately NOT in this file, because a copied detail is a detail that
+goes stale. When you need a specific, go and read it. Do not reconstruct
+it from memory, and do not ask me what a word does — the file is right
+there and it is faster than the question.
+
+## The shape — this is what does not change
+
+- Nothing mutates. `Let` binds a name once. No assignment, no `Dim x = 0`
+  variable, no `x = x + 1`, no `goto`. "Updating" a record returns a new
+  one: `With(r, Field = v)`.
 - There is NO `For`, `While`, `Do`, `Next` or `Wend`. Iteration is
-  `Map` / `Filter` / `Fold` / `Each` / `Times` over a list, or recursion.
-  `Fold` is the workhorse: it threads a value through a sequence.
-- "Updating" a record returns a new one: `With(r, Field = v)`.
+  recursion, or `Map` / `Filter` / `Fold` / `Each` / `Times`. `Fold` is
+  the workhorse: it threads a value through a sequence.
 - Indentation is the structure. There is no `End If`, `End Function`,
   `Next`, `Wend`, brace or semicolon anywhere in the language.
 - A Def's last expression is its result. There is no `Return`.
-- Booleans are not numbers. `If n Then` is an error; write `If n <> 0 Then`.
-- Operators are infix: `a Mod b`, never `Mod(a, b)`. The call form silently
-  builds a function value, and the program fails somewhere else entirely.
-  Same for a unary minus before brackets: write `0 - x * x`.
+- Effects live at the edge: `Print` and `Input` belong in `Main`, not in
+  the words that compute.
 - Names are case-insensitive: `total`, `Total` and `TOTAL` are one word.
-- `Type T` declares a record and creates one accessor function per field.
-  Fields are POSITIONAL — inserting one mid-record shifts every later
-  constructor argument silently. Records compare structurally with `=`.
-- Never name a local, parameter or Def after a field the program reads by
-  accessor: the accessor loses every naming contest.
+- Booleans are not numbers. `If n Then` is an error; write `If n <> 0 Then`.
+- `Number` is an IEEE double and the ONLY numeric type. There are no
+  integers and NO BITWISE OPERATORS — bit work is a machine's words, not
+  `&`, `|` or `&lt;&lt;`, and a design that wants the operators themselves is the
+  wrong design here.
 - Sequences are 1-based and ranges include both ends.
-- A bare name in argument position is passed as a function, not called:
-  `Map(xs, Double)`.
-- A line continues onto the next only inside open brackets.
-
-## Facts that decide a design
-- `Number` is an IEEE double and the ONLY numeric type. There are no integers
-  and NO BITWISE OPERATORS. Bit work is `bool.shoddy`'s words — `BoolBitAnd`,
-  `BoolShl`, `BoolMask`, `BoolGetField` — never `&`, `|` or `&lt;&lt;`; a design
-  that wants the operators themselves is the wrong design here.
+- There are no exceptions. `Error(msg)` aborts with a line number. Anything
+  a caller should be able to handle comes back as a VALUE instead — the
+  predeclared `Option` (`Some`/`None`) and `Result` (`Ok`/`Err`) are what
+  that means, and neither needs an Include.
+- Records compare structurally with `=`. Lists compare by identity, so two
+  separately built lists of the same items are not equal.
+- Self-tail-recursion compiles to a loop, so a word that calls itself last
+  runs in constant stack. MUTUAL recursion does not — it consumes stack
+  like any other call.
 - Arrays are fixed-length with O(1) `Nth`; lists are cons cells built for
   recursion. Index into arrays, recurse over lists. `SetNth` returns a copy.
-- Reading a character is `CodeAt(s, k)`, NOT `Asc(Mid(s, k, 1))`. The second
-  is a trap: `Mid` CLAMPS a start past the end to the empty string without
-  complaint, and `Asc` then aborts naming ASC — so the message blames the
-  wrong word, and only on inputs long enough to reach the end. `CodeAt`
-  refuses at the index and names the position and the length. `Codes(s)` is
-  the whole string as an `Array Of Number` in one pass, `FromCodes` is its
-  exact inverse including NUL (which `Chr` cannot build), and
-  `InstrFrom(s, sub, from)` searches from a position without copying the
-  tail to get there.
-- Self-tail-recursion compiles to a loop, so a recursive word that calls
-  itself last runs in constant stack. MUTUAL recursion does not — it consumes
-  stack like any other call.
-- There are no exceptions. `Error(msg)` aborts the program with a line number.
-  Anything a caller should be able to handle must come back as a value.
-- The network is gated: the mill needs `--allow-net` or the first socket word
-  aborts. A plain socket never blocks. A SECURED socket (after `Secure`) is the
-  exception: `Recv` blocks there and `Ready` is REFUSED, aborting the program,
-  because a poll cannot answer honestly through TLS records.
-- A picture does not need a screen. `ScribblerSave(sc, path)` writes the pixel
-  buffer to a PNG, consults no window and does not blit, so it works headless;
-  and `mill run --no-window` opens every scribbler hidden. That pair is how a
-  program draws a chart into a file from a script. `--no-window` also stops a
-  window outliving the program: normally "draw a picture and return" leaves it
-  up until dismissed, and hidden there is nobody to dismiss it.
-  `ScribblerPlace(sc, x, y)` asks for a window position and may be ignored.
+- Operators are infix: `a Mod b`, never `Mod(a, b)`. An operator in call
+  position silently builds a function value rather than a result, and the
+  program fails somewhere else entirely. Same for a unary minus before
+  brackets: write `0 - x * x`.
+- A bare name in argument position is passed as a function, not called:
+  `Map(xs, Double)`. An operator with its trailing argument pre-loaded is
+  the same thing: `Filter(xs, &gt;=(100))`.
+- A line continues onto the next only inside open brackets.
+- `Type T` declares a record and creates one accessor word per field.
+  Fields are POSITIONAL — inserting one mid-record shifts every later
+  constructor argument silently.
+- An accessor loses every naming contest, so never name a local, a
+  parameter or a Def after a field the program reads by accessor.
+- The network is gated behind `--allow-net`. A plain socket never blocks; a
+  SECURED socket is the deliberate exception and blocks on its read.
 
-## The library
-- The standard library is a set of "machines". `Include "seq.shoddy"` at the top
-  of a file; no path, no configuration, works from any folder.
-- Common ones: str (text), seq (lists), file (whole-file I/O), math,
-  random, clock, dict, csv and json (data files), stats and plotter
-  (statistics and charts), turtle and scribbler (graphics), vt100 (terminal).
-- Include every machine you name a word from. A machine gives you the words it
-  declares and not the ones it includes in turn, so `Include "stats.shoddy"`
-  does NOT give you seq's `ZipWith` even though stats uses it. The compiler
-  refuses the word and names the Include to add; write the Include.
-- Do not invent library words. If you need one, name the machine you think
-  it is in and ask me to confirm.
+## The house style — narrower than the language allows
 
-## How this project is built
+Read three or four machines before you write anything. The language
+permits far more than this project uses, and matching the tree matters
+more than being clever.
+
+- Defs are SMALL. The mean body across the standard library is four lines.
+  When a body grows past that the answer is another named Def, not deeper
+  nesting — the library is full of chains like `Split` / `SplitFrom` /
+  `SplitAt`, each doing one step.
+- `Select Case` for taking a sum type apart or matching a range of values;
+  plain `If` for a two-way test. `Case Type(a, b)` destructures a record and
+  binds its fields, which is how you read one in a match.
+- `Fn(x) =&gt; ...` for a lambda used once; a bare name or an operator section
+  for anything already named.
+- Point-free pipelines are legal and the spec shows them, but the library
+  hardly uses them. Nested calls and named helpers are the house style.
+- A word that aborts often has a total twin answering `Result` or `Option`,
+  with the aborting one defined OVER the total one so there is one set of
+  rules and not two. Follow that pairing rather than writing both twice.
+- Every file opens with a header comment saying what it is for and which
+  decisions are load-bearing, in prose. Match that.
+
+## How to answer
+
+- If you are unsure of a word or its arguments, READ THE SOURCE. Do not
+  invent a plausible name, and do not ask me — `machines/` is the answer
+  and it is quicker than waiting for me.
+- Prefer the shortest idiomatic form over a clever one.
+- Every answer must be code that compiles. Say how to run it:
+  `mill run FILE.shoddy`.
+- `Include` every machine you name a word from. A machine gives you the
+  words it DECLARES and not the ones it includes in turn, so
+  `Include "stats.shoddy"` does not hand you seq's `ZipWith` even though
+  stats uses it. The compiler refuses the word and names the Include to
+  add; write the Include.
 - Split every program: a pure core (`NAME-core.shoddy`) that computes and
   can be tested with no screen, and a thin shell (`NAME.shoddy`) that does
   the input and output.
 - Tests are a program: `test.shoddy` full of `Assert(cond, "MESSAGE")`,
   run like anything else. A run that reaches the end passed.
-- You write the tests, and you write them BEFORE the implementation, from what
-  I said must be true. Never edit a test to make code pass: if something
-  fails, either the code is wrong or I asked for the wrong thing, and I want
-  to know which.
-- The compiler lints every build and warns about stack-effect mistakes,
-  shadowed accessors and operator sections. A clean build prints nothing.
+- You write the tests, and you write them BEFORE the implementation, from
+  what I said must be true. Never edit a test to make code pass: if
+  something fails, either the code is wrong or I asked for the wrong thing,
+  and I want to know which.
 
-## Sources — read these instead of guessing
+## Where the answers are — read these instead of guessing
 
-Three trees. All of it is fair game and none of it needs summarising back
-to me; go and look rather than reconstructing an answer from memory.
+Three trees. All of it is fair game, and none of it needs summarising back
+to me. Go and look rather than reconstructing an answer from memory.
 
-- `docs/*` — the documentation. `quickref.html` is the whole language on one
-  page and is where to start; `spec.html` is the grammar and the semantics;
-  `errors.html` is every message the toolchain can raise with its cause and
-  its fix; `guide.html` teaches it chapter by chapter; `machines/*.html` is a
-  word reference per machine; `stack.html` is the concatenative core beneath
-  the typed surface.
-- `machines/*` — the standard library, written in readable Shoddy. This is
-  the definitive answer on any library word's name, arguments and types, and
-  the best example of house style there is. Prefer reading the machine over
-  asking me what a word does.
+- `machines/*` — the standard library, in readable Shoddy. THE definitive
+  answer on any library word's name, arguments and types, and the best
+  example of house style there is. Never guess which machines exist or what
+  they are called: list the directory. Each one opens with a header naming
+  the builtins it is built on, documented word by word.
 - `mills/*` — complete programs, each built the way this one should be: a
   pure core, a thin shell, a headless test, build scripts. Read the one
-  closest in shape to what you are writing.</code></pre>
+  closest in shape to what you are writing.
+- `docs/*` — the documentation. `quickref.html` is the whole language on
+  one page and is where to start; `spec.html` is the grammar and the
+  semantics; `errors.html` is every message the toolchain can raise with
+  its cause and its fix; `guide.html` teaches it chapter by chapter;
+  `machines/index.html` is the catalogue and `machines/NAME.html` the word
+  reference for one machine; `stack.html` is the concatenative core beneath
+  the typed surface.
 
-<p class="note"><span class="lab">Note</span> The paths at the bottom assume
-you are working inside a copy of the Shoddy repository. If you are not, point
-them at the published docs instead — <code>shoddymills.github.io/shoddy/</code>
-— and an assistant that can browse will fetch them.</p>
+If you are NOT working inside a copy of the repository, the same material
+is published and you can fetch it:
+
+- https://shoddymills.github.io/shoddy/quickref.html
+- https://shoddymills.github.io/shoddy/spec.html
+- https://shoddymills.github.io/shoddy/machines/index.html
+- https://github.com/shoddymills/shoddy — `machines/` and `mills/` as source
+
+## Let the toolchain settle it, not the argument
+
+The weave catches every invented word and every stray `End If` in under a
+second. The linter warns about shadowed accessors, operator sections and
+stack-effect mistakes without ever blocking a build, and a clean build
+prints nothing at all. Never hand me code you have not run.</code></pre>
+
+<p class="note"><span class="lab">Why it is built that way</span> The two
+halves fail differently, and only one of them can be fixed by a link.
+Pointing at the documentation solves <em>"I need a detail I haven't got"</em>
+completely — and it solves it better than a copy does, because a copied word
+list is wrong the moment a machine gains a word. It does nothing at all for
+<em>"I don't know I'm wrong"</em>, which is the failure that actually bites:
+an assistant confidently writing a <code>For</code> loop never reaches for a
+link, because nothing has told it there is a question. So the shape stays in
+the file and the specifics stay out of it. That is also what keeps this page
+from going stale: there is no machine list to fall behind the tree, and the
+last section points at a directory rather than naming its contents.</p>
 
 <h2 id="attach">2. What else to hand it</h2>
 

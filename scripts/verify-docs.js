@@ -246,6 +246,94 @@ for (const [label, file] of grounding) {
     if (!re.test(txt)) { console.log(file + ": grounding block has lost \"" + name + "\""); bad++; }
 }
 
+// ---- grounding, second half: the claims must still be TRUE of the tree ----
+// The check above asks whether a fact is PRESENT. That catches a deletion and
+// nothing else - a block can keep every phrase and still describe a tree that
+// has moved underneath it, which is exactly how these pages went stale before.
+// So the specifics are checked against the sources they describe.
+//
+// The pages are deliberately written to name as few specifics as possible -
+// pointers rather than payload, because a copied word list is wrong the moment
+// a machine gains a word. What little they DO name has to be real, and this is
+// what says so.
+{
+  // Every `name.shoddy` an INSTRUCTIONS page mentions must be a machine that
+  // exists. This is the one that bites: the old blocks listed a dozen machines
+  // by name as "the common ones", and a rename or a removal made the advice
+  // wrong with nothing to notice. The rewritten blocks name no machine list at
+  // all - they point at the directory - so what is left to check is the
+  // handful named in passing as examples, and this is what keeps them real.
+  //
+  // Scoped to the two pages whose whole job is grounding. backgammon.html is a
+  // build-a-program tutorial and legitimately names the files it is teaching
+  // you to write (dice.shoddy, board.shoddy, ...), which are not machines and
+  // never will be; it stays under the phrase check above only.
+  const instructionPages = ["docs/assistants.html", "docs/tutorials/with-ai.html"];
+  // The pages' own worked-example filenames, spelled as they appear in the
+  // templates. Everything else must resolve.
+  const exampleFiles = /^(test|core|readings)$|-core$/;
+  for (const file of instructionPages) {
+    if (!fs.existsSync(path.join(root, file))) continue;
+    const named = new Set([...read(file).matchAll(/\b([a-z][a-z0-9-]*)\.shoddy\b/g)].map(m => m[1]));
+    for (const n of named) {
+      if (exampleFiles.test(n)) continue;
+      if (!(n in includes)) {
+        console.log(file + ': names "' + n + '.shoddy", which is not a machine');
+        bad++;
+      }
+    }
+  }
+
+  // Published URLs are the fallback for an assistant with no checkout, so a
+  // page that offers one has to offer a real one. Checked against the docs
+  // tree itself: the path after the site root must be a page that exists.
+  const SITE = "https://shoddymills.github.io/shoddy/";
+  for (const [label, file] of grounding) {
+    if (!fs.existsSync(path.join(root, file))) continue;
+    for (const m of read(file).matchAll(/https:\/\/shoddymills\.github\.io\/shoddy\/([A-Za-z0-9/._-]*)/g)) {
+      const rel = m[1].replace(/[.,)]+$/, "");
+      if (rel && !fs.existsSync(path.join(root, "docs", rel))) {
+        console.log(file + ": published link " + SITE + rel + " has no page behind it");
+        bad++;
+      }
+    }
+  }
+
+  // The house-style claim the pages now make is a number, and a number is the
+  // most driftable thing a page can carry - so it is derived here rather than
+  // trusted. Mean Def body across machines/, counting neither blank lines nor
+  // comments. If the library's shape moves, the pages have to say so.
+  {
+    let lines = 0, defs = 0;
+    for (const dir of machineDirs)
+      for (const f of fs.readdirSync(path.join(root, dir))) {
+        if (!f.endsWith(".shoddy")) continue;
+        let open = false, n = 0;
+        for (const l of fs.readFileSync(path.join(root, dir, f), "utf8").split("\n")) {
+          if (/^Def /.test(l)) { if (open) { lines += n; defs++; } open = true; n = 0; }
+          else if (open) {
+            if (/^\S/.test(l) && l.trim() !== "") { lines += n; defs++; open = false; }
+            else if (l.trim() && !/^\s*Rem\b/i.test(l)) n++;
+          }
+        }
+        if (open) { lines += n; defs++; }
+      }
+    const mean = Math.round(lines / defs);
+    const WORDS = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight"];
+    for (const [label, file] of grounding) {
+      if (!fs.existsSync(path.join(root, file))) continue;
+      const txt = read(file);
+      // Only pages that make the claim are held to it.
+      const claim = txt.match(/mean body across the standard library is (\w+)/i);
+      if (claim && claim[1].toLowerCase() !== WORDS[mean]) {
+        console.log(file + ': says the mean Def body is "' + claim[1] +
+                    '" lines; the tree measures ' + WORDS[mean] + " (" + mean + ")");
+        bad++;
+      }
+    }
+  }
+}
+
 // ---- runtime: the version the docs quote is the one the mill targets ----
 const tfm = read("src/Shoddy.Mill/Shoddy.Mill.csproj").match(/<TargetFramework>net([0-9]+)\./);
 if (!tfm) { console.log("cannot read TargetFramework from the mill's csproj"); bad++; }

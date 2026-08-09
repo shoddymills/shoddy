@@ -43,6 +43,10 @@ Include "../machines/reckoner.shoddy"
 Include "../machines/seq.shoddy"
 Include "../machines/str.shoddy"
 Include "../machines/seeds/seedeng.shoddy"
+Rem Folded only for the fit section below, and onto a state of its own:
+Rem a fit is a dict, and DGET is how a session actually reads one, so
+Rem reading it any other way would test something nobody types.
+Include "../machines/seeds/seeddict.shoddy"
 
 Rem ---- reading an answer ------------------------------------------------
 
@@ -203,6 +207,56 @@ Def Main()
     Assert(Refuses(g, "[ DUP * 2 + ] 0 2 ENGZEROOF", "DOES NOT CHANGE SIGN ACROSS THAT BRACKET"), "BISECTION ON A BRACKET WITH NO ROOT IN IT, WHICH WOULD ANSWER AN ENDPOINT")
     Assert(Refuses(g, "[ DUP * ] 4 1 ENGMINOF", "LO MUST BE BELOW HI"), "AND GOLDEN SECTION ON AN INVERTED BRACKET, WHICH WOULD WALK OUTWARDS")
     Assert(Refuses(g, "[ DUP * ] 2 2 ENGZEROOF", "LO MUST BE BELOW HI"), "AND EITHER ON A BRACKET OF NO WIDTH")
+
+    Print("--- the statistics words are spelled the way eng.shoddy spells them ---")
+    Rem Seven of these used to carry an extra S — ENGSMEAN for EngMean,
+    Rem ENGSMIN for EngMinimum — which disambiguated against MEAN and MIN,
+    Rem a collision the ENG prefix had already prevented. seedfin carried
+    Rem the same seven and they move together, because a session that
+    Rem learns one set has learned the other.
+    Assert(RckKnows(s0, "ENGMEAN") And RckKnows(s0, "ENGVAR") And RckKnows(s0, "ENGMEDIAN"), "ENGMEAN, ENGVAR AND ENGMEDIAN ARE THE MACHINE'S OWN NAMES")
+    Assert(RckKnows(s0, "ENGQUANTILE") And RckKnows(s0, "ENGMINIMUM") And RckKnows(s0, "ENGMAXIMUM") And RckKnows(s0, "ENGRANGEOF"), "AND SO ARE THE OTHER FOUR")
+    Assert(Not RckKnows(s0, "ENGSMEAN") And Not RckKnows(s0, "ENGSVAR") And Not RckKnows(s0, "ENGSMEDIAN"), "THE S-FORMS ARE GONE RATHER THAN ALIASED")
+    Assert(Not RckKnows(s0, "ENGSQUANTILE") And Not RckKnows(s0, "ENGSMIN") And Not RckKnows(s0, "ENGSMAX") And Not RckKnows(s0, "ENGSRANGE"), "AND ALL SEVEN OF THEM ARE")
+    Rem ENGMINOF and ENGMAXOF are the bracketed searches above and are a
+    Rem different question from the smallest value in a list. Both spellings
+    Rem stay, and this is the assertion that says the rename did not eat one.
+    Assert(RckKnows(s0, "ENGMINOF") And RckKnows(s0, "ENGMAXOF"), "AND THE BRACKETED SEARCHES ARE STILL THEIR OWN WORDS")
+    Assert(Near(Got(s0, "{ 1 2 3 4 } ENGMEAN"), 2.5), "AND THE WORDS STILL ANSWER: THE MEAN")
+    Assert(Near(Got(s0, "{ 2 4 4 4 5 5 7 9 } ENGVAR"), 32 / 7), "THE SAMPLE VARIANCE, DIVIDING BY N-1")
+    Assert(Near(Got(s0, "{ 2 4 4 4 5 5 7 9 } ENGVARP"), 4), "AND THE POPULATION ONE BESIDE IT, WHICH NEVER HAD AN S")
+    Assert(Near(Got(s0, "{ 3 1 2 } ENGMINIMUM"), 1), "THE MINIMUM")
+    Assert(Near(Got(s0, "{ 3 1 2 } ENGMAXIMUM"), 3), "THE MAXIMUM")
+    Assert(Near(Got(s0, "{ 3 1 2 } ENGRANGEOF"), 2), "AND THE RANGE BETWEEN THEM")
+    Assert(Near(Got(s0, "{ 1 2 3 4 } 0 ENGQUANTILE"), 1), "THE ZEROTH QUANTILE IS THE SMALLEST VALUE")
+    Assert(Near(Got(s0, "{ 1 2 3 4 } 1 ENGQUANTILE"), 4), "AND THE FIRST IS THE LARGEST")
+
+    Print("--- ENGFITOF: least squares, and the four models by name ---")
+    Let f0 = RckSeedDict(s0)
+    Assert(RckKnows(s0, "ENGFITOF"), "THE FIT IS IN THE DICTIONARY")
+    Assert(RckKnows(s0, "ENGLINEAR") And RckKnows(s0, "ENGLOGMODEL") And RckKnows(s0, "ENGEXPMODEL") And RckKnows(s0, "ENGPOWERMODEL"), "AND ALL FOUR MODELS ARE WORDS, NOT NUMBERS TO REMEMBER")
+    Assert(Near(Got(f0, "{ 1 2 3 4 } { 3 5 7 9 } ENGLINEAR ENGFITOF " & Q("slope") & " DGET"), 2), "A STRAIGHT LINE'S SLOPE")
+    Assert(Near(Got(f0, "{ 1 2 3 4 } { 3 5 7 9 } ENGLINEAR ENGFITOF " & Q("intercept") & " DGET"), 1), "ITS INTERCEPT")
+    Assert(Near(Got(f0, "{ 1 2 3 4 } { 3 5 7 9 } ENGLINEAR ENGFITOF " & Q("rfit") & " DGET"), 1), "AND AN EXACT FIT CORRELATES AT ONE")
+    Assert(Near(Got(f0, "{ 1 2 4 } { 1 4 16 } ENGPOWERMODEL ENGFITOF " & Q("slope") & " DGET"), 2), "THE POWER MODEL RECOVERS THE EXPONENT OF y = x^2")
+    Assert(Near(Got(f0, "{ 1 2 4 } { 1 4 16 } ENGPOWERMODEL ENGFITOF " & Q("intercept") & " DGET"), 1), "AND ITS COEFFICIENT")
+    Assert(Near(Got(f0, "{ 1 2 4 } { 0 0.6931471805599453 1.3862943611198906 } ENGLOGMODEL ENGFITOF " & Q("slope") & " DGET"), 1), "THE LOGARITHMIC MODEL RECOVERS y = ln x")
+    Assert(Near(Got(f0, "{ 1 2 3 } { 2 4 8 } ENGEXPMODEL ENGFITOF " & Q("slope") & " DGET"), Log(2)), "AND THE EXPONENTIAL ONE RECOVERS THE RATE OF A DOUBLING")
+
+    Print("--- ENGFITOF's guards, including the two eng.shoddy does not state ---")
+    Assert(Refuses(g, "{ 1 2 } { 1 2 3 } ENGLINEAR ENGFITOF", "THEY MUST PAIR UP"), "LISTS OF DIFFERENT LENGTHS, WHICH ZIPWITH WOULD HAVE SILENTLY TRUNCATED")
+    Assert(Refuses(g, "{ 1 } { 2 } ENGLINEAR ENGFITOF", "NEEDS AT LEAST 2 POINTS"), "ONE POINT, WHERE THE VARIANCE DIVIDES BY N-1 AND N IS ONE")
+    Assert(Refuses(g, "{ } { } ENGLINEAR ENGFITOF", "NEEDS AT LEAST 2 POINTS"), "AND NO POINTS AT ALL")
+    Assert(Refuses(g, "{ 1 2 3 } { 1 2 3 } 99 ENGFITOF", "NOT A MODEL"), "A MODEL NUMBER THAT IS NOT ONE, WHICH ENGFITOF WOULD ABORT ON")
+    Assert(Refuses(g, "{ 0 1 2 } { 1 2 3 } ENGLOGMODEL ENGFITOF", "NEEDS EVERY X ABOVE ZERO"), "A LOGARITHMIC FIT THROUGH X = 0")
+    Assert(Refuses(g, "{ 1 2 3 } { 0 1 2 } ENGEXPMODEL ENGFITOF", "NEEDS EVERY Y ABOVE ZERO"), "AN EXPONENTIAL FIT THROUGH Y = 0")
+    Assert(Refuses(g, "{ -1 2 3 } { 1 2 3 } ENGPOWERMODEL ENGFITOF", "NEEDS EVERY X ABOVE ZERO"), "AND A POWER FIT THROUGH A NEGATIVE X")
+    Rem The two nobody wrote down: LinFit divides by Var(xs) and Correl
+    Rem divides by StdDev(xs) * StdDev(ys), so a list that does not vary
+    Rem divides by zero and the runtime ends the session.
+    Assert(Refuses(g, "{ 2 2 2 } { 1 2 3 } ENGLINEAR ENGFITOF", "EVERY X IS THE SAME"), "A VERTICAL LINE, WHICH DIVIDES BY VAR(XS)")
+    Assert(Refuses(g, "{ 1 2 3 } { 2 2 2 } ENGLINEAR ENGFITOF", "EVERY Y IS THE SAME"), "AND A FLAT ONE, WHERE THE CORRELATION DIVIDES BY A SPREAD OF ZERO")
+    Assert(Refuses(g, "{ 1 2 3 } " & Q("no") & " ENGLINEAR ENGFITOF", "a LIST of NUMBERs"), "AND A STRING WHERE THE Y VALUES SHOULD BE")
 
     Print("--- nothing above cost the session anything ---")
     Rem Top of stack first, as CutCells renders it: the 2 the sum just

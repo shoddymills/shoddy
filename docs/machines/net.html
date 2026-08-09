@@ -163,6 +163,98 @@ until the program exits. <code>Request</code> and <code>Serve1</code> close for
 you; when you hold a handle yourself, <code>Close</code> it yourself.</li>
 </ul>
 
+<h2 id="builtins">Builtins</h2>
+<p class="tag">The thirteen socket words the runtime dispatches &mdash; not
+defined here, documented here</p>
+<p>These are not <code>net</code>'s <code>Def</code>s. The engine dispatches
+them, and a <code>Def</code> whose name is a builtin is refused. They are
+listed on this page because <code>net</code> is the friendly layer over
+exactly these thirteen, and they need no <code>Include</code>. The same
+thirteen are documented in <code>machines/net.shoddy</code>'s own header
+block.</p>
+<p><strong>Handles are Numbers</strong>, drawn from the same table of sixteen
+that binary files use. Payloads are Strings carrying <strong>one byte per
+character</strong> — the Latin-1 convention, the same one
+<code>ReadFile</code> uses.</p>
+<p><strong>The whole family is gated behind <code>--allow-net</code></strong>,
+with two exceptions that exist so it can be reached from guarded code at all:
+<code>NetAllowed</code>, which has to stay askable when the answer is no, and
+<code>TryTcpConnect</code>, which reports rather than dies. Everything else
+aborts if the network is off. <strong>On a plain socket nothing blocks</strong>;
+a secured one is the deliberate exception described above.</p>
+
+<h3>Asking, and connecting</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>NetAllowed()</td><td>Whether this mill was started with
+<code>--allow-net</code>. <strong>Not itself gated</strong>, and that is the
+point: without it nothing could tell "no network" from "no answer" without
+ending the run. A program cannot turn the capability on; it can only
+ask.</td></tr>
+<tr><td>TCPConnect(host, port)</td><td>Connect and answer the handle. Bounded
+10-second handshake; aborts if unreachable, if the network is off, or if all
+sixteen handles are taken.</td></tr>
+<tr><td>TryTcpConnect(host, port)</td><td><code>TCPConnect</code> with all
+three of those deaths reported instead: <code>Ok(handle)</code>, or
+<code>Err(why, 0)</code> where <code>why</code> is
+<code>CANNOT REACH 'host:port' (…)</code> ending in one of
+<code>NETWORK IS DISABLED</code>, <code>TOO MANY OPEN SOCKETS</code>,
+<code>TIMED OUT</code> or <code>NO SUCH HOST OR REFUSED</code> — a closed set
+of Shoddy's own, never the platform's socket text.</td></tr>
+<tr><td>TryTcpRequest(host, port, secure, msg)</td><td>A <strong>whole
+conversation</strong> in one word: connect, optionally secure, send, read to
+the end of the reply, close — answering <code>Ok(reply)</code> or the same
+shape of <code>Err</code>. It exists because guarding the <em>steps</em> is
+not enough: <code>Send</code> and <code>Recv</code> die eight ways between
+them on ordinary network faults, so a caller composing guarded parts would
+have to close the socket on each of a dozen error paths and would leak it on
+the one it missed. Here the socket cannot outlive the word. It is also the
+only network read that <strong>cannot hang</strong> — it is bounded by a
+deadline, where a poll-until-closed loop never returns against a keep-alive
+peer.</td></tr>
+</table>
+
+<h3>Serving</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>TCPListen(host, port)</td><td>Bind and listen, answering the listening
+handle. The host is an IP literal: <code>"127.0.0.1"</code> for loopback,
+<code>"0.0.0.0"</code> for any.</td></tr>
+<tr><td>TCPAccept(h)</td><td>A connection handle, or <strong>0</strong> when
+none is waiting. Never blocks, which is what <code>WaitAccept</code> below
+polls around.</td></tr>
+</table>
+
+<h3>Talking, and asking about the stream</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>TCPSend(h, s)</td><td>Send the bytes.</td></tr>
+<tr><td>TCPRecv(h, max)</td><td>Up to <code>max</code> bytes; <code>""</code>
+when nothing is pending <em>or</em> the peer has closed. <code>TCPEof</code> is
+what tells those two apart, and the pair is why a drain loop needs
+both.</td></tr>
+<tr><td>TCPEof(h)</td><td>Whether the peer has closed. On a secured handle
+this reads a flag rather than polling.</td></tr>
+<tr><td>TCPPoll(h)</td><td>Whether <code>Recv</code> or <code>Accept</code>
+would find something right now. <strong>Refused on a secured handle</strong>:
+once TLS records wrap the stream a TCP-level poll cannot answer honestly about
+plaintext, so it aborts rather than lie.</td></tr>
+<tr><td>TCPPeer(h)</td><td>The remote end as <code>"ip:port"</code>.</td></tr>
+</table>
+
+<h3>Closing, and TLS</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>TCPClose(h)</td><td>Close the handle and free its slot.</td></tr>
+<tr><td>TCPSecure(h, host)</td><td>Upgrade a connected socket to TLS <em>in
+place</em>. The host drives both SNI and certificate name validation, and a
+failed handshake closes the handle. From this moment that handle follows the
+secured contract above — <code>Recv</code> blocks, <code>Poll</code> refuses.
+A program cannot ask a handle whether it is secured, so know which kind you
+are holding; in practice you always do, because you secured it. Server-side
+TLS is not supported.</td></tr>
+</table>
+
 <h2 id="words">Word Reference</h2>
 <p class="tag">Every word this machine exports</p>
 

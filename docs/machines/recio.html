@@ -128,6 +128,75 @@ position and change bytes on disk. Keep them at the edges of your program.</li>
 number, don't build the index by hand — reach for <a href="isam.html">isam</a>,
 which does exactly that on the same binary builtins.</p>
 
+<h2 id="builtins">Builtins</h2>
+<p class="tag">The twelve binary-file words the runtime dispatches &mdash; not
+defined here, documented here</p>
+<p>These are not <code>recio</code>'s <code>Def</code>s. The engine dispatches
+them, and a <code>Def</code> whose name is a builtin is refused. They are
+listed on this page because <code>recio</code> is the machine whose domain
+they belong to &mdash; this whole machine is a layer over exactly these twelve
+&mdash; and because a reader who opens the record-I/O machine looking for
+<code>GetStr</code> should find it rather than be expected to know that
+<a href="../spec.html#word-reference">the flat reference</a> exists. They need
+no <code>Include</code>. The same twelve are documented word for word in
+<code>machines/recio.shoddy</code>'s own header block.</p>
+<p><strong>Classic BASIC record files.</strong> A handle is a Number, drawn
+from the same table of sixteen that sockets use. Byte positions are
+<strong>1-based</strong>. Every transfer word advances the position by exactly
+the width it moved, which is what makes record layouts computable: a
+Name(12) + Score(8) record is 20 bytes, so record <em>k</em> starts at
+<code>1 + (k-1)*20</code> — which is <code>RecPos</code> below, and the whole
+of what this machine adds. <strong>Reading past end of file aborts</strong>,
+and so does over-running a <code>PutStr</code> field. All twelve are
+effectful.</p>
+
+<h3>Opening and closing</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>BOpen(path)</td><td>Open <code>path</code> read/write and answer its
+handle, <strong>creating the file if it is absent</strong>; up to 16 handles
+at once. Aborts if it cannot open. The open-or-create is a trap worth naming:
+asking whether a binary file is there by opening it leaves an empty file
+behind when it was not.</td></tr>
+<tr><td>TryBOpen(path)</td><td><code>Ok(handle)</code>, or
+<code>Err(why, 0)</code> with <code>why</code> =
+<code>CANNOT OPEN 'path' (…)</code> from the same closed set
+<code>TryReadFile</code> uses, plus <code>TOO MANY OPEN FILES</code>. It
+differs from <code>BOpen</code> twice over and both differences are the point:
+the failure is <em>reported</em> rather than fatal, and it opens an
+<strong>existing file only</strong>. Since nothing can learn a file's size or
+its leading bytes without opening it, this is the only way to pre-flight a
+binary read at all.</td></tr>
+<tr><td>BClose(h)</td><td>Close the handle and free its slot.</td></tr>
+</table>
+
+<h3>Position</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>Seek(h, pos)</td><td>Move to byte position <code>pos</code>, counting
+from 1.</td></tr>
+<tr><td>BPos(h)</td><td>Where the handle is now, counting from 1.</td></tr>
+<tr><td>BSize(h)</td><td>How many bytes the file holds.
+<code>RecCount</code> below is this divided by the record size.</td></tr>
+</table>
+
+<h3>Typed transfer</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>PutNum(h, x)</td><td>Write <code>x</code> as an 8-byte IEEE double and
+advance 8.</td></tr>
+<tr><td>GetNum(h)</td><td>Read an 8-byte double and advance 8.</td></tr>
+<tr><td>PutBool(h, b)</td><td>Write <code>b</code> as one byte and advance
+1.</td></tr>
+<tr><td>GetBool(h)</td><td>Read one byte as a Boolean and advance 1.</td></tr>
+<tr><td>PutStr(h, s, width)</td><td>Write <strong>exactly
+<code>width</code></strong> bytes: <code>s</code>, zero-padded out to the
+field. An over-length string <em>aborts</em> rather than being silently
+truncated, which is what keeps a fixed layout honest.</td></tr>
+<tr><td>GetStr(h, width)</td><td>Read exactly <code>width</code> bytes and
+strip the zero padding back off.</td></tr>
+</table>
+
 <h2 id="words">Word Reference</h2>
 <p class="tag">Every word this machine exports</p>
 

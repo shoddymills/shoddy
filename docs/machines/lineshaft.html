@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Control Flow and Execution Failure — machines/lineshaft.shoddy">
+<title>lineshaft — Control Flow and Execution Failure | Shoddy Machines</title>
+<link rel="stylesheet" href="../style.css">
+<link rel="icon" href="../favicon.svg" type="image/svg+xml">
+<link rel="alternate icon" href="../favicon.ico" sizes="48x48">
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+</head>
+<body>
+<div class="topbar"><div class="inner">
+  <div class="row">
+    <a class="phase" href="index.html"><img class="mark" src="../media/brand/shoddy-icon.svg" alt="" width="23" height="23">Shoddy · The Machines</a>
+    <span class="spacer"></span>
+    <nav class="docnav meta" aria-label="About"><a href="../heritage.html">Heritage</a><a href="../authorship.html">Authorship</a></nav>
+  </div>
+  <nav class="docnav main" aria-label="Documentation"><a href="../tutorials/index.html">Tutorials</a><a href="../guide.html">Guide</a><a href="../quickref.html">Reference</a><span class="here">Machines</span><a href="../mills/index.html">Mills</a><a href="../stack.html">Stack</a><a href="../spec.html">Spec</a><a href="../setup.html">Setup</a><a href="../vscode.html">VS Code</a><a href="../assistants.html">AI</a><a href="../build.html">Toolchain</a><a href="../errors.html">Errors</a></nav>
+</div></div>
+<div class="wrap">
+
+
+<header class="mast has-icon"><div><p class="eyebrow"><a href="index.html#runtime-stack">The Machines &middot; Runtime stack</a></p><h1>lineshaft</h1><p class="kicker">Control Flow and Execution Failure — machines/lineshaft.shoddy</p></div><img class="micon" src="../media/icons/lineshaft.svg" alt="the lineshaft machine&#39;s icon"></header>
+<nav class="pagenav pagenav-top" aria-label="Machines, in catalog order"><a href="reckoner.html" class="prev"><span class="pnwrap"><span class="dir">&larr; Previous machine</span><span class="ttl">reckoner</span></span></a><a href="index.html" class="all all-last">All machines</a></nav>
+
+<h2 id="summary">Summary</h2>
+<p><code>lineshaft</code> is where the language's own execution primitives are
+written down: <code>Call</code> and <code>Ifte</code>, which route execution,
+and <code>Error</code> and <code>Assert</code>, which end it.
+<strong>This machine declares no words of its own.</strong> All four are
+builtins — the engine dispatches them, so they are callable from any program
+with no <code>Include</code> at all, and including this file gives you nothing
+you did not already have. It exists because these four are used almost
+everywhere in the tree and documented almost nowhere: a builtin used in ninety
+files is still a builtin a reader cannot find.</p>
+
+<h2 id="why">Why It's Useful</h2>
+<p><code>Call</code> is the word every higher-order thing in Shoddy is built
+on. <code>Map</code>, <code>Filter</code> and <code>Fold</code> reach their
+function through it; so do <a href="seq.html">seq</a>'s <code>Any</code> and
+<code>All</code>, <a href="eng.html">eng</a>'s numeric derivatives and
+integrators, and <a href="alg.html">alg</a>'s compiled expressions. It is also
+the one builtin in the language whose stack effect is not fixed, which is a
+fact worth knowing before the stack checker tells you about it.</p>
+<p><code>Error</code> and <code>Assert</code> are how a Shoddy program stops.
+Shoddy has no exceptions and nothing to catch, so a word that cannot honour
+its arguments does not raise something a caller might handle — it ends the
+run, naming the reason and the line. That is a real design decision with real
+consequences for how you write library code, and it deserves somewhere to be
+explained rather than being a one-line entry under "Errors" in the flat
+reference.</p>
+<p><strong>This is not a testing machine.</strong> <code>Assert</code> is here
+because it is a way for a program to stop, next to <code>Error</code> — not
+because this is a quality or test-tooling domain. There is no assertion-helper
+library in the tree to build one around, and both words are used across about
+two thirds of the machines as ordinary internal validation rather than as test
+apparatus. Words like <code>AssertEqual</code> or <code>AssertClose</code>
+would be a feature addition, and would not change where these two live.</p>
+
+<h2 id="guide">User's Guide</h2>
+<p>You need no <code>Include</code> for any of this. The words below are
+already in scope in every Shoddy program.</p>
+<pre><code>Def Twice(f As [ Number -- Number ], x As Number) As Number
+    Call(f, Call(f, x))          ' route execution out to the quotation
+
+Def Half(x As Number) As Number
+    If x &lt; 0 Then
+        Error("HALF: NEGATIVE")  ' ends the run, naming the line
+    Else
+        x / 2
+
+Def Mean(total As Number, n As Number) As Number
+    Assert(n &gt; 0, "MEAN: NO VALUES")
+    total / n</code></pre>
+<p>A few things worth remembering:</p>
+<ul>
+<li><strong><code>Call</code>'s arity is the quotation's.</strong>
+<code>Call(f, x)</code> applies a one-argument quotation,
+<code>Call(f, a, b)</code> a two-argument one, and so on. It is the one
+genuinely dynamic builtin: its net stack effect is whatever the quotation's
+is, so the stack checker treats any <code>Def</code> that reaches it as
+unknown rather than guessing.</li>
+<li><strong><code>Ifte</code> evaluates both arms.</strong> It is an ordinary
+word, not a form the compiler treats specially, so both branches are worked
+out before the choice is made. Use it to pick between two values already in
+hand; use <code>If</code>/<code>Then</code>/<code>Else</code> to guard work
+you do not want done.</li>
+<li><strong><code>Error</code> is final.</strong> There is nothing to catch it
+and nothing to unwind to. When a caller ought to be able to carry on, the
+answer is not to raise differently — it is to answer the language's
+<code>Result</code> or <code>Option</code> instead, which is what every
+<code>Try*</code> word in the tree does. Several machines ship both: an
+aborting word and a total twin defined over it, so there is one set of rules
+and not two.</li>
+<li><strong><code>Assert</code> is <code>Error</code> as a
+precondition.</strong> Same finality, written where the assumption is made.
+The suites under <code>tst/</code> are built on it.</li>
+</ul>
+
+<h2 id="builtins">Builtins</h2>
+<p class="tag">The four execution words the runtime dispatches</p>
+<p>None of these is a <code>Def</code>. The engine dispatches them, and a
+<code>Def</code> whose name is a builtin is refused. The same four are
+documented word for word in <code>machines/lineshaft.shoddy</code>'s own
+header block. Stack effects are the ones the compiler's <code>Effects.cs</code>
+table declares.</p>
+
+<h3>Routing execution</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>Call(f, args…)</td><td>Apply a function value to its arguments; the
+arity is the quotation's. <strong>The one genuinely dynamic builtin</strong> —
+its net stack effect is the quotation's, which is why
+<code>Effects.cs</code> lists it under <code>Dynamic</code> rather than as a
+fixed pair, and why the stack checker treats any <code>Def</code> reaching it
+as unknown. Every higher-order word in the library goes through it.</td></tr>
+<tr><td>Ifte(cond, then, else)</td><td><code>Call</code>'s fixed
+three-argument shell, and the expression form of
+<code>If</code>/<code>Then</code>/<code>Else</code>. Both arms are
+<em>evaluated</em> before the choice is made, since it is an ordinary word —
+so it is for choosing between two values already in hand.</td></tr>
+</table>
+
+<h3>Ending it</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>Error(why)</td><td>End the run, reporting <code>why</code> and the
+line it happened on. Shoddy has no catchable errors, so this is final. It is
+the ordinary way a library word refuses an argument it cannot honour —
+<a href="str.html">str</a>'s <code>Split</code> on an empty separator,
+<a href="matrix.html">matrix</a> on a dimension mismatch.</td></tr>
+<tr><td>Assert(cond, why)</td><td><code>Error</code> unless <code>cond</code>
+is True; nothing at all when it is. The same finality, written as a
+precondition.</td></tr>
+</table>
+
+<h2 id="usedby">Who Uses It</h2>
+<p>Nothing includes it, and nothing needs to. This machine declares no words,
+so there is nothing to import; the four builtins it documents are in scope
+everywhere already, and are in fact among the most used words in the tree —
+<code>Call</code> and <code>Ifte</code> appear across the great majority of
+<code>.shoddy</code> files, and <code>Error</code> or <code>Assert</code> in
+about two thirds of the machines.</p>
+
+<h2 id="uses">The Machines It Uses</h2>
+<p>None, and it could not use one — a file that declares nothing has nothing
+to build. It includes no machine and no machine includes it.</p>
+
+<nav class="pagenav pagenav-bottom" aria-label="Machines, in catalog order">
+  <a href="reckoner.html" class="prev"><span class="pnwrap"><span class="dir">&larr; Previous machine</span><span class="ttl">reckoner</span></span></a>
+  <a href="index.html" class="all all-last">All machines</a>
+</nav>
+<footer>Named for the shoddy mills of the West Riding: Useless Things Made
+Useful Through Skill (<a href="../heritage.html">the heritage of the name</a>).<br>
+&copy; 2026 Stephen Vincent Foster</footer>
+</div>
+</body>
+</html>

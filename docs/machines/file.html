@@ -30,8 +30,9 @@
 usually is: a stack of lines. You hand it a path and get back a plain list of
 strings, one per line — or you hand it a list of strings and it lays them
 down as lines on disk. That's the whole idea. It sits on top of Shoddy's
-whole-file builtins (<code>ReadFile</code>, <code>WriteFile</code>,
-<code>AppendFile</code>) and does the two fiddly bits you'd otherwise do by
+<a href="#builtins">whole-file builtins</a> (<code>ReadFile</code>,
+<code>WriteFile</code>, <code>AppendFile</code> and their guarded twins)
+and does the two fiddly bits you'd otherwise do by
 hand: splitting the text on newlines, and tidying up the line endings so a
 file written on Windows reads back the same as one written anywhere else.
 No handles to open or close — you read the file all at once, or
@@ -91,6 +92,72 @@ effectful — they don't just compute a value, they change what's on disk. Keep
 them at the edges of your program, where the file-shuffling happens, and let
 the rest stay pure.</li>
 </ul>
+
+<h2 id="builtins">Builtins</h2>
+<p class="tag">The eight whole-file words the runtime dispatches &mdash; not
+defined here, documented here</p>
+<p>These are not <code>file</code>'s <code>Def</code>s. The engine dispatches
+them, and a <code>Def</code> whose name is a builtin is refused. They are
+listed on this page because <code>file</code> is the machine whose domain they
+belong to, and because a reader who opens the files machine looking for
+<code>ReadFile</code> should find it rather than be expected to know that
+<a href="../spec.html#word-reference">the flat reference</a> exists. They need
+no <code>Include</code> &mdash; a builtin is callable from any program. The
+same eight are documented word for word in
+<code>machines/file.shoddy</code>'s own header block.</p>
+<p><strong>No handles: a text file is read or written whole.</strong> Paths
+resolve against the working directory, and every one of these is effectful.</p>
+<p><strong>The <code>Try*</code> words are not duplicates</strong>, and the
+reason is the shape of error handling in this language. Shoddy has no
+catchable errors, so an aborting word cannot be asked "would this work?" — the
+asking <em>is</em> the doing, and a failure ends the run. The <code>Try*</code>
+forms are how a program survives a path it did not choose, and
+<code>FileExists</code> cannot stand in for any of them: a directory reports
+False, an existing file that cannot be opened reports True, and a file that is
+there when you ask can be locked by the time a delete lands.</p>
+
+<h3>Reading</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>ReadFile(path)</td><td>The whole file as one string, newlines and all.
+Aborts if the path cannot be read. <code>ReadLines</code> below is the one
+that splits it.</td></tr>
+<tr><td>TryReadFile(path)</td><td>The same read with the failure
+<em>reported</em> rather than fatal: <code>Ok(text)</code>, or
+<code>Err(why, 0)</code> where <code>why</code> is
+<code>CANNOT READ 'path' (…)</code> ending in one of <code>NO SUCH FILE</code>,
+<code>IS A DIRECTORY</code>, <code>ACCESS DENIED</code> or
+<code>UNREADABLE</code> — a closed set of Shoddy's own, never the host
+platform's exception text, which varies by OS and locale. <code>At</code> is
+<code>0</code>: a failure to open a file has no position <em>in</em> it. It
+answers a <code>Result</code> rather than a Boolean because, unlike
+<code>TryWriteFile</code>, it has a payload to carry on success.</td></tr>
+</table>
+
+<h3>Writing</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>WriteFile(path, s)</td><td>Write the string to <code>path</code>,
+replacing whatever was there. Aborts on failure.</td></tr>
+<tr><td>TryWriteFile(path, s)</td><td>The same write, answering True on
+success rather than aborting. A Boolean and not a <code>Result</code>: a write
+has nothing to hand back.</td></tr>
+<tr><td>AppendFile(path, s)</td><td>Add the string to the end of
+<code>path</code>, creating the file if it is not there. Aborts on failure,
+and has no guarded twin.</td></tr>
+</table>
+
+<h3>Asking and removing</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>FileExists(path)</td><td>Whether there is a readable file at
+<code>path</code>. A directory answers False. Not a pre-flight for the
+aborting words — see above.</td></tr>
+<tr><td>DeleteFile(path)</td><td>Delete the file at <code>path</code>. A
+missing file aborts.</td></tr>
+<tr><td>TryDeleteFile(path)</td><td>The same delete, answering True if the
+file went and False if it was not there or could not be removed.</td></tr>
+</table>
 
 <h2 id="words">Word Reference</h2>
 <p class="tag">Every word this machine exports</p>

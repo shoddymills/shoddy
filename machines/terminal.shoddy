@@ -1,0 +1,82 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem terminal.shoddy — Shoddy standard library: the console itself
+Rem
+Rem THIS MACHINE DECLARES NO WORDS. It is where the runtime's raw
+Rem console builtins are documented: Print, Input, InputLine and InKey,
+Rem plus Args, which is core rather than terminal-owned but is read here
+Rem more often than anywhere else. All five are callable from any
+Rem program with no Include at all — including this file gives you
+Rem nothing, and is not needed to use them. It exists so that a reader
+Rem who goes looking for "how does a Shoddy program read a keystroke"
+Rem finds an answer in a machine named for the question, rather than
+Rem needing to already know that section 10 of docs/spec.html exists.
+Rem
+Rem WHY THIS IS NOT vt100.shoddy, which is the natural guess. The split
+Rem is raw versus protocol. Reading a pending keystroke has nothing to
+Rem do with VT100 — InKey is the same word on a terminal that has never
+Rem heard of DEC — while INTERPRETING the arrow-key and PF-key escape
+Rem sequences that come back is exactly what VT100 means, and that is
+Rem EvalKey, which stays in vt100.shoddy. Likewise vt100.shoddy builds
+Rem escape-code STRINGS and never prints one; Print is what puts a
+Rem string on the screen and belongs here. The two cooperate — the
+Rem usual shape is Print(CursorPos(1, 1) & ClearEos()) and
+Rem EvalKey(InKey()) — but neither includes the other, and neither
+Rem needs to.
+Rem
+Rem Everything here is EFFECTFUL, unlike almost every other machine in
+Rem the library. By convention that keeps effects at the edges, these
+Rem belong on Main's side of a program.
+Rem ==================================================================
+
+Rem ---- the builtins this machine documents ---------------------------
+Rem
+Rem NOT Defs. The engine dispatches these, and a Def whose name is a
+Rem builtin is refused. The flat reference is section 10 of
+Rem docs/spec.html, and the stack effects below are the ones the
+Rem compiler's own Effects.cs table declares.
+
+Rem Print(s As String)                                ( s -- )
+Rem     Write s to the screen, followed by a newline. There is no
+Rem     write-without-newline builtin, so a line assembled from several
+Rem     pieces is built up with & and printed once — which is also what
+Rem     vt100.shoddy's escape strings want, since several stray line
+Rem     feeds mid-sequence are harmless on most terminals but are not
+Rem     guaranteed to be.
+
+Rem Input(prompt As String) As String                 ( prompt -- s )
+Rem     Print the prompt, read one whole line, and answer it as a
+Rem     String. Numbers come back through Val — or better, IsNumeric and
+Rem     then Val. It collapses end of stream and a blank line into the
+Rem     same "", which is what InputLine exists to separate.
+
+Rem InputLine(prompt As String) As Array Of Number    ( prompt -- pair )
+Rem     The same read, answering a 2-element ARRAY [atEof, text]:
+Rem     element 1 a Boolean, True only at genuine end of stream, and
+Rem     element 2 the line, empty at EOF. A program reading a redirected
+Rem     script can reprompt on a blank line or stop at EOF; with Input
+Rem     it can do one or the other but never both. It is a flat Array
+Rem     rather than a record because a builtin cannot reach a Type —
+Rem     lifting it into a sum type is the caller's job, and
+Rem     mills/halifax does exactly that in HxAskedOf.
+
+Rem InKey() As String                                 ( -- s )
+Rem     One pending keystroke, read without blocking and without echo,
+Rem     or "" when nothing is pending. Arrow keys and PF1-PF4 arrive as
+Rem     their VT100 application-mode escape sequences, which is what
+Rem     vt100.shoddy's EvalKey is for: EvalKey(InKey()) is a working
+Rem     keyboard poll for a game loop. See mills/pac-vt100.
+
+Rem Args() As List Of String                          ( -- args )
+Rem     The arguments the program was started with.
+Rem
+Rem     ALSO AVAILABLE IN NATIVE HOSTS — not terminal-exclusive. Unlike
+Rem     the four above, a terminal is not this word's only home: a
+Rem     headless service or a program launched from a desktop has
+Rem     arguments too, with no console involved anywhere. It is
+Rem     documented here because reading your own invocation is a
+Rem     console-shaped thing to want, and spec.html classifies it as
+Rem     core, not as this machine's. Nothing needs including to call it.
+Rem ==================================================================

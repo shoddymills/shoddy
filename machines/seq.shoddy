@@ -5,10 +5,118 @@ Rem ==================================================================
 Rem seq.shoddy — Shoddy standard library: sequences
 Rem The usual Fold/Map suspects. Pure, self-hosted. Structure only:
 Rem predicates, searching, slicing, zipping — aggregation (Sum, Mean,
-Rem and friends) lives in stats.shoddy, and sorting is the SORT builtin.
+Rem and friends) lives in stats.shoddy.
+Rem
+Rem Built on the nineteen sequence and higher-order builtins, each
+Rem documented one by one immediately below: Map Filter Fold Each Times
+Rem Range, and Length Reverse Concat Sort IsEmpty First Nth SetNth Dim
+Rem ToArray ToList Rest Prepend. Sorting is the Sort builtin and is
+Rem documented here too, though stats.shoddy is its heaviest caller.
+Rem
 Rem Words marked (poly) work on LISTs and ARRAYs; others are List-only
 Rem because they lean on First/Rest/Prepend structural recursion.
 Rem ==================================================================
+
+Rem ---- the builtins this machine is built on -------------------------
+Rem
+Rem NOT Defs. The engine dispatches these, and a Def whose name is a
+Rem builtin is refused; they are written here because seq.shoddy is
+Rem where a reader goes looking for them. The flat reference is section
+Rem 10 of docs/spec.html, and the stack effects below are the ones the
+Rem compiler's own Effects.cs table declares.
+Rem
+Rem TWO SEQUENCE KINDS, AND THE DIFFERENCE IS THE WHOLE DESIGN. A LIST
+Rem is a linked list: First and Rest are free, Nth walks. An ARRAY is
+Rem contiguous: Nth is O(1), and Rest would have to copy. Recurse over
+Rem lists; index into arrays; ToArray and ToList convert. Everything
+Rem here counts from 1.
+Rem
+Rem ALL NINETEEN ARE PURE, including SetNth — it answers a NEW sequence
+Rem and leaves the original alone, which is what makes them safe to
+Rem share.
+
+Rem ---- higher-order ----
+
+Rem Map(xs As List Of t, f As [ t -- u ]) As List Of u
+Rem                                                   ( xs f -- ys )
+Rem     Every element through f. Poly: an array maps to an array.
+
+Rem Filter(xs As List Of t, p As [ t -- Boolean ]) As List Of t
+Rem                                                   ( xs p -- ys )
+Rem     The elements p answers True for, in order.
+
+Rem Fold(xs As List Of t, init As u, f As [ u t -- u ]) As u
+Rem                                                   ( xs init f -- v )
+Rem     Left fold: the accumulator starts at init and f sees it first.
+Rem     Almost every word below this header is Fold underneath.
+
+Rem Each(xs As List Of t, f As [ t -- ])              ( xs f -- )
+Rem     f applied to every element for its EFFECT, answering nothing.
+Rem     The one word in this group that exists only for impure work.
+
+Rem Times(n As Number, f As [ Number -- ])            ( n f -- )
+Rem     f applied to 1, 2, … n, for effect. The counted loop.
+
+Rem Range(lo As Number, hi As Number) As List Of Number
+Rem                                                   ( lo hi -- xs )
+Rem     The whole numbers from lo to hi inclusive. An empty list when hi
+Rem     is below lo, so a loop over an empty range simply does nothing.
+
+Rem ---- asking about a sequence ----
+
+Rem Length(xs As List Of t) As Number                 ( xs -- n )
+Rem     How many elements. LIST-AND-ARRAY ONLY — it REFUSES a string
+Rem     outright, which is why Len (str.shoddy's) is a separate word and
+Rem     not a near miss for this one.
+
+Rem IsEmpty(xs As List Of t) As Boolean               ( xs -- flag )
+Rem     Whether it holds nothing.
+
+Rem First(xs As List Of t) As t                       ( xs -- v )
+Rem     The first element. Aborts on an empty sequence.
+
+Rem Rest(xs As List Of t) As List Of t                ( xs -- ys )
+Rem     Everything after the first. LISTS ONLY: on an array it would
+Rem     have to copy, and the point of an array is that it does not.
+
+Rem Nth(xs As List Of t, k As Number) As t            ( xs k -- v )
+Rem     The k-th element, counting from 1. Aborts outside the range.
+Rem     O(1) on an array, a walk on a list.
+
+Rem ---- building a new one ----
+
+Rem Prepend(v As t, xs As List Of t) As List Of t     ( v xs -- ys )
+Rem     xs with v on the front. LISTS ONLY, and free — this is the pair
+Rem     to First/Rest that structural recursion is written with.
+
+Rem SetNth(xs As List Of t, k As Number, v As t) As List Of t
+Rem                                                   ( xs k v -- ys )
+Rem     A sequence with its k-th element replaced. THE ORIGINAL IS
+Rem     UNCHANGED. Aborts outside the range.
+
+Rem Reverse(xs As List Of t) As List Of t             ( xs -- ys )
+Rem     The same elements, back to front.
+
+Rem Concat(xs As List Of t, ys As List Of t) As List Of t
+Rem                                                   ( xs ys -- zs )
+Rem     The two joined. Append and Flatten below are written over it.
+
+Rem Sort(xs As List Of t) As List Of t                ( xs -- ys )
+Rem     Ascending, over all-numbers or all-strings. Mixed kinds have no
+Rem     order and are refused. It is a sequence operation and so it is
+Rem     documented here, though stats.shoddy is its heaviest caller —
+Rem     every median, quantile and rank goes through it.
+
+Rem Dim(n As Number, init As t) As Array Of t         ( n init -- arr )
+Rem     An ARRAY of n copies of init. The way an array is made, since
+Rem     there is no array literal.
+
+Rem ToArray(xs As List Of t) As Array Of t            ( xs -- arr )
+Rem ToList(arr As Array Of t) As List Of t            ( arr -- xs )
+Rem     Between the two kinds. The usual shape is: build with list
+Rem     recursion, ToArray once, then index.
+
+Rem ---- this machine's own words --------------------------------------
 
 Rem ---- predicates over sequences (poly) ------------------------------
 

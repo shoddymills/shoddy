@@ -3,12 +3,75 @@ Rem Licensed under the MIT License. See the LICENSE file in the project root.
 
 Rem ==================================================================
 Rem file.shoddy — Shoddy standard library: text files, line-oriented
-Rem Built on the whole-file builtins (ReadFile WriteFile AppendFile
-Rem FileExists DeleteFile) plus str.shoddy. Normalizes \r\n on read.
+Rem Built on the eight whole-file builtins, each documented one by one
+Rem immediately below: ReadFile TryReadFile WriteFile TryWriteFile
+Rem AppendFile FileExists DeleteFile TryDeleteFile — plus str.shoddy.
+Rem Normalizes \r\n on read.
 Rem File words are effectful, like Print/Input: keep them at the edges.
 Rem ==================================================================
 
 Include "str.shoddy"
+
+Rem ---- the builtins this machine is built on -------------------------
+Rem
+Rem NOT Defs. The engine dispatches these, and a Def whose name is a
+Rem builtin is refused; they are written here because file.shoddy is
+Rem where a reader goes looking for them. The flat reference is section
+Rem 10 of docs/spec.html, and the stack effects below are the ones the
+Rem compiler's own Effects.cs table declares.
+Rem
+Rem NO HANDLES: a text file is read or written WHOLE. Paths resolve
+Rem against the working directory. Everything here is effectful.
+Rem
+Rem THE Try* WORDS ARE NOT DUPLICATES, and the reason is the whole
+Rem shape of error handling in this language. Shoddy has no catchable
+Rem errors, so an aborting word cannot be asked "would this work?" —
+Rem the asking IS the doing, and a failure ends the run. The Try* forms
+Rem are how a program survives a path it did not choose, and FileExists
+Rem cannot stand in for any of them: a directory reports False, an
+Rem existing file that cannot be opened reports True, and a file that
+Rem is there when you ask can be locked by the time the delete lands.
+
+Rem ReadFile(path As String) As String                ( path -- s )
+Rem     The whole file as one string, newlines and all. Aborts if the
+Rem     path cannot be read. ReadLines below is the one that splits it.
+
+Rem TryReadFile(path As String) As Result             ( path -- result )
+Rem     The same read with the failure REPORTED rather than fatal:
+Rem     Ok(text), or Err(why, 0) where why is CANNOT READ 'path' (…)
+Rem     ending in one of NO SUCH FILE, IS A DIRECTORY, ACCESS DENIED or
+Rem     UNREADABLE. That phrase is a closed set of Shoddy's own and
+Rem     never the host platform's exception text, which varies by OS and
+Rem     locale. At is 0 — a failure to open a file has no position IN
+Rem     it. It answers a Result rather than a Boolean because, unlike
+Rem     TryWriteFile, it has a payload to carry on success.
+
+Rem WriteFile(path As String, s As String)            ( path s -- )
+Rem     Write the string to path, replacing whatever was there. Aborts
+Rem     on failure.
+
+Rem TryWriteFile(path As String, s As String) As Boolean
+Rem                                                   ( path s -- ok )
+Rem     The same write, answering True on success rather than aborting.
+Rem     A Boolean and not a Result: a write has nothing to hand back.
+
+Rem AppendFile(path As String, s As String)           ( path s -- )
+Rem     Add the string to the end of path, creating the file if it is
+Rem     not there. Aborts on failure, and has no guarded twin.
+
+Rem FileExists(path As String) As Boolean             ( path -- flag )
+Rem     Whether there is a readable file at path. A directory answers
+Rem     False. This is NOT a pre-flight for the aborting words — see the
+Rem     note above.
+
+Rem DeleteFile(path As String)                        ( path -- )
+Rem     Delete the file at path. A missing file aborts.
+
+Rem TryDeleteFile(path As String) As Boolean          ( path -- ok )
+Rem     The same delete, answering True if the file went and False if it
+Rem     was not there or could not be removed.
+
+Rem ---- this machine's own words --------------------------------------
 
 Def ReadLines(path As String) As List Of String
     Let c = Replace(ReadFile(path), "\r", "")

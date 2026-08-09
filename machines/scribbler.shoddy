@@ -25,6 +25,119 @@ Rem ==================================================================
 
 Include "seq.shoddy"
 
+Rem ---- the builtins this machine is built on -------------------------
+Rem
+Rem NOT Defs. The engine dispatches these, and a Def whose name is a
+Rem builtin is refused; they are written here because scribbler.shoddy
+Rem is where a reader goes looking for them. The flat reference is
+Rem section 10 of docs/spec.html, and the stack effects below are the
+Rem ones the compiler's own Effects.cs table declares.
+Rem
+Rem COORDINATES COUNT FROM 0 and are clamped to the buffer; colours are
+Rem 0 to 255 per channel. EVERY WORD LEAVES EXACTLY ONE VALUE — the
+Rem mutators return the scribbler itself, which is what lets
+Rem Let sc = ... chains read functionally even though the buffer is
+Rem mutated in place.
+Rem
+Rem NOTHING SHOWS UNTIL ScribblerBlit. That is the whole drawing model:
+Rem a frame is assembled off-screen and arrives at once.
+Rem
+Rem A Scribbler IS ITS OWN VALUE KIND, not a number — which is why the
+Rem three slot words exist further down, and why a window cannot be
+Rem carried by a handle the way a file can.
+
+Rem ScribblerOpen(w As Number, h As Number) As Scribbler
+Rem                                                   ( w h -- sc )
+Rem     Open a window w by h pixels. Requires the window backend —
+Rem     `mill run` or `mill dap`; woven output run through bare `dotnet`
+Rem     ABORTS here. Everything that only touches the buffer works
+Rem     headless.
+
+Rem ScribblerClose(sc As Scribbler) As Scribbler      ( sc -- sc )
+Rem     Shut the window.
+
+Rem ScribblerTitle(sc As Scribbler, s As String) As Scribbler
+Rem                                                   ( sc s -- sc )
+Rem     Put s in the title bar.
+
+Rem ScribblerWidth(sc As Scribbler) As Number         ( sc -- n )
+Rem ScribblerHeight(sc As Scribbler) As Number        ( sc -- n )
+Rem     The buffer's size in pixels. Both work headless.
+
+Rem ScribblerPixel(sc As Scribbler, x As Number, y As Number, r As Number, g As Number, b As Number) As Scribbler
+Rem                                                   ( sc x y r g b -- sc )
+Rem     Set one pixel. THE ONE DRAWING PRIMITIVE — every line, rectangle,
+Rem     circle and fill below is built on it and nothing else.
+
+Rem ScribblerGetPixel(sc As Scribbler, x As Number, y As Number) As Array Of Number
+Rem                                                   ( sc x y -- rgb )
+Rem     The colour at x, y as a 3-element array. Works headless, and is
+Rem     what FloodFill reads to find its region.
+
+Rem ScribblerFill(sc As Scribbler, r As Number, g As Number, b As Number) As Scribbler
+Rem                                                   ( sc r g b -- sc )
+Rem     Fill the whole buffer with one colour — the usual first call of
+Rem     a frame.
+
+Rem ScribblerText(sc As Scribbler, x As Number, y As Number, scale As Number, r As Number, g As Number, b As Number, s As String) As Scribbler
+Rem                                                   ( sc x y scale r g b s -- sc )
+Rem     Draw s in the built-in 8x8 font, scale times its own size. A
+Rem     scale of 1 is eight pixels tall.
+
+Rem ScribblerBlit(sc As Scribbler) As Scribbler       ( sc -- sc )
+Rem     Show what has been drawn. Until this is called the window does
+Rem     not change, which is what makes a whole frame arrive at once.
+
+Rem ScribblerSave(sc As Scribbler, path As String) As Scribbler
+Rem                                                   ( sc path -- sc )
+Rem     Write the buffer to a PNG — eight-bit truecolour, alpha dropped,
+Rem     no window consulted, so it works headless and under --no-window.
+
+Rem ScribblerPlace(sc As Scribbler, x As Number, y As Number) As Scribbler
+Rem                                                   ( sc x y -- sc )
+Rem     Ask for the window's top-left corner in desktop pixels. A window
+Rem     manager may ignore it, and nothing reads it back.
+
+Rem ScribblerSetInterval(sc As Scribbler, ms As Number) As Scribbler
+Rem                                                   ( sc ms -- sc )
+Rem     Ask for tick events every ms milliseconds; 0 turns them off.
+Rem     SetFps below is this in the units a frame loop thinks in.
+
+Rem ScribblerPoll(sc As Scribbler) As Array Of Number ( sc -- ev )
+Rem     The next pending event as a raw 8-element array, kind 0 meaning
+Rem     none. Never blocks. DecodeEvent below is what turns it into the
+Rem     ScribblerEvent type — a builtin cannot reach a Type, so the
+Rem     lifting is this machine's job.
+
+Rem ScribblerWait(sc As Scribbler) As Array Of Number ( sc -- ev )
+Rem     The same, but BLOCKS until an event arrives — at zero CPU, which
+Rem     is what makes an idle program idle. It ABORTS headless, since
+Rem     nothing would ever wake it.
+
+Rem ---- and three that reach a window by SLOT NUMBER ----
+Rem
+Rem A Scribbler is its own value kind, so unlike a file handle it cannot
+Rem be carried by a number — and a reckoner seed needs exactly that,
+Rem since a resource held in reckoner's named table is found again by an
+Rem integer the binding carries. These three exist for that caller. An
+Rem ordinary program takes its window from ScribblerOpen and never sees
+Rem a slot.
+
+Rem TryScribblerOpen(w As Number, h As Number) As Result
+Rem                                                   ( w h -- result )
+Rem     ScribblerOpen with both of its deaths reported rather than fatal
+Rem     — no window backend, and a size below 1x1 — answering Ok(slot)
+Rem     rather than the window itself.
+
+Rem ScribblerOf(n As Number) As Scribbler             ( n -- sc )
+Rem     The window that slot names.
+
+Rem ScribblerShut(n As Number) As Boolean             ( n -- ok )
+Rem     Close it and free the slot, answering False for one already let
+Rem     go — so closing twice cannot end a run.
+
+Rem ---- this machine's own words --------------------------------------
+
 Rem ---- events --------------------------------------------------------
 
 Rem Key in ScribblerKeyDown/Up is a stable Shoddy key code (letters and

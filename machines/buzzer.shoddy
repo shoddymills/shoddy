@@ -31,6 +31,73 @@ Rem parse and test headless. Play is just SoundQueue over its output:
 Rem it returns as soon as the tune is queued, which is immediately.
 Rem ==================================================================
 
+Rem ---- the builtins this machine is built on -------------------------
+Rem
+Rem NOT Defs. The engine dispatches these, and a Def whose name is a
+Rem builtin is refused; they are written here because buzzer.shoddy is
+Rem where a reader goes looking for them. The flat reference is section
+Rem 10 of docs/spec.html, and the stack effects below are the ones the
+Rem compiler's own Effects.cs table declares.
+Rem
+Rem CHANNELS ARE 1 TO 8, and all eight always exist — there is nothing
+Rem to open and no handle anywhere in this family, which is what makes
+Rem it the one device family a program can use without holding a
+Rem resource. Frequencies are in hertz, durations in milliseconds.
+Rem
+Rem THREE NOTE-LIFETIME MODELS, and picking the wrong one is the usual
+Rem mistake: Sound is fire-and-forget from an anonymous pool, NoteOn
+Rem holds a note until NoteOff releases it, and SoundQueue lines notes
+Rem up back to back on one channel, sample-accurately. Play below is
+Rem SoundQueue over a parsed MML score.
+Rem
+Rem AUDIBLE UNDER `mill run` AND `mill dap`. Woven output run through
+Rem bare `dotnet`, and any machine with no audio device, is SILENT:
+Rem every word here is a no-op there and never an error. Bad arguments
+Rem — channel 0, a negative duration, wave 3 — still raise in silence.
+Rem Nothing here blocks, and nothing here can fail the program for want
+Rem of a speaker.
+
+Rem Sound(freq As Number, ms As Number)               ( freq ms -- )
+Rem     Play one tone for that long from the anonymous pool, and return
+Rem     at once — this does not wait for the note to finish. The pool
+Rem     speaks square waves only; SoundWave does not reach it.
+
+Rem NoteOn(ch As Number, freq As Number)              ( ch freq -- )
+Rem     Start a note on that channel and HOLD it. Nothing stops it but
+Rem     NoteOff, another NoteOn, or the program ending.
+
+Rem NoteOff(ch As Number)                             ( ch -- )
+Rem     Release whatever NoteOn is holding on that channel.
+
+Rem SoundQueue(ch As Number, freq As Number, ms As Number)
+Rem                                                   ( ch freq ms -- )
+Rem     Add a note to the end of that channel's queue, to start exactly
+Rem     when the one before it ends — which is what makes a tune sound
+Rem     like a tune rather than like a sequence of separate calls. A
+Rem     freq of 0 is a REST. More than five minutes queued ahead aborts.
+
+Rem SoundQueued(ch As Number) As Number               ( ch -- ms )
+Rem     How many milliseconds are already queued ahead on that channel.
+Rem     The only way to see the five-minute cap coming, and so the way a
+Rem     long score paces itself rather than being refused half way.
+
+Rem SoundStop(ch As Number)                           ( ch -- )
+Rem     Silence that channel and throw away whatever it had queued.
+
+Rem SoundGain(ch As Number, vol As Number)            ( ch vol -- )
+Rem     Set that channel's volume. STICKY: it stays until changed, and
+Rem     applies to notes queued after it as well as the one sounding.
+
+Rem SoundWave(ch As Number, wave As Number)           ( ch wave -- )
+Rem     Set that channel's timbre — 0 square (the default), 1 triangle,
+Rem     2 sine. Sticky like the gain, and a HELD note re-voices in place
+Rem     at its current pitch. Squares are bright and chip-like, but
+Rem     below about 60 Hz they read as a click train, because the edges
+Rem     are all a small speaker can voice — so deep bass wants sine or
+Rem     triangle. WaveSquare, WaveTriangle and WaveSine below are the
+Rem     names for this argument.
+
+Rem ---- this machine's own words --------------------------------------
 
 Rem ---- waveforms -------------------------------------------------------
 Rem Names for SoundWave's argument, so programs read as music rather

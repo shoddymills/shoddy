@@ -315,6 +315,7 @@ batteries included. Full word references in
     <td align="left" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/turtle.html"><img src="docs/media/icons/turtle.svg" alt="turtle" width="120"></a><br><b>turtle</b><br><sub>purely functional turtles</sub></td>
     <td align="left" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/keys.html"><img src="docs/media/icons/keys.svg" alt="keys" width="120"></a><br><b>keys</b><br><sub>key codes to GameKeys</sub></td>
     <td align="left" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/vt100.html"><img src="docs/media/icons/vt100.svg" alt="vt100" width="120"></a><br><b>vt100</b><br><sub>terminal control codes</sub></td>
+    <td align="left" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/terminal.html"><img src="docs/media/icons/terminal.svg" alt="terminal" width="120"></a><br><b>terminal</b><br><sub>the raw console builtins</sub></td>
     <td align="left" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/buzzer.html"><img src="docs/media/icons/buzzer.svg" alt="buzzer" width="120"></a><br><b>buzzer</b><br><sub>notes, MML tunes, three waves</sub></td>
   </tr>
 </table>
@@ -325,6 +326,7 @@ batteries included. Full word references in
   <tr>
     <td align="left" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/cuttle.html"><img src="docs/media/icons/cuttle.svg" alt="cuttle" width="120"></a><br><b>cuttle</b><br><sub>a runtime stack, reified</sub></td>
     <td align="left" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/reckoner.html"><img src="docs/media/icons/reckoner.svg" alt="reckoner" width="120"></a><br><b>reckoner</b><br><sub>RPN lines against a dictionary</sub></td>
+    <td align="left" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/lineshaft.html"><img src="docs/media/icons/lineshaft.svg" alt="lineshaft" width="120"></a><br><b>lineshaft</b><br><sub>Call, Ifte, Error, Assert</sub></td>
   </tr>
 </table>
 

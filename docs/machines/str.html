@@ -140,6 +140,108 @@ digit. The pads never truncate &mdash; a string already wider than the field
 comes back unchanged.</li>
 </ul>
 
+<h2 id="builtins">Builtins</h2>
+<p class="tag">The eighteen string words the runtime dispatches &mdash; not
+defined here, documented here</p>
+<p>These are not <code>str</code>'s <code>Def</code>s. The engine dispatches
+them, and a <code>Def</code> whose name is a builtin is refused. They are
+listed on this page because <code>str</code> is the machine whose domain they
+belong to, and because a reader who opens the strings machine looking for
+<code>Left</code> should find it rather than be expected to know that
+<a href="../spec.html#word-reference">the flat reference</a> exists. They need
+no <code>Include</code> &mdash; a builtin is callable from any program. The
+same eighteen are documented word for word in
+<code>machines/str.shoddy</code>'s own header block. Positions and lengths
+count from 1; all eighteen are pure.</p>
+
+<h3>Joining and measuring</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>s1 &amp; s2</td><td>The two strings joined. The one string word with
+no name &mdash; it is an operator, and it adds numbers too.</td></tr>
+<tr><td>Len(s)</td><td>How many characters the string holds.
+<code>Length</code> is the <em>list</em> word and refuses a string outright,
+so the two are not a near miss.</td></tr>
+</table>
+
+<h3>Taking a piece</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>Left(s, n)</td><td>The first <code>n</code> characters, or the whole
+string if it is shorter. A fractional <code>n</code> truncates rather than
+refusing.</td></tr>
+<tr><td>Right(s, n)</td><td>The last <code>n</code> characters, or the whole
+string if it is shorter.</td></tr>
+<tr><td>Mid(s, start, n)</td><td><code>n</code> characters from position
+<code>start</code>. A range past the end is trimmed to what is there rather
+than refused &mdash; which is what makes <code>CodeAt</code> worth
+having.</td></tr>
+</table>
+
+<h3>Searching</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>Instr(s, sub)</td><td>Where <code>sub</code> first appears in
+<code>s</code>, or 0 when it does not. An empty <code>sub</code> answers
+0.</td></tr>
+<tr><td>InstrFrom(s, sub, from)</td><td>The same search begun at position
+<code>from</code>, without copying the subject to get there.
+<code>Split</code> and <code>Replace</code> are linear in their subject
+because of this word; a <code>from</code> past the end answers 0.</td></tr>
+</table>
+
+<h3>Case</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>Upper(s)</td><td>The string case-folded up. The language folds word
+names the same way, which is why <a href="reckoner.html">reckoner</a> calls
+this at every lookup.</td></tr>
+<tr><td>Lower(s)</td><td>The string case-folded down.</td></tr>
+</table>
+
+<h3>Characters and codes</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>Chr(n)</td><td>The character with code <code>n</code>.
+<code>Chr(0)</code> is the <strong>empty string</strong> and not a NUL &mdash;
+<code>FromCodes</code> is how a NUL is built. A code above 65535 casts to 16
+bits and wraps silently rather than failing.</td></tr>
+<tr><td>Asc(s)</td><td>The code of the first character. Aborts on the empty
+string, which has none.</td></tr>
+<tr><td>Codes(s)</td><td>The code of every character, in order, as an
+<strong>Array</strong> &mdash; so a scanner indexes with <code>Nth</code> in
+O(1) rather than walking a list. An empty string answers an empty array.
+Total.</td></tr>
+<tr><td>FromCodes(codes)</td><td>The string those codes spell.
+<code>Codes</code>' exact inverse, NUL included, which is the one string
+<code>Chr</code> cannot build.</td></tr>
+<tr><td>CodeAt(s, k)</td><td>The code of the character at position
+<code>k</code>. It <em>refuses</em> past the end where <code>Mid</code> trims,
+and that is the point of it: <code>Asc(Mid(s, k, 1))</code> reads the wrong
+character and then aborts naming <code>Asc</code>, a word away from the index
+that was actually wrong.</td></tr>
+</table>
+
+<h3>Numbers as text</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>Str(x)</td><td>A number written out as text, the way the stack shows
+it &mdash; ten significant digits, so an arbitrary double does not round-trip
+bit-exactly.</td></tr>
+<tr><td>Val(s)</td><td>Text read back as a number, and the most dangerous
+builtin in this family. It is <code>strtod</code>: it answers 0 for text it
+cannot read at all, and takes a leading number off a longer token &mdash; so
+<code>"twelve"</code> is 0 and <code>"3kg"</code> is 3, and neither says so.
+Ask <code>IsNumeric</code> first, or reach for <code>ValOr</code>.</td></tr>
+<tr><td>ValOr(s, fallback)</td><td>The same read, answering
+<code>fallback</code> for text that is not a number. The total form of the
+pair.</td></tr>
+<tr><td>IsNumeric(s)</td><td>Whether <code>Val</code> would read this text as
+a number &mdash; the question <code>Val</code> itself does not ask. It means
+"would <code>Val</code> succeed", not "is this wholly a number", so
+<code>"3kg"</code> passes it.</td></tr>
+</table>
+
 <h2 id="words">Word Reference</h2>
 <p class="tag">Every word, plus one internal helper</p>
 
@@ -309,10 +411,9 @@ serializer.</td></tr>
 </table>
 
 <h2 id="uses">The Machines It Uses</h2>
-<p>None — built on the <code>Instr</code> / <code>InstrFrom</code> /
-<code>Left</code> / <code>Right</code> / <code>Mid</code> / <code>Len</code>
-builtins alone, which is what lets clock, file, money and mps all lean on it
-freely. <code>Split</code> and <code>Replace</code> carry a position and call
+<p>None — built on <a href="#builtins">the eighteen string builtins</a> alone,
+which is what lets clock, file, money and mps all lean on it freely.
+<code>Split</code> and <code>Replace</code> carry a position and call
 <code>InstrFrom</code> rather than recursing on a copy of the tail; that is
 what makes <code>Split</code> linear in its subject rather than quadratic,
 and it changes nothing about what either word answers.</p>

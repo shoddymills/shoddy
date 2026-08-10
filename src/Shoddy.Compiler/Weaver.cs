@@ -83,17 +83,24 @@ public static class Weaver
     }
 
     /// <summary>Weave a machine: machines/seq.shoddy -> Shoddy.Machines.Seq.dll
-    /// beside it, exporting its defs and types with a manifest.</summary>
+    /// beside it, exporting its defs and types with a manifest.
+    ///
+    /// With <paramref name="debug"/>, the instrumented machine weave
+    /// (A6.2): same assembly name, same manifest, every line hooked —
+    /// written to a bin/debug/ subfolder so a debug configuration can
+    /// reference the instrumented artifact while the release one stays
+    /// untouched, and the assembly's identity never forks.</summary>
     public static string WeaveMachine(ShoddyProgram prog, string sbPath,
-                                      IReadOnlyList<MachineInfo>? machines = null)
+                                      IReadOnlyList<MachineInfo>? machines = null,
+                                      bool debug = false)
     {
-        string outDll = MachineSet.DllPathFor(sbPath);
+        string outDll = debug ? MachineSet.DebugDllPathFor(sbPath) : MachineSet.DllPathFor(sbPath);
         string cls = MachineSet.ClassNameFor(sbPath);
         Directory.CreateDirectory(Path.GetDirectoryName(outDll)!);
         using var pe = File.Create(outDll);
-        Compile(GenerateSource(prog, cls, deps: machines, ownFile: sbPath), pe,
+        Compile(GenerateSource(prog, cls, debug: debug, deps: machines, ownFile: sbPath), pe,
                 OutputKind.DynamicallyLinkedLibrary,
-                machines, $"Shoddy.Machines.{cls}");
+                machines, $"Shoddy.Machines.{MachineSet.AssemblyStemFor(sbPath)}");
         return outDll;
     }
 
@@ -110,11 +117,16 @@ public static class Weaver
             foreach (MachineInfo m in machines)
                 refs.Add(MetadataReference.CreateFromFile(m.DllPath));
 
+        // Deterministic: identical inputs give byte-identical output. The
+        // default is a fresh MVID per emit, under which the same weave run
+        // twice differs — and C3.4 (either build of the mill produces the
+        // same artifact for every shared verb) could never hold.
         var comp = CSharpCompilation.Create(
             assemblyName,
             new[] { tree },
             refs,
-            new CSharpCompilationOptions(kind, optimizationLevel: OptimizationLevel.Release));
+            new CSharpCompilationOptions(kind, optimizationLevel: OptimizationLevel.Release,
+                                         deterministic: true));
 
         EmitResult result = comp.Emit(pe);
         if (!result.Success)

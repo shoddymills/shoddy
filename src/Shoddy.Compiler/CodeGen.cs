@@ -201,6 +201,11 @@ public sealed class CodeGen
     bool GlobalVisible(string name) =>
         globalIds.ContainsKey(name) && (!inInit || assignedGlobals.Contains(name));
 
+    /// <summary>A file id as emitted: absolute for a program (its
+    /// preamble registers at offset 0), offset by the per-engine base
+    /// for an instrumented machine (each word's prologue binds _fb).</summary>
+    string Fid(int id) => machineClass != null && debug ? $"_fb + {id}" : id.ToString();
+
     // ---- top level -----------------------------------------------------
 
     public string Generate()
@@ -346,15 +351,27 @@ public sealed class CodeGen
         }
         if (globalIds.Count > 0) W("");
 
+        // An instrumented machine has no preamble to register its file
+        // table, so the table is a class static and every word appends
+        // it (once per engine) on entry, carrying the offset in each
+        // frame — the per-assembly scheme that lets a debug program and
+        // any number of debug machines share one engine's table (D6).
+        if (debug && machine)
+        {
+            W($"static readonly string[] __DbgFiles = {StrArr(fileList)};");
+            W("");
+        }
+
         foreach ((string name, Quot body) in prog.Defs)
         {
             W($"{(machine ? "public " : "")}static void {defIds[name]}(Engine rt)  // {name}");
             Open();
             if (debug)
             {
+                if (machine) W("int _fb = rt.FileBase(__DbgFiles);");
                 Node? first = body.Items.Count > 0 ? body.Items[0] : null;
                 int fid = first?.File != null ? fileIds[first.File] : 0;
-                W($"rt.Enter({StrLit(name)}, {fid}, {first?.Line ?? 0});");
+                W($"rt.Enter({StrLit(name)}, {Fid(fid)}, {first?.Line ?? 0});");
                 W("try");
                 Open();
             }
@@ -441,7 +458,7 @@ public sealed class CodeGen
             Node n = q.Items[k];
             if (debug && n.File != null && (last == null || last.Value != (n.File, n.Line)))
             {
-                W($"rt.Dbg({fileIds[n.File]}, {n.Line});");
+                W($"rt.Dbg({Fid(fileIds[n.File])}, {n.Line});");
                 last = (n.File, n.Line);
             }
             EmitNode(n, sc, k == q.Items.Count - 1 ? tailDef : null);

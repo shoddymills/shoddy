@@ -25,6 +25,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # The host-blindness ratchet (A3.6): no host name in the schema,
+      # src/, the host-blind templates or the extension. First and
+      # cheapest — the boundary is enforced here, not remembered. The
+      # other verify-* scripts stay manual pre-release gates.
+      - name: Host-blindness check
+        run: node scripts/verify-host-blind.js
+
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '10.0.x'
@@ -34,3 +41,35 @@ jobs:
 
       - name: Test — dotnet test, golden suite, net loopback
         run: ./build.sh test
+
+  # The container proof (C8): the headless build of the mill runs a full
+  # weave in a minimal Linux image with no X11 and no audio device — a
+  # build that cannot reference GLFW or OpenAL cannot load them — and its
+  # `run` refuses by name rather than crashing. The bare SDK image is the
+  # kind of machine consumers' CI actually is, which is the reason the
+  # headless build exists (C3).
+  headless:
+    runs-on: ubuntu-latest
+    container: mcr.microsoft.com/dotnet/sdk:10.0
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build the headless mill
+        run: dotnet build src/Shoddy.Mill.Headless -c Release
+
+      - name: Weave a real mill, headless
+        run: dotnet artifacts/bin/Shoddy.Mill.Headless/release/mill.dll weave mills/halifax/halifax.shoddy
+
+      - name: Machine-weave its core, headless
+        run: dotnet artifacts/bin/Shoddy.Mill.Headless/release/mill.dll machine mills/halifax/halifax-core.shoddy
+
+      - name: run refuses by name
+        run: |
+          set +e
+          out=$(dotnet artifacts/bin/Shoddy.Mill.Headless/release/mill.dll run mills/halifax/halifax.shoddy 2>&1)
+          code=$?
+          set -e
+          echo "$out"
+          test $code -eq 1
+          echo "$out" | grep -q "headless"
+          echo "$out" | grep -q "full mill"

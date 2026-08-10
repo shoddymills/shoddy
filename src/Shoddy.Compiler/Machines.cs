@@ -101,7 +101,37 @@ public sealed class MachineSet
     void SetQualifier(string sbPath, string qual) =>
         qualByDll[DllPathFor(sbPath)] = qual;
 
+    /// <summary>The woven class name: a valid C# identifier. A hyphen —
+    /// every mill's <c>name-core.shoddy</c> — is legal in a file and an
+    /// assembly name but not in a class, so non-alphanumerics become word
+    /// breaks and the parts join PascalCase: halifax-core → HalifaxCore.
+    /// For the plain stems machines have always used this is exactly the
+    /// old capitalize-first rule. Nothing spells this name by convention:
+    /// consumers read it from the ShoddyMachine attribute, and the
+    /// assembly and DLL keep the source's own stem (<see
+    /// cref="AssemblyStemFor"/>) so the assembly→source round trip in
+    /// dependency advice stays exact.</summary>
     public static string ClassNameFor(string sbPath)
+    {
+        string stem = Path.GetFileNameWithoutExtension(sbPath);
+        var sb = new System.Text.StringBuilder(stem.Length);
+        bool boundary = true;
+        foreach (char c in stem)
+        {
+            if (!char.IsLetterOrDigit(c)) { boundary = true; continue; }
+            sb.Append(boundary ? char.ToUpperInvariant(c) : char.ToLowerInvariant(c));
+            boundary = false;
+        }
+        if (sb.Length == 0 || char.IsDigit(sb[0])) sb.Insert(0, '_');
+        return sb.ToString();
+    }
+
+    /// <summary>The stem the assembly and DLL carry: the source file's
+    /// own, capitalized — Shoddy.Machines.Halifax-core.dll visibly matches
+    /// halifax-core.shoddy, and <see cref="SourceNameFor(string)"/> can
+    /// lower-case an assembly name straight back to the Include that
+    /// names it.</summary>
+    public static string AssemblyStemFor(string sbPath)
     {
         string stem = Path.GetFileNameWithoutExtension(sbPath);
         return char.ToUpperInvariant(stem[0]) + stem[1..].ToLowerInvariant();
@@ -117,7 +147,15 @@ public sealed class MachineSet
     public static string DllPathFor(string sbPath) =>
         Path.Combine(Path.GetDirectoryName(Path.GetFullPath(sbPath))!,
                      BinDir,
-                     $"Shoddy.Machines.{ClassNameFor(sbPath)}.dll");
+                     $"Shoddy.Machines.{AssemblyStemFor(sbPath)}.dll");
+
+    /// <summary>The instrumented (debug) weave of the same machine:
+    /// bin/debug/, same file name — the assembly's identity never forks,
+    /// only which artifact a configuration references.</summary>
+    public static string DebugDllPathFor(string sbPath) =>
+        Path.Combine(Path.GetDirectoryName(Path.GetFullPath(sbPath))!,
+                     BinDir, "debug",
+                     $"Shoddy.Machines.{AssemblyStemFor(sbPath)}.dll");
 
     /// <summary>The Lexer's externalInclude hook: true = a machine DLL
     /// satisfies this include, don't splice the source.
@@ -169,13 +207,22 @@ public sealed class MachineSet
         }
     }
 
-    /// <summary>Where a dependency's DLL is, relative to the machine that
-    /// needs it: beside it first (the common case — every machine in
-    /// machines/bin depends only on siblings there), then one directory up
-    /// (a reckoner seed in machines/seeds/bin depending on the machine it
-    /// bridges, one level up in machines/bin). Null if neither has it.</summary>
+    /// <summary>Where a dependency's DLL is: the machine library first —
+    /// the canonical copy, and one identity per process, since loading
+    /// the same simple name from two paths is a hard failure — then
+    /// beside the needing machine (a scratch workspace whose machines
+    /// are their own library), then one directory up (a reckoner seed
+    /// in machines/seeds/bin depending on the machine it bridges). The
+    /// library-first order is what keeps a mill's own bin/ — which
+    /// carries COPIES of dependency DLLs beside its woven shell — from
+    /// supplying stale identities. Null when no route has it.</summary>
     static string? FindDependencyDll(string dllPath, string assemblyName)
     {
+        foreach (string lib in Shoddy.Devil.Lexer.LibDirs())
+        {
+            string inLib = Path.Combine(lib, BinDir, assemblyName + ".dll");
+            if (File.Exists(inLib)) return Path.GetFullPath(inLib);
+        }
         string dir = Path.GetDirectoryName(dllPath)!;
         string sibling = Path.Combine(dir, assemblyName + ".dll");
         if (File.Exists(sibling)) return sibling;

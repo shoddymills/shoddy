@@ -335,6 +335,41 @@ public class MachineSurfaceTests
         }
     }
 
+    /// <summary>A hyphenated source file — every mill's
+    /// <c>name-core.shoddy</c> — must machine-weave. The hyphen is legal
+    /// in the DLL and assembly name, which keep it (so the
+    /// assembly→source advice round trip stays exact); it is not legal in
+    /// a C# class, so the class name joins the parts PascalCase — and no
+    /// consumer spells that name, they read it from the manifest
+    /// attribute.</summary>
+    [Fact]
+    public void AHyphenatedCoreWeavesAsAMachine()
+    {
+        string machines = Workspace();
+        string sb = Path.Combine(machines, "hyph-core.shoddy");
+        File.WriteAllText(sb, DepSource);
+        Build(sb);
+
+        string dll = MachineSet.DllPathFor(sb);
+        Assert.EndsWith("Shoddy.Machines.Hyph-core.dll", dll);
+        Assembly asm = Assembly.LoadFrom(dll);
+        Assert.Equal("Shoddy.Machines.Hyph-core", asm.GetName().Name);
+
+        MachineInfo info = MachineInfo.From(asm, dll);
+        Assert.Equal("Shoddy.Machines.HyphCore", info.ClassName);
+        Assert.NotNull(asm.GetType(info.ClassName));
+        Assert.Contains("DEPAVG", info.Defs.Keys);
+
+        // And a consumer resolves it as a DLL and links against it.
+        string ws = Path.GetDirectoryName(machines)!;
+        string src = Path.Combine(ws, "hyphconsumer.shoddy");
+        File.WriteAllText(src,
+            "Include \"machines/hyph-core.shoddy\"\n\nDef Main()\n    Print(DepAvg({ 2, 4 }))\n");
+        var (prog, set) = ParseWithMachines(src);
+        Assert.True(prog.ExternalDefs.ContainsKey("DEPAVG"));
+        Weaver.Weave(prog, Path.Combine(ws, "hyphconsumer.dll"), set.Machines);
+    }
+
     /// <summary>The manifest of one built machine, read back from its DLL.</summary>
     static MachineInfo ManifestOf(string sbPath)
     {

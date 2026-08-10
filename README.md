@@ -434,7 +434,9 @@ one word at a time.
 **Set up and build** — [setup](https://shoddymills.github.io/shoddy/setup.html), two steps once per
 machine · [VS Code](https://shoddymills.github.io/shoddy/vscode.html), debugging, snippets and the
 Run button · [the toolchain](https://shoddymills.github.io/shoddy/build.html), every mill command,
-wrapper and convention.
+wrapper and convention · [hosting](https://shoddymills.github.io/shoddy/hosting.html), a mill inside
+your own .NET app — ShoddyWeave in the csproj, ShoddyHost at runtime, the Reckoner as the worked
+example.
 
 **Also** — [the machines](https://shoddymills.github.io/shoddy/machines/index.html) and
 [the mills](https://shoddymills.github.io/shoddy/mills/index.html), one page each ·

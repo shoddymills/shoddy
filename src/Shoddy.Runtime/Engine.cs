@@ -1396,9 +1396,13 @@ public sealed partial class Engine
             case "INPUT":                       // ( prompt -- s )
             {
                 // The console and a scribbler window are separate input
-                // channels routed by OS focus; reading the console while a
-                // window is up silently hangs, so it is refused instead.
-                if (Volatile.Read(ref ScribblerRegistry.OpenCount) > 0)
+                // channels routed by OS focus; reading the LIVE console
+                // while a window is up silently hangs, so it is refused.
+                // Piped or test-supplied input has no focus to lose — a
+                // host feeding the reader itself may keep a canvas open
+                // beside a prompt, and both work.
+                if (ReferenceEquals(In, Console.In) && !Console.IsInputRedirected
+                    && Volatile.Read(ref ScribblerRegistry.OpenCount) > 0)
                     throw Die(line, "Input: cannot read the console while a scribbler window is open" +
                                     " — read keystrokes with ScribblerWait or ScribblerPoll.");
                 O.Write(PopStr(line, w));
@@ -1414,7 +1418,8 @@ public sealed partial class Engine
                 // line or terminate at EOF, never both. A flat Array carrier,
                 // not a record: a builtin cannot reach a TypeDef, so lifting
                 // this into a sum type is the Shoddy wrapper's job.
-                if (Volatile.Read(ref ScribblerRegistry.OpenCount) > 0)
+                if (ReferenceEquals(In, Console.In) && !Console.IsInputRedirected
+                    && Volatile.Read(ref ScribblerRegistry.OpenCount) > 0)
                     throw Die(line, "InputLine: cannot read the console while a scribbler window is open" +
                                     " — read keystrokes with ScribblerWait or ScribblerPoll.");
                 O.Write(PopStr(line, w));
@@ -1434,7 +1439,8 @@ public sealed partial class Engine
                 // it between frames. Arrow keys and PF1-4 arrive as their
                 // VT100 application-mode sequences (ESC OA .. ESC OS), the
                 // exact strings machines/vt100.shoddy's EvalKey classifies.
-                if (Volatile.Read(ref ScribblerRegistry.OpenCount) > 0)
+                if (ReferenceEquals(In, Console.In) && !Console.IsInputRedirected
+                    && Volatile.Read(ref ScribblerRegistry.OpenCount) > 0)
                     throw Die(line, "InKey: cannot read the console while a scribbler window is open" +
                                     " — read keystrokes with ScribblerWait or ScribblerPoll.");
                 if (!ReferenceEquals(In, Console.In) || Console.IsInputRedirected)
@@ -1442,7 +1448,22 @@ public sealed partial class Engine
                     // Redirected or test-supplied input: consume one pending
                     // character; "" at end of input. Keeps INKEY testable
                     // headless (feed a StringReader) and sane under pipes.
-                    PushStr(In.Peek() < 0 ? "" : ((char)In.Read()).ToString());
+                    // One assembly rule so every path answers the same
+                    // strings: an ESC with a pending 'O' or '[' straight
+                    // behind it is an arrow/PF sequence a piped host fed
+                    // whole, and comes back whole — three characters, the
+                    // form EvalKey decodes. A lone ESC (or ESC before any
+                    // other character) stays a single keystroke.
+                    if (In.Peek() < 0) { PushStr(""); return true; }
+                    char k0 = (char)In.Read();
+                    if (k0 == '\x1b' && (In.Peek() == 'O' || In.Peek() == '['))
+                    {
+                        char k1 = (char)In.Read();
+                        PushStr(In.Peek() < 0
+                            ? new string(new[] { k0, k1 })
+                            : new string(new[] { k0, k1, (char)In.Read() }));
+                    }
+                    else PushStr(k0.ToString());
                     return true;
                 }
                 if (!Console.KeyAvailable) { PushStr(""); return true; }

@@ -69,6 +69,24 @@ public static class BuzzerEngine
 
     // ---- the seam -------------------------------------------------------
 
+    /// <summary>Diagnosis, never control: why this process is silent,
+    /// or null when sound is healthy (or merely not yet asked for). The
+    /// factory-failure degradation is deliberately quiet at the seam —
+    /// this is the one place a host can look it up and say so.</summary>
+    public static string? Trouble =>
+        failed ? "the audio device could not start — silent for this run"
+        : factory == null ? "no audio backend is installed"
+        : null;
+
+    /// <summary>The seam's whole story in one line, for a host's
+    /// diagnostics surface: installed or not, sink up or not yet
+    /// asked, failed and latched silent.</summary>
+    public static string State =>
+        failed ? "failed — the audio device could not start; silent for this run"
+        : sink != null ? "live — the sink is up and rendering"
+        : factory != null ? "armed — no sound requested yet"
+        : "no audio backend installed";
+
     /// <summary>Install the seven delegates over a sink the factory will
     /// create on the first sound call. Costs nothing until then.</summary>
     public static void Install(Func<IAudioSink> sinkFactory)

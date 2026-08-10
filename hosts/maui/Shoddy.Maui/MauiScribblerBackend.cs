@@ -42,6 +42,10 @@ public static class MauiScribblerBackend
                 MainThread.InvokeOnMainThreadAsync(() =>
                 {
                     var v = new ScribblerCanvasView();
+                    // The games' event plumbing (B5.5), wired before the
+                    // view joins the tree. A drawing nobody polls just
+                    // fills a bounded queue nobody reads — harmless.
+                    v.Attach(handle);
                     present(v, handle);
                     return v;
                 }).GetAwaiter().GetResult();
@@ -65,11 +69,18 @@ public static class MauiScribblerBackend
     }
 
     /// <summary>The app-side close — the user dismissed the page while
-    /// the mill still holds the scribbler. Same arbitration, other
-    /// direction; a later SCRIBBLERCLOSE finds it already closed and
-    /// does nothing twice.</summary>
+    /// the mill still holds the scribbler. A Quit event goes first so a
+    /// Wait loop reaches its exit branch (exactly the desktop window's
+    /// close), then the same arbitration; a later SCRIBBLERCLOSE finds
+    /// it already closed and does nothing twice.</summary>
     public static void NoteDismissed(ScribblerHandle handle)
     {
+        handle.Events.Enqueue(new ScribblerEvent
+        {
+            Type = ScribblerEvent.Kind.Quit,
+            At = Ticker.Now,
+        });
+        handle.Signal.Release();
         if (handle.MarkClosed())
         {
             ScribblerRegistry.NoteClosed();

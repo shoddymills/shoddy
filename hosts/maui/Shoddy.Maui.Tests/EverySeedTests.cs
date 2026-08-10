@@ -28,6 +28,7 @@ namespace Shoddy.Maui.Tests;
 /// scratch file root the engine's working directory points into, and
 /// a local HTTP server for NETGET.
 /// </summary>
+[Collection("scribbler seam")]
 public class EverySeedTests : IClassFixture<EverySeedTests.SeedHarness>
 {
     // ---- the probe table: seed → lines to type, expectation ----

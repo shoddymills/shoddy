@@ -21,6 +21,11 @@ public struct TerminalCell
 {
     public char Ch;
     public TerminalAttr Attr;
+    /// <summary>ANSI colours, stored 1..8 (black..white); 0 is the
+    /// theme's default ink/paper. The grid records what the program
+    /// said; mapping onto a palette is the view's business.</summary>
+    public byte Fg;
+    public byte Bg;
 }
 
 /// <summary>
@@ -65,6 +70,7 @@ public sealed class TerminalGrid
     int curRow, curCol;             // 0-based
     bool wrapPending;               // classic deferred wrap at the last column
     TerminalAttr attr;
+    byte fg, bg;                    // current ANSI colours, 0 = default
     int scrollTop, scrollBottom;    // 0-based, inclusive
     bool autoWrap = true;
     bool originMode;
@@ -73,6 +79,7 @@ public sealed class TerminalGrid
     bool reverseScreen;
     int savedRow, savedCol;
     TerminalAttr savedAttr;
+    byte savedFg, savedBg;
     bool[] tabStops = Array.Empty<bool>();
 
     // Character sets: G0/G1 designations ('B' US, 'A' UK, '0' special
@@ -190,6 +197,7 @@ public sealed class TerminalGrid
             curRow = curCol = 0;
             wrapPending = false;
             attr = TerminalAttr.None;
+            fg = bg = 0;
             scrollTop = 0;
             scrollBottom = rows - 1;
             autoWrap = true;
@@ -255,8 +263,8 @@ public sealed class TerminalGrid
             case 'D': LineFeed(); break;                            // index
             case 'M': ReverseLineFeed(); break;                     // reverse index
             case 'E': LineFeed(); curCol = 0; break;                // next line
-            case '7': savedRow = curRow; savedCol = curCol; savedAttr = attr; break;
-            case '8': curRow = savedRow; curCol = savedCol; attr = savedAttr; wrapPending = false; break;
+            case '7': savedRow = curRow; savedCol = curCol; savedAttr = attr; savedFg = fg; savedBg = bg; break;
+            case '8': curRow = savedRow; curCol = savedCol; attr = savedAttr; fg = savedFg; bg = savedBg; wrapPending = false; break;
             case 'H': if (curCol < cols) tabStops[curCol] = true; break;
             case 'c': Reset2(); break;
             case '#': state = PState.EscHash; break;
@@ -380,13 +388,19 @@ public sealed class TerminalGrid
         foreach (int m in n)
             switch (m)
             {
-                case 0: attr = TerminalAttr.None; break;
+                case 0: attr = TerminalAttr.None; fg = bg = 0; break;
                 case 1: attr |= TerminalAttr.Bold; break;
                 case 2: attr |= TerminalAttr.Dim; break;
                 case 4: attr |= TerminalAttr.Underline; break;
                 case 5: attr |= TerminalAttr.Blink; break;
                 case 7: attr |= TerminalAttr.Reverse; break;
                 case 8: attr |= TerminalAttr.Invisible; break;
+                // The eight ANSI colours (a game's paint): stored 1..8,
+                // 0 the theme default, 39/49 the explicit way back.
+                case >= 30 and <= 37: fg = (byte)(m - 29); break;
+                case 39: fg = 0; break;
+                case >= 40 and <= 47: bg = (byte)(m - 39); break;
+                case 49: bg = 0; break;
                 default: Unknown("SGR " + m); break;
             }
     }
@@ -457,7 +471,7 @@ public sealed class TerminalGrid
             curCol = 0;
             LineFeed();
         }
-        screen[curRow][curCol] = new TerminalCell { Ch = ch, Attr = attr };
+        screen[curRow][curCol] = new TerminalCell { Ch = ch, Attr = attr, Fg = fg, Bg = bg };
         if (curCol < cols - 1) curCol++;
         else wrapPending = autoWrap;
     }
@@ -502,6 +516,7 @@ public sealed class TerminalGrid
         curRow = curCol = 0;
         wrapPending = false;
         attr = TerminalAttr.None;
+        fg = bg = 0;
         scrollTop = 0;
         scrollBottom = rows - 1;
         autoWrap = true;

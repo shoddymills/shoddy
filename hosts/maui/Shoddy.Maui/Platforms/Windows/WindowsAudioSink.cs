@@ -7,6 +7,7 @@ using Windows.Media.Audio;
 using Windows.Media.MediaProperties;
 using Windows.Media.Render;
 using Shoddy.Runtime;
+using WinRT;
 
 namespace Shoddy.Maui;
 
@@ -44,6 +45,8 @@ public sealed class WindowsAudioSink : IAudioSink
     readonly AudioGraph graph;
     readonly AudioDeviceOutputNode output;
     readonly List<Voice> voices = new();
+    readonly object startGate = new();
+    bool started;
 
     public WindowsAudioSink()
     {
@@ -61,7 +64,24 @@ public sealed class WindowsAudioSink : IAudioSink
             throw new InvalidOperationException("no audio device: " + dev.Status);
         }
         output = dev.DeviceOutputNode;
-        graph.Start();
+        // The graph does NOT start here. Frame-input nodes added to an
+        // already-running graph never receive QuantumStarted — the
+        // canonical ordering is nodes first, Start() last — and the
+        // engine creates every voice right after construction. First
+        // Play/Queue starts the graph, once, with the wiring complete.
+        // (Found by the render test: every voice sat silent, Playing
+        // forever true, and the drain-based test could not tell.)
+    }
+
+    void EnsureStarted()
+    {
+        if (started) return;
+        lock (startGate)
+        {
+            if (started) return;
+            graph.Start();
+            started = true;
+        }
     }
 
     public int CreateVoice()
@@ -92,6 +112,7 @@ public sealed class WindowsAudioSink : IAudioSink
             v.Playing = true;
         }
         v.Node.OutgoingGain = gain;
+        EnsureStarted();
     }
 
     public void Queue(int voice, short[] pcm, int sampleRate, double gain)
@@ -111,6 +132,7 @@ public sealed class WindowsAudioSink : IAudioSink
             v.Playing = true;
         }
         v.Node.OutgoingGain = gain;
+        EnsureStarted();
     }
 
     public void SetGain(int voice, double gain) => voices[voice].Node.OutgoingGain = gain;
@@ -154,7 +176,14 @@ public sealed class WindowsAudioSink : IAudioSink
         using (AudioBuffer buffer = frame.LockBuffer(AudioBufferAccessMode.Write))
         using (Windows.Foundation.IMemoryBufferReference reference = buffer.CreateReference())
         {
-            ((IMemoryBufferByteAccess)reference).GetBuffer(out byte* raw, out uint _);
+            // CsWinRT: a projected WinRT object refuses the CLR cast to
+            // a ComImport interface (InvalidCastException from
+            // WinRT.IInspectable) — As<T>() does the QueryInterface.
+            // That cast threw on the audio thread EVERY quantum,
+            // swallowed by WinRT, and was the whole of "no sound":
+            // the render test caught it the first time anything
+            // asserted the graph actually pulls.
+            reference.As<IMemoryBufferByteAccess>().GetBuffer(out byte* raw, out uint _);
             float* samples = (float*)raw;
             lock (v.Gate)
             {

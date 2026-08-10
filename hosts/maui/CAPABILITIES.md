@@ -13,7 +13,7 @@ each platform's manifest must say for the grant to be honest.
 | `terminal` | the transcript itself | — | — | — |
 | `clock` | acknowledgement only (C2.4a) | — | — | — |
 | `random` | acknowledgement only | — | — | — |
-| `keys` | nothing — pure functions over key codes | — | — | — |
+| `keys` | for halifax, nothing — pure functions over key codes; for a Mode T game, the terminal's key capture feeding `InKey` through the input pipe | — | — | — |
 | `vt100` | nothing — pure (`VTEVALKEY`) | — | — | — |
 | `scribbler` | `ScribblerCanvasView` in a `CanvasPage` | — | — | — |
 | `buzzer` | platform sink behind the shared engine (D18) | nothing — output only, `AudioGraph` | nothing — output only, `AudioTrack` | nothing — output only, `AVAudioEngine`; Catalyst: no microphone entitlement, output needs none |

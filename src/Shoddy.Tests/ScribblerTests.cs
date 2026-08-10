@@ -297,17 +297,25 @@ public class ScribblerTests
     // ---- input ownership ------------------------------------------------
 
     [Fact]
-    public void InputRefusedWhileAScribblerIsOpen()
+    public void PipedInputWorksWhileAScribblerIsOpen()
     {
-        string err = RunHeadlessError(string.Join('\n',
+        // The refusal ("cannot read the console while a scribbler window
+        // is open") applies to the LIVE console only — the focus hazard
+        // it guards against needs a console with focus to lose. Piped or
+        // host-supplied input has none, and a host feeding the reader
+        // itself may legitimately keep a canvas open beside a prompt.
+        // The live-console branch cannot fire under a test runner (stdin
+        // is redirected here), so this asserts the piped side of the
+        // contract; errors.html carries the full statement.
+        string output = RunHeadless(string.Join('\n',
             "Def Main()",
             "    Let sc = ScribblerOpen(4, 4)",
             "    Print(Input(\"? \"))",
-            ""));
-        Assert.Contains("ScribblerWait or ScribblerPoll", err);
+            ""), input: new StringReader("hello\n"));
+        Assert.Equal("? hello\n", output);
 
         // Closed again (or never opened): Input works as before.
-        string output = RunHeadless(string.Join('\n',
+        output = RunHeadless(string.Join('\n',
             "Def Main()",
             "    Let sc = ScribblerClose(ScribblerOpen(4, 4))",
             "    Print(Input(\"? \"))",

@@ -7,25 +7,75 @@ using Shoddy.Maui;
 namespace ShoddyReckoner;
 
 /// <summary>
-/// The calculator's one screen (B4.7, D9): a TranscriptView wired to a
-/// HalifaxSession. Submit runs the turn on a worker, the UI thread only
-/// ever appends returned lines, and QUIT does what it does at the
-/// terminal — ends the session, which for a windowed app means closing
-/// the window.
+/// The calculator's one screen: the unified terminal control as the
+/// display, the native Entry as the input line. The split is exactly
+/// where the device differences live — the drawn grid renders the same
+/// pixels on every platform, while prose typing keeps the platform's
+/// keyboard, IME, clipboard and screen reader. The core still runs off
+/// the UI thread; QUIT still closes the window; Cancel still restarts
+/// the session, QUIT-style, and says so.
 /// </summary>
 public sealed class CalculatorPage : ContentPage
 {
-    readonly TranscriptView transcript = new();
+    readonly TerminalView term = new();
+    readonly Entry entry;
+    readonly ActivityIndicator spinner;
+    readonly Button cancel;
     HalifaxSession? session;
 
     public CalculatorPage()
     {
         Title = "Shoddy Reckoner";
         Padding = 8;
-        Content = transcript;
-        transcript.LineSubmitted += line => _ = RunTurnAsync(line);
-        transcript.CancelRequested += Cancel;
+
+        entry = new Entry
+        {
+            FontFamily = "Consolas",
+            FontSize = 14,
+            IsSpellCheckEnabled = false,
+            IsTextPredictionEnabled = false,
+            ReturnType = ReturnType.Send,
+        };
+        entry.Completed += (_, _) => Submit();
+
+        spinner = new ActivityIndicator { IsRunning = false, IsVisible = false };
+        cancel = new Button { Text = "Cancel", IsVisible = false };
+        cancel.Clicked += (_, _) => Cancel();
+
+        var grid = new Grid
+        {
+            RowDefinitions =
+            {
+                new RowDefinition(GridLength.Star),
+                new RowDefinition(GridLength.Auto),
+                new RowDefinition(GridLength.Auto),
+            },
+            RowSpacing = 4,
+        };
+        grid.Add(term, 0, 0);
+        grid.Add(new HorizontalStackLayout { Spacing = 8, Children = { spinner, cancel } }, 0, 1);
+        grid.Add(entry, 0, 2);
+        Content = grid;
+
         Loaded += (_, _) => _ = OpenSessionAsync();
+    }
+
+    bool Busy
+    {
+        set
+        {
+            spinner.IsRunning = spinner.IsVisible = cancel.IsVisible = value;
+            entry.IsEnabled = !value;
+            if (!value) entry.Focus();
+        }
+    }
+
+    void Show(IEnumerable<string> lines)
+    {
+        string text = string.Join("\r\n", lines);
+        if (text.Length == 0) return;
+        term.Grid.Feed(text + "\r\n");
+        term.FollowTail();
     }
 
     /// <summary>Persisted files — halifaxrc, SAVE and LOAD paths, tapes
@@ -45,39 +95,51 @@ public sealed class CalculatorPage : ContentPage
     async Task OpenSessionAsync()
     {
         if (session != null) return;
-        transcript.Busy = true;
+        Busy = true;
         try
         {
             HalifaxSession opened = await Task.Run(() =>
-            {
-                var s = HalifaxSession.Open(new ShoddyHostOptions
+                HalifaxSession.Open(new ShoddyHostOptions
                 {
                     FileRoot = FileRoot(),
                     // halifax's grant includes `net` (B4.8); the user
                     // names every URL (B4.6), the app ships none.
                     AllowNet = true,
-                });
-                return s;
-            });
+                    // The engine's own output — seedterminal's PRINT —
+                    // streams into the same face, live, mid-turn: the
+                    // resource behind the `terminal` capability.
+                    Output = new TerminalWriter(term.Grid),
+                }));
             session = opened;
-            IReadOnlyList<string> opening = await Task.Run(opened.Opening);
-            transcript.Append(opening);
-            transcript.Prompt = opened.Prompt;
+            Show(await Task.Run(opened.Opening));
+            entry.Placeholder = opened.Prompt;
         }
         catch (Exception e)
         {
-            transcript.Append(new[] { "the calculator could not start: " + e.Message });
+            Show(new[] { "the calculator could not start: " + e.Message });
         }
         finally
         {
-            transcript.Busy = false;
+            Busy = false;
         }
+    }
+
+    void Submit()
+    {
+        if (session is null) return;
+        string line = entry.Text ?? "";
+        entry.Text = "";
+        // The typed line joins the transcript the way the terminal's
+        // echo does, wearing the prompt it was typed at.
+        term.Grid.Feed(session.Prompt + line + "\r\n");
+        term.FollowTail();
+        _ = RunTurnAsync(line);
     }
 
     async Task RunTurnAsync(string line)
     {
         if (session is null) return;
-        transcript.Busy = true;
+        Busy = true;
         try
         {
             HalifaxTurn? turn = await session.SubmitAsync(line);
@@ -87,19 +149,19 @@ public sealed class CalculatorPage : ContentPage
                 Application.Current?.Quit();
                 return;
             }
-            transcript.Append(turn.Shown);
-            transcript.Prompt = turn.Prompt;
+            Show(turn.Shown);
+            entry.Placeholder = turn.Prompt;
         }
         catch (Exception e)
         {
             // A word's own abort (Error(msg)) surfaces here undecorated;
             // the session and its state are intact — show it as the
             // terminal would and carry on.
-            transcript.Append(new[] { e.Message });
+            Show(new[] { e.Message });
         }
         finally
         {
-            transcript.Busy = false;
+            Busy = false;
         }
     }
 
@@ -112,9 +174,9 @@ public sealed class CalculatorPage : ContentPage
     {
         if (session is null) return;
         IReadOnlyList<string> reopened = session.Abandon();
-        transcript.Append(new[] { "cancelled — the session restarted; unsaved words are gone (SAVE writes them to a file)" });
-        transcript.Append(reopened);
-        transcript.Prompt = session.Prompt;
-        transcript.Busy = false;
+        Show(new[] { "cancelled — the session restarted; unsaved words are gone (SAVE writes them to a file)" });
+        Show(reopened);
+        entry.Placeholder = session.Prompt;
+        Busy = false;
     }
 }

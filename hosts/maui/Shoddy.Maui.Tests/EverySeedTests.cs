@@ -88,6 +88,7 @@ public class EverySeedTests : IClassFixture<EverySeedTests.SeedHarness>
         ["seedplotter"] = new(Array.Empty<string>(), "special"),
         ["seedbuzzer"] = new(Array.Empty<string>(), "special"),
         ["seednet"] = new(Array.Empty<string>(), "special"),
+        ["seedterminal"] = new(Array.Empty<string>(), "special"),
     };
 
     static bool Headless => Environment.GetEnvironmentVariable("SHODDY_HEADLESS_CI") == "1";
@@ -102,6 +103,10 @@ public class EverySeedTests : IClassFixture<EverySeedTests.SeedHarness>
     {
         public readonly HalifaxSession Session;
         public readonly List<ScribblerHandle> Opened = new();
+        /// <summary>The engine's output stream — what seedterminal's
+        /// PRINT writes, captured the way the app captures it into the
+        /// terminal face.</summary>
+        public readonly StringWriter Printed = new();
 
         public SeedHarness()
         {
@@ -123,7 +128,12 @@ public class EverySeedTests : IClassFixture<EverySeedTests.SeedHarness>
             // directory — the same mapping the app makes to app
             // storage (B3.5).
             Directory.SetCurrentDirectory(root);
-            Session = HalifaxSession.Open(new ShoddyHostOptions { FileRoot = root, AllowNet = true });
+            Session = HalifaxSession.Open(new ShoddyHostOptions
+            {
+                FileRoot = root,
+                AllowNet = true,
+                Output = Printed,
+            });
             _ = Session.Opening();
         }
 
@@ -172,6 +182,7 @@ public class EverySeedTests : IClassFixture<EverySeedTests.SeedHarness>
                 "\"p\" { 1 2 2 3 } 4 PLOTHISTOGRAM"); return;
             case "seedbuzzer": await BuzzerProbe(); return;
             case "seednet": await NetProbe(); return;
+            case "seedterminal": await TerminalProbe(); return;
         }
 
         Probe probe = Probes[seed];
@@ -233,6 +244,34 @@ public class EverySeedTests : IClassFixture<EverySeedTests.SeedHarness>
         });
         AssertAnswered("seedbuzzer", shown, @"x: \d", isRegex: true);
         await Run(new[] { "1 BUZZSTOP" });
+    }
+
+    /// <summary>seedterminal's PRINT, on the captured output stream —
+    /// including the case the seed exists for: a loop reporting each
+    /// pass, live, from inside one line.</summary>
+    async Task TerminalProbe()
+    {
+        int before = harness.Printed.ToString().Length;
+        IReadOnlyList<string> shown = await Run(new[]
+        {
+            "\"live report\" PRINT",
+            "1 [ DUP PRINT 2 * ] 3 TIMES",
+        });
+        string printed = harness.Printed.ToString()[before..];
+
+        // A string prints bare, not as a stack picture.
+        Assert.Contains("live report", printed);
+        Assert.DoesNotContain("\"live report\"", printed);
+
+        // The loop reported every pass, in order, on the stream.
+        int one = printed.IndexOf('1', printed.IndexOf("live report", StringComparison.Ordinal));
+        Assert.True(one >= 0, "the loop's first pass never printed: " + printed);
+        int two = printed.IndexOf('2', one + 1);
+        Assert.True(two > one, "the second pass is missing or out of order: " + printed);
+        Assert.True(printed.IndexOf('4', two + 1) > two, "the third pass is missing or out of order: " + printed);
+
+        // And the loop still answered on the stack.
+        Assert.Contains(shown, l => l.Contains("8"));
     }
 
     /// <summary>NETGET against a server this test owns: the user names

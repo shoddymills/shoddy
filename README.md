@@ -83,6 +83,32 @@ a tuning console that goes to eleven.*
 
 ---
 
+### Runs anywhere .NET runs
+
+*A mill is not only a console program. The same woven assembly runs at a
+terminal, inside an app, and from any .NET language — whole and unmodified,
+with [one page of hosting](https://shoddymills.github.io/shoddy/hosting.html)
+behind all of it.*
+
+<table width="100%">
+  <tr>
+    <td width="33%" align="center" valign="top">
+      <a href="https://shoddymills.github.io/shoddy/hosting.html#mode-t"><img src="docs/media/runs-terminal.svg" alt="A woven mill running at a terminal: maze walls, dots, and Pac mid-game under the window's title bar" width="100%"></a><br>
+      <b>A terminal, anywhere</b><br><sub>Mode T — <code>mill weave</code>, then <code>dotnet x.dll</code>: a woven program is an ordinary .NET assembly</sub>
+    </td>
+    <td width="33%" align="center" valign="top">
+      <a href="https://shoddymills.github.io/shoddy/hosting.html#reckoner"><img src="docs/media/runs-reckoner.svg" alt="The Shoddy Reckoner app window: the calculator's stack rows above a shelf of three game cards" width="100%"></a><br>
+      <b>An app — the Reckoner</b><br><sub>Mode N in .NET MAUI — halifax's words called natively, and five catalog games running whole through pipes</sub>
+    </td>
+    <td width="33%" align="center" valign="top">
+      <a href="https://shoddymills.github.io/shoddy/hosting.html#mode-n"><img src="docs/media/runs-dotnet.svg" alt="One woven assembly feeding three hosts: a terminal, an app window, and the cloud" width="100%"></a><br>
+      <b>Everywhere .NET goes</b><br><sub>Mode N from C# or F# — Load, Word, Call; a web endpoint or an Azure Function is the same three lines</sub>
+    </td>
+  </tr>
+</table>
+
+---
+
 ### Start here — the tutorials
 
 *Build a real program from an empty folder, learn the method for driving the

@@ -628,23 +628,74 @@ Def AlgNotOneL(x As AlgEx) As Boolean
 Def AlgMulOf(a As AlgEx, b As AlgEx) As AlgEx
     AlgProdOfList({ a, b })
 
+Rem The refusal that a zero denominator carries, in one place because two
+Rem spellings share it: 1/0 and 0^-1 are the same question and must give
+Rem the same answer.
+Rem
+Rem BARE, with no word name on the front. The parser puts this string into
+Rem an AlgTkBad and seedalg's AsRead prefixes the seed word to whatever
+Rem AlgRead hands back, so a name here would reach the prompt as
+Rem "ALGSIMPLIFY: ALGDIVOF: DIVISION BY ZERO". The two aborting forms add
+Rem their own prefix instead, which is why their messages are unchanged.
+Def AlgDivZeroWhy() As String
+    "DIVISION BY ZERO"
+
 Rem The power identities, in the builder so nothing downstream has to
 Rem repeat them: x^0 is 1, x^1 is x, 1^x is 1, and 0^x is 0 for a positive
 Rem exponent. A numeric base to an integer exponent folds exactly.
-Def AlgPowOf(b As AlgEx, x As AlgEx) As AlgEx
+Rem
+Rem THE GUARDED TWIN, with the aborting AlgPowOf defined over it — buzzer's
+Rem TryNoteMidi shape, and here for the same reason: the PARSER calls this
+Rem builder on whatever a user typed, and a word reachable from a keyboard
+Rem may refuse but may not end the session.
+Rem
+Rem The positive-exponent clause in the comment above is now the whole of
+Rem the rule rather than half of it. A NEGATIVE exponent makes 0^-1 another
+Rem spelling of 1/0, so it refuses instead of folding to zero; a SYMBOLIC
+Rem exponent of unknown sign stands unevaluated, because either answer
+Rem would be a guess and a canonical form with no basis to choose does not
+Rem choose. Infinity and NaN are deliberately not on the menu: Number is a
+Rem double and would carry both away quietly.
+Def TryAlgPowOf(b As AlgEx, x As AlgEx) As Result
     If AlgIsZero(x) Then
-        AlgOne()
+        Ok(AlgOne())
     Else
         If AlgIsOne(x) Then
-            b
+            Ok(b)
         Else
-            If AlgIsOne(b) Then
-                AlgOne()
-            Else
-                If AlgIsZero(b) Then
-                    AlgZero()
-                Else
-                    AlgPowFold(b, x)
+            TryAlgPowB(b, x)
+
+Def TryAlgPowB(b As AlgEx, x As AlgEx) As Result
+    If AlgIsOne(b) Then
+        Ok(AlgOne())
+    Else
+        If AlgIsZero(b) Then
+            TryAlgPowZero(x)
+        Else
+            Ok(AlgPowFold(b, x))
+
+Rem AlgRat normalises the sign onto the numerator, so AlgNumOf on its own
+Rem decides which side of zero a rational exponent falls.
+Def TryAlgPowZero(x As AlgEx) As Result
+    If Not AlgIsNum(x) Then
+        Ok(AlgPow(AlgZero(), x))
+    Else
+        If AlgNumOf(x) > 0 Then
+            Ok(AlgZero())
+        Else
+            Err(AlgDivZeroWhy(), 0)
+
+Def AlgPowOf(b As AlgEx, x As AlgEx) As AlgEx
+    AlgPowOfOr(TryAlgPowOf(b, x))
+
+Def AlgPowOfOr(r As Result) As AlgEx
+    Select Case r
+        Case Ok(e)
+            e
+        Case Err(w, at)
+            Error("ALGPOWOF: " & w)
+        Case Else
+            Error("ALGPOWOF: THE POWER DID NOT ANSWER")
 
 Def AlgPowFold(b As AlgEx, x As AlgEx) As AlgEx
     If AlgIsNum(b) And AlgIsInt(x) And Abs(AlgNumOf(x)) <= 20 Then
@@ -675,11 +726,34 @@ Def AlgPowNest(b As AlgEx, x As AlgEx) As AlgEx
         Case Else
             AlgPow(b, x)
 
-Def AlgDivOf(a As AlgEx, b As AlgEx) As AlgEx
+Rem The same twin again, and the reason it is a twin rather than a
+Rem replacement: AlgDivOf has twenty-five call sites inside this machine —
+Rem the differentiation rules, the integrator, partial fractions, the
+Rem factoriser, the solvers — and every one of them divides by something
+Rem it has already established is non-zero. Turning THEM into Result
+Rem unwrappers would be a large change for no gain. The parser is the only
+Rem caller holding a divisor a stranger chose, so the parser is the only
+Rem caller that takes the guarded form.
+Rem
+Rem AlgPowOf below cannot refuse here: b is non-zero by the test above,
+Rem and a zero base is the only refusal TryAlgPowOf has.
+Def TryAlgDivOf(a As AlgEx, b As AlgEx) As Result
     If AlgIsZero(b) Then
-        Error("ALGDIVOF: DIVISION BY ZERO")
+        Err(AlgDivZeroWhy(), 0)
     Else
-        AlgMulOf(a, AlgPowOf(b, AlgMinusOne()))
+        Ok(AlgMulOf(a, AlgPowOf(b, AlgMinusOne())))
+
+Def AlgDivOf(a As AlgEx, b As AlgEx) As AlgEx
+    AlgDivOfOr(TryAlgDivOf(a, b))
+
+Def AlgDivOfOr(r As Result) As AlgEx
+    Select Case r
+        Case Ok(e)
+            e
+        Case Err(w, at)
+            Error("ALGDIVOF: " & w)
+        Case Else
+            Error("ALGDIVOF: THE DIVISION DID NOT ANSWER")
 
 Def AlgSqrtOf(a As AlgEx) As AlgEx
     AlgPowOf(a, AlgRat(1, 2))
@@ -1353,13 +1427,29 @@ Def AlgPowP(ts As List Of String, i As Number, d As Number) As AlgTake
         b
     Else
         If AlgTkAt2(ts, AlgTkN(b)) = "^" Then
-            Let x = AlgUnaryP(ts, AlgTkN(b) + 1, d + 1)
-            If AlgIsBad(x) Then
-                x
-            Else
-                AlgTook(AlgPowOf(AlgTkV(b), AlgTkV(x)), AlgTkN(x))
+            AlgPowRhs(ts, b, AlgTkN(b) + 1, d)
         Else
             b
+
+Rem The ^ branch, through the same twin and for the same reason: 0^-1 is
+Rem a division by zero spelt differently, so the door a user reaches it
+Rem through has to refuse exactly as the / door does. j is the exponent's
+Rem first token, which is where the refusal points.
+Def AlgPowRhs(ts As List Of String, b As AlgTake, j As Number, d As Number) As AlgTake
+    Let x = AlgUnaryP(ts, j, d + 1)
+    If AlgIsBad(x) Then
+        x
+    Else
+        AlgPowMade(TryAlgPowOf(AlgTkV(b), AlgTkV(x)), AlgTkN(x), j)
+
+Def AlgPowMade(r As Result, n As Number, j As Number) As AlgTake
+    Select Case r
+        Case Ok(e)
+            AlgTook(e, n)
+        Case Err(w, at)
+            AlgTkBad(w, j)
+        Case Else
+            AlgTkBad("THE POWER DID NOT ANSWER", j)
 
 Def AlgUnaryP(ts As List Of String, i As Number, d As Number) As AlgTake
     If AlgTkAt2(ts, i) = "-" Then
@@ -1386,7 +1476,25 @@ Def AlgProdGo(ts As List Of String, acc As AlgEx, i As Number, d As Number) As A
             If op = "*" Then
                 AlgProdGo(ts, AlgMulOf(acc, AlgTkV(r)), AlgTkN(r), d)
             Else
-                AlgProdGo(ts, AlgDivOf(acc, AlgTkV(r)), AlgTkN(r), d)
+                AlgProdDiv(ts, acc, r, i, d)
+
+Rem The / branch, through the guarded twin. This was the one line on the
+Rem whole parse path that could abort, and it took the session with it
+Rem rather than the line.
+Rem
+Rem The divisor is FOLDED by the builders before it arrives, so "1/(1-1)"
+Rem and "x/(y-y)" are this same case with no /0 anywhere in their text —
+Rem which is why the guard has to be here and could not have been a scan
+Rem of the string upstream. The refusal points at i + 1, the divisor's own
+Rem first token, not at the operator.
+Def AlgProdDiv(ts As List Of String, acc As AlgEx, r As AlgTake, i As Number, d As Number) As AlgTake
+    Select Case TryAlgDivOf(acc, AlgTkV(r))
+        Case Ok(e)
+            AlgProdGo(ts, e, AlgTkN(r), d)
+        Case Err(w, at)
+            AlgTkBad(w, i + 1)
+        Case Else
+            AlgTkBad("THE DIVISION DID NOT ANSWER", i + 1)
 
 Def AlgProdP(ts As List Of String, i As Number, d As Number) As AlgTake
     Let f = AlgUnaryP(ts, i, d)

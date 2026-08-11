@@ -1,7 +1,12 @@
 # Releasing Shoddy
 
-How a version gets cut. Day-to-day contribution is in
-[CONTRIBUTING.md](CONTRIBUTING.md); this is the maintainer's procedure.
+How a version gets cut, in full. **If you want the sequence rather than the
+detail — branch, work, prove, ship — that is [WORKFLOW.md](WORKFLOW.md), and
+it is the page to follow.** This one is the reference behind it: what each
+step actually does, and the failures that shaped it.
+
+Day-to-day contribution from outside is in
+[CONTRIBUTING.md](CONTRIBUTING.md).
 
 **Branch discipline.** No work is ever committed directly on `main` — it only
 receives `--no-ff` merge commits, pushed from the CLI. All release mechanics
@@ -17,15 +22,67 @@ only copy that ships.
 
 ## The short version
 
-```sh
-node scripts/verify-docs.js             # doc review — pages must match the sources
-$EDITOR release-notes/v1.0.0.md         # write the notes FIRST — see below
-scripts/shoddy-feature.sh ship          # merge your feature into main
-scripts/shoddy-release.sh 1.0.0         # build, test, tag, push — CI publishes
+```powershell
+scripts/shoddy.ps1 preflight            # read-only: would a release pass right now?
+                                        # write release-notes/v1.0.0.md FIRST — see below
+scripts/shoddy.ps1 gate --resume        # the expensive proof: build + every test
+scripts/shoddy-feature.ps1 ship         # merge your feature into main
+scripts/shoddy-release.ps1 1.0.0        # build, test, tag, push — CI publishes
 ```
 
-Both scripts have `.ps1` twins with identical behaviour; run them from the
-repo root. Everything below is what those scripts do and why, for when something goes
+Every script has a `.sh` twin taking the same arguments, for Linux and macOS.
+**On Windows run the `.ps1`** — it is the path that actually ships there, and the
+twin that goes unexercised is the twin that rots. This page shows the `.ps1`
+throughout for that reason; substitute `.sh` on a Unix machine.
+
+## The gate driver — `scripts/shoddy.*`
+
+One command with four stages, and **the logic lives once**, in
+`scripts/gate/driver.mjs`. The two launchers are ~20 lines each and contain
+no logic to drift; Node is already required here, since every `verify-*` gate
+is Node.
+
+| Stage | Time | Mutates | What it is |
+|---|---|---|---|
+| `preflight` | ~3 s | nothing | environment, git state, version coherence, all four `verify-*` |
+| `gate` | ~15 min | build output | build, machines, C# suite, every `tst/` and machine suite, all 13 mills |
+| `package` | ~3 min | build output | version bump, stage, `.vsix` |
+| `publish` | — | **history** | still owned by `shoddy-release.*` |
+
+```powershell
+scripts/shoddy.ps1 doctor               # is this machine fit to release?
+scripts/shoddy.ps1 preflight            # dirty tree tolerated — run it any day
+scripts/shoddy.ps1 preflight 1.0.0      # strict: clean tree, notes present, tag free
+scripts/shoddy.ps1 gate --resume        # skip what is already green for this commit
+scripts/shoddy.ps1 gate --only mill-halifax
+scripts/shoddy.ps1 gate --from machine-jsontest
+scripts/shoddy.ps1 status               # what is green for the current commit
+scripts/shoddy.ps1 clean                # kill stale toolchain processes, remove litter
+scripts/shoddy.ps1 selftest             # prove the harness still keeps its promises
+```
+
+**Every step carries a timeout, a log and a remedy.** A step that hangs is
+killed with its whole process tree and reported by name with its elapsed time;
+a step that fails prints its last 25 lines and a sentence saying what to do
+next. Nothing is judged on anything but its exit code, so a native program
+writing to stderr can never fail a run that succeeded.
+
+**Receipts are keyed to the commit SHA**, in `.release-state/` (gitignored).
+`gate --resume` skips steps already green for that exact commit — a retry does
+not re-run the hour of work that already passed. A timestamp would not know
+you had edited a file; a SHA does.
+
+**`shoddy clean` is deliberate, and the gate never does it for you.** It shuts
+the build servers down and clears orphaned test hosts, which is what you want
+when something is genuinely wedged — but it also cold-starts the MSBuild
+cache, and several C# tests shell out to `dotnet build` and `dotnet run`. On a
+cold cache those go quiet for long enough that the blame collector kills the
+test host, and the suite reports a crash two thirds of the way through. That
+was measured, not assumed: `dotnet test` passed 294/294 three times running,
+and the same command straight after a clean died at 46 tests. So `clean` is a
+tool with a known cost, not a courtesy performed before every run.
+
+Everything below is what the older scripts do and why, for when something goes
 sideways.
 
 ---
@@ -41,11 +98,11 @@ with it. Format guidance and an example are in
 **When: before you cut the release, and committed.** This is the part that bites. The
 Release workflow checks out the *tag* and reads only what that commit contains, so
 notes written after tagging are invisible to it. Concretely, the notes file has to be
-committed and merged into `main` before you run `shoddy-release.sh` — easiest is to
+committed and merged into `main` before you run `shoddy-release.ps1` — easiest is to
 write it on the same feature branch as the work it describes and let step 1 carry it
 in.
 
-**If you forget**, nothing breaks. `shoddy-release.sh` prints whether it found the
+**If you forget**, nothing breaks. `shoddy-release.ps1` prints whether it found the
 file in its confirmation block, *before* asking you to proceed:
 
 ```
@@ -159,8 +216,8 @@ by the ordinary sweep, because that is the only way they are ever compiled.
 
 ## 1 — Merge the feature into main
 
-```sh
-scripts/shoddy-feature.sh ship
+```powershell
+scripts/shoddy-feature.ps1 ship
 ```
 
 Pushes the current `feature/*` or `bug/*` branch, merges it `--no-ff` into `main`,
@@ -178,7 +235,7 @@ unanswered prompt reads EOF and the script aborts having done nothing.
 By hand, if you prefer:
 
 ```sh
-git checkout main && git pull origin main
+git checkout main; git pull origin main
 git merge --no-ff feature/x -m "Merge branch 'feature/x'"
 git push origin main
 ```
@@ -206,12 +263,12 @@ dotnet build-server shutdown
 ```
 
 Cheap, safe, and worth doing every time. If it happens anyway, the script tells you
-the undo: `git checkout main && git branch -D release/VX.Y.Z`.
+the undo: `git checkout main; git branch -D release/VX.Y.Z`.
 
 ## 2 — Cut the release
 
-```sh
-scripts/shoddy-release.sh 1.0.0
+```powershell
+scripts/shoddy-release.ps1 1.0.0
 ```
 
 That single command does all of the following, and refuses to start unless the
@@ -220,7 +277,7 @@ is in progress, and neither the branch nor the tag already exists locally or on
 origin:
 
 1. Fast-forwards `main` to `origin/main` and cuts `release/V1.0.0`.
-2. Runs `./build.sh all 1.0.0` — clean, then test, then package. **A red test stops
+2. Runs `./build.ps1 all 1.0.0` — clean, then test, then package. **A red test stops
    everything, and nothing has been pushed at this point.** `all` is the only correct
    path for a release: `vsix` alone reuses a stale mill and runs no tests.
 3. Commits the `vscode-shoddy/package.json` version bump as `v1.0.0 release`, and
@@ -272,7 +329,7 @@ sitemap and publishes `docs/`. No docs changes, no deploy. Verify in the Actions
 
 ## 6 — Clean up
 
-`shoddy-feature.sh ship` already deleted the feature branch. The release branch is
+`shoddy-feature.ps1 ship` already deleted the feature branch. The release branch is
 kept as a hotfix base; the tag alone preserves the release point, so delete it
 whenever you like:
 
@@ -303,22 +360,22 @@ it git opens an editor for the merge commit (see §1).
 
 ```sh
 # notes first — they must be in the commit the tag points at
-git add release-notes/v1.0.0.md && git commit -m "notes for v1.0.0"
+git add release-notes/v1.0.0.md; git commit -m "notes for v1.0.0"
 
-git checkout main && git pull origin main
+git checkout main; git pull origin main
 git merge --no-ff feature/x -m "Merge branch 'feature/x'"
 git push origin main
 
 git checkout -b release/V1.0.0
-./build.sh all 1.0.0                              # clean → test → machines → stage → vsix
+./build.ps1 all 1.0.0                             # clean → test → machines → stage → vsix
 git add vscode-shoddy/package.json                # the .vsix is gitignored
 git commit -m "v1.0.0 release"
 git push -u origin release/V1.0.0
-git tag v1.0.0 && git push origin v1.0.0          # ← the Release workflow starts here
+git tag v1.0.0; git push origin v1.0.0          # ← the Release workflow starts here
 
 git checkout main
 git merge --no-ff release/V1.0.0 -m "Merge branch 'release/V1.0.0'"
 git push origin main
 ```
 
-Unix `./build.sh`, Windows `./build.ps1` — same commands.
+Windows `./build.ps1`, Unix `./build.sh` — same commands.

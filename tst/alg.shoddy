@@ -170,6 +170,43 @@ Def Main()
     Assert(AlgIsErr(AlgRead("")), "AND AN EMPTY STRING - CLEANLY, NOT BY ABORTING")
     Assert(Not AlgIsErr(AlgRead("x + 1")), "WHILE A GOOD ONE READS")
 
+    Print("--- INCLUDING A DIVISION BY ZERO, WHICH ONCE ENDED THE SESSION ---")
+    Rem The parser was total for SYNTAX only. Its / branch called the
+    Rem aborting AlgDivOf, so a typed "1/0" killed the mill rather than the
+    Rem line. The builders fold the divisor before the parser sees it, so a
+    Rem textual /0 is only the easiest of these shapes, not the whole set.
+    Assert(AlgIsErr(AlgRead("1/0")), "A LITERAL ZERO DIVISOR IS AN ERR")
+    Assert(AlgAtOf(AlgRead("1/0")) = 3, "AND POINTS AT THE DIVISOR, TOKEN 3")
+    Assert(AlgIsErr(AlgRead("1/(1-1)")), "A DIVISOR THAT FOLDS TO ZERO")
+    Assert(AlgIsErr(AlgRead("x/(y-y)")), "EVEN ONE FOLDED OUT OF VARIABLES")
+    Assert(AlgIsErr(AlgRead("sin(1/0)")), "AND ONE BURIED IN A CALL")
+    Assert(Not AlgIsErr(AlgRead("1/x")), "WHILE AN HONEST DIVISION STILL READS")
+    Assert(Not AlgIsErr(AlgRead("1/(x-x+1)")), "AND ONE THAT FOLDS TO SOMETHING ELSE")
+
+    Print("--- 0 TO A NEGATIVE POWER IS THAT SAME QUESTION, SPELT OTHERWISE ---")
+    Rem It used to answer 0 - quietly and wrongly - while 1/0 killed the
+    Rem mill: two answers to one question, and neither of them right.
+    Assert(AlgIsErr(AlgRead("0^-1")), "A ZERO BASE UNDER A NEGATIVE POWER IS AN ERR")
+    Assert(AlgIsErr(AlgRead("0^-2")), "WHATEVER THE NEGATIVE EXPONENT")
+    Assert(AlgWhyOf(AlgRead("0^-1")) = AlgWhyOf(AlgRead("1/0")),
+           "AND THE TWO SPELLINGS REFUSE IN THE SAME WORDS")
+    Assert(AlgIsZero(AlgOkOf(AlgRead("0^2"))), "A POSITIVE EXPONENT STILL FOLDS TO ZERO")
+    Assert(AlgEqual(AlgOkOf(AlgRead("0^0")), AlgOne()), "AND 0^0 IS STILL ONE")
+    Rem An exponent whose sign is unknown has no answer available, so the
+    Rem power stands unevaluated rather than guessing one of the two.
+    Assert(Not AlgIsErr(AlgRead("0^x")), "A SYMBOLIC EXPONENT NEITHER REFUSES")
+    Assert(Not AlgIsZero(AlgOkOf(AlgRead("0^x"))), "NOR FOLDS TO ZERO ON A GUESS")
+
+    Print("--- AND THE GUARDED TWINS ANSWER ON BOTH ARMS ---")
+    Assert(AlgIsErr(TryAlgDivOf(AlgOne(), AlgZero())), "TRYALGDIVOF REFUSES A ZERO DIVISOR")
+    Assert(Not AlgIsErr(TryAlgDivOf(AlgOne(), X())), "AND ANSWERS OK OTHERWISE")
+    Assert(AlgIsErr(TryAlgPowOf(AlgZero(), AlgMinusOne())), "TRYALGPOWOF REFUSES 0^-1")
+    Assert(Not AlgIsErr(TryAlgPowOf(AlgZero(), N(2))), "AND ANSWERS OK FOR 0^2")
+    Rem The twin is the ONLY set of rules: the aborting form is defined
+    Rem over it, so the two cannot drift apart.
+    Assert(AlgEqual(AlgDivOf(AlgOne(), N(4)), AlgOkOf(TryAlgDivOf(AlgOne(), N(4)))),
+           "AND ALGDIVOF IS ITS OK ARM WHEREVER IT ANSWERS AT ALL")
+
     Print("--- DIFFERENTIATION IS TOTAL ---")
     Assert(AlgEqual(AlgDiff(P("x^3"), "x"), P("3 * x^2")), "POWER RULE")
     Assert(AlgEqual(AlgDiff(P("sin(x)"), "x"), P("cos(x)")), "D SIN IS COS")

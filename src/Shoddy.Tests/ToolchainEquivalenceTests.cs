@@ -32,14 +32,8 @@ public class ToolchainEquivalenceTests
         var psi = new ProcessStartInfo("dotnet", $"\"{millDll}\" {args}")
         {
             WorkingDirectory = cwd,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
         };
-        using Process p = Process.Start(psi)!;
-        string o = p.StandardOutput.ReadToEnd();
-        string e = p.StandardError.ReadToEnd();
-        p.WaitForExit();
-        return (p.ExitCode, o, e);
+        return ProcessRun.Capture(psi);
     }
 
     /// <summary>Both entry points, built fresh so a clean checkout can
@@ -48,14 +42,14 @@ public class ToolchainEquivalenceTests
     {
         foreach (string proj in new[] { "src/Shoddy.Mill", "src/Shoddy.Mill.Headless" })
         {
+            // A nested `dotnet build` inside `dotnet test` is the chattiest
+            // child in the suite - every warning it prints goes to stderr -
+            // so this is exactly where reading one pipe at a time deadlocked.
             var psi = new ProcessStartInfo("dotnet", $"build {proj} -c Release --nologo -v q")
-            { WorkingDirectory = Root, RedirectStandardOutput = true, RedirectStandardError = true };
-            using Process p = Process.Start(psi)!;
-            p.StandardOutput.ReadToEnd();
-            p.StandardError.ReadToEnd();
-            p.WaitForExit();
-            if (p.ExitCode != 0)
-                throw new InvalidOperationException($"dotnet build {proj} failed");
+            { WorkingDirectory = Root };
+            var (exit, text) = ProcessRun.CaptureAll(psi);
+            if (exit != 0)
+                throw new InvalidOperationException($"dotnet build {proj} failed:\n{text}");
         }
     }
 

@@ -154,8 +154,12 @@ function Invoke-Stage {
 }
 
 function Invoke-Test {
-    Native dotnet test src/Shoddy.Tests
+    # The mill first: ProofTests can publish it themselves when it is
+    # missing, but that fallback runs inside `dotnet test` on a cold
+    # cache - it stalled a clean release runner for half an hour
+    # (v2.0.0). Building it here makes the fallback a no-op.
     Assert-Mill
+    Native dotnet test src/Shoddy.Tests
     Native $Mill run tst/libtest.shoddy
     # Not a machine suite: it compares the RUNTIME's builtin dispatch against
     # the seeded dictionary, and fails if a builtin is reachable that a stated

@@ -3,11 +3,11 @@
 # Run from the repo root.
 #
 # scripts/shoddy-feature.ps1 new NAME     create feature/NAME off up-to-date main and switch to it
-# scripts/shoddy-feature.ps1 ship [-Yes]  push the current feature branch, merge --no-ff into main,
-#                                         push main, then delete the branch (local + origin)
+# scripts/shoddy-feature.ps1 ship [-Yes]  push the current feature/bug branch, merge --no-ff into
+#                                         main, push main, then delete the branch (local + origin)
 #
 # Guards: clean tree required; 'new' refuses names already taken (local or origin);
-# 'ship' only runs from a feature/* branch, refuses when there is nothing to merge,
+# 'ship' only runs from a feature/* or bug/* branch, refuses when there is nothing to merge,
 # and on merge conflict aborts cleanly and puts you back on your branch.
 # A leading 'feature/' on NAME is stripped, so both spellings work.
 [CmdletBinding()]
@@ -81,8 +81,11 @@ switch ($Command) {
 
     'ship' {
         $Branch = Gq rev-parse --abbrev-ref HEAD
-        if ($Branch -notlike 'feature/*') {
-            Fail "current branch is '$Branch' - ship only runs from a feature/* branch."
+        # bug/* ships the same way: a fix branch cut off main by hand
+        # (bug/<origin-feature>NN) merges and deletes exactly as a
+        # feature does. Everything else still refuses.
+        if ($Branch -notlike 'feature/*' -and $Branch -notlike 'bug/*') {
+            Fail "current branch is '$Branch' - ship only runs from a feature/* or bug/* branch."
         }
         G fetch origin --prune
         $count = [int](Gq rev-list --count origin/main..HEAD)
@@ -117,7 +120,7 @@ switch ($Command) {
 
     default {
         Write-Host "usage: scripts/shoddy-feature.ps1 new NAME   create feature/NAME off up-to-date main"
-        Write-Host "       scripts/shoddy-feature.ps1 ship [-Yes] push current feature branch, merge --no-ff into main, delete it"
+        Write-Host "       scripts/shoddy-feature.ps1 ship [-Yes] push current feature/bug branch, merge --no-ff into main, delete it"
         exit 2
     }
 }

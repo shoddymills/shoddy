@@ -25,12 +25,24 @@ public sealed class ShoddyHostOptions
     /// switch the runtime reads at construction (D17).</summary>
     public bool AllowNet { get; set; }
 
-    /// <summary>The directory the mill's declared relative paths live
-    /// under. Validated to exist at load — a granted `file` capability
-    /// with no root must fail here, at startup, not by writing beside
-    /// the executable. The runtime resolves relative paths against the
-    /// process working directory; a host that needs stronger isolation
-    /// than path discipline runs the mill with that directory current.</summary>
+    /// <summary>The directory the mill's files live under, and may not
+    /// reach outside of. Validated to exist at load — a granted `file`
+    /// capability with no root must fail here, at startup, not by
+    /// writing beside the executable.
+    ///
+    /// IT IS A BOUNDARY, not merely a base. Every file word in the
+    /// engine resolves its path against this directory and is refused if
+    /// the result lands outside it — `..`, an absolute path elsewhere,
+    /// and a symbolic link along the way all included. Before this it
+    /// was only a base, and only for the paths a host resolved itself:
+    /// the runtime resolved everything else against the process working
+    /// directory, so `"../../elsewhere.png" PLOTSAVE` left the root
+    /// behind. A host no longer needs to chdir for containment, and one
+    /// that does gets the same answer.
+    ///
+    /// The boundary is not a defence against a hostile process sharing
+    /// the root — see Shoddy.Runtime.FileRoot for exactly what it does
+    /// and does not promise.</summary>
     public string? FileRoot { get; set; }
 }
 
@@ -98,20 +110,26 @@ public sealed class ShoddyHost
     {
         lock (ConstructionGate)
         {
-            // Set-construct-restore: the engine snapshots the ambient
-            // switch at construction, so inside the gate this arms (or
+            // Set-construct-restore: the engine snapshots both ambient
+            // switches at construction, so inside the gate this arms (or
             // disarms) exactly this engine. Clearing when not granted
             // matters too: a process a Mode T mill armed for its lifetime
-            // must still yield unarmed engines for ungranted mills.
-            string? ambient = Environment.GetEnvironmentVariable("SHODDY_ALLOW_NET");
+            // must still yield unarmed engines for ungranted mills — and
+            // the same holds for the file root, so a host that loads two
+            // mills with different roots gets two engines each confined
+            // to its own.
+            string? ambientNet = Environment.GetEnvironmentVariable("SHODDY_ALLOW_NET");
+            string? ambientRoot = Environment.GetEnvironmentVariable(FileRoot.Variable);
             Environment.SetEnvironmentVariable("SHODDY_ALLOW_NET", options.AllowNet ? "1" : null);
+            Environment.SetEnvironmentVariable(FileRoot.Variable, options.FileRoot);
             try
             {
                 rt = new Engine(options.Output, options.Input, options.Args);
             }
             finally
             {
-                Environment.SetEnvironmentVariable("SHODDY_ALLOW_NET", ambient);
+                Environment.SetEnvironmentVariable("SHODDY_ALLOW_NET", ambientNet);
+                Environment.SetEnvironmentVariable(FileRoot.Variable, ambientRoot);
             }
         }
 

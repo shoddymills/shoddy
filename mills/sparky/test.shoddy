@@ -1,0 +1,359 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem test.shoddy — the headless suite for sparky-core.shoddy.
+Rem
+Rem     bin/mill run mills/sparky/test.shoddy        (from the repo root)
+Rem     ./build.sh test                              (from this directory)
+Rem
+Rem Assert-driven, in the halifax / reckonertest pattern: it prints what
+Rem it is doing and stops at the first assertion that fails, ending with
+Rem ALL ASSERTIONS PASSED when it does not.
+Rem
+Rem NO TERMINAL, NO DISPLAY, NO NETWORK, AND NO FILES AT ALL. That last
+Rem one is stricter than halifax's suite and it is deliberate: this mill
+Rem is hosted by a server whose whole isolation story is a file root, and
+Rem a suite that scattered scratch files around the repo while grading it
+Rem would be saying one thing and doing another.
+Rem
+Rem ---- WHAT THIS SUITE GRADES, AND WHAT IT CANNOT --------------------
+Rem
+Rem THE FOLD is what this file exists for, in both directions: every
+Rem seed sparky folds is present and reachable, and every word of the
+Rem three seeds it does not fold is absent. Absence is the half that
+Rem needs a test — a seed that quietly rejoined the fold would leave a
+Rem client holding words the server cannot honestly supply, and nothing
+Rem else in the tree would notice.
+Rem
+Rem A REAL ANSWER FROM EVERY SEED IS NOT GRADED HERE, and that is not an
+Rem omission. Several seeds need a resource — a canvas, a file root, a
+Rem socket — and the null seam answers a refusal rather than a value
+Rem when the resource is absent, which is correct behaviour and would
+Rem make a "does it answer" probe grade the harness rather than the
+Rem mill. So the split is: this suite proves every seed is THERE and the
+Rem pure ones ANSWER, and the host's every-seed suite, which owns real
+Rem resources, proves the rest answer for real.
+Rem
+Rem THE FOLD CANNOT BE COMPARED WITH HALIFAX'S FROM HERE either, because
+Rem sparky-core deliberately does not include halifax-core. That
+Rem comparison is the host suite's, made through the two mill manifests,
+Rem which is where a seed added to halifax and forgotten here is caught.
+Rem ==================================================================
+
+Include "../../machines/str.shoddy"
+Include "sparky-core.shoddy"
+
+Rem ---- the harness -----------------------------------------------------
+
+Def Ran(st As RckState, line As String) As RckState
+    SpkAfter(st, SpkDo(st, line))
+
+Def Runs(st As RckState, lines As List Of String) As RckState
+    Fold(lines, st, Ran)
+
+Def Shown(st As RckState, line As String) As List Of String
+    SpkShown(SpkDo(st, line))
+
+Def Said(st As RckState, line As String) As String
+    Join(Shown(st, line), " / ")
+
+Def Has(s As String, sub As String) As Boolean
+    Instr(s, sub) > 0
+
+Def Q(s As String) As String
+    RckQuoteMark() & s & RckQuoteMark()
+
+Def Found(st As RckState, name As String) As RckEntry
+    Select Case RckFind(st, name)
+        Case Some(e)
+            e
+        Case Else
+            Error("no such word " & name)
+
+Def Knows(st As RckState, name As String) As Boolean
+    Select Case RckFind(st, name)
+        Case Some(e)
+            True
+        Case Else
+            False
+
+Rem ---- the probes ------------------------------------------------------
+
+Rem A line to feed and a fragment its answer must contain. "x: " as the
+Rem fragment means only that something landed on the stack, which is all
+Rem that can be said of a word whose answer is a clock reading or a
+Rem random draw.
+Type Probe
+    ProbeSays As List Of String
+    ProbeWant As String
+
+Rem One per seed whose words are pure enough to answer with no resource
+Rem behind them. The seeds left out here — file, recio, isam, scribbler,
+Rem turtle, plotter, net, https — are graded for PRESENCE below and for
+Rem real answers by the host's suite, which owns a root and a canvas.
+Def PureProbes() As List Of Probe
+    { Probe({ "5 NEGATE" }, "x: -5"),
+      Probe({ "3 4 HYPOT" }, "x: 5"),
+      Probe({ "{ 1 2 3 4 } MEAN" }, "x: 2.5"),
+      Probe({ "1 5 RANGE LENGTH" }, "x: 5"),
+      Probe({ Q("hi") & " UPPER" }, "HI"),
+      Probe({ "1234.56 MONEY MFMT" }, "1,234.56"),
+      Probe({ "{ 1 2 } { 3 4 } DOT" }, "x: 11"),
+      Probe({ "{ } " & Q("a") & " 1 DPUT " & Q("a") & " DGET" }, "x: 1"),
+      Probe({ "TICKS" }, "x: "),
+      Probe({ "42 SEED", "1 6 RANDOMINT" }, "x: "),
+      Probe({ Q("a,b,c") & " CSVREAD CSVWIDTH" }, "x: 3"),
+      Probe({ "255 HEX" }, "FF"),
+      Probe({ "SHAKEMOD" }, "x: 67108859"),
+      Probe({ Q("[1,2,3]") & " JSONPARSE JSONTEXT" }, "[1,2,3]"),
+      Probe({ Q("<a>hi</a>") & " XMLPARSE XMLTEXT" }, "<a>hi</a>"),
+      Probe({ Q("<b>hi</b>") & " HTMLPARSE HTMLTEXT" }, "<b>hi</b>"),
+      Probe({ "{ 1 } 1 1 { 1 } MAT { 1 } LPPROBLEM LPSOLVE" }, "OPTIMAL"),
+      Probe({ "2 2 { 1 2 3 4 } MAT LINTRACE" }, "x: 5"),
+      Probe({ "180 ENGRAD" }, "3.14159"),
+      Probe({ "5 FINPCT" }, "x: 0.05"),
+      Probe({ Q("x+x") & " ALGSIMPLIFY" }, "2 * x"),
+      Probe({ "{ { 1 } { 3 } } NEURALSCALERFIT" }, "center"),
+      Probe({ Q("abc123") & " " & Q("[0-9]+") & " RXTEST" }, "True"),
+      Probe({ "2 2 { 1 0 0 4 } MAT SPARSE SPNNZ" }, "x: 2"),
+      Probe({ "{ 1 } 1 1 { 1 } MAT { 1 } LPPROBLEM { } MIPPROBLEM MIPSOLVE" }, "OPTIMAL"),
+      Probe({ Q("nonsense") & " HTTPSTATUS" }, "x: 0") }
+
+Def Probed(p As Probe)
+    Assert(Has(ProbeSaid(p), ProbeWant(p)),
+           "IT ANSWERS — [" & Join(ProbeSays(p), " ; ") & "] said " & ProbeSaid(p))
+
+Def ProbeSaid(p As Probe) As String
+    ProbeLast(SpkFresh(), ProbeSays(p))
+
+Def ProbeLast(st As RckState, lines As List Of String) As String
+    If Length(lines) = 1 Then
+        Said(st, First(lines))
+    Else
+        ProbeLast(Ran(st, First(lines)), Rest(lines))
+
+Rem ---- the fold, named ------------------------------------------------
+
+Rem The group name every seed sparky folds gives its words, in fold
+Rem order, with core's and the shell's around them. This is halifax's
+Rem SeedGroups less seed-vt100, seed-keys and seed-buzzer, and the ORDER
+Rem is asserted rather than only the membership: the listing's order is
+Rem the order someone built the dictionary in, and a fold quietly
+Rem reshuffled would move every heading a reader navigates by.
+Def SpkGroups() As List Of String
+    { "core", "builtin", "seed-math", "seed-stats", "seed-seq",
+      "seed-str", "seed-money", "seed-matrix", "seed-dict", "seed-file",
+      "seed-clock", "seed-random", "seed-csv", "seed-bool",
+      "seed-shaker", "seed-json", "seed-xml", "seed-html",
+      "seed-simplex", "seed-lin", "seed-eng", "seed-fin", "seed-alg",
+      "seed-neural", "seed-recio", "seed-isam", "seed-scribbler",
+      "seed-net", "seed-turtle", "seed-plotter", "seed-https",
+      "seed-regex", "seed-sparse", "seed-mip", "seed-terminal",
+      "shell" }
+
+Def Headings(st As RckState) As List Of String
+    Filter(RckWords(st), IsHeading)
+
+Def IsHeading(s As String) As Boolean
+    Left(s, 3) = "-- "
+
+Def WantedHeadings() As List Of String
+    Map(SpkGroups(), Fn(g) => "-- " & g & " --")
+
+Rem One representative word per folded seed, so that a seed present in
+Rem the heading list but empty of words would still be caught.
+Def OnePerSeed() As List Of String
+    { "DUP", "NEGATE", "HYPOT", "MEAN", "RANGE", "UPPER", "MONEY",
+      "MAT", "DGET", "FILEEXISTS", "TICKS", "RANDOMINT", "CSVWIDTH",
+      "HEX", "SHAKEMOD", "JSONPARSE", "XMLPARSE", "HTMLPARSE",
+      "LPSOLVE", "LINTRACE", "ENGRAD", "FINPCT", "ALGSIMPLIFY",
+      "NEURALFIT", "RECOPEN", "ISAMOPEN", "SCRIBOPEN", "NETGET",
+      "TURTLEOPEN", "PLOTOPEN", "HTTPSGET", "RXTEST", "SPARSE",
+      "MIPSOLVE", "PRINT" }
+
+Rem The three seeds sparky does not fold, three words each, so that the
+Rem exclusion is proved to be a SEED-level decision and not one word
+Rem someone happened to leave out.
+Def ExcludedWords() As List Of String
+    { "BUZZPLAY", "BUZZFREQ", "BUZZSTOP",
+      "KEYNAME", "KEYCODE", "KEYISPRINTABLE",
+      "VTEVALKEY", "VTCLEAR", "VTGOTO" }
+
+Def NotAWord(st As RckState, name As String) As Boolean
+    Contains(RckHelp(st, name), Upper(name) & " is not a word in this dictionary")
+
+Rem ---- the fuzz list ---------------------------------------------------
+
+Rem Every kind of malformed line, and every host word misused. Survival
+Rem is proved by the NEXT line: each case runs and then a plain sum on
+Rem whatever came back, so a refusal that lost the state shows up as the
+Rem following line failing too.
+Rem
+Rem THE ALG SHAPES ARE HERE ON PURPOSE. A whole seed's worth of text
+Rem boundary reached a release without ever being fed a hostile string,
+Rem because halifax's fuzz list had seven regex shapes and no algebra
+Rem ones. A dictionary whose caller is a model — which will type
+Rem anything — is the last place that should be true.
+Rem
+Rem "1/0" IS NOT IN THIS LIST, and its absence is a known defect and not
+Rem a judgement: a divisor that folds to zero aborts inside AlgDivOf
+Rem rather than refusing, so including it would take this suite down
+Rem instead of grading it. It is reported separately, and this comment
+Rem is what should be deleted when it is fixed.
+Def FuzzList() As List Of String
+    Concat(FuzzEmpty(), FuzzShapes())
+
+Def FuzzEmpty() As List Of String
+    { "DUP", "DROP", "SWAP", "OVER", "ROT", "NIP", "TUCK", "ROLL", "PICK",
+      "+", "-", "*", "/", "SQRT", "SIN", "MEAN", "MEDIAN", "SUM", "MONEY",
+      "MSPLIT", "MFMT", "MAT", "DPUT", "DGET", "GATHER", "UNPACK", "LASTX",
+      "STO", "RCL", "FIX", "MAP", "FILTER", "FOLD", "TIMES", "IFT", "IFTE",
+      "TAPE", "CLEARTAPE", "TRACE", "NOTRACE", "UNDO", "REDO", "WORDS" }
+
+Def FuzzShapes() As List Of String
+    { "", "   ", "NOSUCHWORD", "3 " & RckQuoteMark() & "unterminated",
+      "{ 1 2", "[ DUP", "} 1", "] 1", "; 1", ": ;", ": ", ":",
+      ": X ", ": X NOSUCHWORD ;", ": X X ;", ": 3 DUP ;",
+      "1 2 " & Q("k") & " STO " & Q("nope") & " RCL",
+      "{ 1 2 } [ DROP ] MAP", "{ 1 2 } [ 1 2 ] MAP", "{ 1 2 } [ 3 ] FILTER",
+      "1 [ DUP ] 0 TIMES", "1 " & Q("x") & " * ", "TRUE 3 +",
+      "12 FIX", "1 0 MOD", "1 0 WRAP", "0 LN", "2 ASIN",
+      "HELP", "VIEW", "HELP NOSUCHWORD", "VIEW DUP",
+      Rem The host's own four, reached the only way a client can reach
+      Rem them: through a line. Every one must refuse and name the tool.
+      "SAVE", "LOAD", "TAPESAVE", "RESET",
+      "3 SAVE", "3 RESET DROP", "SAVE " & Q("x"), "QUIT", "EXIT",
+      Rem The shapes a person mistypes a pattern in.
+      "RXTEST", Q("abc") & " RXTEST", Q("abc") & " " & Q("(") & " RXTEST",
+      Q("abc") & " " & Q("a{99999}") & " RXTEST", "3 4 RXFIND",
+      Q("") & " " & Q("") & " RXSPLIT", Q("(") & " RXWHY",
+      Rem And the algebra ones, which nothing had ever fed.
+      "ALGSIMPLIFY", "3 ALGSIMPLIFY", Q("1/") & " ALGSIMPLIFY",
+      Q("()") & " ALGSIMPLIFY", Q("5%3") & " ALGSIMPLIFY",
+      Q("2^999999") & " ALGSIMPLIFY", Q("x^x^x^x") & " ALGEXPAND",
+      Q("ln(0)") & " ALGSIMPLIFY", Q("x") & " " & Q("x") & " ALGFACTOR",
+      Q("") & " ALGSOLVE", "ALGDESOLVE" }
+
+Def Fuzzed(st As RckState, lines As List Of String) As Boolean
+    If IsEmpty(lines) Then
+        True
+    Else
+        Survives(st, First(lines), Rest(lines))
+
+Def Survives(st As RckState, line As String, more As List Of String) As Boolean
+    Assert(Last(Shown(Ran(st, line), "3 4 +")) = "x: 7", "THE MILL SURVIVED [" & line & "]")
+    Fuzzed(st, more)
+
+Rem ---- the run ---------------------------------------------------------
+
+Def Main()
+    Let s0 = SpkFresh()
+
+    Print("--- every seed in the fold has a heading, in fold order ---")
+    Rem Joined and compared as text, not as lists: two lists of the same
+    Rem strings are not equal, because a list compares by identity.
+    Assert(Join(Headings(s0), " ") = Join(WantedHeadings(), " "),
+           "THE LISTING'S HEADINGS ARE THE FOLD'S, IN ORDER — got " & Join(Headings(s0), " "))
+    Print("  " & Str(Length(SpkGroups())) & " headings, core and shell included")
+
+    Print("--- and a word of its own under each ---")
+    Each(OnePerSeed(), Fn(w) => Assert(Knows(s0, w), "THE DICTIONARY KNOWS " & w))
+
+    Print("--- the pure ones answer ---")
+    Each(PureProbes(), Probed)
+    Print("  " & Str(Length(PureProbes())) & " probes answered")
+
+    Print("--- PRINT writes as it runs, which is not what a line answers ---")
+    Rem The one probe that cannot be a probe. PRINT writes the session's
+    Rem output stream THE MOMENT IT RUNS, so what it wrote is not in what
+    Rem the line answered and never will be — the two are different
+    Rem things and the server's turn result keeps them in different
+    Rem fields for exactly this reason. All a headless suite can say is
+    Rem that the word is there, that it says it touches the world, and
+    Rem that the line answers nothing. The line below prints, once, into
+    Rem this suite's own output; proving it reached a stream is the
+    Rem host's, which owns one it can read back.
+    Assert(RckTouches(Found(s0, "PRINT")), "PRINT SAYS IT TOUCHES THE WORLD")
+    Print("  the next line is PRINT's, and is the proof it wrote something:")
+    Assert(Said(s0, Q("  live report from seed-terminal") & " PRINT") = "[ empty ]",
+           "AND WHAT IT WROTE IS NOT WHAT THE LINE ANSWERED")
+
+    Print("--- the three seeds that are not folded cannot be reached ---")
+    Each(ExcludedWords(), Fn(w) => Assert(Not Knows(s0, w), "NOTHING ANSWERS TO " & w))
+    Each(ExcludedWords(), Fn(w) => Assert(NotAWord(s0, w), "AND HELP SAYS SO FOR " & w))
+    Assert(Not Contains(RckWords(s0), "-- seed-buzzer --"), "NO SOUND GROUP IN THE LISTING")
+    Assert(Not Contains(RckWords(s0), "-- seed-keys --"), "NO KEYS GROUP IN THE LISTING")
+    Assert(Not Contains(RckWords(s0), "-- seed-vt100 --"), "NO VT100 GROUP IN THE LISTING")
+
+    Print("--- and neither can a way out of a session there is no way out of ---")
+    Assert(Not Knows(s0, "QUIT"), "QUIT IS NOT REGISTERED")
+    Assert(Not Knows(s0, "EXIT"), "EXIT IS NOT REGISTERED")
+    Assert(NotAWord(s0, "QUIT"), "AND HELP QUIT SAYS SO")
+
+    Print("--- there is no word that reads, either ---")
+    Assert(Not Knows(s0, "INPUT"), "NO INPUT")
+    Assert(Not Knows(s0, "INPUTLINE"), "NO INPUTLINE")
+    Assert(Not Knows(s0, "INKEY"), "NO INKEY")
+
+    Print("--- the four the host owns are listed, explained, and refuse ---")
+    Each(SpkShellWordNames(), Fn(w) => Assert(Knows(s0, w), "THE DICTIONARY LISTS " & w))
+    Assert(Length(RckHelp(s0, "SAVE")) = 3, "HELP SAVE ANSWERS")
+    Assert(Contains(RckHelp(s0, "TAPESAVE"), "TAPESAVE  ( -- )"), "WITH ITS STACK EFFECT")
+    Assert(Said(s0, "3 SAVE") = "?: SAVE is the server's word, not the dictionary's: call the save tool instead / [ empty ]",
+           "AND REACHED THROUGH A LINE IT NAMES THE TOOL")
+    Assert(Said(s0, "3 RESET DROP") = "?: RESET is the server's word, not the dictionary's: call the reset tool instead / [ empty ]",
+           "INCLUDING THE ONE THAT TOUCHES NOTHING")
+    Assert(Not RckTouches(Found(s0, "RESET")), "RESET TOUCHES NOTHING")
+    Assert(RckTouches(Found(s0, "SAVE")) And RckTouches(Found(s0, "TAPESAVE")) And RckTouches(Found(s0, "LOAD")),
+           "AND THE THREE THAT NAME A FILE SAY SO")
+
+    Print("--- every word carries its metadata, the host's included ---")
+    Assert(IsEmpty(Filter(RckDict(s0), Fn(e) => WordEffect(e) = "" Or WordDesc(e) = "")),
+           "NO WORD IS WITHOUT AN EFFECT LINE AND A DESCRIPTION")
+    Assert(IsEmpty(Filter(RckDict(s0), Fn(e) => WordSeed(e) = "")),
+           "AND EVERY WORD KNOWS WHICH SEED IT CAME FROM")
+
+    Print("--- a line is the transaction ---")
+    Assert(Said(s0, "3 4 +") = "x: 7", "A GOOD LINE ANSWERS AND SHOWS THE STACK")
+    Assert(Said(s0, "NOSUCHWORD") = "?: unknown word NOSUCHWORD / [ empty ]", "A BAD ONE REFUSES AND SHOWS IT UNCHANGED")
+    Assert(Join(RckShow(Ran(s0, "NOSUCHWORD")), " ") = "[ empty ]", "AND THE STATE THAT STANDS IS THE ONE IT STARTED FROM")
+
+    Print("--- an unfinished line is gathered, not refused ---")
+    Assert(Joined("", ": VAT DUP") = "more", "A DEFINITION STILL OPEN WANTS MORE")
+    Assert(Joined(": VAT DUP", "0.2 * + ;") = "ready", "AND CLOSES WHEN IT CLOSES")
+    Assert(Joined("", "{ 1 2") = "more", "SO DOES A LIST")
+    Assert(Joined("", "3 4 +") = "ready", "AN ORDINARY LINE IS READY AT ONCE")
+    Assert(Joined("", "} 1") = "ready", "AND SO IS ONE NOTHING COULD FINISH")
+    Let vat = Runs(s0, { ": VAT DUP 0.2 * + ;", "250 VAT" })
+    Assert(Join(RckShow(vat), " ") = "x: 300", "A DEFINITION MADE ACROSS THE HARNESS RUNS")
+    Assert(SpkUserCount(vat) = 1, "AND COUNTS AS ONE USER WORD")
+    Assert(Contains(RckWords(vat), "-- user --"), "UNDER A HEADING THAT APPEARS ONLY ONCE THERE IS ONE")
+
+    Print("--- counting says it in English ---")
+    Assert(SpkCounted(1, "word", "words") = "1 word", "ONE IS SINGULAR")
+    Assert(SpkCounted(0, "word", "words") = "0 words", "NONE IS PLURAL")
+    Assert(SpkCounted(2, "row", "rows") = "2 rows", "AND SO IS TWO")
+
+    Print("--- the host's own carriers tape what the host did ---")
+    Let refused = SpkAfter(s0, SpkRefused(s0, "LOAD " & Q("gone"), "there is no file called gone"))
+    Assert(Contains(RckTape(refused), "?: there is no file called gone"), "A REFUSAL THE HOST RAISED IS ON THE TAPE")
+    Let said = SpkAfter(s0, SpkSaid(s0, "SAVE " & Q("mine"), "saved 1 word"))
+    Assert(Contains(RckTape(said), "saved 1 word"), "AND SO IS A CONFIRMATION")
+
+    Print("--- nothing keyable aborts: the fuzz list ---")
+    Assert(Fuzzed(s0, FuzzList()), "EVERY LINE IN THE FUZZ LIST WAS SURVIVED")
+    Print("  " & Str(Length(FuzzList())) & " lines fed, and 3 4 + still answered 7 after every one")
+
+    Print("")
+    Print("ALL ASSERTIONS PASSED")
+
+Rem Reading SpkJoined as one word, so the cases above read as a table.
+Def Joined(buf As String, line As String) As String
+    Select Case SpkJoined(buf, line)
+        Case SpkReady(l)
+            "ready"
+        Case SpkMore(m)
+            "more"
+        Case Else
+            "none"

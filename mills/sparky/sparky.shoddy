@@ -1,0 +1,197 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem sparky.shoddy — the same dictionary, at a terminal.
+Rem
+Rem     bin/mill run mills/sparky/sparky.shoddy
+Rem     ./build.sh run                            (from this directory)
+Rem
+Rem THIS IS NOT THE PRODUCT. Sparky is an MCP server and its caller is a
+Rem model; this file exists so that the fold can be looked at by a person
+Rem without a client in front of them, and so that the mill is a mill
+Rem like any other — one that `mill run` runs and `mill weave` weaves.
+Rem What it proves is worth having: if the dictionary a client is handed
+Rem can be typed at, then the dictionary is real and the server is only a
+Rem transport over it.
+Rem
+Rem Everything that touches the outside world is here and nothing else
+Rem is: reading a line, printing what came back, and reading sparkyrc on
+Rem the way in. Every decision about what a line MEANS is in
+Rem sparky-core.shoddy, which is pure and which test.shoddy grades with
+Rem no terminal anywhere near it.
+Rem
+Rem ---- how you leave ------------------------------------------------
+Rem
+Rem END OF INPUT, and nothing else: Ctrl-Z then Enter on Windows, Ctrl-D
+Rem elsewhere. There is no QUIT and no EXIT, and their absence is the
+Rem point rather than an omission. A server has no session to leave, so
+Rem sparky-core registers neither — and if this file registered one for
+Rem its own convenience, the dictionary a person types at would no longer
+Rem be the dictionary a client is handed, which is the one thing this
+Rem file exists to demonstrate.
+Rem
+Rem SAVE, LOAD, TAPESAVE and RESET refuse here for the same reason. They
+Rem are the host's words, the server answers them as tools, and this
+Rem shell is not that server. They stay registered so WORDS lists them
+Rem and HELP explains them, and their bodies say which door does work.
+Rem
+Rem ---- why the loop is one Def ---------------------------------------
+Rem
+Rem SpkLoop calls itself and only itself, in tail position. The compiler
+Rem turns a SELF tail call into a jump and a mutual one into a call, so a
+Rem loop written as SpkLoop -> SpkTurn -> SpkLoop would grow the stack by
+Rem a frame per line entered. Gathering an unfinished definition is under
+Rem the same rule: the text typed so far is carried as a second argument
+Rem rather than recursed into, so three lines of a definition are three
+Rem jumps and no frames.
+Rem
+Rem ---- paths ---------------------------------------------------------
+Rem
+Rem Resolved against the current directory, and sparkyrc is looked for
+Rem there too. Guarded twins throughout — TryReadFile, never ReadFile —
+Rem because an unreadable startup file is an ordinary thing to answer and
+Rem an aborted mill is not.
+Rem ==================================================================
+
+Include "../../machines/str.shoddy"
+Include "sparky-core.shoddy"
+
+Rem ---- reading a line --------------------------------------------------
+
+Rem End of input is not an empty line, and here the difference is the
+Rem whole way out: InputLine reports the two separately, and this lifts
+Rem its flat carrier into an answer that can be matched.
+Type SpkIn = SpkEof | SpkTyped(SpkTypedText As String)
+
+Def SpkAsked(prompt As String) As SpkIn
+    SpkAskedOf(InputLine(prompt))
+
+Def SpkAskedOf(r As Array) As SpkIn
+    If Nth(r, 1) Then
+        SpkEof()
+    Else
+        SpkTyped(Nth(r, 2))
+
+Rem ---- the loop --------------------------------------------------------
+
+Rem What the loop does next, so that reading a line and deciding whether
+Rem it is finished both happen OUTSIDE SpkLoop and leave it calling
+Rem nothing but itself.
+Type SpkStep = SpkGo(GoLine As String) | SpkHold(HoldBuf As String) | SpkStop
+
+Def SpkLoop(st As RckState, buf As String)
+    Select Case SpkNext(buf)
+        Case SpkGo(line)
+            SpkLoop(SpkTurn(st, line), "")
+        Case SpkHold(more)
+            SpkLoop(st, more)
+        Case Else
+            SpkDone(st)
+
+Def SpkNext(buf As String) As SpkStep
+    SpkStepOf(buf, SpkAsked(SpkPromptFor(buf)))
+
+Def SpkPromptFor(buf As String) As String
+    If buf = "" Then
+        SpkPrompt()
+    Else
+        SpkMorePrompt()
+
+Rem END OF INPUT IS THE END, whatever is being gathered: a script that
+Rem stops mid-definition closes the session exactly as one that stops
+Rem anywhere else does, and the part-built line is dropped rather than
+Rem run.
+Def SpkStepOf(buf As String, r As SpkIn) As SpkStep
+    Select Case r
+        Case SpkTyped(line)
+            SpkStepJoined(SpkJoined(buf, line))
+        Case Else
+            SpkStop()
+
+Def SpkStepJoined(j As SpkJoin) As SpkStep
+    Select Case j
+        Case SpkReady(line)
+            SpkGo(line)
+        Case SpkMore(more)
+            SpkHold(more)
+        Case Else
+            SpkStop()
+
+Rem Shut whatever the session left open. Not a breach of "nothing is
+Rem saved on the way out" — that rule is about not creating things
+Rem nobody asked for, and releasing a canvas the session explicitly
+Rem opened is the opposite. It is also what lets the mill exit: the
+Rem window pump keeps going while any scribbler is open.
+Def SpkDone(st As RckState)
+    RckShutAll(st)
+    Print("")
+
+Rem One turn: evaluate, show it, and hand back the state to go on from.
+Rem A refusal is a state too — the one the line started from, with the
+Rem refusal on the tape.
+Def SpkTurn(st As RckState, line As String) As RckState
+    SpkShowed(st, SpkDo(st, line))
+
+Def SpkShowed(st As RckState, r As RckLine) As RckState
+    Each(SpkShown(r), Print)
+    SpkAfter(st, r)
+
+Rem ---- starting up -----------------------------------------------------
+
+Rem A missing sparkyrc is silence, not an error: most sessions have no
+Rem such file and a mill that complained about its absence would be
+Rem complaining at everyone. A file that IS there and will not load says
+Rem so and starts anyway, because a bad startup file is a reason to fix
+Rem the file and not a reason to have no dictionary.
+Rem
+Rem It loads through RckLoad rather than through a turn, so it leaves no
+Rem tape rows: the tape is a record of a session, and nobody typed this.
+Def SpkStart(st As RckState) As RckState
+    If Not FileExists(SpkRcName()) Then
+        st
+    Else
+        SpkStartRead(st, TryReadFile(SpkRcName()))
+
+Def SpkStartRead(st As RckState, r As Result) As RckState
+    Select Case r
+        Case Ok(text)
+            SpkStartLoad(st, RckLoad(st, SpkTextLines(text)))
+        Case Else
+            SpkStartSaid(st, SpkRcName() & ": cannot read it")
+
+Def SpkStartLoad(st As RckState, r As RckLine) As RckState
+    Select Case r
+        Case RckNext(st2, out)
+            SpkStartSaid(st2, SpkRcName() & ": loaded " & SpkCounted(SpkUserCount(st2) - SpkUserCount(st), "word", "words"))
+        Case RckStop(st2, why, out)
+            SpkStartSaid(st, SpkRcName() & ": " & why)
+        Case Else
+            st
+
+Def SpkStartSaid(st As RckState, said As String) As RckState
+    Print(said)
+    st
+
+Rem Split on the newline and Trim what is left, which takes the carriage
+Rem return off a file written on Windows and read on anything else.
+Def SpkTextLines(text As String) As List Of String
+    Map(Split(text, Chr(10)), Trim)
+
+Rem ---- the run ---------------------------------------------------------
+
+Rem The line about leaving belongs to this file and not to SpkBanner:
+Rem the banner is carried into the server's grounding as it stands, and
+Rem a client told to press Ctrl-Z would be told something false.
+Def SpkConsoleNote() As String
+    "This is the server's dictionary at a terminal. End input (Ctrl-Z, or Ctrl-D) to leave."
+
+Def SpkOpened() As RckState
+    Let st = SpkStart(SpkFresh())
+    Each(RckShow(st), Print)
+    st
+
+Def Main()
+    Each(SpkBanner(), Print)
+    Print(SpkConsoleNote())
+    SpkLoop(SpkOpened(), "")

@@ -227,6 +227,10 @@ write-up on each one, or start at
       <a href="https://shoddymills.github.io/shoddy/mills/halifax.html"><img src="docs/media/halifax.svg" alt="halifax: labelled stack rows above an indented traced cascade" width="150"></a><br>
       <b>halifax</b><br><sub>a programmable RPN calculator</sub>
     </td>
+    <td align="left" valign="top">
+      <a href="https://shoddymills.github.io/shoddy/mills/sparky.html"><img src="docs/media/sparky.svg" alt="sparky: a question in English, and the calculator's answer with a histogram" width="150"></a><br>
+      <b>sparky</b><br><sub>the calculator, as an MCP server</sub>
+    </td>
   </tr>
 </table>
 

@@ -1,0 +1,658 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="A local MCP server handing an LLM the reckoner dictionary — mills/sparky">
+<title>sparky — The Reckoner as an MCP Server | Shoddy Mills</title>
+<link rel="stylesheet" href="../style.css">
+<link rel="icon" href="../favicon.svg" type="image/svg+xml">
+<link rel="alternate icon" href="../favicon.ico" sizes="48x48">
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+</head>
+<body>
+<div class="topbar"><div class="inner">
+  <div class="row">
+    <a class="phase" href="index.html"><img class="mark" src="../media/brand/shoddy-icon.svg" alt="" width="23" height="23">Shoddy · The Mills</a>
+    <span class="spacer"></span>
+    <nav class="docnav meta" aria-label="About"><a href="../heritage.html">Heritage</a><a href="../authorship.html">Authorship</a></nav>
+  </div>
+  <nav class="docnav main" aria-label="Documentation"><a href="../tutorials/index.html">Tutorials</a><a href="../guide.html">Guide</a><a href="../quickref.html">Reference</a><a href="../machines/index.html">Machines</a><span class="here">Mills</span><a href="../stack.html">Stack</a><a href="../spec.html">Spec</a><a href="../setup.html">Setup</a><a href="../vscode.html">VS Code</a><a href="../assistants.html">AI</a><a href="../build.html">Toolchain</a><a href="../hosting.html">Hosting</a><a href="../errors.html">Errors</a></nav>
+</div></div>
+<div class="wrap">
+
+<header class="mast"><p class="eyebrow"><a href="index.html#data">The Mills &middot; Data &amp; statistics</a></p><h1>sparky</h1><p class="kicker">A local MCP server handing a model the reckoner dictionary, and the grounding to use it — mills/sparky</p></header>
+<nav class="pagenav pagenav-top" aria-label="Mills, in catalog order"><a href="halifax.html" class="prev"><span class="pnwrap"><span class="dir">&larr; Previous mill</span><span class="ttl">halifax</span></span></a><a href="index.html" class="all all-last">All mills</a></nav>
+
+<h2 id="summary">Summary</h2>
+<p>The same calculator <a href="halifax.html">halifax</a> puts at a terminal,
+handed instead to a language model as callable tools. A student asks a question
+in English; the model answers it by <em>computing</em> — in a language where
+every word carries its own stack effect and description, so it never has to
+guess what a word does, and shows its working.</p>
+<p>Named after Karen Spärck Jones (1935&ndash;2007), who gave information
+retrieval inverse document frequency and spent a career arguing that computing
+was too important to be left to men. The name is apt twice over: her subject
+was retrieving the right material for a question, and half this server's job is
+retrieving the right grounding for a word.</p>
+<pre><code>bin/mill run mills/sparky/sparky.shoddy     # the same dictionary, at a terminal
+dotnet run --project hosts/mcp/sparky       # the server, on stdin and stdout</code></pre>
+<p>It folds thirty-four of the reckoner's thirty-seven seeds. The three it
+leaves out are left out <em>whole</em>, so their words are not in the
+dictionary at all rather than present and answering nonsense — see
+<a href="#absent">what is deliberately absent</a>.</p>
+
+<h2 id="register">Registering it with an agent</h2>
+<p>Sparky is a <strong>local stdio server</strong>: a client launches it as a
+child process and speaks JSON-RPC to it, one message per line, on stdin and
+stdout. Nothing listens on a socket. Every client therefore needs the same two
+things — the command to run, and its arguments:</p>
+<pre><code>sparky --root PATH</code></pre>
+<p><code>--root</code> is where the session's files live: <code>sparkyrc</code>,
+anything <code>save</code> writes, any chart <code>PLOTSAVE</code> writes. Omit
+it and the server uses <code>LocalApplicationData/Shoddy/Sparky</code>, creating
+it if it is not there. Name one that does not exist and the server refuses to
+start and says which path it could not find — a root you named is one you
+meant, so a typo is reported rather than materialised.</p>
+<p>Build it first; the published executable is what a client launches:</p>
+<pre><code class="language-sh">./build.ps1                                  # repo root: publishes bin/mill  (./build.sh elsewhere)
+cd hosts/mcp
+./build.ps1 release                          # sparky lands in artifacts/bin/sparky/release/</code></pre>
+
+<h3 id="register-config">The configuration, per client</h3>
+<p>Client configuration formats move faster than this page does. The
+<em>contract</em> above does not, so if a form below has drifted, check that
+client's own documentation and give it the same command and arguments. All four
+are the same two facts wearing different keys.</p>
+
+<p><strong>Claude Desktop</strong> — <code>claude_desktop_config.json</code>
+(<code>%APPDATA%\Claude\</code> on Windows,
+<code>~/Library/Application Support/Claude/</code> on macOS):</p>
+<div class="promptbox"><button class="copy">Copy</button><pre><code class="language-json">{
+  "mcpServers": {
+    "sparky": {
+      "command": "C:\\shoddy\\artifacts\\bin\\sparky\\release\\sparky.exe",
+      "args": ["--root", "C:\\Users\\you\\Documents\\sparky"]
+    }
+  }
+}</code></pre></div>
+
+<p><strong>Claude Code</strong> — one command, no file to edit:</p>
+<div class="promptbox"><button class="copy">Copy</button><pre><code class="language-sh">claude mcp add sparky -- /path/to/sparky --root ~/sparky</code></pre></div>
+
+<p><strong>VS Code</strong> — <code>.mcp.json</code> in the workspace, or the
+user-level equivalent:</p>
+<div class="promptbox"><button class="copy">Copy</button><pre><code class="language-json">{
+  "servers": {
+    "sparky": {
+      "type": "stdio",
+      "command": "/path/to/sparky",
+      "args": ["--root", "/home/you/sparky"]
+    }
+  }
+}</code></pre></div>
+
+<p><strong>Anything else</strong> — a client that speaks MCP over stdio needs
+no adapter. Launch the executable, write one JSON-RPC message per line to its
+stdin, read one per line from its stdout. Diagnostics go to stderr and never
+to stdout, so nothing the server logs can corrupt the stream.</p>
+
+<h3 id="register-check">Checking it works without a client</h3>
+<p>Two lines on stdin are enough to see the whole handshake:</p>
+<div class="promptbox"><button class="copy">Copy</button><pre><code class="language-sh">printf '%s\n' \
+  '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}' \
+  '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"eval","arguments":{"lines":["{ 12500 13100 11900 } MEAN"]}}}' \
+  | sparky --root /tmp/sparky</code></pre></div>
+<p>The second answer contains <code>[stack] x: 12500</code>. If it does, the
+dictionary is live and the client's only remaining job is to launch the same
+command.</p>
+
+<h2 id="prompt">The grounding prompt</h2>
+<p>The server serves this itself, as the two resources
+<code>sparky://grounding/reckoner</code> and
+<code>sparky://grounding/surface</code>, so a client that reads resources needs
+nothing from this section. What follows is those two, concatenated and
+reproduced verbatim, for the case that has no server to ask: a system prompt, a
+project instruction file, or a model you are briefing before it ever connects.
+A test asserts this block and the served text are the same, so the copy below
+cannot drift from the one a client is given.</p>
+<p><strong>Two parts of it earn their length.</strong> The first is the
+instruction not to invent a word: every word carries its own stack effect and
+description read from the running engine, so a model that asks is never wrong
+and a model that guesses is fluently, confidently wrong. The second is
+<em>Where the calculator cannot catch you</em>. Everything else a model gets
+wrong earns a refusal that names the fix — wrong arity, wrong type, wrong
+order, all caught — so the briefing can afford to be short about them. Those
+four are the ones that return a plausible number instead.</p>
+
+<div class="promptbox"><button class="copy">Copy</button>
+<pre><code># The reckoner — how a line works
+
+Lines are RPN. Numbers and strings go on the stack; words work on what
+is there. `3 4 +` leaves 7. The stack is shown after every line, top
+value labelled `x`, then `y`, `z`, `t` beneath it.
+
+- **A list is `{ 1 2 3 }`.** A program (a quotation) is `[ DUP * ]`.
+  `{ 1 2 3 } [ 2 * ] MAP` answers `{ 2 4 6 }`.
+- **A string is double-quoted**, and prints with its quotes on the stack
+  and without them under `PRINT`.
+- **You define a word with `: NAME ... ;`** — for example
+  `: VAT DUP 0.2 * + ;`. It may span several lines; the definition is
+  not run until it closes.
+- **THE LINE IS THE TRANSACTION.** A line either takes effect whole or
+  is refused whole, and a refusal leaves the stack exactly as it was.
+  Refusals start with `?:`.
+- **NOTHING KEYABLE ABORTS.** There is no line you can type that ends
+  the session. If something is wrong you get a refusal and another
+  chance, so trying a thing is cheap — try it rather than asking.
+- **`UNDO` restores a stack, not the world.** A file already written is
+  still written; a line already drawn is still drawn; a `PRINT` already
+  printed cannot be unprinted.
+
+## Two facts that surprise everything that has seen a Forth
+
+- **A USER WORD TAKES EXACTLY ONE CELL.** Not "as many as it pops" — one.
+  If a word needs a second argument, bank it in a register first with
+  `STO` and read it inside with `RCL`. Writing a two-argument definition
+  is the single most common mistake here and it will be refused.
+- **RECURSION IS IMPOSSIBLE, ON PURPOSE.** A definition is validated
+  against the dictionary as it stands, so its body may name only words
+  that ALREADY EXIST — never the name being defined. Loop with `TIMES`,
+  `MAP`, `FILTER` or `FOLD` instead.
+
+## Reading a stack effect
+
+`HELP` answers one. `STO  ( x name -- )` means the word takes two cells
+and leaves none, and the ORDER is the order you push them: the value
+first, then the name. `RCL  ( name -- x )` takes one and leaves one.
+`PLOTHISTOGRAM  ( plot xs bins -- )` takes three, in that order.
+
+Argument order is the mistake you will make most often, and reading the
+effect line is the whole cure.
+
+## Never invent a word
+
+`WORDS` lists everything, grouped by the seed it came from. `HELP NAME`
+gives a word's exact stack effect and description. `VIEW NAME` shows a
+definition you made. Use the `help` and `words` tools rather than
+guessing a word exists — every word carries its own effect and
+description, so there is never a reason to invent one.
+
+## When a line is refused, the refusal tells you the fix
+
+This is why trying is cheap and why this briefing can be short: the
+engine knows far more about its own words than any prompt can carry, and
+it says so. Real refusals, verbatim:
+
+    12500 13100 11900 MEAN     ?: MEAN needs a LIST, got NUMBER
+    { 1 2 3 4 } 2 2 MAT        ?: MAT needs a NUMBER, got LIST
+    640 480 PLOTOPEN           ?: PLOTOPEN needs a width, a height and a name
+    { 1 2 2 3 } PLOTHISTOGRAM  ?: PLOTHISTOGRAM needs 3, the stack holds 2
+    "3" 4 +                    ?: + is not defined for STRING and NUMBER
+
+Every one of those names what was wrong. Send the corrected line; the
+stack is exactly as it was. Do NOT apologise to the user for a refused
+line and do not narrate it as a failure — it is how you find the right
+line, and it costs nothing.
+
+## Where the calculator CANNOT catch you
+
+Everything above is caught. These are not: the line is accepted, an
+answer appears, and it is the wrong answer. There are four of them, and
+they are the reason to read this section rather than skim it.
+
+**Trig is in RADIANS unless you say otherwise.**
+
+    90 SIN            x: 0.8939966636      radians, and almost certainly not the question
+    DEG   90 SIN      x: 1                 degrees
+
+Set `DEG` before any trigonometry a person asked for in degrees, and say
+in your answer which mode you used. `RAD` puts it back.
+
+**Sample and population statistics are different words.**
+
+    { 2 4 4 4 5 5 7 9 } STDDEV     x: 2.138089935    sample, divides by n-1
+    { 2 4 4 4 5 5 7 9 } STDDEVP    x: 2              population, divides by n
+
+Same for `VAR` and `VARP`. Both are right answers to different
+questions; nothing will tell you that you chose the wrong one. Decide
+which the student meant, and say which you used.
+
+**`FIX` changes what is SHOWN, not what is held.**
+
+    2 FIX   3.14159265      x: 3.14
+
+The stack still holds every digit; `STD` shows them again. Never read a
+`FIX`ed display back as the value.
+
+**Numbers are IEEE doubles, so money is its own kind.**
+
+    0.1 0.2 +               x: 0.3
+    0.1 0.2 + 0.3 =         x: False
+
+The display rounds; the comparison does not. For currency use `MONEY`
+and its words, which are exact and which refuse a bare number so you
+cannot mix the two by accident.
+
+## A worked line or two
+
+    { 12500 13100 11900 } MEAN
+    x: 12500
+
+A word needing two arguments, banking one first:
+
+    0.2 "rate" STO
+    : WITHVAT DUP "rate" RCL * + ;
+    250 WITHVAT
+    x: 300
+
+A matrix, built rows-and-columns first:
+
+    2 2 { 1 2 3 4 } MAT LINDET
+    x: -2
+
+A chart, which arrives as a picture with the third line:
+
+    640 480 "p" PLOTOPEN
+    "p" { 1 2 2 3 3 3 } 4 PLOTHISTOGRAM
+    "p" PLOTBLIT
+
+# What this server is, and what it is not
+
+Sparky hands you the Halifax dictionary — the whole of the reckoner's
+standard library at an RPN prompt — as callable tools, plus the
+grounding to use it correctly. Statistics, matrices, linear algebra,
+linear and integer programming, finance, symbolic algebra, neural nets,
+regular expressions, sparse matrices, CSV/JSON/XML/HTML, indexed files,
+number bases and bit work, charts and turtle graphics.
+
+**Compute the answer. Do not estimate it.** That is the whole point of
+this server: you have a calculator that shows its working, and a student
+is better served by `{ 12500 13100 11900 } MEAN` than by your arithmetic.
+
+## What is in the dictionary
+
+Seven hundred words, grouped by the seed each came from. This is the
+index; `words` gives the full list and `help` gives any one word exactly.
+
+    core          arithmetic, comparison, stack shuffling, registers, UNDO
+                  and REDO, TRACE, the tape, angle and display modes, and
+                  the combinators MAP FILTER FOLD TIMES IFT IFTE
+    builtin       string slicing and character codes, number parsing,
+                  arrays, whole-file read and write, the clock
+    seed-math     logs to a base, hypotenuse, distance, clamp, lerp, remap
+    seed-stats    mean, median, spread, quantiles, correlation, normal, t
+    seed-seq      ranges, length, reverse, concat, first and rest, sorting
+    seed-str      case, trim, split, join, fixed-decimal text
+    seed-money    exact decimal money, splitting a sum without losing a penny
+    seed-matrix   building matrices, identity, transpose, multiply, dot
+    seed-dict     string-keyed dictionaries
+    seed-file     line-oriented files, and whether one exists
+    seed-clock    timestamps, monotonic ticks, elapsed time, durations
+    seed-random   seeded generation, ranges, shuffling, sampling
+    seed-csv      reading and writing CSV, columns, headers, filtering
+    seed-bool     number bases, bit operations, masks, fields, logic gates
+    seed-shaker   reversible obfuscation of a list, with a tamper checksum
+    seed-json     parse, render, pretty-print, load and save JSON
+    seed-xml      the same for XML
+    seed-html     the same for HTML
+    seed-simplex  linear programs, and MPS files
+    seed-lin      linear algebra: determinants, inverses, decompositions,
+                  eigenvalues, solving
+    seed-eng      angles, complex numbers, statistics, number theory,
+                  polynomials, calculus, units and physical constants
+    seed-fin      interest, annuities, loans, NPV and IRR, depreciation,
+                  day counts, bonds
+    seed-alg      symbolic algebra: simplify, expand, factor, solve, and
+                  first-order differential equations
+    seed-neural   small neural networks: build, train, predict, score, save
+    seed-recio    fixed-layout binary record files
+    seed-isam     indexed files: keyed lookup, ranges, insert and update
+    seed-scribbler a pixel canvas to draw on
+    seed-net      outbound HTTP fetches
+    seed-turtle   turtle graphics
+    seed-plotter  charts: histogram, scatter, box, bar, pie
+    seed-https    HTTPS fetches, and reading a response apart
+    seed-regex    regular expressions: test, find, groups, replace, split
+    seed-sparse   sparse matrices, stored by column
+    seed-mip      mixed-integer programs
+    seed-terminal PRINT
+    shell         SAVE, LOAD, TAPESAVE and RESET, called as tools
+
+Ask `subject` for any of those and you get a teaching card: what the
+machine is for, worked examples that run at this prompt, and its live
+word list.
+
+## Resources are opened under a NAME, not held on the stack
+
+A canvas, a plotter, a turtle, a record file and an indexed file are all
+opened under a name you choose, and every later word takes that name:
+
+    640 480 "p" PLOTOPEN
+    "p" { 1 2 2 3 } 4 PLOTHISTOGRAM
+    "p" PLOTBLIT
+
+Nothing is pushed by the open. `BOUND` lists what is open, `CLOSE` shuts
+one by name, `CLOSEALL` shuts them all. This is why `UNDO` cannot leave a
+resource stranded: what is open is not on the stack in the first place.
+
+## What is deliberately absent
+
+| Not here | Why |
+|---|---|
+| sound | the server does not control the host's audio and cannot know if anything is listening |
+| key handling | there is no keystroke source, so the words that classify keys classify nothing |
+| terminal escape sequences | there is no screen; a client receiving them in JSON is worse off than one told the word is absent |
+| any way to read input | no seed registers `INPUT`, `INPUTLINE` or `INKEY` |
+| any listening socket | `NETGET` and `NETREQUEST` are the whole of the network surface — there is no listen, accept or blocking-wait word |
+
+These are absent from the DICTIONARY, not merely withheld: ask `HELP`
+about one of their words and you are told it is not a word here.
+
+## Four things that catch a text-only caller harder than a person
+
+- **`UNDO` does not un-draw.** After `TURTLEFORWARD`, `UNDO` restores
+  the stack and leaves the line on the canvas.
+- **`UNDO` does not un-write, either.** A word that has already written
+  a file has still written it.
+- **`abandon` costs a turtle more than a chart.** A turtle's position,
+  heading, pen and colour live in the session; a plotter has no state of
+  its own at all, so a chart is one word to redraw and a turtle drawing
+  is not.
+- **`CLOSE` ends the drawing.** After it the dictionary cannot reach the
+  surface — though this server keeps the last captured frame, so you can
+  still be shown what was made.
+
+## Pictures
+
+Charts and turtle drawings go into a pixel buffer with no window. A line
+ending in `PLOTBLIT`, `SCRIBBLIT` or `TURTLEBLIT` carries its picture
+back in the same answer. A drawing you forgot to blit is not lost: ask
+the `canvas` tool, which reads the buffer as it stands.
+
+## Persistence
+
+`SAVE`, `LOAD`, `TAPESAVE` and `RESET` are the server's words, not the
+dictionary's — call the tools of those names. Typing them in a line gets
+you a refusal saying so.
+
+Files live under one root the server owns. A plain name like
+`"mine.sparky"` lands in it, and so does `"saved/mine.sparky"`. A path
+that tries to climb out of it — `"../elsewhere"`, or an absolute path
+somewhere else — is refused before anything is touched, so use plain
+names.</code></pre>
+</div>
+
+<h2 id="words">Every word it exposes</h2>
+<p>Thirty-four seeds and the shell's own, as <code>WORDS</code> lists them —
+grouped by the seed each came from, in the order the dictionary was built.
+This is an <em>inventory</em>, for choosing what to reach for. It is not the
+reference: the running dictionary is, and <code>help</code> reads from it, so
+where this page and the server disagree the server is right.</p>
+<pre><code>-- core --
+  + - * / ^ MOD WRAP ABS SGN FLOOR CEIL ROUND MIN MAX SQRT EXP LN LOG
+  PI E = &lt;&gt; &lt; &gt; &lt;= &gt;= NOT AND OR TRUE FALSE DUP DROP SWAP OVER NIP
+  TUCK ROT ROLL PICK DEPTH CLEAR GATHER UNPACK LASTX STO RCL CLOSE
+  CLOSEALL BOUND UNDO REDO TRACE NOTRACE TAPE CLEARTAPE DEG RAD FIX
+  SCI ENG STD SIN COS TAN ASIN ACOS ATAN ATAN2 IFT IFTE TIMES MAP
+  FILTER FOLD HELP VIEW WORDS
+-- builtin --
+  LEN LEFT RIGHT MID INSTR INSTRFROM CHR ASC CODES FROMCODES CODEAT
+  STR VAL VALOR ISNUMERIC NEGATE ATN ATN2 TANH ERF GAMMAP BETAI NTH
+  SETNTH ISEMPTY PREPEND DIM READFILE WRITEFILE APPENDFILE DELETEFILE
+  NETALLOWED ARGS CLOCK SLEEP CALL ERROR ASSERT
+-- seed-math --
+  LOGB LOG2 HYPOT DIST CLAMP LERP REMAP ROUNDTO
+-- seed-stats --
+  MEAN MEDIAN STDDEV STDDEVP VAR SUM QUANTILE CORREL NORMCDF NORMINV
+  TCDF
+-- seed-seq --
+  RANGE LENGTH REVERSE CONCAT FIRST REST SORTL PAIR HEAD TAIL
+-- seed-str --
+  STRCAT UPPER LOWER TRIM SPLIT JOIN TOFIXED
+-- seed-money --
+  MONEY MADD MSUB MSPLIT MFMT
+-- seed-matrix --
+  MAT IDENT TRANSP MMUL MATADD MGET DOT
+-- seed-dict --
+  DHAS DGET DPUT DKEYS
+-- seed-file --
+  READLINES WRITELINES APPENDLINE FILEEXISTS
+-- seed-clock --
+  STAMP STAMPDATE STAMPTIME TICKS ELAPSED FORMATDURATION
+-- seed-random --
+  RANDOM RANDOMRANGE RANDOMINT SHUFFLE SAMPLE SEED
+-- seed-csv --
+  CSVLOAD CSVREAD CSVSAVE CSVWIDTH CSVHEADS CSVBODY CSVCOLUMN
+  CSVCOLUMNNUMS CSVGET CSVWHERE CSVPAIRS
+-- seed-bool --
+  HEX BIN INBASE FROMBASE BITAND BITOR BITXOR BITNOT SHL SHR MASK
+  GETFIELD BITAT POPCOUNT NAND NOR XOR XNOR IMPLIES IFF
+-- seed-shaker --
+  SHAKE UNSHAKE UNSHAKEOR SHAKEOK SHAKEMOD
+-- seed-json --
+  JSONPARSE JSONTEXT JSONPRETTY JSONLOAD JSONSAVE
+-- seed-xml --
+  XMLPARSE XMLTEXT XMLPRETTY XMLLOAD XMLSAVE
+-- seed-html --
+  HTMLPARSE HTMLTEXT HTMLPRETTY HTMLLOAD HTMLSAVE
+-- seed-simplex --
+  LPPROBLEM LPSOLVE MPSPARSE MPSPARSEZERO MPSLOAD MPSLOADZERO MPSNAMES
+-- seed-lin --
+  LINTRACE LINNORM LINMAXABS LINISSQUARE LINISSYM LINREF LINRREF
+  LINRANK LINDET LINADJ LININV LINCHOL LINLUOF LINQROF LINCHARPOLY
+  LINEIGVALS LINEIGSYM LINSWAPROWS LINSCALEROW LINSCALECOL LINCOLS
+  LINAUG LINSOLVE LINPOW LINVNORM LINVUNIT LINCROSS
+-- seed-eng --
+  ENGRAD ENGDEG ENGGRADOF ENGFROMGRAD ENGDMSOF ENGFROMDMS ENGSEC
+  ENGCSC ENGCOT ENGASEC ENGACSC ENGACOT ENGANGLEOF ENGHYPOT ENGDISTOF
+  ENGRECTX ENGRECTY ENGPOLAROF ENGSINH ENGCOSH ENGSECH ENGCSCH ENGCOTH
+  ENGASINH ENGACOSH ENGATANH ENGASECH ENGACSCH ENGACOTH ENGLOGBASE
+  ENGLOG2 ENGLOG1P ENGEXPM1 ENGNTHROOT ENGCADD ENGCSUB ENGCMUL ENGCDIV
+  ENGCONJ ENGCABS ENGCARG ENGCFROMPOLAR ENGCTOPOLAR ENGCEXP ENGCLOG
+  ENGCSQRT ENGCPOW ENGCNEAR ENGCSHOW ENGSUM ENGMEAN ENGSTDDEV
+  ENGSTDDEVP ENGVAR ENGVARP ENGMEDIAN ENGQUANTILE ENGMINIMUM
+  ENGMAXIMUM ENGRANGEOF ENGSKEWNESS ENGKURTOSIS ENGWEIGHTEDMEAN
+  ENGGEOMEAN ENGCORREL ENGCOV ENGSPEARMAN ENGSTAT1 ENGLINEAR
+  ENGLOGMODEL ENGEXPMODEL ENGPOWERMODEL ENGFITOF ENGNORMPDF ENGNORMCDF
+  ENGNORMINV ENGTCDF ENGTINV ENGCHI2CDF ENGFCDF ENGBINOMPDF
+  ENGBINOMCDF ENGPOISSONPDF ENGPOISSONCDF ENGGEOMPDF ENGGEOMCDF
+  ENGHYPERPDF ENGEXPCDF ENGGCD ENGLCM ENGIQUOT ENGIREM ENGMODPOW
+  ENGMODINV ENGISPRIME ENGPRIMES ENGFACTORIZE ENGDIVISORS ENGTOTIENT
+  ENGFACT ENGCOMB ENGPERM ENGFIB ENGGAMMA ENGBETA ENGPOLYEVAL
+  ENGPOLYTRIM ENGPOLYDEGREE ENGPOLYADD ENGPOLYNEG ENGPOLYSUB
+  ENGPOLYSCALE ENGPOLYMUL ENGPOLYDIV ENGPOLYDERIV ENGPOLYINTEGRAL
+  ENGPOLYAREA ENGQUADROOTS ENGCUBICREAL ENGLINSPACE ENGGEOMSPACE
+  ENGCUMSUM ENGDIFF ENGMOVAVG ENGNORMALIZE ENGDOTOF ENGMAGOF ENGMETRE
+  ENGKILOMETRE ENGCENTIMETRE ENGMILLIMETRE ENGINCH ENGFOOT ENGYARD
+  ENGMILE ENGNAUTICALMILE ENGKILOGRAM ENGGRAM ENGTONNE ENGPOUND
+  ENGOUNCE ENGSTONE ENGSECOND ENGMINUTE ENGHOUR ENGDAY ENGKELVIN
+  ENGCELSIUS ENGFAHRENHEIT ENGPASCAL ENGKILOPASCAL ENGBAR ENGPSI
+  ENGATM ENGJOULE ENGKILOJOULE ENGCALORIE ENGKWH ENGBTU ENGWATT
+  ENGKILOWATT ENGHORSEPOWER ENGLITRE ENGMILLILITRE ENGCUBICMETRE
+  ENGGALLONUK ENGGALLONUS ENGMPS ENGKPH ENGMPH ENGKNOT ENGTOBASE
+  ENGFROMBASE ENGCONVERT ENGLIGHTSPEED ENGPLANCK ENGGRAVITATION
+  ENGSTDGRAVITY ENGELECTRONCHARGE ENGELECTRONMASS ENGPROTONMASS
+  ENGAVOGADRO ENGBOLTZMANN ENGGASCONSTANT ENGSTEFANBOLTZMANN
+  ENGFARADAY ENGVACUUMPERMITTIVITY ENGVACUUMPERMEABILITY ENGE ENGTAU
+  ENGROUNDTO ENGFRACOF ENGCLAMP ENGLERP ENGINVLERP ENGREMAP
+  ENGSMOOTHSTEP ENGSIGN ENGNEAR ENGSIGFIG ENGSCI ENGCOMMAS ENGDERIV
+  ENGDERIV2 ENGINTEGRATE ENGSUMOF ENGPRODOF ENGZEROOF ENGMINOF
+  ENGMAXOF
+-- seed-fin --
+  FINPCT FINASPCT FINEFF FINNOM FINRULE72 FINREAL FINPCTCHG FINTOBPS
+  FINFROMBPS FINPV FINFV FINPVANN FINFVANN FINPVANNDUE FINFVANNDUE
+  FINPMT FINPMTDUE FINNPER FINSIMPLE FINCOMPOUND FINSUM FINMEAN
+  FINSTDDEV FINSTDDEVP FINVAR FINVARP FINMEDIAN FINQUANTILE FINMINIMUM
+  FINMAXIMUM FINRANGEOF FINSKEWNESS FINKURTOSIS FINWEIGHTEDMEAN
+  FINGEOMEAN FINCORREL FINCOV FINSPEARMAN FINNORMP FINTDIST FINSTAT1
+  FINLINEAR FINLOGMODEL FINEXPMODEL FINPOWERMODEL FINFITOF FINGOALPMT
+  FINRETIRE FINNETWORTH FINBUDGETOF FINDCAOF FINBALANCE FINAMORTAT
+  FINSCHEDULE FINEXTRAPAYOFF FINCARDPAYOFF FINCARDMINPAYOFF FINNPV
+  FINNPVOF FINIRR FINNFV FINMIRR FINPAYBACK FINPAYBACKDISC FINCAGR
+  FINROI FINRSTAT FINYIELD FINDIVGROWTH FINMARGINOF FINMARKUPOF
+  FINSELLFROMMARGIN FINCOSTFROMMARGIN FINBREAKEVENOF FINPAYROLLOF
+  FINSL FINSLBOOK FINSYD FINDB FINFACT FINCOMB FINPERM FINACTUAL
+  FIN360 FIN365 FINANNUAL FINSEMI FINQUARTERLY FINDATE FINDATESHOW
+  FINDATEOF FINISLEAP FINDAYSINMONTH FINSERIAL FINFROMSERIAL
+  FINDATEADD FINDATEADDMONTHS FINDAYS360 FINDATEDIFF FINYEARFRAC
+  FINCOUPONSBEFORE FINLASTCOUPON FINACCRUED FINBONDPRICE FINYTM
+  FINMDUR
+-- seed-alg --
+  ALGSIMPLIFY ALGEXPAND ALGFACTOR ALGSOLVE ALGDESOLVE
+-- seed-neural --
+  NEURALNEW NEURALNEWSCALED NEURALPREDICT NEURALTRAIN
+  NEURALREGRESSPLAN NEURALCLASSPLAN NEURALFIT NEURALPROBS
+  NEURALCLASSOF NEURALSOFTMAX NEURALARGMAX NEURALONEHOT NEURALMSE
+  NEURALACCURACY NEURALLOGLOSS NEURALCLASSACCURACY NEURALSCALERFIT
+  NEURALSCALERAPPLY NEURALSAVE NEURALLOAD NEURALSAVEBIN NEURALLOADBIN
+  NEURALMODEL NEURALMODELSAVE NEURALMODELLOAD NEURALMODELPREDICT
+-- seed-recio --
+  RECOPEN RECCOUNT RECFIELDS RECGET RECALL RECPUT RECAPPEND
+-- seed-isam --
+  ISAMOPEN ISAMCOUNT ISAMFIELDS ISAMHAS ISAMGETOR ISAMALL ISAMRANGE
+  ISAMINSERT ISAMUPDATE ISAMDELETE
+-- seed-scribbler --
+  SCRIBOPEN SCRIBWIDTH SCRIBHEIGHT SCRIBTITLE SCRIBPIXEL SCRIBFILL
+  SCRIBTEXT SCRIBGETPIXEL SCRIBBLIT SCRIBSAVE
+-- seed-net --
+  NETGET NETREQUEST
+-- seed-turtle --
+  TURTLEOPEN TURTLEFORWARD TURTLEBACK TURTLERIGHT TURTLELEFT
+  TURTLESETHEADING TURTLEHOME TURTLEPENUP TURTLEPENDOWN TURTLEGOTO
+  TURTLESETPEN TURTLEWHERE TURTLEBLIT TURTLESAVE
+-- seed-plotter --
+  PLOTOPEN PLOTTITLE PLOTBLIT PLOTSAVE PLOTHISTOGRAM PLOTSCATTER
+  PLOTBOX PLOTBAR PLOTPIE
+-- seed-https --
+  HTTPSTATUS HTTPREASON HTTPBODY HTTPHEADERS HTTPHEADER HTTPSGET
+  HTTPSREQUEST
+-- seed-regex --
+  RXTEST RXFIND RXFINDALL RXGROUPS RXREPLACE RXSPLIT RXQUOTE RXWHY
+-- seed-sparse --
+  SPARSE SPDENSE SPENTS SPNNZ SPGET SPCOLIX SPCOLVS SPCOLDOT SPMATVEC
+  SPVECMAT SPTRANSP SPADDROW SPADDCOL
+-- seed-mip --
+  MIPPROBLEM MIPSOLVE MIPFIXED MPSMIP MPSMIPLOAD
+-- seed-terminal --
+  PRINT
+-- shell --
+  SAVE LOAD TAPESAVE RESET</code></pre>
+
+<h2 id="tools">The tools</h2>
+<table>
+<tr><th>Tool</th><th>What it does</th></tr>
+<tr><td><code>eval</code></td><td>Evaluate lines in order; answers what each printed, said, and left on the stack. A drawing blitted during the line comes back as a picture in the same answer.</td></tr>
+<tr><td><code>define</code></td><td>A whole <code>: NAME &hellip; ;</code> at once.</td></tr>
+<tr><td><code>stack</code></td><td>The stack as it stands.</td></tr>
+<tr><td><code>help</code></td><td>One word's exact stack effect and description, read from the running dictionary.</td></tr>
+<tr><td><code>view</code></td><td>The body of a word the session defined.</td></tr>
+<tr><td><code>words</code></td><td>Every word, grouped by seed — or by what touches the world.</td></tr>
+<tr><td><code>canvas</code></td><td>The current drawing as a PNG, blitted or not.</td></tr>
+<tr><td><code>save</code> / <code>load</code></td><td>Write the session's definitions to a file under the root, and read them back.</td></tr>
+<tr><td><code>tape</code></td><td>Every line entered and what it answered; with a file, written out.</td></tr>
+<tr><td><code>machines</code> / <code>subject</code></td><td>What can be taught, and a teaching card for one of them — the page's prose with the live word list.</td></tr>
+<tr><td><code>reset</code></td><td>A fresh dictionary: empty stack, no tape, only the words it started with.</td></tr>
+<tr><td><code>abandon</code></td><td>A new engine, for a session stuck in a fetch that will never return.</td></tr>
+</table>
+<p>Resources carry the grounding — <code>sparky://grounding/shape</code>,
+<code>&hellip;/reckoner</code>, <code>&hellip;/surface</code>,
+<code>sparky://dictionary</code>, and <code>sparky://machines/{name}</code> for
+a subject card. Two prompts come with it: <code>teach</code> for a lesson in
+one machine's subject, and <code>check-my-working</code> for a student who has
+an answer and wants it recomputed rather than agreed with.</p>
+
+<h2 id="absent">What is deliberately absent</h2>
+<p>A capability grant does not gate a dictionary: withholding
+<code>scribbler</code> from halifax would leave <code>SCRIBOPEN</code>
+registered, listed by <code>WORDS</code>, answered by <code>HELP</code>, and
+returning nonsense to whoever called it. The seed fold is the only thing that
+decides which words exist, which is why Sparky is a mill of its own rather
+than a narrower grant over halifax's.</p>
+<table>
+<tr><th>Left out</th><th>Why</th></tr>
+<tr><td><code>seedbuzzer</code></td><td>Sound. The server does not control the host's audio lifetime, cannot know whether anything is listening, and has no use for it.</td></tr>
+<tr><td><code>seedkeys</code></td><td>Pure, and pointless. It classifies keystrokes, and there is no keystroke source.</td></tr>
+<tr><td><code>seedvt100</code></td><td>Pure, and pointless. It builds escape sequences for a screen that does not exist; a client receiving them in JSON is worse off than one told the word is absent.</td></tr>
+</table>
+<p>Ask <code>HELP BUZZPLAY</code> and you are told it is not a word in this
+dictionary — which is the honest answer, and the one a model can act on.
+<code>INPUT</code>, <code>INPUTLINE</code> and <code>INKEY</code> needed no
+excluding: no seed registers them. Neither does any listening, accepting or
+blocking-wait word — <code>seednet</code> bridges the request half and nothing
+else, so the network surface is outbound by construction rather than by
+policy.</p>
+<p>Files live under one root, and it is a boundary rather than a base: a path
+climbing out with <code>..</code>, an absolute path elsewhere, or a symbolic
+link along the way are all refused before anything is touched. See
+<a href="../hosting.html#grants">Capabilities and grants</a>.</p>
+
+<h2 id="running">Running It</h2>
+<table>
+<tr><th>Command</th><th>What it does</th></tr>
+<tr><td><code>./build.ps1 run</code></td><td>The dictionary at a terminal — the debugging affordance, not the product. End input (Ctrl-Z, or Ctrl-D) to leave: there is no <code>QUIT</code>, because a server has no session to leave and the dictionary a person types at must be the one a client is handed.</td></tr>
+<tr><td><code>./build.ps1 test</code></td><td>The headless suite: no terminal, no display, no network, and no files at all.</td></tr>
+<tr><td><code>./build.ps1 build</code></td><td>Weave the mill into <code>bin/</code>.</td></tr>
+<tr><td><code>hosts/mcp/build.ps1</code></td><td>The server: restore, build, test.</td></tr>
+</table>
+<p>A <code>sparkyrc</code> in the root loads on the way in, exactly as
+<code>halifaxrc</code> does: absent is silence, present is loaded and the word
+count reported, and one that will not load says so and the session starts
+anyway. <code>abandon</code> reads it again, because that is a new session;
+<code>reset</code> does not, because <code>RESET</code> means a fresh
+dictionary and nothing else.</p>
+
+<h2 id="built">How It's Built</h2>
+<table>
+<tr><th>File</th><th>What's in it</th></tr>
+<tr><td><code>mills/sparky/sparky-core.shoddy</code></td><td>The fold — thirty-four seeds in halifax's own order — and the four words the host owns. Pure: nothing here reads, writes or prints.</td></tr>
+<tr><td><code>mills/sparky/sparky.shoddy</code></td><td>The console shell: a prompt, and <code>sparkyrc</code>. Everything that touches the world.</td></tr>
+<tr><td><code>mills/sparky/test.shoddy</code></td><td>The headless suite.</td></tr>
+<tr><td><code>hosts/mcp/Shoddy.Mcp</code></td><td>The session, the headless canvas, the grounding index, the tools, and the protocol loop.</td></tr>
+<tr><td><code>hosts/mcp/sparky</code></td><td>The executable: arguments, the root, and the stdio streams.</td></tr>
+</table>
+<p>It does not include <code>halifax-core.shoddy</code>, and that is the
+decision most likely to be undone by someone tidying. Halifax's layer is a
+terminal REPL — a prompt, a banner, <code>QUIT</code>, the interception that
+lets <code>SAVE</code> mean something typed as a whole line. Sparky's caller is
+a model calling tools, and its door is the engine's own: <code>RckEval</code>,
+which <a href="../machines/reckoner.html">reckoner</a> calls the only door a
+shell needs. Borrowing the REPL would import a prompt model there is no prompt
+for.</p>
+<p>The protocol is hand-rolled over <code>System.Text.Json</code>. A
+preview-versioned protocol SDK would become this repository's most volatile
+dependency and would sit on its least stable layer; the cost of not taking it
+is a few hundred lines.</p>
+
+<h2 id="testing">How It's Tested</h2>
+<p>The mill's own suite grades the fold in both directions — every seed folded
+is present and reachable, and every word of the three that are not folded is
+absent, which is the half that needs a test. A seed that quietly rejoined would
+leave a client holding words the server cannot honestly supply, and nothing
+else in the tree would notice.</p>
+<p>It also runs a fuzz list: every malformed line, every host word misused, and
+the algebra shapes nothing had ever fed. Each is followed by a plain sum, so a
+refusal that lost the state shows up as the next line failing too.</p>
+
+<h2 id="uses">The Machines It Uses</h2>
+<table>
+<tr><th></th><th>Machine</th><th>Why</th></tr>
+<tr><td class="uicon"><a href="../machines/reckoner.html"><img src="../media/icons/reckoner.svg" alt=""></a></td><td><a href="../machines/reckoner.html">reckoner</a></td><td>The whole calculator: the stack, the dictionary, the registers, <code>UNDO</code>, the tape, <code>HELP</code> and <code>WORDS</code>. <code>RckEval</code> is the door every tool goes through.</td></tr>
+<tr><td class="uicon"><a href="../machines/seq.html"><img src="../media/icons/seq.svg" alt=""></a></td><td><a href="../machines/seq.html">seq</a></td><td><code>Filter</code> and <code>Length</code> count the words a session has defined, for the load report.</td></tr>
+<tr><td class="uicon"><a href="../machines/str.html"><img src="../media/icons/str.svg" alt=""></a></td><td><a href="../machines/str.html">str</a></td><td><code>Split</code> and <code>Trim</code> turn <code>sparkyrc</code> into lines, taking the carriage return off a file written on another platform.</td></tr>
+</table>
+<p>And, through the fold, every machine the thirty-four seeds bridge — which is
+most of <a href="../machines/index.html">the library</a>.</p>
+
+<nav class="pagenav pagenav-bottom" aria-label="Mills, in catalog order">
+  <a href="halifax.html" class="prev"><span class="pnwrap"><span class="dir">&larr; Previous mill</span><span class="ttl">halifax</span></span></a>
+  <a href="index.html" class="all all-last">All mills</a>
+</nav>
+
+<footer>Named for the shoddy mills of the West Riding: Useless Things Made
+Useful Through Skill (<a href="../heritage.html">the heritage of the name</a>).<br>
+&copy; 2026 Stephen Vincent Foster</footer>
+</div>
+<script src="../copy.js"></script>
+</body>
+</html>

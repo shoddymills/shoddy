@@ -427,6 +427,55 @@ public class ScribblerTests
         Assert.Equal(new byte[] { 200, 100, 50 }, raw[px..(px + 3)]);
     }
 
+    /// <summary>Png.Encode answers the same bytes Png.Write writes. This
+    /// is the whole warrant for the in-memory path existing: a host with
+    /// no file to write encodes a drawing straight to bytes, and it must
+    /// be the same PNG a SCRIBBLERSAVE would have produced rather than a
+    /// second encoder that drifts from the first.</summary>
+    [Fact]
+    public void EncodeAnswersTheSameBytesWriteWrites()
+    {
+        // A buffer with structure rather than a flat fill: a gradient
+        // across x, a step across y, and an alpha channel that varies —
+        // so that a filter, a stride or a dropped-alpha mistake in one
+        // path and not the other would show.
+        const int w = 37, h = 11;      // deliberately not multiples of anything
+        var rgba = new byte[w * h * 4];
+        for (int y = 0, i = 0; y < h; y++)
+            for (int x = 0; x < w; x++, i += 4)
+            {
+                rgba[i] = (byte)(x * 7);
+                rgba[i + 1] = (byte)(y * 23);
+                rgba[i + 2] = (byte)(x ^ y);
+                rgba[i + 3] = (byte)(x + y);     // dropped by both paths
+            }
+
+        string path = Path.Combine(Path.GetTempPath(), "shoddy-png",
+                                   Guid.NewGuid().ToString("N") + ".png");
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        Png.Write(path, rgba, w, h);
+
+        Assert.Equal(File.ReadAllBytes(path), Png.Encode(rgba, w, h));
+    }
+
+    /// <summary>Both guards, on both paths — and the file path checks
+    /// before it opens anything, so a refused size leaves no file behind
+    /// rather than an empty one.</summary>
+    [Fact]
+    public void EncodeAndWriteRefuseTheSameArguments()
+    {
+        var ok = new byte[2 * 2 * 4];
+        string path = Path.Combine(Path.GetTempPath(), "shoddy-png",
+                                   Guid.NewGuid().ToString("N") + ".png");
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+
+        Assert.Throws<ArgumentException>(() => Png.Encode(ok, 0, 2));
+        Assert.Throws<ArgumentException>(() => Png.Write(path, ok, 0, 2));
+        Assert.Throws<ArgumentException>(() => Png.Encode(new byte[3], 2, 2));
+        Assert.Throws<ArgumentException>(() => Png.Write(path, new byte[3], 2, 2));
+        Assert.False(File.Exists(path), "a refused size left a file behind");
+    }
+
     [Fact]
     public void ScribblerSaveOnAnUnwritablePathIsAShoddyError()
     {

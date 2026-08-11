@@ -37,6 +37,15 @@ folders already hold all four heads.
 | MAUI workload | this table; re-install after every SDK bump | `maui-windows` 10.0.20 (workload set 10.0.302.1) |
 | SkiaSharp | `Shoddy.Maui.csproj` | see the csproj |
 
+`global.json` states the SDK this lane was built with, and `maui.yml` reads
+it through `setup-dotnet`'s `global-json-file` — so the runner installs that
+exact SDK and the workload above pairs with the SDK it was tested against.
+Its `rollForward` is `latestMinor`, which makes the version a **floor**
+rather than a lock: core CI asks `setup-dotnet` for `10.0.x` and the headless
+job runs a rolling `mcr.microsoft.com/dotnet/sdk:10.0` container, and neither
+must break the day .NET ships a new feature band. Bump the version here when
+you bump the workload, and re-run `dotnet workload install maui-windows`.
+
 Workloads live inside the SDK directory and vanish with it: after any
 SDK bump, re-run `dotnet workload install maui-windows` (and on the
 Mac, the full `maui` workload) and update this table.

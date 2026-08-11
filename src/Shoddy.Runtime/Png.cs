@@ -33,12 +33,44 @@ public static class Png
     /// the caller turns that into a Shoddy error.</summary>
     public static void Write(string path, byte[] rgba, int width, int height)
     {
+        // Checked BEFORE the file is opened, which is what keeps a bad
+        // size from leaving a zero-byte file behind.
+        Check(rgba, width, height);
+        using var file = new FileStream(path, FileMode.Create, FileAccess.Write);
+        Encode(file, rgba, width, height);
+    }
+
+    /// <summary>The same PNG, in memory. A host with no file to write —
+    /// one handing a drawing straight back to whoever asked for it —
+    /// needs the bytes rather than a path, and writing a scratch file to
+    /// read it back would put something on disk that was never a file,
+    /// need cleanup on every error path, and race a second caller using
+    /// the same name. Byte for byte what Write writes.</summary>
+    public static byte[] Encode(byte[] rgba, int width, int height)
+    {
+        Check(rgba, width, height);
+        var buf = new MemoryStream();
+        Encode(buf, rgba, width, height);
+        return buf.ToArray();
+    }
+
+    /// <summary>The two argument guards, in one place so the file path
+    /// and the memory path cannot come to disagree about what a valid
+    /// buffer is.</summary>
+    static void Check(byte[] rgba, int width, int height)
+    {
         if (width < 1 || height < 1)
             throw new ArgumentException($"PNG: size must be at least 1x1, got {width}x{height}");
         if (rgba.Length < width * height * 4)
             throw new ArgumentException("PNG: pixel buffer is shorter than its stated size");
+    }
 
-        using var file = new FileStream(path, FileMode.Create, FileAccess.Write);
+    /// <summary>The whole file, to any stream: signature, IHDR, IDAT,
+    /// IEND, in that order. Chunk already took a Stream and Deflate
+    /// already returned a byte[], so this body is Write's as it stood
+    /// and neither of those moved.</summary>
+    static void Encode(Stream file, byte[] rgba, int width, int height)
+    {
         file.Write(Signature);
 
         Span<byte> ihdr = stackalloc byte[13];

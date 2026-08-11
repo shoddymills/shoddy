@@ -413,6 +413,14 @@ The only prerequisite is the [.NET 10 runtime](https://dotnet.microsoft.com/down
 set: a bare `Include "seq.shoddy"` resolves in any folder you open. See
 [the setup guide](https://shoddymills.github.io/shoddy/setup.html).
 
+The other download on that release page is **sparky** — the reckoner as an
+MCP server, for a caller that is an AI agent rather than a person. One
+self-contained executable per OS, needing no repository, no .NET install and
+no editor: unpack the archive for your platform and point any MCP client at
+it. [The sparky page](https://shoddymills.github.io/shoddy/mills/sparky.html)
+carries the registration shapes for Claude Desktop, Claude Code and VS Code,
+and the grounding prompt the server also serves itself.
+
 ---
 
 ### Build from source

@@ -211,6 +211,33 @@ if (Object.keys(navs).length > 1) {
       { console.log("nav differs on " + where.join(", ") + ":\n  has  " + key + "\n  want " + majority); bad++; }
 }
 
+// ---- sitemap: every published page has an entry, every entry a page ----
+// Nothing gated the sitemap, and it rotted the way ungated things do:
+// eleven pages were absent by the time anyone looked, three of them for
+// months. The expectation is rebuilt from the tree: every docs page maps
+// to one URL (directory indexes to the bare directory URL, the docs root
+// to the site root), seeds stay out exactly as they do in the catalogs,
+// and 404.html is the page whose job is to not be arrived at on purpose
+// (the pages walk above already excludes it).
+{
+  const SITE = "https://shoddymills.github.io/shoddy/";
+  const locs = new Set(
+    [...read("docs/sitemap.xml").matchAll(/<loc>([^<]+)<\/loc>/g)].map(m => m[1]));
+  const expected = new Map();   // loc -> page path, for the message
+  for (const p of pages) {
+    const rel = path.relative(path.join(root, "docs"), p).replace(/\\/g, "/");
+    if (rel.startsWith("machines/seed")) continue;
+    const loc = rel === "index.html" ? SITE
+      : rel.endsWith("/index.html") ? SITE + rel.slice(0, -"index.html".length)
+      : SITE + rel;
+    expected.set(loc, "docs/" + rel);
+  }
+  for (const [loc, page] of expected)
+    if (!locs.has(loc)) { console.log("sitemap: no entry for " + page + " (" + loc + ")"); bad++; }
+  for (const loc of locs)
+    if (!expected.has(loc)) { console.log("sitemap: entry with no page behind it: " + loc); bad++; }
+}
+
 // ---- grounding: the copyable blocks handed to an assistant must agree ----
 // Three pages carry a block of Shoddy facts meant to be pasted into a session.
 // They are deliberately separate artifacts (each has to work alone), so they

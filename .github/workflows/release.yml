@@ -21,6 +21,7 @@ on:
 
 permissions:
   contents: write
+  deployments: write
 
 concurrency:
   group: release-${{ github.ref }}
@@ -133,3 +134,23 @@ jobs:
             artifacts/publish/sparky-* \
             --title "${{ steps.ver.outputs.tag }}" \
             --notes-file NOTES.md
+
+      # The repo home's Deployments sidebar is where a passer-by sees what
+      # this repository puts into the world - Pages lists the docs site
+      # there. This records sparky beside it, an environment whose latest
+      # deployment links the release its binaries live on. required_contexts
+      # is emptied because the tag build IS the gate; asking the deployment
+      # to wait on status checks would deadlock a job that is itself the
+      # only check.
+      - name: Record the sparky deployment
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          id=$(gh api "repos/${{ github.repository }}/deployments" \
+            -f ref="${{ steps.ver.outputs.tag }}" -f environment=sparky \
+            -f description="sparky - the reckoner as an MCP server, one self-contained executable per OS" \
+            -F auto_merge=false -f "required_contexts[]" --jq .id)
+          gh api "repos/${{ github.repository }}/deployments/$id/statuses" \
+            -f state=success \
+            -f environment_url="https://github.com/${{ github.repository }}/releases/tag/${{ steps.ver.outputs.tag }}" \
+            -f description="${{ steps.ver.outputs.tag }}"

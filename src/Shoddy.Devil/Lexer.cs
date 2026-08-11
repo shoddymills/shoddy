@@ -217,7 +217,11 @@ public static class Lexer
         return false;
     }
 
-    static IEnumerable<string> LibDirs()
+    /// <summary>Public because the machine-DLL dependency walk resolves
+    /// against the same library: a mill's core woven into its own bin/
+    /// declares dependencies that live in machines/bin, and finding them
+    /// must follow the same route an Include does.</summary>
+    public static IEnumerable<string> LibDirs()
     {
         string? env = Environment.GetEnvironmentVariable("SHODDYLIB");
         // The reckoner seeds live one level deeper, beside the machines

@@ -10,6 +10,7 @@
 #   ./build.ps1 machines              compile every machine to a machine DLL
 #   ./build.ps1 stage                 stage the mill + machines into the extension
 #   ./build.ps1 vsix [bump]           package the VS Code extension (.vsix)
+#   ./build.ps1 install               install the packaged .vsix into VS Code
 #   ./build.ps1 clean                 remove build output
 #   ./build.ps1 help                  show this help
 #
@@ -304,6 +305,32 @@ function Invoke-Vsix {
     finally { Pop-Location }
 }
 
+# The other target with a dependency outside the repo's tools — the
+# `code` CLI — and, like vsce, it is REPORTED rather than acquired. It
+# installs the .vsix for the version package.json currently names, and
+# refuses if that exact package has not been built: installing whatever
+# .vsix happens to be newest is how a stale extension gets mistaken for
+# a fresh one, which is the failure this target exists to end.
+#
+# Deliberately NOT part of `all`: release.yml runs `all` on a runner
+# with no VS Code, and installing into an editor is a workstation act,
+# not a build step. Locally the pair is: ./build.ps1 all, then install.
+function Invoke-Install {
+    if (-not (Get-Command code -ErrorAction SilentlyContinue)) {
+        [Console]::Error.WriteLine('install needs the VS Code CLI (code), which is not on PATH.')
+        exit 1
+    }
+    $ver = (Get-Content (Join-Path 'vscode-shoddy' 'package.json') -Raw | ConvertFrom-Json).version
+    $pkg = Join-Path 'vscode-shoddy' "vscode-shoddy-$ver.vsix"
+    if (-not (Test-Path $pkg)) {
+        [Console]::Error.WriteLine("no package for the current version: $pkg is not there.")
+        [Console]::Error.WriteLine('run ./build.ps1 vsix (or all) first - install does not guess at a stale package.')
+        exit 1
+    }
+    Native code --install-extension $pkg --force
+    Write-Host "installed $pkg - reload VS Code windows to pick it up."
+}
+
 function Invoke-Clean {
     if (Test-Path bin) { Remove-Item -Recurse -Force bin }
     if (Test-Path artifacts) { Remove-Item -Recurse -Force artifacts }
@@ -347,9 +374,10 @@ switch ($Command) {
     'machines' { Invoke-Machines }
     'stage' { Invoke-Stage }
     'vsix' { Invoke-Vsix $File }
+    'install' { Invoke-Install }
     'clean' { Invoke-Clean }
     { $_ -in 'help', '-h', '--help' } {
-        Get-Content $PSCommandPath | Select-Object -Skip 1 -First 24 |
+        Get-Content $PSCommandPath | Select-Object -Skip 1 -First 25 |
             ForEach-Object { $_ -replace '^#\s?', '' }
     }
     default {

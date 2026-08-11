@@ -11,6 +11,7 @@
 #   ./build.sh machines              compile every machine to a machine DLL
 #   ./build.sh stage                 stage the mill + machines into the extension
 #   ./build.sh vsix [bump]           package the VS Code extension (.vsix)
+#   ./build.sh install               install the packaged .vsix into VS Code
 #   ./build.sh clean                 remove build output
 #   ./build.sh help                  show this help
 #
@@ -286,13 +287,40 @@ case "${1:-help}" in
             fi
         )
         ;;
+    install)
+        # The other target with a dependency outside the repo's tools —
+        # the `code` CLI — and, like vsce, it is REPORTED rather than
+        # acquired. It installs the .vsix for the version package.json
+        # currently names, and refuses if that exact package has not
+        # been built: installing whatever .vsix happens to be newest is
+        # how a stale extension gets mistaken for a fresh one, which is
+        # the failure this target exists to end.
+        #
+        # Deliberately NOT part of `all`: release.yml runs `all` on a
+        # runner with no VS Code, and installing into an editor is a
+        # workstation act, not a build step. Locally the pair is:
+        # ./build.sh all, then install.
+        command -v code >/dev/null 2>&1 || {
+            echo "install needs the VS Code CLI (code), which is not on PATH." >&2
+            exit 1
+        }
+        ver=$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' vscode-shoddy/package.json | head -1)
+        pkg="vscode-shoddy/vscode-shoddy-$ver.vsix"
+        [ -f "$pkg" ] || {
+            echo "no package for the current version: $pkg is not there." >&2
+            echo "run ./build.sh vsix (or all) first - install does not guess at a stale package." >&2
+            exit 1
+        }
+        code --install-extension "$pkg" --force
+        echo "installed $pkg - reload VS Code windows to pick it up."
+        ;;
     clean)
         rm -rf bin artifacts machines/bin machines/seeds/bin "$STAGE_MILL" "$STAGE_LIB"
         find src -type d \( -name bin -o -name obj \) -prune -exec rm -rf {} +
         echo "cleaned."
         ;;
     help|-h|--help)
-        sed -n '2,26p' "$SELF" | sed 's/^# \{0,1\}//'
+        sed -n '2,27p' "$SELF" | sed 's/^# \{0,1\}//'
         ;;
     *)
         echo "unknown command: $1" >&2

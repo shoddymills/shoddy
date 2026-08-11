@@ -1,0 +1,110 @@
+name: MCP
+
+# The MCP host lane's CI, separate from core CI and path-filtered to
+# hosts/mcp/** — core CI ignores hosts/** entirely, so without this file
+# nothing builds or tests this lane at all.
+#
+# ubuntu-latest, deliberately: this lane has no platform head, no window,
+# no audio and no workload to install. If it ever stops building on Linux
+# something has been added that does not belong in it.
+#
+# It asks setup-dotnet for 10.0.x rather than reading global.json, as
+# ci.yml and release.yml do. The root global.json is a FLOOR
+# (rollForward: latestMinor), so whatever 10.x the runner installs
+# satisfies it; the MAUI lane reads the file directly because its
+# workload has to pair with the SDK it was tested against, and this lane
+# has no workload at all.
+
+on:
+  push:
+    branches: [main]
+    paths: ['hosts/mcp/**', 'mills/sparky/**', '.github/workflows/mcp.yml']
+  pull_request:
+    paths: ['hosts/mcp/**', 'mills/sparky/**', '.github/workflows/mcp.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The one-way dependency rule (B2.2), hosts side: nothing under
+      # hosts/ references Shoddy.Mill or Shoddy.Compiler (B2.4). The
+      # weave arrives through ShoddyWeave, driven by bin/mill.
+      - name: One-way dependency check
+        run: |
+          if grep -rE 'Shoddy\.Mill\.csproj|Shoddy\.Compiler\.csproj' hosts --include='*.csproj'; then
+            echo 'hosts/ must not reference Shoddy.Mill or Shoddy.Compiler (B2.4)'; exit 1
+          fi
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Publish the mill (ShoddyWeave drives it)
+        run: dotnet publish src/Shoddy.Mill -c Release -o bin
+
+      # The mill's own suite first: if the FOLD is wrong there is no
+      # point grading the server over it.
+      - name: The mill's headless suite
+        run: ./build.sh test
+        working-directory: mills/sparky
+
+      - name: Build the MCP lane
+        working-directory: hosts/mcp
+        run: ./build.sh
+
+      - name: Test the MCP lane
+        working-directory: hosts/mcp
+        run: ./build.sh test
+
+      - name: Release build
+        working-directory: hosts/mcp
+        run: ./build.sh release
+
+      # No third-party package rides along: the protocol is hand-rolled
+      # over System.Text.Json, and this is what says so a year from now.
+      - name: Assert the lane carries no window, audio or toolchain
+        run: |
+          rel=artifacts/bin/sparky/release
+          test -f "$rel/sparky.dll" || { echo "no executable in $rel"; exit 1; }
+          test -f "$rel/Shoddy.Machines.Sparky-core.dll" || { echo 'missing the woven core'; exit 1; }
+          for bad in Shoddy.Compiler Shoddy.Devil Shoddy.Mill Silk.NET OpenAL glfw Microsoft.CodeAnalysis SkiaSharp; do
+            if ls "$rel" | grep -qi "$bad"; then echo "the server links past its floor: $bad"; exit 1; fi
+          done
+
+      # The three seeds that are not folded must not be present as
+      # machine assemblies either — the fold is the mechanism, and this
+      # is the mechanism observed from outside.
+      - name: Assert the excluded seeds are not linked
+        run: |
+          rel=artifacts/bin/sparky/release
+          for bad in Seedbuzzer Seedkeys Seedvt100 Buzzer.dll Keys.dll Vt100.dll; do
+            if ls "$rel" | grep -q "Shoddy.Machines.$bad"; then
+              echo "an excluded seed is in the server's closure: $bad"; exit 1
+            fi
+          done
+
+      # The publish target is what a release attaches, and a target only
+      # release.yml exercises would rot between releases the way any
+      # unrun script does. Cut the archives exactly as release.yml will.
+      - name: Publish the release archives
+        working-directory: hosts/mcp
+        run: ./build.sh publish
+
+      # Then prove the shipped shape: unpack the linux archive and drive
+      # the single file over stdio — no client, no repo and no installed
+      # runtime in the loop. This is the exact artifact a user downloads.
+      - name: The shipped binary answers on stdio
+        run: |
+          tar -xzf artifacts/publish/sparky-linux-x64.tar.gz -C /tmp
+          mkdir -p /tmp/sparky-root
+          printf '%s\n' \
+            '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}' \
+            '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"eval","arguments":{"lines":["{ 12500 13100 11900 } MEAN"]}}}' \
+            | /tmp/sparky --root /tmp/sparky-root | tee answers.jsonl
+          grep -q 'x: 12500' answers.jsonl

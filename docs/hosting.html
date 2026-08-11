@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Shoddy inside your .NET app — ShoddyWeave in the csproj, ShoddyHost at runtime, and the Reckoner as the worked example.">
+<title>Hosting | Shoddy</title>
+<link rel="stylesheet" href="style.css">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="alternate icon" href="favicon.ico" sizes="48x48">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+</head>
+<body>
+<div class="topbar"><div class="inner">
+  <div class="row">
+    <a class="phase" href="index.html"><img class="mark" src="media/brand/shoddy-icon.svg" alt="" width="23" height="23">Shoddy · Documentation</a>
+    <span class="spacer"></span>
+    <nav class="docnav meta" aria-label="About"><a href="heritage.html">Heritage</a><a href="authorship.html">Authorship</a></nav>
+  </div>
+  <nav class="docnav main" aria-label="Documentation"><a href="tutorials/index.html">Tutorials</a><a href="guide.html">Guide</a><a href="quickref.html">Reference</a><a href="machines/index.html">Machines</a><a href="mills/index.html">Mills</a><a href="stack.html">Stack</a><a href="spec.html">Spec</a><a href="setup.html">Setup</a><a href="vscode.html">VS Code</a><a href="assistants.html">AI</a><a href="build.html">Toolchain</a><span class="here">Hosting</span><a href="errors.html">Errors</a></nav>
+</div></div>
+<div class="wrap">
+<header class="mast">
+<p class="eyebrow">Shoddy Documentation</p>
+<h1 id="hosting">Hosting</h1>
+<p class="kicker">Shoddy inside your .NET app — ShoddyWeave in the csproj, ShoddyHost at runtime, and the Reckoner as the worked example.</p>
+</header>
+
+<p>A mill is not only a console program. The same woven assembly that
+<code>mill run</code> executes at a desktop can run inside any .NET
+application — a WinUI window, a web service, a phone — <em>whole and
+unmodified</em>. The host supplies only the edges: where the text goes,
+where keystrokes come from, what a window or a speaker means. Everything
+between the edges is the mill's, exactly as it was tested.</p>
+<div class="takeaway"><b>This page is for the C# side of the seam.</b>
+Writing the mill itself is the rest of this documentation —
+<a href="guide.html">the guide</a>, <a href="build.html">the toolchain</a>,
+<a href="mills/index.html">the mills</a>. Read on when you have a mill (or
+want one) and a .NET app that should carry it.</div>
+
+<h2 id="weave">1. The weave in your csproj</h2>
+<p>ShoddyWeave (<code>src/Shoddy.Build</code>) turns a declared mill folder
+into ordinary build inputs. One item per mill, per mode:</p>
+<pre><code class="language-xml">&lt;Import Project="...\Shoddy.Build\build\Shoddy.Build.props" /&gt;
+
+&lt;ItemGroup&gt;
+  &lt;ShoddyMill Include="..\mills\pac-vt100" Mode="T"
+              Grant="terminal;clock;random;vt100" /&gt;
+&lt;/ItemGroup&gt;
+
+&lt;Import Project="...\Shoddy.Build\build\Shoddy.Build.targets" /&gt;</code></pre>
+<p>Every <code>dotnet build</code> then runs the mill's half of the
+pipeline, in order:</p>
+<table>
+<tr><th>Stage</th><th>What it does</th></tr>
+<tr><td><b>verify</b></td><td>checks <code>mill.manifest</code> against the tree — a stale machines section is a build error naming the drift</td></tr>
+<tr><td><b>gate</b></td><td>default-deny over the manifest's declared capabilities; a refusal prints the exact <code>Grant="…"</code> line to add</td></tr>
+<tr><td><b>weave</b></td><td>compiles the mill — incremental, so an untouched mill launches nothing</td></tr>
+<tr><td><b>reference</b></td><td>the woven DLL and its transitive machine closure become references, all copy-local</td></tr>
+<tr><td><b>assets</b></td><td>declared assets are copied beside the output under the mill's own layout</td></tr>
+<tr><td><b>embed</b></td><td><code>mill.manifest</code> is embedded as a resource, for hosts that read their mills at runtime</td></tr>
+</table>
+<p>The toolchain computes every name and path itself; the targets only
+orchestrate, so there is no second derivation to drift. The mill is found
+three ways, in order: the <code>ShoddyToolPath</code> property, a local
+.NET tool manifest carrying <code>mill</code>, then PATH.</p>
+<p><strong>The manifest is the contract.</strong> Each mill folder carries a
+<code>mill.manifest</code> (schema: <code>docs/schemas/mill.manifest.json</code>)
+declaring its name, core, shell, modes, capabilities, and machine closure —
+hand-authored identity on top, a generated machines section the verify stage
+keeps honest. The two modes are the two things a mill can be to a host:</p>
+<ul>
+<li><p><strong>Mode N</strong> (native): the mill's <em>pure core</em> is
+woven as a machine DLL — <code>Shoddy.Machines.&lt;Core-stem&gt;</code> —
+and its words become ordinary .NET calls. The host owns the loop; §2.</p></li>
+<li><p><strong>Mode T</strong> (terminal): the mill's <em>shell</em> is woven
+as a complete console program — an assembly named after the shell file's stem —
+and runs whole through pipes the host supplies. The mill owns the loop; §3.</p></li>
+</ul>
+<p>One folder may be declared twice, once per mode: the Reckoner does exactly
+that with its calculator mill, calling core words natively while also able to
+run the same mill as a terminal program.</p>
+
+<h2 id="mode-n">2. Mode N — words as calls</h2>
+<p><code>ShoddyHost.Load</code> reads the woven machine assemblies' manifests
+(attribute reading only — nothing from the toolchain ships in your app) and
+owns the one engine the words run against:</p>
+<pre><code class="language-csharp">using System.Reflection;
+using Shoddy.Hosting;
+
+var host = ShoddyHost.Load(Assembly.Load("Shoddy.Machines.Widget-core"));
+double n = host.Word("Total").Call(ShoddyValue.Num(21)).AsNum();</code></pre>
+<p><code>Word</code> finds a word case-insensitively — every Shoddy name is —
+and an unknown word throws by name rather than answering null.
+<code>Call</code> is the marshalling layer: it pushes the arguments, runs the
+word, and pops the answer, so the caller never sees the engine's stack.
+<code>ShoddyValue</code> carries the values across: <code>Num</code>,
+<code>Str</code>, <code>Bool</code>, <code>ListOf</code> in;
+<code>AsNum</code>, <code>AsStr</code>, <code>AsBool</code>,
+<code>AsList</code>, and <code>Field("Name")</code> for records, out. A
+word's own abort — <code>Error(msg)</code> — reaches the caller as the same
+exception it would be at the console, line number and all.</p>
+<p>Two rules of the road: words go <em>one at a time</em> (the engine is a
+single value stack, not a thread-safe service), and a word that leaves more
+than one value on the stack is refused by name — a silently dropped value is
+a debugging session.</p>
+<p><code>ShoddyHostOptions</code> is where run-time resources meet build-time
+permission: <code>Output</code>/<code>Input</code>/<code>Args</code> for the
+engine's I/O, <code>AllowNet</code> to arm the gated TCP builtins for this
+engine and no other, and <code>FileRoot</code> — the directory a
+<code>file</code>-granted mill's relative paths live under, validated to
+exist at load. The grant said the mill <em>may</em>; the option says
+<em>where</em>. §5 has the whole story.</p>
+
+<h2 id="mode-t">3. Mode T — a program, whole</h2>
+<p>A Mode T mill is the program you already tested at the console, run
+through pipes:</p>
+<pre><code class="language-csharp">Task&lt;int&gt; run = ShoddyHost.RunWovenAsync(
+    Assembly.Load("pac"),      // the shell's stem names the assembly
+    outputWriter,              // where Print and VT100 escapes land
+    inputReader,               // where Input and InKey read from
+    Array.Empty&lt;string&gt;());    // the program's own arguments</code></pre>
+<p>The woven entry type is found per-assembly by name, never referenced in
+code — which is what lets several woven games coexist in one host, as the
+Reckoner's shelf does. The task completes with the program's exit code when
+its <code>Main</code> returns.</p>
+<p><strong>The piped-reader contract</strong> is the host's half of the
+bargain, and it is small:</p>
+<ul>
+<li><p><code>Peek()</code> answers <code>-1</code> when nothing is pending —
+that is how <code>InKey</code> stays non-blocking through a pipe, answering
+<code>""</code> between keystrokes so a game loop can poll between
+frames.</p></li>
+<li><p><code>Read</code>/<code>ReadLine</code> block until input arrives —
+that is <code>Input</code> waiting at its prompt.</p></li>
+<li><p>Feed special keys as their VT100 application-mode sequences, whole —
+an <code>ESC</code> with <code>O</code> or <code>[</code> straight behind it
+comes back to <code>InKey</code> as the whole three-character sequence
+<code>EvalKey</code> classifies, exactly as at a live terminal.</p></li>
+<li><p>Cancellation is cooperative: the mill unblocks when the host's pipe
+does, so cancel by ending the input stream.</p></li>
+</ul>
+<p>Reading the console while a scribbler window is open is refused —
+<em>at a live console</em>, where the two input channels are routed by OS
+focus and the read would silently hang. Redirected or host-piped input has
+no focus to lose, so a host may keep a canvas open beside a prompt and both
+work. <a href="errors.html">The errors page</a> carries the full
+statement.</p>
+
+<h2 id="seams">4. The three seams a host supplies</h2>
+<p>Everything a mill can do beyond pure computation reaches the world
+through a seam the host fills in. Three of them carry all the games:</p>
+<table>
+<tr><th>Seam</th><th>The mill's side</th><th>The host's side</th></tr>
+<tr><td><b>terminal</b></td><td><code>Print</code>, <code>Input</code>, <code>InKey</code>, VT100 escapes</td><td>the <code>TextWriter</code>/<code>TextReader</code> handed to <code>RunWovenAsync</code> — the Reckoner backs them with a screen-grid control and a key queue</td></tr>
+<tr><td><b>scribbler</b></td><td><code>ScribblerOpen</code>, drawing words, the event queue</td><td><code>ScribblerRegistry.CreateScribbler</code>: answer a handle, present the blits it pushes, feed pointer/key/tick events into its queue, send <code>Quit</code> when your window closes</td></tr>
+<tr><td><b>buzzer</b></td><td><code>Sound</code>, <code>NoteOn</code>, queues, gain</td><td>the <code>BuzzerRegistry</code> delegates, behind the shared engine that owns channels, pooling and ramps — the host supplies only a platform audio sink</td></tr>
+</table>
+<p>The deliberate shape: the registries are <em>null by default</em>, and a
+mill run against an empty seam computes exactly as it would headless — which
+is how the whole surface is tested without a window on CI, and how your host
+can adopt one seam at a time. A sink or backend installed before the run is
+simply what the mill finds when it asks.</p>
+
+<h2 id="grants">5. Capabilities and grants</h2>
+<p>The <code>Grant</code> attribute is your project's capability statement,
+and the gate is default-deny: a capability the manifest declares and the
+project has not granted fails the <em>build</em>, and the refusal prints the
+exact line to add. Granting is deliberate, so refusal is self-documenting.</p>
+<p>Two capabilities have run-time teeth beyond the gate:</p>
+<ul>
+<li><p><strong><code>file</code></strong> — the grant is permission; the
+<em>root</em> is a run-time argument. A project that granted
+<code>file</code> compiles in a fail-fast: every <code>ShoddyHost.Load</code>
+must supply <code>FileRoot</code>, or it dies at startup naming the mill —
+never by silently writing beside the executable.</p>
+<p>The root is a <em>boundary</em>, not merely a base. Every file word in
+the engine resolves its path against that directory and is refused if the
+result would land outside it: a path climbing out with <code>..</code>, an
+absolute path elsewhere, and a symbolic link anywhere along the way are all
+turned away before anything is touched. The aborting words stop with
+<code>{WORD}: '{path}' is outside the file root</code>; the guarded twins
+report it in their own shape, and <code>FileExists</code> answers
+<code>False</code> so nothing outside can be probed for. Your host does not
+need to change its working directory to get this, and one that does gets
+the same answer.</p>
+<p>It is a boundary against the <em>mill</em>, not against a hostile process
+sharing the root — a component swapped for a link between the check and the
+open that follows it would need the operating system to prevent, not a path
+comparison. <code>mill run</code> sets no root and is unaffected: it is a
+general-purpose tool run by someone who could open the file in an editor
+anyway.</p></li>
+<li><p><strong><code>net</code></strong> — Mode N engines are armed
+per-engine through <code>ShoddyHostOptions.AllowNet</code>. A Mode T mill
+constructs its own engine inside the woven program, so granting it
+<code>net</code> arms <em>the whole process for its lifetime</em> —
+all-or-nothing, exactly as <code>mill run --allow-net</code> behaves at the
+desktop. Two concurrent Mode T mills in one process share the switch; a host
+that needs them isolated runs them in separate processes.</p></li>
+</ul>
+<p>What each capability needs from each platform the host targets —
+permissions, entitlements, manifest lines — is tabulated in the repo at
+<code>hosts/maui/CAPABILITIES.md</code>. The short version: only
+<code>net</code> costs anything anywhere, and only a manifest line.</p>
+
+<h2 id="reckoner">6. The worked example — the Shoddy Reckoner</h2>
+<p>The repo's own host is <code>hosts/maui</code>: <code>Shoddy.Maui</code>
+holds the reusable pieces (the session loop, the terminal control, the
+canvas view, the audio sinks), <code>shoddy-reckoner</code> is the app, and
+<code>Shoddy.Maui.Tests</code> proves both without opening a window. Build
+the mill first, then run it:</p>
+<pre><code class="language-sh">./build.ps1                # repo root: publishes bin/mill  (./build.sh elsewhere)
+dotnet run -c Release --project hosts/maui/shoddy-reckoner</code></pre>
+<p>The app is a calculator with a games shelf, and the shelf is the point:
+five mills from <a href="mills/index.html">the catalog</a>, each running
+unmodified, each exercising a different part of the seam:</p>
+<table>
+<tr><th>Page</th><th>Mill</th><th>What it demonstrates</th></tr>
+<tr><td>Calculator</td><td><a href="mills/halifax.html">halifax</a></td><td>Mode N — core words called natively, one line at a time, no console anywhere</td></tr>
+<tr><td>Pac-Man</td><td><a href="mills/pac-vt100.html">pac-vt100</a></td><td>Mode T, raw keys — a fixed 80&times;26 grid, VT100 escapes drawn by the terminal control, <code>InKey</code> polled through the pipe</td></tr>
+<tr><td>Oregon Trail</td><td><a href="mills/oregon.html">oregon</a></td><td>Mode T, line input — a scrolling transcript with the platform's own entry beneath it, keyboard, IME and clipboard kept</td></tr>
+<tr><td>Mungo Caverns</td><td><a href="mills/mungo-caverns.html">mungo-caverns</a></td><td>Mode T with <code>file</code> — SAVE and LOAD land in the app's own storage</td></tr>
+<tr><td>Invaders</td><td><a href="mills/invaders.html">invaders</a></td><td>the scribbler seam — the mill opens its window, the host presents it as a page and feeds it events</td></tr>
+<tr><td>Devil's Dust</td><td><a href="mills/devils-dust.html">devils-dust</a></td><td>scribbler + buzzer together — mouse, tabs, and the platform audio sink behind the shared engine</td></tr>
+</table>
+<p>The test project is as much of the example as the app: the same woven
+mills, driven through the same pipes, asserted headless — a game boots to
+its first prompt, answers travel the pipe, the frame rate holds, the audio
+graph provably pulls samples. If you are writing a host, read
+<code>hosts/maui/Shoddy.Maui.Tests</code> before anything else: it is the
+seam contract, executable.</p>
+
+<h2 id="consuming">7. Consuming from your own repo</h2>
+<p>Two <code>dotnet new</code> templates in <code>templates/</code> scaffold
+the shapes above: <code>shoddy-console</code> (a console host calling a
+mill's words — ShoddyWeave wired, grants parameterized, F5 debugging both
+sides) and <code>shoddy-lib</code> (a mill wrapped as a class library).
+Until Shoddy's packages publish, consumption is checkout-relative: the
+templates reference <code>Shoddy.Hosting</code> and import
+<code>Shoddy.Build</code> straight from a Shoddy checkout beside your repo,
+and the packaged import becomes a one-line swap when the NuGet graduation
+lands.</p>
+<p>Debugging crosses the seam too: under Debug, ShoddyWeave weaves the
+instrumented core and compiles in the attach service, so one F5 runs the
+.NET debugger on your host and the Shoddy debugger on the mill at once —
+release builds carry neither. Three constraints every host inherits: one
+debuggee per process, a paused core blocks its calling thread, and
+breakpoints key on the source paths the build wove.</p>
+
+<footer>Named for the shoddy mills of the West Riding: Useless Things Made
+Useful Through Skill (<a href="heritage.html">the heritage of the name</a>).<br>
+&copy; 2026 Stephen Vincent Foster</footer>
+</div>
+</body>
+</html>

@@ -1,23 +1,22 @@
 // Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
 // Licensed under the MIT License. See the LICENSE file in the project root.
 
-using Shoddy.Compiler;
 using Shoddy.Devil;
 using Shoddy.Runtime;
 
-namespace Shoddy.Mill;
+namespace Shoddy.Compiler;
 
 /// <summary>
-/// How an Include becomes a compiled machine. Both entry points that read
-/// a program — `mill run`/`weave`, and the debug adapter — go through
-/// here, so the debugger cannot end up compiling a different program than
-/// the runner.
+/// How an Include becomes a compiled machine. Every entry point that
+/// reads a program — the shared verbs, `mill run`, and the debug
+/// adapter — goes through here, so the debugger cannot end up compiling
+/// a different program than the runner.
 ///
 /// A machine is a runtime. It is compiled, and it is used compiled: its
 /// source shipping alongside is for reading, not for splicing into
 /// whoever includes it. Everything below follows from that.
 /// </summary>
-static class MachineResolve
+public static class MachineResolve
 {
     /// <summary>Resolve one Include. Returns true when a machine DLL
     /// satisfies it, false to let the Lexer splice the source.
@@ -28,6 +27,13 @@ static class MachineResolve
     /// spread itself across a dozen files.</summary>
     public static bool Resolve(MachineSet machines, string sbPath, string? qual)
     {
+        // Only a file in a machine library is a machine. A program's own
+        // siblings splice — and keep splicing even when a woven artifact
+        // sits beside them: a mill whose core has been machine-woven
+        // (ShoddyWeave does, into the mill's own bin/) must not have its
+        // shell and tests quietly rescoped by the build's leftovers.
+        if (!Lexer.IsMachineLibrary(sbPath)) return false;
+
         string dll = MachineSet.DllPathFor(sbPath);
 
         if (!File.Exists(dll))
@@ -36,7 +42,6 @@ static class MachineResolve
             // includer's flat table and quietly undo the scoping — so
             // whether a program is legal would depend on what happened to
             // be built. Build it instead; the mill already knows how.
-            if (!Lexer.IsMachineLibrary(sbPath)) return false;
             Console.Error.WriteLine(
                 $"mill: machine {Path.GetFileName(sbPath)} is not built — building");
             Build(sbPath);

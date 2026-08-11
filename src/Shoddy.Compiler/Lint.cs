@@ -105,7 +105,7 @@ public static class Lint
     /// resolves. Counting it would silence a warning that is telling the
     /// truth. The test for "is this a real use" is whether the build fails
     /// without the Include, and for an annotation alone it does not.</summary>
-    static HashSet<string> UsedWords(ShoddyProgram prog)
+    internal static HashSet<string> UsedWords(ShoddyProgram prog)
     {
         var used = new HashSet<string>();
         void walkPat(Pat? p)

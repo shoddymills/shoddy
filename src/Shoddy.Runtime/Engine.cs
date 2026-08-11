@@ -37,6 +37,13 @@ public sealed partial class Engine
     // so a standalone woven exe honors the same switch). Read once at
     // construction: policy is fixed for the life of a run.
     readonly bool netOK = Environment.GetEnvironmentVariable("SHODDY_ALLOW_NET") == "1";
+    // The filesystem is gated the same way, and read at the same moment.
+    // Null unless a host set SHODDY_FILE_ROOT, in which case NO file word
+    // may reach outside that directory — see FileRoot, and PopPath below,
+    // which is the one door every path in this file goes through. Null is
+    // `mill run`'s case and means the runtime behaves exactly as it always
+    // has.
+    readonly string? fileRoot = FileRoot.Of(Environment.GetEnvironmentVariable(FileRoot.Variable));
     const int ConnectTimeoutMs = 10_000;          // TCPCONNECT: bounded handshake wait
     const int SendPollMicros = 5_000_000;         // TCPSEND: bounded wait for a full send buffer to drain
 
@@ -114,6 +121,34 @@ public sealed partial class Engine
         Value v = Pop(line);
         if (v.T != VType.Str) throw Die(line, $"{who} expects a STRING, got {Value.TypeName(v.T)}");
         return v.Str!;
+    }
+
+    /// <summary>Pop a path and contain it: THE one door every file word
+    /// in this engine goes through, so a word added later cannot quietly
+    /// skip the boundary by popping its path itself.
+    ///
+    /// Aborts when the path is outside the root, which is right for the
+    /// aborting file words — they abort on an unopenable path too, and
+    /// an escape attempt is not more forgivable than a typo. The guarded
+    /// twins use PopPathOr and answer their own refusal.
+    ///
+    /// With no root this is PopStr and nothing else.</summary>
+    string PopPath(int line, string w)
+    {
+        string asked = PopStr(line, w);
+        return FileRoot.Contain(fileRoot, asked)
+            ?? throw Die(line, $"{w}: '{asked}' is outside the file root");
+    }
+
+    /// <summary>PopPath for the words that report rather than abort:
+    /// null when the path escapes, with what was asked for handed back
+    /// so the refusal can name it. Each caller answers in its own shape
+    /// — a Result, a Boolean — which is why this cannot be one helper
+    /// with the refusal built in.</summary>
+    string? PopPathOr(int line, string w, out string asked)
+    {
+        asked = PopStr(line, w);
+        return FileRoot.Contain(fileRoot, asked);
     }
 
     public bool PopBool(int line, string who)
@@ -697,7 +732,7 @@ public sealed partial class Engine
                 return true;
             case "READFILE":                    // ( path -- s ) whole file
             {
-                string path = PopStr(line, w);
+                string path = PopPath(line, w);
                 byte[] buf;
                 try { buf = File.ReadAllBytes(path); }
                 catch (Exception) { throw Die(line, $"READFILE: cannot open '{path}'"); }
@@ -724,14 +759,23 @@ public sealed partial class Engine
                 // record this pushes matches a Case Ok in any weave (the
                 // usual "a builtin cannot reach a TypeDef" bar applies to
                 // MACHINE types, not to the four the language predeclares).
-                string path = PopStr(line, w);
+                string? path = PopPathOr(line, w, out string readAsked);
+                if (path is null)
+                {
+                    Push(Value.OfRec(Prelude.Err, new[]
+                    {
+                        Value.OfStr($"CANNOT READ '{readAsked}' (OUTSIDE THE FILE ROOT)"),
+                        Value.OfNum(0),
+                    }));
+                    return true;
+                }
                 byte[] buf;
                 try { buf = File.ReadAllBytes(path); }
                 catch (Exception e) when (e is not ShoddyError)
                 {
                     Push(Value.OfRec(Prelude.Err, new[]
                     {
-                        Value.OfStr($"CANNOT READ '{path}' ({ReadWhy(e, path)})"),
+                        Value.OfStr($"CANNOT READ '{readAsked}' ({ReadWhy(e, path)})"),
                         Value.OfNum(0),
                     }));
                     return true;
@@ -743,7 +787,7 @@ public sealed partial class Engine
             case "APPENDFILE":
             {
                 string s = PopStr(line, w);     // ( path s -- )
-                string path = PopStr(line, w);
+                string path = PopPath(line, w);
                 try
                 {
                     using var f = new FileStream(path,
@@ -764,7 +808,8 @@ public sealed partial class Engine
                 // cannot answer it, since a directory reports false and an
                 // unwritable existing file reports true.
                 string s = PopStr(line, w);
-                string path = PopStr(line, w);
+                string? path = PopPathOr(line, w, out _);
+                if (path is null) { PushBool(false); return true; }
                 try
                 {
                     using var f = new FileStream(path, FileMode.Create, FileAccess.Write);
@@ -778,11 +823,20 @@ public sealed partial class Engine
                 return true;
             }
             case "FILEEXISTS":                  // ( path -- bool )
-                PushBool(File.Exists(PopStr(line, w)));
+            {
+                // A path outside the root answers FALSE rather than
+                // aborting: the word's whole job is to answer a question
+                // without a fuss, and "no" is both the containing answer
+                // and the true one from inside the boundary. Aborting
+                // here would also make the word a probe for what exists
+                // outside, which is the opposite of the point.
+                string? probe = PopPathOr(line, w, out _);
+                PushBool(probe != null && File.Exists(probe));
                 return true;
+            }
             case "DELETEFILE":                  // ( path -- )
             {
-                string path = PopStr(line, w);
+                string path = PopPath(line, w);
                 try
                 {
                     if (!File.Exists(path)) throw new IOException();
@@ -810,7 +864,8 @@ public sealed partial class Engine
                 // a failed delete. A caller who means "make sure it is gone"
                 // writes that as an ignored answer, which reads as the
                 // intention it is.
-                string path = PopStr(line, w);
+                string? path = PopPathOr(line, w, out _);
+                if (path is null) { PushBool(false); return true; }
                 try
                 {
                     if (!File.Exists(path)) { PushBool(false); return true; }
@@ -829,7 +884,7 @@ public sealed partial class Engine
              * double, BOOLEAN = 1 byte, strings = fixed zero-padded fields. */
             case "BOPEN":                       // ( path -- handle )
             {
-                string path = PopStr(line, w);
+                string path = PopPath(line, w);
                 int slot = Array.IndexOf(files, null);
                 if (slot < 0) throw Die(line, "BOPEN: too many open files");
                 try
@@ -867,13 +922,22 @@ public sealed partial class Engine
                 // WORD can now open, check, read and close inside its own
                 // body without a bad file ending the run mid-way, which is
                 // what a seed needs and all it needs.
-                string path = PopStr(line, w);
+                string? path = PopPathOr(line, w, out string openAsked);
+                if (path is null)
+                {
+                    Push(Value.OfRec(Prelude.Err, new[]
+                    {
+                        Value.OfStr($"CANNOT OPEN '{openAsked}' (OUTSIDE THE FILE ROOT)"),
+                        Value.OfNum(0),
+                    }));
+                    return true;
+                }
                 int slot = Array.IndexOf(files, null);
                 if (slot < 0)
                 {
                     Push(Value.OfRec(Prelude.Err, new[]
                     {
-                        Value.OfStr($"CANNOT OPEN '{path}' (TOO MANY OPEN FILES)"),
+                        Value.OfStr($"CANNOT OPEN '{openAsked}' (TOO MANY OPEN FILES)"),
                         Value.OfNum(0),
                     }));
                     return true;
@@ -1396,9 +1460,13 @@ public sealed partial class Engine
             case "INPUT":                       // ( prompt -- s )
             {
                 // The console and a scribbler window are separate input
-                // channels routed by OS focus; reading the console while a
-                // window is up silently hangs, so it is refused instead.
-                if (Volatile.Read(ref ScribblerRegistry.OpenCount) > 0)
+                // channels routed by OS focus; reading the LIVE console
+                // while a window is up silently hangs, so it is refused.
+                // Piped or test-supplied input has no focus to lose — a
+                // host feeding the reader itself may keep a canvas open
+                // beside a prompt, and both work.
+                if (ReferenceEquals(In, Console.In) && !Console.IsInputRedirected
+                    && Volatile.Read(ref ScribblerRegistry.OpenCount) > 0)
                     throw Die(line, "Input: cannot read the console while a scribbler window is open" +
                                     " — read keystrokes with ScribblerWait or ScribblerPoll.");
                 O.Write(PopStr(line, w));
@@ -1414,7 +1482,8 @@ public sealed partial class Engine
                 // line or terminate at EOF, never both. A flat Array carrier,
                 // not a record: a builtin cannot reach a TypeDef, so lifting
                 // this into a sum type is the Shoddy wrapper's job.
-                if (Volatile.Read(ref ScribblerRegistry.OpenCount) > 0)
+                if (ReferenceEquals(In, Console.In) && !Console.IsInputRedirected
+                    && Volatile.Read(ref ScribblerRegistry.OpenCount) > 0)
                     throw Die(line, "InputLine: cannot read the console while a scribbler window is open" +
                                     " — read keystrokes with ScribblerWait or ScribblerPoll.");
                 O.Write(PopStr(line, w));
@@ -1434,7 +1503,8 @@ public sealed partial class Engine
                 // it between frames. Arrow keys and PF1-4 arrive as their
                 // VT100 application-mode sequences (ESC OA .. ESC OS), the
                 // exact strings machines/vt100.shoddy's EvalKey classifies.
-                if (Volatile.Read(ref ScribblerRegistry.OpenCount) > 0)
+                if (ReferenceEquals(In, Console.In) && !Console.IsInputRedirected
+                    && Volatile.Read(ref ScribblerRegistry.OpenCount) > 0)
                     throw Die(line, "InKey: cannot read the console while a scribbler window is open" +
                                     " — read keystrokes with ScribblerWait or ScribblerPoll.");
                 if (!ReferenceEquals(In, Console.In) || Console.IsInputRedirected)
@@ -1442,7 +1512,22 @@ public sealed partial class Engine
                     // Redirected or test-supplied input: consume one pending
                     // character; "" at end of input. Keeps INKEY testable
                     // headless (feed a StringReader) and sane under pipes.
-                    PushStr(In.Peek() < 0 ? "" : ((char)In.Read()).ToString());
+                    // One assembly rule so every path answers the same
+                    // strings: an ESC with a pending 'O' or '[' straight
+                    // behind it is an arrow/PF sequence a piped host fed
+                    // whole, and comes back whole — three characters, the
+                    // form EvalKey decodes. A lone ESC (or ESC before any
+                    // other character) stays a single keystroke.
+                    if (In.Peek() < 0) { PushStr(""); return true; }
+                    char k0 = (char)In.Read();
+                    if (k0 == '\x1b' && (In.Peek() == 'O' || In.Peek() == '['))
+                    {
+                        char k1 = (char)In.Read();
+                        PushStr(In.Peek() < 0
+                            ? new string(new[] { k0, k1 })
+                            : new string(new[] { k0, k1, (char)In.Read() }));
+                    }
+                    else PushStr(k0.ToString());
                     return true;
                 }
                 if (!Console.KeyAvailable) { PushStr(""); return true; }
@@ -1915,7 +2000,11 @@ public sealed partial class Engine
                 // --no-window, which is the point of it. Nothing blits first:
                 // saving and showing are separate requests, and a program
                 // that wants both says both.
-                string path = PopStr(line, w);
+                // The path goes through PopPath like every other: this is
+                // the word the whole boundary used to leak through, since
+                // it hands its path straight to Png.Write and a host's
+                // root disciplined nothing.
+                string path = PopPath(line, w);
                 Value v = PopScrib(line, w);
                 ScribblerHandle h = v.Scribbler!;
                 try

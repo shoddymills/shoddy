@@ -39,12 +39,39 @@ public sealed partial class Engine
     /// concatenative language.</summary>
     public IReadOnlyList<Value> StackView => Stk;
 
+    /// <summary>Per-assembly file registration: each debug-woven
+    /// assembly's table, keyed by the table's own identity (a static
+    /// array per woven class), mapped to its offset in
+    /// <see cref="DebugFiles"/>. A debug program registers first —
+    /// its preamble runs before anything else — so its ids stay
+    /// absolute at offset 0; each instrumented machine appends on
+    /// first entry and carries its offset in every frame.</summary>
+    readonly Dictionary<string[], int> fileBases = new();
+
     /// <summary>Debug preamble: register the source file table and the
     /// root frame (top-level Lets run here, before Main).</summary>
     public void Files(string[] files)
     {
-        DebugFiles = files;
-        Frames.Add(new DebugFrame { Name = "(program)" });
+        if (Frames.Count == 0) Frames.Add(new DebugFrame { Name = "(program)" });
+        FileBase(files);
+    }
+
+    /// <summary>The offset this assembly's file ids live at — appended
+    /// on first sight, constant thereafter. Called by instrumented
+    /// machine words on entry; O(1) after the first call.</summary>
+    public int FileBase(string[] files)
+    {
+        if (fileBases.TryGetValue(files, out int at)) return at;
+        at = DebugFiles.Length;
+        if (files.Length > 0)
+        {
+            var grown = new string[at + files.Length];
+            DebugFiles.CopyTo(grown, 0);
+            files.CopyTo(grown, at);
+            DebugFiles = grown;
+        }
+        fileBases[files] = at;
+        return at;
     }
 
     /// <summary>Source-line boundary: update position, offer the sink a

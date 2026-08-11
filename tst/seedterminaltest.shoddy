@@ -1,0 +1,90 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem seedterminaltest.shoddy — test program for seedterminal.shoddy
+Rem
+Rem Assert-driven, in the cuttletest / reckonertest / seedtest pattern:
+Rem it prints what it is doing and stops the run at the first assertion
+Rem that fails, ending with ALL ASSERTIONS PASSED when it does not.
+Rem
+Rem WHAT PRINT WRITES GOES TO THE CONSOLE, which in this headless run
+Rem is the test's own transcript — so the CONTENT of the output is
+Rem asserted where the stream can be captured (the host test suite
+Rem drives the same seed with a captured writer), and what this file
+Rem proves is the word's mechanics: registered, grouped, documented;
+Rem pops exactly one cell; refuses an empty stack without damaging the
+Rem session; and takes every kind of cell without aborting.
+Rem
+Rem Run: bin\mill run tst\seedterminaltest.shoddy    (from the repo root)
+Rem ==================================================================
+
+Include "../machines/cuttle.shoddy"
+Include "../machines/reckoner.shoddy"
+Include "../machines/seq.shoddy"
+Include "../machines/str.shoddy"
+Include "../machines/seeds/seedterminal.shoddy"
+
+Rem ---- reading an answer ------------------------------------------------
+
+Def Ran(st As RckState, line As String) As RckState
+    Select Case RckEval(st, line)
+        Case RckNext(st2, out)
+            st2
+        Case RckStop(st2, why, out)
+            st2
+        Case Else
+            st
+
+Def Bad(st As RckState, line As String) As Boolean
+    Select Case RckEval(st, line)
+        Case RckStop(st2, why, out)
+            True
+        Case Else
+            False
+
+Def Text(st As RckState) As String
+    Join(Map(CutCells(RckStack(st)), Fn(c) => CutShow(c, RckFmt(st))), " | ")
+
+Def TopNum(st As RckState) As Number
+    If CutDepth(RckStack(st)) < 1 Then
+        0 - 999999
+    Else
+        NumOf(First(CutCells(RckStack(st))))
+
+Def NumOf(c As Cell) As Number
+    Select Case c
+        Case CutNum(x)
+            x
+        Case Else
+            0 - 999999
+
+Def Q(s As String) As String
+    Chr(34) & s & Chr(34)
+
+Def Main()
+    Let s0 = RckSeedTerminal(RckNew())
+
+    Print("--- the seed is in the dictionary, grouped and documented ---")
+    Assert(RckKnows(s0, "PRINT"), "THE WORD IS THERE")
+    Assert(Contains(RckWords(s0), "-- seed-terminal --"), "AND IT HAS A GROUP OF ITS OWN")
+    Assert(Length(RckHelp(s0, "PRINT")) = 3, "AND HELP ANSWERS FOR IT")
+
+    Print("--- PRINT pops exactly one cell ---")
+    Assert(Text(Ran(s0, "42 PRINT")) = "", "A PRINTED NUMBER LEAVES THE STACK EMPTY")
+    Assert(TopNum(Ran(s0, "42 PRINT DEPTH")) = 0, "AND DEPTH AGREES")
+    Assert(Text(Ran(s0, "1 2 PRINT")) = "1", "AND ONLY THE TOP CELL GOES")
+
+    Print("--- every kind of cell prints without aborting ---")
+    Assert(Text(Ran(s0, Q("hello") & " PRINT")) = "", "A STRING")
+    Assert(Text(Ran(s0, "TRUE PRINT")) = "", "A TRUTH VALUE")
+    Assert(Text(Ran(s0, "{ 1 2 } PRINT")) = "", "A LIST")
+    Assert(Text(Ran(s0, "PI PRINT")) = "", "A NUMBER THAT IS NOT ROUND")
+
+    Print("--- an empty stack refuses and the session survives ---")
+    Assert(Bad(s0, "PRINT"), "PRINT WITH NOTHING TO PRINT IS REFUSED")
+    Assert(Text(Ran(s0, "PRINT")) = Text(s0), "AND THE STACK IS AS IT WAS")
+    Assert(TopNum(Ran(Ran(s0, "PRINT"), "1 1 +")) = 2, "AND THE SESSION STILL EVALUATES")
+
+    Print("")
+    Print("ALL ASSERTIONS PASSED")

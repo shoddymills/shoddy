@@ -139,9 +139,17 @@ exports.activate = (ctx) => {
         vscode.commands.registerCommand('shoddy.machine', millInTerminal('machine')),
         vscode.commands.registerCommand('shoddy.gen', showGenerated),
 
-        // The perch: `mill dap` speaks the Debug Adapter Protocol.
+        // The perch: `mill dap` speaks the Debug Adapter Protocol for a
+        // launch; an attach names a transport — never a host kind — and
+        // connects straight to the debuggee's perch service, no mill
+        // process in the path.
         vscode.debug.registerDebugAdapterDescriptorFactory('shoddy', {
-            createDebugAdapterDescriptor: () => {
+            createDebugAdapterDescriptor: (session) => {
+                if (session.configuration.request === 'attach') {
+                    return new vscode.DebugAdapterServer(
+                        session.configuration.port,
+                        session.configuration.host || '127.0.0.1');
+                }
                 const { cmd, args } = millCommand();
                 return new vscode.DebugAdapterExecutable(cmd, [...args, 'dap'],
                     { env: millEnv() });

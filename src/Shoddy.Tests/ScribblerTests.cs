@@ -297,17 +297,25 @@ public class ScribblerTests
     // ---- input ownership ------------------------------------------------
 
     [Fact]
-    public void InputRefusedWhileAScribblerIsOpen()
+    public void PipedInputWorksWhileAScribblerIsOpen()
     {
-        string err = RunHeadlessError(string.Join('\n',
+        // The refusal ("cannot read the console while a scribbler window
+        // is open") applies to the LIVE console only — the focus hazard
+        // it guards against needs a console with focus to lose. Piped or
+        // host-supplied input has none, and a host feeding the reader
+        // itself may legitimately keep a canvas open beside a prompt.
+        // The live-console branch cannot fire under a test runner (stdin
+        // is redirected here), so this asserts the piped side of the
+        // contract; errors.html carries the full statement.
+        string output = RunHeadless(string.Join('\n',
             "Def Main()",
             "    Let sc = ScribblerOpen(4, 4)",
             "    Print(Input(\"? \"))",
-            ""));
-        Assert.Contains("ScribblerWait or ScribblerPoll", err);
+            ""), input: new StringReader("hello\n"));
+        Assert.Equal("? hello\n", output);
 
         // Closed again (or never opened): Input works as before.
-        string output = RunHeadless(string.Join('\n',
+        output = RunHeadless(string.Join('\n',
             "Def Main()",
             "    Let sc = ScribblerClose(ScribblerOpen(4, 4))",
             "    Print(Input(\"? \"))",
@@ -417,6 +425,55 @@ public class ScribblerTests
         // Row 2, pixel x = 1 — the one pixel set by hand, alpha dropped.
         int px = 2 * stride + 1 + 3;
         Assert.Equal(new byte[] { 200, 100, 50 }, raw[px..(px + 3)]);
+    }
+
+    /// <summary>Png.Encode answers the same bytes Png.Write writes. This
+    /// is the whole warrant for the in-memory path existing: a host with
+    /// no file to write encodes a drawing straight to bytes, and it must
+    /// be the same PNG a SCRIBBLERSAVE would have produced rather than a
+    /// second encoder that drifts from the first.</summary>
+    [Fact]
+    public void EncodeAnswersTheSameBytesWriteWrites()
+    {
+        // A buffer with structure rather than a flat fill: a gradient
+        // across x, a step across y, and an alpha channel that varies —
+        // so that a filter, a stride or a dropped-alpha mistake in one
+        // path and not the other would show.
+        const int w = 37, h = 11;      // deliberately not multiples of anything
+        var rgba = new byte[w * h * 4];
+        for (int y = 0, i = 0; y < h; y++)
+            for (int x = 0; x < w; x++, i += 4)
+            {
+                rgba[i] = (byte)(x * 7);
+                rgba[i + 1] = (byte)(y * 23);
+                rgba[i + 2] = (byte)(x ^ y);
+                rgba[i + 3] = (byte)(x + y);     // dropped by both paths
+            }
+
+        string path = Path.Combine(Path.GetTempPath(), "shoddy-png",
+                                   Guid.NewGuid().ToString("N") + ".png");
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        Png.Write(path, rgba, w, h);
+
+        Assert.Equal(File.ReadAllBytes(path), Png.Encode(rgba, w, h));
+    }
+
+    /// <summary>Both guards, on both paths — and the file path checks
+    /// before it opens anything, so a refused size leaves no file behind
+    /// rather than an empty one.</summary>
+    [Fact]
+    public void EncodeAndWriteRefuseTheSameArguments()
+    {
+        var ok = new byte[2 * 2 * 4];
+        string path = Path.Combine(Path.GetTempPath(), "shoddy-png",
+                                   Guid.NewGuid().ToString("N") + ".png");
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+
+        Assert.Throws<ArgumentException>(() => Png.Encode(ok, 0, 2));
+        Assert.Throws<ArgumentException>(() => Png.Write(path, ok, 0, 2));
+        Assert.Throws<ArgumentException>(() => Png.Encode(new byte[3], 2, 2));
+        Assert.Throws<ArgumentException>(() => Png.Write(path, new byte[3], 2, 2));
+        Assert.False(File.Exists(path), "a refused size left a file behind");
     }
 
     [Fact]

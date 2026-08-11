@@ -96,6 +96,10 @@ public static class Weaver
     {
         string outDll = debug ? MachineSet.DebugDllPathFor(sbPath) : MachineSet.DllPathFor(sbPath);
         string cls = MachineSet.ClassNameFor(sbPath);
+        // Two different outer targets can both auto-build the same shared
+        // machine (MachineResolve.Build); gate on the output so those
+        // serialize too — the per-target gate in RunPure cannot see them.
+        using IDisposable gate = MillGate.Hold(outDll);
         Directory.CreateDirectory(Path.GetDirectoryName(outDll)!);
         using var pe = File.Create(outDll);
         Compile(GenerateSource(prog, cls, debug: debug, deps: machines, ownFile: sbPath), pe,

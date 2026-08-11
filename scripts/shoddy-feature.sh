@@ -7,7 +7,7 @@
 #                                       push main, then delete the branch (local + origin)
 #
 # Guards: clean tree required; 'new' refuses names already taken (local or origin);
-# 'ship' only runs from a feature/* branch, refuses when there is nothing to merge,
+# 'ship' only runs from a feature/* or bug/* branch, refuses when there is nothing to merge,
 # and on merge conflict aborts cleanly and puts you back on your branch.
 # A leading 'feature/' on NAME is stripped, so both spellings work.
 set -u
@@ -42,8 +42,11 @@ new)
 ship)
     BR="$(git rev-parse --abbrev-ref HEAD)"
     case "$BR" in
-        feature/*) ;;
-        *) fail "current branch is '$BR' - ship only runs from a feature/* branch." ;;
+        # bug/* ships the same way: a fix branch cut off main by hand
+        # (bug/<origin-feature>NN) merges and deletes exactly as a
+        # feature does. Everything else still refuses.
+        feature/*|bug/*) ;;
+        *) fail "current branch is '$BR' - ship only runs from a feature/* or bug/* branch." ;;
     esac
     run git fetch origin --prune
     N="$(git rev-list --count origin/main..HEAD)"
@@ -75,7 +78,7 @@ ship)
 
 *)
     echo "usage: scripts/shoddy-feature.sh new NAME   create feature/NAME off up-to-date main"
-    echo "       scripts/shoddy-feature.sh ship [-y]  push current feature branch, merge --no-ff into main, delete it"
+    echo "       scripts/shoddy-feature.sh ship [-y]  push current feature/bug branch, merge --no-ff into main, delete it"
     exit 2
     ;;
 esac

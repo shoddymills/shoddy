@@ -156,6 +156,10 @@ public static class MillVerbs
     /// are the callers' own because only the full mill can serve them.</summary>
     public static int RunPure(Command cmd, Options opt)
     {
+        // Two projects in one solution both drive the mill at the same
+        // target under parallel MSBuild; serialize per target so the
+        // second writer waits instead of crashing on a file in use.
+        using IDisposable gate = MillGate.Hold(cmd.File);
         switch (cmd.Verb)
         {
             case "lex":

@@ -54,6 +54,13 @@ public class ProofTests
         }
     }
 
+    /// <summary>The published mill, by the name this OS gives it —
+    /// bin/mill.exe on Windows, bin/mill everywhere else. The scaffold
+    /// builds pass it as ShoddyToolPath; naming the .exe unconditionally
+    /// broke every proof on the Linux runners (v2.0.0).</summary>
+    static string MillPath => Path.Combine(Root, "bin",
+        OperatingSystem.IsWindows() ? "mill.exe" : "mill");
+
     [Fact]
     public void ConsoleCsProofsPass()
     {
@@ -163,7 +170,7 @@ public class ProofTests
                 $" -o scaffold-console", ws);
             Assert.True(nExit == 0, nOut);
             var (bExit, bOut) = Dotnet(
-                $"build scaffold-console -p:ShoddyToolPath=\"{Path.Combine(Root, "bin", "mill.exe")}\"", ws);
+                $"build scaffold-console -p:ShoddyToolPath=\"{MillPath}\"", ws);
             Assert.True(bExit == 0, bOut);
 
             var (lExit, lOut) = Dotnet(
@@ -171,7 +178,7 @@ public class ProofTests
                 $" -o scaffold-lib", ws);
             Assert.True(lExit == 0, lOut);
             var (lbExit, lbOut) = Dotnet(
-                $"build scaffold-lib -p:ShoddyToolPath=\"{Path.Combine(Root, "bin", "mill.exe")}\"", ws);
+                $"build scaffold-lib -p:ShoddyToolPath=\"{MillPath}\"", ws);
             Assert.True(lbExit == 0, lbOut);
         }
         finally

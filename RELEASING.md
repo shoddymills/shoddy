@@ -163,10 +163,12 @@ by the ordinary sweep, because that is the only way they are ever compiled.
 scripts/shoddy-feature.sh ship
 ```
 
-Pushes the current `feature/*` branch, merges it `--no-ff` into `main`, pushes
-`main`, and deletes the branch locally and on origin. It refuses to run with a dirty
-tree, from a non-feature branch, or when there is nothing to merge, and on a merge
-conflict it aborts cleanly and puts you back on your branch.
+Pushes the current `feature/*` or `bug/*` branch, merges it `--no-ff` into `main`,
+pushes `main`, and deletes the branch locally and on origin. It refuses to run with a
+dirty tree, from any other branch, or when there is nothing to merge, and on a merge
+conflict it aborts cleanly and puts you back on your branch. (Bug branches are cut by
+hand off `main`, named `bug/<origin-feature>NN` — the curated feature-name list is
+not consumed for fixes.)
 
 It prints the commits it is about to merge and asks `Proceed? (y/N)`. **Pass
 `-Yes` (PowerShell) or `-y` (sh/cmd) to skip that prompt** — required from any

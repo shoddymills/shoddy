@@ -12,9 +12,9 @@ namespace Shoddy.Compiler;
 /// ShoddyWeave runs the mill once per referencing project, and parallel
 /// MSBuild runs those projects together — so two mill processes can reach
 /// File.Create on the same output at the same moment, and whichever loses
-/// dies with the file in use. It happened twice on one release day: the
-/// MAUI app and its tests both driving `manifest mills/halifax`, and the
-/// sparky server and its tests both weaving the sparky core.
+/// dies with the file in use. It happened twice on one release day, in
+/// two different lanes: an app and its tests both driving `manifest`
+/// against one mill, and a server and its tests both weaving one core.
 ///
 /// A named mutex per normalized target path makes the second writer wait
 /// instead. Distinct targets never contend, a waiter that inherits the

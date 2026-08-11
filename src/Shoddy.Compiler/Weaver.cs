@@ -101,10 +101,18 @@ public static class Weaver
         // serialize too — the per-target gate in RunPure cannot see them.
         using IDisposable gate = MillGate.Hold(outDll);
         Directory.CreateDirectory(Path.GetDirectoryName(outDll)!);
-        using var pe = File.Create(outDll);
-        Compile(GenerateSource(prog, cls, debug: debug, deps: machines, ownFile: sbPath), pe,
-                OutputKind.DynamicallyLinkedLibrary,
-                machines, $"Shoddy.Machines.{MachineSet.AssemblyStemFor(sbPath)}");
+        // Weave beside, then move into place: the gate serializes WRITERS,
+        // but another project's compiler can be READING the previous weave
+        // as a metadata reference at this very moment, and truncating the
+        // file under it is a CS0009 in that build. The rename is atomic,
+        // so a reader sees the old weave complete or the new one complete —
+        // and the weave is deterministic, so rewriting is always safe.
+        string tmp = outDll + ".weaving";
+        using (FileStream pe = File.Create(tmp))
+            Compile(GenerateSource(prog, cls, debug: debug, deps: machines, ownFile: sbPath), pe,
+                    OutputKind.DynamicallyLinkedLibrary,
+                    machines, $"Shoddy.Machines.{MachineSet.AssemblyStemFor(sbPath)}");
+        File.Move(tmp, outDll, overwrite: true);
         return outDll;
     }
 

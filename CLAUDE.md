@@ -48,7 +48,16 @@ publish a release. Don't re-derive or restate it from memory or by guessing at
 script behavior: read it fresh each time from source, since scripts and
 workflows can change underneath a stale summary.
 
+- [WORKFLOW.md](WORKFLOW.md) — **branch → work → prove → ship, as one
+  sequence.** The page to follow; the others are reference behind it.
 - [RELEASING.md](RELEASING.md) — the maintainer procedure, start to finish
+- `scripts/shoddy.ps1` / `scripts/shoddy.sh` — the gate driver: `doctor`,
+  `preflight`, `gate`, `package`, `status`, `clean`, `selftest`. Thin
+  launchers over `scripts/gate/driver.mjs`, which holds the logic once so
+  the twins cannot drift. **`preflight` is cheap (~3s) and read-only — run it
+  before proposing anything release-shaped rather than reasoning about
+  whether the tree is ready.** `gate --resume` is the expensive proof and
+  skips what is already green for the current commit.
 - [CONTRIBUTING.md](CONTRIBUTING.md) — day-to-day contribution process
 - [release-notes/README.md](release-notes/README.md) — release-notes format and timing
 - [SECURITY.md](SECURITY.md) — vulnerability reporting (not via public issues)

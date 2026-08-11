@@ -1,7 +1,12 @@
 # Releasing Shoddy
 
-How a version gets cut. Day-to-day contribution is in
-[CONTRIBUTING.md](CONTRIBUTING.md); this is the maintainer's procedure.
+How a version gets cut, in full. **If you want the sequence rather than the
+detail — branch, work, prove, ship — that is [WORKFLOW.md](WORKFLOW.md), and
+it is the page to follow.** This one is the reference behind it: what each
+step actually does, and the failures that shaped it.
+
+Day-to-day contribution from outside is in
+[CONTRIBUTING.md](CONTRIBUTING.md).
 
 **Branch discipline.** No work is ever committed directly on `main` — it only
 receives `--no-ff` merge commits, pushed from the CLI. All release mechanics
@@ -18,14 +23,65 @@ only copy that ships.
 ## The short version
 
 ```sh
-node scripts/verify-docs.js             # doc review — pages must match the sources
+scripts/shoddy.sh preflight             # read-only: would a release pass right now?
 $EDITOR release-notes/v1.0.0.md         # write the notes FIRST — see below
+scripts/shoddy.sh gate --resume         # the expensive proof: build + every test
 scripts/shoddy-feature.sh ship          # merge your feature into main
 scripts/shoddy-release.sh 1.0.0         # build, test, tag, push — CI publishes
 ```
 
-Both scripts have `.ps1` twins with identical behaviour; run them from the
-repo root. Everything below is what those scripts do and why, for when something goes
+Every script has a `.ps1` twin; run them from the repo root. On Windows run the
+`.ps1` — it is the path that actually ships there, and the twin that goes
+unexercised is the twin that rots.
+
+## The gate driver — `scripts/shoddy.*`
+
+One command with four stages, and **the logic lives once**, in
+`scripts/gate/driver.mjs`. The two launchers are ~20 lines each and contain
+no logic to drift; Node is already required here, since every `verify-*` gate
+is Node.
+
+| Stage | Time | Mutates | What it is |
+|---|---|---|---|
+| `preflight` | ~3 s | nothing | environment, git state, version coherence, all four `verify-*` |
+| `gate` | ~15 min | build output | build, machines, C# suite, every `tst/` and machine suite, all 13 mills |
+| `package` | ~3 min | build output | version bump, stage, `.vsix` |
+| `publish` | — | **history** | still owned by `shoddy-release.*` |
+
+```sh
+scripts/shoddy.sh doctor                # is this machine fit to release?
+scripts/shoddy.sh preflight             # dirty tree tolerated — run it any day
+scripts/shoddy.sh preflight 1.0.0       # strict: clean tree, notes present, tag free
+scripts/shoddy.sh gate --resume         # skip what is already green for this commit
+scripts/shoddy.sh gate --only mill-halifax
+scripts/shoddy.sh gate --from machine-jsontest
+scripts/shoddy.sh status                # what is green for the current commit
+scripts/shoddy.sh clean                 # kill stale toolchain processes, remove litter
+scripts/shoddy.sh selftest              # prove the harness still keeps its promises
+```
+
+**Every step carries a timeout, a log and a remedy.** A step that hangs is
+killed with its whole process tree and reported by name with its elapsed time;
+a step that fails prints its last 25 lines and a sentence saying what to do
+next. Nothing is judged on anything but its exit code, so a native program
+writing to stderr can never fail a run that succeeded.
+
+**Receipts are keyed to the commit SHA**, in `.release-state/` (gitignored).
+`gate --resume` skips steps already green for that exact commit — a retry does
+not re-run the hour of work that already passed. A timestamp would not know
+you had edited a file; a SHA does.
+
+**`shoddy clean` is deliberate, and the gate never does it for you.** It shuts
+the build servers down and clears orphaned test hosts, which is what you want
+when something is genuinely wedged — but it also cold-starts the MSBuild
+cache, and several C# tests shell out to `dotnet build` and `dotnet run`. On a
+cold cache those go quiet for long enough that the blame collector kills the
+test host, and the suite reports a crash two thirds of the way through. That
+was measured, not assumed: `dotnet test` passed 294/294 three times running,
+and the same command straight after a clean died at 46 tests. So `clean` is a
+tool with a known cost, not a courtesy performed before every run.
+
+Everything below is what the older scripts do and why, for when something goes
 sideways.
 
 ---

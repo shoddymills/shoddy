@@ -530,6 +530,8 @@ its [LICENSE](mills/mungo-caverns/LICENSE) and
 
 Contributions are welcome under the MIT License; see
 [CONTRIBUTING.md](CONTRIBUTING.md) and the [Code of Conduct](CODE_OF_CONDUCT.md).
+Maintainers: the branch-to-tag sequence is **[WORKFLOW.md](WORKFLOW.md)**, with
+[RELEASING.md](RELEASING.md) as the reference behind it.
 This project intends to join the [.NET Foundation](https://dotnetfoundation.org/).
 
 Authorship, and the disclosure of which tools were used in the making of Shoddy

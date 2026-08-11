@@ -148,12 +148,9 @@ public class ManifestTests
         string millExe = Path.Combine(Root, "bin", "mill.exe");
         if (!File.Exists(millExe)) millExe = Path.Combine(Root, "bin", "mill");
         var psi = new System.Diagnostics.ProcessStartInfo(millExe,
-            $"manifest \"{Path.Combine(Root, "mills", "halifax")}\"")
-        { RedirectStandardError = true, RedirectStandardOutput = true };
-        using var p = System.Diagnostics.Process.Start(psi)!;
-        string err = p.StandardError.ReadToEnd() + p.StandardOutput.ReadToEnd();
-        p.WaitForExit();
-        Assert.True(p.ExitCode == 0, err);
+            $"manifest \"{Path.Combine(Root, "mills", "halifax")}\"");
+        var (exit, text) = ProcessRun.CaptureAll(psi);
+        Assert.True(exit == 0, text);
     }
 
     static void Build(string sbPath)

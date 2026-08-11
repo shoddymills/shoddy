@@ -27,13 +27,8 @@ public class ProofTests
         var psi = new ProcessStartInfo("dotnet", args)
         {
             WorkingDirectory = workdir,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
         };
-        using Process p = Process.Start(psi)!;
-        string o = p.StandardOutput.ReadToEnd() + p.StandardError.ReadToEnd();
-        p.WaitForExit();
-        return (p.ExitCode, o);
+        return ProcessRun.CaptureAll(psi);
     }
 
     /// <summary>The published mill the proof projects' ShoddyToolPath
@@ -44,13 +39,13 @@ public class ProofTests
         if (!File.Exists(Path.Combine(Root, "bin", "mill.exe")) &&
             !File.Exists(Path.Combine(Root, "bin", "mill")))
         {
+            // The nested publish the build scripts warn about: on a cold
+            // cache it is slow AND loud, and reading its pipes one at a time
+            // is what turned "slow" into "stopped".
             var psi = new ProcessStartInfo("dotnet",
                 $"publish src/Shoddy.Mill -c Release -o bin")
-            { WorkingDirectory = Root, RedirectStandardOutput = true, RedirectStandardError = true };
-            using Process p = Process.Start(psi)!;
-            p.StandardOutput.ReadToEnd();
-            p.StandardError.ReadToEnd();
-            p.WaitForExit();
+            { WorkingDirectory = Root };
+            ProcessRun.CaptureAll(psi);
         }
     }
 

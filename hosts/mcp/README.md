@@ -22,7 +22,15 @@ build that first:
 cd hosts/mcp
 ./build.ps1            # restore + build
 ./build.ps1 test       # and prove it
+./build.ps1 publish    # the per-OS release archives, in artifacts/publish/
 ```
+
+`publish` cuts what a release attaches: a self-contained single-file
+sparky per OS, so the far end needs no repo and no .NET install. The
+Release workflow runs it and puts one archive per OS on the GitHub
+Release, beside the extension; `mcp.yml` cuts the same archives on
+every push and drives the unpacked Linux binary over stdio, so the
+target cannot rot between releases.
 
 ## The projects
 

@@ -88,3 +88,23 @@ jobs:
               echo "an excluded seed is in the server's closure: $bad"; exit 1
             fi
           done
+
+      # The publish target is what a release attaches, and a target only
+      # release.yml exercises would rot between releases the way any
+      # unrun script does. Cut the archives exactly as release.yml will.
+      - name: Publish the release archives
+        working-directory: hosts/mcp
+        run: ./build.sh publish
+
+      # Then prove the shipped shape: unpack the linux archive and drive
+      # the single file over stdio — no client, no repo and no installed
+      # runtime in the loop. This is the exact artifact a user downloads.
+      - name: The shipped binary answers on stdio
+        run: |
+          tar -xzf artifacts/publish/sparky-linux-x64.tar.gz -C /tmp
+          mkdir -p /tmp/sparky-root
+          printf '%s\n' \
+            '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}' \
+            '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"eval","arguments":{"lines":["{ 12500 13100 11900 } MEAN"]}}}' \
+            | /tmp/sparky --root /tmp/sparky-root | tee answers.jsonl
+          grep -q 'x: 12500' answers.jsonl

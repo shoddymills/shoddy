@@ -238,9 +238,11 @@ reaches users is the one the Release workflow builds from the tag.
 Actions → **Release**. It verifies the tag matches `package.json`, runs
 `./build.sh all`, composes the body from `release-notes/vX.Y.Z.md` (falling back to
 the merge log if that file isn't in the tagged commit), and publishes the GitHub
-Release with `vscode-shoddy-X.Y.Z.vsix` attached — one asset, batteries included: the
+Release with `vscode-shoddy-X.Y.Z.vsix` attached — batteries included: the
 package carries its own mill and machines, so installing it needs only the .NET 10
-runtime. The job log prints the body it chose under `--- release body ---`, so you can
+runtime. It also tests and publishes the MCP lane, attaching one sparky archive per
+OS — self-contained single-file binaries that need no repo and no .NET install at
+all. The job log prints the body it chose under `--- release body ---`, so you can
 see which path it took without opening the release.
 
 If the workflow fails, the tag is already public. Fix forward with a new patch
@@ -255,6 +257,10 @@ code --install-extension vscode-shoddy-X.Y.Z.vsix   # the version you just tagge
 ```
 
 Open a `.shoddy` file; Ctrl+R runs it via the bundled mill.
+
+For a local, untagged build the same step is `./build.ps1 install` (or the
+`.sh` twin): it installs the `.vsix` for whatever version `package.json`
+names, and refuses if that exact package hasn't been built yet.
 
 ## 5 — Website
 
@@ -280,8 +286,9 @@ git log --oneline --graph -6      # feature bubble + release bubble + tag
 git ls-remote --tags origin       # v1.0.0 present
 ```
 
-The release page should show exactly one `.vsix` asset. Download and install it once
-if you're feeling paranoid — it's the artifact users get, and nothing local proves it.
+The release page should show the `.vsix` and one sparky archive per OS. Download and
+install the `.vsix` once if you're feeling paranoid — it's the artifact users get, and
+nothing local proves it.
 
 ---
 

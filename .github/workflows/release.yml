@@ -3,8 +3,8 @@ name: Release
 # Pushing a vX.Y.Z tag is what ships a release. scripts/shoddy-release.sh (and its
 # .ps1 twins) build and test locally as a gate, then push the tag; this job
 # rebuilds from scratch on a clean runner and publishes the GitHub Release with the
-# packaged extension attached. The .vsix is never committed — this is the only place
-# a shipped package comes from.
+# packaged extension and the sparky MCP binaries attached. Neither the .vsix nor a
+# binary is ever committed — this is the only place a shipped package comes from.
 #
 # The staged mill is framework-dependent and carries every RID's natives (see
 # build.sh `stage`), so a package built here on Linux is the same artifact as one
@@ -69,6 +69,26 @@ jobs:
       - name: Confirm the package was produced
         run: test -f "vscode-shoddy/vscode-shoddy-${{ steps.ver.outputs.version }}.vsix"
 
+      # The MCP lane ships beside the extension: sparky as a
+      # self-contained single-file binary per OS, so a user needs
+      # nothing but the download and an MCP client - no repo, no .NET
+      # install. Its mill suite and server tests run first; there is no
+      # point attaching a binary the fold or the protocol would fail.
+      # `./build.sh all` above already staged bin/mill, which ShoddyWeave
+      # drives. One runner cross-targets every RID: the lane is pure
+      # managed code, and mcp.yml asserts that from outside.
+      - name: The sparky mill's headless suite
+        working-directory: mills/sparky
+        run: ./build.sh test
+
+      - name: Test the MCP lane
+        working-directory: hosts/mcp
+        run: ./build.sh test
+
+      - name: Publish sparky binaries
+        working-directory: hosts/mcp
+        run: ./build.sh publish ${{ steps.ver.outputs.version }}
+
       # Hand-written notes win. They must be committed *before* the tag is pushed,
       # because this job checks out the tag and sees only what it contains.
       # Without them the body falls back to the --no-ff merge subjects, which is
@@ -110,5 +130,6 @@ jobs:
         run: |
           gh release create "${{ steps.ver.outputs.tag }}" \
             "vscode-shoddy/vscode-shoddy-${{ steps.ver.outputs.version }}.vsix" \
+            artifacts/publish/sparky-* \
             --title "${{ steps.ver.outputs.tag }}" \
             --notes-file NOTES.md

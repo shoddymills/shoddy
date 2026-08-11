@@ -123,7 +123,11 @@ Print(AlgShow(AlgParse("a - (b - c)")))      ' a - (b - c) — minimal brackets
 Print(AlgToNumber(AlgParse("2^3^2")))        ' 512 — ^ is right-associative</code></pre>
 <p><code>AlgParse</code> aborts on a bad parse and is the one for a test or
 a literal. <code>AlgRead</code> is total, returns a <code>Result</code>, and
-is the one for anything a user typed. Precedence is conventional and pinned:
+is the one for anything a user typed. <strong>Total covers the arithmetic the
+parser does on the way, not only the syntax</strong> &mdash; the builders fold
+as they read, so <code>"1/(1-1)"</code> arrives at a zero denominator with no
+<code>/0</code> anywhere in its text, and comes back as an <code>Err</code>
+like any other refusal. Precedence is conventional and pinned:
 <code>^</code> is right-associative and <strong>tighter than unary
 minus</strong>, so <code>-x^2</code> is <code>-(x^2)</code> and
 <code>2^3^2</code> is 512.</p>
@@ -230,8 +234,10 @@ form", which is a weaker claim than "not equal".</p>
 <tr><th>Word</th><th>Description</th></tr>
 <tr><td>AlgVarOf(name)</td><td>A symbol.</td></tr>
 <tr><td>AlgAddOf / AlgSubOf / AlgMulOf / AlgDivOf / AlgNegOf</td><td>The four operations and negation. <code>AlgSubOf</code> and <code>AlgDivOf</code> build the sugar the type does not have; <code>AlgDivOf</code> errors on a zero divisor.</td></tr>
+<tr><td>TryAlgDivOf(a, b)</td><td>&rarr; <code>Result</code>. <code>AlgDivOf</code>'s guarded twin: <code>Err("DIVISION BY ZERO", 0)</code> instead of the abort. <code>AlgDivOf</code> is defined over it, so there is one rule and not two. This is the form the parser calls, and the form to call on a divisor a stranger chose.</td></tr>
 <tr><td>AlgSumOfList / AlgProdOfList</td><td>The n-ary forms.</td></tr>
-<tr><td>AlgPowOf(b, e) / AlgSqrtOf(a)</td><td>Powers. The identities apply here, so <code>x^0</code> is 1 and <code>x^1</code> is x before anything downstream sees them.</td></tr>
+<tr><td>AlgPowOf(b, e) / AlgSqrtOf(a)</td><td>Powers. The identities apply here, so <code>x^0</code> is 1 and <code>x^1</code> is x before anything downstream sees them. <code>0^e</code> is 0 for a positive <em>e</em> and <strong>errors for a negative one</strong>, which is a division by zero spelt differently; a symbolic <em>e</em> of unknown sign is left unevaluated rather than guessed at.</td></tr>
+<tr><td>TryAlgPowOf(b, e)</td><td>&rarr; <code>Result</code>. <code>AlgPowOf</code>'s guarded twin, refusing <code>0^-1</code> in the same words <code>TryAlgDivOf</code> refuses <code>1/0</code> &mdash; they are one question and get one answer. The parser's <code>^</code> branch calls this.</td></tr>
 <tr><td>AlgCallOf(fn, arg)</td><td>A function call. <strong>Errors on a name not in the table</strong> rather than building something nothing downstream can differentiate or evaluate.</td></tr>
 </table>
 <p class="note"><strong>Every builder simplifies as it goes.</strong>

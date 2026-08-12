@@ -1,0 +1,141 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem julian.shoddy — test program for machines/julian.shoddy
+Rem
+Rem Assert-driven, in the fin.shoddy / geo.shoddy pattern: it prints
+Rem what it is doing, stops at the first failed assertion, and ends
+Rem with ALL ASSERTIONS PASSED when none fail. Offline — nothing here
+Rem reads a clock, which is the machine's own claim being exercised:
+Rem every date below is an argument.
+Rem
+Rem EVERY NUMBER BELOW IS A KNOWN ANSWER, NEVER A VALUE RECORDED FROM
+Rem A RUN. The anchors are public facts, not this machine's output:
+Rem
+Rem   1970-01-01  serial 0 by definition; JD 2440587.5; a Thursday
+Rem   2000-01-01  serial 10957 (thirty years, seven leap days);
+Rem               JD 2451544.5 (J2000.0 is JD 2451545.0 at NOON);
+Rem               a Saturday
+Rem   2001-09-09  serial 11574 (the billionth Unix second fell on
+Rem               this day); a Sunday
+Rem
+Rem UNLIKE geo's suite, = IS USED ON COMPUTED DATES, DELIBERATELY. A
+Rem JulDate is whole-number arithmetic end to end — no trigonometry,
+Rem no rounding — so a computed date either equals its literal exactly
+Rem or the machine is wrong. A tolerance here would hide defects, not
+Rem absorb noise.
+Rem
+Rem THE FIXTURES 1900 / 2000 / 2100 ARE THE POINT, NOT A DECORATION.
+Rem Both century rules bite inside them, and they are the same three
+Rem years fin's suite pinned before this machine existed — the
+Rem migration's promise is that the arithmetic moved without bending,
+Rem and these are the assertions that hold it to that.
+Rem
+Rem WHAT CANNOT BE TESTED HERE: the aborting half of each guard.
+Rem Shoddy has no catchable errors, so asserting that these abort
+Rem would kill the suite rather than fail an assertion. Verified by
+Rem hand and named here instead:
+Rem
+Rem   JulOf(2026, 2, 30)        a day that does not exist
+Rem   JulOf(2026, 13, 1)        a thirteenth month
+Rem   JulFromSerial(0.5)        a fractional serial — the guard that
+Rem                             catches a Julian day number handed to
+Rem                             the wrong epoch
+Rem
+Rem JulTryOf is the total twin of exactly those refusals and IS
+Rem asserted below, on both arms.
+Rem
+Rem Run: bin\mill run tst\julian.shoddy      (from the repo root)
+Rem ==================================================================
+
+Include "../machines/julian.shoddy"
+
+Rem ---- this file's own helpers -----------------------------------------
+
+Rem A date is only honest if it survives the trip to a day number and
+Rem back — that is what makes the century rules testable at all.
+Def RoundTrips(d As JulDate) As Boolean
+    JulFromSerial(JulSerial(d)) = d
+
+Def IsErr(r As Result) As Boolean
+    Select Case r
+        Case Err(why, at)
+            True
+        Case Else
+            False
+
+Rem Result has no accessor words — Select Case is the only way in — so
+Rem an assertion about the date inside one goes through this.
+Def OkDate(r As Result) As JulDate
+    Select Case r
+        Case Ok(d)
+            d
+        Case Else
+            JulOf(1970, 1, 1)
+
+Def Main()
+    Print("--- LEAP RULES ---")
+    Assert(JulIsLeap(2000), "2000 IS A LEAP YEAR")
+    Assert(Not JulIsLeap(1900), "1900 IS NOT")
+    Assert(Not JulIsLeap(2100), "NOR IS 2100")
+    Assert(JulIsLeap(2024), "2024 IS")
+    Assert(JulDaysInMonth(2024, 2) = 29, "FEBRUARY IN A LEAP YEAR")
+    Assert(JulDaysInMonth(2026, 2) = 28, "AND IN A COMMON YEAR")
+    Assert(JulDaysInMonth(2000, 2) = 29, "THE 400 RULE GIVES FEBRUARY ITS DAY")
+    Assert(JulDaysInMonth(1900, 2) = 28, "THE 100 RULE TAKES IT AWAY")
+    Assert(JulDaysInMonth(2026, 4) = 30, "THIRTY DAYS HATH APRIL")
+    Assert(JulDaysInMonth(2026, 12) = 31, "AND DECEMBER THIRTY-ONE")
+
+    Print("--- THE TWO EPOCHS ---")
+    Assert(JulSerial(JulOf(1970, 1, 1)) = 0, "SERIAL 0 IS THE EPOCH")
+    Assert(JulSerial(JulOf(2000, 1, 1)) = 10957, "SERIAL OF 2000-01-01, A PUBLIC FACT")
+    Assert(JulSerial(JulOf(2001, 9, 9)) = 11574, "THE BILLIONTH-SECOND DAY")
+    Assert(JulSerial(JulOf(2026, 1, 1)) = 20454, "SERIAL OF 2026-01-01")
+    Assert(JulDayNumber(JulOf(1970, 1, 1)) = 2440587.5, "JD OF THE EPOCH, THE ONE CONSTANT")
+    Assert(JulDayNumber(JulOf(2000, 1, 1)) = 2451544.5, "MIDNIGHT BEFORE J2000.0")
+    Assert(JulDayNumber(JulOf(2026, 1, 1)) - JulSerial(JulOf(2026, 1, 1)) = 2440587.5,
+           "THE TWO EPOCHS DIFFER BY EXACTLY THE STATED CONSTANT")
+
+    Print("--- ROUND TRIPS ---")
+    Assert(RoundTrips(JulOf(1900, 2, 28)), "A DATE SURVIVES THE SERIAL ROUND TRIP")
+    Assert(RoundTrips(JulOf(2000, 2, 29)), "INCLUDING A LEAP CENTURY")
+    Assert(RoundTrips(JulOf(2100, 3, 1)), "AND A NON-LEAP CENTURY")
+    Assert(RoundTrips(JulOf(2026, 12, 31)), "AND A YEAR BOUNDARY")
+    Assert(RoundTrips(JulOf(1826, 7, 4)), "TWO CENTURIES BACK")
+    Assert(RoundTrips(JulOf(2226, 12, 31)), "TWO CENTURIES FORWARD")
+    Assert(RoundTrips(JulOf(1, 1, 1)), "THE FIRST PROLEPTIC YEAR")
+    Assert(JulFromSerial(0) = JulOf(1970, 1, 1), "SERIAL 0 COMES BACK AS THE EPOCH")
+
+    Print("--- ARITHMETIC ---")
+    Assert(JulDiff(JulOf(2026, 1, 1), JulOf(2026, 1, 2)) = 1, "CONSECUTIVE DAYS")
+    Assert(JulDiff(JulOf(2026, 1, 1), JulOf(2027, 1, 1)) = 365, "A COMMON YEAR")
+    Assert(JulDiff(JulOf(2024, 1, 1), JulOf(2025, 1, 1)) = 366, "A LEAP YEAR")
+    Assert(JulDiff(JulOf(2026, 1, 2), JulOf(2026, 1, 1)) = -1, "AND THE DIFFERENCE IS SIGNED")
+    Assert(JulAddDays(JulOf(2026, 1, 31), 1) = JulOf(2026, 2, 1), "ADDING A DAY CROSSES THE MONTH")
+    Assert(JulAddDays(JulOf(2024, 2, 28), 1) = JulOf(2024, 2, 29), "INTO A LEAP DAY WHERE THERE IS ONE")
+    Assert(JulAddDays(JulOf(2026, 2, 28), 1) = JulOf(2026, 3, 1), "AND PAST IT WHERE THERE IS NOT")
+    Assert(JulAddDays(JulOf(2026, 1, 1), -1) = JulOf(2025, 12, 31), "A NEGATIVE COUNT WALKS BACKWARDS")
+    Assert(JulAddMonths(JulOf(2026, 1, 31), 1) = JulOf(2026, 2, 28), "MONTHS CLAMP TO THE MONTH END")
+    Assert(JulAddMonths(JulOf(2024, 1, 31), 1) = JulOf(2024, 2, 29), "AND KNOW ABOUT LEAP YEARS")
+    Assert(JulAddMonths(JulOf(2026, 8, 12), 12) = JulOf(2027, 8, 12), "TWELVE MONTHS IS A YEAR")
+    Assert(JulAddMonths(JulOf(2031, 1, 1), -6) = JulOf(2030, 7, 1), "A NEGATIVE COUNT WALKS BACK - THE COUPON SHAPE")
+
+    Print("--- WEEKDAYS ---")
+    Assert(JulWeekday(JulOf(1970, 1, 1)) = 4, "THE EPOCH WAS A THURSDAY")
+    Assert(JulWeekday(JulOf(2000, 1, 1)) = 6, "2000 OPENED ON A SATURDAY")
+    Assert(JulWeekday(JulOf(2001, 9, 9)) = 7, "THE BILLIONTH SECOND FELL ON A SUNDAY")
+    Assert(JulWeekday(JulOf(2026, 8, 12)) = 3, "AND A KNOWN WEDNESDAY")
+
+    Print("--- THE TOTAL TWIN ---")
+    Assert(OkDate(JulTryOf(2024, 2, 29)) = JulOf(2024, 2, 29), "A REAL LEAP DAY IS OK")
+    Assert(IsErr(JulTryOf(2026, 2, 29)), "THE SAME DAY IN A COMMON YEAR IS NOT")
+    Assert(IsErr(JulTryOf(2026, 2, 30)), "NO FEBRUARY THIRTIETH")
+    Assert(IsErr(JulTryOf(2026, 6, 31)), "NO THIRTY-FIRST OF JUNE")
+    Assert(IsErr(JulTryOf(2026, 13, 1)), "NO THIRTEENTH MONTH")
+    Assert(IsErr(JulTryOf(2026, 0, 5)), "MONTHS START AT ONE")
+    Assert(IsErr(JulTryOf(2026, 6, 0)), "SO DO DAYS")
+    Assert(IsErr(JulTryOf(2026.5, 1, 1)), "A YEAR IS A WHOLE NUMBER")
+    Assert(IsErr(JulTryOf(2026, 1, 1.5)), "SO IS A DAY")
+
+    Print("ALL ASSERTIONS PASSED")

@@ -1,0 +1,68 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem clock.shoddy — test program for machines/clock.shoddy
+Rem
+Rem Assert-driven, in the fin.shoddy / julian.shoddy pattern. This
+Rem suite is DELIBERATELY IMPURE — clock is the capability that reads
+Rem the wall clock, and a clock suite that never read one would test
+Rem nothing — so every assertion here is about CONSISTENCY, never
+Rem about a particular moment: nothing below can fail tomorrow, at
+Rem midnight, or on a leap day.
+Rem
+Rem THE MIDNIGHT STRADDLE IS HANDLED, NOT IGNORED. Two reads of the
+Rem clock can land either side of midnight, so no assertion compares
+Rem two reads for equality; the ClockDate assertions allow the serial
+Rem to move by one day between reads, which is the honest tolerance
+Rem and costs nothing the rest of the year.
+Rem
+Rem Run: bin\mill run tst\clock.shoddy      (from the repo root)
+Rem ==================================================================
+
+Include "../machines/clock.shoddy"
+Include "../machines/julian.shoddy"
+
+Def Main()
+    Print("--- MEASURING ---")
+    Let t0 = Ticks()
+    Assert(t0 >= 0, "TICKS RUNS FORWARD FROM PROGRAM START")
+    Assert(Elapsed(t0) >= 0, "ELAPSED IS NEVER NEGATIVE")
+    Assert(TimeIt([ ]) >= 0, "TIMING NOTHING TAKES NO TIME AT ALL")
+
+    Print("--- THE DATE BRIDGE ---")
+    Rem ClockDate must agree with the calendar it bridges to: its
+    Rem serial round-trips, and a second read lands on the same day or
+    Rem the next one — never anywhere else.
+    Let today = ClockDate()
+    Assert(JulFromSerial(JulSerial(today)) = today, "TODAY SURVIVES THE SERIAL ROUND TRIP")
+    Assert(JulMonth(today) >= 1 And JulMonth(today) <= 12, "THE MONTH IS A MONTH")
+    Assert(JulDay(today) >= 1 And JulDay(today) <= JulDaysInMonth(JulYear(today), JulMonth(today)),
+           "THE DAY FALLS IN ITS MONTH")
+    Assert(JulYear(today) >= 2026, "THE CLOCK HAS NOT GONE BACKWARDS IN HISTORY")
+    Let again = JulSerial(ClockDate())
+    Assert(again - JulSerial(today) >= 0 And again - JulSerial(today) <= 1,
+           "A SECOND READ IS TODAY OR, ACROSS MIDNIGHT, TOMORROW")
+
+    Rem Clock() and ClockDate() must describe the same day, straddle
+    Rem allowed: the raw array's y/m/d, rebuilt as a date, sits within
+    Rem a day of the bridged one.
+    Let raw = Clock()
+    Let rawDay = JulSerial(JulOf(Nth(raw, 1), Nth(raw, 2), Nth(raw, 3)))
+    Assert(Abs(rawDay - JulSerial(today)) <= 1, "THE BRIDGE AND THE RAW READ AGREE ON THE DAY")
+
+    Print("--- STAMPING ---")
+    Rem A stamp is 23 characters and its separators sit where ISO-8601
+    Rem puts them — asserted on shape, never on the moment.
+    Let s = Stamp()
+    Assert(Len(s) = 23, "A STAMP IS TWENTY-THREE CHARACTERS")
+    Assert(Mid(s, 5, 1) = "-" And Mid(s, 8, 1) = "-", "THE DATE SEPARATORS SIT WHERE ISO PUTS THEM")
+    Assert(Mid(s, 11, 1) = "T", "AND THE T BETWEEN THE HALVES")
+    Assert(Mid(s, 14, 1) = ":" And Mid(s, 17, 1) = ":", "AND THE TIME SEPARATORS")
+
+    Print("--- DURATIONS ---")
+    Assert(FormatDuration(64200) = "1m 04.2s", "MINUTES AND PADDED SECONDS")
+    Assert(FormatDuration(4200) = "4.2s", "SECONDS ALONE UNDER A MINUTE")
+    Assert(FormatDuration(0) = "0s", "AND ZERO IS ZERO")
+
+    Print("ALL ASSERTIONS PASSED")

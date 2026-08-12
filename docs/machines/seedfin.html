@@ -68,13 +68,16 @@ stops at the shorter, so a mismatched pair would otherwise answer a fit of
 the overlap against the means of the whole: a wrong number rather than a
 refusal, and that is the failure this layer exists for.</p>
 
-<h3>The calendar, and the bond pricer standing on it</h3>
-<p>fin carries a second subsystem — a calendar, and a bond pricer built on
-it — and it is bridged in full. A date is a dict like every other record
-here: <code>{ ("yr" n) ("mon" n) ("day" n) }</code>, built by
-<code>FINDATE</code> and read back by <code>FINDATESHOW</code> as
-<code>"2025-01-31"</code>. <code>FINDATEOF</code> parses that same spelling,
-so a date can be typed either way round and a tape reads as prose.</p>
+<h3>The day counts, and the bond pricer standing on them</h3>
+<p>fin carries a second subsystem — the day-count bases, and a bond pricer
+built on them — and it is bridged in full. A date is a dict —
+<code>{ ("yr" n) ("mon" n) ("day" n) }</code> — built by
+<a href="seedjulian.html">seedjulian</a>'s <code>JULDATE</code>: the
+calendar words lived here as <code>FINDATE</code> and friends while fin
+carried the calendar itself, and they moved to seedjulian, renamed, when
+the calendar moved to <a href="julian.html">julian</a>. The dict shape did
+not change, so a date built there flows straight into
+<code>FINDAYS360</code> and the bond words.</p>
 <p>The day-count bases and coupon frequencies are <em>words</em> rather than
 numbers to remember. fin spells them as zero-argument definitions because
 Shoddy has no enum; the same choice here means a session reads
@@ -84,18 +87,18 @@ wrong answer.</p>
 
 <h3>Why this subsystem needed more guarding than the rest of the seed</h3>
 <p>Almost nothing here <em>aborts</em> on bad input, which is exactly the
-problem. <code>FinSerial</code> is integer arithmetic with no opinion about
-whether a date exists: <code>FinDate(2025, 2, 30)</code> serializes perfectly
-happily to the 2nd of March, and <code>FinDate(2025, 13, 1)</code> to January
-2026. <code>FinYearFrac</code> falls through to actual/365.25 for any basis
-it does not recognise. <code>FinLastCoupon</code> steps back by
-<code>12 / freq</code> whole months whether or not that divides evenly.</p>
+problem. <code>JulSerial</code> is integer arithmetic with no opinion about
+whether a date exists — the raw constructor serializes a 30th of February
+perfectly happily to the 2nd of March. <code>FinYearFrac</code> falls
+through to actual/365.25 for any basis it does not recognise.
+<code>FinLastCoupon</code> steps back by <code>12 / freq</code> whole months
+whether or not that divides evenly.</p>
 <p>Every one of those is a <strong>wrong answer</strong> rather than a
 refusal, and a wrong answer about money is the failure this whole seed layer
-exists to prevent. So <code>FINDATE</code> checks the calendar, every word
-that takes a date checks it again on the way in — a dict can also arrive
-hand-built — and the basis, the frequency and the yield are each refused
-when they are outside what the arithmetic underneath can mean.</p>
+exists to prevent. So every word that takes a date checks it on the way in
+— a dict can also arrive hand-built — and the basis, the frequency and the
+yield are each refused when they are outside what the arithmetic underneath
+can mean.</p>
 <p>The one genuine abort is <code>FinYtm</code>'s, when no yield between 0
 and 2 prices the bond. It is guarded the way <code>FINIRR</code>'s twin
 already is: the same test asked first, and refused instead.</p>
@@ -104,7 +107,7 @@ already is: the same test asked first, and refused instead.</p>
 <p>A five percent bond, paying twice a year, settling on a coupon date five
 years before it matures. At a yield equal to its coupon it must be worth
 exactly par, which is the arithmetic anyone can check:</p>
-<pre><code>&gt; 2025 1 15 FINDATE "S" STO  2030 1 15 FINDATE "M" STO
+<pre><code>&gt; 2025 1 15 JULDATE "S" STO  2030 1 15 JULDATE "M" STO
 ok: S
 ok: M
 [ empty ]
@@ -118,26 +121,16 @@ x: 87.83365633
 x: 0.05
 &gt; "S" RCL "M" RCL 0.05 0.05 FINSEMI FINMDUR
 x: 4.376031965
-&gt; "S" RCL 2024 7 15 FINDATE 0.05 FINSEMI FIN360 FINACCRUED
+&gt; "S" RCL 2024 7 15 JULDATE 0.05 FINSEMI FIN360 FINACCRUED
 x: 2.5</code></pre>
-<p>The calendar underneath it, including the month-end clamp that a
-hand-rolled date library always gets wrong:</p>
-<pre><code>&gt; 1970 1 1 FINDATE FINSERIAL
-x: 0
-&gt; 2025 1 31 FINDATE 1 FINDATEADDMONTHS FINDATESHOW
-x: "2025-02-28"
-&gt; 2024 1 31 FINDATE 1 FINDATEADDMONTHS FINDATESHOW
-x: "2024-02-29"
-&gt; 2025 3 1 FINDATE -45 FINDATEADD FINDATESHOW
-x: "2025-01-15"
-&gt; 2025 1 1 FINDATE 2026 1 1 FINDATE FIN360 FINDATEDIFF
+<p>The day counts underneath it, where the whole point is that the bases
+disagree:</p>
+<pre><code>&gt; 2025 1 1 JULDATE 2026 1 1 JULDATE FIN360 FINDATEDIFF
 x: 360
-&gt; 2025 1 1 FINDATE 2026 1 1 FINDATE FINACTUAL FINDATEDIFF
+&gt; 2025 1 1 JULDATE 2026 1 1 JULDATE FINACTUAL FINDATEDIFF
 x: 365</code></pre>
 <p>And the refusals, every one of which would otherwise have been a number:</p>
-<pre><code>&gt; 2025 2 30 FINDATE
-?: FINDATE: 2/2025 HAS 28 DAYS, SO THERE IS NO DAY 30
-&gt; 2025 1 1 FINDATE 2026 1 1 FINDATE 9 FINYEARFRAC
+<pre><code>&gt; 2025 1 1 JULDATE 2026 1 1 JULDATE 9 FINYEARFRAC
 ?: FINYEARFRAC: THAT IS NOT A DAY-COUNT BASIS — USE FINACTUAL, FIN360 OR FIN365
 &gt; "M" RCL "S" RCL 0.05 0.05 FINSEMI FIN360 FINBONDPRICE
 ?: FINBONDPRICE: SETTLEMENT MUST FALL BEFORE MATURITY
@@ -156,23 +149,16 @@ x: 365</code></pre>
 <tr><td>Capital budgeting</td><td><code>FINNPV FINNPVOF FINIRR FINNFV FINMIRR FINPAYBACK FINPAYBACKDISC</code></td></tr>
 <tr><td>Growth, margin, break-even, payroll, depreciation</td><td><code>FINCAGR FINROI FINRSTAT FINYIELD FINDIVGROWTH FINMARGINOF FINMARKUPOF FINSELLFROMMARGIN FINCOSTFROMMARGIN FINBREAKEVENOF FINPAYROLLOF FINSL FINSLBOOK FINSYD FINDB FINFACT FINCOMB FINPERM</code></td></tr>
 <tr><td>Bases and frequencies</td><td><code>FINACTUAL FIN360 FIN365 FINANNUAL FINSEMI FINQUARTERLY</code></td></tr>
-<tr><td>The calendar</td><td><code>FINDATE FINDATESHOW FINDATEOF FINISLEAP FINDAYSINMONTH FINSERIAL FINFROMSERIAL FINDATEADD FINDATEADDMONTHS FINDAYS360 FINDATEDIFF FINYEARFRAC</code></td></tr>
+<tr><td>The day counts</td><td><code>FINDAYS360 FINDATEDIFF FINYEARFRAC</code></td></tr>
 <tr><td>Bonds</td><td><code>FINCOUPONSBEFORE FINLASTCOUPON FINACCRUED FINBONDPRICE FINYTM FINMDUR</code></td></tr>
 </table>
 
-<p>The calendar and the bonds in full, since both are new here and neither
-reads like the rest of the seed:</p>
+<p>The day counts and the bonds in full, since neither reads like the rest
+of the seed. The calendar words that once sat above these &mdash;
+<code>FINDATE</code> through <code>FINDATEADDMONTHS</code> &mdash; are
+<a href="seedjulian.html">seedjulian</a>'s now, spelled <code>JUL*</code>:</p>
 <table>
 <tr><th>Word</th><th>Description</th></tr>
-<tr><td>FINDATE ( y m d -- date )</td><td>A date as a dict: yr, mon, day. Refuses anything the calendar does not have, such as the 30th of February.</td></tr>
-<tr><td>FINDATESHOW ( date -- str )</td><td>A date written out as "YYYY-MM-DD".</td></tr>
-<tr><td>FINDATEOF ( str -- date )</td><td>The other way: "2025-01-31" read back into a date.</td></tr>
-<tr><td>FINISLEAP ( y -- flag )</td><td>Whether a year is a leap year, century rules included.</td></tr>
-<tr><td>FINDAYSINMONTH ( y m -- n )</td><td>How many days that month has in that year.</td></tr>
-<tr><td>FINSERIAL ( date -- n )</td><td>A date as a day number, counting from 1970-01-01 — the form to subtract two dates with. Negative before it.</td></tr>
-<tr><td>FINFROMSERIAL ( n -- date )</td><td>A day number back into a date.</td></tr>
-<tr><td>FINDATEADD ( date days -- date )</td><td>The date that many days later; a negative count goes back.</td></tr>
-<tr><td>FINDATEADDMONTHS ( date months -- date )</td><td>That many months later, clamped to month end: one month after 31 January is 28 February.</td></tr>
 <tr><td>FINDAYS360 ( a b -- n )</td><td>Days from a to b on the NASD 30/360 rule.</td></tr>
 <tr><td>FINDATEDIFF ( a b basis -- n )</td><td>Days from a to b, counted on the given basis.</td></tr>
 <tr><td>FINYEARFRAC ( a b basis -- n )</td><td>The fraction of a year from a to b on the given basis.</td></tr>
@@ -200,7 +186,7 @@ reckoner state, which is all halifax does.</p>
 <tr><td class="uicon"><a href="fin.html"><img src="../media/icons/fin.svg" alt=""></a></td><td><a href="fin.html">fin</a></td><td>The domain this seed bridges.</td></tr>
 <tr><td class="uicon"><a href="reckoner.html"><img src="../media/icons/reckoner.svg" alt=""></a></td><td><a href="reckoner.html">reckoner</a></td><td><code>RckReg</code> and the argument readers every registered word is built from.</td></tr>
 <tr><td class="uicon"><a href="seq.html"><img src="../media/icons/seq.svg" alt=""></a></td><td><a href="seq.html">seq</a></td><td>List plumbing under every dict and list converter.</td></tr>
-<tr><td class="uicon"><a href="str.html"><img src="../media/icons/str.svg" alt=""></a></td><td><a href="str.html">str</a></td><td><code>PadZero</code> writes a date as <code>"2025-01-31"</code> and <code>Split</code> reads one back.</td></tr>
+<tr><td class="uicon"><a href="julian.html"><img src="../media/icons/julian.svg" alt=""></a></td><td><a href="julian.html">julian</a></td><td>The calendar rules every arriving date dict is checked against, and the <code>JulDate</code> the bond words consume.</td></tr>
 </table>
 
 <nav class="pagenav pagenav-bottom" aria-label="Machines, in catalog order">

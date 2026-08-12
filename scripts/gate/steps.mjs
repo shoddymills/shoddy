@@ -29,6 +29,7 @@ export const MACHINE_SUITES = [
     'seedreciotest', 'seedregextest', 'seedsimplextest', 'seedsparsetest',
     'seedterminaltest',
     'seedvt100test', 'shakertest', 'xmltest', 'seedgeotest',
+    'seedjuliantest', 'seedephemeristest',
 ];
 
 // tst/ files deliberately run by nothing, each with the reason. A name
@@ -64,6 +65,9 @@ export const CORE_SUITES = [
     ['sparse', 'sparse kernels against dense counterparts', 300],
     ['mip', 'branch and bound', 300],
     ['geo', 'the sphere, against independently worked distances', 300],
+    ['julian', 'the calendar, against public epoch facts', 300],
+    ['ephemeris', 'the sky, against the eclipse and the oppositions', 300],
+    ['clock', 'the timing capability, by consistency not by moment', 300],
 ];
 
 export const MILLS = [

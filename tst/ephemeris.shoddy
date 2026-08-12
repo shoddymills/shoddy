@@ -1,0 +1,238 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem ephemeris.shoddy — test program for machines/ephemeris.shoddy
+Rem
+Rem Assert-driven, in the geo.shoddy / julian.shoddy pattern: it prints
+Rem what it is doing, stops at the first failed assertion, and ends
+Rem with ALL ASSERTIONS PASSED when none fail. Offline, and nothing
+Rem here reads a clock: every date is an argument, which is the
+Rem machine's own claim being exercised.
+Rem
+Rem EVERY FIXTURE BELOW IS A PUBLIC FACT, NEVER A VALUE RECORDED FROM
+Rem A RUN — and most are facts a wrong ephemeris cannot fake:
+Rem
+Rem   * Greenwich mean sidereal time at J2000.0 is the epoch constant
+Rem     280.4606 degrees, and twelve hours earlier it was 99.9678
+Rem     (6h 39m 52.27s, the published value for 2000-01-01 0h UT).
+Rem   * Polaris (RA 37.95, dec +89.264) stands at an altitude equal to
+Rem     the observer's latitude, within the 0.74 degrees it sits from
+Rem     the pole, at EVERY hour — the oldest test in navigation.
+Rem   * On 2024-04-08 the moon eclipsed the sun (conjunction 18:21 UT),
+Rem     so at 18:00 UT their geocentric separation was under two
+Rem     degrees. No pair of independently wrong positions passes this.
+Rem   * Mercury never stands more than about 28 degrees from the sun,
+Rem     Venus about 48 — bounds that only hold if the heliocentric to
+Rem     geocentric conversion is right on both ends.
+Rem   * Jupiter stood at opposition on 2024-12-07, Saturn on
+Rem     2024-09-08, Mars on 2025-01-16 — published dates, and at
+Rem     opposition the separation from the sun approaches 180.
+Rem
+Rem THE ACCURACY BEING ASSERTED IS THE MACHINE'S STATED ACCURACY: the
+Rem sun to a third of a degree, the moon to a third of a degree
+Rem (geocentric), the planets to well under a degree over 1800..2050.
+Rem Tolerances below are set from those statements, not from the
+Rem arithmetic's best day.
+Rem
+Rem WHAT CANNOT BE TESTED HERE: the aborting half of the guards.
+Rem Verified by hand and named here instead:
+Rem
+Rem   EphPlanet(3, jd, 0)     the Earth, which is where you are standing
+Rem   EphPlanet(9, jd, 0)     a planet the table does not carry
+Rem
+Rem Run: bin\mill run tst\ephemeris.shoddy      (from the repo root)
+Rem ==================================================================
+
+Include "../machines/ephemeris.shoddy"
+Include "../machines/geo.shoddy"
+
+Rem ---- fixtures --------------------------------------------------------
+
+Def London() As GeoPt
+    GeoAt(51.5074, -0.1278)
+
+Def Sydney() As GeoPt
+    GeoAt(-33.8688, 151.2093)
+
+Rem Dallas, inside the 2024-04-08 path of totality.
+Def Dallas() As GeoPt
+    GeoAt(32.7767, -96.797)
+
+Def Polaris() As EphSky
+    EphSky(37.95, 89.264)
+
+Rem The eclipse: geocentric conjunction at 18:21 UT.
+Def EclipseDay() As Number
+    GeoJulian(2024, 4, 8)
+
+Rem ---- this file's own helpers -----------------------------------------
+
+Def Close(a As Number, b As Number, tol As Number) As Boolean
+    Abs(a - b) <= tol
+
+Rem Azimuths and right ascensions live on a circle, so 359.9 and 0.1
+Rem are two tenths apart, not 359.8.
+Def RoundClose(a As Number, b As Number, tol As Number) As Boolean
+    Min(Abs(a - b), 360 - Abs(a - b)) <= tol
+
+Def IsNone(o As Option) As Boolean
+    Select Case o
+        Case None
+            True
+        Case Else
+            False
+
+Def HourOr(o As Option, dflt As Number) As Number
+    Select Case o
+        Case Some(h)
+            h
+        Case Else
+            dflt
+
+Rem The moon's altitude at a UTC hour — the composition every rise and
+Rem set assertion checks itself against.
+Def MoonAltAt(p As GeoPt, jd As Number, hours As Number) As Number
+    EphAlt(EphAltAz(p, EphMoon(jd, hours), jd, hours))
+
+Rem A rise or set time is only honest if the moon is actually AT the
+Rem rise altitude at that time. None passes vacuously: a day with no
+Rem crossing has nothing to check.
+Def EventHonest(p As GeoPt, jd As Number, o As Option) As Boolean
+    Select Case o
+        Case Some(h)
+            Close(MoonAltAt(p, jd, h), EphMoonAltitude(), 0.2)
+        Case Else
+            True
+
+Def Main()
+    Print("--- SIDEREAL TIME, AGAINST THE PUBLISHED EPOCH VALUES ---")
+    Assert(Close(EphSidereal(2451544.5, 12), 280.4606, 0.01), "GMST AT J2000.0 IS THE EPOCH CONSTANT")
+    Assert(Close(EphSidereal(2451544.5, 0), 99.9678, 0.01), "AND AT 2000-01-01 0H UT IT WAS 6H 39M 52S")
+    Assert(EphSidereal(EclipseDay(), 12) >= 0 And EphSidereal(EclipseDay(), 12) < 360, "AND IT IS ALWAYS FOLDED INTO 0..360")
+
+    Print("--- SEPARATION, ON KNOWN CONFIGURATIONS ---")
+    Assert(Close(EphSeparation(Polaris(), Polaris()), 0, 0.000001), "A POINT IS NO DISTANCE FROM ITSELF")
+    Assert(Close(EphSeparation(EphSky(0, 0), EphSky(180, 0)), 180, 0.000001), "AND OPPOSITE POINTS ON THE EQUATOR ARE 180 APART")
+    Assert(Close(EphSeparation(EphSky(0, 90), EphSky(123, -90)), 180, 0.000001), "POLE TO POLE IS 180 WHATEVER THE RA SAYS")
+
+    Print("--- POLARIS: ALTITUDE IS LATITUDE, THE OLDEST TEST IN NAVIGATION ---")
+    Assert(Close(EphAlt(EphAltAz(London(), Polaris(), EclipseDay(), 3)), 51.5074, 1.2),
+           "FROM LONDON THE POLE STAR STANDS AT THE LATITUDE")
+    Assert(Close(EphAlt(EphAltAz(London(), Polaris(), GeoJulian(2026, 8, 12), 21)), 51.5074, 1.2),
+           "AT ANY HOUR OF ANY YEAR")
+    Assert(RoundClose(EphAzim(EphAltAz(London(), Polaris(), EclipseDay(), 3)), 0, 2.5),
+           "AND IT BEARS NORTH, WHICH IS THE WHOLE POINT OF IT")
+
+    Print("--- THE SUN, AGAINST GEO'S SUN ---")
+    Rem Two machines, two routes to the same sky: geo goes through the
+    Rem equation of time, ephemeris through sidereal time. They must
+    Rem agree within their joint stated accuracy, and this assertion is
+    Rem what keeps the two private solar models from drifting apart.
+    Let jdJun = GeoJulian(2026, 6, 21)
+    Let sunUp = EphAltAz(London(), EphSun(jdJun, 12), jdJun, 12)
+    Assert(Close(EphAlt(sunUp), SunElevation(GeoSunPos(London(), jdJun, 12)), 0.5),
+           "MIDSUMMER NOON ELEVATION IN LONDON, BOTH MACHINES")
+    Assert(RoundClose(EphAzim(sunUp), SunAzimuth(GeoSunPos(London(), jdJun, 12)), 1.5),
+           "AND THE SAME COMPASS AZIMUTH")
+    Let jdJan = GeoJulian(2026, 1, 15)
+    Let sunSyd = EphAltAz(Sydney(), EphSun(jdJan, 2), jdJan, 2)
+    Assert(Close(EphAlt(sunSyd), SunElevation(GeoSunPos(Sydney(), jdJan, 2)), 0.5),
+           "A SYDNEY SUMMER AFTERNOON, SOUTH OF THE EQUATOR")
+    Assert(RoundClose(EphAzim(sunSyd), SunAzimuth(GeoSunPos(Sydney(), jdJan, 2)), 1.5),
+           "AZIMUTH TOO, WHERE THE SUN CROSSES NORTH OF THE OBSERVER")
+    Rem The season read through the ephemeris path alone.
+    Assert(Close(EphDec(EphSun(GeoJulian(2024, 6, 20), 12)), 23.43, 0.15), "THE JUNE SOLSTICE DECLINATION IS THE OBLIQUITY")
+    Assert(Close(EphDec(EphSun(GeoJulian(2024, 3, 20), 12)), 0, 0.5), "AND AT THE EQUINOX THE SUN IS OVER THE EQUATOR")
+
+    Print("--- THE MOON, AGAINST THE ECLIPSE EVERYONE SAW ---")
+    Assert(EphSeparation(EphMoon(EclipseDay(), 18), EphSun(EclipseDay(), 18)) < 2,
+           "AT 18:00 UT ON 2024-04-08 THE MOON WAS CROSSING THE SUN")
+    Assert(EphSeparation(EphMoon(EclipseDay(), 18), EphSun(EclipseDay(), 18)) <
+           EphSeparation(EphMoon(EclipseDay(), 6), EphSun(EclipseDay(), 6)),
+           "AND IT WAS CLOSER AT 18:00 THAN TWELVE HOURS EARLIER")
+    Assert(EphMoonPhase(EclipseDay(), 0) < 0.02, "A SOLAR ECLIPSE HAPPENS AT NEW MOON")
+    Assert(EphMoonPhase(GeoJulian(2024, 4, 24), 0) > 0.98, "AND A FORTNIGHT LATER THE MOON WAS FULL")
+    Assert(EphMoonAge(GeoJulian(2024, 4, 9), 0) >= 0 And EphMoonAge(GeoJulian(2024, 4, 9), 0) < 1,
+           "THE DAY AFTER NEW MOON THE MOON IS UNDER A DAY OLD")
+    Assert(EphMoonAge(GeoJulian(2024, 4, 7), 0) > 27, "AND THE DAY BEFORE IT IS NEARLY A MONTH OLD")
+
+    Print("--- THE MOON'S DISTANCE STAYS BETWEEN ITS PERIGEE AND APOGEE ---")
+    Assert(EphMoonDistance(EclipseDay(), 18) > 356000000 And EphMoonDistance(EclipseDay(), 18) < 407000000,
+           "ON THE ECLIPSE DAY")
+    Assert(EphMoonDistance(GeoJulian(2026, 8, 12), 0) > 356000000 And EphMoonDistance(GeoJulian(2026, 8, 12), 0) < 407000000,
+           "AND ON AN ORDINARY ONE")
+    Assert(EphMoonDistance(GeoJulian(2025, 1, 1), 12) > 356000000 And EphMoonDistance(GeoJulian(2025, 1, 1), 12) < 407000000,
+           "AND A THIRD, A YEAR AWAY FROM THE OTHERS")
+
+    Print("--- MOONRISE AND MOONSET, SELF-CONSISTENT AND HONEST ABOUT ABSENCE ---")
+    Rem The moon rises about fifty minutes later each day, so roughly
+    Rem once a month a calendar day has no moonrise at all. Over two
+    Rem consecutive days at least one rise and one set must exist, and
+    Rem every time answered must put the moon AT the rise altitude.
+    Let d1 = GeoJulian(2026, 8, 12)
+    Let d2 = GeoJulian(2026, 8, 13)
+    Assert(Not IsNone(EphMoonRise(London(), d1)) Or Not IsNone(EphMoonRise(London(), d2)),
+           "TWO CONSECUTIVE LONDON DAYS HAVE AT LEAST ONE MOONRISE BETWEEN THEM")
+    Assert(Not IsNone(EphMoonSet(London(), d1)) Or Not IsNone(EphMoonSet(London(), d2)),
+           "AND AT LEAST ONE MOONSET")
+    Assert(EventHonest(London(), d1, EphMoonRise(London(), d1)), "A RISE TIME PUTS THE MOON AT THE RISE ALTITUDE")
+    Assert(EventHonest(London(), d2, EphMoonRise(London(), d2)), "ON THE SECOND DAY TOO")
+    Assert(EventHonest(London(), d1, EphMoonSet(London(), d1)), "AND SO DOES A SET TIME")
+    Assert(EventHonest(London(), d2, EphMoonSet(London(), d2)), "BOTH DAYS")
+    Rem A rise or set is a UTC hour of the day asked about.
+    Assert(HourOr(EphMoonRise(London(), d1), 12) >= 0 And HourOr(EphMoonRise(London(), d1), 12) <= 24,
+           "A MOONRISE IS AN HOUR OF ITS OWN DAY")
+
+    Rem On the day of a total solar eclipse the new moon rises WITH the
+    Rem sun — a cross-check between two machines and two bodies.
+    Assert(Close(HourOr(EphMoonRise(Dallas(), EclipseDay()), -99),
+                 HourOr(GeoSunRise(Dallas(), EclipseDay()), 99), 1.2),
+           "ON ECLIPSE DAY IN DALLAS THE MOON ROSE WITH THE SUN")
+
+    Rem December 2024 sat at the major lunar standstill: the full moon
+    Rem of 2024-12-15 rode near its greatest northern declination, so a
+    Rem degree from the pole it was up all day — no rise, no set, and
+    Rem Option is the design, exactly as it is for geo's midnight sun.
+    Let polar = GeoAt(89, 0)
+    Let standstill = GeoJulian(2024, 12, 15)
+    Assert(IsNone(EphMoonRise(polar, standstill)), "A CIRCUMPOLAR MOON HAS NO RISE")
+    Assert(IsNone(EphMoonSet(polar, standstill)), "AND NO SET")
+    Assert(MoonAltAt(polar, standstill, 0) > 0 And MoonAltAt(polar, standstill, 12) > 0,
+           "BECAUSE IT IS UP AT MIDNIGHT AND STILL UP AT NOON")
+
+    Print("--- MERCURY AND VENUS NEVER LEAVE THE SUN'S SIDE ---")
+    Rem The inner planets' greatest elongations are geometry, not
+    Rem circumstance: about 28 degrees for Mercury, 48 for Venus. Four
+    Rem dates spread over two years, and the bound must hold at all of
+    Rem them — only a correct heliocentric-to-geocentric conversion on
+    Rem BOTH ends keeps an inner planet this close to the sun.
+    Assert(EphSeparation(EphPlanet(EphMercury(), GeoJulian(2024, 1, 15), 0), EphSun(GeoJulian(2024, 1, 15), 0)) < 29,
+           "MERCURY IN JANUARY 2024")
+    Assert(EphSeparation(EphPlanet(EphMercury(), GeoJulian(2024, 7, 1), 0), EphSun(GeoJulian(2024, 7, 1), 0)) < 29,
+           "IN JULY 2024")
+    Assert(EphSeparation(EphPlanet(EphMercury(), GeoJulian(2025, 3, 10), 0), EphSun(GeoJulian(2025, 3, 10), 0)) < 29,
+           "IN MARCH 2025")
+    Assert(EphSeparation(EphPlanet(EphMercury(), GeoJulian(2026, 8, 12), 0), EphSun(GeoJulian(2026, 8, 12), 0)) < 29,
+           "AND IN AUGUST 2026")
+    Assert(EphSeparation(EphPlanet(EphVenus(), GeoJulian(2024, 1, 15), 0), EphSun(GeoJulian(2024, 1, 15), 0)) < 48.5,
+           "VENUS IN JANUARY 2024")
+    Assert(EphSeparation(EphPlanet(EphVenus(), GeoJulian(2024, 10, 1), 0), EphSun(GeoJulian(2024, 10, 1), 0)) < 48.5,
+           "IN OCTOBER 2024")
+    Assert(EphSeparation(EphPlanet(EphVenus(), GeoJulian(2026, 8, 12), 0), EphSun(GeoJulian(2026, 8, 12), 0)) < 48.5,
+           "AND IN AUGUST 2026")
+
+    Print("--- THE OUTER PLANETS, AT THEIR PUBLISHED OPPOSITIONS ---")
+    Assert(EphSeparation(EphPlanet(EphJupiter(), GeoJulian(2024, 12, 7), 0), EphSun(GeoJulian(2024, 12, 7), 0)) > 168,
+           "JUPITER STOOD AT OPPOSITION ON 2024-12-07")
+    Assert(EphSeparation(EphPlanet(EphSaturn(), GeoJulian(2024, 9, 8), 0), EphSun(GeoJulian(2024, 9, 8), 0)) > 168,
+           "SATURN ON 2024-09-08")
+    Assert(EphSeparation(EphPlanet(EphMars(), GeoJulian(2025, 1, 16), 0), EphSun(GeoJulian(2025, 1, 16), 0)) > 168,
+           "AND MARS ON 2025-01-16")
+    Rem And a planet nowhere near opposition is nowhere near 180: at the
+    Rem eclipse Jupiter was a spring evening object, high and east of
+    Rem the sun.
+    Assert(EphSeparation(EphPlanet(EphJupiter(), EclipseDay(), 0), EphSun(EclipseDay(), 0)) < 120,
+           "JUPITER IN APRIL 2024 WAS AN EVENING OBJECT, NOT AT OPPOSITION")
+
+    Print("ALL ASSERTIONS PASSED")

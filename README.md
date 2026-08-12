@@ -263,7 +263,11 @@ batteries included. Full word references in
     <td align="left" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/bool.html"><img src="docs/media/icons/bool.svg" alt="bool" width="120"></a><br><b>bool</b><br><sub>bits, bases, truth tables</sub></td>
     <td align="left" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/clock.html"><img src="docs/media/icons/clock.svg" alt="clock" width="120"></a><br><b>clock</b><br><sub>timing and timestamps</sub></td>
     <td align="left" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/eng.html"><img src="docs/media/icons/eng.svg" alt="eng" width="120"></a><br><b>eng</b><br><sub>the engineer's calculator</sub></td>
+    <td align="left" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/ephemeris.html"><img src="docs/media/icons/ephemeris.svg" alt="ephemeris" width="120"></a><br><b>ephemeris</b><br><sub>the sky as arithmetic</sub></td>
+  </tr>
+  <tr>
     <td align="left" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/geo.html"><img src="docs/media/icons/geo.svg" alt="geo" width="120"></a><br><b>geo</b><br><sub>the Earth as arithmetic</sub></td>
+    <td align="left" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/julian.html"><img src="docs/media/icons/julian.svg" alt="julian" width="120"></a><br><b>julian</b><br><sub>the calendar as arithmetic</sub></td>
     <td align="left" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/math.html"><img src="docs/media/icons/math.svg" alt="math" width="120"></a><br><b>math</b><br><sub>the derived math layer</sub></td>
   </tr>
 </table>

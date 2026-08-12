@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="The Sky as Arithmetic — machines/ephemeris.shoddy">
+<title>ephemeris — The Sky as Arithmetic | Shoddy Machines</title>
+<link rel="stylesheet" href="../style.css">
+<link rel="icon" href="../favicon.svg" type="image/svg+xml">
+<link rel="alternate icon" href="../favicon.ico" sizes="48x48">
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+</head>
+<body>
+<div class="topbar"><div class="inner">
+  <div class="row">
+    <a class="phase" href="index.html"><img class="mark" src="../media/brand/shoddy-icon.svg" alt="" width="23" height="23">Shoddy · The Machines</a>
+    <span class="spacer"></span>
+    <nav class="docnav meta" aria-label="About"><a href="../heritage.html">Heritage</a><a href="../authorship.html">Authorship</a></nav>
+  </div>
+  <nav class="docnav main" aria-label="Documentation"><a href="../tutorials/index.html">Tutorials</a><a href="../guide.html">Guide</a><a href="../quickref.html">Reference</a><span class="here">Machines</span><a href="../mills/index.html">Mills</a><a href="../stack.html">Stack</a><a href="../spec.html">Spec</a><a href="../setup.html">Setup</a><a href="../vscode.html">VS Code</a><a href="../assistants.html">AI</a><a href="../build.html">Toolchain</a><a href="../hosting.html">Hosting</a><a href="../errors.html">Errors</a></nav>
+</div></div>
+<div class="wrap">
+
+
+<header class="mast has-icon"><div><p class="eyebrow"><a href="index.html#core-numerics">The Machines &middot; Core numerics</a></p><h1>ephemeris</h1><p class="kicker">The Sky as Arithmetic &mdash; machines/ephemeris.shoddy</p></div><img class="micon" src="../media/icons/ephemeris.svg" alt="the ephemeris machine&#39;s icon"></header>
+<nav class="pagenav pagenav-top" aria-label="Machines, in catalog order"><a href="eng.html" class="prev"><span class="pnwrap"><span class="dir">&larr; Previous machine</span><span class="ttl">eng</span></span></a><a href="index.html" class="all">All machines</a><a class="next" href="geo.html"><span class="pnwrap"><span class="ttl">geo</span><span class="dir">Next machine &rarr;</span></span></a></nav>
+
+<h2 id="summary">Summary</h2>
+<p><code>ephemeris</code> answers where everything is, for any observer and
+any date: sidereal time, the transform from a sky position to an altitude
+and a compass azimuth, the sun and the moon as sky positions, the moon's
+phase, age, distance, rise and set, and the five naked-eye planets from
+Keplerian elements. It is the machine <a href="geo.html">geo</a>'s
+out-of-scope promised — geo kept the sun as experienced at a place; this is
+the rest of the sky.</p>
+<p>Pure throughout, and <strong>no clock anywhere near it</strong>: every
+word takes a Julian day number and a UTC hour as arguments.
+<a href="julian.html">julian</a>'s <code>JulDayNumber</code> makes one from
+a calendar date (geo's <code>GeoJulian</code> is the same word by another
+name), and <a href="clock.html">clock</a>'s <code>ClockDate()</code>
+supplies &ldquo;today&rdquo; at the caller's edge.</p>
+
+<h2 id="history">A Brief History of the Almanac</h2>
+<p>An ephemeris &mdash; a table of where the sky's bodies will be, date by
+date &mdash; is one of the oldest products of organised computation. The
+<em>Nautical Almanac</em>, established by Astronomer Royal Nevil Maskelyne
+in 1767, printed the moon's position precisely so that a navigator could
+read longitude off the sky, and it was produced by a cottage industry of
+freelance human computers who worked at home by post, in pairs whose answers
+were checked against each other &mdash; distributed, redundant computation,
+two centuries before the words meant machinery. The tables in that tradition
+were built from <em>series</em>: sums of periodic terms, each term a cycle
+the moon or a planet is known to follow, truncated at whatever accuracy the
+page could justify. That is still the shape of the thing. The definitive
+modern ephemerides are numerically integrated at JPL, but the compact
+printed forms &mdash; the Almanac's low-precision moon, Keplerian elements
+fitted over a few centuries &mdash; are exactly what this machine carries:
+the almanac tradition with the page removed, each word honest about the
+accuracy at which its series was cut.</p>
+
+<h2 id="why">Why It's Useful</h2>
+<p>&ldquo;What's that bright thing over the rooftops&rdquo; is a question a
+latitude, a longitude and a clock reading can answer, and this machine is
+the arithmetic between them. <code>EphSun</code>, <code>EphMoon</code> and
+<code>EphPlanet</code> answer <em>where a body is on the celestial
+sphere</em>; <code>EphAltAz</code> turns that into <em>where it stands in
+your sky</em> — an altitude and a bearing you can point a compass at.</p>
+<p><strong>The boundary with geo is stated so it cannot drift.</strong> geo
+answers the sun as experienced at a place: rise, set, noon, day length,
+twilight — and stays the canonical machine for all of those. ephemeris
+answers the sky as observed from a place. <code>EphSun</code> exists here
+because the moon's phase and every planet's elongation are measured from
+it; the two machines' suns are two small models of one star, and the test
+suite asserts they agree rather than trusting it.</p>
+<p><strong>A sky position is <code>EphSky</code> and not
+<code>GeoPt</code></strong>, though both live on a sphere. Declination is
+latitude-shaped and right ascension longitude-shaped — but geo folds
+longitudes into (&minus;180, 180], which would mangle a right ascension,
+and a word accepting either record would someday be handed the wrong one
+silently. Two meanings, two types.</p>
+<p><strong>Accuracy is a number, per body.</strong> The sun is good to
+about a minute of arc; the moon is the Astronomical Almanac's low-precision
+series — about a third of a degree, <em>geocentric</em>, with the observer's
+parallax deliberately unmodelled and its average folded into the rise
+altitude instead, which is the almanac's own convention for rise times; the
+planets are the JPL approximate Keplerian elements, valid 1800..2050 and
+well under a degree there. Ample for pointing and planning; an
+observatory wants a different class of library, and would be right to.</p>
+<p><strong><code>Option</code> is the design for rise and set</strong>,
+exactly as in geo: a circumpolar moon has no rise because it never set. The
+scan is the UTC day, 0..24 — roughly once a month a calendar day genuinely
+has no moonrise, because the moon rises about fifty minutes later each day
+and one rise falls the far side of midnight. That day answers
+<code>None</code> honestly rather than borrowing tomorrow's.</p>
+
+<h2 id="guide">User's Guide</h2>
+<p>Tonight's moon, from anywhere — the date arrives through julian or
+clock, and everything after that is arithmetic:</p>
+<pre><code>Include "julian.shoddy"
+Include "geo.shoddy"
+Include "ephemeris.shoddy"
+
+Def Main()
+    Let here = GeoAt(53.72, -1.86)
+    Let jd = JulDayNumber(JulOf(2026, 8, 12))     ' or ClockDate() via clock
+    Let moon = EphMoon(jd, 21)                     ' 21:00 UTC
+    Let seen = EphAltAz(here, moon, jd, 21)
+    Print(EphAlt(seen))                            ' degrees above the horizon
+    Print(EphAzim(seen))                           ' compass bearing to face
+    Print(EphMoonPhase(jd, 21))                    ' 0 new .. 1 full
+    Select Case EphMoonRise(here, jd)
+        Case Some(h)
+            Print(h)                               ' UTC hours of moonrise
+        Case None
+            Print("no moonrise today")             ' an ordinary answer</code></pre>
+<p>A planet is the same shape — name it, place it, look at it:</p>
+<pre><code>Let mars = EphPlanet(EphMars(), jd, 21)
+Print(EphSeparation(mars, EphSun(jd, 21)))         ' its elongation from the sun
+Print(EphAlt(EphAltAz(here, mars, jd, 21)))        ' is it even up?</code></pre>
+<p>Things worth remembering:</p>
+<ul>
+<li><strong>Degrees at every boundary</strong>, geo's convention for geo's
+reasons. Right ascension is degrees 0..360, not hours — divide by 15
+visibly if you want hours. Azimuth is a compass bearing: 0..360, north 0,
+clockwise.</li>
+<li><strong>Metres for the one distance.</strong>
+<code>EphMoonDistance</code> answers metres, as everything in geo does;
+<a href="eng.html">eng</a> converts at the edge.</li>
+<li><strong>Phase says how much; age says which way.</strong> A
+half-lit moon is 0.5 twice a month; <code>EphMoonAge</code> — days since
+new, 0..29.53 — is what tells waxing from waning.</li>
+<li><strong>The planet choosers are words</strong> —
+<code>EphMercury()</code> through <code>EphSaturn()</code> — and the
+numbering keeps the Earth's seat: Mars is 4. Asking for planet 3 aborts
+with the truth: it is where you are standing, and geo answers for it.</li>
+<li><strong>Eclipses, comets, nutation, leap seconds and star catalogues
+are out of scope</strong>, each for a stated reason — mostly that they need
+a precision class this design honestly refuses, or data that goes
+stale.</li>
+</ul>
+
+<h2 id="words">Word Reference</h2>
+<p class="tag">Time and frames, the bodies, the observer</p>
+
+<h3>Time and frames</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>Type EphSky</td><td>A position on the celestial sphere:
+<code>EphRa</code> 0..360 and <code>EphDec</code> &minus;90..90, both
+degrees, equinox of date.</td></tr>
+<tr><td>Type EphView</td><td>What an observer sees: <code>EphAlt</code>
+above the horizon and <code>EphAzim</code> as a compass bearing, both
+degrees.</td></tr>
+<tr><td>EphSidereal(jd, hours)</td><td>Greenwich mean sidereal time at that
+UTC hour, degrees 0..360 — the one formula that turns a clock time into a
+direction in the sky. Add an east longitude for the local form.</td></tr>
+<tr><td>EphAltAz(p, sky, jd, hours)</td><td>A sky position as seen from a
+<code>GeoPt</code> at an instant, as an <code>EphView</code>. The azimuth
+convention is geo's bearing convention, so you can point a compass at
+it.</td></tr>
+<tr><td>EphSeparation(a, b)</td><td>The angle between two sky positions,
+degrees — by haversine, so a moon two degrees from the sun keeps its
+digits.</td></tr>
+</table>
+
+<h3>The sun and the moon</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>EphSun(jd, hours)</td><td>The sun as a sky position. For rise and
+set at a place, geo remains the machine; this word is for the sky, and it
+is what phase and elongation are measured from.</td></tr>
+<tr><td>EphMoon(jd, hours)</td><td>The moon as a sky position, geocentric,
+to about a third of a degree.</td></tr>
+<tr><td>EphMoonDistance(jd, hours)</td><td>The distance to the moon in
+metres, from its parallax.</td></tr>
+<tr><td>EphMoonPhase(jd, hours)</td><td>The illuminated fraction, 0 at new
+through 1 at full — from the full angular separation of sun and moon, which
+is what makes it honest during an eclipse.</td></tr>
+<tr><td>EphMoonAge(jd, hours)</td><td>Days since new moon, 0 up to a
+synodic month of 29.53.</td></tr>
+<tr><td>EphMoonAltitude()</td><td>The altitude of the moon's centre at the
+moment we call moonrise, +0.125&deg; — the almanac's convention, folding
+average parallax against refraction and semi-diameter. A word so it can be
+seen and substituted, exactly as <code>GeoSunAltitude</code> is.</td></tr>
+<tr><td>EphMoonRise(p, jd)</td><td>UTC hours of moonrise on that day, or
+<code>None</code> — a day with no moonrise is roughly monthly and a
+circumpolar moon near a pole has none for weeks. Walked hourly and
+bisected, because unlike the sun the moon has no closed form.</td></tr>
+<tr><td>EphMoonSet(p, jd)</td><td>Moonset, on the same terms.</td></tr>
+</table>
+
+<h3>The planets</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>EphMercury() &hellip; EphSaturn()</td><td>The five choosers, as
+words rather than numbers to remember. Mercury 1, Venus 2, Mars 4, Jupiter
+5, Saturn 6 — slot 3 is the Earth-Moon barycentre, which the geocentric
+subtraction uses and a caller cannot ask for.</td></tr>
+<tr><td>EphPlanet(which, jd, hours)</td><td>A planet as a geocentric sky
+position, from the JPL approximate Keplerian elements: Kepler's equation by
+Newton, the standard rotation through perihelion, inclination and node, the
+Earth subtracted, and one frame change into right ascension and
+declination. Light-time and aberration are below the stated accuracy and
+deliberately absent.</td></tr>
+</table>
+
+<h2 id="usedby">Who Uses It</h2>
+<table>
+<tr><th></th><th>User</th><th>How</th></tr>
+<tr><td class="uicon"><a href="seedephemeris.html"><img src="../media/icons/seedephemeris.svg" alt=""></a></td><td><a href="seedephemeris.html">seedephemeris</a></td><td>The
+domain this seed bridges: the sky at a calculator keyboard, in seedgeo's
+list shapes.</td></tr>
+</table>
+
+<h2 id="uses">The Machines It Uses</h2>
+<table>
+<tr><th></th><th>Machine</th><th>Why</th></tr>
+<tr><td class="uicon"><a href="geo.html"><img src="../media/icons/geo.svg" alt=""></a></td><td><a href="geo.html">geo</a></td><td>The
+observer is a <code>GeoPt</code>, read through its radian accessors, and
+the azimuth answer goes through <code>GeoWrapBrg</code> — one compass
+convention for the whole tree.</td></tr>
+<tr><td class="uicon"><a href="math.html"><img src="../media/icons/math.svg" alt=""></a></td><td><a href="math.html">math</a></td><td><code>Rad</code>,
+<code>Deg</code>, <code>Clamp</code> and <code>Hypot</code>, exactly as geo
+uses them.</td></tr>
+</table>
+
+<nav class="pagenav pagenav-bottom" aria-label="Machines, in catalog order">
+  <a href="eng.html" class="prev"><span class="pnwrap"><span class="dir">&larr; Previous machine</span><span class="ttl">eng</span></span></a>
+  <a href="index.html" class="all">All machines</a>
+  <a class="next" href="geo.html"><span class="pnwrap"><span class="ttl">geo</span><span class="dir">Next machine &rarr;</span></span></a>
+</nav>
+<footer>Named for the shoddy mills of the West Riding: Useless Things Made
+Useful Through Skill (<a href="../heritage.html">the heritage of the name</a>).<br>
+&copy; 2026 Stephen Vincent Foster</footer>
+</div>
+</body>
+</html>

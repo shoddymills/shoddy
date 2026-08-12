@@ -32,10 +32,27 @@ after three years, what a bond is worth today. It carries the time value of
 money (present and future value, annuities, payments, terms), loans and their
 amortisation schedules, investment appraisal (NPV, IRR, payback, MIRR),
 everyday small-business arithmetic (break-even, margin and markup, payroll,
-late interest), the four depreciation methods, a civil calendar, and bond
+late interest), the four depreciation methods, the day-count bases, and bond
 pricing with yield and duration on top of it. Every word is <strong>pure</strong>
 &mdash; it computes from its arguments and nothing else &mdash; and every word
 is prefixed <code>Fin</code>.</p>
+
+<h2 id="history">A Brief History of Present Value</h2>
+<p>The idea under every word in this machine &mdash; that money later is
+worth a computable amount of money now &mdash; is medieval. Leonardo of Pisa,
+better known as Fibonacci, worked comparisons of investment streams in the
+<em>Liber Abaci</em> of 1202, discounting future payments to put two deals on
+a common footing; scholars have argued he deserves the credit for present
+value itself. For the next seven centuries the discipline ran on printed
+tables &mdash; compound interest, annuities, depreciation &mdash; because
+raising <code>(1&nbsp;+&nbsp;r)</code> to the 360th power by hand is nobody's
+idea of an afternoon. The other fossil in this machine is younger: the
+30/360 day-count basis exists because a bond desk clerk computing accrued
+interest with pen and ink needed every month to be 30 days and every year
+360, so the arithmetic would come out in round fractions. The clerks are
+gone; the convention is still written into bond contracts, which is why
+<code>FinDays360</code> must reproduce its rules exactly rather than count
+real days &mdash; the real count is <a href="julian.html">julian</a>'s job.</p>
 
 <h2 id="why">Why It's Useful</h2>
 <p>Finance arithmetic is the kind that looks easy and is not. The formulas are
@@ -136,15 +153,17 @@ finance behind, and you include <a href="stats.html">stats</a> and say so.</p>
 geometric mean, never an arithmetic one &mdash; on a series that falls and
 recovers the two disagree, and the geometric answer is the true one.</p>
 
-<h3>Dates, because bonds need them</h3>
-<p>Shoddy has no date type, so this machine carries one. <code>FinDate</code> is
-a year, a month and a day, and everything is defined through a conversion to a
-day number and back, which is what keeps it honest across century
-boundaries:</p>
-<pre class="basic"><code>Print(FinIsLeap(2000))                                  ' True
-Print(FinIsLeap(1900))                                  ' False — the century rule
-Print(Day(FinDateAddMonths(FinDate(2026, 1, 31), 1)))   ' 28 — clamped to month end
-Print(FinDays360(FinDate(2026, 1, 31), FinDate(2026, 2, 28)))   ' 28 — the NASD rule</code></pre>
+<h3>Day counts, because bonds need them</h3>
+<p>The calendar itself lives in <a href="julian.html">julian</a> — this
+machine once spelled the leap rules as a stated stand-in, and that
+arithmetic moved there unchanged. A date here is a <code>JulDate</code>,
+built by <code>JulOf</code>; what stays in fin are the day-count
+<strong>bases</strong>, because a basis is a financial fiction about the
+calendar, not the calendar:</p>
+<pre class="basic"><code>Include "julian.shoddy"
+
+Print(FinDays360(JulOf(2026, 1, 31), JulOf(2026, 2, 28)))       ' 28 — the NASD rule
+Print(FinDateDiff(JulOf(2026, 1, 1), JulOf(2027, 1, 1), FinActual()))   ' 365</code></pre>
 
 <p>Three day-count bases ship, because the conventions genuinely differ:
 <code>FinActual()</code> counts real days, <code>Fin360()</code> is the 30/360
@@ -153,8 +172,8 @@ actual/365. The basis is an argument wherever it matters rather than an
 assumption baked in.</p>
 
 <h3>Bonds</h3>
-<pre class="basic"><code>Let settle = FinDate(2026, 1, 1)
-Let mature = FinDate(2031, 1, 1)
+<pre class="basic"><code>Let settle = JulOf(2026, 1, 1)
+Let mature = JulOf(2031, 1, 1)
 Print(FinBondPrice(settle, mature, 0.06, 0.06, FinSemi(), Fin360()))   ' 100 — par
 Print(FinYtm(settle, mature, 0.06, 100, FinSemi(), Fin360()))          ' 0.06</code></pre>
 
@@ -182,8 +201,10 @@ walk, so they cannot drift apart.</p>
 <tr><td>FinPayroll</td><td><code>Net</code>, <code>Withheld</code>.</td></tr>
 <tr><td>FinDep</td><td><code>Amount</code>, <code>Book</code>, <code>Method</code> — a period's depreciation, the book value after it, and which method produced it.</td></tr>
 <tr><td>FinFit</td><td><code>Intercept</code>, <code>Slope</code>, <code>RFit</code> — a fitted curve. <code>RFit</code> is the correlation in the fitted space, which is what a spreadsheet reports.</td></tr>
-<tr><td>FinDate</td><td><code>Yr</code>, <code>Mon</code>, <code>Day</code> — a civil date. Spelled out rather than Y/M/D because a one-letter accessor loses to any local of the same letter.</td></tr>
 </table>
+<p>A civil date is <a href="julian.html">julian</a>'s <code>JulDate</code>
+&mdash; the record this machine once carried as <code>FinDate</code>, retired
+when the calendar moved and the tree gained one set of leap rules.</p>
 
 <h3>Choices</h3>
 <table>
@@ -321,14 +342,12 @@ promotional loan is a real input, not an edge case.</p>
 <tr><td>FinComb(n, r)</td><td>Unordered selections, computed multiplicatively — <code>FinComb(52, 5)</code> is 2598960 <em>exactly</em>, which the factorial form cannot manage.</td></tr>
 </table>
 
-<h3>Dates</h3>
+<h3>Day counts</h3>
+<p class="tag">The calendar itself &mdash; dates, leap rules, date
+arithmetic &mdash; is <a href="julian.html">julian</a>'s; these take its
+<code>JulDate</code></p>
 <table>
 <tr><th>Word</th><th>Description</th></tr>
-<tr><td>FinDate(y, m, d)</td><td>A civil date.</td></tr>
-<tr><td>FinIsLeap(y)</td><td>Including the century rule: 2000 is, 1900 and 2100 are not.</td></tr>
-<tr><td>FinSerial(d) / FinFromSerial(n)</td><td>To a day number and back. Everything else is defined through these.</td></tr>
-<tr><td>FinDateAdd(d, days)</td><td>Add or subtract days.</td></tr>
-<tr><td>FinDateAddMonths(d, months)</td><td>Add months, clamped to the month end — one month after 31 January is 28 February.</td></tr>
 <tr><td>FinDateDiff(a, b, basis)</td><td>Days between, under a day-count basis.</td></tr>
 <tr><td>FinDays360(a, b)</td><td>The 30/360 US (NASD) rule, end-of-month adjustments and all.</td></tr>
 <tr><td>FinYearFrac(a, b, basis)</td><td>The fraction of a year between two dates.</td></tr>
@@ -368,6 +387,7 @@ call them by their own names.</p>
 <h2 id="uses">The Machines It Uses</h2>
 <table>
 <tr><th></th><th>Machine</th><th>Why</th></tr>
+<tr><td class="uicon"><a href="julian.html"><img src="../media/icons/julian.svg" alt=""></a></td><td><a href="julian.html">julian</a></td><td>The calendar. A date here is a <code>JulDate</code>, and <code>JulSerial</code>, <code>JulDiff</code> and <code>JulAddMonths</code> stand under the day counts and the bond words &mdash; the leap rules this machine once spelled itself, as a stated stand-in, now spelled once for the tree.</td></tr>
 <tr><td class="uicon"><a href="math.html"><img src="../media/icons/math.svg" alt=""></a></td><td><a href="math.html">math</a></td><td><code>RoundTo</code> under <code>FinRound</code>.</td></tr>
 <tr><td class="uicon"><a href="seq.html"><img src="../media/icons/seq.svg" alt=""></a></td><td><a href="seq.html">seq</a></td><td><code>Flatten</code> expands a cash-flow list, and <code>Taken</code> walks the running cash position.</td></tr>
 <tr><td class="uicon"><a href="stats.html"><img src="../media/icons/stats.svg" alt=""></a></td><td><a href="stats.html">stats</a></td><td>Every descriptive statistic this machine offers, and <code>LinFit</code> under the four regression models.</td></tr>

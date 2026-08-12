@@ -2,8 +2,8 @@ Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
 Rem Licensed under the MIT License. See the LICENSE file in the project root.
 
 Rem ==================================================================
-Rem seedfintest.shoddy — test program for seedfin.shoddy's calendar and
-Rem bond words
+Rem seedfintest.shoddy — test program for seedfin.shoddy's day-count
+Rem and bond words
 Rem
 Rem Assert-driven, in the cuttletest / reckonertest / seedtest pattern:
 Rem it prints what it is doing and stops the run at the first assertion
@@ -12,18 +12,21 @@ Rem
 Rem WHAT IS GRADED HERE. fin.shoddy's own arithmetic has a known-answer
 Rem suite of its own (tst/fin.shoddy), and seedfin's rates, time value,
 Rem loans and capital budgeting arrived with the first seeding pass.
-Rem What is graded here is the second subsystem, deferred then and built
-Rem now: the calendar, and the bond pricer standing on it.
+Rem What is graded here is the second subsystem: the day counts, and
+Rem the bond pricer standing on them. THE CALENDAR WORDS MOVED to
+Rem seedjulian when the calendar moved to julian.shoddy, and their walk
+Rem moved with them to tst/seedjuliantest.shoddy; the dates the bond
+Rem words below consume are built by JULDATE, which is why this suite
+Rem folds both seeds.
 Rem
 Rem WHY THE GUARDS MATTER MORE HERE THAN ANYWHERE. Almost nothing in
-Rem this subsystem ABORTS on bad input — FinSerial is integer arithmetic
-Rem and will happily serialize the 30th of February as the 2nd of March,
-Rem FinYearFrac falls through to actual/365.25 for a basis it does not
-Rem recognise, and FinLastCoupon steps back by 12/freq months whether or
-Rem not that is a whole number. Every one of those is a WRONG ANSWER
-Rem rather than a refusal, and a wrong answer about money is the failure
-Rem this whole seed layer exists to prevent. So the guard sections below
-Rem are the point of the file and not its housekeeping.
+Rem this subsystem ABORTS on bad input — FinYearFrac falls through to
+Rem actual/365.25 for a basis it does not recognise, and FinLastCoupon
+Rem steps back by 12/freq months whether or not that is a whole number.
+Rem Every one of those is a WRONG ANSWER rather than a refusal, and a
+Rem wrong answer about money is the failure this whole seed layer
+Rem exists to prevent. So the guard sections below are the point of the
+Rem file and not its housekeeping.
 Rem
 Rem THE ONE ABORT is FinYtm's, when no yield between 0 and 2 prices the
 Rem bond, and it is guarded the way FINIRR's twin already is: the same
@@ -41,6 +44,7 @@ Include "../machines/reckoner.shoddy"
 Include "../machines/seq.shoddy"
 Include "../machines/str.shoddy"
 Include "../machines/seeds/seedfin.shoddy"
+Include "../machines/seeds/seedjulian.shoddy"
 Rem Folded only for the fit section below, and onto a state of its own:
 Rem a fit is a dict, and DGET is how a session actually reads one, so
 Rem reading it any other way would test something nobody types.
@@ -115,10 +119,10 @@ Rem the arithmetic is checkable by hand: at a yield equal to the coupon
 Rem it must price at exactly par.
 
 Def Settle() As String
-    "2025 1 15 FINDATE"
+    "2025 1 15 JULDATE"
 
 Def Maturity() As String
-    "2030 1 15 FINDATE"
+    "2030 1 15 JULDATE"
 
 Rem Both banked in registers by the section below, so the bond's two
 Rem dates are one short phrase at every call site rather than two
@@ -127,11 +131,14 @@ Def Bond() As String
     Q("S") & " RCL " & Q("M") & " RCL"
 
 Def Main()
-    Let s0 = RckSeedFin(RckNew())
+    Rem seedjulian folds first, seedfin after — the same order HxFresh
+    Rem uses, and the dates every bond line below builds come from it.
+    Let s0 = RckSeedFin(RckSeedJulian(RckNew()))
     Let g = Ran(s0, "1 2")
 
     Print("--- the words are registered, pure, and carry their metadata ---")
-    Assert(RckKnows(s0, "FINDATE") And RckKnows(s0, "FINSERIAL") And RckKnows(s0, "FINYEARFRAC"), "THE CALENDAR IS IN THE DICTIONARY")
+    Assert(RckKnows(s0, "FINDAYS360") And RckKnows(s0, "FINDATEDIFF") And RckKnows(s0, "FINYEARFRAC"), "THE DAY COUNTS ARE IN THE DICTIONARY")
+    Assert(Not RckKnows(RckSeedFin(RckNew()), "JULDATE"), "AND THE CALENDAR WORDS ARE GONE FROM THIS SEED, NOT ALIASED — THEY ARE SEEDJULIAN'S NOW")
     Assert(RckKnows(s0, "FINBONDPRICE") And RckKnows(s0, "FINYTM") And RckKnows(s0, "FINMDUR"), "AND THE BOND PRICER")
     Assert(RckKnows(s0, "FIN360") And RckKnows(s0, "FINSEMI"), "AND THE BASES AND FREQUENCIES ARE WORDS, NOT NUMBERS TO REMEMBER")
     Assert(All(RckDict(s0), Fn(e) => WordEffect(e) <> "" And WordDesc(e) <> ""), "NO WORD IS WITHOUT AN EFFECT LINE AND A DESCRIPTION")
@@ -140,63 +147,30 @@ Def Main()
     Rem every word here is arithmetic over cells already on the stack.
     Assert(All(RckDict(s0), Fn(e) => Not RckTouches(e)), "AND NOTHING IN THE WHOLE SEED TOUCHES THE WORLD")
 
-    Print("--- the calendar, against dates known by hand ---")
-    Assert(Got(s0, "1970 1 1 FINDATE FINSERIAL") = 0, "THE SERIAL COUNTS FROM 1970-01-01")
-    Assert(Got(s0, "1969 12 31 FINDATE FINSERIAL") = 0 - 1, "AND GOES NEGATIVE BEFORE IT")
-    Assert(Text(Ran(s0, "-1 FINFROMSERIAL FINDATESHOW")) = Q("1969-12-31"), "AND BACK AGAIN FROM A NEGATIVE SERIAL")
-    Assert(Text(Ran(s0, "2025 1 31 FINDATE FINDATESHOW")) = Q("2025-01-31"), "A DATE WRITES ITSELF AS YYYY-MM-DD, ZERO-PADDED")
-    Assert(Text(Ran(s0, Q("2025-01-31") & " FINDATEOF FINDATESHOW")) = Q("2025-01-31"), "AND READS BACK FROM THE SAME SPELLING")
-    Assert(Text(Ran(s0, "2024 FINISLEAP")) = "True", "2024 IS A LEAP YEAR")
-    Assert(Text(Ran(s0, "1900 FINISLEAP")) = "False", "1900 IS NOT, BY THE CENTURY RULE")
-    Assert(Text(Ran(s0, "2000 FINISLEAP")) = "True", "AND 2000 IS, BY THE EXCEPTION TO IT")
-    Assert(Got(s0, "2024 2 FINDAYSINMONTH") = 29, "FEBRUARY 2024 HAS 29 DAYS")
-    Assert(Got(s0, "2025 2 FINDAYSINMONTH") = 28, "AND FEBRUARY 2025 HAS 28")
-    Assert(Text(Ran(s0, "2025 1 1 FINDATE 45 FINDATEADD FINDATESHOW")) = Q("2025-02-15"), "45 DAYS ON FROM NEW YEAR'S DAY")
-    Assert(Text(Ran(s0, "2025 3 1 FINDATE -45 FINDATEADD FINDATESHOW")) = Q("2025-01-15"), "AND 45 DAYS BACK, WHICH IS AN ORDINARY QUESTION AND MUST NOT BE REFUSED")
-    Rem The month-end clamp, both ways: this is the rule a hand-rolled
-    Rem calendar always gets wrong, so it is asserted in both directions.
-    Assert(Text(Ran(s0, "2025 1 31 FINDATE 1 FINDATEADDMONTHS FINDATESHOW")) = Q("2025-02-28"), "ONE MONTH AFTER 31 JANUARY IS 28 FEBRUARY, NOT 3 MARCH")
-    Assert(Text(Ran(s0, "2025 3 31 FINDATE -1 FINDATEADDMONTHS FINDATESHOW")) = Q("2025-02-28"), "AND ONE MONTH BEFORE 31 MARCH IS 28 FEBRUARY TOO")
-    Assert(Text(Ran(s0, "2024 1 31 FINDATE 1 FINDATEADDMONTHS FINDATESHOW")) = Q("2024-02-29"), "AND IN A LEAP YEAR IT IS THE 29TH")
-
     Print("--- the day counts, where the whole point is that they disagree ---")
-    Assert(Got(s0, "2025 1 1 FINDATE 2025 2 1 FINDATE FINDAYS360") = 30, "JANUARY IS 30 DAYS ON THE 30/360 RULE")
-    Assert(Got(s0, "2025 1 1 FINDATE 2026 1 1 FINDATE FINACTUAL FINDATEDIFF") = 365, "AND 2025 IS 365 ACTUAL DAYS")
-    Assert(Got(s0, "2025 1 1 FINDATE 2026 1 1 FINDATE FIN360 FINDATEDIFF") = 360, "AND 360 ON THE 30/360 RULE")
-    Assert(Near(Got(s0, "2025 1 1 FINDATE 2026 1 1 FINDATE FIN360 FINYEARFRAC"), 1), "A YEAR IS A WHOLE YEAR ON 30/360")
-    Assert(Near(Got(s0, "2025 1 1 FINDATE 2026 1 1 FINDATE FIN365 FINYEARFRAC"), 1), "AND ON ACTUAL/365")
-    Assert(Not Near(Got(s0, "2025 1 1 FINDATE 2026 1 1 FINDATE FINACTUAL FINYEARFRAC"), 1), "BUT NOT ON ACTUAL/365.25, WHICH IS WHY THE BASIS HAS TO BE SAID")
+    Assert(Got(s0, "2025 1 1 JULDATE 2025 2 1 JULDATE FINDAYS360") = 30, "JANUARY IS 30 DAYS ON THE 30/360 RULE")
+    Assert(Got(s0, "2025 1 1 JULDATE 2026 1 1 JULDATE FINACTUAL FINDATEDIFF") = 365, "AND 2025 IS 365 ACTUAL DAYS")
+    Assert(Got(s0, "2025 1 1 JULDATE 2026 1 1 JULDATE FIN360 FINDATEDIFF") = 360, "AND 360 ON THE 30/360 RULE")
+    Assert(Near(Got(s0, "2025 1 1 JULDATE 2026 1 1 JULDATE FIN360 FINYEARFRAC"), 1), "A YEAR IS A WHOLE YEAR ON 30/360")
+    Assert(Near(Got(s0, "2025 1 1 JULDATE 2026 1 1 JULDATE FIN365 FINYEARFRAC"), 1), "AND ON ACTUAL/365")
+    Assert(Not Near(Got(s0, "2025 1 1 JULDATE 2026 1 1 JULDATE FINACTUAL FINYEARFRAC"), 1), "BUT NOT ON ACTUAL/365.25, WHICH IS WHY THE BASIS HAS TO BE SAID")
 
-    Print("--- the calendar's guards: a date that does not exist is refused, not serialized ---")
-    Rem FinSerial has no opinion about whether a date is real: 2025-02-30
-    Rem serializes to 2 March and 2025-13-01 to January 2026. Both would
-    Rem be confident wrong answers, which is the failure this seed layer
-    Rem is for.
-    Assert(Refuses(g, "2025 2 30 FINDATE", "2/2025 HAS 28 DAYS, SO THERE IS NO DAY 30"), "THE 30TH OF FEBRUARY, NAMING THE MONTH'S REAL LENGTH")
-    Assert(Refuses(g, "2024 2 30 FINDATE", "2/2024 HAS 29 DAYS"), "AND THE 30TH IN A LEAP YEAR, WHERE THE LENGTH IS DIFFERENT")
-    Assert(Refuses(g, "2025 13 1 FINDATE", "THERE IS NO MONTH 13"), "A THIRTEENTH MONTH")
-    Assert(Refuses(g, "2025 0 1 FINDATE", "THERE IS NO MONTH 0"), "AND A ZEROTH ONE")
-    Assert(Refuses(g, "2025 1 0 FINDATE", "THERE IS NO DAY 0"), "AND A ZEROTH DAY")
-    Assert(Refuses(g, "2025 1 1.5 FINDATE", "MUST ALL BE WHOLE NUMBERS"), "AND HALF A DAY")
-    Assert(Refuses(g, "{ 1 2 } FINSERIAL", "NOT A DATE"), "A DICT OF THE WRONG SIZE HANDED TO A DATE WORD")
-    Assert(Refuses(g, "{ } FINDATESHOW", "NOT A DATE"), "AND AN EMPTY ONE")
-    Rem A dict of the right SHAPE but holding a date that does not exist:
-    Rem the check has to run on the way in as well as on the way out,
-    Rem because a dict can be built by hand.
-    Assert(Refuses(RckSeedDict(g), "{ } " & Q("yr") & " 2025 DPUT " & Q("mon") & " 2 DPUT " & Q("day") & " 30 DPUT FINSERIAL", "THERE IS NO DAY 30"), "AND A HAND-BUILT DICT NAMING A DAY THAT DOES NOT EXIST")
-    Assert(Refuses(g, "2025 1 1 FINDATE 1.5 FINDATEADD", "needs a whole number"), "HALF A DAY'S OFFSET")
-    Assert(Refuses(g, Q("31/01/2025") & " FINDATEOF", "IT WANTS YYYY-MM-DD"), "A DATE SPELLED THE OTHER WAY ROUND")
-    Assert(Refuses(g, Q("2025-1x-31") & " FINDATEOF", "IT WANTS YYYY-MM-DD"), "AND ONE WITH A LETTER IN IT, WHICH VAL WOULD HAVE READ AS 1")
-    Assert(Refuses(g, Q("2025-02-30") & " FINDATEOF", "THERE IS NO DAY 30"), "AND ONE THAT PARSES BUT IS NOT A DAY")
-    Assert(Refuses(g, "2025 1 1 FINDATE 2026 1 1 FINDATE 9 FINYEARFRAC", "NOT A DAY-COUNT BASIS"), "A BASIS FIN.SHODDY WOULD HAVE SILENTLY TREATED AS ACTUAL/365.25")
-    Assert(Refuses(g, "2025 1 1 FINDATE 2026 1 1 FINDATE 9 FINDATEDIFF", "NOT A DAY-COUNT BASIS"), "AND THE SAME FOR THE DAY COUNT")
-    Assert(Refuses(g, "2025 0 FINDAYSINMONTH", "THERE IS NO MONTH 0"), "AND A MONTH LENGTH ASKED OF NO MONTH")
+    Print("--- the day counts' guards ---")
+    Rem The date-CONSTRUCTION guards walked here under the old names now
+    Rem walk in tst/seedjuliantest.shoddy with the words that own them.
+    Rem What must still hold HERE is that a date arriving at a day-count
+    Rem word is checked on the way in — a dict can be hand-built, and a
+    Rem wrong answer about money is the failure this layer is for.
+    Assert(Refuses(g, "{ 1 2 } 2026 1 1 JULDATE FINDAYS360", "NOT A DATE"), "A DICT OF THE WRONG SIZE HANDED TO A DAY COUNT")
+    Assert(Refuses(RckSeedDict(g), "{ } " & Q("yr") & " 2025 DPUT " & Q("mon") & " 2 DPUT " & Q("day") & " 30 DPUT 2026 1 1 JULDATE FINACTUAL FINDATEDIFF", "THERE IS NO DAY 30"), "AND A HAND-BUILT DICT NAMING A DAY THAT DOES NOT EXIST")
+    Assert(Refuses(g, "2025 1 1 JULDATE 2026 1 1 JULDATE 9 FINYEARFRAC", "NOT A DAY-COUNT BASIS"), "A BASIS FIN.SHODDY WOULD HAVE SILENTLY TREATED AS ACTUAL/365.25")
+    Assert(Refuses(g, "2025 1 1 JULDATE 2026 1 1 JULDATE 9 FINDATEDIFF", "NOT A DAY-COUNT BASIS"), "AND THE SAME FOR THE DAY COUNT")
 
     Print("--- the bond, priced against arithmetic that can be done by hand ---")
     Let b = Ran(s0, Settle() & " " & Q("S") & " STO " & Maturity() & " " & Q("M") & " STO")
     Assert(Got(b, Bond() & " FINSEMI FINCOUPONSBEFORE") = 10, "FIVE YEARS OF SEMIANNUAL COUPONS IS TEN OF THEM")
     Assert(Got(b, Bond() & " FINANNUAL FINCOUPONSBEFORE") = 5, "AND FIVE ANNUAL ONES")
-    Assert(Text(Ran(b, Bond() & " FINSEMI FINLASTCOUPON FINDATESHOW")) = Q("2025-01-15"), "SETTLING ON A COUPON DATE, THE LAST COUPON IS THAT DAY")
+    Assert(Text(Ran(b, Bond() & " FINSEMI FINLASTCOUPON JULDATESHOW")) = Q("2025-01-15"), "SETTLING ON A COUPON DATE, THE LAST COUPON IS THAT DAY")
     Rem The assertion the whole pricer turns on: a bond yielding exactly
     Rem its coupon, settling on a coupon date, is worth exactly par. Any
     Rem sign error in the discounting shows up here and nowhere cheaper.
@@ -208,7 +182,7 @@ Def Main()
     Assert(Near(Got(b, Bond() & " 0.05 100 FINSEMI FIN360 FINYTM"), 0.05), "THE YIELD THAT PRICES IT AT PAR IS THE COUPON")
     Assert(Near(Got(b, Bond() & " 0.05 " & Str(Got(b, Bond() & " 0.05 0.08 FINSEMI FIN360 FINBONDPRICE")) & " FINSEMI FIN360 FINYTM"), 0.08), "AND PRICE THEN YIELD ROUND-TRIPS BACK TO THE YIELD IT STARTED FROM")
     Rem Half a year of a five percent coupon on 100 of face is 2.50.
-    Assert(Near(Got(b, Q("S") & " RCL 2024 7 15 FINDATE 0.05 FINSEMI FIN360 FINACCRUED"), 2.5), "SIX MONTHS OF A FIVE PERCENT COUPON HAS ACCRUED 2.50 PER 100")
+    Assert(Near(Got(b, Q("S") & " RCL 2024 7 15 JULDATE 0.05 FINSEMI FIN360 FINACCRUED"), 2.5), "SIX MONTHS OF A FIVE PERCENT COUPON HAS ACCRUED 2.50 PER 100")
     Assert(Near(Got(b, Q("S") & " RCL " & Q("S") & " RCL 0.05 FINSEMI FIN360 FINACCRUED"), 0), "AND NOTHING HAS ACCRUED ON THE COUPON DATE ITSELF")
     Rem Duration is shorter than maturity for any coupon-paying bond, and
     Rem falls as the yield rises. Both are properties rather than figures,
@@ -230,7 +204,7 @@ Def Main()
     Assert(Refuses(bg, Bond() & " 0.05 -3 FINSEMI FIN360 FINBONDPRICE", "HAS NO DISCOUNT FACTOR"), "AND ONE BELOW IT, WHERE THE BASE IS NEGATIVE")
     Rem The one abort in the subsystem, guarded the way FINIRR's is.
     Assert(Refuses(bg, Bond() & " 0.05 5000 FINSEMI FIN360 FINYTM", "NO YIELD BETWEEN 0 AND 2 PRICES THIS BOND"), "A PRICE NO YIELD IN THE BRACKET REACHES, WHICH FINYTM WOULD OTHERWISE ABORT ON")
-    Assert(Refuses(bg, "2024 7 15 FINDATE " & Q("S") & " RCL 0.05 FINSEMI FIN360 FINACCRUED", "LAST COUPON MUST FALL ON OR BEFORE SETTLEMENT"), "ACCRUAL RUNNING BACKWARDS FROM A COUPON THAT HAS NOT HAPPENED")
+    Assert(Refuses(bg, "2024 7 15 JULDATE " & Q("S") & " RCL 0.05 FINSEMI FIN360 FINACCRUED", "LAST COUPON MUST FALL ON OR BEFORE SETTLEMENT"), "ACCRUAL RUNNING BACKWARDS FROM A COUPON THAT HAS NOT HAPPENED")
     Assert(Refuses(bg, Bond() & " 0.05 0.05 5 FINMDUR", "MUST DIVIDE 12 EVENLY"), "AND THE SAME FREQUENCY CHECK ON DURATION")
 
     Print("--- the statistics words are spelled the way fin.shoddy spells them ---")

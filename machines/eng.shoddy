@@ -5,8 +5,8 @@ Rem ==================================================================
 Rem eng.shoddy — Shoddy standard library: engineering
 Rem
 Rem Continuous mathematics over Number: the trigonometry the runtime does
-Rem not supply, hyperbolics, complex numbers, numeric calculus over
-Rem quotations, root-finding and polynomial arithmetic, number theory,
+Rem not supply, hyperbolics, complex numbers, numeric calculus and a
+Rem Runge-Kutta ODE stepper over quotations, root-finding and polynomial arithmetic, number theory,
 Rem combinatorics and the discrete distributions, descriptive statistics,
 Rem sequences, unit conversion and physical constants. Pure throughout.
 Rem
@@ -784,6 +784,83 @@ Def EngIntegrate(f As [ Number -- Number ], a As Number, b As Number, n As Numbe
         Let s = Sum(Map(Range(1, n - 1),
                         Fn(i) => Ifte(i Mod 2 = 1, 4, 2) * Call(f, a + h * i)))
         h / 3 * (Call(f, a) + Call(f, b) + s)
+
+Rem ---- ordinary differential equations -----------------------------------
+Rem Classic fixed-step fourth-order Runge-Kutta, over quotations like
+Rem the rest of the calculus here. FIXED STEP AND NO STIFFNESS
+Rem DETECTION, stated where it bites: a stiff equation (a rate constant
+Rem thousands of times the span) needs a smaller h than these words
+Rem will choose for you, and the symptom is an answer that explodes
+Rem rather than an error. Classroom-sized, like the machine.
+Rem
+Rem A SECOND-ORDER EQUATION IS A FIRST-ORDER PAIR, which is what the
+Rem Sys words are for: the damped driven oscillator
+Rem y'' = -k y - c y' + F(t) integrates as the state { y, y' } with
+Rem derivative Fn(t, s) => { Nth(s, 2), 0 - k * Nth(s, 1) - c * Nth(s, 2) + F(t) }.
+Rem The docs page works that example in full.
+
+Rem One RK4 step for y' = f(t, y): the value at t + h. Error per step
+Rem is of order h^5, so a hundred steps across an ordinary span carry
+Rem roughly eight significant digits.
+Def EngOdeStep(f As [ Number Number -- Number ], t As Number, y As Number, h As Number) As Number
+    Let k1 = Call(f, t, y)
+    Let k2 = Call(f, t + h / 2, y + h / 2 * k1)
+    Let k3 = Call(f, t + h / 2, y + h / 2 * k2)
+    Let k4 = Call(f, t + h, y + h * k3)
+    y + h / 6 * (k1 + 2 * k2 + 2 * k3 + k4)
+
+Rem The trajectory from t0 to t1 in n equal steps: n + 1 values, the
+Rem first y0 and the last y(t1) — one value per sample point, which is
+Rem what a plot wants.
+Def EngOdeSolve(f As [ Number Number -- Number ], t0 As Number, y0 As Number, t1 As Number, n As Number) As List Of Number
+    If n < 1 Or n <> Floor(n) Then
+        Error("ENGODESOLVE: N MUST BE A WHOLE NUMBER OF STEPS, AT LEAST 1")
+    Else
+        Reverse(EngOdeGo(f, t0, y0, (t1 - t0) / n, n, { y0 }))
+
+Rem Self-tail-recursive with Prepend, reversing at the end — geo's
+Rem route walks set the pattern and the reason: Append in a loop is
+Rem quadratic.
+Def EngOdeGo(f As [ Number Number -- Number ], t As Number, y As Number, h As Number, k As Number, acc As List Of Number) As List Of Number
+    If k <= 0 Then
+        acc
+    Else
+        Let y2 = EngOdeStep(f, t, y, h)
+        EngOdeGo(f, t + h, y2, h, k - 1, Prepend(y2, acc))
+
+Rem One RK4 step for a SYSTEM: the state is a List Of Number and the
+Rem derivative answers one the same length. ZipWith is quadratic in
+Rem the state length, which for the two-to-four unknowns these are for
+Rem is not a cost worth a word.
+Def EngOdeSysStep(f As [ Number List Of Number -- List Of Number ], t As Number, ys As List Of Number, h As Number) As List Of Number
+    Let k1 = Call(f, t, ys)
+    Let k2 = Call(f, t + h / 2, EngOdeNudge(ys, k1, h / 2))
+    Let k3 = Call(f, t + h / 2, EngOdeNudge(ys, k2, h / 2))
+    Let k4 = Call(f, t + h, EngOdeNudge(ys, k3, h))
+    EngOdeNudge(ys, EngOdeBlend(k1, k2, k3, k4), h / 6)
+
+Def EngOdeNudge(ys As List Of Number, ks As List Of Number, s As Number) As List Of Number
+    ZipWith(ys, ks, Fn(a, b) => a + s * b)
+
+Rem k1 + 2 k2 + 2 k3 + k4, elementwise — the RK4 weighting, spelled
+Rem once for the Sys step the way the scalar step spells it inline.
+Def EngOdeBlend(k1 As List Of Number, k2 As List Of Number, k3 As List Of Number, k4 As List Of Number) As List Of Number
+    ZipWith(ZipWith(ZipWith(k1, k2, Fn(a, b) => a + 2 * b), k3, Fn(a, b) => a + 2 * b), k4, Fn(a, b) => a + b)
+
+Rem The state at t1, from t0 in n equal steps. THE FINAL STATE ONLY:
+Rem a system's trajectory is a list per sample, and a caller who wants
+Rem one calls EngOdeSysStep in their own walk and keeps what they need.
+Def EngOdeSysAt(f As [ Number List Of Number -- List Of Number ], t0 As Number, ys0 As List Of Number, t1 As Number, n As Number) As List Of Number
+    If n < 1 Or n <> Floor(n) Then
+        Error("ENGODESYSAT: N MUST BE A WHOLE NUMBER OF STEPS, AT LEAST 1")
+    Else
+        EngOdeSysGo(f, t0, ys0, (t1 - t0) / n, n)
+
+Def EngOdeSysGo(f As [ Number List Of Number -- List Of Number ], t As Number, ys As List Of Number, h As Number, k As Number) As List Of Number
+    If k <= 0 Then
+        ys
+    Else
+        EngOdeSysGo(f, t + h, EngOdeSysStep(f, t, ys, h), h, k - 1)
 
 Def EngSumOf(f As [ Number -- Number ], lo As Number, hi As Number) As Number
     Sum(Map(Range(lo, hi), f))

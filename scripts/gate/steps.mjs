@@ -18,7 +18,8 @@ const MILL = process.platform === 'win32' ? 'bin\\mill.exe' : 'bin/mill';
 // stopped running unnoticed.
 export const MACHINE_SUITES = [
     'csvtest', 'cuttletest', 'htmltest', 'jsontest', 'nettest', 'neuraltest',
-    'randomtest', 'reckonertest', 'regextest', 'seedtest', 'seedbuiltintest',
+    'randomtest', 'reckonertest', 'regextest', 'seedtest', 'seedbooltest',
+    'seedbuiltintest',
     'seedengtest', 'seedbuzzertest', 'seedfintest', 'seedhttpstest',
     'seedisamtest', 'seedmiptest', 'seedneuraltest', 'seednettest',
     'seedreciotest', 'seedregextest', 'seedsimplextest', 'seedsparsetest',

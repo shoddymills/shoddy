@@ -337,6 +337,28 @@ Def Main()
     Assert(Text(Ran(s0, "3 ENG 12345")) = "12.345E+03", "ENG KEEPS THE EXPONENT A MULTIPLE OF THREE")
     Assert(Text(Ran(s0, "2 FIX STD 1 3 /")) = "0.3333333333", "AND STD PUTS IT BACK")
 
+    Print("--- the word width is the third mode, and it is the core's ---")
+    Rem It sits beside RckFmt and RckAngle for the same reason both of
+    Rem those are here rather than in a seed: it is a property of the
+    Rem SESSION that several seeds read, and a mode owned by one domain's
+    Rem seed is a mode the next domain cannot see. The engine holds no bit
+    Rem words itself, which is exactly why the mode has to be here — the
+    Rem words that read it live in seed-bool and are graded there.
+    Assert(RckWidth(RckNew()) = 32, "A NEW ENGINE IS THIRTY-TWO BITS WIDE")
+    Assert(RckWidth(Ran(s0, "8 WIDTH")) = 8, "AND WIDTH SETS IT")
+    Assert(Text(Ran(s0, "WIDTH?")) = "32", "WIDTH? REPORTS THE DEFAULT")
+    Assert(Text(Ran(s0, "8 WIDTH WIDTH?")) = "8", "AND REPORTS WHAT WIDTH SET")
+    Rem WIDTH? follows TAPE: a bare word that pushes what it knows, so a
+    Rem session can ask without changing anything. Two arities cannot
+    Rem share one name, which is the whole reason for the question mark.
+    Assert(Text(Ran(s0, "WIDTH?")) = Text(Ran(Ran(s0, "WIDTH?"), "DROP WIDTH?")), "ASKING TWICE ANSWERS THE SAME, BECAUSE ASKING CHANGES NOTHING")
+    Assert(Text(Ran(s0, "8 WIDTH")) = "", "SETTING IT PUSHES NOTHING, AS FIX AND DEG DO")
+    Rem R1.5: the width governs bit OPERATIONS and not the render. A
+    Rem session at eight bits still sees 255, because a second mode
+    Rem changing the display would be two modes fighting over it.
+    Assert(Text(Ran(s0, "8 WIDTH 255")) = "255", "AND IT DOES NOT TOUCH HOW A NUMBER IS SHOWN")
+    Assert(RckFmt(Ran(s0, "8 WIDTH")) = RckFmt(s0), "LEAVING THE DISPLAY FORMAT EXACTLY WHERE IT WAS")
+
     Print("--- the display labels the top four levels x y z t ---")
     Assert(Lines(RckShow(Ran(s0, "1"))) = "x: 1", "AT DEPTH ONE, x ALONE")
     Assert(Lines(RckShow(Ran(s0, "1 2"))) = "y: 1 / x: 2", "AT DEPTH TWO, y THEN x — NEWEST LAST")
@@ -545,6 +567,13 @@ Def Main()
     Assert(Refuses(g, "12 FIX", "FIX shows at most 11 places, not 12"), "AND ONE PAST WHAT CAN BE SHOWN")
     Assert(Refuses(g, "12 SCI", "SCI shows at most 11 places, not 12"), "IN SCI TOO")
     Assert(Refuses(g, "12 ENG", "ENG shows at most 11 places, not 12"), "AND ENG")
+    Rem The width is validated HERE and nowhere else, so every seed word
+    Rem that later reads it reads a number already known good. These four
+    Rem are the whole of what can be wrong with one.
+    Assert(Refuses(g, "0 WIDTH", "WIDTH needs a width from 1 to 53, got 0"), "A WORD WIDTH OF ZERO")
+    Assert(Refuses(g, "54 WIDTH", "WIDTH needs a width from 1 to 53, got 54"), "AND ONE PAST 53, WHERE A DOUBLE STOPS COUNTING WHOLE NUMBERS")
+    Assert(Refuses(g, "8.5 WIDTH", "WIDTH needs a whole number of 0 or more, got 8.5"), "AND A FRACTIONAL WIDTH")
+    Assert(Refuses(g, Q("8") & " WIDTH", "WIDTH needs a NUMBER, got STRING"), "AND A WIDTH THAT IS NOT A NUMBER AT ALL")
     Assert(Refuses(g, Q("a") & " 1 ATAN2", "ATAN2 needs a NUMBER, got STRING"), "ATAN2 GIVEN A STRING")
     Assert(Refuses(g, "1 " & Q("a") & " ATAN2", "ATAN2 needs a NUMBER, got STRING"), "IN EITHER POSITION")
     Assert(Refuses(g, "1 1 [ 2 * ] IFT", "IFT needs a BOOLEAN, got NUMBER"), "A CONDITION THAT IS NOT A FLAG")

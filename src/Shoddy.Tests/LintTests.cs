@@ -554,6 +554,184 @@ public class LintTests
             "effects for non-builtins: " + string.Join(" ", extra));
     }
 
+    // ---- geo-build-issues 1-3: binders shadowing builtins ---------------
+
+    [Fact]
+    public void CallingABuiltinThroughItsOwnShadowWarns()
+    {
+        // The geo hang: parameter `rest` IS the Rest builtin inside its
+        // own body, so Rest(rest) answers the list unchanged and the
+        // walker never advances. The call site is the live wound.
+        Lint.Result r = LintSrc(J(
+            "Def Walk(rest As List Of Number) As Number",
+            "    If IsEmpty(rest) Then",
+            "        0",
+            "    Else",
+            "        1 + Walk(Rest(rest))",
+            "",
+            "Def Main()",
+            "    Print(Walk({ 1, 2, 3 }))"));
+        Assert.Contains(r.Warnings,
+            w => w.Contains("REST") && w.Contains("local") && w.Contains("call"));
+    }
+
+    [Fact]
+    public void LatentLetShadowOfABuiltinIsAVerboseNoteNotAWarning()
+    {
+        // Found beside the hang, never fired: Let len against the Len
+        // builtin. Dormant shadows number ~99 across the healthy standard
+        // library (rest, args, mid ARE the recursion idiom), and a clean
+        // build prints nothing — so the binder note waits behind
+        // --lint-verbose, and the day the scope calls the shadowed name
+        // the call-shaped warning fires at the exact line.
+        Lint.Result r = LintSrc(J(
+            "Def Wide(s As String) As Number",
+            "    Let len = 3",
+            "    len + 1",
+            "",
+            "Def Main()",
+            "    Print(Wide(\"X\"))"));
+        Assert.Contains(r.Verbose,
+            w => w.Contains("LEN") && w.Contains("shadows the builtin"));
+        Assert.DoesNotContain(r.Warnings, w => w.Contains("shadows the builtin"));
+    }
+
+    [Fact]
+    public void LatentParameterShadowOfABuiltinIsAVerboseNote()
+    {
+        Lint.Result r = LintSrc(J(
+            "Def Area(sqr As Number) As Number",
+            "    sqr * 2",
+            "",
+            "Def Main()",
+            "    Print(Area(3))"));
+        Assert.Contains(r.Verbose,
+            w => w.Contains("SQR") && w.Contains("shadows the builtin"));
+        Assert.DoesNotContain(r.Warnings, w => w.Contains("shadows the builtin"));
+    }
+
+    [Fact]
+    public void ParameterShadowingAMachineWordWarns()
+    {
+        // The third of the trio: a parameter `e` against math's E().
+        // Seed the machine surface directly, as the collision test does.
+        string dir = Path.Combine(Path.GetTempPath(), $"shoddy-lint-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(dir);
+        try
+        {
+            string f = Path.Combine(dir, "fixture.shoddy");
+            File.WriteAllText(f, J(
+                "Def Grow(e As Number) As Number",
+                "    e * 2",
+                "",
+                "Def Main()",
+                "    Print(Grow(1))"));
+            List<Line> lines = Lexer.ReadProgram(f);
+            var prog = new ShoddyProgram();
+            prog.ExternalDefs["E"] = "Shoddy.Machines.Math.E";
+            prog.ExternalEffects["E"] = (0, 1);
+            prog.NoteBare("E", "E");
+            ShoddyProgram parsed = Parser.Parse(lines, prog);
+            Lint.Result r = Lint.Run(parsed, lines);
+            Assert.Contains(r.Verbose,
+                w => w.Contains("'E'") && w.Contains("machine word"));
+        }
+        finally { Directory.Delete(dir, recursive: true); }
+    }
+
+    [Fact]
+    public void OrdinaryParameterNamesStaySilent()
+    {
+        Lint.Result r = LintSrc(J(
+            "Def Blend(x As Number, n As Number) As Number",
+            "    x + n",
+            "",
+            "Def Main()",
+            "    Print(Blend(1, 2))"));
+        Assert.DoesNotContain(r.Warnings, w => w.Contains("shadows the builtin"));
+        Assert.Empty(r.Verbose);
+    }
+
+    // ---- geo-build-issues 5: written arity vs the callee's pops ---------
+
+    [Fact]
+    public void ACallWritingMoreArgumentsThanTheDefTakesWarns()
+    {
+        // The misplaced-paren shape: two arguments reach a one-argument
+        // Def, it compiles, and the wrong value binds — the failure then
+        // surfaces inside an unrelated machine.
+        Lint.Result r = LintSrc(J(
+            "Def Inc(n As Number) As Number",
+            "    n + 1",
+            "",
+            "Def Main()",
+            "    Print(Inc(1, 2))"));
+        Assert.Contains(r.Warnings,
+            w => w.Contains("INC") && w.Contains("argument"));
+    }
+
+    [Fact]
+    public void UnderSupplyOnAnEmptyStackWarnsThroughTheDepthCheck()
+    {
+        // Under-supply is NOT an arity warning: Map(Fst) after a value-
+        // producing line is the point-free pipeline idiom. When the stack
+        // genuinely has too little, the existing depth check names it.
+        Lint.Result r = LintSrc(J(
+            "Def Add2(a As Number, b As Number) As Number",
+            "    a + b",
+            "",
+            "Def Use(n As Number) As Number",
+            "    Add2(n)",
+            "",
+            "Def Main()",
+            "    Print(Use(1))"));
+        Assert.Contains(r.Warnings, w => w.Contains("below its own parameters"));
+        Assert.DoesNotContain(r.Warnings, w => w.Contains("argument"));
+    }
+
+    [Fact]
+    public void PointFreePipelineUnderSupplyStaysSilent()
+    {
+        // json.shoddy's JKeys: the members, mapped through Fst — one
+        // written argument to a two-pop word, fed from the line above.
+        Lint.Result r = LintSrc(J(
+            "Def Heads(xs As List Of List Of Number) As List Of Number",
+            "    Map(xs, First)",
+            "",
+            "Def Tops(xs As List Of List Of Number) As List Of Number",
+            "    xs",
+            "        Map(First)",
+            "",
+            "Def Main()",
+            "    Print(First(Heads({ { 1, 2 } })))",
+            "    Print(First(Tops({ { 3, 4 } })))"));
+        Assert.DoesNotContain(r.Warnings, w => w.Contains("argument"));
+    }
+
+    [Fact]
+    public void ABuiltinCalledWithTheWrongArityWarns()
+    {
+        Lint.Result r = LintSrc(J(
+            "Def Main()",
+            "    Print(Abs(1, 2))"));
+        Assert.Contains(r.Warnings,
+            w => w.Contains("ABS") && w.Contains("argument"));
+    }
+
+    [Fact]
+    public void MatchingArityAndHigherOrderCallsStaySilent()
+    {
+        Lint.Result r = LintSrc(J(
+            "Def Dub(n As Number) As Number",
+            "    n * 2",
+            "",
+            "Def Main()",
+            "    Print(Abs(0 - 3))",
+            "    Print(First(Map({ 1, 2 }, Dub)))",
+            "    Print(Ifte(1 < 2, 10, 20))"));
+        Assert.DoesNotContain(r.Warnings, w => w.Contains("argument"));
+    }
+
     // ---- clean programs stay clean --------------------------------------
 
     [Fact]

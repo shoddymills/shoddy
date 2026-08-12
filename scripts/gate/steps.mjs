@@ -15,7 +15,11 @@ const MILL = process.platform === 'win32' ? 'bin\\mill.exe' : 'bin/mill';
 
 // The machine suites, by name rather than by glob: a suite that stops being
 // listed is a suite that stops running, and that is how nine of them once
-// stopped running unnoticed.
+// stopped running unnoticed — and how seedterminaltest stopped again, by
+// missing from every copy of the list at once. THIS LIST IS THE ONLY COPY
+// NOW: build.ps1 and build.sh read it through node, and verify-suites.js
+// (a preflight gate) proves every tst/*.shoddy is either run somewhere in
+// this file or excluded below with its reason written down.
 export const MACHINE_SUITES = [
     'csvtest', 'cuttletest', 'htmltest', 'jsontest', 'nettest', 'neuraltest',
     'randomtest', 'reckonertest', 'regextest', 'seedtest', 'seedbooltest',
@@ -23,12 +27,33 @@ export const MACHINE_SUITES = [
     'seedengtest', 'seedbuzzertest', 'seedfintest', 'seedhttpstest',
     'seedisamtest', 'seedmiptest', 'seedneuraltest', 'seednettest',
     'seedreciotest', 'seedregextest', 'seedsimplextest', 'seedsparsetest',
+    'seedterminaltest',
     'seedvt100test', 'shakertest', 'xmltest', 'seedgeotest',
 ];
 
+// tst/ files deliberately run by nothing, each with the reason. A name
+// here is a decision on the record; a name in neither place fails the
+// suites preflight gate.
+export const TST_EXCLUSIONS = {
+    'seedscribblertest': 'needs a real display: GLFW has no platform on hosted runners; run by hand',
+    'seedturtletest': 'needs a real display: GLFW has no platform on hosted runners; run by hand',
+    'seedplottertest': 'needs a real display: GLFW has no platform on hosted runners; run by hand',
+    'buzzer-demo': 'interactive demo, not a suite',
+    'html-demo': 'interactive demo, not a suite',
+    'https-demo': 'interactive demo, not a suite',
+    'plotter-demo': 'interactive demo, not a suite',
+    'scribbler-demo': 'interactive demo, not a suite',
+    'shaker-demo': 'interactive demo, not a suite',
+    'turtle-demo': 'interactive demo, not a suite',
+    'examples': 'a grab-bag of worked defs, not a suite',
+    'simplex': 'a worked demo of the simplex machine — prints, asserts nothing',
+    'gradebook': 'the guide\'s interactive worked example; Input blocks an unattended run',
+    'isamfixture': 'shared record shape Included by the isam suites; no Main',
+};
+
 // The numerics and conformance suites that run before the machine sweep,
 // in build.ps1's own order.
-const CORE_SUITES = [
+export const CORE_SUITES = [
     ['libtest', 'the golden library suite', 300],
     ['builtinsurfacetest', 'builtin dispatch against the seeded dictionary', 300],
     ['fin', 'finance, by known answers', 300],
@@ -75,6 +100,12 @@ export function preflightSteps() {
             cmd: ['node', 'scripts/verify-host-blind.js'],
             remedy: 'A host project has reached into mill internals. See the script output.',
         },
+        {
+            id: 'suites', title: 'every tst suite is run or excluded', timeoutSec: 60,
+            cmd: ['node', 'scripts/verify-suites.js'],
+            remedy: 'A tst/*.shoddy fell out of the roster. Add it to MACHINE_SUITES '
+                + 'in scripts/gate/steps.mjs, or to TST_EXCLUSIONS with the reason.',
+        },
     ];
 }
 
@@ -114,9 +145,28 @@ export function gateSteps({ splitDotnetTest }) {
     // entry points in Release, and ProofTests runs the two console proofs.
     // Warming only some of them fixes only some of the crashes, which is a
     // confusing place to stop.
+    //
+    // ORDER IS LOAD-BEARING, AND WARMING THE PROOFS FIRST UNDOES ITSELF.
+    // `dotnet test src/Shoddy.Tests` builds the test project's DEBUG
+    // dependency graph, and Shoddy.Tests and console-cs both ProjectReference
+    // Shoddy.Hosting - in the same default configuration. So a proof project
+    // warmed before `dotnet test` is invalidated BY `dotnet test`, and the
+    // rebuild lands back inside the test host, silently, which is the exact
+    // stall the warming exists to prevent. Observed on 2026-08-12: the run
+    // that recompiled (analyser warnings in its log) stalled at
+    // ProofTests.ConsoleCsProofsPass and was killed at the blame timeout; the
+    // retry, which found everything up to date, passed all 296 in 1m51s. Same
+    // commit, same code, and the only difference was whether a rebuild was
+    // still owed.
+    //
+    // So the suite's own graph is built BEFORE the proofs are warmed. Then
+    // the proofs are warmed on top of settled dependencies, and `dotnet test`
+    // compiles nothing and invalidates nothing. The Release mill warms above
+    // are a different configuration and do not take part in this.
     for (const [id, title, proj, extra] of [
         ['warm-mill-release', 'the full mill, Release', 'src/Shoddy.Mill', ['-c', 'Release']],
         ['warm-mill-headless', 'the headless mill, Release', 'src/Shoddy.Mill.Headless', ['-c', 'Release']],
+        ['warm-tests', 'the C# suite and its Debug graph', 'src/Shoddy.Tests', []],
         ['warm-proof-cs', 'the C# proof project', 'proofs/console-cs/console-cs.csproj', []],
         ['warm-proof-fs', 'the F# proof project', 'proofs/console-fs/console-fs.fsproj', []],
     ]) {

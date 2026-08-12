@@ -119,6 +119,15 @@ function extract(page, sectionId) {
 const sorted = a => [...a].sort().join(" ");
 let bad = 0;
 for (const m of Object.keys(includes).sort()) {
+  // A machine with no page yet is a finding, not a crash: the geo build
+  // hit this as an ENOENT stack trace from the readFileSync below, which
+  // reads as the checker breaking rather than the tree being incomplete.
+  if (!fs.existsSync(path.join(root, "docs", "machines", m + ".html"))) {
+    console.log("machines/" + m + ".shoddy has no docs/machines/" + m
+      + ".html — write the page, in the shape of any existing machine page");
+    bad++;
+    continue;
+  }
   const ub = extract(m, "usedby");
   if (!ub) { console.log(m + ": MISSING usedby section"); bad++; continue; }
   if (sorted(ub.machines) !== sorted(usedByMachines[m]))

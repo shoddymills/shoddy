@@ -939,6 +939,57 @@ Def SealStamp(c As Crate) As String
 </div>
 
 <div class="err">
+<p class="emsg"><code>'{name}' is written as a call, but here '{name}' is a local shadowing the builtin — a local cannot be called, so its value passes through unchanged; rename the local</code>
+<code>… shadowing the machine word …</code>
+<code>… shadowing the Def …</code></p>
+<p>A parameter or <code>Let</code> shares its case-insensitive name with the
+word the call means to reach, and a local wins every naming contest — so the
+call applies nothing and the value slides through untouched. The classic
+symptom is a list walker that never advances: <code>Rest(rest)</code> answers
+<code>rest</code> unchanged, and the program hangs rather than erring. Rename
+the local. (Under <code>--lint-verbose</code> the linter also notes every
+<em>dormant</em> shadow of this kind — <code>note: parameter '{name}' shadows
+the builtin '{name}' — the local wins every naming contest in this scope;
+rename it</code> — quiet by default because parameters named
+<code>rest</code>, <code>args</code> or <code>mid</code> are the recursion
+idiom across the library and dormant shadows cost nothing until called.)</p>
+<div class="fixpair">
+<div class="bad"><b>Broken</b><pre><code>Def Walk(rest As List Of Number) As Number
+    If IsEmpty(rest) Then
+        0
+    Else
+        1 + Walk(Rest(rest))   ' the local wins: never advances</code></pre></div>
+<div class="good"><b>Fixed</b><pre><code>Def Walk(more As List Of Number) As Number
+    If IsEmpty(more) Then
+        0
+    Else
+        1 + Walk(Rest(more))</code></pre></div>
+</div>
+</div>
+
+<div class="err">
+<p class="emsg"><code>'{name}' takes {n} value(s), but this call writes {m} argument(s) — the extra value(s) land beneath the call and surface somewhere else</code></p>
+<p>The call writes more arguments than the word consumes — usually a
+misplaced paren folding two arguments into one call. It compiles, the callee
+binds whichever values sit on top, and the extras surface as a type error or
+a wrong answer far from this line. Writing <em>fewer</em> arguments than the
+word takes is deliberately not judged: feeding the rest from the stack is the
+point-free pipeline idiom.</p>
+<div class="fixpair">
+<div class="bad"><b>Broken</b><pre><code>Def Inc(n As Number) As Number
+    n + 1
+
+Def Main()
+    Print(Inc(1, 2))     ' one param, two arguments</code></pre></div>
+<div class="good"><b>Fixed</b><pre><code>Def Inc(n As Number) As Number
+    n + 1
+
+Def Main()
+    Print(Inc(1) + 2)</code></pre></div>
+</div>
+</div>
+
+<div class="err">
 <p class="emsg"><code>Def '{name}' leaves {n} values on the stack — a Def yields one value, or none</code></p>
 <p>The body provably pushes more than one value. The usual cause is an
 expression on its own line that was meant to combine with the next — every

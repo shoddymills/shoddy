@@ -33,6 +33,12 @@ public sealed class Node
     public int Line;
     public string? File;        // source file (lines are per-file) — the
                                 // debugger's breakpoints need both
+    public int? CallArgs;       // Word only: how many arguments the source
+                                // wrote call-style, F(a, b) = 2. Null for a
+                                // bare word or any desugared Word. The lint
+                                // compares it against the callee's pops —
+                                // the count is real arity evidence the
+                                // stack machine otherwise erases.
 
     public Node(NType t, int line) { T = t; Line = line; }
 

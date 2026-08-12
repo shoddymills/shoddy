@@ -102,7 +102,7 @@ scripts/shoddy.ps1 preflight        # ~3s, read-only, tolerates a dirty tree
 scripts/shoddy.ps1 gate --resume    # the expensive proof
 ```
 
-`preflight` checks the environment, the git state and all four `verify-*`
+`preflight` checks the environment, the git state and all five `verify-*`
 gates. It is read-only and mutates nothing, so there is no reason not to run
 it mid-work.
 

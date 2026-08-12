@@ -200,6 +200,11 @@ function Invoke-Test {
     # relaxation's nor the relaxation rounded.
     Native $Mill run tst/sparse.shoddy
     Native $Mill run tst/mip.shoddy
+    # geo is the same argument once more, and its fixtures are worked by
+    # the spherical law of cosines where the machine uses haversine -- a
+    # different formula reaching the same number, so a mistyped one
+    # disagrees instead of agreeing with itself.
+    Native $Mill run tst/geo.shoddy
     # The net demo is the only end-to-end exercise of the socket words: it
     # stands up a server, connects a client to it and trades lines, both
     # ends in one process on loopback. --allow-net is required because the
@@ -232,7 +237,7 @@ function Invoke-MachineSuites {
     foreach ($suite in 'csvtest', 'cuttletest', 'htmltest', 'jsontest', 'nettest', 'neuraltest',
                        'randomtest', 'reckonertest', 'regextest', 'seedtest', 'seedbuiltintest', 'seedengtest',
                        'seedbuzzertest', 'seedfintest', 'seedhttpstest', 'seedisamtest', 'seedmiptest', 'seedneuraltest', 'seednettest', 'seedreciotest', 'seedregextest', 'seedsimplextest', 'seedsparsetest', 'seedvt100test', 'shakertest',
-                       'xmltest') {
+                       'xmltest', 'seedgeotest') {
         Write-Host "==> tst/$suite.shoddy"
         Native $Mill run "tst/$suite.shoddy"
     }

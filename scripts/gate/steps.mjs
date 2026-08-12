@@ -23,7 +23,7 @@ export const MACHINE_SUITES = [
     'seedengtest', 'seedbuzzertest', 'seedfintest', 'seedhttpstest',
     'seedisamtest', 'seedmiptest', 'seedneuraltest', 'seednettest',
     'seedreciotest', 'seedregextest', 'seedsimplextest', 'seedsparsetest',
-    'seedvt100test', 'shakertest', 'xmltest',
+    'seedvt100test', 'shakertest', 'xmltest', 'seedgeotest',
 ];
 
 // The numerics and conformance suites that run before the machine sweep,
@@ -38,6 +38,7 @@ const CORE_SUITES = [
     ['bool', 'the binary layer, by identity', 300],
     ['sparse', 'sparse kernels against dense counterparts', 300],
     ['mip', 'branch and bound', 300],
+    ['geo', 'the sphere, against independently worked distances', 300],
 ];
 
 export const MILLS = [

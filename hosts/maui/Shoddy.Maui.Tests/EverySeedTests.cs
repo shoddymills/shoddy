@@ -50,6 +50,11 @@ public class EverySeedTests : IClassFixture<EverySeedTests.SeedHarness>
             "\"t.tape\" READLINES FIRST",
         }, "\"hello\""),
         ["seedfin"] = new(new[] { "5 FINPCT" }, "0.05"),
+        // London to Paris, 343556.5 m. A point is a two-element LIST, and
+        // the expected value is one no plausible wrong haversine reaches:
+        // swap the Atn2 arguments or drop the cosine and it moves by
+        // kilometres, not metres.
+        ["seedgeo"] = new(new[] { "{ 51.5074 -0.1278 } { 48.8566 2.3522 } GEODIST" }, "343556"),
         ["seedhtml"] = new(new[] { "\"<b>hi</b>\" HTMLPARSE HTMLTEXT" }, "<b>hi</b>"),
         ["seedhttps"] = new(new[] { "\"nonsense\" HTTPSTATUS" }, "0"),
         ["seedisam"] = new(new[]

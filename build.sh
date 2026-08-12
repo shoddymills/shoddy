@@ -100,7 +100,7 @@ machine_suites() {
                  seedbuzzertest seedhttpstest seednettest seedregextest seedsimplextest \
                  seedsparsetest seedmiptest \
                  seedvt100test \
-                 shakertest xmltest; do
+                 shakertest xmltest seedgeotest; do
         echo "==> tst/$suite.shoddy"
         "$MILL" run "tst/$suite.shoddy" </dev/null
     done
@@ -227,6 +227,11 @@ case "${1:-help}" in
         # answer is neither the relaxation's nor the relaxation rounded.
         "$MILL" run tst/sparse.shoddy
         "$MILL" run tst/mip.shoddy
+        # geo is the same argument once more, and its fixtures are worked
+        # by the spherical law of cosines where the machine uses
+        # haversine — a different formula reaching the same number, so a
+        # mistyped one disagrees instead of agreeing with itself.
+        "$MILL" run tst/geo.shoddy
         # The net demo is the only end-to-end exercise of the socket words:
         # it stands up a server, connects a client to it and trades lines,
         # both ends in one process on loopback. --allow-net is required

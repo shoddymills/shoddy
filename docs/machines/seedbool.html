@@ -42,8 +42,8 @@ widest domain bridged. Bases, bit operations, masks, two's complement, the
 codes, minimisation and gates share nothing but the value they work on, and a
 keyboard that has one of them and not the others is a keyboard that cannot
 finish the job.</p>
-<p class="note"><strong>Fourteen of these words read the session word width
-rather than taking one.</strong> <code>WIDTH</code> is a
+<p class="note"><strong>Sixteen of these words read the session word width
+rather than taking one, and none of them takes a width argument.</strong> <code>WIDTH</code> is a
 <a href="reckoner.html">reckoner</a> core word beside <code>FIX</code> and
 <code>DEG</code> — <code>8 WIDTH</code> sets it, <code>WIDTH?</code> reports
 it, and it starts at 32. That mode is what made the rotates, the arithmetic
@@ -130,10 +130,14 @@ RckEval(st0, "180 BIN")                  ' x: "10110100"</code></pre>
 <p>Refusals name the bound they are enforcing, not merely that something was
 out of range, because "1 to 53" is the fact a caller needs and "bad width"
 is not:</p>
-<pre><code>RckEval(st0, "256 8 BITNOT")   ' BITNOT needs a value that fits 8 bits, and 256 does not
-RckEval(st0, "0 54 BITNOT")    ' BITNOT needs a width from 1 to 53, got 54
+<pre><code>RckEval(st8, "256 BITNOT")     ' BITNOT needs a value that fits 8 bits, and 256 does not
+RckEval(st0, "54 WIDTH")       ' WIDTH needs a width from 1 to 53, got 54
 RckEval(st0, "5 37 INBASE")    ' INBASE needs a base from 2 to 36, got 37
 RckEval(st0, "TRUE 1 XOR")     ' XOR needs a BOOLEAN, got NUMBER</code></pre>
+<p>Note where the second of those now comes from. A width outside 1..53 is
+refused by <code>WIDTH</code> itself, once, where the mode is set — so every
+word that later reads it reads a number already known good, and none of them
+carries that check.</p>
 <p><code>FROMBASE</code> is the one guard this seed translates rather than
 invents. Reading text is not a bug, so <code>bool</code> answers a
 <code>Result</code> there; this turns it into a refusal carrying the 1-based
@@ -159,22 +163,25 @@ them clearly:</p>
 <tr><td>BITAND ( a b -- c )</td><td>Bitwise AND. Needs no width.</td></tr>
 <tr><td>BITOR ( a b -- c )</td><td>Bitwise OR. Needs no width.</td></tr>
 <tr><td>BITXOR ( a b -- c )</td><td>Bitwise XOR. Needs no width. These three are the only width-free words, here as in <a href="bool.html">bool</a> itself.</td></tr>
-<tr><td>BITNOT ( a width -- c )</td><td>Bitwise NOT within the given width; refuses a width outside 1..53 and a value that does not fit it. <strong>The one word here that still takes an explicit width</strong> rather than reading the session's.</td></tr>
+<tr><td>BITNOT ( a -- c )</td><td>Bitwise NOT within the session width; refuses a value that does not fit it. Every bit of the word flips, so the answer depends on how wide the word is — <code>255 BITNOT</code> is 0 at width 8 and 4294967040 at 32.</td></tr>
 <tr><td>SHL ( a n -- c )</td><td>a shifted left n places within the <strong>session width</strong>, bits above it falling off; refuses a shift past 53 and a value that does not fit the width.</td></tr>
 <tr><td>SHR ( a n -- c )</td><td>a shifted right n places, zeros coming in at the top. Needs no width, because a logical right shift cannot produce a bit the input did not have.</td></tr>
 <tr><td>SHRA ( a n -- b )</td><td>Arithmetic right shift at the session width: the top bit is copied down rather than zeros coming in, so a negative pattern stays negative. This is the difference between <code>SHRA</code> and <code>SHR</code> and the only reason both exist.</td></tr>
 <tr><td>ROTL ( a n -- b )</td><td>a rotated left n places within the session width; bits leaving the top come back at the bottom.</td></tr>
 <tr><td>ROTR ( a n -- b )</td><td>a rotated right n places; bits leaving the bottom come back at the top.</td></tr>
 </table>
-<p class="note"><strong><code>SHL</code> took its width as a third argument
-until the session mode existed, and now reads the session's.</strong> That is
-a change to the <em>arity</em> and not only to where the number comes from:
-<code>255 1 32 SHL</code> is now <code>255 1 SHL</code>, and at the default
-width both answer 510. It was done because <code>SHL</code>,
-<code>SHRA</code>, <code>ROTL</code> and <code>ROTR</code> are one family, and
-three of them reading a mode while the fourth demands an argument is the
-surface nobody can remember. <code>SHR</code> is untouched: a word that needs
-no width gains nothing from one.</p>
+<p class="note"><strong><code>SHL</code> and <code>BITNOT</code> took their
+width as an argument until the session mode existed, and now read the
+session's.</strong> Both are changes to the <em>arity</em> and not only to
+where the number comes from: <code>255 1 32 SHL</code> is now
+<code>255 1 SHL</code>, and <code>255 8 BITNOT</code> is now
+<code>255 BITNOT</code>. At the default width the answers are unchanged,
+which is what makes the mode opt-in — and also what makes the change easy to
+under-rate, since the number is the same and the call is not. They were done
+because the width-taking words are one family, and a member demanding an
+argument while the rest read a mode is the surface nobody can remember.
+<code>SHR</code> is untouched: a word that needs no width gains nothing from
+one.</p>
 
 <h3>Masks, fields and inspection</h3>
 <table>

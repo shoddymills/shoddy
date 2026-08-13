@@ -16,11 +16,22 @@ namespace Shoddy.Compiler;
 ///
 /// THE RULE IS A PROHIBITION: the initializer contains no word calls.
 /// Literals, { } list literals and type constructors, nested to any
-/// depth, with two folded exceptions (ToArray and Dim — there is no
-/// array literal in the language, so without them the array case could
-/// not be written) and the arithmetic and concatenation operators over
-/// constant operands. Everything else keeps the refusal, and the message
-/// names the offending word rather than the feature.
+/// depth, with four folded exceptions and the arithmetic and
+/// concatenation operators over constant operands. Everything else keeps
+/// the refusal, and the message names the offending word rather than the
+/// feature.
+///
+/// The four exceptions are one exception twice over: a value kind with no
+/// literal has no other spelling. ToArray and Dim are there because the
+/// language has no array literal, and True and False because it has no
+/// boolean one — they are runtime builtins, so without them a boolean
+/// could not appear in a constant at all, which is what the spec has
+/// always said it could. Both fold to a value like any other word.
+///
+/// A word that reaches the whitelist is folded to the builtin even where
+/// the file carries a Redef of that name. That is the standing behaviour
+/// for Mod, ToArray and Dim rather than anything new here, and a plain
+/// Def of a builtin's name is refused by the parser long before this.
 ///
 /// The prohibition is not conservatism. A quotation captures the
 /// environment it was made in, and a captured environment shared between
@@ -42,16 +53,17 @@ static class MachineConstants
 {
     static readonly CultureInfo Inv = CultureInfo.InvariantCulture;
 
-    /// <summary>The words a constant initializer may name. The two folded
-    /// builtins are recognised HERE, ahead of the rejection branch, so
-    /// neither can ever be reported as an offender: the first person to
-    /// write `Let A = ToArray({1,2,3})` must not be told their constant
-    /// "calls TOARRAY", which is true, useless and contradicts the
+    /// <summary>The words a constant initializer may name. The four folded
+    /// builtins are recognised HERE, ahead of the rejection branch, so none
+    /// can ever be reported as an offender: the first person to write
+    /// `Let A = ToArray({1,2,3})` must not be told their constant "calls
+    /// TOARRAY", which is true, useless and contradicts the
     /// documentation.</summary>
     static readonly HashSet<string> Folded = new()
     {
         "+", "-", "*", "/", "MOD", "^", "NEGATE", "&",   // R2.6 operators
         "TOARRAY", "DIM",                                // R2.2 builtins
+        "TRUE", "FALSE",                                 // no boolean literal
     };
 
     /// <summary>One machine constant: the binding, and the C# expression
@@ -146,6 +158,16 @@ static class MachineConstants
                     "a machine's top-level Let must bind a constant; " +
                     $"this one calls {name}");
             }
+            case NType.If:
+                // R2.4's complaint in a third costume. And and Or compile
+                // to a short-circuiting conditional, so the writer of
+                // `Let ok = True And False` typed no If at all and the
+                // offending-word branch would name a word not in their
+                // file. Unreachable until True and False began to fold,
+                // because the condition was refused ahead of it.
+                throw new ShoddyError(n.Line, n.File,
+                    "a machine's top-level Let cannot hold a conditional; " +
+                    "And and Or compile to one, so neither folds");
             default:
                 throw new ShoddyError(n.Line, n.File,
                     "a machine's top-level Let must bind a constant; " +

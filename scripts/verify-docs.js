@@ -55,16 +55,19 @@ for (const dir of machineDirs)
   }
 
 // ---- ground truth: machine -> machines that include it ----
+// The reckoner seeds are invisible here by design: "its seed uses it" is
+// true of nearly every machine at once, so as a usedby row it says nothing
+// - it was the same sentence repeated across forty pages. The seeds are
+// listed once instead, on reckoner's own page, and that listing is
+// ground-truth-checked below so a new seed cannot go unlisted. A seed
+// built on another seed still counts: that row lands on a seed's own page,
+// where it is real information.
 const usedByMachines = {};
 for (const m of Object.keys(includes)) usedByMachines[m] = [];
 for (const [m, incs] of Object.entries(includes))
-  for (const dep of incs) usedByMachines[dep].push(m);
-// Every reckoner seed includes both cuttle and reckoner, which would make
-// their usedby tables just the thirteen seeds again - already listed, with
-// more detail, in the "The Reckoner Seeds" section those two pages carry
-// instead. Strip seeds from just these two so the tables aren't a duplicate.
-usedByMachines["cuttle"] = usedByMachines["cuttle"].filter(m => !m.startsWith("seed"));
-usedByMachines["reckoner"] = usedByMachines["reckoner"].filter(m => !m.startsWith("seed"));
+  for (const dep of incs)
+    if (!m.startsWith("seed") || dep.startsWith("seed"))
+      usedByMachines[dep].push(m);
 
 // ---- ground truth: machine -> mills that call its words ----
 const usedByMills = {};
@@ -119,6 +122,15 @@ function extract(page, sectionId) {
 const sorted = a => [...a].sort().join(" ");
 let bad = 0;
 for (const m of Object.keys(includes).sort()) {
+  // A machine with no page yet is a finding, not a crash: the geo build
+  // hit this as an ENOENT stack trace from the readFileSync below, which
+  // reads as the checker breaking rather than the tree being incomplete.
+  if (!fs.existsSync(path.join(root, "docs", "machines", m + ".html"))) {
+    console.log("machines/" + m + ".shoddy has no docs/machines/" + m
+      + ".html — write the page, in the shape of any existing machine page");
+    bad++;
+    continue;
+  }
   const ub = extract(m, "usedby");
   if (!ub) { console.log(m + ": MISSING usedby section"); bad++; continue; }
   if (sorted(ub.machines) !== sorted(usedByMachines[m]))
@@ -130,6 +142,27 @@ for (const m of Object.keys(includes).sort()) {
   if (sorted(us.machines) !== sorted(includes[m]))
     { console.log(m + " uses: page[" + sorted(us.machines) + "] truth[" + sorted(includes[m]) + "]"); bad++; }
 }
+// ---- reckoner's seeds section: the one place the seeds are listed ----
+// Seed rows are stripped from every machine's "Who Uses It" above, so this
+// section is the seeds' only listing anywhere - and it went stale the very
+// week two seeds were added with nothing checking it. Both directions:
+// every seed in the tree has a row, every row has a seed behind it.
+{
+  const html = fs.readFileSync(path.join(root, "docs", "machines", "reckoner.html"), "utf8");
+  const i = html.indexOf('id="seeds"');
+  if (i < 0) { console.log("reckoner.html: MISSING seeds section"); bad++; }
+  else {
+    const j = html.indexOf("<h2 ", i);
+    const sec = html.slice(i, j < 0 ? html.length : j);
+    const listed = [...new Set([...sec.matchAll(/href="(seed[a-z0-9]+)\.html"/g)].map(m => m[1]))];
+    const seeds = Object.keys(includes).filter(n => n.startsWith("seed"));
+    for (const s of seeds)
+      if (!listed.includes(s)) { console.log("reckoner.html seeds: " + s + " is not listed"); bad++; }
+    for (const s of listed)
+      if (!seeds.includes(s)) { console.log("reckoner.html seeds: lists " + s + ", which is not a seed"); bad++; }
+  }
+}
+
 // ---- spec.html's machine catalogue: its Includes trailers ----
 // Prose, and prose drifts. Every machine bullet in section 13 states what
 // that machine includes; nothing checked it, so the list went stale twice
@@ -157,9 +190,10 @@ for (const m of Object.keys(includes).sort()) {
 // ---- catalogs: nothing added to the tree may go unlisted ----
 // Exception: the reckoner seeds ("seed*"). They have no bearing outside
 // cuttle/reckoner, so they are deliberately not tiled in the general
-// catalogs - reckoner's own page lists all twelve instead. They still need
-// a page (the orphan check below still runs over every machine) and their
-// usedby/uses sections are still ground-truth-checked as normal.
+// catalogs - reckoner's own page lists them all instead, and the seeds
+// check above holds that listing complete. They still need a page (the
+// orphan check below still runs over every machine) and their usedby/uses
+// sections are still ground-truth-checked as normal.
 const machineNames = Object.keys(includes).sort();
 const catalogedNames = machineNames.filter(n => !n.startsWith("seed"));
 const read = f => fs.readFileSync(path.join(root, f), "utf8");

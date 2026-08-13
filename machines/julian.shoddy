@@ -1,0 +1,222 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem julian.shoddy — Shoddy standard library: the calendar as arithmetic
+Rem
+Rem The one place the civil calendar is spelled. Before this machine
+Rem the Gregorian leap rules shipped twice — fin.shoddy carried a
+Rem serial-day arithmetic for its bond words and geo.shoddy carried a
+Rem Julian day number for its sun words — and fin's own header called
+Rem its copy a stand-in. Both now define their words over this machine,
+Rem so there is one set of rules and not two.
+Rem
+Rem PURE THROUGHOUT, AND IT NEVER READS A CLOCK. A date arrives as an
+Rem argument or it does not arrive. clock.shoddy is the capability that
+Rem knows what today is, and ClockDate there is the one bridge — built
+Rem that way so that fin, geo and ephemeris stay out of the capability
+Rem system entirely, exactly as geo's header promises.
+Rem
+Rem Conventions, all of them load-bearing:
+Rem
+Rem   * THE CALENDAR IS THE PROLEPTIC GREGORIAN. The leap rules run
+Rem     unchanged back past 1582 and into negative years, because a
+Rem     calendar that switches rulebooks mid-history would make every
+Rem     serial ambiguous. Dates in genuinely Julian-calendar documents
+Rem     need converting by the caller, who knows the document.
+Rem
+Rem   * TWO EPOCHS, ONE SET OF RULES, ONE CONSTANT. JulSerial counts
+Rem     whole days from 1970-01-01 (serial 0), the epoch finance and
+Rem     computing already use. JulDayNumber is the astronomical Julian
+Rem     day at 00:00 UT — noon-based, so a civil midnight always ends
+Rem     in .5 — and it is DEFINED OVER JulSerial, so 2440587.5 appears
+Rem     in exactly one place. A machine per epoch would spell the leap
+Rem     rules twice, which is the disease this machine cures.
+Rem
+Rem   * A FRACTIONAL SERIAL IS REFUSED, AND THE GUARD IS LOAD-BEARING.
+Rem     The commonest way to confuse the two epochs is to hand a Julian
+Rem     day number to the serial words — and a Julian day number ends
+Rem     in .5. JulFromSerial aborts on a fraction instead of answering
+Rem     a plausible date some five thousand years wide of the mark.
+Rem
+Rem   * FIELDS CARRY THE PREFIX: JulYear, JulMonth, JulDay. An accessor
+Rem     loses every naming contest, and Year, Month and Day are words
+Rem     every program wants as locals. fin's retired date record spelt
+Rem     them Yr, Mon and Day for the same reason and still had to warn
+Rem     about it; the prefix removes the contest instead of narrowing
+Rem     it.
+Rem
+Rem   * = ON TWO DATES IS HONEST, unlike geo's points and eng's complex
+Rem     numbers. A JulDate is whole-number arithmetic end to end, so a
+Rem     computed date lands exactly on its literal or the arithmetic is
+Rem     wrong. There is no JulNear and none is missing.
+Rem
+Rem   * YEARS RUN -400000..400000, WHOLE. The bound is far inside 2^53
+Rem     for every arithmetic here; it exists so that an infinity or a
+Rem     NaN fails a positive range test rather than flowing into the
+Rem     era arithmetic (a comparison against NaN is False, so both are
+Rem     refused by the same check — the trick geo's builders use).
+Rem
+Rem   * WEEKDAYS ARE 1..7, MONDAY IS 1. The ISO convention, 1-based as
+Rem     everything in Shoddy is. Serial 0 was a Thursday, which is the
+Rem     whole derivation of the formula below.
+Rem
+Rem   * NO PARSING, NO FORMATTING, NO TIME. Text is str's business and
+Rem     a caller's format decision; hours are a Number argument in the
+Rem     machines that need one (geo's sun words, ephemeris); political
+Rem     time zones are a database no machine should ship, and the
+Rem     nautical zone is already geo's GeoZoneOffset. This machine is
+Rem     the calendar's arithmetic, not its politics.
+Rem
+Rem Includes nothing, deliberately — a tier-one machine like math, so
+Rem any program can pull the calendar in alone.
+Rem ==================================================================
+
+Rem ---- the builtins this machine is built on -------------------------
+Rem
+Rem NOT Defs. The engine dispatches these; they are listed because a
+Rem reader checking the era arithmetic should not have to leave the
+Rem file to find out what they do.
+
+Rem Fix(x As Number) As Number                        ( x -- y )
+Rem     Truncation TOWARD ZERO, where Floor goes toward minus infinity.
+Rem     The era arithmetic below leans on that difference: it shifts
+Rem     negative years by 399 first precisely so that Fix lands the era
+Rem     where Floor would.
+
+Rem Wrap(a As Number, b As Number) As Number          ( a b -- r )
+Rem     FLOORED modulo: the answer takes its sign from b, so a negative
+Rem     serial still yields a weekday in 1..7.
+
+Rem Ifte(c, t, f)                                     ( c t f -- x )
+Rem     The inline conditional, for the one-line branches below where
+Rem     an indented If would triple a Def's height.
+
+Rem ---- the type --------------------------------------------------------
+
+Rem Year, month, day, in the order a date is written. Both the fields
+Rem and their order are load-bearing: fields are POSITIONAL, so
+Rem inserting one here would shift every later constructor argument in
+Rem the tree silently.
+Type JulDate
+    JulYear  As Number
+    JulMonth As Number
+    JulDay   As Number
+
+Rem ---- the leap rules, spelled once --------------------------------
+
+Def JulIsLeap(y As Number) As Boolean
+    (y Mod 4 = 0 And y Mod 100 <> 0) Or y Mod 400 = 0
+
+Def JulDaysInMonth(y As Number, m As Number) As Number
+    If m = 2 Then
+        Ifte(JulIsLeap(y), 29, 28)
+    Else
+        Ifte(m = 4 Or m = 6 Or m = 9 Or m = 11, 30, 31)
+
+Rem ---- construction ----------------------------------------------------
+
+Rem One set of rules for both builders, so there are not two. THE WORD
+Rem NAME IS AN ARGUMENT because JulOf must abort naming JULOF and
+Rem JulTryOf must refuse naming JULTRYOF — an error naming the other
+Rem one is an error a caller cannot act on. The tests are written
+Rem POSITIVELY so that NaN and infinity fail them for free.
+Def JulChkOf(word As String, y As Number, m As Number, d As Number) As Result
+    If Not (y >= -400000 And y <= 400000 And Floor(y) = y) Then
+        Err(word & ": YEAR '" & Str(y) & "' IS NOT A WHOLE NUMBER IN -400000..400000", 0)
+    Else
+        If Not (m >= 1 And m <= 12 And Floor(m) = m) Then
+            Err(word & ": MONTH '" & Str(m) & "' IS NOT A WHOLE NUMBER IN 1..12", 0)
+        Else
+            If Not (d >= 1 And d <= JulDaysInMonth(y, m) And Floor(d) = d) Then
+                Err(word & ": DAY '" & Str(d) & "' DOES NOT FALL IN THAT MONTH", 0)
+            Else
+                Ok(JulDate(y, m, d))
+
+Rem The total twin, for a date that came from outside. At is 0
+Rem throughout: the offending value is a number that was handed over,
+Rem not a character in a string that was read.
+Def JulTryOf(y As Number, m As Number, d As Number) As Result
+    JulChkOf("JULTRYOF", y, m, d)
+
+Rem The checked builder, DEFINED OVER THE TOTAL TWIN — the pairing
+Rem bool, str and geo all use. A bad date from inside the program is a
+Rem bug in the program and aborts.
+Def JulOf(y As Number, m As Number, d As Number) As JulDate
+    Select Case JulChkOf("JULOF", y, m, d)
+        Case Ok(dd)
+            dd
+        Case Err(why, at)
+            Error(why)
+        Case Else
+            Error("JULOF: THE DOMAIN CHECK DID NOT ANSWER")
+
+Rem ---- the two epochs --------------------------------------------------
+
+Rem Days from civil: shift the year to start in March so the leap day
+Rem lands last, then it is all integer arithmetic and the century rules
+Rem take care of themselves. This is the arithmetic fin.shoddy shipped
+Rem and proved; it moved here unchanged, and tst/julian.shoddy holds it
+Rem to fin's own fixtures.
+Def JulSerial(d As JulDate) As Number
+    Let y = Ifte(JulMonth(d) <= 2, JulYear(d) - 1, JulYear(d))
+    Let era = Fix(Ifte(y >= 0, y, y - 399) / 400)
+    Let yoe = y - era * 400
+    Let mp = (JulMonth(d) + 9) Mod 12
+    Let doy = Fix((153 * mp + 2) / 5) + JulDay(d) - 1
+    Let doe = yoe * 365 + Fix(yoe / 4) - Fix(yoe / 100) + doy
+    era * 146097 + doe - 719468
+
+Rem Civil from days. THE GUARD IS THE POINT (see the header): a serial
+Rem is a whole count of days, and the likeliest fraction to arrive here
+Rem is a Julian day number's .5, which without the guard would answer a
+Rem plausible date five thousand years wide of the mark.
+Def JulFromSerial(n As Number) As JulDate
+    If Floor(n) <> n Then
+        Error("JULFROMSERIAL: '" & Str(n) & "' IS NOT A WHOLE COUNT OF DAYS - A .5 IS USUALLY A JULIAN DAY NUMBER ON THE WRONG EPOCH")
+    Else
+        JulFromWhole(n)
+
+Def JulFromWhole(n As Number) As JulDate
+    Let z = n + 719468
+    Let era = Fix(Ifte(z >= 0, z, z - 146096) / 146097)
+    Let doe = z - era * 146097
+    Let yoe = Fix((doe - Fix(doe / 1460) + Fix(doe / 36524) - Fix(doe / 146096)) / 365)
+    Let y = yoe + era * 400
+    Let doy = doe - (365 * yoe + Fix(yoe / 4) - Fix(yoe / 100))
+    Let mp = Fix((5 * doy + 2) / 153)
+    Let d = doy - Fix((153 * mp + 2) / 5) + 1
+    Let m = Ifte(mp < 10, mp + 3, mp - 9)
+    JulDate(Ifte(m <= 2, y + 1, y), m, d)
+
+Rem The astronomical Julian day number at 00:00 UT — noon-based, so a
+Rem civil midnight always ends in .5. DEFINED OVER JulSerial: this line
+Rem is the only place the offset between the epochs exists, and it is
+Rem the relation tst/julian.shoddy asserts verbatim.
+Def JulDayNumber(d As JulDate) As Number
+    JulSerial(d) + 2440587.5
+
+Rem ---- arithmetic ------------------------------------------------------
+
+Rem Signed, b minus a — the order every "days until" question wants,
+Rem and the order fin's actual-basis day count already used.
+Def JulDiff(a As JulDate, b As JulDate) As Number
+    JulSerial(b) - JulSerial(a)
+
+Def JulAddDays(d As JulDate, days As Number) As JulDate
+    JulFromSerial(JulSerial(d) + days)
+
+Rem Clamped to month end: one month after 31 January is 28 February,
+Rem not the 3rd of March. The coupon-schedule word, which is why a
+Rem negative count must walk cleanly backwards.
+Def JulAddMonths(d As JulDate, months As Number) As JulDate
+    Let total = JulYear(d) * 12 + (JulMonth(d) - 1) + months
+    Let yy = Fix(total / 12)
+    Let mm = total - yy * 12 + 1
+    JulDate(yy, mm, Min(JulDay(d), JulDaysInMonth(yy, mm)))
+
+Rem 1..7, Monday 1 — the ISO convention. Serial 0 was a Thursday, so
+Rem shifting by 3 puts Monday at the bottom of the wrap; Wrap rather
+Rem than Mod so a date before 1970 still answers 1..7.
+Def JulWeekday(d As JulDate) As Number
+    Wrap(JulSerial(d) + 3, 7) + 1

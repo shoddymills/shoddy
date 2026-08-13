@@ -50,6 +50,18 @@ public class EverySeedTests : IClassFixture<EverySeedTests.SeedHarness>
             "\"t.tape\" READLINES FIRST",
         }, "\"hello\""),
         ["seedfin"] = new(new[] { "5 FINPCT" }, "0.05"),
+        // London to Paris, 343556.5 m. A point is a two-element LIST, and
+        // the expected value is one no plausible wrong haversine reaches:
+        // swap the Atn2 arguments or drop the cosine and it moves by
+        // kilometres, not metres.
+        ["seedgeo"] = new(new[] { "{ 51.5074 -0.1278 } { 48.8566 2.3522 } GEODIST" }, "343556"),
+        // Midnight before J2000.0 — a value only the real calendar
+        // reaches: both century rules sit between 1970 and 2000, so an
+        // off-by-one leap rule moves it by whole days.
+        ["seedjulian"] = new(new[] { "2000 1 1 JULDATE JULDAYNUMBER" }, "2451544.5"),
+        // GMST at J2000.0 itself — the epoch constant, reached only if
+        // the day count and the wrap are both right.
+        ["seedephemeris"] = new(new[] { "2451544.5 12 EPHSIDEREAL" }, "280.46"),
         ["seedhtml"] = new(new[] { "\"<b>hi</b>\" HTMLPARSE HTMLTEXT" }, "<b>hi</b>"),
         ["seedhttps"] = new(new[] { "\"nonsense\" HTTPSTATUS" }, "0"),
         ["seedisam"] = new(new[]

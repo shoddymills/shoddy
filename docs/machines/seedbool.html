@@ -29,16 +29,27 @@
 <p><code>seedbool</code> bridges <a href="bool.html">bool</a>'s binary layer
 into the <a href="reckoner.html">reckoner</a> engine:
 <code>HEX BIN INBASE FROMBASE</code>,
-<code>BITAND BITOR BITXOR BITNOT SHL SHR</code>,
-<code>MASK GETFIELD BITAT POPCOUNT</code>, and the six logic gates the engine
+<code>BITAND BITOR BITXOR BITNOT SHL SHR SHRA ROTL ROTR</code>,
+<code>MASK GETFIELD BITAT POPCOUNT LOWBIT HIGHBIT CARD CARDWITH</code>,
+<code>SIGNED UNSIGNED SIGNEXTEND NEGW ADDW SUBW MULW CARRIES OVERFLOWS</code>,
+<code>GRAY FROMGRAY BCD FROMBCD PARITY PARITYBIT HAMMING</code>,
+<code>MINTERMS IMPLICANTS TABLE</code>, and the six logic gates the engine
 core does not already own — <code>NAND NOR XOR XNOR IMPLIES IFF</code>. Its
 whole public surface is one function: fold <code>RckSeedBool</code> over a
-state and all twenty words are in the dictionary.</p>
+state and all forty-six words are in the dictionary.</p>
 <p>It is <strong>the widest seed</strong>, because <code>bool</code> is the
-widest domain bridged. Bases, bit operations, masks and gates are four
-families that share nothing but the value they work on, and a keyboard that
-has one of them and not the others is a keyboard that cannot finish the
-job.</p>
+widest domain bridged. Bases, bit operations, masks, two's complement, the
+codes, minimisation and gates share nothing but the value they work on, and a
+keyboard that has one of them and not the others is a keyboard that cannot
+finish the job.</p>
+<p class="note"><strong>Sixteen of these words read the session word width
+rather than taking one, and none of them takes a width argument.</strong> <code>WIDTH</code> is a
+<a href="reckoner.html">reckoner</a> core word beside <code>FIX</code> and
+<code>DEG</code> — <code>8 WIDTH</code> sets it, <code>WIDTH?</code> reports
+it, and it starts at 32. That mode is what made the rotates, the arithmetic
+shift and the whole two's-complement family bridgeable at all: each of them
+wants a width, and forty words each carrying one as an argument is not a
+bridge but a second dictionary.</p>
 
 <h2 id="why">Why It's Useful</h2>
 <p>Every <code>Bool*</code> word aborts on a bad domain, and nothing keyable
@@ -69,7 +80,46 @@ up".</p>
 RckEval(st0, "255 HEX")                  ' x: "FF"
 RckEval(st0, "12 10 BITAND")             ' x: 8
 RckEval(st0, "171 7 4 GETFIELD")         ' x: 10
-RckEval(st0, "1 7 8 SHL")                ' x: 128</code></pre>
+RckEval(st0, "1 7 SHL")                  ' x: 128</code></pre>
+<p><strong>Set the width once and the bit words work inside it.</strong> Every
+line below answers differently at the default 32 — the bit does not fall off
+(<code>256</code>), the pattern is not negative (<code>255</code>), and the
+card is thirty-two holes wide instead of eight. That difference is the whole
+argument for a mode:</p>
+<pre><code>Let st8 = RckEval(st0, "8 WIDTH")        ' a byte from here on
+RckEval(st8, "1 8 SHL")                  ' x: 0      — the bit fell off the end
+RckEval(st8, "255 SIGNED")               ' x: -1     — the same bits, read as signed
+RckEval(st8, "202 CARD")                 ' x: "##..#.#."
+RckEval(st8, "200 100 ADDW")             ' x: 44     — wrapped, as a byte does
+RckEval(st8, "200 100 CARRIES")          ' x: True   — and it carried out</code></pre>
+<p><code>CARRIES</code> and <code>OVERFLOWS</code> are the pair nobody
+expects and everybody needs. Unsigned overflow and signed overflow are
+different questions with different answers, and the same two operands
+routinely disagree — a machine that gave the wrapping arithmetic without the
+flags would be teaching half of it:</p>
+<pre><code>RckEval(st8, "100 100 CARRIES")          ' x: False  — 200 fits a byte
+RckEval(st8, "100 100 OVERFLOWS")        ' x: True   — but not a SIGNED byte</code></pre>
+<p><strong>Absence is an empty list.</strong> <code>LOWBIT</code> and
+<code>HIGHBIT</code> answer an <code>Option</code> in
+<a href="bool.html">bool</a>, and zero genuinely has no lowest set bit. That
+is an ordinary answer rather than an error, so the bridge answers
+<code>{ }</code> — one cell either way, which is what keeps
+<code>UNDO</code>'s accounting, and it composes with the words a keyboard
+already has:</p>
+<pre><code>RckEval(st0, "12 LOWBIT")                ' x: { 2 }
+RckEval(st0, "0 LOWBIT")                 ' x: { }
+RckEval(st0, "0 LOWBIT LENGTH")          ' x: 0      — "was there a bit?"
+RckEval(st0, "12 LOWBIT FIRST")          ' x: 2      — "which one?"</code></pre>
+<p>Minimisation answers <strong>text</strong>, which is how a product term
+reaches a stack that has no cell for one. The minterms go in as a
+<code>LIST</code>, which is the input somebody actually has after filling in
+a table:</p>
+<pre><code>RckEval(st0, "{ 0 1 2 3 } 3 MINTERMS")   ' x: "A'"
+RckEval(st0, "{ 1 2 } 2 TABLE")          ' x: "A B | OUT
+                                         '     F F | F
+                                         '     F T | T
+                                         '     T F | T
+                                         '     T T | F"</code></pre>
 <p>A register decoded at the keyboard, which is what the field words are
 for — 180 is <code>1011 0100</code>, and there are no hex literals in
 Shoddy, so a value is typed in decimal or read with
@@ -80,10 +130,14 @@ RckEval(st0, "180 BIN")                  ' x: "10110100"</code></pre>
 <p>Refusals name the bound they are enforcing, not merely that something was
 out of range, because "1 to 53" is the fact a caller needs and "bad width"
 is not:</p>
-<pre><code>RckEval(st0, "256 8 BITNOT")   ' BITNOT needs a value that fits 8 bits, and 256 does not
-RckEval(st0, "0 54 BITNOT")    ' BITNOT needs a width from 1 to 53, got 54
+<pre><code>RckEval(st8, "256 BITNOT")     ' BITNOT needs a value that fits 8 bits, and 256 does not
+RckEval(st0, "54 WIDTH")       ' WIDTH needs a width from 1 to 53, got 54
 RckEval(st0, "5 37 INBASE")    ' INBASE needs a base from 2 to 36, got 37
 RckEval(st0, "TRUE 1 XOR")     ' XOR needs a BOOLEAN, got NUMBER</code></pre>
+<p>Note where the second of those now comes from. A width outside 1..53 is
+refused by <code>WIDTH</code> itself, once, where the mode is set — so every
+word that later reads it reads a number already known good, and none of them
+carries that check.</p>
 <p><code>FROMBASE</code> is the one guard this seed translates rather than
 invents. Reading text is not a bug, so <code>bool</code> answers a
 <code>Result</code> there; this turns it into a refusal carrying the 1-based
@@ -109,10 +163,25 @@ them clearly:</p>
 <tr><td>BITAND ( a b -- c )</td><td>Bitwise AND. Needs no width.</td></tr>
 <tr><td>BITOR ( a b -- c )</td><td>Bitwise OR. Needs no width.</td></tr>
 <tr><td>BITXOR ( a b -- c )</td><td>Bitwise XOR. Needs no width. These three are the only width-free words, here as in <a href="bool.html">bool</a> itself.</td></tr>
-<tr><td>BITNOT ( a width -- c )</td><td>Bitwise NOT within the given width; refuses a width outside 1..53 and a value that does not fit it.</td></tr>
-<tr><td>SHL ( a n width -- c )</td><td>a shifted left n places within the width, bits above it falling off; refuses a shift past 53.</td></tr>
+<tr><td>BITNOT ( a -- c )</td><td>Bitwise NOT within the session width; refuses a value that does not fit it. Every bit of the word flips, so the answer depends on how wide the word is — <code>255 BITNOT</code> is 0 at width 8 and 4294967040 at 32.</td></tr>
+<tr><td>SHL ( a n -- c )</td><td>a shifted left n places within the <strong>session width</strong>, bits above it falling off; refuses a shift past 53 and a value that does not fit the width.</td></tr>
 <tr><td>SHR ( a n -- c )</td><td>a shifted right n places, zeros coming in at the top. Needs no width, because a logical right shift cannot produce a bit the input did not have.</td></tr>
+<tr><td>SHRA ( a n -- b )</td><td>Arithmetic right shift at the session width: the top bit is copied down rather than zeros coming in, so a negative pattern stays negative. This is the difference between <code>SHRA</code> and <code>SHR</code> and the only reason both exist.</td></tr>
+<tr><td>ROTL ( a n -- b )</td><td>a rotated left n places within the session width; bits leaving the top come back at the bottom.</td></tr>
+<tr><td>ROTR ( a n -- b )</td><td>a rotated right n places; bits leaving the bottom come back at the top.</td></tr>
 </table>
+<p class="note"><strong><code>SHL</code> and <code>BITNOT</code> took their
+width as an argument until the session mode existed, and now read the
+session's.</strong> Both are changes to the <em>arity</em> and not only to
+where the number comes from: <code>255 1 32 SHL</code> is now
+<code>255 1 SHL</code>, and <code>255 8 BITNOT</code> is now
+<code>255 BITNOT</code>. At the default width the answers are unchanged,
+which is what makes the mode opt-in — and also what makes the change easy to
+under-rate, since the number is the same and the call is not. They were done
+because the width-taking words are one family, and a member demanding an
+argument while the rest read a mode is the surface nobody can remember.
+<code>SHR</code> is untouched: a word that needs no width gains nothing from
+one.</p>
 
 <h3>Masks, fields and inspection</h3>
 <table>
@@ -121,7 +190,72 @@ them clearly:</p>
 <tr><td>GETFIELD ( a hi lo -- v )</td><td>Bits hi down to lo of a, inclusive and 0-based, shifted down to zero; refuses an inverted field and an index past 52.</td></tr>
 <tr><td>BITAT ( a k -- flag )</td><td>Whether bit k of a is set. Answers a <strong>BOOLEAN</strong>, never 1 or 0.</td></tr>
 <tr><td>POPCOUNT ( a -- n )</td><td>How many of a's bits are set.</td></tr>
+<tr><td>LOWBIT ( a -- list )</td><td>The index of a's lowest set bit as a one-item <code>LIST</code>, or an empty <code>LIST</code> when no bit is set. <code>LENGTH</code> asks whether there was one; <code>FIRST</code> takes it out.</td></tr>
+<tr><td>HIGHBIT ( a -- list )</td><td>The index of a's highest set bit, the same way.</td></tr>
+<tr><td>CARD ( a -- s )</td><td>a as a row of session-width holes, <code>#</code> for a set bit and <code>.</code> for a clear one. <strong>Plain ASCII</strong>, so it survives a tape or a saved session.</td></tr>
+<tr><td>CARDWITH ( a on off -- s )</td><td><code>CARD</code> with your own two glyphs, for a terminal that can hold them. Anything outside ASCII will not survive being saved.</td></tr>
 </table>
+<p class="note"><strong>Zero's lowest set bit is an absence, not an
+error.</strong> <code>LOWBIT</code> and <code>HIGHBIT</code> answer
+<code>{ }</code> there rather than refusing, because a word that refused on
+zero would contradict the contract <a href="bool.html">bool</a> itself draws.
+The answer is <strong>one cell either way</strong> — a word pushing a variable
+number of cells would break <code>UNDO</code>'s accounting, which is the same
+rule <a href="seedregex.html">seedregex</a>'s <code>RXGROUPS</code> keeps for
+the same shape. Bit <em>zero</em> is an index and not an absence, which is
+exactly the case a &minus;1 sentinel confuses.</p>
+
+<h3>Two's complement and wrapping arithmetic</h3>
+<p>All at the session width, which is what makes them one-argument words
+instead of two-argument ones.</p>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>SIGNED ( a -- v )</td><td>The bit pattern a read as a two's-complement signed value. At width 8, <code>255 SIGNED</code> is &minus;1; at 32 it is still 255.</td></tr>
+<tr><td>UNSIGNED ( v -- a )</td><td>The signed value v as the bit pattern that holds it. <strong>The one word here whose input may be negative</strong>, which is what it is for; refuses a value the width cannot hold as signed, naming the range it missed.</td></tr>
+<tr><td>SIGNEXTEND ( a from -- b )</td><td>The from-bit pattern a widened to the session width, its sign bit copied into the new bits; refuses a session width narrower than the source, which is not widening at all.</td></tr>
+<tr><td>NEGW ( a -- b )</td><td>Two's-complement negation. Zero negates to zero — the case a NOT-plus-one implementation gets wrong.</td></tr>
+<tr><td>ADDW ( a b -- c )</td><td>a plus b, wrapping at the session width the way a machine word does.</td></tr>
+<tr><td>SUBW ( a b -- c )</td><td>a minus b, wrapping; below zero it comes back round the top.</td></tr>
+<tr><td>MULW ( a b -- c )</td><td>a times b, keeping only the low bits that fit.</td></tr>
+<tr><td>CARRIES ( a b -- flag )</td><td>Whether a plus b carries out of the width — <strong>unsigned</strong> overflow.</td></tr>
+<tr><td>OVERFLOWS ( a b -- flag )</td><td>Whether a plus b overflows as <strong>signed</strong> values. A different question from <code>CARRIES</code>, with a different answer.</td></tr>
+</table>
+
+<h3>The codes</h3>
+<p>None of these wants a width: they are facts about a number's bits rather
+than about a machine word.</p>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>GRAY ( n -- g )</td><td>n in Gray code, where consecutive values differ in exactly one bit.</td></tr>
+<tr><td>FROMGRAY ( g -- n )</td><td>The number a Gray code stands for.</td></tr>
+<tr><td>BCD ( n -- b )</td><td>n packed as binary-coded decimal, one digit to each four bits. Up to thirteen digits, which is what 53 bits hold.</td></tr>
+<tr><td>FROMBCD ( b -- n )</td><td>The number a BCD pattern stands for; refuses a nibble above 9, which is not a decimal digit. Translated from <code>bool</code>'s <code>Result</code>, the same way <code>FROMBASE</code> is.</td></tr>
+<tr><td>PARITY ( a -- flag )</td><td>Whether an odd number of a's bits are set. Answers a <strong>BOOLEAN</strong>.</td></tr>
+<tr><td>PARITYBIT ( a -- k )</td><td>The even-parity bit to append to a: 1 when the set-bit count is odd.</td></tr>
+<tr><td>HAMMING ( a b -- d )</td><td>How many bit positions a and b differ in. Needs no width, and is a registered word because a user word takes exactly one cell.</td></tr>
+</table>
+
+<h3>Minimisation and truth tables, as text</h3>
+<p>A product term has no <a href="cuttle.html">cuttle</a> <code>Cell</code>,
+and inventing one would be a design rather than a bridge. It never reaches
+the stack: <code>bool</code> already renders both structures as
+<strong>strings</strong>, and a string is a <code>Cell</code>, so these three
+answer the rendering.</p>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>MINTERMS ( ms n -- s )</td><td>The minimised sum-of-products covering those minterms over n variables, as text. <strong>Minimal in practice rather than proven minimal</strong> — the cover step is greedy, because exact cover is NP-hard.</td></tr>
+<tr><td>IMPLICANTS ( ms n -- s )</td><td>Every prime implicant of those minterms — the chart behind <code>MINTERMS</code> rather than one cover chosen from it.</td></tr>
+<tr><td>TABLE ( ms n -- s )</td><td>The truth table over n variables that is true on exactly those minterms. One string of 2<sup>n</sup> rows under a header line; four variables is sixteen rows, which is a screen and not a wall.</td></tr>
+</table>
+<p class="note"><strong>n is a variable count, not the session width.</strong>
+These are Boolean variables, not bits of a machine word, and letting
+<code>WIDTH</code> govern a truth table would be one mode quietly answering a
+question nobody pointed it at. Above twelve variables the words refuse by
+name, because 2<sup>16</sup> rows is not a slow answer but a hang. The
+variables are named <code>A</code>, <code>B</code>, <code>C</code> and on —
+<code>bool</code>'s rendering words take the names rather than inventing
+them, because a program has its own; at a keyboard there is nobody to ask and
+the letters are what the textbook prints.</p>
 
 <h3>The six gates the core does not own</h3>
 <p>All on <code>BOOLEAN</code>, all one line each over
@@ -139,26 +273,44 @@ cell</strong>, so a keyboard user cannot define a two-argument
 <tr><td>IFF ( p q -- r )</td><td>Material equivalence — the same answer as XNOR, under a logician's name.</td></tr>
 </table>
 
-<h3>Not bridged</h3>
+<h3>What the page used to say, and why it no longer does</h3>
+<p>This seed stopped at twenty words for a long time, and four of the five
+families it left out were left out for reasons that have since dissolved. The
+load-bearing one was the width. Kept here because the reasoning is worth
+following, not as a list of regrets.</p>
+<table>
+<tr><th>The old objection</th><th>What answers it</th></tr>
+<tr><td>The rotates, <code>BoolShrA</code>, two's complement and the codes each <em>"want a width the keyboard must keep supplying, and a seed of forty words has stopped being a bridge and become a second dictionary."</em></td><td>Right about the problem, and the answer is not forty words carrying a width each — it is <strong>one mode word</strong>. <code>WIDTH</code> belongs to the <a href="reckoner.html">reckoner</a> core beside <code>FIX</code> and <code>DEG</code>, is validated once where it is set, and the moment it existed the width stopped being something the keyboard supplies.</td></tr>
+<tr><td><em>"a stack has nowhere to put <code>None()</code>"</em></td><td>It has <code>{ }</code>. <code>LOWBIT</code> and <code>HIGHBIT</code> answer a <code>LIST</code> that is empty when no bit is set — one cell always, so <code>UNDO</code>'s accounting holds, and it composes with <code>LENGTH</code> and <code>FIRST</code>. <a href="seedregex.html">seedregex</a>'s <code>RXGROUPS</code> already had this shape.</td></tr>
+<tr><td><em>"a product term has no <code>Cell</code>"</em></td><td>True, and it never reaches the stack. <code>MINTERMS</code>, <code>IMPLICANTS</code> and <code>TABLE</code> answer <code>bool</code>'s own string renderings, and a string is a <code>Cell</code>.</td></tr>
+<tr><td><em>"<code>BoolCard</code>'s glyphs are UTF-8 and file I/O is Latin-1"</em></td><td>So <code>CARD</code> is built on <code>BoolCardWith</code>, which takes its glyphs as arguments precisely so a caller can pick ones that survive being written down, and picks ASCII. <code>CARDWITH</code> is there for a session that knows its terminal.</td></tr>
+</table>
+
+<h3>Still not bridged</h3>
+<p>These are boundaries rather than a to-do list.</p>
 <table>
 <tr><th>Left out</th><th>Why</th></tr>
 <tr><td><code>AND</code>, <code>OR</code>, <code>NOT</code></td><td>The engine core owns all three as Boolean words already. Bridging <code>bool</code>'s would give two spellings for one idea, which is the rule <a href="seedmath.html">seedmath</a> applied to <code>Rad</code> and <code>Deg</code>.</td></tr>
-<tr><td>Truth tables and minimisation</td><td><code>BoolTruthTable</code> answers a <code>List Of BoolRow</code> and <code>BoolMinimise</code> a <code>List Of BoolTerm</code>, and neither is a <a href="cuttle.html">cuttle</a> <code>Cell</code> — the value set has no case for either. Bridging them means inventing a stack representation for a product term, which is a design and not a bridge.</td></tr>
-<tr><td><code>BoolLowBit</code>, <code>BoolHighBit</code></td><td>They answer an <code>Option</code>, and <code>None()</code> at zero is an <em>ordinary</em> answer a stack has nowhere to put. A word that refused on zero would contradict the contract <code>bool</code> itself draws. <code>POPCOUNT</code> and <code>BITAT</code> answer the questions a keyboard actually asks.</td></tr>
-<tr><td><code>BoolCard</code></td><td>Its glyphs are UTF-8 and file I/O is Latin-1, so a card that reaches a tape or a saved session is a row of question marks. <code>BIN</code> is the render that survives being written down.</td></tr>
-<tr><td>The rotates, <code>BoolShrA</code>, two's complement, the codes</td><td>Bridgeable, and deliberately left: each wants a width the keyboard must keep supplying, and a seed of forty words has stopped being a bridge and become a second dictionary. A mill that wants them registers them itself — <code>RckReg</code> is public, and that is the whole point of the seed pattern.</td></tr>
+<tr><td><code>BoolBitList</code>, <code>BoolFromBitList</code></td><td><code>POPCOUNT</code>, <code>BITAT</code>, <code>LOWBIT</code>, <code>HIGHBIT</code> and <code>CARD</code> answer everything a keyboard asks about which bits are set. A list of indices is a programming intermediate.</td></tr>
+<tr><td><code>BoolIsTautology</code>, <code>BoolEquiv</code>, <code>BoolRowOf</code> and the rest that take a <code>[ List Of Boolean -- Boolean ]</code></td><td>A reckoner quotation is a token list and not a typed function value, so bridging them means the engine calling back into a user program with a typed argument — genuinely a design, and genuinely not this one. <code>TABLE</code> sidesteps it by taking the <em>minterms</em> and building the predicate inside the seed, where writing a function value is an ordinary thing to do.</td></tr>
+<tr><td><code>BoolMinimiseWith</code></td><td><code>MINTERMS</code> covers the common case; the with-don't-cares form needs a second minterm list, and three list arguments at a prompt is where a bridge stops helping.</td></tr>
 </table>
 
 <h2 id="usedby">Who Uses It</h2>
 <table>
 <tr><th></th><th>User</th><th>How</th></tr>
-<tr><td class="uicon"><a href="../mills/halifax.html"><img src="../media/icons/halifax.svg" alt=""></a></td><td><a href="../mills/halifax.html">halifax</a></td><td>The calculator's bases and bitwise/boolean words: <code>HEX</code>, <code>BIN</code>, <code>BITAND</code>, <code>BITOR</code>, <code>SHL</code>, <code>SHR</code>, <code>NAND</code>, <code>XOR</code> and the rest of the table.</td></tr>
+<tr><td class="uicon"><a href="../mills/halifax.html"><img src="../media/icons/halifax.svg" alt=""></a></td><td><a href="../mills/halifax.html">halifax</a></td><td>The calculator's bases, bitwise, two's-complement and boolean words: <code>HEX</code>, <code>BIN</code>, <code>BITAND</code>, <code>SHL</code>, <code>ROTL</code>, <code>SIGNED</code>, <code>ADDW</code>, <code>LOWBIT</code>, <code>CARD</code>, <code>GRAY</code>, <code>MINTERMS</code>, <code>XOR</code> and the rest of the table.</td></tr>
 <tr><td class="uicon"><a href="../mills/sparky.html"><img src="../media/icons/sparky.svg" alt=""></a></td><td><a href="../mills/sparky.html">sparky</a></td><td>Sparky folds it too, so a model calling <code>eval</code> reaches the same words halifax puts at a prompt.</td></tr>
 </table>
 <p>A mill claims this seed by folding <code>RckSeedBool</code> over its
 reckoner state, which is all halifax does.
-<a href="../../tst/seedtest.shoddy">tst/seedtest.shoddy</a> exercises every
-word and every refusal above.</p>
+<a href="../../tst/seedbooltest.shoddy">tst/seedbooltest.shoddy</a> is this
+seed's own suite and grades every word above at the default width
+<em>and</em> at a narrow one, since a bridge that ignored the mode entirely
+would pass the first and fail the second.
+<a href="../../tst/seedtest.shoddy">tst/seedtest.shoddy</a> walks one refusal
+from each family alongside the other twelve seeds; it is a guard walk and
+deliberately not a catalogue.</p>
 
 <h2 id="uses">The Machines It Uses</h2>
 <table>

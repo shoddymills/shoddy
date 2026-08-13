@@ -5,9 +5,17 @@ Rem ==================================================================
 Rem fin.shoddy — Shoddy standard library: finance
 Rem
 Rem Time value of money, loans and amortisation, investment appraisal,
-Rem small-business arithmetic, depreciation, bonds, and the calendar
-Rem arithmetic the bond words need — plus a Fin* face over the statistics
-Rem a finance report wants. Pure throughout.
+Rem small-business arithmetic, depreciation, bonds, and the day-count
+Rem conventions the bond words need — plus a Fin* face over the
+Rem statistics a finance report wants. Pure throughout.
+Rem
+Rem THE CALENDAR ITSELF LIVES IN julian.shoddy, and a date here is its
+Rem JulDate. This machine once carried its own date record and serial
+Rem arithmetic as a stated stand-in ("no date type exists in the
+Rem tree"); julian is that type existing, so the stand-in is retired
+Rem and the leap rules are spelled once. What stays here are the
+Rem day-count BASES — 30/360, actual/365 and friends — because a basis
+Rem is a financial fiction about the calendar, not the calendar.
 Rem
 Rem Conventions, all of them load-bearing:
 Rem
@@ -54,6 +62,7 @@ Include "seq.shoddy"
 Include "stats.shoddy"
 Include "math.shoddy"
 Include "str.shoddy"
+Include "julian.shoddy"
 
 Rem ---- constants -------------------------------------------------------
 Rem Shoddy has no enum type, so the choices are zero-arg Defs. They stay
@@ -160,15 +169,6 @@ Type FinFit
     Intercept As Number
     Slope     As Number
     RFit      As Number
-
-Rem Yr/Mon/Day, not Y/M/D: a one-letter accessor is shadowed by any local
-Rem or parameter of the same letter, and a date word naturally wants to
-Rem call its argument d. The accessor loses that fight silently — Day(d)
-Rem yields the record, not the day.
-Type FinDate
-    Yr  As Number
-    Mon As Number
-    Day As Number
 
 Rem ---- rates and conversion -------------------------------------------
 
@@ -698,90 +698,45 @@ Rem cannot get there.
 Def FinComb(n As Number, r As Number) As Number
     Fold(Range(1, r), 1, Fn(a, k) => a * (n - r + k) / k)
 
-Rem ---- dates and day counts -------------------------------------------
-Rem No date type exists in the tree and clock.shoddy has no calendar
-Rem arithmetic, so the bond words below stand on these.
-Rem
-Rem Mod is infix in Shoddy: write a Mod b, never Mod(a, b), which
-Rem partially applies into a quotation and fails a long way from the
-Rem mistake.
-
-Def FinIsLeap(y As Number) As Boolean
-    (y Mod 4 = 0 And y Mod 100 <> 0) Or y Mod 400 = 0
-
-Rem Days from civil: shift the year to start in March so the leap day
-Rem lands last, then it is all integer arithmetic and the century rules
-Rem take care of themselves.
-Def FinSerial(d As FinDate) As Number
-    Let y = Ifte(Mon(d) <= 2, Yr(d) - 1, Yr(d))
-    Let era = Fix(Ifte(y >= 0, y, y - 399) / 400)
-    Let yoe = y - era * 400
-    Let mp = (Mon(d) + 9) Mod 12
-    Let doy = Fix((153 * mp + 2) / 5) + Day(d) - 1
-    Let doe = yoe * 365 + Fix(yoe / 4) - Fix(yoe / 100) + doy
-    era * 146097 + doe - 719468
-
-Def FinFromSerial(n As Number) As FinDate
-    Let z = n + 719468
-    Let era = Fix(Ifte(z >= 0, z, z - 146096) / 146097)
-    Let doe = z - era * 146097
-    Let yoe = Fix((doe - Fix(doe / 1460) + Fix(doe / 36524) - Fix(doe / 146096)) / 365)
-    Let y = yoe + era * 400
-    Let doy = doe - (365 * yoe + Fix(yoe / 4) - Fix(yoe / 100))
-    Let mp = Fix((5 * doy + 2) / 153)
-    Let d = doy - Fix((153 * mp + 2) / 5) + 1
-    Let m = Ifte(mp < 10, mp + 3, mp - 9)
-    FinDate(Ifte(m <= 2, y + 1, y), m, d)
-
-Def FinDateAdd(d As FinDate, days As Number) As FinDate
-    FinFromSerial(FinSerial(d) + days)
-
-Def FinDaysInMonth(y As Number, m As Number) As Number
-    If m = 2 Then
-        Ifte(FinIsLeap(y), 29, 28)
-    Else
-        Ifte(m = 4 Or m = 6 Or m = 9 Or m = 11, 30, 31)
-
-Rem Clamped to month end: one month after 31 January is 28 February, not
-Rem the 3rd of March.
-Def FinDateAddMonths(d As FinDate, months As Number) As FinDate
-    Let total = Yr(d) * 12 + (Mon(d) - 1) + months
-    Let yy = Fix(total / 12)
-    Let mm = total - yy * 12 + 1
-    FinDate(yy, mm, Min(Day(d), FinDaysInMonth(yy, mm)))
+Rem ---- day counts ------------------------------------------------------
+Rem The CALENDAR lives in julian.shoddy — this machine once spelled the
+Rem leap rules itself as a stated stand-in, and JulSerial there is that
+Rem arithmetic, moved not rewritten. What stays here are the day-count
+Rem CONVENTIONS: a basis is a financial fiction about the calendar, and
+Rem no machine outside finance should inherit one.
 
 Rem The NASD 30/360 rule. The two end-of-month adjustments are applied in
 Rem order and are not independent: the second one only fires because the
 Rem first already moved D1.
-Def FinDays360(a As FinDate, b As FinDate) As Number
-    Let d1 = Ifte(Day(a) = 31, 30, Day(a))
-    Let d2 = Ifte(Day(b) = 31 And d1 = 30, 30, Day(b))
-    360 * (Yr(b) - Yr(a)) + 30 * (Mon(b) - Mon(a)) + (d2 - d1)
+Def FinDays360(a As JulDate, b As JulDate) As Number
+    Let d1 = Ifte(JulDay(a) = 31, 30, JulDay(a))
+    Let d2 = Ifte(JulDay(b) = 31 And d1 = 30, 30, JulDay(b))
+    360 * (JulYear(b) - JulYear(a)) + 30 * (JulMonth(b) - JulMonth(a)) + (d2 - d1)
 
-Def FinDateDiff(a As FinDate, b As FinDate, basis As Number) As Number
-    Ifte(basis = Fin360(), FinDays360(a, b), FinSerial(b) - FinSerial(a))
+Def FinDateDiff(a As JulDate, b As JulDate, basis As Number) As Number
+    Ifte(basis = Fin360(), FinDays360(a, b), JulDiff(a, b))
 
-Def FinYearFrac(a As FinDate, b As FinDate, basis As Number) As Number
+Def FinYearFrac(a As JulDate, b As JulDate, basis As Number) As Number
     If basis = Fin360() Then
         FinDays360(a, b) / 360
     Else
         Ifte(basis = Fin365(),
-             (FinSerial(b) - FinSerial(a)) / 365,
-             (FinSerial(b) - FinSerial(a)) / 365.25)
+             JulDiff(a, b) / 365,
+             JulDiff(a, b) / 365.25)
 
 Rem ---- bonds -----------------------------------------------------------
 Rem One cash-flow walk underneath price and duration, so the two cannot
 Rem drift apart.
 
-Def FinCouponsBefore(settle As FinDate, maturity As FinDate, freq As Number) As Number
+Def FinCouponsBefore(settle As JulDate, maturity As JulDate, freq As Number) As Number
     Ceil(FinYearFrac(settle, maturity, Fin360()) * freq)
 
-Def FinLastCoupon(settle As FinDate, maturity As FinDate, freq As Number) As FinDate
+Def FinLastCoupon(settle As JulDate, maturity As JulDate, freq As Number) As JulDate
     Let n = FinCouponsBefore(settle, maturity, freq)
-    FinDateAddMonths(maturity, 0 - n * (12 / freq))
+    JulAddMonths(maturity, 0 - n * (12 / freq))
 
 Rem Interest earned since the last coupon and not yet paid.
-Def FinAccrued(settle As FinDate, lastCoupon As FinDate, coupon As Number,
+Def FinAccrued(settle As JulDate, lastCoupon As JulDate, coupon As Number,
                freq As Number, basis As Number) As Number
     Let period = 1 / freq
     coupon * 100 * period * (FinYearFrac(lastCoupon, settle, basis) / period)
@@ -789,7 +744,7 @@ Def FinAccrued(settle As FinDate, lastCoupon As FinDate, coupon As Number,
 Rem The clean price, per 100 of face: accrued interest excluded, which is
 Rem what every quoting convention means by "price". FinAccrued is right
 Rem there when the caller wants dirty.
-Def FinBondPrice(settle As FinDate, maturity As FinDate, coupon As Number,
+Def FinBondPrice(settle As JulDate, maturity As JulDate, coupon As Number,
                  yld As Number, freq As Number, basis As Number) As Number
     Let n = FinCouponsBefore(settle, maturity, freq)
     Let c = coupon * 100 / freq
@@ -799,7 +754,7 @@ Def FinBondPrice(settle As FinDate, maturity As FinDate, coupon As Number,
                 Fn(k) => c / (1 + yp) ^ (k - 1 + stub)))
      + 100 / (1 + yp) ^ (n - 1 + stub))
 
-Def FinYtmGo(settle As FinDate, maturity As FinDate, coupon As Number, price As Number,
+Def FinYtmGo(settle As JulDate, maturity As JulDate, coupon As Number, price As Number,
              freq As Number, basis As Number, lo As Number, hi As Number, k As Number) As Number
     Let mid = (lo + hi) / 2
     If k <= 0 Then
@@ -810,7 +765,7 @@ Def FinYtmGo(settle As FinDate, maturity As FinDate, coupon As Number, price As 
         Else
             FinYtmGo(settle, maturity, coupon, price, freq, basis, lo, mid, k - 1)
 
-Def FinYtm(settle As FinDate, maturity As FinDate, coupon As Number, price As Number,
+Def FinYtm(settle As JulDate, maturity As JulDate, coupon As Number, price As Number,
            freq As Number, basis As Number) As Number
     Let atLo = FinBondPrice(settle, maturity, coupon, 0, freq, basis) - price
     Let atHi = FinBondPrice(settle, maturity, coupon, 2, freq, basis) - price
@@ -820,7 +775,7 @@ Def FinYtm(settle As FinDate, maturity As FinDate, coupon As Number, price As Nu
         FinYtmGo(settle, maturity, coupon, price, freq, basis, 0, 2, 100)
 
 Rem Macaulay duration over the same walk, divided by (1 + y/freq).
-Def FinMdur(settle As FinDate, maturity As FinDate, coupon As Number,
+Def FinMdur(settle As JulDate, maturity As JulDate, coupon As Number,
             yld As Number, freq As Number) As Number
     Let n = FinCouponsBefore(settle, maturity, freq)
     Let c = coupon * 100 / freq

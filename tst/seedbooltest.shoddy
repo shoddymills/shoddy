@@ -1,0 +1,383 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem seedbooltest.shoddy — test program for seedbool.shoddy
+Rem
+Rem Assert-driven, in the seedregextest / seedengtest pattern: it prints
+Rem what it is doing and stops the run at the first assertion that
+Rem fails, ending with ALL ASSERTIONS PASSED when it does not.
+Rem
+Rem WHAT IS GRADED HERE IS THE BRIDGE AND NOT THE MACHINE.
+Rem tst/bool.shoddy grades bool.shoddy — every identity, every code,
+Rem every width rule. This file grades the glue between that machine and
+Rem a keyboard: does the right cell come back, does a wrong cell refuse
+Rem instead of aborting, and does the session survive it.
+Rem
+Rem WHY THIS FILE EXISTS AT ALL. seed-bool's coverage lived in
+Rem tst/seedtest.shoddy, which walks guards across thirteen seeds and is
+Rem deliberately not a catalogue. That was proportionate at twenty words.
+Rem This seed is now forty-six, and the families it grew — the session
+Rem width, two's complement, the codes, minimisation as text — each have
+Rem behaviour that a guard walk does not reach.
+Rem
+Rem THE SESSION WIDTH IS THE THING TO GET WRONG. Fourteen words read it
+Rem rather than taking it, so a test that never sets it grades one
+Rem column of the table. Every width-reading word below is asserted at
+Rem the default 32 AND at a narrow width where the answer differs, since
+Rem an implementation that ignored the mode entirely would pass the
+Rem first of those and fail the second.
+Rem
+Rem SURVIVAL IS PROVED BY THE NEXT LINE, never by the refusal. Refuses
+Rem asserts three things at once: the line was refused, the stack is
+Rem untouched by it, and a further line afterwards answers exactly what
+Rem it would have answered if the bad line had never been typed. A
+Rem refusal that quietly ate a cell passes the first and fails the third.
+Rem
+Rem THE TWO 53s ARE ASSERTED TO AGREE. reckoner owns the session width
+Rem and states its own ceiling; bool owns the bit words and states one
+Rem too. Neither machine includes the other to get it — the number comes
+Rem from the same fact about a double either way — so the correspondence
+Rem is pinned here, where both are in scope, rather than by a dependency.
+Rem
+Rem Nothing here touches a file, a socket or a window.
+Rem
+Rem Run: bin\mill run tst\seedbooltest.shoddy    (from the repo root)
+Rem ==================================================================
+
+Include "../machines/bool.shoddy"
+Include "../machines/cuttle.shoddy"
+Include "../machines/reckoner.shoddy"
+Include "../machines/seq.shoddy"
+Include "../machines/str.shoddy"
+Include "../machines/seeds/seedbool.shoddy"
+Include "../machines/seeds/seedseq.shoddy"
+
+Rem seed-seq is folded in as well as seed-bool, and for one reason:
+Rem LOWBIT's whole design is that its answer COMPOSES, and the words it
+Rem composes with — LENGTH and FIRST — are seed-seq's. Asserting "{ }"
+Rem renders correctly would grade the rendering; asserting
+Rem "0 LOWBIT LENGTH" is 0 grades the design. The word-count assertions
+Rem below filter on the seed-bool group, so the extra fold changes
+Rem nothing they measure.
+Def Base() As RckState
+    RckSeedBool(RckSeedSeq(RckNew()))
+
+Rem ---- reading an answer ----------------------------------------------
+
+Def Ran(st As RckState, line As String) As RckState
+    Select Case RckEval(st, line)
+        Case RckNext(st2, out)
+            st2
+        Case RckStop(st2, why, out)
+            st2
+        Case Else
+            st
+
+Def Bad(st As RckState, line As String) As Boolean
+    Select Case RckEval(st, line)
+        Case RckStop(st2, why, out)
+            True
+        Case Else
+            False
+
+Def Why(st As RckState, line As String) As String
+    Select Case RckEval(st, line)
+        Case RckStop(st2, why, out)
+            why
+        Case Else
+            ""
+
+Def Text(st As RckState) As String
+    Join(Map(CutCells(RckStack(st)), Fn(c) => CutShow(c, RckFmt(st))), " | ")
+
+Rem The top cell's own text, unquoted — what a multi-line rendering needs,
+Rem since CutShow would wrap it in quote marks and hide the newlines.
+Def TopStr(st As RckState) As String
+    Select Case First(CutCells(RckStack(st)))
+        Case CutStr(s)
+            s
+        Case Else
+            "NOT A STRING"
+
+Rem What one line leaves on an empty stack at the default width.
+Def Said(line As String) As String
+    Text(Ran(Base(), line))
+
+Rem The same, at a stated session width.
+Def SaidAt(w As Number, line As String) As String
+    Text(Ran(Ran(Base(), Str(w) & " WIDTH"), line))
+
+Def StrAt(w As Number, line As String) As String
+    TopStr(Ran(Ran(Base(), Str(w) & " WIDTH"), line))
+
+Rem Which group a word was registered under — WIDTH's is "core", and
+Rem that is the assertion, not a detail.
+Def SeedOf(st As RckState, name As String) As String
+    Select Case RckFind(st, name)
+        Case Some(e)
+            WordSeed(e)
+        Case Else
+            "NOT A WORD"
+
+Rem Refused, with the reason naming what is wrong; the stack untouched;
+Rem and a further line afterwards answering as though nothing happened.
+Def Refuses(st As RckState, line As String, part As String) As Boolean
+    Bad(st, line) And Instr(Why(st, line), part) > 0 And Text(Ran(st, line)) = Text(st) And Text(Ran(Ran(st, line), "1 1 +")) = Text(Ran(st, "1 1 +"))
+
+Def Qm() As String
+    RckQuoteMark()
+
+Def Q(s As String) As String
+    Qm() & s & Qm()
+
+Rem Every character of s inside printable ASCII, which is what "survives
+Rem being written down" means where file I/O is Latin-1.
+Def AllAscii(s As String) As Boolean
+    All(Range(1, Len(s)), Fn(i) => Asc(Mid(s, i, 1)) >= 32 And Asc(Mid(s, i, 1)) <= 126)
+
+Def Main()
+    Let s0 = Base()
+    Rem A session at eight bits, which is where most of the width work
+    Rem below is graded because a byte is small enough to read by eye.
+    Let s8 = Ran(s0, "8 WIDTH")
+
+    Print("--- the words are registered, with their metadata ---")
+    Let mine = Filter(RckDict(s0), Fn(e) => WordSeed(e) = "seed-bool")
+    Assert(Length(mine) = 46, "FORTY-SIX WORDS UNDER SEED-BOOL, AND NOT A FORTY-SEVENTH")
+    Assert(IsEmpty(Filter(mine, Fn(e) => WordEffect(e) = "" Or WordDesc(e) = "")), "NOT ONE OF THEM IS WITHOUT AN EFFECT LINE AND A DESCRIPTION")
+    Assert(All(mine, Fn(e) => Not RckTouches(e)), "EVERY WORD HERE IS PURE — READING A MODE IS NOT TOUCHING THE WORLD")
+    Assert(RckKnows(s0, "ROTL") And RckKnows(s0, "ROTR") And RckKnows(s0, "SHRA"), "THE SHIFT FAMILY IS COMPLETE")
+    Assert(RckKnows(s0, "SIGNED") And RckKnows(s0, "UNSIGNED") And RckKnows(s0, "SIGNEXTEND") And RckKnows(s0, "NEGW"), "AND THE TWO'S-COMPLEMENT FAMILY")
+    Assert(RckKnows(s0, "ADDW") And RckKnows(s0, "SUBW") And RckKnows(s0, "MULW") And RckKnows(s0, "CARRIES") And RckKnows(s0, "OVERFLOWS"), "AND THE WRAPPING ARITHMETIC WITH BOTH ITS FLAGS")
+    Assert(RckKnows(s0, "GRAY") And RckKnows(s0, "FROMGRAY") And RckKnows(s0, "BCD") And RckKnows(s0, "FROMBCD"), "AND THE CODES")
+    Assert(RckKnows(s0, "PARITY") And RckKnows(s0, "PARITYBIT") And RckKnows(s0, "HAMMING"), "AND THE REST OF THEM")
+    Assert(RckKnows(s0, "MINTERMS") And RckKnows(s0, "IMPLICANTS") And RckKnows(s0, "TABLE"), "AND MINIMISATION, WHICH USED TO BE OUT")
+    Assert(RckKnows(s0, "LOWBIT") And RckKnows(s0, "HIGHBIT") And RckKnows(s0, "CARD") And RckKnows(s0, "CARDWITH"), "AND THE FOUR SMALL UNLOCKS")
+
+    Print("--- WIDTH is the core's, not this seed's ---")
+    Rem It belongs to the engine for the same reason the display format
+    Rem does: several seeds will read it, and a mode owned by one domain's
+    Rem seed is a mode the next domain cannot see.
+    Assert(RckKnows(s0, "WIDTH") And RckKnows(s0, "WIDTH?"), "BOTH WIDTH WORDS ARE IN THE DICTIONARY")
+    Assert(SeedOf(s0, "WIDTH") = "core" And SeedOf(s0, "WIDTH?") = "core", "AND BOTH BELONG TO THE CORE")
+    Assert(Said("WIDTH?") = "32", "A FRESH SESSION IS THIRTY-TWO BITS WIDE")
+    Assert(BoolBits() = 32, "WHICH IS THE SAME THIRTY-TWO BOOL NAMES, REACHED WITHOUT EITHER MACHINE INCLUDING THE OTHER")
+    Assert(RckMaxWidth() = BoolMaxWidth(), "AND THE TWO CEILINGS AGREE AT 53, WHICH IS THE FACT ABOUT A DOUBLE BOTH OF THEM READ")
+    Assert(Said("8 WIDTH WIDTH?") = "8", "WIDTH SETS IT AND WIDTH? REPORTS IT")
+    Assert(Said("53 WIDTH WIDTH?") = "53", "THE TOP OF THE RANGE IS ALLOWED")
+    Assert(Said("1 WIDTH WIDTH?") = "1", "AND SO IS THE BOTTOM")
+    Assert(Said("8 WIDTH") = "", "SETTING IT PUSHES NOTHING, EXACTLY AS FIX AND DEG DO")
+
+    Print("--- WIDTH refuses, and the session survives every refusal ---")
+    Assert(Refuses(s0, "0 WIDTH", "WIDTH needs a width from 1 to 53, got 0"), "A WIDTH OF ZERO")
+    Assert(Refuses(s0, "54 WIDTH", "WIDTH needs a width from 1 to 53, got 54"), "AND ONE PAST THE CEILING")
+    Assert(Refuses(s0, "8.5 WIDTH", "WIDTH needs a whole number of 0 or more, got 8.5"), "AND A FRACTIONAL ONE")
+    Assert(Refuses(s0, "0 1 - WIDTH", "WIDTH needs a whole number of 0 or more, got -1"), "AND A NEGATIVE ONE")
+    Rem A refused WIDTH must leave the mode as it was, not half-set it.
+    Assert(Text(Ran(Ran(s8, "99 WIDTH"), "WIDTH?")) = "8", "AND A REFUSED WIDTH LEAVES THE MODE WHERE IT WAS")
+
+    Print("--- the width does not touch how numbers are shown ---")
+    Rem R1.5: the render is FIX/SCI/STD's business. Two modes changing it
+    Rem would be two modes fighting.
+    Assert(SaidAt(8, "255") = "255", "AT EIGHT BITS 255 IS STILL SHOWN AS 255, NOT AS ITS BITS")
+
+    Print("--- SHL reads the width now, and SHR still needs none ---")
+    Assert(Said("1 7 SHL") = "128", "SHL AT THE DEFAULT WIDTH")
+    Assert(SaidAt(8, "1 7 SHL") = "128", "AND TO THE TOP OF A BYTE AT EIGHT")
+    Assert(SaidAt(8, "1 8 SHL") = "0", "ONE PLACE FURTHER AND THE BIT FALLS OFF THE END OF THE BYTE")
+    Assert(Said("1 8 SHL") = "256", "WHILE AT THIRTY-TWO IT IS STILL THERE — WHICH IS THE MODE DOING SOMETHING")
+    Rem SHR is untouched: a logical right shift cannot produce a bit the
+    Rem input did not have, so there is no end for its answer to depend on.
+    Assert(Said("256 4 SHR") = "16", "SHR NEEDS NO WIDTH AND TAKES NONE")
+    Assert(SaidAt(8, "255 4 SHR") = "15", "AND ANSWERS THE SAME WHATEVER THE WIDTH IS")
+    Assert(Refuses(s0, "1 99 SHL", "SHL needs a shift from 0 to 53, got 99"), "A SHIFT PAST THE CEILING IS STILL NAMED")
+    Assert(Refuses(s8, "256 1 SHL", "SHL needs a value that fits 8 bits, and 256 does not"), "AND A VALUE THAT DOES NOT FIT THE SESSION WIDTH")
+
+    Print("--- BITNOT reads the width too, so no word here asks for one ---")
+    Rem It held out longest and was the worst one to leave: four of its
+    Rem neighbours read the mode and it did not, which made it the one a
+    Rem session would type wrong.
+    Assert(SaidAt(8, "255 BITNOT") = "0", "EVERY BIT OF A FULL BYTE FLIPS TO NOTHING")
+    Assert(SaidAt(8, "0 BITNOT") = "255", "AND NOTHING FLIPS TO EVERY BIT")
+    Assert(SaidAt(8, "170 BITNOT") = "85", "10101010 COMPLEMENTS TO 01010101")
+    Assert(Said("255 BITNOT") = "4294967040", "THE SAME VALUE AT THIRTY-TWO BITS FLIPS TWENTY-FOUR MORE OF THEM, WHICH IS WHY A COMPLEMENT NEEDS A WIDTH AT ALL")
+    Assert(SaidAt(8, "255 BITNOT BITNOT") = "255", "AND COMPLEMENTING TWICE COMES HOME")
+    Assert(Refuses(s8, "256 BITNOT", "BITNOT needs a value that fits 8 bits, and 256 does not"), "A VALUE TOO WIDE FOR THE SESSION")
+    Rem The width bound moved to WIDTH, which is where it is now checked
+    Rem once for every word rather than by each word for itself.
+    Assert(Refuses(s0, "0 1 - BITNOT", "BITNOT needs a whole number of 0 or more, got -1"), "AND A NEGATIVE PATTERN")
+
+    Print("--- ROTL, ROTR, SHRA ---")
+    Assert(SaidAt(8, "1 1 ROTR") = "128", "ROTATING ONE RIGHT AT EIGHT BITS BRINGS THE BIT BACK AT THE TOP")
+    Assert(SaidAt(8, "128 1 ROTL") = "1", "AND ROTATING THE TOP BIT LEFT BRINGS IT BACK AT THE BOTTOM")
+    Assert(SaidAt(8, "1 8 ROTL") = "1", "A FULL TURN IS THE IDENTITY")
+    Assert(Said("1 1 ROTR") = "2147483648", "THE SAME ROTATE AT THIRTY-TWO LANDS SOMEWHERE ELSE ENTIRELY")
+    Rem SHRA copies the sign bit down where SHR brings in zeros, which is
+    Rem the whole difference between the two and the reason both exist.
+    Assert(SaidAt(8, "128 1 SHRA") = "192", "AN ARITHMETIC SHIFT COPIES THE TOP BIT DOWN")
+    Assert(SaidAt(8, "128 1 SHR") = "64", "WHERE A LOGICAL ONE BRINGS IN A ZERO")
+    Assert(SaidAt(8, "64 1 SHRA") = "32", "AND A CLEAR TOP BIT SHIFTS LIKE ANY OTHER")
+    Assert(Refuses(s8, "300 1 ROTL", "ROTL needs a value that fits 8 bits, and 300 does not"), "ROTL REFUSES A VALUE TOO WIDE FOR THE SESSION")
+    Assert(Refuses(s8, "1 60 ROTR", "ROTR needs a shift from 0 to 53, got 60"), "AND ROTR A COUNT PAST THE CEILING")
+    Assert(Refuses(s8, "0 1 - 1 SHRA", "SHRA needs a whole number of 0 or more, got -1"), "AND SHRA A NEGATIVE PATTERN")
+
+    Print("--- SIGNED and UNSIGNED, the pair that reads a pattern as a number ---")
+    Assert(SaidAt(8, "255 SIGNED") = "-1", "255 AT EIGHT BITS IS MINUS ONE")
+    Assert(Said("255 SIGNED") = "255", "AND AT THIRTY-TWO IT IS STILL 255 — THE SAME BITS, A DIFFERENT WORD LENGTH")
+    Assert(SaidAt(8, "128 SIGNED") = "-128", "THE MOST NEGATIVE VALUE A BYTE HOLDS")
+    Assert(SaidAt(8, "127 SIGNED") = "127", "AND THE MOST POSITIVE")
+    Rem UNSIGNED is the one word here whose input may be negative, which
+    Rem is exactly what it is for.
+    Assert(SaidAt(8, "0 1 - UNSIGNED") = "255", "MINUS ONE AT EIGHT BITS IS THE PATTERN 255")
+    Assert(SaidAt(8, "0 128 - UNSIGNED") = "128", "AND MINUS 128 IS 128")
+    Assert(SaidAt(8, "127 UNSIGNED") = "127", "A POSITIVE VALUE IN RANGE PASSES STRAIGHT THROUGH")
+    Assert(SaidAt(8, "255 SIGNED UNSIGNED") = "255", "AND THE ROUND TRIP THROUGH BOTH COMES HOME")
+    Assert(Refuses(s8, "128 UNSIGNED", "UNSIGNED needs a value from -128 to 127 at 8 signed bits"), "128 IS NOT A SIGNED BYTE, AND THE REFUSAL SAYS WHICH RANGE IT MISSED")
+    Assert(Refuses(s8, "0 129 - UNSIGNED", "UNSIGNED needs a value from -128 to 127 at 8 signed bits"), "AND NEITHER IS MINUS 129")
+    Assert(Refuses(s8, "1.5 UNSIGNED", "UNSIGNED needs a whole number, got 1.5"), "AND A FRACTION IS NOT A BIT PATTERN AT ALL")
+
+    Print("--- SIGNEXTEND widens, and refuses to narrow ---")
+    Assert(Text(Ran(Ran(s0, "16 WIDTH"), "255 8 SIGNEXTEND")) = "65535", "A NEGATIVE BYTE WIDENED TO SIXTEEN BITS KEEPS ITS SIGN")
+    Assert(Text(Ran(Ran(s0, "16 WIDTH"), "127 8 SIGNEXTEND")) = "127", "AND A POSITIVE ONE IS UNCHANGED")
+    Assert(Refuses(s8, "255 16 SIGNEXTEND", "SIGNEXTEND cannot widen from 16 bits to the session width of 8"), "WIDENING DOWNWARDS IS NOT WIDENING, AND IS NAMED AS SUCH")
+
+    Print("--- NEGW, and the zero it gets right ---")
+    Assert(SaidAt(8, "1 NEGW") = "255", "MINUS ONE AS A BYTE PATTERN")
+    Assert(SaidAt(8, "0 NEGW") = "0", "AND ZERO NEGATES TO ZERO, WHICH IS THE CASE A NOT-PLUS-ONE IMPLEMENTATION GETS WRONG")
+    Assert(SaidAt(8, "128 NEGW") = "128", "THE MOST NEGATIVE VALUE NEGATES TO ITSELF")
+
+    Print("--- the wrapping arithmetic, and both of its flags ---")
+    Assert(SaidAt(8, "200 100 ADDW") = "44", "200 PLUS 100 IN A BYTE IS 44")
+    Assert(Said("200 100 ADDW") = "300", "AND AT THIRTY-TWO IT IS JUST 300")
+    Assert(SaidAt(8, "10 20 SUBW") = "246", "BELOW ZERO COMES BACK ROUND THE TOP")
+    Assert(SaidAt(8, "20 10 SUBW") = "10", "AND AN ORDINARY SUBTRACTION IS ORDINARY")
+    Assert(SaidAt(8, "16 16 MULW") = "0", "256 IN A BYTE IS NOTHING BUT THE BITS THAT FIT")
+    Assert(SaidAt(8, "15 15 MULW") = "225", "AND A PRODUCT THAT FITS IS ITSELF")
+    Rem CARRIES and OVERFLOWS are different questions with different
+    Rem answers, which is the reason a machine giving the arithmetic
+    Rem without the flags would be teaching half of it.
+    Assert(SaidAt(8, "200 100 CARRIES") = "True", "200 PLUS 100 CARRIES OUT OF A BYTE")
+    Assert(SaidAt(8, "200 100 OVERFLOWS") = "False", "AND AS SIGNED VALUES — MINUS 56 PLUS 100 — IT DOES NOT OVERFLOW")
+    Assert(SaidAt(8, "100 100 CARRIES") = "False", "100 PLUS 100 DOES NOT CARRY")
+    Assert(SaidAt(8, "100 100 OVERFLOWS") = "True", "AND YET IT DOES OVERFLOW AS SIGNED, WHICH IS WHY BOTH WORDS ARE HERE")
+    Assert(Refuses(s8, "256 1 ADDW", "ADDW needs a value that fits 8 bits, and 256 does not"), "A FIRST OPERAND TOO WIDE")
+    Assert(Refuses(s8, "1 256 SUBW", "SUBW needs a value that fits 8 bits, and 256 does not"), "AND A SECOND ONE")
+    Assert(Refuses(s8, "300 1 CARRIES", "CARRIES needs a value that fits 8 bits, and 300 does not"), "AND THE FLAGS GUARD THE SAME WAY")
+    Assert(Refuses(s8, "1 300 OVERFLOWS", "OVERFLOWS needs a value that fits 8 bits, and 300 does not"), "BOTH OF THEM")
+
+    Print("--- LOWBIT and HIGHBIT: absence is an empty list ---")
+    Rem The whole answer to the old exclusion. None() has nowhere to go on
+    Rem a stack; { } has. One cell always, so UNDO's accounting holds.
+    Assert(Said("12 LOWBIT") = "{ 2 }", "THE LOWEST SET BIT OF 12 IS BIT 2")
+    Assert(Said("12 HIGHBIT") = "{ 3 }", "AND THE HIGHEST IS BIT 3")
+    Assert(Said("0 LOWBIT") = "{ }", "ZERO HAS NO LOWEST SET BIT, AND SAYS SO AS AN EMPTY LIST RATHER THAN REFUSING")
+    Assert(Said("0 HIGHBIT") = "{ }", "AND NO HIGHEST ONE EITHER")
+    Assert(Said("1 LOWBIT") = "{ 0 }", "BIT ZERO IS AN INDEX AND NOT AN ABSENCE, WHICH IS THE CASE A -1 SENTINEL CONFUSES")
+    Rem The composition the design is for: LENGTH turns the answer into
+    Rem the question "was there a bit at all?" in words the keyboard has.
+    Assert(Said("0 LOWBIT LENGTH") = "0", "LENGTH OF THE EMPTY ANSWER IS ZERO")
+    Assert(Said("12 LOWBIT LENGTH") = "1", "AND OF A FOUND ONE IS ONE")
+    Assert(Said("12 LOWBIT FIRST") = "2", "AND FIRST TAKES THE INDEX OUT")
+    Rem One cell, always — the rule RXGROUPS keeps for the same reason.
+    Assert(CutDepth(RckStack(Ran(s0, "0 LOWBIT"))) = 1, "THE EMPTY ANSWER IS STILL ONE CELL, SO UNDO'S ACCOUNTING HOLDS")
+    Assert(CutDepth(RckStack(Ran(s0, "12 HIGHBIT"))) = 1, "AND SO IS A FOUND ONE")
+    Assert(Refuses(s0, "0 1 - LOWBIT", "LOWBIT needs a whole number of 0 or more, got -1"), "A NEGATIVE STILL REFUSES — ABSENCE IS NOT THE SAME AS NONSENSE")
+
+    Print("--- CARD, and the ASCII that survives being written down ---")
+    Assert(StrAt(8, "10 CARD") = "....#.#.", "TEN AS A ROW OF EIGHT HOLES")
+    Assert(Len(StrAt(8, "10 CARD")) = 8, "ONE CHARACTER PER BIT OF THE SESSION WIDTH")
+    Assert(AllAscii(StrAt(8, "10 CARD")), "AND EVERY ONE OF THEM PLAIN ASCII, WHICH IS THE WHOLE OF THE OLD EXCLUSION")
+    Assert(Len(StrAt(16, "10 CARD")) = 16, "A WIDER SESSION IS A WIDER CARD")
+    Assert(StrAt(8, "255 CARD") = "########", "EVERY BIT SET")
+    Assert(StrAt(8, "0 CARD") = "........", "AND NONE")
+    Assert(StrAt(8, "10 " & Q("*") & " " & Q("-") & " CARDWITH") = "----*-*-", "CARDWITH TAKES ITS OWN GLYPHS")
+    Assert(Refuses(s8, "256 CARD", "CARD needs a value that fits 8 bits, and 256 does not"), "A VALUE TOO WIDE FOR THE CARD")
+    Assert(Refuses(s8, "10 1 " & Q("-") & " CARDWITH", "CARDWITH needs a STRING, got NUMBER"), "AND A GLYPH THAT IS NOT TEXT")
+
+    Print("--- the codes ---")
+    Assert(Said("5 GRAY") = "7", "FIVE IN GRAY CODE IS SEVEN")
+    Assert(Said("7 FROMGRAY") = "5", "AND BACK AGAIN")
+    Assert(Said("5 GRAY FROMGRAY") = "5", "THE ROUND TRIP THROUGH BOTH")
+    Rem The property that makes Gray code worth having: consecutive values
+    Rem differ in exactly one bit, which HAMMING is right here to measure.
+    Assert(Said("5 GRAY 6 GRAY HAMMING") = "1", "CONSECUTIVE VALUES DIFFER IN EXACTLY ONE BIT, WHICH IS WHAT GRAY CODE IS FOR")
+    Assert(Said("12 10 HAMMING") = "2", "HAMMING COUNTS THE POSITIONS TWO PATTERNS DIFFER IN")
+    Assert(Said("255 255 HAMMING") = "0", "AND IS ZERO FOR A PATTERN AGAINST ITSELF")
+    Assert(Said("7 PARITY") = "True", "THREE BITS SET IS ODD PARITY")
+    Assert(Said("3 PARITY") = "False", "AND TWO IS EVEN")
+    Assert(Said("7 PARITYBIT") = "1", "THE EVEN-PARITY BIT TO APPEND TO AN ODD COUNT IS ONE")
+    Assert(Said("3 PARITYBIT") = "0", "AND TO AN EVEN COUNT IS ZERO")
+    Assert(Said("42 BCD") = "66", "FORTY-TWO PACKED AS BCD IS 0x42, WHICH IS 66")
+    Assert(Said("66 FROMBCD") = "42", "AND READ BACK IS FORTY-TWO AGAIN")
+    Assert(Said("1234 BCD FROMBCD") = "1234", "THE ROUND TRIP THROUGH BOTH")
+    Assert(Refuses(s0, "10 FROMBCD", "FROMBCD: '10' HAS THE NIBBLE 10, WHICH IS NOT A DECIMAL DIGIT"), "A NIBBLE ABOVE NINE IS NOT A DECIMAL DIGIT, AND THE REFUSAL NAMES FROMBCD AND NOT BOOLFROMBCD")
+    Assert(Refuses(s0, "10000000000000 BCD", "BCD packs at most thirteen digits"), "AND A FOURTEENTH DIGIT DOES NOT FIT 53 BITS")
+    Assert(Refuses(s0, "0 1 - GRAY", "GRAY needs a whole number of 0 or more, got -1"), "A NEGATIVE HAS NO GRAY CODE")
+    Assert(Refuses(s0, "1.5 PARITY", "PARITY needs a whole number of 0 or more, got 1.5"), "AND A FRACTION HAS NO BITS TO COUNT")
+
+    Print("--- minimisation and truth tables, as text ---")
+    Rem The product term never reaches the stack: bool renders it and a
+    Rem string is a Cell, which is the whole of that old exclusion.
+    Assert(StrAt(32, "{ 0 1 2 3 } 3 MINTERMS") = "A'", "MINTERMS 0..3 OVER THREE VARIABLES IS EXACTLY A-NOT, WHICH HAS ONE ANSWER AND SO CAN BE ASSERTED LITERALLY")
+    Rem R8.5: the cover step is greedy and the result is minimal in
+    Rem practice rather than proven minimal, so a literal string here would
+    Rem be asserting which of several equally valid covers the greedy step
+    Rem happened to pick. The bound is what the requirement states.
+    Let sop = StrAt(32, "{ 0 1 2 5 6 7 } 3 MINTERMS")
+    Assert(Length(Split(sop, " + ")) <= 3, "SIX MINTERMS WITH NO ESSENTIAL PRIME IMPLICANT COVER IN AT MOST THREE TERMS")
+    Assert(Len(sop) > 0, "AND THE ANSWER IS A RENDERING AND NOT AN EMPTY STRING")
+    Assert(StrAt(32, "{ } 3 MINTERMS") = "0", "THE EMPTY MINTERM SET IS THE CONSTANT FALSE")
+    Rem IMPLICANTS is the chart behind MINTERMS rather than one cover of
+    Rem it, so it never has fewer terms than the cover does.
+    Assert(Length(Split(StrAt(32, "{ 0 1 2 5 6 7 } 3 IMPLICANTS"), " + ")) >= Length(Split(sop, " + ")), "THE PRIME IMPLICANTS ARE NEVER FEWER THAN THE COVER CHOSEN FROM THEM")
+    Rem The table is one string of 2^n rows under a header, so a caller
+    Rem gets a screen and not a wall.
+    Let tbl = StrAt(32, "{ 1 2 } 2 TABLE")
+    Assert(Length(Split(tbl, Chr(10))) = 5, "TWO VARIABLES IS FOUR ROWS UNDER ONE HEADER LINE")
+    Assert(StartsWith(tbl, "A B | OUT"), "AND THE HEADER NAMES THE VARIABLES THE SEED CHOSE FOR IT")
+    Assert(Instr(tbl, "F T | T") > 0, "THE ROW FOR MINTERM 1 IS TRUE")
+    Assert(Instr(tbl, "F F | F") > 0, "AND THE ROW FOR MINTERM 0, WHICH WAS NOT ASKED FOR, IS FALSE")
+    Rem n is a variable count and not the session width: letting WIDTH
+    Rem govern a truth table would be one mode answering a question nobody
+    Rem pointed it at.
+    Assert(Length(Split(StrAt(8, "{ 1 2 } 2 TABLE"), Chr(10))) = 5, "A NARROW SESSION DOES NOT NARROW A TRUTH TABLE — THE WIDTH IS NOT THE VARIABLE COUNT")
+    Assert(Refuses(s0, "{ 0 1 } 13 MINTERMS", "MINTERMS needs a variable count from 1 to 12, got 13"), "THIRTEEN VARIABLES IS A HANG AND NOT A SLOW ANSWER, SO IT IS REFUSED BY NAME")
+    Assert(Refuses(s0, "{ 0 8 } 3 MINTERMS", "MINTERMS needs every minterm from 0 to 7 for 3 variables"), "AND A MINTERM OUTSIDE THE VARIABLE COUNT")
+    Assert(Refuses(s0, "5 3 TABLE", "TABLE needs a LIST, got NUMBER"), "AND MINTERMS THAT ARE NOT A LIST AT ALL")
+    Assert(Refuses(s0, "{ 0 1.5 } 3 IMPLICANTS", "IMPLICANTS needs a whole number of 0 or more, got 1.5"), "AND A MINTERM THAT IS NOT A WHOLE NUMBER")
+
+    Print("--- the twenty that were here first still answer as they did ---")
+    Rem Only SHL changed, and it changed deliberately. Everything else is
+    Rem asserted unchanged so that a regression in the new work cannot hide
+    Rem behind a suite that only grades the new work.
+    Assert(Said("255 HEX") = Q("FF"), "HEX")
+    Assert(Said("5 BIN") = Q("101"), "BIN")
+    Assert(Said("1295 36 INBASE") = Q("ZZ"), "INBASE AT THE TOP OF THE ALPHABET")
+    Assert(Said(Q("ff") & " 16 FROMBASE") = "255", "FROMBASE, CASE-INSENSITIVE")
+    Assert(Said("12 10 BITAND") = "8", "BITAND")
+    Assert(Said("12 10 BITOR") = "14", "BITOR")
+    Assert(Said("12 10 BITXOR") = "6", "BITXOR")
+    Assert(SaidAt(8, "0 BITNOT") = "255", "BITNOT AT THE SESSION WIDTH")
+    Assert(Said("8 MASK") = "255", "MASK")
+    Assert(Said("171 7 4 GETFIELD") = "10", "GETFIELD")
+    Assert(Said("5 0 BITAT") = "True", "BITAT")
+    Assert(Said("7 POPCOUNT") = "3", "POPCOUNT")
+    Assert(Said("TRUE FALSE NAND") = "True", "NAND")
+    Assert(Said("TRUE FALSE XOR") = "True", "XOR")
+    Assert(Said("TRUE FALSE IMPLIES") = "False", "IMPLIES")
+    Assert(Said("TRUE TRUE IFF") = "True", "IFF")
+
+    Print("--- a worked session: reading a byte four ways ---")
+    Rem The shape somebody actually types, threaded through one state, to
+    Rem prove the mode persists across lines rather than only within one.
+    Let w = Ran(s0, "8 WIDTH")
+    Assert(Text(Ran(w, "WIDTH?")) = "8", "THE WIDTH SET ON ONE LINE IS STILL THERE ON THE NEXT")
+    Assert(TopStr(Ran(w, "202 CARD")) = "##..#.#.", "THE BYTE AS HOLES")
+    Assert(Text(Ran(w, "202 SIGNED")) = "-54", "AS A SIGNED VALUE")
+    Assert(Text(Ran(w, "202 HEX")) = Q("CA"), "IN HEXADECIMAL")
+    Assert(Text(Ran(w, "202 HIGHBIT")) = "{ 7 }", "AND ITS TOP SET BIT")
+    Assert(Text(Ran(w, "202 1 ROTL")) = "149", "ROTATED ONE LEFT INSIDE THE BYTE")
+
+    Print("")
+    Print("ALL ASSERTIONS PASSED")

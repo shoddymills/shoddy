@@ -18,6 +18,13 @@ public static class Lint
     public sealed class Result
     {
         public readonly List<string> Warnings = new();
+        /// <summary>Advisory findings below the always-on bar, printed only
+        /// under --lint-verbose. Latent builtin shadows live here: measured
+        /// across the standard library they number ~99 on a healthy tree
+        /// (parameters named rest, args, mid are the recursion idiom), and
+        /// a clean build prints nothing — so the live misuse warns and the
+        /// dormant shadow waits to be asked for.</summary>
+        public readonly List<string> Verbose = new();
         public readonly List<(string Msg, string? File, int Line)> UnknownWords = new();
         public int DefsChecked;
         public int DefsTotal;
@@ -134,11 +141,13 @@ public static class Lint
         var r = new Result();
         UnusedMachineIncludes(prog, lines, r);
         r.Warnings.AddRange(ShadowedAccessors(prog));
+        BuiltinShadows(prog, r);
         WordAccessorCollisions(prog, r);
         NamespacedTopLevelLets(prog, r);
         if (lines != null) WrappedInfix(lines, r);
         StackEffects(prog, r);
         r.Warnings.Sort(StringComparer.Ordinal);
+        r.Verbose.Sort(StringComparer.Ordinal);
         return r;
     }
 
@@ -281,6 +290,115 @@ public static class Lint
             }
             if (n.Q != null) WalkBinds(n.Q, owner, hits, seen);
             if (n.ElseQ != null) WalkBinds(n.ElseQ, owner, hits, seen);
+        }
+    }
+
+    // ================= binders shadowing builtins ======================
+
+    /// <summary>The geo hang (2026-08): a parameter named `rest` IS the
+    /// Rest builtin inside its own body — names are case-insensitive and a
+    /// local wins every naming contest — so `Rest(rest)` answered the list
+    /// unchanged and four route walkers spun forever, with two more of the
+    /// same shadow lying latent beside it (`Let len`, a parameter `e`
+    /// against math's E). Two warnings, deliberately separate:
+    ///
+    /// A CALL-SHAPED USE of the shadowed name — `Rest(rest)` — reported at
+    /// the call, always on. The author wrote a call; a local cannot be
+    /// called, so the value passes through untouched. This is the live
+    /// wound, and it is checked here rather than in the stack simulator
+    /// because the Defs it bites are exactly the mutually recursive ones
+    /// the simulator skips. Its first run over the standard library found
+    /// one: scribbler's PolylineStep, hiding behind a display suite CI
+    /// cannot run.
+    ///
+    /// THE BINDER ITSELF, reported where it is declared — but only under
+    /// --lint-verbose. Measured across the healthy standard library the
+    /// dormant shadows number ~99 (parameters named rest, args, mid ARE
+    /// the recursion idiom), and a clean build prints nothing. The dormant
+    /// shadow costs nothing until the day the scope calls the shadowed
+    /// name, and on that day the call-shaped warning fires at the exact
+    /// line. Accessor shadowing stays with its own check — accessors lose
+    /// the contest silently, builtins lose it and are then CALLED, which
+    /// is why this one hangs programs instead of mis-reading fields.</summary>
+    static void BuiltinShadows(ShoddyProgram prog, Result r)
+    {
+        var seen = new HashSet<string>();
+
+        string KindOf(string resolved) =>
+            Engine.BuiltinWords.Contains(resolved) ? "builtin" :
+            prog.ExternalDefs.ContainsKey(resolved) ? "machine word" : "";
+
+        var globals = new HashSet<string>(GlobalNames(prog));
+
+        void Binder(string name, Node n, string what)
+        {
+            if (name.Length == 0 || name[0] == '\u0001') return;
+            string kind = KindOf(prog.ResolveName(name, n.File));
+            if (kind == "") return;
+            if (!seen.Add($"{n.File}:{n.Line}:{name}:bind")) return;
+            r.Verbose.Add($"{n.File ?? "?"}:{n.Line}: note: {what} '{name}' " +
+                          $"shadows the {kind} '{name}' — the local wins every " +
+                          "naming contest in this scope; rename it");
+        }
+
+        void Walk(Quot q, HashSet<string> locals, bool defTop)
+        {
+            for (int i = 0; i < q.Items.Count; i++)
+            {
+                Node n = q.Items[i];
+                if (n.T is NType.Take or NType.Bind)
+                {
+                    string what = defTop && i == 0 && n.T == NType.Take
+                        ? "parameter" : "local";
+                    foreach (string nm in n.Names)
+                    {
+                        Binder(nm, n, what);
+                        locals.Add(nm);
+                    }
+                }
+                if (n.T == NType.Pat && n.P != null)
+                {
+                    var bound = new HashSet<string>();
+                    PatBinders(n.P, bound);
+                    foreach (string nm in bound)
+                    {
+                        Binder(nm, n, "pattern binding");
+                        locals.Add(nm);
+                    }
+                }
+                if (n.T == NType.Word && n.CallArgs != null)
+                {
+                    string w = n.Str!;
+                    string resolved = prog.ResolveName(w, n.File);
+                    bool shadowed = locals.Contains(w) || globals.Contains(resolved);
+                    string kind = KindOf(resolved);
+                    if (kind == "" && prog.Defs.ContainsKey(resolved) &&
+                        locals.Contains(w)) kind = "Def";
+                    if (shadowed && kind != "" &&
+                        seen.Add($"{n.File}:{n.Line}:{w}:call"))
+                        r.Warnings.Add($"{n.File ?? "?"}:{n.Line}: warning: '{w}' is " +
+                            $"written as a call, but here '{w}' is a local shadowing " +
+                            $"the {kind} — a local cannot be called, so its value " +
+                            "passes through unchanged; rename the local");
+                }
+                if (n.Q != null) Walk(n.Q, new HashSet<string>(locals), false);
+                if (n.ElseQ != null) Walk(n.ElseQ, new HashSet<string>(locals), false);
+            }
+        }
+
+        foreach ((_, Quot body) in prog.Defs)
+            Walk(body, new HashSet<string>(), defTop: true);
+        if (prog.InitQuot != null)
+        {
+            // Top-level Lets are Takes in InitQuot; one named after a
+            // builtin shadows it for the whole program, not one scope.
+            for (int i = 0; i < prog.InitQuot.Items.Count; i++)
+            {
+                Node n = prog.InitQuot.Items[i];
+                if (n.T != NType.Take) continue;
+                foreach (string nm in n.Names) Binder(nm, n, "top-level Let");
+            }
+            Walk(prog.InitQuot, new HashSet<string>(GlobalNames(prog)), false);
         }
     }
 
@@ -756,16 +874,19 @@ public static class Lint
                         {
                             if (!known.TryGetValue(name, out DefEffect de)) return null;
                             CheckRecArgs(name, de.Pops, kinds, n);
+                            CheckArity(n, written, de.Pops);
                             Apply(de.Pops, de.Pushes, n, null);
                         }
                         else if (prog.ExternalDefs.ContainsKey(name))
                         {
                             if (!prog.ExternalEffects.TryGetValue(name, out (int Pops, int Pushes) fx))
                                 return null;
+                            CheckArity(n, written, fx.Pops);
                             Apply(fx.Pops, fx.Pushes, n, null);
                         }
                         else if (prog.FindType(name) is { } t)
                         {
+                            CheckArity(n, written, t.Fields.Count);
                             Apply(t.Fields.Count, 0, n, null);
                             Push(Kind.Rec);
                         }
@@ -773,11 +894,13 @@ public static class Lint
                         {
                             if (Effects.Dynamic.Contains(name)) return null;
                             Effects.Effect e = Effects.Builtin[name];
+                            CheckArity(n, written, e.Pops);
                             Apply(e.Pops, e.Pushes, n, name);
                             if (name == "ERROR") lastDiverges = true;
                         }
                         else if (prog.Accessors.ContainsKey(name) || prog.AnyTypeHasField(name))
                         {
+                            CheckArity(n, written, 1);
                             Pop(); Push(Kind.Unknown);
                         }
                         else
@@ -852,6 +975,27 @@ public static class Lint
                         $"'{w}' was passed as a function value, but nothing defines " +
                         "it — a typo is auto-quoted silently in argument position");
             }
+        }
+
+        /// <summary>Written arity against the callee's pops — geo issue 5:
+        /// a misplaced paren handed two arguments to a one-argument Def, it
+        /// compiled, bound the wrong value, and the failure surfaced as a
+        /// type error inside an unrelated machine. The parser counts what
+        /// the source wrote (Node.CallArgs); OVER-supply is provably wrong,
+        /// because the callee cannot reach the extras and they land beneath
+        /// the call. UNDER-supply is judged by nobody here: `Map(Fst)`
+        /// after a value-producing line is the point-free pipeline the spec
+        /// shows and json.shoddy writes, and feeding the rest from the
+        /// stack is the idiom, not a mistake — when the stack genuinely
+        /// has too little, the below-its-own-parameters depth warning
+        /// already names the Def. Bare words and desugared calls carry no
+        /// count and stay exempt.</summary>
+        void CheckArity(Node n, string written, int pops)
+        {
+            if (r == null || n.CallArgs is not int wa || wa <= pops) return;
+            r.Warnings.Add($"{n.File ?? "?"}:{n.Line}: warning: '{written}' takes " +
+                $"{pops} value(s), but this call writes {wa} argument(s) — the " +
+                "extra value(s) land beneath the call and surface somewhere else");
         }
 
         void CheckRecArgs(string callee, int pops, List<Kind> kinds, Node n)

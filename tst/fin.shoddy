@@ -28,18 +28,13 @@ Rem margin are all verified by hand and named here instead.
 Rem ==================================================================
 
 Include "../machines/fin.shoddy"
+Include "../machines/julian.shoddy"
 
 Rem Money and rates carry more places than they print, so compare to a
 Rem tolerance. The answers that must be exact are asserted with = and
 Rem would otherwise hide a real defect behind a tolerance.
 Def Near(a As Number, b As Number, tol As Number) As Boolean
     Abs(a - b) <= tol
-
-Rem A date is only honest if it survives the trip to a day number and
-Rem back — that is what makes the century rules testable at all.
-Def RoundTrips(d As FinDate) As Boolean
-    Let back = FinFromSerial(FinSerial(d))
-    Yr(back) = Yr(d) And Mon(back) = Mon(d) And Day(back) = Day(d)
 
 Def Main()
     Print("--- RATES AND CONVERSION ---")
@@ -214,51 +209,42 @@ Def Main()
     Assert(FinComb(52, 5) = 2598960, "A POKER HAND, EXACTLY")
     Assert(FinComb(5, 2) = 10, "AND A SMALL ONE")
 
-    Print("--- DATES ---")
-    Assert(FinIsLeap(2000), "2000 IS A LEAP YEAR")
-    Assert(Not FinIsLeap(1900), "1900 IS NOT")
-    Assert(Not FinIsLeap(2100), "NOR IS 2100")
-    Assert(FinIsLeap(2024), "2024 IS")
-    Assert(RoundTrips(FinDate(1900, 2, 28)), "A DATE SURVIVES THE SERIAL ROUND TRIP")
-    Assert(RoundTrips(FinDate(2000, 2, 29)), "INCLUDING A LEAP CENTURY")
-    Assert(RoundTrips(FinDate(2100, 3, 1)), "AND A NON-LEAP CENTURY")
-    Assert(RoundTrips(FinDate(2026, 12, 31)), "AND A YEAR BOUNDARY")
-    Assert(FinSerial(FinDate(2026, 1, 2)) - FinSerial(FinDate(2026, 1, 1)) = 1, "CONSECUTIVE DAYS")
-    Assert(Day(FinDateAdd(FinDate(2026, 1, 31), 1)) = 1, "ADDING A DAY CROSSES THE MONTH")
-    Rem One month after 31 January is 28 February, not the 3rd of March.
-    Assert(Day(FinDateAddMonths(FinDate(2026, 1, 31), 1)) = 28, "MONTHS CLAMP TO THE MONTH END")
-    Assert(Day(FinDateAddMonths(FinDate(2024, 1, 31), 1)) = 29, "AND KNOW ABOUT LEAP YEARS")
+    Print("--- DAY COUNTS ---")
+    Rem The CALENDAR's own assertions — leap rules, serial round trips,
+    Rem month clamping — moved to tst/julian.shoddy with the arithmetic,
+    Rem on the same fixtures. What is asserted here is what stayed in
+    Rem fin: the BASES, which are finance's fiction about the calendar.
     Rem The NASD adjustment case: D1 is 31 so it becomes 30, and the
     Rem count from there to 28 February is 28 days.
-    Assert(FinDays360(FinDate(2026, 1, 31), FinDate(2026, 2, 28)) = 28, "THE 30/360 END-OF-MONTH RULE")
-    Assert(FinDays360(FinDate(2026, 1, 1), FinDate(2027, 1, 1)) = 360, "AND A WHOLE 30/360 YEAR")
-    Assert(FinDateDiff(FinDate(2026, 1, 1), FinDate(2027, 1, 1), FinActual()) = 365,
+    Assert(FinDays360(JulOf(2026, 1, 31), JulOf(2026, 2, 28)) = 28, "THE 30/360 END-OF-MONTH RULE")
+    Assert(FinDays360(JulOf(2026, 1, 1), JulOf(2027, 1, 1)) = 360, "AND A WHOLE 30/360 YEAR")
+    Assert(FinDateDiff(JulOf(2026, 1, 1), JulOf(2027, 1, 1), FinActual()) = 365,
            "AN ACTUAL YEAR IS 365 DAYS")
-    Assert(Near(FinYearFrac(FinDate(2026, 1, 1), FinDate(2027, 1, 1), Fin360()), 1, 0.0000001),
+    Assert(Near(FinYearFrac(JulOf(2026, 1, 1), JulOf(2027, 1, 1), Fin360()), 1, 0.0000001),
            "AND A 30/360 YEAR IS ONE")
 
     Print("--- BONDS ---")
     Rem A bond priced at par yields its coupon: the single property that
     Rem checks price and yield against each other.
-    Assert(Near(FinBondPrice(FinDate(2026, 1, 1), FinDate(2031, 1, 1),
+    Assert(Near(FinBondPrice(JulOf(2026, 1, 1), JulOf(2031, 1, 1),
                              0.06, 0.06, FinSemi(), Fin360()), 100, 0.0001),
            "A 6 PERCENT BOND AT A 6 PERCENT YIELD PRICES AT PAR")
-    Assert(Near(FinYtm(FinDate(2026, 1, 1), FinDate(2031, 1, 1),
+    Assert(Near(FinYtm(JulOf(2026, 1, 1), JulOf(2031, 1, 1),
                        0.06, 100, FinSemi(), Fin360()), 0.06, 0.000001),
            "AND YIELDS 6 PERCENT AT PAR")
-    Assert(FinBondPrice(FinDate(2026, 1, 1), FinDate(2031, 1, 1), 0.06, 0.08, FinSemi(), Fin360())
+    Assert(FinBondPrice(JulOf(2026, 1, 1), JulOf(2031, 1, 1), 0.06, 0.08, FinSemi(), Fin360())
            < 100, "A HIGHER YIELD PRICES BELOW PAR")
-    Assert(FinBondPrice(FinDate(2026, 1, 1), FinDate(2031, 1, 1), 0.06, 0.04, FinSemi(), Fin360())
+    Assert(FinBondPrice(JulOf(2026, 1, 1), JulOf(2031, 1, 1), 0.06, 0.04, FinSemi(), Fin360())
            > 100, "AND A LOWER ONE ABOVE IT")
-    Assert(Near(FinAccrued(FinDate(2026, 1, 1), FinDate(2026, 1, 1),
+    Assert(Near(FinAccrued(JulOf(2026, 1, 1), JulOf(2026, 1, 1),
                            0.06, FinSemi(), Fin360()), 0, 0.0000001),
            "NOTHING HAS ACCRUED ON A COUPON DATE")
-    Assert(Near(FinAccrued(FinDate(2026, 4, 1), FinDate(2026, 1, 1),
+    Assert(Near(FinAccrued(JulOf(2026, 4, 1), JulOf(2026, 1, 1),
                            0.06, FinSemi(), Fin360()), 1.5, 0.0001),
            "AND HALF A PERIOD IS HALF A COUPON")
-    Assert(FinMdur(FinDate(2026, 1, 1), FinDate(2031, 1, 1), 0.06, 0.06, FinSemi()) > 0,
+    Assert(FinMdur(JulOf(2026, 1, 1), JulOf(2031, 1, 1), 0.06, 0.06, FinSemi()) > 0,
            "MODIFIED DURATION IS POSITIVE")
-    Assert(FinMdur(FinDate(2026, 1, 1), FinDate(2031, 1, 1), 0.06, 0.06, FinSemi()) < 5,
+    Assert(FinMdur(JulOf(2026, 1, 1), JulOf(2031, 1, 1), 0.06, 0.06, FinSemi()) < 5,
            "AND SHORTER THAN THE BOND")
 
     Print("--- PRESENTATION ---")

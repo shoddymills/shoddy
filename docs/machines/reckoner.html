@@ -50,6 +50,23 @@ value with the state intact. Losing the stack, the dictionary, the
 registers and the tape is worse than any wrong answer, so every guard is
 written before the builtin it protects rather than after it.</p>
 
+<h2 id="history">A Brief History of the Ready Reckoner</h2>
+<p>A <em>ready reckoner</em> was a book of answers. From the eighteenth
+century &mdash; Daniel Fenning's of 1757 was the one everyone copied &mdash;
+every shop counter, counting-house and mill office kept one: pages of
+pre-computed products and prices, so that seventeen and a half yards at
+elevenpence three-farthings was a lookup instead of a calculation. It was
+the working arithmetic of the textile trade, which is reason enough for the
+name; but the dialect this machine speaks has its own history. Jan
+&#321;ukasiewicz worked out in 1924 that with the operator moved to the
+edge, arithmetic needs no parentheses at all, and Hewlett-Packard put the
+reversed form of his notation on the HP-35 in 1972, teaching a generation
+of engineers to think "enter the numbers, then say what to do with them."
+An RPN line against a stack is exactly that, and this machine is both
+ancestors at once: the reckoner kept at the counter's edge, answering
+whatever the mill needs worked out, in the notation that needs no
+brackets.</p>
+
 <h2 id="why">Why It's Useful</h2>
 <p>Once evaluating a line is a pure function from one state to the next,
 undo falls out of the semantics rather than needing to be built: keep the
@@ -217,11 +234,29 @@ evaluator itself</p>
 <tr><td>SCI ( n -- )</td><td>Show numbers in scientific notation to n places.</td></tr>
 <tr><td>ENG ( n -- )</td><td>Show numbers in engineering notation to n places.</td></tr>
 <tr><td>STD ( -- )</td><td>Show numbers at their own precision.</td></tr>
+<tr><td>WIDTH ( n -- )</td><td>Work the bit words in an n-bit word, 1 to 53. It does <strong>not</strong> change how numbers are shown.</td></tr>
+<tr><td>WIDTH? ( -- n )</td><td>How wide the bit words think the word is; <code>WIDTH</code> sets it and it starts at 32.</td></tr>
 <tr><td>: NAME &hellip; ;</td><td>Define a user word; refused at definition if its body names an unknown word.</td></tr>
 <tr><td>VIEW ( -- )</td><td>Print the word named next back as it was defined.</td></tr>
 <tr><td>HELP ( -- )</td><td>Show what the word named next does — <code>HELP MEAN</code>, not <code>"MEAN" HELP</code>.</td></tr>
 <tr><td>WORDS ( -- )</td><td>List every word in the dictionary, grouped by where it came from.</td></tr>
 </table>
+
+<p class="note"><strong>The word width is the third mode, and it belongs to
+the engine rather than to <a href="seedbool.html">seedbool</a>.</strong> The
+engine holds no bit words itself, which is exactly why the mode has to be
+here: it is a property of the <em>session</em> that several seeds read, and a
+mode owned by one domain's seed is a mode the next domain cannot see. It is
+validated where it is set &mdash; whole, 1 to 53 &mdash; so every word that
+later reads it reads a number already known good, and none of them repeats
+the check. The ceiling is where a double stops counting consecutive whole
+numbers, since 2<sup>53</sup>&nbsp;+&nbsp;1 <em>is</em> 2<sup>53</sup> and a
+54-bit word cannot represent its own top bit.</p>
+<p><code>WIDTH?</code> follows <code>TAPE</code>: a bare word that pushes what
+it knows, so a session can ask without changing anything. Two arities cannot
+share one name, which is the whole reason for the question mark &mdash; the
+one place this design pays a price, and it pays it in a name rather than in a
+second mode.</p>
 
 <h3>The trace and the tape</h3>
 <p>Both are state, because both are reached by dictionary words and a
@@ -366,7 +401,7 @@ is listed here instead, where seeding one actually means something.</p>
 <tr><td class="uicon"><a href="seedisam.html"><img src="../media/icons/seedisam.svg" alt=""></a></td><td><a href="seedisam.html">seedisam</a></td><td><code>ISAMALL ISAMRANGE ISAMHAS ISAMGETOR ISAMCOUNT</code> — <a href="isam.html">isam</a>'s whole-table words, over a handle the caller already opened.</td></tr>
 <tr><td class="uicon"><a href="seedclock.html"><img src="../media/icons/seedclock.svg" alt=""></a></td><td><a href="seedclock.html">seedclock</a></td><td><code>STAMP STAMPDATE STAMPTIME TICKS ELAPSED FORMATDURATION</code> — <a href="clock.html">clock</a>'s stamping and monotonic timing.</td></tr>
 <tr><td class="uicon"><a href="seedrandom.html"><img src="../media/icons/seedrandom.svg" alt=""></a></td><td><a href="seedrandom.html">seedrandom</a></td><td><code>RANDOM RANDOMRANGE RANDOMINT SHUFFLE SAMPLE SEED</code> — <a href="random.html">random</a>, plus the builtin that makes a session reproducible.</td></tr>
-<tr><td class="uicon"><a href="seedbool.html"><img src="../media/icons/seedbool.svg" alt=""></a></td><td><a href="seedbool.html">seedbool</a></td><td><code>HEX BIN INBASE FROMBASE BITAND BITOR BITXOR BITNOT SHL SHR MASK GETFIELD BITAT POPCOUNT NAND NOR XOR XNOR IMPLIES IFF</code> — <a href="bool.html">bool</a>'s binary layer, translating the strictest guards in the tree into refusals. The widest seed, and the six gates are here because a user word takes exactly one cell, so a keyboard cannot define a two-argument <code>XOR</code> for itself.</td></tr>
+<tr><td class="uicon"><a href="seedbool.html"><img src="../media/icons/seedbool.svg" alt=""></a></td><td><a href="seedbool.html">seedbool</a></td><td><code>HEX BIN INBASE FROMBASE BITAND BITOR BITXOR BITNOT SHL SHR SHRA ROTL ROTR MASK GETFIELD BITAT POPCOUNT LOWBIT HIGHBIT CARD CARDWITH SIGNED UNSIGNED SIGNEXTEND NEGW ADDW SUBW MULW CARRIES OVERFLOWS GRAY FROMGRAY BCD FROMBCD PARITY PARITYBIT HAMMING MINTERMS IMPLICANTS TABLE NAND NOR XOR XNOR IMPLIES IFF</code> — <a href="bool.html">bool</a>'s binary layer, translating the strictest guards in the tree into refusals. The widest seed by a distance, and the only one that reads <code>WIDTH</code>: sixteen of its words take the session's word length rather than an argument, and not one of them asks a keyboard for a width. That is what made the rotates and the two's-complement family bridgeable at all.</td></tr>
 <tr><td class="uicon"><a href="seedshaker.html"><img src="../media/icons/seedshaker.svg" alt=""></a></td><td><a href="seedshaker.html">seedshaker</a></td><td><code>SHAKE UNSHAKE UNSHAKEOR SHAKEOK SHAKEMOD</code> — <a href="shaker.html">shaker</a>'s reversible obfuscation over lists of numbers.</td></tr>
 <tr><td class="uicon"><a href="seedjson.html"><img src="../media/icons/seedjson.svg" alt=""></a></td><td><a href="seedjson.html">seedjson</a></td><td><code>JSONPARSE JSONTEXT JSONPRETTY JSONLOAD JSONSAVE</code> — <a href="json.html">json</a>, an object landing as the same dict shape <code>seeddict</code> already established.</td></tr>
 <tr><td class="uicon"><a href="seedxml.html"><img src="../media/icons/seedxml.svg" alt=""></a></td><td><a href="seedxml.html">seedxml</a></td><td><code>XMLPARSE XMLTEXT XMLPRETTY XMLLOAD XMLSAVE</code> — <a href="xml.html">xml</a>, a node as a tagged list, an element's attributes as a dict.</td></tr>
@@ -392,6 +427,9 @@ is listed here instead, where seeding one actually means something.</p>
 <tr><td class="uicon"><a href="seedsparse.html"><img src="../media/icons/seedsparse.svg" alt=""></a></td><td><a href="seedsparse.html">seedsparse</a></td><td><code>SPARSE SPDENSE SPENTS SPNNZ SPGET SPCOLIX SPCOLVS SPCOLDOT SPMATVEC SPVECMAT SPTRANSP SPADDROW SPADDCOL</code> &mdash; <a href="sparse.html">sparse</a>'s matrices, the ones that are mostly zeros. A <code>Sparse</code> is a dict rather than a cell of its own, so its storage is visible: a row index and a value per entry, and nothing for the gaps.</td></tr>
 <tr><td class="uicon"><a href="seedmip.html"><img src="../media/icons/seedmip.svg" alt=""></a></td><td><a href="seedmip.html">seedmip</a></td><td><code>MIPPROBLEM MIPSOLVE MIPFIXED MPSMIP MPSMIPLOAD</code> &mdash; <a href="mip.html">mip</a>'s branch and bound, for answers that have to be whole numbers. It speaks seedsimplex's problem dict, so <code>MIPFIXED</code>'s answer goes straight into <code>LPSOLVE</code> &mdash; which is the only honest route to a shadow price once integers are involved.</td></tr>
 <tr><td class="uicon"><a href="seedterminal.html"><img src="../media/icons/seedterminal.svg" alt=""></a></td><td><a href="seedterminal.html">seedterminal</a></td><td><code>PRINT</code> &mdash; the console's <code>Print</code> builtin (<a href="terminal.html">terminal</a> documents it), so a looping program can report each pass the moment it happens rather than when the line finishes. The write-only seed: the reading builtins stay with the shell that owns the session's input.</td></tr>
+<tr><td class="uicon"><a href="seedgeo.html"><img src="../media/icons/seedgeo.svg" alt=""></a></td><td><a href="seedgeo.html">seedgeo</a></td><td>Distance, bearing, routes, area, the written coordinate forms, the sun and the horizon &mdash; <a href="geo.html">geo</a>'s keyable surface. A point is a two-element <code>LIST</code>, <code>{ 53.72 -1.86 }</code>, and an <code>Option</code> comes back as a one-cell <code>LIST</code> that is empty when the sun did not rise.</td></tr>
+<tr><td class="uicon"><a href="seedjulian.html"><img src="../media/icons/seedjulian.svg" alt=""></a></td><td><a href="seedjulian.html">seedjulian</a></td><td>The calendar at the keyboard &mdash; <a href="julian.html">julian</a>'s dates, serials, Julian day numbers, date arithmetic and weekdays. A date is a dict, <code>{ ("yr" 2000) ("mon" 1) ("day" 1) }</code>, the same shape seedfin's day-count and bond words take, so <code>JULDATE</code> feeds them directly.</td></tr>
+<tr><td class="uicon"><a href="seedephemeris.html"><img src="../media/icons/seedephemeris.svg" alt=""></a></td><td><a href="seedephemeris.html">seedephemeris</a></td><td>The sky at the keyboard &mdash; <a href="ephemeris.html">ephemeris</a>'s sidereal time, sun, moon, phases, rise and set, and the five naked-eye planets, in seedgeo's list shapes: a sky position is a two-element <code>LIST</code> and a rise that never comes is an empty one-cell <code>LIST</code>.</td></tr>
 </table>
 
 <h2 id="usedby">Who Uses It</h2>

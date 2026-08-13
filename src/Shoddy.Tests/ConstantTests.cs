@@ -171,6 +171,41 @@ public class ConstantTests
     }
 
     [Fact]
+    public void TrueAndFalseFold()
+    {
+        using var ws = new Workspace();
+        BuildMachine(ws.Machine("flags", J(
+            "Type FlagWay",
+            "    FwName As String",
+            "    FwBoth As Boolean",
+            "",
+            "Let bothWays = True",
+            "Let flagPair = { True, False }",
+            "Rem the shape that raised this: a hand-written data table whose",
+            "Rem records carry a boolean field",
+            "Let wayTable = { FlagWay(\"north\", True), FlagWay(\"south\", False) }",
+            "",
+            "Def FlagBoth() As Boolean",
+            "    bothWays",
+            "",
+            "Def FlagList() As List Of Boolean",
+            "    flagPair",
+            "",
+            "Def FlagWays() As List Of FlagWay",
+            "    wayTable")));
+
+        Assert.Equal("True\nFalse\nTrue\nFalse\nsouth\n", RunProgram(ws, ws.Program("use", J(
+            "Include \"flags.shoddy\"",
+            "",
+            "Def Main()",
+            "    Print(FlagBoth())",
+            "    Print(Nth(FlagList(), 2))",
+            "    Print(FwBoth(Nth(FlagWays(), 1)))",
+            "    Print(FwBoth(Nth(FlagWays(), 2)))",
+            "    Print(FwName(Nth(FlagWays(), 2)))"))));
+    }
+
+    [Fact]
     public void ConstantOperatorExpressionsFoldToWhatTheRuntimeComputes()
     {
         using var ws = new Workspace();
@@ -453,16 +488,42 @@ public class ConstantTests
     {
         // The first person to write this must not be told their constant
         // "calls TOARRAY", which is true, useless, and contradicts the
-        // documentation.
+        // documentation. True and False are there for the same reason as
+        // ToArray: the value kind has no literal, so the word is the only
+        // spelling there is.
         Assert.Equal("", Refusal(J(
             "Let a = ToArray({ 1, 2, 3 })",
             "Let d = Dim(3, 0)",
+            "Let t = True",
+            "Let f = False",
             "",
             "Def FoldA() As Array Of Number",
             "    a",
             "",
             "Def FoldD() As Array Of Number",
-            "    d")));
+            "    d",
+            "",
+            "Def FoldT() As Boolean",
+            "    t",
+            "",
+            "Def FoldF() As Boolean",
+            "    f")));
+    }
+
+    [Fact]
+    public void AndAndOrAreRefusedAsAConditionalAndNeverAsCallsIf()
+    {
+        string m = Refusal(J(
+            "Let bad = True And False",
+            "",
+            "Def BadAnd() As Boolean",
+            "    bad"));
+        Assert.Contains("cannot hold a conditional", m);
+        // The quotation refusal's complaint in a third costume. And and Or
+        // compile to a short-circuiting conditional, so once True folds the
+        // walk reaches that node — and "calls IF" would name a word the
+        // writer never wrote.
+        Assert.DoesNotContain("calls IF", m);
     }
 
     [Fact]
@@ -519,12 +580,16 @@ public class ConstantTests
             "",
             "Let names = { \"m\", \"kg\" }",
             "Let mile = Unit(\"MILE\", 1609.344)",
+            "Let metric = True",
             "",
             "Def QuietNames() As List Of String",
             "    names",
             "",
             "Def QuietMile() As Unit",
-            "    mile"));
+            "    mile",
+            "",
+            "Def QuietMetric() As Boolean",
+            "    metric"));
         Assert.Empty(r.Warnings);
         // StackEffects walks the initializer too. A constant is (0 -> 1)
         // by construction, so the simulation is satisfied and no word in

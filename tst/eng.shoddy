@@ -41,6 +41,9 @@ Rem here instead.
 Rem ==================================================================
 
 Include "../machines/eng.shoddy"
+Rem seq is for the ODE section alone: Last and Length read the
+Rem trajectory EngOdeSolve answers.
+Include "../machines/seq.shoddy"
 
 Rem Doubles compare to a tolerance. The answers that must be exact are
 Rem asserted with = and would otherwise hide a real defect behind one.
@@ -302,6 +305,32 @@ Def Main()
            "AND TWO INTERVALS IS ENOUGH FOR A PARABOLA")
     Assert(EngSumOf(Fn(i) => i, 1, 100) = 5050, "THE SUM GAUSS DID AT SCHOOL")
     Assert(EngProdOf(Fn(i) => i, 1, 5) = 120, "AND A PRODUCT IS A FACTORIAL")
+
+    Print("--- ORDINARY DIFFERENTIAL EQUATIONS ---")
+    Rem y' = y from 1 is the exponential, so a hundred RK4 steps to
+    Rem t = 1 must land on Euler's number to the stepper's stated
+    Rem accuracy. The closed form is the fixture, never a recorded run.
+    Assert(Close(Last(EngOdeSolve(Fn(t, y) => y, 0, 1, 1, 100)), Exp(1), 0.000001),
+           "GROWTH INTEGRATES TO EULER'S NUMBER")
+    Assert(Close(Last(EngOdeSolve(Fn(t, y) => 0 - 2 * y, 0, 1, 1, 100)), Exp(-2), 0.000001),
+           "AND DECAY TO ITS RECIPROCAL SQUARED")
+    Rem The trajectory is one value per sample point, first the start.
+    Assert(Length(EngOdeSolve(Fn(t, y) => y, 0, 1, 1, 10)) = 11, "TEN STEPS IS ELEVEN SAMPLES")
+    Assert(First(EngOdeSolve(Fn(t, y) => y, 0, 1, 1, 10)) = 1, "THE FIRST OF WHICH IS THE START")
+    Rem One step of y' = t from 0: the area under the ramp, which RK4
+    Rem gets exactly because the integrand is polynomial.
+    Assert(Close(EngOdeStep(Fn(t, y) => t, 0, 0, 1), 0.5, 0.0000000001), "ONE STEP UNDER A RAMP IS ITS AREA")
+    Rem The harmonic oscillator y'' = -y as the pair { y, y' }: after a
+    Rem full period the state returns to where it began, which checks
+    Rem the system stepper AND that its energy has not drifted.
+    Let period = EngOdeSysAt(Fn(t, s) => { Nth(s, 2), 0 - Nth(s, 1) }, 0, { 1, 0 }, 2 * Pi(), 400)
+    Assert(Close(Nth(period, 1), 1, 0.001), "AN OSCILLATOR COMES HOME AFTER ONE PERIOD")
+    Assert(Close(Nth(period, 2), 0, 0.001), "AND ARRIVES AT REST, AS IT LEFT")
+    Let halfway = EngOdeSysAt(Fn(t, s) => { Nth(s, 2), 0 - Nth(s, 1) }, 0, { 1, 0 }, Pi(), 200)
+    Assert(Close(Nth(halfway, 1), -1, 0.001), "AND STANDS AT THE FAR SIDE AFTER HALF OF ONE")
+    Rem What cannot be asserted here: EngOdeSolve with n = 0 and with a
+    Rem fractional n abort naming ENGODESOLVE, and EngOdeSysAt likewise —
+    Rem verified by hand, the suite has no catchable errors.
 
     Print("--- ROOTS AND OPTIMISATION ---")
     Assert(Close(EngZeroOf(Fn(x) => x * x - 2, 0, 2), 1.4142135624, 0.0000000001),

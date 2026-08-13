@@ -1,0 +1,330 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem seedjulian.shoddy — reckoner seed: julian.shoddy, converting at
+Rem the bridge
+Rem
+Rem The calendar at the prompt: building a date, writing it out and
+Rem reading it back, leap years and month lengths, the two epochs
+Rem (serial days from 1970-01-01 and the astronomical Julian day
+Rem number), date arithmetic and the weekday. These words lived in
+Rem seedfin while fin.shoddy carried the calendar as a stated stand-in;
+Rem when the calendar moved to julian.shoddy the words moved with it,
+Rem renamed JUL* to say whose they are. The day-count BASES and the
+Rem bond words stayed in seedfin, exactly as FinDays360 stayed in fin.
+Rem
+Rem A DATE IS A DICT, the same LIST-of-PAIR shape seeddict.shoddy
+Rem established and seedfin's records use:
+Rem { ("yr" n) ("mon" n) ("day" n) }, built by JULDATE and read back by
+Rem JULDATESHOW as "2025-01-31". JULDATEOF parses that same spelling,
+Rem so a date can be typed either way round and a tape reads as prose.
+Rem The keys are the same three seedfin's dates always carried, so a
+Rem date built here flows straight into FINDAYS360 and the bond words.
+Rem
+Rem WHY THE DATE IS VALIDATED AT ALL. JulSerial is pure integer
+Rem arithmetic over year/month/day and has no opinion about whether the
+Rem date exists: the raw constructor serializes a 30th of February
+Rem perfectly happily to the 2nd of March. julian.shoddy's own checked
+Rem builder aborts, and NOTHING HERE MAY ABORT — so JULDATE asks
+Rem JulTryOf first and turns its Err into a refusal, and every word
+Rem that takes a date checks it again on the way in, since a dict can
+Rem also arrive hand-built.
+Rem
+Rem THE SAME REASONING SETS THE OTHER GUARDS. JulFromSerial aborts on a
+Rem fractional serial — the guard that catches a Julian day number
+Rem handed to the wrong epoch — so JULFROMSERIAL asks the same question
+Rem first and refuses instead. The offsets to JULADDDAYS and
+Rem JULADDMONTHS must be whole for the same reason, and negative
+Rem offsets are ordinary questions that must not be refused: days back,
+Rem months back, and a serial before 1970 all run both ways.
+Rem ==================================================================
+
+Include "julian.shoddy"
+Include "cuttle.shoddy"
+Include "reckoner.shoddy"
+Include "seq.shoddy"
+Include "str.shoddy"
+
+Rem ---- shared readers -----------------------------------------------------
+
+Rem A whole number that may be NEGATIVE, which RckWholeArg is not: its
+Rem whole numbers start at zero, and every offset in a calendar runs
+Rem both ways.
+Def JsStepArg(word As String, c As Cell) As Result
+    Select Case c
+        Case CutNum(x)
+            JsStepWhole(word, x)
+        Case Else
+            Err(RckKindWhy(word, "a NUMBER", c), 0)
+
+Def JsStepWhole(word As String, x As Number) As Result
+    If x <> Floor(x) Then
+        Err(word & " needs a whole number, got " & Str(x), 0)
+    Else
+        Ok(x)
+
+Def JsListNum(word As String, c As Cell) As Result
+    Select Case RckListArg(word, c)
+        Case Ok(xs)
+            JsNumsAt(word, xs, { })
+        Case Err(w, at)
+            Err(w, at)
+        Case Else
+            Err(word & " did not answer", 0)
+
+Def JsNumsAt(word As String, xs As List Of Cell, acc As List Of Number) As Result
+    If IsEmpty(xs) Then
+        Ok(acc)
+    Else
+        JsNumsNext(word, xs, acc, First(xs))
+
+Def JsNumsNext(word As String, xs As List Of Cell, acc As List Of Number, c As Cell) As Result
+    Select Case c
+        Case CutNum(x)
+            JsNumsAt(word, Rest(xs), Append(acc, x))
+        Case Else
+            Err(RckKindWhy(word, "a LIST of NUMBERs", c), 0)
+
+Def JsEntry(k As String, v As Cell) As Cell
+    CutPair(Pair(CutStr(k), v))
+
+Rem ---- the date dict, in and out ------------------------------------------
+
+Def JsDateCell(d As JulDate) As Cell
+    CutList({ JsEntry("yr", CutNum(JulYear(d))), JsEntry("mon", CutNum(JulMonth(d))), JsEntry("day", CutNum(JulDay(d))) })
+
+Def JsDateWhy(word As String) As String
+    word & ": NOT A DATE — USE JULDATE, OR JULDATEOF ON " & RckQuoteMark() & "YYYY-MM-DD" & RckQuoteMark()
+
+Def JsDateOf(word As String, c As Cell) As Result
+    Select Case RckListArg(word, c)
+        Case Ok(fields)
+            JsDateFields(word, fields)
+        Case Err(w, at)
+            Err(w, at)
+        Case Else
+            Err(word & " did not answer", 0)
+
+Def JsDateFields(word As String, fields As List Of Cell) As Result
+    If Length(fields) <> 3 Then
+        Err(JsDateWhy(word), 0)
+    Else
+        JsDateNums(word, Map(fields, JsPairVal))
+
+Def JsPairVal(entry As Cell) As Cell
+    Select Case entry
+        Case CutPair(p)
+            Snd(p)
+        Case Else
+            entry
+
+Def JsDateNums(word As String, vals As List Of Cell) As Result
+    Select Case JsListNum(word, CutList(vals))
+        Case Ok(ns)
+            JsDateMade(word, Nth(ns, 1), Nth(ns, 2), Nth(ns, 3))
+        Case Err(w, at)
+            Err(JsDateWhy(word), 0)
+        Case Else
+            Err(word & " did not answer", 0)
+
+Rem The one calendar check, used by JULDATE on the way in and by every
+Rem date-taking word on a dict that may have been built by hand. The
+Rem rules are julian's own — JulTryOf — with the month and day named
+Rem separately so a refusal says which one is wrong and what the real
+Rem month length was.
+Def JsDateMade(word As String, y As Number, m As Number, d As Number) As Result
+    If y <> Floor(y) Or m <> Floor(m) Or d <> Floor(d) Then
+        Err(word & ": A YEAR, MONTH AND DAY MUST ALL BE WHOLE NUMBERS", 0)
+    Else
+        JsDateReal(word, y, m, d)
+
+Def JsDateReal(word As String, y As Number, m As Number, d As Number) As Result
+    If m < 1 Or m > 12 Then
+        Err(word & ": THERE IS NO MONTH " & Str(m), 0)
+    Else
+        JsDateDay(word, y, m, d)
+
+Def JsDateDay(word As String, y As Number, m As Number, d As Number) As Result
+    If d < 1 Or d > JulDaysInMonth(y, m) Then
+        Err(word & ": " & Str(m) & "/" & Str(y) & " HAS " & Str(JulDaysInMonth(y, m)) & " DAYS, SO THERE IS NO DAY " & Str(d), 0)
+    Else
+        Ok(JulDate(y, m, d))
+
+Rem ---- the words -----------------------------------------------------------
+
+Def JsSeedDates(st As RckState) As RckState
+    Let s1 = RckReg(st, "JULDATE", 3, RckPure(Fn(vs) => JsDate(vs)), "( y m d -- date )", "A date as a dict: yr, mon, day. Refuses anything the calendar does not have, such as the 30th of February.")
+    Let s2 = RckReg(s1, "JULDATESHOW", 1, RckPure(Fn(vs) => JsDateshow(vs)), "( date -- str )", "A date written out as " & RckQuoteMark() & "YYYY-MM-DD" & RckQuoteMark() & ".")
+    Let s3 = RckReg(s2, "JULDATEOF", 1, RckPure(Fn(vs) => JsFromtext(vs)), "( str -- date )", "The other way: " & RckQuoteMark() & "2025-01-31" & RckQuoteMark() & " read back into a date.")
+    Let s4 = RckReg(s3, "JULISLEAP", 1, RckPure(Fn(vs) => JsIsleap(vs)), "( y -- flag )", "Whether a year is a leap year, century rules included.")
+    Let s5 = RckReg(s4, "JULDAYSINMONTH", 2, RckPure(Fn(vs) => JsDaysinmonth(vs)), "( y m -- n )", "How many days that month has in that year.")
+    Let s6 = RckReg(s5, "JULSERIAL", 1, RckPure(Fn(vs) => JsSerial(vs)), "( date -- n )", "A date as a day number, counting from 1970-01-01 — the form to subtract two dates with.")
+    Let s7 = RckReg(s6, "JULFROMSERIAL", 1, RckPure(Fn(vs) => JsFromserial(vs)), "( n -- date )", "A day number back into a date. Refuses a fraction: a number ending in .5 is usually a Julian day number on the wrong epoch.")
+    Let s8 = RckReg(s7, "JULDAYNUMBER", 1, RckPure(Fn(vs) => JsDaynumber(vs)), "( date -- jd )", "The astronomical Julian day number at midnight UT — always ends in .5, and it is what the geo sun words take.")
+    Let s9 = RckReg(s8, "JULADDDAYS", 2, RckPure(Fn(vs) => JsAdddays(vs)), "( date days -- date )", "The date that many days later; a negative count goes back.")
+    Let s10 = RckReg(s9, "JULADDMONTHS", 2, RckPure(Fn(vs) => JsAddmonths(vs)), "( date months -- date )", "That many months later, clamped to month end: one month after 31 January is 28 February.")
+    Let s11 = RckReg(s10, "JULDIFF", 2, RckPure(Fn(vs) => JsDiff(vs)), "( a b -- days )", "Days from a to b, signed: negative when b falls before a.")
+    RckReg(s11, "JULWEEKDAY", 1, RckPure(Fn(vs) => JsWeekday(vs)), "( date -- n )", "The day of the week, 1..7 with Monday 1 — the ISO convention.")
+
+Def JsDate(vs As List Of Cell) As RckWork
+    Select Case JsListNum("JULDATE", CutList(vs))
+        Case Ok(ns)
+            JsDateAt(Nth(ns, 1), Nth(ns, 2), Nth(ns, 3))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("JULDATE did not answer")
+
+Def JsDateAt(y As Number, m As Number, d As Number) As RckWork
+    Select Case JsDateMade("JULDATE", y, m, d)
+        Case Ok(dt)
+            RckVals({ JsDateCell(dt) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("JULDATE did not answer")
+
+Rem The one shape most of the calendar words have: one date in, one
+Rem cell out, with the date validated on the way through.
+Def JsOnDate(word As String, c As Cell, f As [ JulDate -- Cell ]) As RckWork
+    Select Case JsDateOf(word, c)
+        Case Ok(dt)
+            RckVals({ Call(f, dt) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Def JsDateshow(vs As List Of Cell) As RckWork
+    JsOnDate("JULDATESHOW", First(vs), Fn(d) => CutStr(JsShown(d)))
+
+Def JsShown(d As JulDate) As String
+    PadZero(JulYear(d), 4) & "-" & PadZero(JulMonth(d), 2) & "-" & PadZero(JulDay(d), 2)
+
+Def JsSerial(vs As List Of Cell) As RckWork
+    JsOnDate("JULSERIAL", First(vs), Fn(d) => CutNum(JulSerial(d)))
+
+Def JsDaynumber(vs As List Of Cell) As RckWork
+    JsOnDate("JULDAYNUMBER", First(vs), Fn(d) => CutNum(JulDayNumber(d)))
+
+Def JsWeekday(vs As List Of Cell) As RckWork
+    JsOnDate("JULWEEKDAY", First(vs), Fn(d) => CutNum(JulWeekday(d)))
+
+Rem "YYYY-MM-DD" and nothing else: three fields, each all digits, and
+Rem then the same calendar check JULDATE makes. A lax parse here would
+Rem put the wrong date on the stack rather than refuse, which is the
+Rem whole failure these seeds exist to prevent.
+Def JsFromtext(vs As List Of Cell) As RckWork
+    Select Case RckTextArg("JULDATEOF", First(vs))
+        Case Ok(s)
+            JsFromtextParts(s, Split(s, "-"))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("JULDATEOF did not answer")
+
+Def JsFromtextParts(s As String, parts As List Of String) As RckWork
+    If Length(parts) <> 3 Or Not All(parts, JsAllDigits) Then
+        RckWorkBad("JULDATEOF: " & RckQuoteMark() & s & RckQuoteMark() & " IS NOT A DATE — IT WANTS YYYY-MM-DD")
+    Else
+        JsFromtextAt(Val(Nth(parts, 1)), Val(Nth(parts, 2)), Val(Nth(parts, 3)))
+
+Def JsAllDigits(s As String) As Boolean
+    s <> "" And All(Map(Range(1, Len(s)), Fn(k) => Mid(s, k, 1)), Fn(c) => Instr("0123456789", c) > 0)
+
+Def JsFromtextAt(y As Number, m As Number, d As Number) As RckWork
+    Select Case JsDateMade("JULDATEOF", y, m, d)
+        Case Ok(dt)
+            RckVals({ JsDateCell(dt) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("JULDATEOF did not answer")
+
+Def JsIsleap(vs As List Of Cell) As RckWork
+    Select Case JsStepArg("JULISLEAP", First(vs))
+        Case Ok(y)
+            RckVals({ CutBool(JulIsLeap(y)) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("JULISLEAP did not answer")
+
+Def JsDaysinmonth(vs As List Of Cell) As RckWork
+    Select Case Pair(JsStepArg("JULDAYSINMONTH", Nth(vs, 1)), JsStepArg("JULDAYSINMONTH", Nth(vs, 2)))
+        Case Pair(Ok(y), Ok(m))
+            JsDaysinmonthAt(y, m)
+        Case Else
+            RckWorkBad("JULDAYSINMONTH did not answer")
+
+Def JsDaysinmonthAt(y As Number, m As Number) As RckWork
+    If m < 1 Or m > 12 Then
+        RckWorkBad("JULDAYSINMONTH: THERE IS NO MONTH " & Str(m))
+    Else
+        RckVals({ CutNum(JulDaysInMonth(y, m)) })
+
+Rem The same refusal julian's own guard makes as an abort, asked here
+Rem first: a fractional serial is usually a Julian day number on the
+Rem wrong epoch, and the answer is a refusal that says so, not a date
+Rem five thousand years wide of the mark and not a dead session.
+Def JsFromserial(vs As List Of Cell) As RckWork
+    Select Case JsStepArg("JULFROMSERIAL", First(vs))
+        Case Ok(n)
+            RckVals({ JsDateCell(JulFromSerial(n)) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("JULFROMSERIAL did not answer")
+
+Def JsAdddays(vs As List Of Cell) As RckWork
+    JsDateAndWhole("JULADDDAYS", vs, Fn(d, n) => JsDateCell(JulAddDays(d, n)))
+
+Def JsAddmonths(vs As List Of Cell) As RckWork
+    JsDateAndWhole("JULADDMONTHS", vs, Fn(d, n) => JsDateCell(JulAddMonths(d, n)))
+
+Rem A fractional step would run through Fix and land somewhere nobody
+Rem asked for, so both offsets have to be whole.
+Def JsDateAndWhole(word As String, vs As List Of Cell, f As [ JulDate Number -- Cell ]) As RckWork
+    Select Case JsDateOf(word, Nth(vs, 1))
+        Case Ok(d)
+            JsDateAndWholeAt(word, d, Nth(vs, 2), f)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Def JsDateAndWholeAt(word As String, d As JulDate, c As Cell, f As [ JulDate Number -- Cell ]) As RckWork
+    Select Case JsStepArg(word, c)
+        Case Ok(n)
+            RckVals({ Call(f, d, n) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Def JsDiff(vs As List Of Cell) As RckWork
+    JsOnTwoDates("JULDIFF", vs, Fn(a, b) => RckVals({ CutNum(JulDiff(a, b)) }))
+
+Def JsOnTwoDates(word As String, vs As List Of Cell, f As [ JulDate JulDate -- RckWork ]) As RckWork
+    Select Case JsDateOf(word, Nth(vs, 1))
+        Case Ok(a)
+            JsOnTwoDatesAt(word, a, Nth(vs, 2), f)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Def JsOnTwoDatesAt(word As String, a As JulDate, c As Cell, f As [ JulDate JulDate -- RckWork ]) As RckWork
+    Select Case JsDateOf(word, c)
+        Case Ok(b)
+            Call(f, a, b)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Rem ---- the seed -----------------------------------------------------------
+
+Def RckSeedJulian(st As RckState) As RckState
+    JsSeedDates(RckSeeding(st, "seed-julian"))

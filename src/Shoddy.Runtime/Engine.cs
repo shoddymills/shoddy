@@ -2344,8 +2344,16 @@ public sealed partial class Engine
         return 1 - bt * BetaCf(b, a, 1 - x) / b;    // symmetry: faster side
     }
 
-    /// <summary>C strtod semantics: parse the longest numeric prefix
-    /// (sign, digits, decimal point, exponent); false if none.</summary>
+    /// <summary>The whole string as one number — sign, digits, decimal
+    /// point, exponent, whitespace either side — or false. VAL, ISNUMERIC
+    /// and VALOR all answer through this, which is what keeps the quickref
+    /// promise "IsNumeric(s) is true iff Val(s) would succeed" one fact.
+    ///
+    /// This was C strtod's longest-prefix parse until the geo build showed
+    /// what that costs: "1.2.3" read as 1.2 with the stray full stop
+    /// silently dropped, and a mistyped coordinate parsed to a real place
+    /// hundreds of miles away. A trailing remainder is a refusal now, not
+    /// a discard.</summary>
     public static bool Strtod(string s, out double v)
     {
         v = 0;
@@ -2370,6 +2378,8 @@ public sealed partial class Engine
             while (m < s.Length && char.IsAsciiDigit(s[m])) { m++; ed++; }
             if (ed > 0) end = m;
         }
+        for (int k = end; k < s.Length; k++)
+            if (!char.IsWhiteSpace(s[k])) return false;
         return double.TryParse(s[i0..end], NumberStyles.Float, Inv, out v);
     }
 }

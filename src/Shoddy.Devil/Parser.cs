@@ -515,7 +515,9 @@ public sealed class Parser
             ExpectTok(l, ref pos, ")");
             if (first != null)
                 foreach (Node item in first.Items) outq.Add(item);
-            outq.Add(Node.Word(name, l.LineNo, l.File));
+            Node call = Node.Word(name, l.LineNo, l.File);
+            call.CallArgs = argIdx;
+            outq.Add(call);
             return;
         }
 

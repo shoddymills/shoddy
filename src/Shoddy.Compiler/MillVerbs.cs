@@ -235,9 +235,15 @@ public static class MillVerbs
                 Console.Error.WriteLine(w);
         }
         if (opt.LintVerbose)
+        {
+            // The advisory tier: findings real enough to record and too
+            // common on healthy code to shout — dormant builtin shadows.
+            foreach (string w in lint.Verbose)
+                Console.Error.WriteLine(w);
             Console.Error.WriteLine(
                 $"lint: checked {lint.DefsChecked} of {lint.DefsTotal} Defs " +
                 "(the rest touch dynamic constructs and are skipped, not guessed)");
+        }
         if (lint.UnknownWords.Count > 0)
         {
             foreach ((string msg, string? f, int ln) in lint.UnknownWords)

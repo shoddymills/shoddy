@@ -44,7 +44,7 @@ is Node.
 
 | Stage | Time | Mutates | What it is |
 |---|---|---|---|
-| `preflight` | ~3 s | nothing | environment, git state, version coherence, all four `verify-*` |
+| `preflight` | ~3 s | nothing | environment, git state, version coherence, all five `verify-*` |
 | `gate` | ~15 min | build output | build, machines, C# suite, every `tst/` and machine suite, all 13 mills |
 | `package` | ~3 min | build output | version bump, stage, `.vsix` |
 | `publish` | — | **history** | still owned by `shoddy-release.*` |

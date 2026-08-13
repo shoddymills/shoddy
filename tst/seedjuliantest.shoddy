@@ -1,0 +1,168 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem seedjuliantest.shoddy — test program for seedjulian.shoddy
+Rem
+Rem Assert-driven, in the cuttletest / reckonertest / seedtest pattern:
+Rem it prints what it is doing and stops the run at the first assertion
+Rem that fails, ending with ALL ASSERTIONS PASSED when it does not.
+Rem
+Rem WHAT IS GRADED HERE. julian.shoddy's own arithmetic has a
+Rem known-answer suite of its own (tst/julian.shoddy); what is graded
+Rem here is the BRIDGE — that every calendar word reaches the prompt,
+Rem that a date is the dict both seeds have always spelled, and that
+Rem every bad input is a REFUSAL with the stack intact rather than a
+Rem wrong answer or a dead session.
+Rem
+Rem THESE WORDS LIVED IN SEEDFIN, AS FINDATE AND FRIENDS, while
+Rem fin.shoddy carried the calendar as a stated stand-in. They moved
+Rem here, renamed JUL*, when the calendar moved to julian.shoddy — and
+Rem the guard walk below is the same one they passed under their old
+Rem names, plus the two words that are new (JULDAYNUMBER, JULWEEKDAY)
+Rem and the refusal julian added (a fractional serial, which is usually
+Rem a Julian day number on the wrong epoch).
+Rem
+Rem Every refusal is walked in the seed suite's two-part shape — the
+Rem line refuses for the stated reason with the state as it was, AND a
+Rem further line evaluates afterwards.
+Rem
+Rem Run: bin\mill run tst\seedjuliantest.shoddy      (from the repo root)
+Rem ==================================================================
+
+Include "../machines/cuttle.shoddy"
+Include "../machines/reckoner.shoddy"
+Include "../machines/seq.shoddy"
+Include "../machines/str.shoddy"
+Include "../machines/seeds/seedjulian.shoddy"
+Rem Folded only for the hand-built-dict guard below: DPUT is how a
+Rem session actually builds a dict by hand, so building it any other
+Rem way would test something nobody types.
+Include "../machines/seeds/seeddict.shoddy"
+
+Rem ---- reading an answer ------------------------------------------------
+
+Def Ran(st As RckState, line As String) As RckState
+    Select Case RckEval(st, line)
+        Case RckNext(st2, out)
+            st2
+        Case RckStop(st2, why, out)
+            st2
+        Case Else
+            st
+
+Def Bad(st As RckState, line As String) As Boolean
+    Select Case RckEval(st, line)
+        Case RckStop(st2, why, out)
+            True
+        Case Else
+            False
+
+Def Why(st As RckState, line As String) As String
+    Select Case RckEval(st, line)
+        Case RckStop(st2, why, out)
+            why
+        Case Else
+            ""
+
+Def Text(st As RckState) As String
+    Join(Map(CutCells(RckStack(st)), Fn(c) => CutShow(c, RckFmt(st))), " | ")
+
+Def Deep(st As RckState) As Number
+    CutDepth(RckStack(st))
+
+Def TopNum(st As RckState) As Number
+    If Deep(st) < 1 Then
+        0 - 999999
+    Else
+        NumOf(First(CutCells(RckStack(st))))
+
+Def NumOf(c As Cell) As Number
+    Select Case c
+        Case CutNum(x)
+            x
+        Case Else
+            0 - 999999
+
+Def Got(st As RckState, line As String) As Number
+    TopNum(Ran(st, line))
+
+Def Q(s As String) As String
+    Chr(34) & s & Chr(34)
+
+Def Refuses(st As RckState, line As String, part As String) As Boolean
+    Bad(st, line) And Instr(Why(st, line), part) > 0 And Text(Ran(st, line)) = Text(st) And Text(Ran(Ran(st, line), "1 1 +")) = Text(Ran(st, "1 1 +"))
+
+Def Main()
+    Let s0 = RckSeedJulian(RckNew())
+    Let g = Ran(s0, "1 2")
+
+    Print("--- the words are registered, pure, and carry their metadata ---")
+    Assert(RckKnows(s0, "JULDATE") And RckKnows(s0, "JULSERIAL") And RckKnows(s0, "JULFROMSERIAL"), "THE CALENDAR IS IN THE DICTIONARY")
+    Assert(RckKnows(s0, "JULDAYNUMBER") And RckKnows(s0, "JULDIFF") And RckKnows(s0, "JULWEEKDAY"), "AND THE TWO EPOCHS AND THE WEEKDAY WITH IT")
+    Assert(All(RckDict(s0), Fn(e) => WordEffect(e) <> "" And WordDesc(e) <> ""), "NO WORD IS WITHOUT AN EFFECT LINE AND A DESCRIPTION")
+    Assert(All(RckDict(s0), Fn(e) => Length(RckHelp(s0, WordName(e))) = 3), "AND HELP ANSWERS FOR EVERY ONE OF THEM")
+    Rem A calendar reaches no clock: every word here is arithmetic over
+    Rem cells already on the stack, which is julian.shoddy's own claim.
+    Assert(All(RckDict(s0), Fn(e) => Not RckTouches(e)), "AND NOTHING IN THE WHOLE SEED TOUCHES THE WORLD")
+
+    Print("--- the calendar, against dates known by hand ---")
+    Assert(Got(s0, "1970 1 1 JULDATE JULSERIAL") = 0, "THE SERIAL COUNTS FROM 1970-01-01")
+    Assert(Got(s0, "1969 12 31 JULDATE JULSERIAL") = 0 - 1, "AND GOES NEGATIVE BEFORE IT")
+    Assert(Text(Ran(s0, "-1 JULFROMSERIAL JULDATESHOW")) = Q("1969-12-31"), "AND BACK AGAIN FROM A NEGATIVE SERIAL")
+    Assert(Text(Ran(s0, "2025 1 31 JULDATE JULDATESHOW")) = Q("2025-01-31"), "A DATE WRITES ITSELF AS YYYY-MM-DD, ZERO-PADDED")
+    Assert(Text(Ran(s0, Q("2025-01-31") & " JULDATEOF JULDATESHOW")) = Q("2025-01-31"), "AND READS BACK FROM THE SAME SPELLING")
+    Assert(Text(Ran(s0, "2024 JULISLEAP")) = "True", "2024 IS A LEAP YEAR")
+    Assert(Text(Ran(s0, "1900 JULISLEAP")) = "False", "1900 IS NOT, BY THE CENTURY RULE")
+    Assert(Text(Ran(s0, "2000 JULISLEAP")) = "True", "AND 2000 IS, BY THE EXCEPTION TO IT")
+    Assert(Got(s0, "2024 2 JULDAYSINMONTH") = 29, "FEBRUARY 2024 HAS 29 DAYS")
+    Assert(Got(s0, "2025 2 JULDAYSINMONTH") = 28, "AND FEBRUARY 2025 HAS 28")
+    Assert(Text(Ran(s0, "2025 1 1 JULDATE 45 JULADDDAYS JULDATESHOW")) = Q("2025-02-15"), "45 DAYS ON FROM NEW YEAR'S DAY")
+    Assert(Text(Ran(s0, "2025 3 1 JULDATE -45 JULADDDAYS JULDATESHOW")) = Q("2025-01-15"), "AND 45 DAYS BACK, WHICH IS AN ORDINARY QUESTION AND MUST NOT BE REFUSED")
+    Rem The month-end clamp, both ways: this is the rule a hand-rolled
+    Rem calendar always gets wrong, so it is asserted in both directions.
+    Assert(Text(Ran(s0, "2025 1 31 JULDATE 1 JULADDMONTHS JULDATESHOW")) = Q("2025-02-28"), "ONE MONTH AFTER 31 JANUARY IS 28 FEBRUARY, NOT 3 MARCH")
+    Assert(Text(Ran(s0, "2025 3 31 JULDATE -1 JULADDMONTHS JULDATESHOW")) = Q("2025-02-28"), "AND ONE MONTH BEFORE 31 MARCH IS 28 FEBRUARY TOO")
+    Assert(Text(Ran(s0, "2024 1 31 JULDATE 1 JULADDMONTHS JULDATESHOW")) = Q("2024-02-29"), "AND IN A LEAP YEAR IT IS THE 29TH")
+
+    Print("--- the two epochs, and the weekday ---")
+    Assert(Got(s0, "2000 1 1 JULDATE JULDAYNUMBER") = 2451544.5, "MIDNIGHT BEFORE J2000.0, WHICH ALWAYS ENDS IN POINT FIVE")
+    Assert(Got(s0, "1970 1 1 JULDATE JULDAYNUMBER") = 2440587.5, "AND THE EPOCH'S OWN JULIAN DAY, THE ONE CONSTANT")
+    Assert(Got(s0, "2026 1 1 JULDATE 2027 1 1 JULDATE JULDIFF") = 365, "A COMMON YEAR OF DAYS")
+    Assert(Got(s0, "2027 1 1 JULDATE 2026 1 1 JULDATE JULDIFF") = -365, "AND THE DIFFERENCE IS SIGNED")
+    Assert(Got(s0, "1970 1 1 JULDATE JULWEEKDAY") = 4, "THE EPOCH WAS A THURSDAY, AND MONDAY IS 1")
+    Assert(Got(s0, "2026 8 12 JULDATE JULWEEKDAY") = 3, "AND A KNOWN WEDNESDAY")
+
+    Print("--- the guards: a date that does not exist is refused, not serialized ---")
+    Rem The raw arithmetic has no opinion about whether a date is real:
+    Rem 2025-02-30 would serialize to 2 March and 2025-13-01 to January
+    Rem 2026. Both would be confident wrong answers, which is the
+    Rem failure this seed layer is for.
+    Assert(Refuses(g, "2025 2 30 JULDATE", "2/2025 HAS 28 DAYS, SO THERE IS NO DAY 30"), "THE 30TH OF FEBRUARY, NAMING THE MONTH'S REAL LENGTH")
+    Assert(Refuses(g, "2024 2 30 JULDATE", "2/2024 HAS 29 DAYS"), "AND THE 30TH IN A LEAP YEAR, WHERE THE LENGTH IS DIFFERENT")
+    Assert(Refuses(g, "2025 13 1 JULDATE", "THERE IS NO MONTH 13"), "A THIRTEENTH MONTH")
+    Assert(Refuses(g, "2025 0 1 JULDATE", "THERE IS NO MONTH 0"), "AND A ZEROTH ONE")
+    Assert(Refuses(g, "2025 1 0 JULDATE", "THERE IS NO DAY 0"), "AND A ZEROTH DAY")
+    Assert(Refuses(g, "2025 1 1.5 JULDATE", "MUST ALL BE WHOLE NUMBERS"), "AND HALF A DAY")
+    Assert(Refuses(g, "{ 1 2 } JULSERIAL", "NOT A DATE"), "A DICT OF THE WRONG SIZE HANDED TO A DATE WORD")
+    Assert(Refuses(g, "{ } JULDATESHOW", "NOT A DATE"), "AND AN EMPTY ONE")
+    Rem A dict of the right SHAPE but holding a date that does not
+    Rem exist: the check has to run on the way in as well as on the way
+    Rem out, because a dict can be built by hand.
+    Assert(Refuses(RckSeedDict(g), "{ } " & Q("yr") & " 2025 DPUT " & Q("mon") & " 2 DPUT " & Q("day") & " 30 DPUT JULSERIAL", "THERE IS NO DAY 30"), "AND A HAND-BUILT DICT NAMING A DAY THAT DOES NOT EXIST")
+    Assert(Refuses(g, "2025 1 1 JULDATE 1.5 JULADDDAYS", "needs a whole number"), "HALF A DAY'S OFFSET")
+    Assert(Refuses(g, Q("31/01/2025") & " JULDATEOF", "IT WANTS YYYY-MM-DD"), "A DATE SPELLED THE OTHER WAY ROUND")
+    Assert(Refuses(g, Q("2025-1x-31") & " JULDATEOF", "IT WANTS YYYY-MM-DD"), "AND ONE WITH A LETTER IN IT, WHICH VAL WOULD HAVE READ AS 1")
+    Assert(Refuses(g, Q("2025-02-30") & " JULDATEOF", "THERE IS NO DAY 30"), "AND ONE THAT PARSES BUT IS NOT A DAY")
+    Assert(Refuses(g, "2025 0 JULDAYSINMONTH", "THERE IS NO MONTH 0"), "AND A MONTH LENGTH ASKED OF NO MONTH")
+    Rem julian.shoddy ABORTS on a fractional serial — the guard that
+    Rem catches a Julian day number handed to the wrong epoch — and an
+    Rem abort would end the session, so the same question is asked here
+    Rem first and answered as a refusal.
+    Assert(Refuses(g, "2451544.5 JULFROMSERIAL", "needs a whole number"), "A JULIAN DAY NUMBER HANDED TO THE SERIAL EPOCH, WHICH JULIAN ITSELF WOULD ABORT ON")
+
+    Print("--- nothing above cost the session anything ---")
+    Assert(Text(Ran(g, "1 1 +")) = "2 | 2 | 1", "THE STACK IS STILL THERE AND STILL EVALUATING")
+
+    Print("")
+    Print("ALL ASSERTIONS PASSED")

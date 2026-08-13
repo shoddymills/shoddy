@@ -131,8 +131,8 @@ Def Q(s As String) As String
 Rem The two-part abort-safety assertion: the line answers for the stated
 Rem reason with the state as it was, AND a further line evaluates
 Rem afterwards. Only the second half proves the mill lived.
-Def Refuses(st As RckState, line As String, why As String) As Boolean
-    Bad(st, line) And Instr(Why(st, line), why) > 0 And Text(Ran(st, line)) = Text(st) And Text(Ran(Ran(st, line), "1 1 +")) = Text(Ran(st, "1 1 +"))
+Def Refuses(st As RckState, line As String, part As String) As Boolean
+    Bad(st, line) And Instr(Why(st, line), part) > 0 And Text(Ran(st, line)) = Text(st) And Text(Ran(Ran(st, line), "1 1 +")) = Text(Ran(st, "1 1 +"))
 
 Rem The abort-safety shape T15 and T17's ISAMGETOR need: not every
 Rem guarded word REFUSES on the bad case (WRITELINES answers False,
@@ -345,14 +345,19 @@ Def Main()
     Assert(Refuses(g, "0 1 - 1 BITAND", "BITAND needs a whole number of 0 or more, got -1"), "A NEGATIVE BIT PATTERN")
     Assert(Refuses(g, "1.5 0 BITAT", "BITAT needs a whole number of 0 or more, got 1.5"), "AND A FRACTIONAL ONE")
     Assert(Refuses(g, "2 53 ^ POPCOUNT", "POPCOUNT needs a whole number below 2^53"), "AND ONE PAST THE 53-BIT CEILING, WHERE IT IS NO LONGER EXACTLY ITSELF")
-    Assert(Refuses(g, "256 8 BITNOT", "BITNOT needs a value that fits 8 bits, and 256 does not"), "A VALUE TOO WIDE FOR ITS WIDTH")
-    Assert(Refuses(g, "0 54 BITNOT", "BITNOT needs a width from 1 to 53, got 54"), "A WIDTH ABOVE THE CEILING")
-    Assert(Refuses(g, "0 0 BITNOT", "BITNOT needs a width from 1 to 53, got 0"), "AND ONE BELOW ONE")
+    Assert(Refuses(Ran(g, "8 WIDTH"), "256 BITNOT", "BITNOT needs a value that fits 8 bits, and 256 does not"), "A VALUE TOO WIDE FOR THE SESSION WIDTH")
+    Rem The width bound itself is no longer any bit word's to enforce: it
+    Rem is checked once, by WIDTH, where the mode is set. So these two
+    Rem refusals moved rather than disappeared.
+    Assert(Refuses(g, "54 WIDTH", "WIDTH needs a width from 1 to 53, got 54"), "A WIDTH ABOVE THE CEILING")
+    Assert(Refuses(g, "0 WIDTH", "WIDTH needs a width from 1 to 53, got 0"), "AND ONE BELOW ONE")
     Assert(Refuses(g, "5 37 INBASE", "INBASE needs a base from 2 to 36, got 37"), "A BASE THE DIGIT ALPHABET CANNOT SPELL")
     Assert(Refuses(g, "5 1 INBASE", "INBASE needs a base from 2 to 36, got 1"), "AND A BASE OF ONE")
     Assert(Refuses(g, "0 53 BITAT", "BITAT needs a bit index from 0 to 52, got 53"), "A BIT INDEX PAST THE LAST ONE A 53-BIT WORD HAS")
     Assert(Refuses(g, "54 MASK", "MASK needs a bit count from 0 to 53, got 54"), "A MASK WIDER THAN THE CEILING")
-    Assert(Refuses(g, "1 99 8 SHL", "SHL needs a shift from 0 to 53, got 99"), "A SHIFT PAST THE CEILING")
+    Rem SHL reads the session width now and takes two arguments, not
+    Rem three. The shift is still bounded and still named.
+    Assert(Refuses(g, "1 99 SHL", "SHL needs a shift from 0 to 53, got 99"), "A SHIFT PAST THE CEILING")
     Assert(Refuses(g, "255 54 SHR", "SHR needs a shift from 0 to 53, got 54"), "AND THE SAME FOR THE ONE SHIFT THAT TAKES NO WIDTH")
     Assert(Refuses(g, "171 4 7 GETFIELD", "GETFIELD needs a high bit at or above the low bit, got 4 and 7"), "AN INVERTED FIELD")
     Rem FROMBASE reads text, so bool answers Result rather than aborting;
@@ -361,6 +366,21 @@ Def Main()
     Assert(Refuses(g, Q("1F") & " 2 FROMBASE", "FROMBASE: '1F' HAS NO DIGIT F IN BASE 2 at position 2"), "A DIGIT THE BASE DOES NOT HAVE, WITH ITS 1-BASED POSITION")
     Assert(Refuses(g, Q("") & " 16 FROMBASE", "FROMBASE: THE EMPTY STRING IS NOT A NUMBER IN BASE 16"), "AND AN EMPTY STRING, WHICH HAS NO POSITION TO REPORT")
     Assert(Refuses(g, "TRUE 1 XOR", "XOR needs a BOOLEAN, got NUMBER"), "A GATE HANDED A NUMBER")
+    Rem The families that arrived with the session width bring one new
+    Rem KIND of refusal between them and not thirty: a value that does not
+    Rem fit the width the session is set to. One from each family is
+    Rem walked here; tst/seedbooltest.shoddy walks every word of all of
+    Rem them, which is what a per-seed suite is for and this file is not.
+    Assert(Refuses(Ran(g, "8 WIDTH"), "256 1 ROTL", "ROTL needs a value that fits 8 bits, and 256 does not"), "A ROTATE OF A VALUE TOO WIDE FOR THE SESSION")
+    Assert(Refuses(Ran(g, "8 WIDTH"), "256 1 ADDW", "ADDW needs a value that fits 8 bits, and 256 does not"), "AND THE SAME IN THE WRAPPING ARITHMETIC")
+    Assert(Refuses(Ran(g, "8 WIDTH"), "128 UNSIGNED", "UNSIGNED needs a value from -128 to 127 at 8 signed bits"), "AND A SIGNED VALUE OUTSIDE WHAT THE WIDTH HOLDS, WHICH IS A DIFFERENT BOUND AND SAYS SO")
+    Assert(Refuses(g, "10 FROMBCD", "HAS THE NIBBLE 10, WHICH IS NOT A DECIMAL DIGIT"), "A BCD NIBBLE THAT IS NOT A DECIMAL DIGIT, TRANSLATED FROM BOOL'S RESULT RATHER THAN INVENTED")
+    Assert(Refuses(g, "{ 0 1 } 13 MINTERMS", "MINTERMS needs a variable count from 1 to 12, got 13"), "AND A TRUTH TABLE BIG ENOUGH TO HANG, REFUSED BY NAME INSTEAD")
+    Rem LOWBIT is the one that does NOT refuse where a caller might expect
+    Rem it to: zero has no lowest set bit and that is an ordinary answer,
+    Rem so it answers an empty LIST. Asserted here as an answer, beside the
+    Rem refusals, because the distinction is the design.
+    Assert(Text(Ran(s0, "0 LOWBIT")) = "{ }", "AND ZERO'S LOWEST BIT IS AN ABSENCE ANSWERED, NOT A REFUSAL")
 
     Print("--- seed-bool: and the answers ---")
     Assert(Text(Ran(s0, "255 HEX")) = Q("FF"), "HEX")
@@ -373,9 +393,14 @@ Def Main()
     Assert(Text(Ran(s0, "12 10 BITAND")) = "8", "BITAND")
     Assert(Text(Ran(s0, "12 10 BITOR")) = "14", "BITOR")
     Assert(Text(Ran(s0, "12 10 BITXOR")) = "6", "BITXOR")
-    Assert(Text(Ran(s0, "0 8 BITNOT")) = "255", "BITNOT WITHIN A BYTE")
-    Assert(Text(Ran(s0, "1 7 8 SHL")) = "128", "SHL TO THE TOP OF A BYTE")
-    Assert(Text(Ran(s0, "1 8 8 SHL")) = "0", "AND ONE PLACE FURTHER FALLS OFF")
+    Assert(Text(Ran(s0, "8 WIDTH 0 BITNOT")) = "255", "BITNOT WITHIN A BYTE")
+    Rem The width is a session mode, so it is set once at the front of the
+    Rem line rather than carried by every shift on it. At the default 32
+    Rem the second of these would be 256; the whole point of WIDTH is that
+    Rem the bit falls off where the session says the word ends.
+    Assert(Text(Ran(s0, "8 WIDTH 1 7 SHL")) = "128", "SHL TO THE TOP OF A BYTE")
+    Assert(Text(Ran(s0, "8 WIDTH 1 8 SHL")) = "0", "AND ONE PLACE FURTHER FALLS OFF")
+    Assert(Text(Ran(s0, "1 8 SHL")) = "256", "WHILE AT THE DEFAULT WIDTH IT IS STILL THERE")
     Assert(Text(Ran(s0, "255 4 SHR")) = "15", "SHR")
     Assert(Text(Ran(s0, "8 MASK")) = "255", "MASK")
     Assert(Text(Ran(s0, "171 7 4 GETFIELD")) = "10", "GETFIELD READS THE HIGH NIBBLE OF 171")

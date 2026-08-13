@@ -1,0 +1,644 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem geo.shoddy — test program for machines/geo.shoddy
+Rem
+Rem Assert-driven, in the fin.shoddy / eng.shoddy / bool.shoddy pattern:
+Rem it prints what it is doing, stops at the first failed assertion, and
+Rem ends with ALL ASSERTIONS PASSED when none fail. Offline — nothing
+Rem here touches a file, a socket or a window, and nothing here reads a
+Rem clock.
+Rem
+Rem EVERY NUMBER BELOW IS A KNOWN ANSWER, NEVER A VALUE RECORDED FROM A
+Rem RUN. The distances and bearings were worked independently, by the
+Rem SPHERICAL LAW OF COSINES, before machines/geo.shoddy existed:
+Rem
+Rem   d = R * acos(sin(lat1) sin(lat2) + cos(lat1) cos(lat2) cos(dLon))
+Rem
+Rem That matters more here than in most suites. geo computes distance by
+Rem HAVERSINE, which is a different formula reaching the same number, so
+Rem a fixture worked this way disagrees with a mistyped haversine instead
+Rem of agreeing with it. A suite built from geo's own output would agree
+Rem with a wrong geo forever.
+Rem
+Rem   London  51.5074 N, 0.1278 W        Paris     48.8566 N, 2.3522 E
+Rem   New York 40.7128 N, 74.0060 W
+Rem
+Rem   London -> Paris     343556.5349 m   initial 148.1156169 deg
+Rem                                       final   150.0210929 deg
+Rem   London -> New York 5570229.874  m   initial 288.3297016 deg
+Rem                                       final   231.2126168 deg
+Rem   0N 179E -> 0N 179W  222390.1605 m
+Rem
+Rem The wider tolerances in the ACCEPTANCE block are deliberately looser
+Rem than the arithmetic needs: what they pin is the formula, not the
+Rem coordinates somebody chose for the fixture.
+Rem
+Rem NOTHING IS ASSERTED WITH = ON A COMPUTED POINT. A GeoPt is an
+Rem all-scalar record, so it does compare structurally — but a point
+Rem arrived at through trigonometry never lands on the literal it should
+Rem equal. GeoNear is the comparison throughout, exactly as EngCNear is
+Rem for complex numbers. = appears only on points that were BUILT rather
+Rem than computed, where it is testing the constructor and nothing else.
+Rem
+Rem INCLUDES DO NOT BLEED THROUGH, so math's Rad, Deg and Clamp are not
+Rem in scope here even though geo is built on them. Everything below is
+Rem a builtin or a Geo word, which is the right constraint for a suite:
+Rem it can only reach what a caller of geo can reach.
+Rem
+Rem WHAT CANNOT BE TESTED HERE: the aborting half of the domain guard.
+Rem Shoddy has no catchable errors, so asserting that GeoAt(91, 0)
+Rem aborts would kill the suite rather than fail an assertion. The
+Rem aborting twin is verified by hand and named here instead:
+Rem
+Rem   GeoAt(91, 0)        latitude above 90
+Rem   GeoAt(-91, 0)       latitude below -90
+Rem   GeoAt(0, 181)       longitude outside -180..180
+Rem
+Rem GeoTryAt is the total twin of exactly those refusals and IS asserted
+Rem below, on both arms. That is the argument for the Result/abort line
+Rem being drawn where it is.
+Rem
+Rem Run: bin\mill run tst\geo.shoddy      (from the repo root)
+Rem ==================================================================
+
+Include "../machines/geo.shoddy"
+
+Rem ---- fixtures --------------------------------------------------------
+
+Def London() As GeoPt
+    GeoAt(51.5074, -0.1278)
+
+Def Paris() As GeoPt
+    GeoAt(48.8566, 2.3522)
+
+Def NewYork() As GeoPt
+    GeoAt(40.7128, -74.006)
+
+Rem The two points either side of the antimeridian, ON THE EQUATOR. The
+Rem latitude has to be stated: the same two degrees of longitude shrink
+Rem with the cosine, so a test omitting it asserts an accident.
+Def EastOfLine() As GeoPt
+    GeoAt(0, 179)
+
+Def WestOfLine() As GeoPt
+    GeoAt(0, -179)
+
+Rem The cross-track trio. TrackA -> TrackB runs east-south-east; OffTrack
+Rem lies NORTH of it, which is to the LEFT of that heading, which is why
+Rem the expected cross-track distance below is negative.
+Def TrackA() As GeoPt
+    GeoAt(53.3206, -1.7297)
+
+Def TrackB() As GeoPt
+    GeoAt(53.1887, -0.1334)
+
+Def OffTrack() As GeoPt
+    GeoAt(53.2611, -0.7972)
+
+Rem The intersection worked example: two aircraft on two bearings.
+Def IntA() As GeoPt
+    GeoAt(51.8853, 0.2545)
+
+Def IntB() As GeoPt
+    GeoAt(49.0034, 2.5735)
+
+Rem A three-point route across northern Europe: London, Paris, Lyon.
+Def Route() As List Of GeoPt
+    { London(), Paris(), GeoAt(45.764, 4.8357) }
+
+Rem The two-point route across the antimeridian, which is where every
+Rem bounding box written by hand goes wrong.
+Def LineRoute() As List Of GeoPt
+    { EastOfLine(), WestOfLine() }
+
+Rem ---- this file's own helpers -----------------------------------------
+
+Def Close(a As Number, b As Number, tol As Number) As Boolean
+    Abs(a - b) <= tol
+
+Def IsNone(o As Option) As Boolean
+    Select Case o
+        Case None
+            True
+        Case Else
+            False
+
+Rem Option has no accessor words — Select Case is the only way in — so
+Rem an assertion about the point inside one goes through this.
+Def SomeOr(o As Option, dflt As GeoPt) As GeoPt
+    Select Case o
+        Case Some(p)
+            p
+        Case Else
+            dflt
+
+Rem The degree and second marks, built from their codes rather than
+Rem typed. A literal degree sign in a source file is one bad save away
+Rem from mojibake, and verify-docs.js scans this tree for exactly that.
+Def DegMark() As String
+    Chr(176)
+
+Def SecMark() As String
+    Chr(34)
+
+Def OkNum(r As Result, dflt As Number) As Number
+    Select Case r
+        Case Ok(x)
+            x
+        Case Else
+            dflt
+
+Def OkPt(r As Result) As GeoPt
+    Select Case r
+        Case Ok(p)
+            p
+        Case Else
+            GeoAt(0, 0)
+
+Def OkBox(r As Result) As GeoBox
+    Select Case r
+        Case Ok(b)
+            b
+        Case Else
+            GeoBox(0, 0, 0, 0, False)
+
+Def ErrAt(r As Result) As Number
+    Select Case r
+        Case Err(why, at)
+            at
+        Case Else
+            0
+
+Rem seq's Contains is not in scope here — Includes do not bleed through
+Rem — so the two list predicates this file needs are its own, on Fold.
+Def HasText(xs As List Of String, v As String) As Boolean
+    Fold(xs, False, Fn(a, x) => a Or (x = v))
+
+Def CountOf(xs As List Of String, v As String) As Number
+    Fold(xs, 0, Fn(a, x) => a + Ifte(x = v, 1, 0))
+
+Def AllDistinct(xs As List Of String) As Boolean
+    Fold(xs, True, Fn(a, x) => a And (CountOf(xs, x) = 1))
+
+Rem Comparing two bearings needs the difference folded, or due north
+Rem read off a real calculation — 359.97 degrees — is judged 360 away
+Rem from 0 rather than a thirtieth of a degree. Every angular assertion
+Rem below goes through this and none of them uses Close.
+Def CloseAngle(a As Number, b As Number, tol As Number) As Boolean
+    Abs(180 - Wrap(180 - (a - b), 360)) <= tol
+
+Def SomeNum(o As Option, dflt As Number) As Number
+    Select Case o
+        Case Some(x)
+            x
+        Case Else
+            dflt
+
+Def SomeNums(o As Option) As List Of Number
+    Select Case o
+        Case Some(xs)
+            xs
+        Case Else
+            { }
+
+Def IsErr(r As Result) As Boolean
+    Select Case r
+        Case Err(why, at)
+            True
+        Case Else
+            False
+
+Rem The round trip that catches everything: steer the bearing geo
+Rem answers for the distance geo answers, and arrive back at b.
+Def RoundTrips(a As GeoPt, b As GeoPt) As Boolean
+    GeoNear(GeoDestination(a, GeoBearing(a, b), GeoDistance(a, b)), b, 1)
+
+Def Main()
+    Print("--- THE SPHERE ---")
+    Assert(GeoRadius() = 6371008.8, "THE IUGG MEAN EARTH RADIUS, IN METRES")
+
+    Print("--- THE TYPE AND ITS CONSTRUCTION ---")
+    Assert(GeoLat(GeoAt(53.72, -1.86)) = 53.72, "LATITUDE IS THE FIRST FIELD")
+    Assert(GeoLon(GeoAt(53.72, -1.86)) = -1.86, "AND LONGITUDE THE SECOND")
+    Assert(GeoAt(90, 180) = GeoPt(90, 180), "THE CORNERS OF THE DOMAIN ARE INSIDE IT")
+    Assert(GeoAt(-90, -180) = GeoPt(-90, -180), "AT BOTH ENDS")
+
+    Print("--- THE DOMAIN, AS A RESULT ---")
+    Assert(GeoTryAt(53.72, -1.86) = Ok(GeoPt(53.72, -1.86)), "A GOOD COORDINATE IS OK")
+    Assert(IsErr(GeoTryAt(91, 0)), "91 DEGREES NORTH IS ERR, NOT AN ABORT")
+    Assert(IsErr(GeoTryAt(-91, 0)), "AND 91 DEGREES SOUTH")
+    Assert(IsErr(GeoTryAt(0, 181)), "AND 181 DEGREES EAST")
+    Assert(IsErr(GeoTryAt(0, -181)), "AND 181 DEGREES WEST")
+    Assert(Not IsErr(GeoTryAt(90, 180)), "THE CORNERS ARE NOT REFUSED")
+
+    Print("--- THE ANTIMERIDIAN, FOLDED ONCE AND FOR ALL ---")
+    Assert(GeoWrapLon(0) = 0, "ZERO IS ZERO")
+    Assert(GeoWrapLon(179) = 179, "AND ANYTHING ALREADY INSIDE IS UNTOUCHED")
+    Assert(GeoWrapLon(180) = 180, "THE RANGE IS HALF-OPEN AT THE WEST END, SO 180 STAYS 180")
+    Assert(GeoWrapLon(-180) = 180, "AND -180 IS THE SAME MERIDIAN, SPELLED THE OTHER WAY")
+    Assert(GeoWrapLon(190) = -170, "190 EAST IS 170 WEST")
+    Assert(GeoWrapLon(-190) = 170, "AND 190 WEST IS 170 EAST")
+    Assert(GeoWrapLon(360) = 0, "A WHOLE TURN COMES BACK")
+    Assert(GeoWrapLon(540) = 180, "AND A TURN AND A HALF LANDS ON THE LINE")
+
+    Print("--- BEARINGS ARE 0..360, NORTH IS 0, CLOCKWISE ---")
+    Assert(GeoWrapBrg(0) = 0, "NORTH IS ZERO")
+    Assert(GeoWrapBrg(-170) = 190, "AND NO CALLER EVER SEES -170")
+    Assert(GeoWrapBrg(370) = 10, "A TURN AND TEN IS TEN")
+    Assert(GeoWrapBrg(360) = 0, "AND A WHOLE TURN IS NORTH AGAIN, NOT 360")
+
+    Print("--- DISTANCE, AGAINST INDEPENDENTLY WORKED VALUES ---")
+    Assert(Close(GeoDistance(London(), Paris()), 343556.5349, 1), "LONDON TO PARIS, TO THE METRE")
+    Assert(Close(GeoDistance(London(), NewYork()), 5570229.874, 1), "LONDON TO NEW YORK, TO THE METRE")
+    Assert(GeoDistance(London(), Paris()) = GeoDistance(Paris(), London()), "DISTANCE IS SYMMETRIC")
+    Assert(GeoDistance(London(), London()) = 0, "AND A POINT IS NO DISTANCE FROM ITSELF")
+
+    Print("--- ACCEPTANCE: THE PUBLISHED FIGURES, LOOSELY PINNED ---")
+    Assert(Close(GeoDistance(London(), Paris()), 344000, 2000), "LONDON TO PARIS IS 344 KM WITHIN 2 KM")
+    Assert(Close(GeoDistance(London(), NewYork()), 5570000, 20000), "LONDON TO NEW YORK IS 5570 KM WITHIN 20 KM")
+
+    Print("--- THE ANTIMERIDIAN IS 222 KM, NOT 40000 ---")
+    Assert(Close(GeoDistance(EastOfLine(), WestOfLine()), 222390.1605, 1), "179 EAST TO 179 WEST ON THE EQUATOR")
+    Assert(GeoDistance(EastOfLine(), WestOfLine()) < 300000, "THE SHORT WAY ROUND, WHICH IS THE WHOLE POINT")
+
+    Print("--- BEARING ---")
+    Assert(Close(GeoBearing(London(), Paris()), 148.1156169, 0.0001), "LONDON TO PARIS, INITIAL")
+    Assert(Close(GeoBearing(London(), NewYork()), 288.3297016, 0.0001), "LONDON TO NEW YORK, INITIAL")
+    Assert(GeoBearing(London(), Paris()) >= 0, "A BEARING IS NEVER NEGATIVE")
+    Assert(GeoBearing(London(), NewYork()) < 360, "AND NEVER A WHOLE TURN")
+
+    Print("--- FINAL BEARING IS NOT THE INITIAL ONE REVERSED ---")
+    Assert(Close(GeoFinalBearing(London(), Paris()), 150.0210929, 0.0001), "LONDON TO PARIS, ON ARRIVAL")
+    Assert(Close(GeoFinalBearing(London(), NewYork()), 231.2126168, 0.0001), "LONDON TO NEW YORK, ON ARRIVAL")
+    Assert(Abs(GeoFinalBearing(London(), NewYork()) - GeoWrapBrg(GeoBearing(London(), NewYork()) + 180)) > 50, "AND OVER THE ATLANTIC THE TWO DIFFER BY MORE THAN 50 DEGREES")
+
+    Print("--- THE ROUND TRIP: DESTINATION OVER BEARING OVER DISTANCE ---")
+    Assert(RoundTrips(London(), Paris()), "A SHORT LEG RETURNS WITHIN A METRE")
+    Assert(RoundTrips(London(), NewYork()), "A LONG ONE DOES TOO")
+    Assert(RoundTrips(EastOfLine(), WestOfLine()), "AND ONE CROSSING THE ANTIMERIDIAN")
+    Assert(RoundTrips(GeoAt(-33.8688, 151.2093), GeoAt(-41.2865, 174.7762)), "AND ONE IN THE SOUTHERN HEMISPHERE")
+
+    Print("--- DESTINATION ---")
+    Assert(GeoNear(GeoDestination(London(), 90, 0), London(), 0.000001), "GOING NOWHERE ARRIVES WHERE YOU STARTED")
+    Assert(Close(GeoLat(GeoDestination(GeoAt(0, 0), 0, GeoRadius() * Pi() / 2)), 90, 0.000001), "DUE NORTH A QUARTER OF THE WAY ROUND REACHES THE POLE")
+    Assert(Close(GeoDistance(London(), GeoDestination(London(), 37, 100000)), 100000, 0.000001), "AND THE DISTANCE STEERED IS THE DISTANCE TRAVELLED")
+    Assert(GeoLon(GeoDestination(EastOfLine(), 90, 400000)) < 0, "STEERING EAST OFF 179 EAST LANDS IN THE WESTERN HEMISPHERE")
+
+    Print("--- MIDPOINT IS NOT THE AVERAGE OF TWO COORDINATES ---")
+    Assert(Close(Abs(GeoLon(GeoMidpoint(EastOfLine(), WestOfLine()))), 180, 0.000001), "THE MIDPOINT ACROSS THE LINE IS ON THE LINE")
+    Assert(Close(GeoLat(GeoMidpoint(EastOfLine(), WestOfLine())), 0, 0.000001), "AND STAYS ON THE EQUATOR")
+    Assert(Close(GeoDistance(London(), GeoMidpoint(London(), NewYork())), GeoDistance(GeoMidpoint(London(), NewYork()), NewYork()), 0.001), "THE MIDPOINT IS EQUIDISTANT FROM BOTH ENDS")
+    Assert(GeoNear(GeoMidpoint(London(), London()), London(), 0.000001), "AND THE MIDPOINT OF ONE POINT IS THAT POINT")
+
+    Print("--- ALONG, WHICH MIDPOINT IS HALF OF ---")
+    Assert(GeoNear(GeoAlong(London(), NewYork(), 0), London(), 0.001), "FRACTION 0 IS THE START")
+    Assert(GeoNear(GeoAlong(London(), NewYork(), 1), NewYork(), 0.001), "FRACTION 1 IS THE END")
+    Assert(GeoNear(GeoAlong(London(), NewYork(), 0.5), GeoMidpoint(London(), NewYork()), 0.001), "AND A HALF IS THE MIDPOINT")
+    Assert(Close(GeoDistance(London(), GeoAlong(London(), NewYork(), 0.25)), GeoDistance(London(), NewYork()) * 0.25, 0.001), "A QUARTER OF THE WAY IS A QUARTER OF THE DISTANCE")
+    Assert(GeoDistance(London(), GeoAlong(London(), NewYork(), 2)) > GeoDistance(London(), NewYork()), "AND A FRACTION PAST 1 EXTRAPOLATES, DELIBERATELY")
+
+    Print("--- ANTIPODE ---")
+    Assert(GeoAntipode(GeoAt(53.72, -1.86)) = GeoPt(-53.72, 178.14), "DIAMETRICALLY OPPOSITE, BOTH FIELDS TURNED")
+    Assert(Close(GeoDistance(London(), GeoAntipode(London())), GeoRadius() * Pi(), 0.001), "AND HALF THE PLANET AWAY")
+    Assert(GeoNear(GeoAntipode(GeoAntipode(London())), London(), 0.000001), "TWICE OVER IS BACK HOME")
+
+    Print("--- THE POLES ARE THE OTHER BUG ---")
+    Assert(Close(GeoDistance(GeoAt(90, 0), GeoAt(0, 0)), GeoRadius() * Pi() / 2, 0.001), "POLE TO EQUATOR IS A QUARTER OF THE WAY ROUND")
+    Assert(GeoBearing(GeoAt(90, 0), GeoAt(50, 0)) = 180, "EVERY DIRECTION FROM THE NORTH POLE IS SOUTH")
+    Assert(GeoBearing(GeoAt(-90, 0), GeoAt(-50, 0)) = 0, "AND EVERY DIRECTION FROM THE SOUTH POLE IS NORTH")
+    Assert(Close(GeoDistance(GeoAt(90, 0), GeoAt(90, 137)), 0, 0.000001), "THE POLE IS ONE PLACE, WHATEVER LONGITUDE IT IS SPELLED WITH")
+
+    Print("--- NEAR, THE ONLY COMPARISON OFFERED ---")
+    Assert(GeoNear(London(), London(), 0), "A POINT IS WITHIN NOTHING OF ITSELF")
+    Assert(GeoNear(London(), Paris(), 400000), "LONDON IS WITHIN 400 KM OF PARIS")
+    Assert(Not GeoNear(London(), Paris(), 1000), "AND NOT WITHIN 1 KM")
+
+    Print("--- EQUIRECTANGULAR, HONEST ABOUT BEING WRONG ---")
+    Assert(Close(GeoEquirect(London(), Paris()), GeoDistance(London(), Paris()), 500), "IT IS GOOD ENOUGH TO RANK A SHORTLIST")
+    Assert(Abs(GeoEquirect(London(), NewYork()) - GeoDistance(London(), NewYork())) > 100000, "AND OVER THE ATLANTIC IT IS OUT BY OVER 100 KM, WHICH IS WHY IT IS NOT A DISTANCE")
+    Assert(GeoEquirect(London(), London()) = 0, "A POINT IS STILL NO DISTANCE FROM ITSELF")
+
+    Print("--- CROSS-TRACK, SIGNED ON PURPOSE ---")
+    Assert(Close(GeoCrossTrack(OffTrack(), TrackA(), TrackB()), -1636.588912, 0.01), "THE PERPENDICULAR DISTANCE FROM THE GREAT CIRCLE")
+    Assert(GeoCrossTrack(GeoAt(0.4, 0.6), GeoAt(0, 0), GeoAt(1, 1)) > 0, "RIGHT OF A NORTH-EAST TRACK IS POSITIVE")
+    Assert(GeoCrossTrack(GeoAt(0.6, 0.4), GeoAt(0, 0), GeoAt(1, 1)) < 0, "AND LEFT OF IT IS NEGATIVE")
+    Assert(Close(GeoCrossTrack(TrackA(), TrackA(), TrackB()), 0, 0.000001), "A POINT ON THE TRACK IS NOT OFF IT")
+
+    Print("--- ALONG-TRACK ---")
+    Assert(Close(GeoAlongTrack(OffTrack(), TrackA(), TrackB()), 62310.85005, 0.01), "HOW FAR ALONG THE NEAREST POINT LIES")
+    Assert(Close(GeoAlongTrack(TrackA(), TrackA(), TrackB()), 0, 0.000001), "THE START IS NO WAY ALONG")
+    Assert(Close(GeoAlongTrack(TrackB(), TrackA(), TrackB()), GeoDistance(TrackA(), TrackB()), 0.001), "AND THE END IS THE WHOLE WAY")
+    Assert(GeoAlongTrack(GeoDestination(TrackA(), GeoWrapBrg(GeoBearing(TrackA(), TrackB()) + 180), 5000), TrackA(), TrackB()) < 0, "A POINT BEHIND THE START IS A NEGATIVE DISTANCE ALONG")
+
+    Print("--- THE FOOT OF THE PERPENDICULAR, CLAMPED TO THE SEGMENT ---")
+    Assert(Close(GeoDistance(OffTrack(), GeoClosestOnLeg(OffTrack(), TrackA(), TrackB())), 1636.588912, 0.1), "THE NEAREST POINT IS THE CROSS-TRACK DISTANCE AWAY")
+    Assert(GeoNear(GeoClosestOnLeg(GeoDestination(TrackB(), GeoBearing(TrackA(), TrackB()), 50000), TrackA(), TrackB()), TrackB(), 0.001), "PAST THE END CLAMPS TO THE END")
+    Assert(GeoNear(GeoClosestOnLeg(GeoDestination(TrackA(), GeoWrapBrg(GeoBearing(TrackA(), TrackB()) + 180), 50000), TrackA(), TrackB()), TrackA(), 0.001), "AND BEFORE THE START CLAMPS TO THE START")
+    Assert(GeoNear(GeoClosestOnLeg(OffTrack(), TrackA(), TrackA()), TrackA(), 0.000001), "A LEG OF NO LENGTH IS ITS OWN NEAREST POINT")
+
+    Print("--- WHERE TWO GREAT CIRCLES CROSS ---")
+    Assert(Not IsNone(GeoIntersect(IntA(), 108.547, IntB(), 32.435)), "TWO CROSSING PATHS CROSS")
+    Assert(GeoNear(SomeOr(GeoIntersect(IntA(), 108.547, IntB(), 32.435), GeoAt(0, 0)), GeoPt(50.9078087, 4.508409907), 1), "AND THEY CROSS WHERE THE WORKED EXAMPLE SAYS, WITHIN A METRE")
+    Assert(IsNone(GeoIntersect(GeoAt(0, 0), 90, GeoAt(0, 10), 90)), "TWO PATHS ALONG THE EQUATOR ARE ONE CIRCLE, AND ONE CIRCLE HAS NO CROSSING")
+    Assert(IsNone(GeoIntersect(GeoAt(0, 0), 90, GeoAt(0, 10), 270)), "AND THE SAME CIRCLE RUN BACKWARDS IS STILL ONE CIRCLE")
+    Assert(GeoNear(SomeOr(GeoIntersect(London(), 0, London(), 90), GeoAt(0, 0)), London(), 0.000001), "TWO PATHS FROM ONE POINT CROSS AT THAT POINT")
+    Assert(IsNone(GeoIntersect(London(), 45, London(), 225)), "UNLESS THE TWO BEARINGS DESCRIBE ONE CIRCLE")
+
+    Print("--- A ROUTE IS A LIST, AND AN EMPTY ONE HAS A LENGTH ---")
+    Assert(GeoRouteLength({ }) = 0, "A ROUTE WITH NOWHERE TO GO IS ZERO LONG, NOT AN ERROR")
+    Assert(GeoRouteLength({ London() }) = 0, "AND SO IS A ROUTE OF ONE POINT")
+    Assert(Close(GeoRouteLength({ London(), Paris() }), GeoDistance(London(), Paris()), 0.000001), "A TWO-POINT ROUTE IS ONE LEG")
+    Assert(Length(GeoRouteLegs(Route())) = 2, "THREE POINTS MAKE TWO LEGS")
+    Assert(Length(GeoRouteLegs({ })) = 0, "AND NO POINTS MAKE NO LEGS")
+    Assert(Close(Nth(GeoRouteLegs(Route()), 1), GeoDistance(London(), Paris()), 0.000001), "AND THE FIRST LEG IS THE FIRST LEG")
+
+    Print("--- CUMULATIVE: N VALUES, FIRST 0, LAST THE TOTAL ---")
+    Assert(Length(GeoRouteCumulative(Route())) = 3, "ONE PER POINT, NOT ONE PER LEG")
+    Assert(First(GeoRouteCumulative(Route())) = 0, "THE START IS NO WAY ALONG")
+    Assert(Close(Nth(GeoRouteCumulative(Route()), 3), GeoRouteLength(Route()), 0.000001), "AND THE END IS THE WHOLE LENGTH")
+
+    Print("--- THE COURSE TO STEER, LEG BY LEG ---")
+    Assert(Length(GeoRouteBearings(Route())) = 2, "ONE BEARING PER LEG")
+    Assert(Close(First(GeoRouteBearings(Route())), GeoBearing(London(), Paris()), 0.000001), "AND IT IS THE INITIAL BEARING OF THAT LEG")
+
+    Print("--- THE POINT THAT FAR ALONG, OR ABSENCE ---")
+    Assert(GeoNear(SomeOr(GeoRouteAt(Route(), 0), GeoAt(0, 0)), London(), 0.001), "NOTHING ALONG IS THE START")
+    Assert(GeoNear(SomeOr(GeoRouteAt(Route(), GeoRouteLength(Route())), GeoAt(0, 0)), Nth(Route(), 3), 0.001), "THE WHOLE WAY ALONG IS THE END")
+    Assert(IsNone(GeoRouteAt(Route(), GeoRouteLength(Route()) + 1)), "PAST THE END IS ABSENCE, NOT A CALLER BUG")
+    Assert(IsNone(GeoRouteAt(Route(), -1)), "AND SO IS BEFORE THE START")
+    Assert(IsNone(GeoRouteAt({ }, 0)), "AN EMPTY ROUTE HAS NO POINT ANYWHERE ALONG IT")
+    Assert(Close(GeoDistance(London(), SomeOr(GeoRouteAt(Route(), 100000), GeoAt(0, 0))), 100000, 0.001), "AND 100 KM ALONG IS 100 KM FROM THE START")
+
+    Print("--- THE NEAREST POINT ON A ROUTE ---")
+    Assert(Close(HitAway(GeoNearestOn({ TrackA(), TrackB() }, OffTrack())), 1636.588912, 0.1), "AS FAR OFF AS THE CROSS-TRACK DISTANCE SAYS")
+    Assert(HitLeg(GeoNearestOn({ TrackA(), TrackB() }, OffTrack())) = 1, "ON THE FIRST LEG")
+    Assert(Close(HitAlong(GeoNearestOn({ TrackA(), TrackB() }, OffTrack())), 62310.85005, 0.5), "AND THAT FAR ALONG IT")
+    Assert(HitLeg(GeoNearestOn(Route(), GeoAt(46, 5))) = 2, "A POINT BY LYON IS NEAREST THE SECOND LEG")
+    Assert(GeoNear(HitPoint(GeoNearestOn({ London() }, Paris())), London(), 0.000001), "A ONE-POINT ROUTE IS ITS OWN NEAREST POINT")
+
+    Print("--- BOUNDS, ANTIMERIDIAN-AWARE ---")
+    Assert(Not BoxWraps(GeoRouteBounds(Route())), "A EUROPEAN ROUTE NEEDS NO WRAPPING")
+    Assert(BoxWraps(GeoRouteBounds(LineRoute())), "AND ONE ACROSS THE LINE REPORTS THAT IT DOES")
+    Assert(Close(BoxWest(GeoRouteBounds(LineRoute())), 179, 0.000001), "THE BOX RUNS EAST FROM 179 EAST")
+    Assert(Close(BoxEast(GeoRouteBounds(LineRoute())), -179, 0.000001), "TO 179 WEST, WHICH IS TWO DEGREES AND NOT THREE HUNDRED AND FIFTY-EIGHT")
+    Assert(GeoInBox(EastOfLine(), GeoRouteBounds(LineRoute())), "AND GEOINBOX AGREES ABOUT ITS OWN POINTS")
+    Assert(GeoInBox(WestOfLine(), GeoRouteBounds(LineRoute())), "AT BOTH ENDS")
+    Assert(Not GeoInBox(GeoAt(0, 0), GeoRouteBounds(LineRoute())), "AND EXCLUDES THE FAR SIDE OF THE PLANET")
+    Assert(GeoInBox(London(), GeoRouteBounds(Route())), "AN ORDINARY BOX CONTAINS ITS OWN POINTS TOO")
+    Assert(Not GeoInBox(NewYork(), GeoRouteBounds(Route())), "AND NOT SOMEWHERE ELSE")
+
+    Print("--- A BOX AROUND A RADIUS, FOR CHEAP FILTERING ---")
+    Assert(GeoInBox(London(), GeoBoxAround(London(), 1000)), "A BOX AROUND A POINT CONTAINS IT")
+    Assert(GeoInBox(GeoDestination(London(), 0, 900), GeoBoxAround(London(), 1000)), "AND A POINT 900 M NORTH OF IT")
+    Assert(Not GeoInBox(GeoDestination(London(), 0, 2000), GeoBoxAround(London(), 1000)), "AND NOT ONE 2 KM NORTH")
+    Assert(Close(BoxWest(GeoBoxAround(GeoAt(89.9, 0), 100000)), -180, 0.000001), "NEAR A POLE IT WIDENS TO EVERY LONGITUDE, WHICH IS CORRECT AND SURPRISING")
+    Assert(Close(BoxNorth(GeoBoxAround(GeoAt(89.9, 0), 100000)), 90, 0.000001), "AND CLAMPS LATITUDE AT THE POLE")
+
+    Print("--- UNION AND CENTRE ---")
+    Assert(GeoInBox(GeoAt(0, 179.5), GeoBoxUnion(GeoBoxAround(GeoAt(0, 179.5), 10000), GeoBoxAround(GeoAt(0, -179.5), 10000))), "THE UNION CONTAINS THE FIRST BOX")
+    Assert(GeoInBox(GeoAt(0, -179.5), GeoBoxUnion(GeoBoxAround(GeoAt(0, 179.5), 10000), GeoBoxAround(GeoAt(0, -179.5), 10000))), "AND THE SECOND")
+    Assert(Not GeoInBox(GeoAt(0, 0), GeoBoxUnion(GeoBoxAround(GeoAt(0, 179.5), 10000), GeoBoxAround(GeoAt(0, -179.5), 10000))), "AND DOES NOT SWALLOW THE PLANET TO GET THEM")
+    Assert(Close(Abs(GeoLon(GeoBoxCentre(GeoRouteBounds(LineRoute())))), 180, 0.000001), "THE CENTRE OF A WRAPPING BOX IS ON THE LINE, NOT AT ZERO")
+
+    Print("--- THE ENCLOSING CIRCLE ---")
+    Assert(GeoDistance(CircleCentre(GeoBoundingCircle(Route())), London()) <= CircleRadius(GeoBoundingCircle(Route())) + 0.001, "THE CIRCLE COVERS THE FIRST POINT")
+    Assert(GeoDistance(CircleCentre(GeoBoundingCircle(Route())), Nth(Route(), 3)) <= CircleRadius(GeoBoundingCircle(Route())) + 0.001, "AND THE LAST")
+
+    Print("--- SIMPLIFY ---")
+    Assert(Length(GeoSimplify({ GeoAt(0, 0), GeoAt(0, 5), GeoAt(0, 10) }, 1)) = 2, "A POINT ON THE LINE IS NOISE, AND GOES")
+    Assert(Length(GeoSimplify({ GeoAt(0, 0), GeoAt(1, 5), GeoAt(0, 10) }, 1)) = 3, "AND A REAL CORNER STAYS")
+    Assert(GeoNear(First(GeoSimplify(Route(), 1000)), London(), 0.000001), "SIMPLIFY PRESERVES THE FIRST POINT")
+    Assert(GeoNear(Nth(GeoSimplify(Route(), 1000), Length(GeoSimplify(Route(), 1000))), Nth(Route(), 3), 0.000001), "AND THE LAST")
+    Assert(Length(GeoSimplify(Route(), 1000)) <= Length(Route()), "AND NEVER GROWS A ROUTE")
+
+    Print("--- RESAMPLE ---")
+    Assert(Length(GeoResample({ GeoAt(0, 0), GeoAt(0, 1) }, 1000000)) = 2, "A SPACING LONGER THAN THE ROUTE ANSWERS TWO POINTS")
+    Assert(GeoNear(First(GeoResample(Route(), 50000)), London(), 0.000001), "RESAMPLE KEEPS THE FIRST POINT")
+    Assert(GeoNear(Nth(GeoResample(Route(), 50000), Length(GeoResample(Route(), 50000))), Nth(Route(), 3), 0.000001), "AND THE LAST")
+    Assert(Close(GeoDistance(First(GeoResample(Route(), 50000)), Nth(GeoResample(Route(), 50000), 2)), 50000, 0.001), "AND THE SPACING IS THE SPACING ASKED FOR")
+
+    Print("--- WAYPOINTS, THE DRAWING WORD ---")
+    Assert(Length(GeoWaypoints(London(), NewYork(), 5)) = 5, "FIVE WAYPOINTS ARE FIVE POINTS")
+    Assert(GeoNear(First(GeoWaypoints(London(), NewYork(), 5)), London(), 0.001), "THE FIRST IS THE START")
+    Assert(GeoNear(Nth(GeoWaypoints(London(), NewYork(), 5), 5), NewYork(), 0.001), "AND THE LAST IS THE END")
+    Assert(GeoNear(Nth(GeoWaypoints(London(), NewYork(), 5), 3), GeoMidpoint(London(), NewYork()), 0.001), "AND THE MIDDLE ONE IS THE MIDPOINT, WHICH IS WHY THE DRAWN LINE CURVES")
+
+    Print("--- CENTROID, THROUGH 3-D VECTORS ---")
+    Assert(Close(Abs(GeoLon(GeoCentroid(LineRoute()))), 180, 0.000001), "THE CENTROID ACROSS THE LINE IS ON THE LINE, NOT IN THE GULF OF GUINEA")
+    Assert(Close(GeoLat(GeoCentroid(LineRoute())), 0, 0.000001), "AND STAYS ON THE EQUATOR")
+    Assert(GeoNear(GeoCentroid({ London() }), London(), 0.000001), "THE CENTROID OF ONE POINT IS THAT POINT")
+    Assert(GeoNear(GeoCentroid({ London(), London() }), London(), 0.000001), "AND OF THE SAME POINT TWICE")
+
+    Print("--- AREA, BY SPHERICAL EXCESS ---")
+    Assert(Close(GeoArea({ GeoAt(0, 0), GeoAt(0, 10), GeoAt(10, 0) }), 621357420100, 1000000), "A TEN-DEGREE TRIANGLE, AGAINST THE EXCESS WORKED INDEPENDENTLY")
+    Assert(Close(GeoArea({ GeoAt(0, 0), GeoAt(0, 90), GeoAt(90, 0) }), Pi() * GeoRadius() ^ 2 / 2, 1000), "AND AN OCTANT OF THE SPHERE IS AN EIGHTH OF ITS SURFACE")
+    Assert(Close(GeoArea({ GeoAt(0, 0), GeoAt(0, 10), GeoAt(10, 0), GeoAt(0, 0) }), GeoArea({ GeoAt(0, 0), GeoAt(0, 10), GeoAt(10, 0) }), 0.000001), "A RING THE CALLER CLOSED AND ONE IT DID NOT ARE THE SAME RING")
+    Rem One square metre out of six hundred and twenty-one square
+    Rem kilometres. The tolerance is a square metre and not the
+    Rem micrometre used elsewhere in this file because the two windings
+    Rem do not take the same arithmetic path: one walks the ring, the
+    Rem other walks it reversed, and the vertex angles are summed in the
+    Rem opposite order. Asking for closer than this would be asking a
+    Rem double for nineteen significant digits.
+    Assert(Close(GeoArea({ GeoAt(10, 0), GeoAt(0, 10), GeoAt(0, 0) }), GeoArea({ GeoAt(0, 0), GeoAt(0, 10), GeoAt(10, 0) }), 1), "AND WINDING THE OTHER WAY DOES NOT CHANGE IT")
+
+    Print("--- DEGREES, MINUTES AND SECONDS ---")
+    Assert(GeoDms(53.72, 1) = "53" & DegMark() & "43'12.0" & SecMark(), "53.72 DEGREES WRITTEN OUT")
+    Assert(GeoDms(-1.86, 1) = "-1" & DegMark() & "51'36.0" & SecMark(), "AND A WESTERN LONGITUDE KEEPS ITS SIGN ON THE DEGREES")
+    Assert(GeoDms(5.5, 0) = "5" & DegMark() & "30'00" & SecMark(), "MINUTES AND SECONDS ARE ZERO-PADDED TO TWO DIGITS")
+
+    Print("--- READING DMS BACK ---")
+    Assert(Close(OkNum(GeoFromDms("53" & DegMark() & "43'12.0" & SecMark()), 0), 53.72, 0.0000001), "THE ROUND TRIP, NORTH")
+    Assert(Close(OkNum(GeoFromDms("-1 51 36"), 0), -1.86, 0.0000001), "PLAIN ASCII, AND THE SIGN ON THE DEGREES")
+    Assert(Close(OkNum(GeoFromDms("1 51 36 W"), 0), -1.86, 0.0000001), "A HEMISPHERE LETTER AFTER")
+    Assert(Close(OkNum(GeoFromDms("W1 51 36"), 0), -1.86, 0.0000001), "AND ONE BEFORE")
+    Assert(Close(OkNum(GeoFromDms(GeoDms(-33.8688, 4)), 0), -33.8688, 0.0001), "SOUTHERN LATITUDES ROUND-TRIP TOO")
+    Assert(Close(OkNum(GeoFromDms(GeoDms(174.7762, 4)), 0), 174.7762, 0.0001), "AND EASTERN LONGITUDES")
+    Assert(IsErr(GeoFromDms("53 43 12 X")), "A CHARACTER IT CANNOT READ IS AN ERR")
+    Assert(ErrAt(GeoFromDms("53 43 12 X")) = 10, "AND THE ERR CARRIES ITS 1-BASED POSITION")
+    Assert(IsErr(GeoFromDms("1.2.3")), "AND SO IS SOMETHING THAT ONLY LOOKS LIKE A NUMBER")
+
+    Print("--- THE PASTE FORM EVERY MAPPING TOOL ACCEPTS ---")
+    Assert(GeoFormat(GeoAt(53.72, -1.86), 6) = "53.720000, -1.860000", "LATITUDE, COMMA, LONGITUDE")
+
+    Print("--- PARSING A WHOLE COORDINATE, IN EVERY SPELLING ---")
+    Assert(GeoNear(OkPt(GeoParse("53.72, -1.86")), GeoAt(53.72, -1.86), 0.001), "A DECIMAL PAIR")
+    Assert(GeoNear(OkPt(GeoParse("53.72 -1.86")), GeoAt(53.72, -1.86), 0.001), "WITH NO COMMA")
+    Assert(GeoNear(OkPt(GeoParse("53 43 12 N, 1 51 36 W")), GeoAt(53.72, -1.86), 0.001), "DMS WITH THE LETTERS AFTER")
+    Assert(GeoNear(OkPt(GeoParse("N53 43 12 W1 51 36")), GeoAt(53.72, -1.86), 0.001), "DMS WITH THE LETTERS BEFORE")
+    Assert(GeoNear(OkPt(GeoParse("53" & DegMark() & "43'12" & SecMark() & "N 1" & DegMark() & "51'36" & SecMark() & "W")), GeoAt(53.72, -1.86), 0.001), "DMS WITH THE MARKS")
+    Assert(GeoNear(OkPt(GeoParse("1 51 36 W, 53 43 12 N")), GeoAt(53.72, -1.86), 0.001), "LONGITUDE FIRST, BECAUSE THE LETTERS SAY WHICH IS WHICH")
+    Assert(GeoNear(OkPt(GeoParse("53 43 -1 51")), GeoAt(53 + 43 / 60, Negate(1 + 51 / 60)), 0.001), "FOUR BARE NUMBERS SPLIT EVENLY")
+    Assert(GeoNear(OkPt(GeoParse(GeoFormat(NewYork(), 6))), NewYork(), 0.5), "AND GEOFORMAT ROUND-TRIPS THROUGH IT")
+    Assert(IsErr(GeoParse("53.72, -1.86, 99")), "THREE COORDINATES ARE NOT A COORDINATE")
+    Assert(IsErr(GeoParse("91, 0")), "AND A LATITUDE OUT OF DOMAIN IS REFUSED HERE TOO")
+    Assert(IsErr(GeoParse("")), "AND SO IS NOTHING AT ALL")
+    Assert(ErrAt(GeoParse("53.72, -1.86Q")) = 13, "AN UNREADABLE CHARACTER IS NAMED BY POSITION")
+
+    Print("--- SIXTEEN COMPASS POINTS, NOT THIRTY-TWO ---")
+    Assert(GeoCompass(0) = "N", "NORTH")
+    Assert(GeoCompass(22.5) = "NNE", "NORTH NORTH EAST")
+    Assert(GeoCompass(45) = "NE", "NORTH EAST")
+    Assert(GeoCompass(180) = "S", "SOUTH")
+    Assert(GeoCompass(350) = "N", "AND THE LAST SECTOR WRAPS BACK TO NORTH")
+    Assert(GeoCompass(11.24) = "N", "THE SECTOR BOUNDARY IS AT 11.25")
+    Assert(GeoCompass(11.26) = "NNE", "ON BOTH SIDES OF IT")
+    Assert(Close(OkNum(GeoFromCompass("NNE"), 0), 22.5, 0.000001), "AND BACK AGAIN")
+    Assert(Close(OkNum(GeoFromCompass("wsw"), 0), 247.5, 0.000001), "CASE DOES NOT MATTER")
+    Assert(IsErr(GeoFromCompass("NEbN")), "A THIRTY-TWO POINT HALF-WIND IS NOT A WORD THIS MACHINE KNOWS")
+
+    Print("--- GEOHASH: THE FIRST CHARACTER, WORKED BY HAND ---")
+    Assert(Left(GeoHash(GeoAt(51.5, -0.1), 5), 1) = "g", "LONDON IS IN CELL 01111, WHICH IS G")
+    Assert(Left(GeoHash(NewYork(), 5), 1) = "d", "NEW YORK IS IN 01100, WHICH IS D")
+    Assert(Left(GeoHash(GeoAt(-33.8688, 151.2093), 5), 1) = "r", "AND SYDNEY IS IN 10111, WHICH IS R")
+    Assert(Len(GeoHash(London(), 9)) = 9, "NINE CHARACTERS ARE ASKED FOR AND NINE ARRIVE")
+
+    Print("--- A GEOHASH IS A BOX, NOT A POINT ---")
+    Assert(Close(BoxEast(OkBox(GeoHashBox(GeoHash(London(), 6)))) - BoxWest(OkBox(GeoHashBox(GeoHash(London(), 6)))), 360 / 2 ^ 15, 0.0000001), "A SIX-CHARACTER CELL IS 15 LONGITUDE BITS WIDE")
+    Assert(Close(BoxNorth(OkBox(GeoHashBox(GeoHash(London(), 6)))) - BoxSouth(OkBox(GeoHashBox(GeoHash(London(), 6)))), 180 / 2 ^ 15, 0.0000001), "AND 15 LATITUDE BITS TALL")
+    Assert(BoxEast(OkBox(GeoHashBox(GeoHash(London(), 6)))) - BoxWest(OkBox(GeoHashBox(GeoHash(London(), 6)))) > BoxNorth(OkBox(GeoHashBox(GeoHash(London(), 6)))) - BoxSouth(OkBox(GeoHashBox(GeoHash(London(), 6)))), "WIDER THAN IT IS TALL, WHICH IS WHAT CATCHES AN INTERLEAVE PUT IN BACKWARDS")
+    Assert(GeoInBox(London(), OkBox(GeoHashBox(GeoHash(London(), 6)))), "THE CELL CONTAINS THE POINT THAT MADE IT")
+    Assert(GeoInBox(OkPt(GeoFromHash(GeoHash(London(), 6))), OkBox(GeoHashBox(GeoHash(London(), 6)))), "AND THE CENTRE GEOFROMHASH ANSWERS IS INSIDE IT")
+
+    Print("--- GEOHASH ROUND TRIPS, ALL FOUR QUADRANTS ---")
+    Assert(GeoNear(OkPt(GeoFromHash(GeoHash(GeoAt(53.72, -1.86), 9))), GeoAt(53.72, -1.86), 5), "NORTH WEST, TO THE CELL AND NOT TO THE POINT")
+    Assert(GeoNear(OkPt(GeoFromHash(GeoHash(GeoAt(35.68, 139.77), 9))), GeoAt(35.68, 139.77), 5), "NORTH EAST")
+    Assert(GeoNear(OkPt(GeoFromHash(GeoHash(GeoAt(-33.87, 151.21), 9))), GeoAt(-33.87, 151.21), 5), "SOUTH EAST")
+    Assert(GeoNear(OkPt(GeoFromHash(GeoHash(GeoAt(-34.6, -58.38), 9))), GeoAt(-34.6, -58.38), 5), "AND SOUTH WEST")
+    Assert(IsErr(GeoHashBox("abc")), "A IS NOT IN THE GEOHASH ALPHABET - IT DROPS A, I, L AND O")
+    Assert(ErrAt(GeoHashBox("gcpua")) = 5, "AND THE ERR NAMES THE OFFENDING POSITION")
+    Assert(IsErr(GeoHashBox("")), "NOR IS NOTHING A GEOHASH")
+
+    Print("--- THE EIGHT NEIGHBOURS, WHICH ARE WHAT MAKE IT USEFUL ---")
+    Assert(Length(GeoHashNeighbours(GeoHash(London(), 6))) = 8, "EIGHT OF THEM")
+    Assert(Not HasText(GeoHashNeighbours(GeoHash(London(), 6)), GeoHash(London(), 6)), "AND NONE OF THEM IS THE CELL ITSELF")
+    Assert(AllDistinct(GeoHashNeighbours(GeoHash(London(), 6))), "AND NO TWO OF THEM ARE THE SAME CELL")
+
+    Print("--- MAIDENHEAD, BECAUSE IT IS REAL AND DELIGHTFUL ---")
+    Assert(GeoLocator(GeoAt(53.72, -1.86), 6) = "IO93br", "THE HEAVY WOOLLEN DISTRICT, WORKED BY HAND")
+    Assert(GeoLocator(GeoAt(51.5074, -0.1278), 6) = "IO91wm", "AND LONDON")
+    Assert(GeoLocator(GeoAt(53.72, -1.86), 4) = "IO93", "FOUR CHARACTERS IS THE SQUARE")
+    Assert(GeoLocator(GeoAt(53.72, -1.86), 2) = "IO", "AND TWO IS THE FIELD")
+    Assert(GeoNear(OkPt(GeoFromLocator("IO91wm")), GeoAt(51.5074, -0.1278), 4000), "READING ONE BACK LANDS IN THE SAME SUBSQUARE")
+    Assert(GeoNear(OkPt(GeoFromLocator(GeoLocator(GeoAt(-33.87, 151.21), 8))), GeoAt(-33.87, 151.21), 500), "AN EIGHT-CHARACTER LOCATOR ROUND-TRIPS IN THE SOUTHERN HEMISPHERE")
+    Assert(GeoNear(OkPt(GeoFromLocator(GeoLocator(GeoAt(-34.6, -58.38), 8))), GeoAt(-34.6, -58.38), 500), "AND IN THE SOUTH WEST")
+    Assert(IsErr(GeoFromLocator("IO9")), "AN ODD NUMBER OF CHARACTERS IS NOT A LOCATOR")
+    Assert(IsErr(GeoFromLocator("ZZ93br")), "AND Z IS PAST THE END OF THE FIELD ALPHABET")
+
+    Print("--- THE JULIAN DAY, WORKED BY HAND ---")
+    Assert(GeoJulian(2000, 1, 1) = 2451544.5, "THE FIRST OF JANUARY 2000 AT MIDNIGHT UT")
+    Assert(GeoJulian(2024, 3, 21) - GeoJulian(2024, 3, 20) = 1, "CONSECUTIVE DAYS ARE ONE APART")
+    Assert(GeoJulian(2025, 1, 1) - GeoJulian(2024, 1, 1) = 366, "2024 WAS A LEAP YEAR")
+    Assert(GeoJulian(1900, 3, 1) - GeoJulian(1900, 2, 28) = 1, "AND 1900 WAS NOT, WHICH IS THE CENTURY RULE")
+
+    Print("--- THE SEASON, AS ONE NUMBER ---")
+    Assert(Close(GeoSolarDeclination(GeoJulian(2024, 6, 20)), 23.44, 0.06), "THE JUNE SOLSTICE IS THE OBLIQUITY OF THE ECLIPTIC")
+    Assert(Close(GeoSolarDeclination(GeoJulian(2024, 12, 21)), -23.44, 0.06), "AND THE DECEMBER ONE IS ITS NEGATIVE")
+    Assert(Close(GeoSolarDeclination(GeoJulian(2024, 3, 20)), 0, 0.5), "AT THE MARCH EQUINOX THE SUN IS OVER THE EQUATOR")
+    Assert(Close(GeoSolarDeclination(GeoJulian(2024, 9, 22)), 0, 0.5), "AND AT THE SEPTEMBER ONE TOO")
+
+    Print("--- WHY A SUNDIAL DISAGREES WITH A CLOCK ---")
+    Assert(Abs(GeoEquationOfTime(GeoJulian(2024, 2, 11))) < 17, "THE EQUATION OF TIME NEVER EXCEEDS SEVENTEEN MINUTES")
+    Assert(Abs(GeoEquationOfTime(GeoJulian(2024, 11, 3))) < 17, "AT EITHER EXTREME")
+    Assert(GeoEquationOfTime(GeoJulian(2024, 2, 11)) < 0, "IN FEBRUARY THE SUNDIAL IS BEHIND THE CLOCK")
+    Assert(GeoEquationOfTime(GeoJulian(2024, 11, 3)) > 0, "AND IN NOVEMBER IT IS AHEAD")
+
+    Print("--- SOLAR NOON ---")
+    Assert(Close(GeoSunNoon(GeoAt(51.5, 0), GeoJulian(2024, 6, 20)), 12, 0.3), "ON THE PRIME MERIDIAN NOON IS NEAR TWELVE, OFF BY THE EQUATION OF TIME")
+    Assert(Close(GeoSunNoon(GeoAt(0, 15), GeoJulian(2024, 6, 20)) + 1, GeoSunNoon(GeoAt(0, 0), GeoJulian(2024, 6, 20)), 0.000001), "AND FIFTEEN DEGREES EAST IS AN HOUR EARLIER")
+
+    Print("--- THE SUN IS WHERE THE RISE SAYS IT IS ---")
+    Rem The definitive self-consistency check of this whole part: ask
+    Rem GeoSunRise for a time, then ask GeoSunPos where the sun is AT
+    Rem that time. It has to be at the sunrise altitude, or one of the
+    Rem two words is wrong. It ties the position model, the equation of
+    Rem time, the declination and solar noon together in one assertion.
+    Assert(Close(SunElevation(GeoSunPos(London(), GeoJulian(2024, 6, 20), SomeNum(GeoSunRise(London(), GeoJulian(2024, 6, 20)), 0))), GeoSunAltitude(), 0.15), "LONDON, MIDSUMMER")
+    Assert(Close(SunElevation(GeoSunPos(London(), GeoJulian(2024, 12, 21), SomeNum(GeoSunSet(London(), GeoJulian(2024, 12, 21)), 0))), GeoSunAltitude(), 0.15), "LONDON, MIDWINTER SUNSET")
+    Assert(Close(SunElevation(GeoSunPos(GeoAt(-33.8688, 151.2093), GeoJulian(2024, 6, 20), SomeNum(GeoSunRise(GeoAt(-33.8688, 151.2093), GeoJulian(2024, 6, 20)), 0))), GeoSunAltitude(), 0.15), "SYDNEY, SOUTHERN HEMISPHERE")
+    Assert(Close(SunElevation(GeoSunPos(GeoAt(-0.1807, -78.4678), GeoJulian(2024, 3, 20), SomeNum(GeoSunRise(GeoAt(-0.1807, -78.4678), GeoJulian(2024, 3, 20)), 0))), GeoSunAltitude(), 0.15), "QUITO, ON THE EQUATOR")
+
+    Print("--- NOON ELEVATION IS 90 LESS THE ZENITH DISTANCE ---")
+    Assert(Close(SunElevation(GeoSunPos(London(), GeoJulian(2024, 6, 20), GeoSunNoon(London(), GeoJulian(2024, 6, 20)))), 90 - Abs(GeoLat(London()) - GeoSolarDeclination(GeoJulian(2024, 6, 20))), 0.1), "LONDON AT MIDSUMMER NOON")
+    Assert(Close(SunElevation(GeoSunPos(GeoAt(0, 0), GeoJulian(2024, 3, 20), GeoSunNoon(GeoAt(0, 0), GeoJulian(2024, 3, 20)))), 90 - Abs(0 - GeoSolarDeclination(GeoJulian(2024, 3, 20))), 0.1), "AND THE EQUATOR AT AN EQUINOX, WHERE IT IS OVERHEAD")
+    Assert(CloseAngle(SunAzimuth(GeoSunPos(London(), GeoJulian(2024, 6, 20), GeoSunNoon(London(), GeoJulian(2024, 6, 20)))), 180, 0.5), "AT NOON IN THE NORTH THE SUN IS DUE SOUTH")
+    Assert(CloseAngle(SunAzimuth(GeoSunPos(GeoAt(-33.8688, 151.2093), GeoJulian(2024, 6, 20), GeoSunNoon(GeoAt(-33.8688, 151.2093), GeoJulian(2024, 6, 20)))), 0, 0.5), "AND IN THE SOUTH IT IS DUE NORTH")
+
+    Print("--- RISE AND SET STRADDLE NOON ---")
+    Assert(Close(SomeNum(GeoSunRise(London(), GeoJulian(2024, 6, 20)), 0) + SomeNum(GeoSunSet(London(), GeoJulian(2024, 6, 20)), 0), 2 * GeoSunNoon(London(), GeoJulian(2024, 6, 20)), 0.000001), "THEY ARE SYMMETRIC ABOUT SOLAR NOON, BY CONSTRUCTION")
+    Assert(SomeNum(GeoSunRise(London(), GeoJulian(2024, 6, 20)), 0) < SomeNum(GeoSunSet(London(), GeoJulian(2024, 6, 20)), 0), "AND THE SUN RISES BEFORE IT SETS")
+
+    Print("--- DAY LENGTH ---")
+    Assert(Close(GeoDayLength(GeoAt(0, 0), GeoJulian(2024, 3, 20)), 12.11, 0.05), "TWELVE HOURS ON THE EQUATOR, PLUS THE REFRACTION AT BOTH ENDS")
+    Assert(Close(GeoDayLength(GeoAt(0, 0), GeoJulian(2024, 6, 20)), 12.11, 0.05), "AND THE EQUATOR HARDLY VARIES ACROSS THE YEAR")
+    Assert(Close(GeoDayLength(GeoAt(40, 0), GeoJulian(2024, 3, 20)), GeoDayLength(GeoAt(-40, 0), GeoJulian(2024, 3, 20)), 0.05), "AT AN EQUINOX BOTH HEMISPHERES GET THE SAME DAY")
+    Assert(GeoDayLength(GeoAt(60, 0), GeoJulian(2024, 6, 20)) > 18, "SIXTY NORTH GETS OVER EIGHTEEN HOURS AT MIDSUMMER")
+    Assert(GeoDayLength(GeoAt(-60, 0), GeoJulian(2024, 6, 20)) < 6, "AND SIXTY SOUTH GETS UNDER SIX ON THE SAME DAY")
+    Assert(Close(GeoDayLength(GeoAt(70, 0), GeoJulian(2024, 6, 20)), 24, 0.000001), "INSIDE THE ARCTIC CIRCLE IN JUNE THE SUN NEVER SETS")
+    Assert(Close(GeoDayLength(GeoAt(70, 0), GeoJulian(2024, 12, 21)), 0, 0.000001), "AND IN DECEMBER IT NEVER RISES")
+
+    Print("--- OPTION IS THE WHOLE DESIGN HERE ---")
+    Assert(IsNone(GeoSunRise(GeoAt(70, 0), GeoJulian(2024, 6, 20))), "NO SUNRISE ABOVE THE ARCTIC CIRCLE IN JUNE, BECAUSE IT NEVER SET")
+    Assert(IsNone(GeoSunSet(GeoAt(70, 0), GeoJulian(2024, 6, 20))), "AND NO SUNSET, FOR THE SAME REASON")
+    Assert(IsNone(GeoSunRise(GeoAt(70, 0), GeoJulian(2024, 12, 21))), "AND NONE IN DECEMBER EITHER, FOR THE OPPOSITE REASON")
+    Assert(Not IsNone(GeoSunRise(GeoAt(70, 0), GeoJulian(2024, 3, 20))), "BUT AT THE EQUINOX IT RISES THERE LIKE ANYWHERE ELSE")
+    Assert(Close(GeoSunNoon(GeoAt(70, 0), GeoJulian(2024, 6, 20)), 12, 0.3), "SOLAR NOON IS DEFINED EVEN WHERE RISE AND SET ARE NOT, WHICH IS WHY IT IS SEPARATE")
+
+    Print("--- TWILIGHT ---")
+    Assert(Length(SomeNums(GeoTwilight(London(), GeoJulian(2024, 3, 20), 6))) = 2, "CIVIL TWILIGHT IS A PAIR OF TIMES")
+    Assert(First(SomeNums(GeoTwilight(London(), GeoJulian(2024, 3, 20), 6))) < SomeNum(GeoSunRise(London(), GeoJulian(2024, 3, 20)), 0), "THE MORNING ONE COMES BEFORE SUNRISE")
+    Assert(Nth(SomeNums(GeoTwilight(London(), GeoJulian(2024, 3, 20), 6)), 2) > SomeNum(GeoSunSet(London(), GeoJulian(2024, 3, 20)), 0), "AND THE EVENING ONE AFTER SUNSET")
+    Assert(First(SomeNums(GeoTwilight(London(), GeoJulian(2024, 3, 20), 18))) < First(SomeNums(GeoTwilight(London(), GeoJulian(2024, 3, 20), 6))), "ASTRONOMICAL TWILIGHT STARTS BEFORE CIVIL")
+    Assert(IsNone(GeoTwilight(GeoAt(70, 0), GeoJulian(2024, 6, 20), 18)), "AND THERE IS NO ASTRONOMICAL TWILIGHT UNDER THE MIDNIGHT SUN")
+
+    Print("--- A RHUMB LINE IS NOT A GREAT CIRCLE, AND THAT IS THE POINT ---")
+    Assert(GeoRhumbDistance(London(), NewYork()) > GeoDistance(London(), NewYork()), "THE CONSTANT-BEARING TRACK IS THE LONGER ONE")
+    Assert(GeoRhumbDistance(London(), NewYork()) - GeoDistance(London(), NewYork()) > 50000, "AND ACROSS THE ATLANTIC IT IS LONGER BY OVER FIFTY KILOMETRES")
+    Assert(Close(GeoRhumbDistance(GeoAt(0, 0), GeoAt(50, 0)), GeoDistance(GeoAt(0, 0), GeoAt(50, 0)), 0.001), "ALONG A MERIDIAN THE TWO AGREE, BECAUSE A MERIDIAN IS BOTH")
+    Assert(Close(GeoRhumbDistance(GeoAt(0, 0), GeoAt(0, 50)), GeoDistance(GeoAt(0, 0), GeoAt(0, 50)), 0.001), "AND ALONG THE EQUATOR TOO")
+    Assert(Close(GeoRhumbBearing(GeoAt(0, 0), GeoAt(50, 0)), 0, 0.000001), "DUE NORTH IS DUE NORTH")
+    Rem The same two points, both ways round, at a latitude where the
+    Rem difference is unmistakable. Fifty north rather than ten north
+    Rem because the great circle's deviation grows with the latitude:
+    Rem down at ten it is under five degrees, which would make this a
+    Rem test that only just passes rather than one that shows the point.
+    Assert(CloseAngle(GeoRhumbBearing(GeoAt(50, 0), GeoAt(50, 50)), 90, 0.000001), "A PARALLEL IS DUE EAST ALL THE WAY BY RHUMB")
+    Assert(Abs(GeoBearing(GeoAt(50, 0), GeoAt(50, 50)) - 90) > 15, "AND THE GREAT CIRCLE BETWEEN THE SAME TWO POINTS LEAVES MORE THAN FIFTEEN DEGREES NORTH OF EAST")
+
+    Print("--- THE BEARING YOU ACTUALLY STEER STAYS PUT ---")
+    Assert(CloseAngle(GeoRhumbBearing(London(), GeoRhumbDestination(London(), 231, 3000000)), 231, 0.0001), "STEER 231 FOR 3000 KM AND THE RHUMB BEARING BACK IS STILL 231")
+    Assert(GeoNear(GeoRhumbDestination(London(), GeoRhumbBearing(London(), NewYork()), GeoRhumbDistance(London(), NewYork())), NewYork(), 1), "AND THE RHUMB ROUND TRIP CLOSES WITHIN A METRE")
+    Assert(GeoNear(GeoRhumbDestination(GeoAt(0, 179), 90, 222390), GeoAt(0, -179), 1), "A RHUMB LEG ACROSS THE ANTIMERIDIAN ARRIVES ON THE OTHER SIDE")
+    Assert(Close(GeoRhumbDistance(GeoAt(0, 179), GeoAt(0, -179)), 222390.1605, 1), "AND MEASURES THE SHORT WAY ROUND")
+
+    Print("--- HOW FAR YOU CAN SEE ---")
+    Assert(GeoHorizon(0) = 0, "FROM SEA LEVEL YOU SEE NOTHING PAST YOUR FEET")
+    Assert(Close(GeoHorizon(2), Sqr(2 * GeoRadius() * 2), 0.01), "AND FROM EYE HEIGHT THE SMALL-ANGLE IDENTITY HOLDS")
+    Assert(Close(GeoHorizon(2), 5048.2, 1), "WHICH IS THE FAMILIAR FIVE KILOMETRES")
+    Assert(GeoHorizon(100) > GeoHorizon(10), "HIGHER IS FURTHER")
+    Assert(Close(GeoGeographicRange(30, 5), GeoHorizon(30) + GeoHorizon(5), 0.000001), "AND A LIGHT COMES INTO VIEW WHERE THE TWO HORIZONS MEET")
+
+    Print("--- DEAD RECKONING, WHICH IS FOLD IN ONE WORD ---")
+    Assert(GeoNear(GeoDeadReckon(London(), { { 90, 1000 } }), GeoDestination(London(), 90, 1000), 0.000001), "ONE LEG IS ONE DESTINATION")
+    Assert(GeoNear(GeoDeadReckon(London(), { }), London(), 0.000001), "AND NO LEGS AT ALL LEAVES YOU WHERE YOU STARTED")
+    Assert(GeoNear(GeoDeadReckon(GeoAt(10, 20), { { 0, 500000 }, { 180, 500000 } }), GeoAt(10, 20), 0.001), "NORTH THEN SOUTH THE SAME DISTANCE COMES HOME")
+    Assert(Close(GeoDistance(London(), GeoDeadReckon(London(), { { 45, 100000 }, { 45, 100000 } })), GeoDistance(London(), GeoDestination(London(), 45, 200000)), 5000), "AND TWO LEGS ON ONE BEARING ARE ABOUT ONE LONG ONE - ABOUT, BECAUSE A GREAT CIRCLE TURNS UNDER YOU")
+
+    Print("--- THE NAUTICAL TIME ZONE, WHICH IS ARITHMETIC ---")
+    Assert(GeoZoneOffset(0) = 0, "GREENWICH IS ZONE ZERO")
+    Assert(GeoZoneOffset(7.4) = 0, "AND SO IS ANYWHERE INSIDE ITS SEVEN AND A HALF DEGREES")
+    Assert(GeoZoneOffset(7.6) = 1, "JUST PAST THE EDGE IS THE NEXT ZONE")
+    Assert(GeoZoneOffset(-75) = -5, "SEVENTY-FIVE WEST IS FIVE HOURS BEHIND")
+    Assert(GeoZoneOffset(175) = 12, "AND THE FAR SIDE IS TWELVE AHEAD")
+
+    Print("--- EARTH-CENTRED CARTESIAN, THE BRIDGE TO THREE DIMENSIONS ---")
+    Assert(Close(Nth(GeoEcef(GeoAt(0, 0), 0), 1), GeoRadius(), 0.000001), "X RUNS OUT THROUGH ZERO NORTH ZERO EAST")
+    Assert(Close(Nth(GeoEcef(GeoAt(0, 90), 0), 2), GeoRadius(), 0.000001), "Y THROUGH THE EQUATOR AT NINETY EAST")
+    Assert(Close(Nth(GeoEcef(GeoAt(90, 0), 0), 3), GeoRadius(), 0.000001), "AND Z THROUGH THE NORTH POLE")
+    Assert(Close(GeoEcefHeight(GeoEcef(London(), 8000)), 8000, 0.000001), "THE ALTITUDE SURVIVES THE TRIP OUT AND BACK")
+    Assert(GeoNear(GeoFromEcef(GeoEcef(London(), 8000)), London(), 0.000001), "AND SO DOES THE POSITION, WITH THE HEIGHT DISCARDED")
+    Assert(GeoNear(GeoFromEcef(GeoEcef(GeoAt(-34.6, -58.38), 0)), GeoAt(-34.6, -58.38), 0.000001), "IN THE SOUTHERN AND WESTERN HEMISPHERES TOO")
+
+    Print("ALL ASSERTIONS PASSED")

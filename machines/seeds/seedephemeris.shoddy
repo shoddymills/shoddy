@@ -1,0 +1,272 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem seedephemeris.shoddy — reckoner seed: ephemeris.shoddy, at a
+Rem keyboard
+Rem
+Rem The sky from a prompt: sidereal time, the sun and the moon as sky
+Rem positions, the moon's phase, age, distance, rise and set, the five
+Rem naked-eye planets, the observer transform and the separation
+Rem between two sky positions.
+Rem
+Rem THE SHAPES ARE SEEDGEO'S, ONE SPHERE LATER. A point on the Earth is
+Rem the two-element LIST seedgeo established, { 53.72 -1.86 }, latitude
+Rem first. A SKY position is the same shape one frame up:
+Rem { ra dec }, right ascension then declination, both degrees — built
+Rem by EPHSUN, EPHMOON and EPHPLANET, consumed by EPHALTAZ and
+Rem EPHSEPARATION. What an observer sees is { alt az }. Nothing here
+Rem needs a new spelling, only the discipline to keep the two kinds of
+Rem list apart, which the guards below enforce by refusing a
+Rem declination outside -90..90.
+Rem
+Rem A DATE IS A JULIAN DAY NUMBER, made by JULDAYNUMBER (seedjulian) or
+Rem GEOJULIAN (seedgeo) — this seed mints no dates of its own, because
+Rem the calendar is julian's and the bridge already exists. Hours are
+Rem UTC, fractional, exactly as the sun words take them.
+Rem
+Rem NOTHING HERE ABORTS. ephemeris.shoddy's one abort is EphPlanet's
+Rem chooser; the same test is asked here first and refused with the
+Rem same words. Every malformed list, string or fraction is a refusal
+Rem that leaves the stack exactly as it was.
+Rem
+Rem AN Option BRIDGES AS A ONE-CELL LIST — { } for None, { h } for a
+Rem rise at h — the encoding seedgeo's sun words and seedbool's LOWBIT
+Rem already use, and for the same reason: a word must push exactly one
+Rem cell or UNDO's accounting breaks. A circumpolar moon's rise is
+Rem { }, which is the honest stack spelling of "it does not".
+Rem ==================================================================
+
+Include "ephemeris.shoddy"
+Include "geo.shoddy"
+Include "cuttle.shoddy"
+Include "reckoner.shoddy"
+Include "seq.shoddy"
+
+Rem ---- reading the arguments off the stack -------------------------------
+
+Rem A Cell holding { lat lon } as a GeoPt — seedgeo's reader, respelled
+Rem with this seed's prefix because two seeds may not share a Def.
+Def EsPt(word As String, c As Cell) As Result
+    Select Case RckListArg(word, c)
+        Case Ok(xs)
+            EsPtOf(word, xs)
+        Case Err(w, at)
+            Err(w, at)
+        Case Else
+            Err(word & " did not answer", 0)
+
+Def EsPtOf(word As String, xs As List Of Cell) As Result
+    If Length(xs) <> 2 Then
+        Err(word & " needs a point as a LIST of a latitude and a longitude, got " & Str(Length(xs)) & " items", 0)
+    Else
+        EsPtNums(word, xs)
+
+Def EsPtNums(word As String, xs As List Of Cell) As Result
+    Select Case Pair(RckNumArg(word, Nth(xs, 1)), RckNumArg(word, Nth(xs, 2)))
+        Case Pair(Ok(lat), Ok(lon))
+            EsChecked(word, GeoTryAt(lat, lon))
+        Case Else
+            Err(word & " needs a point as a LIST of two NUMBERs", 0)
+
+Def EsChecked(word As String, r As Result) As Result
+    Select Case r
+        Case Ok(p)
+            Ok(p)
+        Case Err(w, at)
+            Err(word & ": " & w, at)
+        Case Else
+            Err(word & " did not answer", 0)
+
+Rem A Cell holding { ra dec } as an EphSky. The declination is range
+Rem checked — a sky list and a point list are the same shape, and a
+Rem latitude-first point handed to a sky word would otherwise compute
+Rem a plausible nonsense; a dec beyond the poles is the tell.
+Def EsSky(word As String, c As Cell) As Result
+    Select Case RckListArg(word, c)
+        Case Ok(xs)
+            EsSkyOf(word, xs)
+        Case Err(w, at)
+            Err(w, at)
+        Case Else
+            Err(word & " did not answer", 0)
+
+Def EsSkyOf(word As String, xs As List Of Cell) As Result
+    If Length(xs) <> 2 Then
+        Err(word & " needs a sky position as a LIST of a right ascension and a declination, got " & Str(Length(xs)) & " items", 0)
+    Else
+        EsSkyNums(word, xs)
+
+Def EsSkyNums(word As String, xs As List Of Cell) As Result
+    Select Case Pair(RckNumArg(word, Nth(xs, 1)), RckNumArg(word, Nth(xs, 2)))
+        Case Pair(Ok(ra), Ok(dec))
+            EsSkyMade(word, ra, dec)
+        Case Else
+            Err(word & " needs a sky position as a LIST of two NUMBERs", 0)
+
+Def EsSkyMade(word As String, ra As Number, dec As Number) As Result
+    If Not (dec >= -90 And dec <= 90) Then
+        Err(word & ": A DECLINATION OF " & Str(dec) & " IS OUTSIDE -90..90 — IS THIS A POINT WHERE A SKY POSITION SHOULD BE?", 0)
+    Else
+        Ok(EphSky(ra, dec))
+
+Rem ---- writing the answers back ------------------------------------------
+
+Def EsSkyCell(sky As EphSky) As Cell
+    CutList({ CutNum(EphRa(sky)), CutNum(EphDec(sky)) })
+
+Def EsViewCell(v As EphView) As Cell
+    CutList({ CutNum(EphAlt(v)), CutNum(EphAzim(v)) })
+
+Rem { } for None, { h } for Some — the one-cell Option encoding every
+Rem seed uses.
+Def EsOptCell(o As Option) As Cell
+    Select Case o
+        Case Some(x)
+            CutList({ CutNum(x) })
+        Case Else
+            CutList({ })
+
+Rem ---- the shapes the words share -----------------------------------------
+
+Rem Most words here end with a Julian date and an hour: read both as
+Rem numbers, then hand on.
+Def EsJdHours(word As String, a As Cell, b As Cell, f As [ Number Number -- Cell ]) As RckWork
+    Select Case Pair(RckNumArg(word, a), RckNumArg(word, b))
+        Case Pair(Ok(jd), Ok(hours))
+            RckVals({ Call(f, jd, hours) })
+        Case Else
+            RckWorkBad(word & " needs a Julian date and an hour, both NUMBERs")
+
+Rem ---- sidereal time -------------------------------------------------------
+
+Def EsSeedSidereal(st As RckState) As RckState
+    RckReg(st, "EPHSIDEREAL", 2, RckPure(Fn(vs) => EsSidereal(vs)), "( jd h -- deg )", "Greenwich mean sidereal time at that UTC hour, degrees 0..360. Add an east longitude for the local form.")
+
+Def EsSidereal(vs As List Of Cell) As RckWork
+    EsJdHours("EPHSIDEREAL", Nth(vs, 1), Nth(vs, 2), Fn(jd, hours) => CutNum(EphSidereal(jd, hours)))
+
+Rem ---- the bodies -----------------------------------------------------------
+
+Def EsSeedSun(st As RckState) As RckState
+    RckReg(st, "EPHSUN", 2, RckPure(Fn(vs) => EsSun(vs)), "( jd h -- sky )", "The sun as a sky position, { ra dec } in degrees. For rise and set at a place, GEOSUNRISE is the word; this one is for the sky.")
+
+Def EsSun(vs As List Of Cell) As RckWork
+    EsJdHours("EPHSUN", Nth(vs, 1), Nth(vs, 2), Fn(jd, hours) => EsSkyCell(EphSun(jd, hours)))
+
+Def EsSeedMoon(st As RckState) As RckState
+    Let s1 = RckReg(st, "EPHMOON", 2, RckPure(Fn(vs) => EsMoon(vs)), "( jd h -- sky )", "The moon as a sky position, { ra dec } in degrees, geocentric, to about a third of a degree.")
+    Let s2 = RckReg(s1, "EPHMOONDIST", 2, RckPure(Fn(vs) => EsMoondist(vs)), "( jd h -- m )", "The distance to the moon in metres, from its parallax.")
+    Let s3 = RckReg(s2, "EPHMOONPHASE", 2, RckPure(Fn(vs) => EsMoonphase(vs)), "( jd h -- f )", "The illuminated fraction, 0 at new through 1 at full.")
+    RckReg(s3, "EPHMOONAGE", 2, RckPure(Fn(vs) => EsMoonage(vs)), "( jd h -- days )", "Days since new moon, 0 up to a synodic month of 29.53 — what says waxing or waning when the fraction alone cannot.")
+
+Def EsMoon(vs As List Of Cell) As RckWork
+    EsJdHours("EPHMOON", Nth(vs, 1), Nth(vs, 2), Fn(jd, hours) => EsSkyCell(EphMoon(jd, hours)))
+
+Def EsMoondist(vs As List Of Cell) As RckWork
+    EsJdHours("EPHMOONDIST", Nth(vs, 1), Nth(vs, 2), Fn(jd, hours) => CutNum(EphMoonDistance(jd, hours)))
+
+Def EsMoonphase(vs As List Of Cell) As RckWork
+    EsJdHours("EPHMOONPHASE", Nth(vs, 1), Nth(vs, 2), Fn(jd, hours) => CutNum(EphMoonPhase(jd, hours)))
+
+Def EsMoonage(vs As List Of Cell) As RckWork
+    EsJdHours("EPHMOONAGE", Nth(vs, 1), Nth(vs, 2), Fn(jd, hours) => CutNum(EphMoonAge(jd, hours)))
+
+Rem ---- moonrise and moonset -------------------------------------------------
+
+Def EsSeedMoonRise(st As RckState) As RckState
+    Let s1 = RckReg(st, "EPHMOONRISE", 2, RckPure(Fn(vs) => EsMoonrise(vs)), "( p jd -- hs )", "UTC hours of moonrise on that day as { h }, or { } - roughly once a month a day genuinely has none, and near a pole the moon can be up or down for weeks.")
+    RckReg(s1, "EPHMOONSET", 2, RckPure(Fn(vs) => EsMoonset(vs)), "( p jd -- hs )", "UTC hours of moonset, { h } or { }, on the same terms as EPHMOONRISE.")
+
+Def EsMoonrise(vs As List Of Cell) As RckWork
+    EsMoonEvent("EPHMOONRISE", vs, EphMoonRise)
+
+Def EsMoonset(vs As List Of Cell) As RckWork
+    EsMoonEvent("EPHMOONSET", vs, EphMoonSet)
+
+Def EsMoonEvent(word As String, vs As List Of Cell, f As [ GeoPt Number -- Option ]) As RckWork
+    Select Case EsPt(word, Nth(vs, 1))
+        Case Ok(p)
+            EsMoonEventAt(word, p, Nth(vs, 2), f)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Def EsMoonEventAt(word As String, p As GeoPt, c As Cell, f As [ GeoPt Number -- Option ]) As RckWork
+    Select Case RckNumArg(word, c)
+        Case Ok(jd)
+            RckVals({ EsOptCell(Call(f, p, jd)) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Rem ---- the planets ------------------------------------------------------------
+
+Def EsSeedPlanets(st As RckState) As RckState
+    Let s1 = RckReg(st, "EPHMERCURY", 0, RckPure(Fn(vs) => RckVals({ CutNum(EphMercury()) })), "( -- planet )", "Mercury, for EPHPLANET.")
+    Let s2 = RckReg(s1, "EPHVENUS", 0, RckPure(Fn(vs) => RckVals({ CutNum(EphVenus()) })), "( -- planet )", "Venus, for EPHPLANET.")
+    Let s3 = RckReg(s2, "EPHMARS", 0, RckPure(Fn(vs) => RckVals({ CutNum(EphMars()) })), "( -- planet )", "Mars, for EPHPLANET. The numbering keeps the Earth's seat: Mars is 4.")
+    Let s4 = RckReg(s3, "EPHJUPITER", 0, RckPure(Fn(vs) => RckVals({ CutNum(EphJupiter()) })), "( -- planet )", "Jupiter, for EPHPLANET.")
+    Let s5 = RckReg(s4, "EPHSATURN", 0, RckPure(Fn(vs) => RckVals({ CutNum(EphSaturn()) })), "( -- planet )", "Saturn, for EPHPLANET.")
+    RckReg(s5, "EPHPLANET", 3, RckPure(Fn(vs) => EsPlanet(vs)), "( planet jd h -- sky )", "A planet as a sky position, { ra dec } geocentric. Name it with EPHMERCURY through EPHSATURN.")
+
+Rem The library's chooser guard, asked here first so the session
+Rem refuses where the machine would abort — the same words, minus the
+Rem death.
+Def EsPlanet(vs As List Of Cell) As RckWork
+    Select Case RckNumArg("EPHPLANET", Nth(vs, 1))
+        Case Ok(which)
+            EsPlanetAt(which, Nth(vs, 2), Nth(vs, 3))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("EPHPLANET did not answer")
+
+Def EsPlanetAt(which As Number, b As Cell, c As Cell) As RckWork
+    If which = 3 Then
+        RckWorkBad("EPHPLANET: PLANET 3 IS THE EARTH, WHICH IS WHERE YOU ARE STANDING — THE GEO WORDS ANSWER FOR IT")
+    Else
+        If which = 1 Or which = 2 Or which = 4 Or which = 5 Or which = 6 Then
+            EsJdHours("EPHPLANET", b, c, Fn(jd, hours) => EsSkyCell(EphPlanet(which, jd, hours)))
+        Else
+            RckWorkBad("EPHPLANET: THERE IS NO PLANET '" & Str(which) & "' IN THE TABLE — USE EPHMERCURY THROUGH EPHSATURN")
+
+Rem ---- the observer ------------------------------------------------------------
+
+Def EsSeedAltAz(st As RckState) As RckState
+    Let s1 = RckReg(st, "EPHALTAZ", 4, RckPure(Fn(vs) => EsAltaz(vs)), "( p sky jd h -- view )", "What an observer at p sees of a sky position at that instant: { altitude azimuth }, azimuth a compass bearing.")
+    RckReg(s1, "EPHSEPARATION", 2, RckPure(Fn(vs) => EsSeparation(vs)), "( a b -- deg )", "The angle between two sky positions, degrees.")
+
+Def EsAltaz(vs As List Of Cell) As RckWork
+    Select Case Pair(EsPt("EPHALTAZ", Nth(vs, 1)), EsSky("EPHALTAZ", Nth(vs, 2)))
+        Case Pair(Ok(p), Ok(sky))
+            EsJdHours("EPHALTAZ", Nth(vs, 3), Nth(vs, 4), Fn(jd, hours) => EsViewCell(EphAltAz(p, sky, jd, hours)))
+        Case Pair(Err(w, at), other)
+            RckWorkBad(w)
+        Case Pair(other, Err(w, at))
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("EPHALTAZ did not answer")
+
+Def EsSeparation(vs As List Of Cell) As RckWork
+    Select Case Pair(EsSky("EPHSEPARATION", Nth(vs, 1)), EsSky("EPHSEPARATION", Nth(vs, 2)))
+        Case Pair(Ok(a), Ok(b))
+            RckVals({ CutNum(EphSeparation(a, b)) })
+        Case Pair(Err(w, at), other)
+            RckWorkBad(w)
+        Case Pair(other, Err(w, at))
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("EPHSEPARATION did not answer")
+
+Rem ---- the seed ------------------------------------------------------------------
+
+Def RckSeedEphemeris(st As RckState) As RckState
+    Let s1 = EsSeedSidereal(RckSeeding(st, "seed-ephemeris"))
+    Let s2 = EsSeedSun(s1)
+    Let s3 = EsSeedMoon(s2)
+    Let s4 = EsSeedMoonRise(s3)
+    Let s5 = EsSeedPlanets(s4)
+    EsSeedAltAz(s5)

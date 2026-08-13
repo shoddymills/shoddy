@@ -1,0 +1,368 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="The Earth as arithmetic &mdash; machines/geo.shoddy">
+<title>geo &mdash; The Earth as arithmetic | Shoddy Machines</title>
+<link rel="stylesheet" href="../style.css">
+<link rel="icon" href="../favicon.svg" type="image/svg+xml">
+<link rel="alternate icon" href="../favicon.ico" sizes="48x48">
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+</head>
+<body>
+<div class="topbar"><div class="inner">
+  <div class="row">
+    <a class="phase" href="index.html"><img class="mark" src="../media/brand/shoddy-icon.svg" alt="" width="23" height="23">Shoddy · The Machines</a>
+    <span class="spacer"></span>
+    <nav class="docnav meta" aria-label="About"><a href="../heritage.html">Heritage</a><a href="../authorship.html">Authorship</a></nav>
+  </div>
+  <nav class="docnav main" aria-label="Documentation"><a href="../tutorials/index.html">Tutorials</a><a href="../guide.html">Guide</a><a href="../quickref.html">Reference</a><span class="here">Machines</span><a href="../mills/index.html">Mills</a><a href="../stack.html">Stack</a><a href="../spec.html">Spec</a><a href="../setup.html">Setup</a><a href="../vscode.html">VS Code</a><a href="../assistants.html">AI</a><a href="../build.html">Toolchain</a><a href="../hosting.html">Hosting</a><a href="../errors.html">Errors</a></nav>
+</div></div>
+<div class="wrap">
+
+
+<header class="mast has-icon"><div><p class="eyebrow"><a href="index.html#core-numerics">The Machines &middot; Core numerics</a></p><h1>geo</h1><p class="kicker">The Earth as arithmetic &mdash; machines/geo.shoddy</p></div><img class="micon" src="../media/icons/geo.svg" alt="the geo machine&#39;s icon"></header>
+<nav class="pagenav pagenav-top" aria-label="Machines, in catalog order"><a href="ephemeris.html" class="prev"><span class="pnwrap"><span class="dir">&larr; Previous machine</span><span class="ttl">ephemeris</span></span></a><a href="index.html" class="all">All machines</a><a class="next" href="julian.html"><span class="pnwrap"><span class="ttl">julian</span><span class="dir">Next machine &rarr;</span></span></a></nav>
+
+<h2 id="summary">Summary</h2>
+<p>Everything you can compute about a position on the Earth without
+asking anybody. How far apart two points are and which way one lies from
+the other; where you end up steering a bearing for a distance; how long a
+route is, how far off it you have drifted, and where two great circles
+cross; how to write a coordinate down in the half-dozen forms people
+write them in; how far you can see from a given height; and &mdash;
+because it is the most interesting thing a latitude and a longitude know
+&mdash; where the sun is, and when it rises.</p>
+<p>Pure throughout, sphere-based, and <strong>no network anywhere near
+it</strong>: the machine includes no networking machine, so it cannot
+acquire one by accident. There is no geocoding here, no tiles, no
+elevation and no address search. A coordinate arrives as two numbers or
+it does not arrive.</p>
+
+<h2 id="history">A Brief History of the Haversine</h2>
+<p>The distance formula at the heart of this machine is named for a
+navigator's shortcut. Spherical trigonometry could give the great-circle
+distance between two points long before anyone could afford to compute it
+at sea: the direct law-of-cosines form loses its precision badly when the
+angle is small &mdash; and on a voyage plotted daily, the angle is always
+small. The fix was to work with the <em>versed sine</em>, a quantity Indian
+astronomers had tabled centuries earlier, and specifically with half of it:
+the <em>haversine</em>, a name coined by James Inman in the 1835 edition of
+his navigation textbook for the Royal Navy. Written in haversines, the
+distance formula has no catastrophic small-angle behaviour and, crucially
+for 1835, could be worked entirely from log tables. The tables are gone,
+but the numerical virtue is not: on IEEE doubles the haversine form is still
+the right way to ask how far apart two nearby points are, which is why a
+formula named for a Victorian textbook sits in every phone's location stack
+&mdash; and in <code>GeoDist</code>.</p>
+
+<h2 id="why">Why It's Useful</h2>
+<p>The arithmetic is small &mdash; most of these words are three lines of
+trigonometry. That is exactly the argument for a machine rather than
+against one: small, sharp formulas that are easy to get <em>subtly</em>
+wrong are the ones worth writing down once. A mistyped haversine does not
+crash. It returns a plausible number, and the bug surfaces three screens
+later as a route that is four kilometres too long.</p>
+<p>Six decisions are made here so that no caller has to make them:</p>
+<table>
+<tr><th>Convention</th><th>Why it is that way</th></tr>
+<tr><td><strong>Degrees at every boundary</strong></td><td>A deliberate divergence from <a href="eng.html">eng</a>, which takes radians and says so. A coordinate is <em>written</em> in degrees everywhere on Earth &mdash; every receiver, every map, every URL &mdash; so a radians surface would put a conversion at every call site, and the conversion is where the mistakes are.</td></tr>
+<tr><td><strong>Metres for every distance, and no unit mode</strong></td><td>A mode is state, this machine has none, and a distance whose unit depends on a setting made three screens ago is the worst fault of the calculators eng was compiled from. <code>EngConvert(d, EngMetre(), EngNauticalMile())</code> converts at the edge.</td></tr>
+<tr><td><strong>Bearings are 0..360, north is 0, clockwise</strong></td><td>Compass convention, not mathematical convention: geo answers a bearing a navigator can steer, not an angle from the positive x-axis. No caller ever sees &minus;170.</td></tr>
+<tr><td><strong>The Earth is a sphere, and the error has a number</strong></td><td>Haversine on a mean-radius sphere is within about 0.5&nbsp;% of the ellipsoidal answer &mdash; a few kilometres on a transatlantic leg, a few metres across a city. Vincenty is deliberately absent; see below.</td></tr>
+<tr><td><strong>The antimeridian is handled once</strong></td><td>Longitude wraps at &plusmn;180, and every naive midpoint, bounding box and route length breaks crossing it, usually by computing a path the long way round the planet. Callers get this right for free or the machine has failed.</td></tr>
+<tr><td><strong>Never compare two points with <code>=</code></strong></td><td>Records compare structurally, so <code>GeoPt(53.72, -1.86) = GeoPt(53.72, -1.86)</code> is <code>True</code> &mdash; and one arrived at by arithmetic never will be. <code>GeoNear</code> is the only comparison offered, exactly as <code>EngCNear</code> is for complex numbers.</td></tr>
+</table>
+
+<h2 id="guide">User's Guide</h2>
+
+<h3>A route, which is what a list is for</h3>
+<p>A route is a <code>List Of GeoPt</code> and nothing else &mdash; no
+type, no wrapper, no builder. It is what a caller already has. Three
+points across northern Europe:</p>
+<pre><code>Include "geo.shoddy"
+
+Def Route() As List Of GeoPt
+    { GeoAt(51.5074, -0.1278),      ' London
+      GeoAt(48.8566, 2.3522),       ' Paris
+      GeoAt(45.7640, 4.8357) }      ' Lyon
+
+Def Main()
+    Print(Str(GeoRouteLength(Route())))         ' 735056.0073 metres
+    Print(Str(Nth(GeoRouteLegs(Route()), 1)))   ' 343556.5349  London to Paris
+    Print(Str(Nth(GeoRouteLegs(Route()), 2)))   ' 391499.4724  Paris to Lyon
+    Print(GeoCompass(Nth(GeoRouteBearings(Route()), 1)))   ' SSE</code></pre>
+<p>Its enclosing box is four numbers and a flag. The flag matters: a box
+crossing the antimeridian has <code>BoxWest &gt; BoxEast</code>, and
+<code>GeoInBox</code> needs to know rather than guess. This one does
+not wrap.</p>
+<pre><code>Let box = GeoRouteBounds(Route())
+' BoxSouth 45.764   BoxNorth 51.5074   BoxWest -0.1278   BoxEast 4.8357
+' BoxWraps False</code></pre>
+<p>How far does a fourth point lie off the route? <code>GeoNearestOn</code>
+answers all three questions a caller asks next &mdash; how far off, how
+far along, and which leg:</p>
+<pre><code>Let hit = GeoNearestOn(Route(), GeoAt(50.8503, 4.3517))    ' Brussels
+' HitAway  233291.1698   metres off the route
+' HitAlong 220003.8472   metres from the start
+' HitLeg   1             on the London-to-Paris leg</code></pre>
+<p>And to <em>draw</em> it, sample the great circle. This is the one word
+here whose purpose is a picture: a great circle is a curve on every map
+projection, so a route drawn as two-point straight lines is visibly wrong
+over any distance.</p>
+<pre><code>GeoWaypoints(GeoAt(51.5074, -0.1278), GeoAt(45.7640, 4.8357), 5)
+' the middle one is 48.6623, 2.4954 - south of the straight line between them</code></pre>
+
+<h3>The sun, which is why anyone tries the machine twice</h3>
+<p>Nothing here reads a clock. The date is an argument, which is what
+keeps geo out of the capability system entirely &mdash;
+<a href="clock.html">clock</a> is optional in every manifest, and a geo
+that reached for &ldquo;today&rdquo; would drag that optionality into a
+machine that is otherwise arithmetic. <code>GeoJulian</code> is the
+bridge and a caller crosses it deliberately.</p>
+<pre><code>Let jd = GeoJulian(2026, 6, 21)                    ' 2461212.5
+Let here = GeoAt(53.72, -1.86)                     ' the Heavy Woollen District
+
+GeoSunRise(here, jd)        ' Some(3.613168696)    03:37 UTC
+GeoSunSet(here, jd)         ' Some(20.69574165)    20:42 UTC
+GeoDayLength(here, jd)      ' 17.08257295          seventeen hours of it
+GeoSunNoon(here, jd)        ' 12.15445517
+GeoSolarDeclination(jd)     ' 23.43505541          the solstice, to two decimals
+GeoEquationOfTime(jd)       ' -1.827310364         minutes</code></pre>
+<p><strong><code>Option</code> is the whole design here and it is not
+decoration.</strong> Above the Arctic circle in June the sun does not
+rise, because it never set. That is an ordinary answer, not an error and
+not a sentinel &mdash; and a library returning midnight, or aborting,
+would be wrong in the two places the question is most interesting.
+<code>GeoSunNoon</code> is always defined, which is why it is a separate
+word.</p>
+<pre><code>GeoSunRise(GeoAt(70, 0), GeoJulian(2026, 6, 21))    ' None()  - it never set
+GeoSunRise(GeoAt(70, 0), GeoJulian(2026, 12, 21))   ' None()  - it never rose
+GeoDayLength(GeoAt(70, 0), GeoJulian(2026, 6, 21))  ' 24      - still a number</code></pre>
+<p>Times are UTC hours as a <code>Number</code>, <code>13.5</code> meaning
+13:30. Not a string and not a clock type: this machine does no formatting
+and knows no time zone. A time may fall outside 0..24, meaning the event
+happens on the UTC day either side of the one asked about &mdash; wrapping
+it would break the guarantee that sunrise and sunset straddle solar
+noon.</p>
+
+<h3>A rhumb line is not a great circle</h3>
+<p>A great circle is the shortest path. A rhumb line holds <em>one
+compass bearing</em> the whole way, and it is what a vessel can actually
+steer without continuously re-plotting. A navigation answer computed on a
+great circle is the wrong answer to the question that was asked. London
+to New York, both ways:</p>
+<table>
+<tr><th></th><th>Great circle</th><th>Rhumb line</th></tr>
+<tr><td>Distance</td><td>5&nbsp;570&nbsp;230 m</td><td>5&nbsp;794&nbsp;129 m</td></tr>
+<tr><td>Bearing on departure</td><td>288.33&deg;</td><td>258.04&deg;</td></tr>
+<tr><td>Bearing on arrival</td><td>231.21&deg;</td><td>258.04&deg;</td></tr>
+</table>
+<p>Two hundred and twenty-four kilometres, and fifty-seven degrees of
+turn. The great circle's bearing on arrival is <em>not</em> its departure
+bearing reversed &mdash; reversing 288.33&deg; gives 108.33&deg;, which is
+a hundred and twenty degrees wrong. That is what
+<code>GeoFinalBearing</code> exists to say.</p>
+
+<h3>Coordinates as text</h3>
+<p>A coordinate arrives as text far more often than as two numbers, and in
+more spellings than anyone expects. Everything that reads text answers
+<code>Result</code>, and every one reports the 1-based position of what it
+could not read.</p>
+<pre><code>GeoFormat(GeoAt(53.72, -1.86), 6)   ' "53.720000, -1.860000"
+GeoDms(53.72, 1)                    ' 53&deg;43'12.0"
+GeoDms(-1.86, 1)                    ' -1&deg;51'36.0"
+GeoHash(GeoAt(53.72, -1.86), 6)     ' "gcw9te"
+GeoLocator(GeoAt(53.72, -1.86), 6)  ' "IO93br"   the Maidenhead square
+
+GeoParse("53.72, -1.86")            ' Ok(GeoPt(53.72, -1.86))
+GeoParse("53 43 12 N, 1 51 36 W")   ' the same place
+GeoParse("N53 43 12 W1 51 36")      ' and so is this
+GeoParse("53.72, -1.86Q")           ' Err("... CANNOT READ 'Q' AT POSITION 13", 13)</code></pre>
+<p><strong>A geohash is a box, not a point</strong>, and
+<code>GeoHashBox</code> is the word that says so. <code>GeoFromHash</code>
+answers the centre for convenience and its description names the precision
+it just discarded &mdash; a six-character cell is about 1.2&nbsp;km by
+0.6&nbsp;km. This is the single commonest geohash misunderstanding and the
+surface is built to correct it rather than encode it.
+<code>GeoHashNeighbours</code> is what makes geohashes actually useful:
+proximity search by shared prefix fails at every cell boundary, where two
+points a metre apart share no prefix at all, and searching the eight
+neighbours too is the standard repair.</p>
+
+<h2 id="ceilings">Three Ceilings</h2>
+<p><strong>Half a per cent, and it is the sphere.</strong> Every distance
+here is computed on a mean-radius sphere. The real Earth is an ellipsoid
+flattened by about a part in 300, so an answer can be out by roughly
+0.5&nbsp;% &mdash; a few kilometres on a transatlantic leg. Vincenty's
+method is the accurate one and is deliberately absent: it is iterative, it
+fails to converge for near-antipodal points and so must answer
+<code>Result</code>, and it roughly doubles the machine's conceptual
+weight to buy that half a per cent. Survey accuracy needs a geodesy
+machine, and that is a different design.</p>
+<p><strong>A minute of time, and it is the sun.</strong> The solar
+position here is the low-precision algorithm, good to about a minute of
+arc, so rise and set are good to about a minute of time. Ample for
+anything but observation. Sunrise is taken as the upper limb clearing the
+horizon with refraction &mdash; the standard &minus;0.833&deg;, named as
+<code>GeoSunAltitude()</code> so it can be seen and substituted &mdash;
+which is six minutes different from the centre crossing, and the
+commonest reason two implementations disagree.</p>
+<p><strong>Half the planet, and it is the polygon.</strong>
+<code>GeoArea</code> works by spherical excess and answers whichever of
+the two regions a closed ring divides the sphere into is
+<em>smaller</em>. That makes winding irrelevant, which is what a caller
+wants in every case but one: a polygon genuinely covering more than half
+the Earth comes back as its complement, and nothing here can tell the
+difference.</p>
+
+<h2 id="words">Word Reference</h2>
+
+<h3>The type and its construction</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>Type GeoPt</td><td><code>GeoLat</code>, <code>GeoLon</code>, both degrees, latitude first because that is the order a coordinate is written in. The prefix is not tidiness: an accessor loses every naming contest, so a bare <code>Lat</code> would be shadowed by any local of that name anywhere.</td></tr>
+<tr><td>GeoAt(lat, lon)</td><td>The checked builder. Aborts naming itself on a latitude outside &minus;90..90, a longitude outside &minus;180..180, or a value that is not finite.</td></tr>
+<tr><td>GeoTryAt(lat, lon)</td><td>The total twin, answering <code>Result</code>, for a coordinate that came from outside. <code>GeoAt</code> is defined <em>over</em> this, so there is one set of rules and not two.</td></tr>
+<tr><td>GeoWrapLon(lon)</td><td>Longitude folded into (&minus;180, 180]. Public, because a caller doing their own longitude arithmetic needs the same fold. A longitude already in range comes back bit for bit.</td></tr>
+<tr><td>GeoWrapBrg(brg)</td><td>A bearing folded into [0, 360). The compass twin of the above.</td></tr>
+<tr><td>GeoNear(a, b, metres)</td><td>The only comparison between two points this machine offers, and the reason never to use <code>=</code> on one.</td></tr>
+<tr><td>GeoRadius()</td><td>6371008.8, the IUGG mean Earth radius in metres. A word and not a literal, so the one place it is decided is visible and a caller working on another body can see what to substitute.</td></tr>
+<tr><td>GeoEps()</td><td>The angular tolerance below which two directions are treated as the same.</td></tr>
+</table>
+
+<h3>Two points</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>GeoDistance(a, b)</td><td>The great-circle distance in metres, by haversine.</td></tr>
+<tr><td>GeoArc(a, b)</td><td>The central angle between them in radians &mdash; the quantity every other word here is really about.</td></tr>
+<tr><td>GeoBearing(a, b)</td><td>The initial bearing: the course to steer as you leave a.</td></tr>
+<tr><td>GeoFinalBearing(a, b)</td><td>The bearing on arrival, and <strong>not</strong> the initial bearing reversed.</td></tr>
+<tr><td>GeoDestination(a, brg, m)</td><td>The direct problem: where you end up.</td></tr>
+<tr><td>GeoMidpoint(a, b)</td><td>The great-circle midpoint, <strong>not</strong> the average of the coordinates. The midpoint of 179&nbsp;E and 179&nbsp;W is on the antimeridian, where the coordinate average is in the Gulf of Guinea.</td></tr>
+<tr><td>GeoAlong(a, b, f)</td><td>The point a fraction of the way. <code>f</code> outside 0..1 extrapolates, deliberately.</td></tr>
+<tr><td>GeoAntipode(a)</td><td>Diametrically opposite.</td></tr>
+<tr><td>GeoEquirect(a, b)</td><td>The fast flat-Earth approximation. It earns its place by being honest about being wrong: good enough to <em>rank</em> candidates before measuring a shortlist properly, and out by 250&nbsp;km over the Atlantic. Reaching for it as a distance is a misreading.</td></tr>
+</table>
+
+<h3>Where two paths cross</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>GeoIntersect(a, brgA, b, brgB)</td><td>Where two great circles cross, as an <code>Option</code>. <code>None</code> only when the two describe one circle &mdash; any two <em>distinct</em> great circles always cross. They cross twice, at antipodes; this answers the nearer.</td></tr>
+<tr><td>GeoCrossTrack(p, a, b)</td><td>The <strong>signed</strong> perpendicular distance from the great circle through a and b, positive to the right of the track. Signed on purpose: &ldquo;two hundred metres off track&rdquo; is half an answer, and an absolute value throws the other half away where a caller cannot recover it.</td></tr>
+<tr><td>GeoAlongTrack(p, a, b)</td><td>How far along a&nbsp;&rarr;&nbsp;b the nearest point lies. Negative behind a.</td></tr>
+<tr><td>GeoClosestOnLeg(p, a, b)</td><td>The foot of the perpendicular, clamped to the segment.</td></tr>
+</table>
+
+<h3>Routes</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>GeoRouteLength(pts)</td><td>The total in metres. An empty or one-point route is 0, not an error: a route with nowhere to go has a length and it is zero.</td></tr>
+<tr><td>GeoRouteLegs(pts)</td><td>Each leg, <em>n</em>&nbsp;&minus;&nbsp;1 of them.</td></tr>
+<tr><td>GeoRouteCumulative(pts)</td><td>Distance from the start to each point, <em>n</em> of them, the first 0 and the last the whole length.</td></tr>
+<tr><td>GeoRouteAt(pts, m)</td><td>The point that far along, interpolated within its leg, as an <code>Option</code>. Past either end is absence, not a caller bug.</td></tr>
+<tr><td>GeoRouteBearings(pts)</td><td>The initial bearing of each leg &mdash; the course to steer, leg by leg.</td></tr>
+<tr><td>GeoNearestOn(pts, p)</td><td>The nearest point on the route, as a <code>GeoHit</code>: <code>HitPoint</code>, <code>HitAway</code>, <code>HitAlong</code>, <code>HitLeg</code>.</td></tr>
+<tr><td>GeoRouteBounds(pts)</td><td>The enclosing box, antimeridian-aware. Latitude is just the minimum and maximum; longitude is the complement of the <em>widest gap</em>, which is what gives a route from 179&nbsp;E to 179&nbsp;W a box two degrees wide instead of one spanning the planet.</td></tr>
+<tr><td>GeoSimplify(pts, m)</td><td>Douglas&ndash;Peucker, tolerance in metres. What makes a recorded track usable: a GPS trace is tens of thousands of points, most of them noise about a line the walker actually walked. Preserves both endpoints and never grows a route.</td></tr>
+<tr><td>GeoResample(pts, m)</td><td>The route re-cut at a fixed spacing &mdash; what a profile, an animation or a fair comparison between two tracks wants. The last point is always kept.</td></tr>
+<tr><td>GeoWaypoints(a, b, n)</td><td><em>n</em> points along the great circle, both ends included. The drawing word.</td></tr>
+<tr><td>GeoCentroid(pts)</td><td>The spherical mean, <strong>through 3-D vectors</strong>. Averaging latitudes and longitudes puts the centroid of two points either side of the antimeridian on the wrong side of the planet, and the centroid of a ring around the pole nowhere near it.</td></tr>
+<tr><td>GeoArea(pts)</td><td>The spherical polygon area by spherical excess, in square metres. The ring closes itself and winding does not matter. <strong>Not</strong> the trapezoid formula, which treats each edge as straight in latitude and longitude and is out by about one per cent on a ten-degree triangle.</td></tr>
+<tr><td>GeoUnitVec(p) / GeoVecPt(v) / GeoVecAdd(a, b)</td><td>The 3-D vector bridge the centroid is built on.</td></tr>
+</table>
+
+<h3>Boxes, and cheap filtering</h3>
+<p>The box exists to make filtering cheap. Measuring the distance to every
+point in a large set is expensive; a box test is four comparisons.
+Shortlisting with a box and then measuring the shortlist properly is the
+standard shape, and saying so here is what stops somebody putting
+<code>GeoDistance</code> inside a <code>Filter</code> over ten thousand
+points.</p>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>Type GeoBox</td><td><code>BoxSouth</code>, <code>BoxNorth</code>, <code>BoxWest</code>, <code>BoxEast</code>, <code>BoxWraps</code>. The flag is a field and not a derivation, because a box of one point on the antimeridian looks the same as a wrapping one.</td></tr>
+<tr><td>GeoBoxAround(centre, m)</td><td>The lat/lon window enclosing a radius. Named <code>GeoBoxAround</code> and not <code>GeoBox</code> because the type already publishes that name as its constructor. Near a pole it clamps latitude and widens longitude to the full circle, which is correct and surprising.</td></tr>
+<tr><td>GeoInBox(p, box)</td><td>Membership, antimeridian-aware. A wrapping box's test is an <code>Or</code> where an ordinary box's is an <code>And</code>, which is the one line a caller writing this by hand gets wrong.</td></tr>
+<tr><td>GeoBoxUnion(x, y)</td><td>The smaller of the only two arcs that can contain both.</td></tr>
+<tr><td>GeoBoxCentre(box) / GeoBoxSpan(box) / GeoBoxOf(s, n, w, e)</td><td>The middle going east from the west edge, the eastward span in degrees, and the builder that sets the wrap flag for you.</td></tr>
+<tr><td>GeoBoundingCircle(pts)</td><td>A <code>GeoCircle</code> covering every point: the centroid, and the distance to whichever point is furthest. <strong>Not</strong> the minimal enclosing circle, which is a harder problem with an iterative answer.</td></tr>
+</table>
+
+<h3>Coordinates as text</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>GeoDms(deg, places)</td><td>An angle as degrees, minutes and seconds. The whole angle is rounded to seconds first and then split, because rounding the seconds last is what produces 43 minutes 60 seconds.</td></tr>
+<tr><td>GeoFromDms(s)</td><td>One written angle back, as <code>Result</code>.</td></tr>
+<tr><td>GeoFormat(p, places)</td><td>The paste form every mapping tool accepts.</td></tr>
+<tr><td>GeoParse(s)</td><td>A whole coordinate in any accepted spelling: a decimal pair; DMS with the marks; DMS in plain ASCII; N, S, E or W before or after its numbers; comma or whitespace between the halves. E or W on the first half means the caller wrote longitude first, which is rarer but unambiguous.</td></tr>
+<tr><td>GeoCompass(brg) / GeoFromCompass(s)</td><td>The sixteen compass points and back. Sixteen and not thirty-two: the half-winds are a nineteenth-century sailing surface and a machine offering <code>NEbN</code> would be answering a question nobody asks.</td></tr>
+<tr><td>GeoHash(p, n)</td><td>The geohash to <em>n</em> characters. The alphabet drops a, i, l and o.</td></tr>
+<tr><td>GeoHashBox(s)</td><td>The cell as a <code>GeoBox</code> &mdash; what a geohash <em>is</em>.</td></tr>
+<tr><td>GeoFromHash(s)</td><td>The cell's centre, for convenience, having discarded the precision.</td></tr>
+<tr><td>GeoHashNeighbours(s)</td><td>The eight adjacent cells, clamping at the poles and wrapping at the antimeridian.</td></tr>
+<tr><td>GeoLocator(p, n) / GeoFromLocator(s)</td><td>Maidenhead, <code>IO91wm</code> and the like, to 2, 4, 6 or 8 characters. In because it is real and delightful: amateur radio has located itself this way for forty years, and a machine that can tell a student their grid square has earned their attention in a way a haversine has not.</td></tr>
+<tr><td>GeoDegSign() / GeoMinSign() / GeoSecSign()</td><td>The three marks, built from their character codes rather than typed &mdash; a literal degree sign in a source file is one bad save away from mojibake.</td></tr>
+</table>
+
+<h3>The sun</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>GeoJulian(y, m, d)</td><td>The Julian date at 00:00&nbsp;UT. The bridge a caller crosses deliberately, because geo never reads a clock.</td></tr>
+<tr><td>GeoSunPos(p, jd, hours)</td><td>A <code>GeoSun</code>: <code>SunElevation</code> and <code>SunAzimuth</code>, the azimuth from north clockwise like every other bearing here.</td></tr>
+<tr><td>GeoSunRise(p, jd) / GeoSunSet(p, jd)</td><td>UTC hours as an <code>Option</code>; <code>None</code> inside a polar day or night.</td></tr>
+<tr><td>GeoSunNoon(p, jd)</td><td>Solar noon &mdash; always defined, even where rise and set are not, which is why it is separate.</td></tr>
+<tr><td>GeoDayLength(p, jd)</td><td>0 through 24 hours. Still a number where there is no sunrise to have.</td></tr>
+<tr><td>GeoTwilight(p, jd, deg)</td><td>The pair of times the sun passes a given depression: 6 civil, 12 nautical, 18 astronomical.</td></tr>
+<tr><td>GeoSolarDeclination(jd)</td><td>The season, as one number.</td></tr>
+<tr><td>GeoEquationOfTime(jd)</td><td>Why a sundial disagrees with a clock, in minutes.</td></tr>
+<tr><td>GeoSunAltitude()</td><td>&minus;0.833&deg;, the standard sunrise altitude: the upper limb clearing the horizon with refraction.</td></tr>
+</table>
+
+<h3>Navigation</h3>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>GeoRhumbDistance(a, b)</td><td>Constant-bearing distance.</td></tr>
+<tr><td>GeoRhumbBearing(a, b)</td><td>The bearing you actually steer, and it does not change along the way.</td></tr>
+<tr><td>GeoRhumbDestination(a, brg, m)</td><td>Where holding that bearing takes you. A rhumb line steered far enough north reaches the pole and carries on down the far side.</td></tr>
+<tr><td>GeoHorizon(h)</td><td>How far you can see from height <em>h</em>, in metres. Geometric, with no allowance for refraction &mdash; the atmosphere pushes the true horizon out by something like eight per cent, and that coefficient depends on the weather.</td></tr>
+<tr><td>GeoGeographicRange(h1, h2)</td><td>When a light of one height becomes visible from another: where the two horizons touch.</td></tr>
+<tr><td>GeoDeadReckon(a, legs)</td><td>A start and a list of bearing/distance pairs. This is <code>Fold</code> in one word, and it is here as much for the teaching as for the navigation.</td></tr>
+<tr><td>GeoZoneOffset(lon)</td><td>The <strong>nautical</strong> time zone: fifteen degrees wide, centred on its meridian. Political time zones are a database that changes several times a year and no machine should ship one; this is arithmetic, and it is genuinely what is used at sea.</td></tr>
+<tr><td>GeoEcef(p, alt) / GeoFromEcef(xyz) / GeoEcefHeight(xyz)</td><td>Earth-centred Cartesian, as a three-element list &mdash; the representation every satellite and every 3-D renderer wants, and the one that makes <code>GeoCentroid</code> obviously correct rather than surprising.</td></tr>
+</table>
+
+<h2 id="usedby">Who Uses It</h2>
+<table>
+<tr><th></th><th>Machine</th><th>Why</th></tr>
+<tr><td class="uicon"><a href="ephemeris.html"><img src="../media/icons/ephemeris.svg" alt=""></a></td><td><a href="ephemeris.html">ephemeris</a></td><td>The observer is a <code>GeoPt</code>, and the sky's compass azimuth goes through <code>GeoWrapBrg</code> &mdash; the machine geo's own out-of-scope promised, built on geo's conventions.</td></tr>
+</table>
+
+<h2 id="uses">The Machines It Uses</h2>
+<table>
+<tr><th></th><th>Machine</th><th>Why</th></tr>
+<tr><td class="uicon"><a href="math.html"><img src="../media/icons/math.svg" alt=""></a></td><td><a href="math.html">math</a></td><td><code>Rad</code> and <code>Deg</code> at the degrees boundary, <code>Clamp</code> guarding every <code>Asin</code> and <code>Sqr</code> against a rounding error past &plusmn;1, <code>Hypot</code>, and <code>RoundTo</code> for the seconds.</td></tr>
+<tr><td class="uicon"><a href="seq.html"><img src="../media/icons/seq.svg" alt=""></a></td><td><a href="seq.html">seq</a></td><td><code>Last</code>, <code>Taken</code>, <code>DropN</code>, <code>Append</code>, <code>IndexOf</code>, and the <code>Pair</code> the Douglas&ndash;Peucker search carries its best candidate in.</td></tr>
+<tr><td class="uicon"><a href="str.html"><img src="../media/icons/str.svg" alt=""></a></td><td><a href="str.html">str</a></td><td><code>ToFixed</code> and <code>PadZero</code> for writing a coordinate out, <code>Trim</code> for reading one in.</td></tr>
+<tr><td class="uicon"><a href="julian.html"><img src="../media/icons/julian.svg" alt=""></a></td><td><a href="julian.html">julian</a></td><td>The calendar: <code>GeoJulian</code> is one line over <code>JulDayNumber</code>, so the sun words share the tree's one set of leap rules.</td></tr>
+</table>
+<p>It does <strong>not</strong> include <a href="eng.html">eng</a>. eng
+duplicates <code>Rad</code> and <code>Deg</code>, drags stats, seq and str
+in behind it, and this machine converts nothing &mdash; a caller wanting
+nautical miles calls <code>EngConvert</code> at the edge, where the policy
+lives. It does not include <a href="stats.html">stats</a> either: stats
+publishes <code>GeoMean</code>, which is a geometric mean and nothing to
+do with geography, and a route total is a one-line <code>Fold</code>.</p>
+
+<nav class="pagenav pagenav-bottom" aria-label="Machines, in catalog order">
+  <a href="ephemeris.html" class="prev"><span class="pnwrap"><span class="dir">&larr; Previous machine</span><span class="ttl">ephemeris</span></span></a>
+  <a href="index.html" class="all">All machines</a>
+  <a class="next" href="julian.html"><span class="pnwrap"><span class="ttl">julian</span><span class="dir">Next machine &rarr;</span></span></a>
+</nav>
+<footer>Named for the shoddy mills of the West Riding: Useless Things Made
+Useful Through Skill (<a href="../heritage.html">the heritage of the name</a>).<br>
+&copy; 2026 Stephen Vincent Foster</footer>
+</div>
+</body>
+</html>

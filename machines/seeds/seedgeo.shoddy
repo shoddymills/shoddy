@@ -1,0 +1,582 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem seedgeo.shoddy — reckoner seed: geo.shoddy, at a keyboard
+Rem
+Rem Nineteen words: GEODIST, GEOBEARING, GEODEST, GEOMID, GEOROUTELEN,
+Rem GEOCROSSTRACK, GEOBOUNDS, GEOAREA, GEOSIMPLIFY, GEODMS, GEOPARSE,
+Rem GEOHASH, GEOLOCATOR, GEOCOMPASS, GEOJULIAN, GEOSUNRISE, GEOSUNSET,
+Rem GEODAYLENGTH, GEOHORIZON.
+Rem
+Rem A POINT AT A PROMPT IS A TWO-ELEMENT LIST, { 53.72 -1.86 }, latitude
+Rem first, and a route is a LIST of them. A record does not fit a Cell,
+Rem and a resource binding would be absurd for a value with no lifetime
+Rem — so this is the shape seed-matrix and seed-stats already use for a
+Rem structured argument, and it is the one a person can type.
+Rem
+Rem THE WORDS ARE GEO-PREFIXED, all of them. Bare DISTANCE, AREA and
+Rem BEARING are exactly the names the next domain seed will want too,
+Rem and a name registered twice does not collide — it SILENTLY REPLACES
+Rem the first, which is a fault nothing in the engine will report.
+Rem
+Rem NOTHING HERE ABORTS. Every guard geo performs with Error is asked
+Rem first and answered as a refusal: an out-of-domain coordinate, an
+Rem empty route where a route is needed, a polygon of two points, a
+Rem geohash length below one. The line is the transaction, and a refused
+Rem line must leave the stack exactly as it was.
+Rem
+Rem EVERY GUARD BELOW TESTS ITS REASON WITH If/Then/Else AND NEVER Ifte.
+Rem Ifte is an ordinary call, so both arms are evaluated before it
+Rem chooses between them — handing it an aborting geo word as one arm
+Rem would run exactly the abort the guard was written to prevent.
+Rem
+Rem AN Option BRIDGES AS A ONE-CELL LIST: { } for None, { x } for Some.
+Rem GEOSUNRISE inside a polar day answers { }, which is the honest stack
+Rem spelling of "it does not". LENGTH asks whether there was one. This
+Rem is the encoding seed-bool's LOWBIT uses and for the same reason: a
+Rem word pushing a variable number of cells would break UNDO's
+Rem accounting, so the answer is always exactly one cell.
+Rem
+Rem GEOJULIAN IS NOT IN THE ENHANCEMENT'S LIST OF EIGHTEEN and is here
+Rem anyway, because without it the three sun words cannot be reached
+Rem from a keyboard at all: they take a Julian date and there would be
+Rem no way to make one. geo takes the date as an argument on purpose —
+Rem that is what keeps it out of the capability system — so the bridge
+Rem has to come with it.
+Rem
+Rem STILL NOT BRIDGED, and these are boundaries rather than a to-do
+Rem list: the intersection and along-track family, resample, waypoints,
+Rem centroid, the box words other than GEOBOUNDS, the geohash and
+Rem locator readers, twilight, solar position, and the rhumb family.
+Rem They want either two structured arguments and a fraction, or a
+Rem record answer with no stack spelling, and three list arguments at a
+Rem prompt is where a bridge stops helping.
+Rem ==================================================================
+
+Include "geo.shoddy"
+Include "cuttle.shoddy"
+Include "reckoner.shoddy"
+
+Rem ---- reading a point off the stack ------------------------------------
+
+Rem A Cell holding { lat lon } as a GeoPt, or a refusal naming the word
+Rem the person actually typed.
+Def GsPt(word As String, c As Cell) As Result
+    Select Case RckListArg(word, c)
+        Case Ok(xs)
+            GsPtOf(word, xs)
+        Case Err(w, at)
+            Err(w, at)
+        Case Else
+            Err(word & " did not answer", 0)
+
+Def GsPtOf(word As String, xs As List Of Cell) As Result
+    If Length(xs) <> 2 Then
+        Err(word & " needs a point as a LIST of a latitude and a longitude, got " & Str(Length(xs)) & " items", 0)
+    Else
+        GsPtAt(word, Nth(xs, 1), Nth(xs, 2))
+
+Def GsPtAt(word As String, a As Cell, b As Cell) As Result
+    Select Case RckNumArg(word, a)
+        Case Ok(lat)
+            GsPtLon(word, lat, b)
+        Case Err(w, at)
+            Err(w, at)
+        Case Else
+            Err(word & " did not answer", 0)
+
+Def GsPtLon(word As String, lat As Number, b As Cell) As Result
+    Select Case RckNumArg(word, b)
+        Case Ok(lon)
+            GsChecked(word, GeoTryAt(lat, lon))
+        Case Err(w, at)
+            Err(w, at)
+        Case Else
+            Err(word & " did not answer", 0)
+
+Rem GeoTryAt is the TOTAL twin of GeoAt and is what makes this seed
+Rem possible: the domain check comes back as a value, so the guard is
+Rem asked rather than reached.
+Def GsChecked(word As String, r As Result) As Result
+    Select Case r
+        Case Ok(p)
+            Ok(p)
+        Case Err(w, at)
+            Err(word & ": " & w, at)
+        Case Else
+            Err(word & " did not answer", 0)
+
+Rem ---- reading a route off the stack ------------------------------------
+
+Def GsPts(word As String, c As Cell) As Result
+    Select Case RckListArg(word, c)
+        Case Ok(xs)
+            GsPtsAt(word, xs, { })
+        Case Err(w, at)
+            Err(w, at)
+        Case Else
+            Err(word & " did not answer", 0)
+
+Def GsPtsAt(word As String, xs As List Of Cell, acc As List Of GeoPt) As Result
+    If IsEmpty(xs) Then
+        Ok(Reverse(acc))
+    Else
+        GsPtsNext(word, xs, acc, GsPt(word, First(xs)))
+
+Def GsPtsNext(word As String, xs As List Of Cell, acc As List Of GeoPt, r As Result) As Result
+    Select Case r
+        Case Ok(p)
+            GsPtsAt(word, Rest(xs), Prepend(p, acc))
+        Case Err(w, at)
+            Err(w, at)
+        Case Else
+            Err(word & " did not answer", 0)
+
+Rem ---- writing answers back ---------------------------------------------
+
+Def GsPtCell(p As GeoPt) As Cell
+    CutList({ CutNum(GeoLat(p)), CutNum(GeoLon(p)) })
+
+Def GsPtsCell(pts As List Of GeoPt) As Cell
+    CutList(Map(pts, GsPtCell))
+
+Rem One cell holding a list that is empty for None and holds the number
+Rem for Some. LENGTH is how the keyboard asks which it was.
+Def GsOptCell(o As Option) As Cell
+    Select Case o
+        Case Some(x)
+            CutList({ CutNum(x) })
+        Case Else
+            CutList({ })
+
+Rem ---- the shapes the words share ---------------------------------------
+
+Def GsTwoNum(word As String, vs As List Of Cell, f As [ GeoPt GeoPt -- Number ]) As RckWork
+    Select Case GsPt(word, First(vs))
+        Case Ok(a)
+            GsTwoNumB(word, a, Nth(vs, 2), f)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Def GsTwoNumB(word As String, a As GeoPt, c As Cell, f As [ GeoPt GeoPt -- Number ]) As RckWork
+    Select Case GsPt(word, c)
+        Case Ok(b)
+            RckVals({ CutNum(Call(f, a, b)) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Def GsPtNum(word As String, vs As List Of Cell, f As [ GeoPt Number -- Number ]) As RckWork
+    Select Case GsPt(word, First(vs))
+        Case Ok(p)
+            GsPtNumB(word, p, Nth(vs, 2), f)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Def GsPtNumB(word As String, p As GeoPt, c As Cell, f As [ GeoPt Number -- Number ]) As RckWork
+    Select Case RckNumArg(word, c)
+        Case Ok(x)
+            RckVals({ CutNum(Call(f, p, x)) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Def GsPtOpt(word As String, vs As List Of Cell, f As [ GeoPt Number -- Option ]) As RckWork
+    Select Case GsPt(word, First(vs))
+        Case Ok(p)
+            GsPtOptB(word, p, Nth(vs, 2), f)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Def GsPtOptB(word As String, p As GeoPt, c As Cell, f As [ GeoPt Number -- Option ]) As RckWork
+    Select Case RckNumArg(word, c)
+        Case Ok(x)
+            RckVals({ GsOptCell(Call(f, p, x)) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Rem ---- GEODIST, GEOBEARING ----------------------------------------------
+
+Def GsSeedDist(st As RckState) As RckState
+    RckReg(st, "GEODIST", 2, RckPure(Fn(vs) => GsTwoNum("GEODIST", vs, GeoDistance)), "( a b -- m )", "The great-circle distance in metres between two points, each a LIST of a latitude and a longitude in degrees.")
+
+Def GsSeedBearing(st As RckState) As RckState
+    RckReg(st, "GEOBEARING", 2, RckPure(Fn(vs) => GsTwoNum("GEOBEARING", vs, GeoBearing)), "( a b -- deg )", "The initial bearing from a to b, degrees clockwise from north. It changes along the way; this is the one you leave on.")
+
+Rem ---- GEODEST ----------------------------------------------------------
+
+Def GsSeedDest(st As RckState) As RckState
+    RckReg(st, "GEODEST", 3, RckPure(Fn(vs) => GsDest(vs)), "( a brg m -- b )", "Where you arrive steering brg degrees from a for m metres, as a LIST of a latitude and a longitude.")
+
+Def GsDest(vs As List Of Cell) As RckWork
+    Select Case GsPt("GEODEST", First(vs))
+        Case Ok(a)
+            GsDestBrg(a, Nth(vs, 2), Nth(vs, 3))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("GEODEST did not answer")
+
+Def GsDestBrg(a As GeoPt, b As Cell, c As Cell) As RckWork
+    Select Case RckNumArg("GEODEST", b)
+        Case Ok(brg)
+            GsDestAt(a, brg, c)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("GEODEST did not answer")
+
+Def GsDestAt(a As GeoPt, brg As Number, c As Cell) As RckWork
+    Select Case RckNumArg("GEODEST", c)
+        Case Ok(m)
+            RckVals({ GsPtCell(GeoDestination(a, brg, m)) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("GEODEST did not answer")
+
+Rem ---- GEOMID -----------------------------------------------------------
+
+Def GsSeedMid(st As RckState) As RckState
+    RckReg(st, "GEOMID", 2, RckPure(Fn(vs) => GsMid(vs)), "( a b -- c )", "The great-circle midpoint, which is NOT the average of the two coordinates - across the date line the average is on the far side of the planet.")
+
+Def GsMid(vs As List Of Cell) As RckWork
+    Select Case GsPt("GEOMID", First(vs))
+        Case Ok(a)
+            GsMidB(a, Nth(vs, 2))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("GEOMID did not answer")
+
+Def GsMidB(a As GeoPt, c As Cell) As RckWork
+    Select Case GsPt("GEOMID", c)
+        Case Ok(b)
+            RckVals({ GsPtCell(GeoMidpoint(a, b)) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("GEOMID did not answer")
+
+Rem ---- GEOCROSSTRACK ----------------------------------------------------
+
+Def GsSeedCross(st As RckState) As RckState
+    RckReg(st, "GEOCROSSTRACK", 3, RckPure(Fn(vs) => GsCross(vs)), "( p a b -- m )", "How far p lies off the great circle through a and b, in metres, SIGNED - positive to the right of the track a to b.")
+
+Def GsCross(vs As List Of Cell) As RckWork
+    Select Case GsPt("GEOCROSSTRACK", First(vs))
+        Case Ok(p)
+            GsCrossA(p, Nth(vs, 2), Nth(vs, 3))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("GEOCROSSTRACK did not answer")
+
+Def GsCrossA(p As GeoPt, b As Cell, c As Cell) As RckWork
+    Select Case GsPt("GEOCROSSTRACK", b)
+        Case Ok(a)
+            GsCrossB(p, a, c)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("GEOCROSSTRACK did not answer")
+
+Def GsCrossB(p As GeoPt, a As GeoPt, c As Cell) As RckWork
+    Select Case GsPt("GEOCROSSTRACK", c)
+        Case Ok(b)
+            RckVals({ CutNum(GeoCrossTrack(p, a, b)) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("GEOCROSSTRACK did not answer")
+
+Rem ---- GEOROUTELEN ------------------------------------------------------
+
+Def GsSeedRouteLen(st As RckState) As RckState
+    RckReg(st, "GEOROUTELEN", 1, RckPure(Fn(vs) => GsRouteLen(vs)), "( pts -- m )", "The total length in metres of a route given as a LIST of points. An empty or one-point route is 0, not a refusal.")
+
+Def GsRouteLen(vs As List Of Cell) As RckWork
+    Select Case GsPts("GEOROUTELEN", First(vs))
+        Case Ok(pts)
+            RckVals({ CutNum(GeoRouteLength(pts)) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("GEOROUTELEN did not answer")
+
+Rem ---- GEOBOUNDS --------------------------------------------------------
+
+Def GsSeedBounds(st As RckState) As RckState
+    RckReg(st, "GEOBOUNDS", 1, RckPure(Fn(vs) => GsBounds(vs)), "( pts -- box )", "The enclosing box of a LIST of points as { south north west east wraps }. It is antimeridian-aware, so west may be greater than east and the flag says when.")
+
+Def GsBounds(vs As List Of Cell) As RckWork
+    Select Case GsPts("GEOBOUNDS", First(vs))
+        Case Ok(pts)
+            GsBoundsAt(pts)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("GEOBOUNDS did not answer")
+
+Rem GeoRouteBounds aborts on an empty route, so the emptiness is asked
+Rem here rather than discovered there.
+Def GsBoundsAt(pts As List Of GeoPt) As RckWork
+    If IsEmpty(pts) Then
+        RckWorkBad("GEOBOUNDS needs at least one point, the LIST is empty")
+    Else
+        GsBoxCell(GeoRouteBounds(pts))
+
+Def GsBoxCell(b As GeoBox) As RckWork
+    RckVals({ CutList({ CutNum(BoxSouth(b)), CutNum(BoxNorth(b)), CutNum(BoxWest(b)), CutNum(BoxEast(b)), CutBool(BoxWraps(b)) }) })
+
+Rem ---- GEOAREA ----------------------------------------------------------
+
+Def GsSeedArea(st As RckState) As RckState
+    RckReg(st, "GEOAREA", 1, RckPure(Fn(vs) => GsArea(vs)), "( pts -- m2 )", "The area in square metres of the spherical polygon through a LIST of points, by spherical excess. The ring closes itself and winding does not matter.")
+
+Def GsArea(vs As List Of Cell) As RckWork
+    Select Case GsPts("GEOAREA", First(vs))
+        Case Ok(pts)
+            GsAreaAt(pts)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("GEOAREA did not answer")
+
+Rem GeoArea aborts below three DISTINCT points, and a ring the caller
+Rem closed by repeating its first point has one fewer than it looks.
+Def GsAreaAt(pts As List Of GeoPt) As RckWork
+    If Length(GeoOpenRing(pts)) < 3 Then
+        RckWorkBad("GEOAREA needs at least three distinct points, got " & Str(Length(GeoOpenRing(pts))))
+    Else
+        RckVals({ CutNum(GeoArea(pts)) })
+
+Rem ---- GEOSIMPLIFY ------------------------------------------------------
+
+Def GsSeedSimplify(st As RckState) As RckState
+    RckReg(st, "GEOSIMPLIFY", 2, RckPure(Fn(vs) => GsSimplify(vs)), "( pts m -- pts )", "Douglas-Peucker: the route with every point closer than m metres to the line it sits on dropped. Both ends are kept and it never grows a route.")
+
+Def GsSimplify(vs As List Of Cell) As RckWork
+    Select Case GsPts("GEOSIMPLIFY", First(vs))
+        Case Ok(pts)
+            GsSimplifyAt(pts, Nth(vs, 2))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("GEOSIMPLIFY did not answer")
+
+Def GsSimplifyAt(pts As List Of GeoPt, c As Cell) As RckWork
+    Select Case RckNumArg("GEOSIMPLIFY", c)
+        Case Ok(m)
+            RckVals({ GsPtsCell(GeoSimplify(pts, m)) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("GEOSIMPLIFY did not answer")
+
+Rem ---- GEODMS, GEOCOMPASS, GEOHORIZON: one number in -------------------
+
+Def GsSeedDms(st As RckState) As RckState
+    RckReg(st, "GEODMS", 2, RckPure(Fn(vs) => GsDms(vs)), "( d n -- s )", "An angle in degrees written as degrees, minutes and seconds, with the seconds to n places.")
+
+Def GsDms(vs As List Of Cell) As RckWork
+    Select Case RckNumArg("GEODMS", First(vs))
+        Case Ok(d)
+            GsDmsAt(d, Nth(vs, 2))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("GEODMS did not answer")
+
+Def GsDmsAt(d As Number, c As Cell) As RckWork
+    Select Case RckWholeArg("GEODMS", c)
+        Case Ok(n)
+            RckVals({ CutStr(GeoDms(d, n)) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("GEODMS did not answer")
+
+Def GsSeedCompass(st As RckState) As RckState
+    RckReg(st, "GEOCOMPASS", 1, RckPure(Fn(vs) => GsCompass(vs)), "( brg -- s )", "A bearing as one of the sixteen compass points, NNE and the rest. The half-winds are not offered.")
+
+Def GsCompass(vs As List Of Cell) As RckWork
+    Select Case RckNumArg("GEOCOMPASS", First(vs))
+        Case Ok(brg)
+            RckVals({ CutStr(GeoCompass(brg)) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("GEOCOMPASS did not answer")
+
+Def GsSeedHorizon(st As RckState) As RckState
+    RckReg(st, "GEOHORIZON", 1, RckPure(Fn(vs) => GsHorizon(vs)), "( h -- m )", "How far you can see from a height of h metres, in metres. Geometric, with no allowance for refraction.")
+
+Def GsHorizon(vs As List Of Cell) As RckWork
+    Select Case RckNumArg("GEOHORIZON", First(vs))
+        Case Ok(h)
+            RckVals({ CutNum(GeoHorizon(h)) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("GEOHORIZON did not answer")
+
+Rem ---- GEOPARSE ---------------------------------------------------------
+
+Def GsSeedParse(st As RckState) As RckState
+    RckReg(st, "GEOPARSE", 1, RckPure(Fn(vs) => GsParse(vs)), "( s -- p )", "A written coordinate as a point: a decimal pair, or degrees and minutes and seconds, with N S E W before or after and in either order.")
+
+Def GsParse(vs As List Of Cell) As RckWork
+    Select Case RckTextArg("GEOPARSE", First(vs))
+        Case Ok(t)
+            GsParsed(GeoParse(t))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("GEOPARSE did not answer")
+
+Def GsParsed(r As Result) As RckWork
+    Select Case r
+        Case Ok(p)
+            RckVals({ GsPtCell(p) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("GEOPARSE did not answer")
+
+Rem ---- GEOHASH, GEOLOCATOR ----------------------------------------------
+
+Def GsSeedHash(st As RckState) As RckState
+    RckReg(st, "GEOHASH", 2, RckPure(Fn(vs) => GsHash(vs)), "( p n -- s )", "The geohash of a point to n characters. A geohash names a BOX, not a point: six characters is about 1.2 km by 0.6 km.")
+
+Def GsHash(vs As List Of Cell) As RckWork
+    Select Case GsPt("GEOHASH", First(vs))
+        Case Ok(p)
+            GsHashAt(p, Nth(vs, 2))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("GEOHASH did not answer")
+
+Def GsHashAt(p As GeoPt, c As Cell) As RckWork
+    Select Case RckWholeArg("GEOHASH", c)
+        Case Ok(n)
+            GsHashOf(p, n)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("GEOHASH did not answer")
+
+Def GsHashOf(p As GeoPt, n As Number) As RckWork
+    If n < 1 Then
+        RckWorkBad("GEOHASH needs a length of at least 1, got " & Str(n))
+    Else
+        RckVals({ CutStr(GeoHash(p, n)) })
+
+Def GsSeedLocator(st As RckState) As RckState
+    RckReg(st, "GEOLOCATOR", 2, RckPure(Fn(vs) => GsLocator(vs)), "( p n -- s )", "The Maidenhead locator of a point to n characters, IO91wm and the like. n must be 2, 4, 6 or 8.")
+
+Def GsLocator(vs As List Of Cell) As RckWork
+    Select Case GsPt("GEOLOCATOR", First(vs))
+        Case Ok(p)
+            GsLocatorAt(p, Nth(vs, 2))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("GEOLOCATOR did not answer")
+
+Def GsLocatorAt(p As GeoPt, c As Cell) As RckWork
+    Select Case RckWholeArg("GEOLOCATOR", c)
+        Case Ok(n)
+            GsLocatorOf(p, n)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("GEOLOCATOR did not answer")
+
+Def GsLocatorOf(p As GeoPt, n As Number) As RckWork
+    If n < 2 Or n > 8 Or Wrap(n, 2) <> 0 Then
+        RckWorkBad("GEOLOCATOR needs a length of 2, 4, 6 or 8, got " & Str(n))
+    Else
+        RckVals({ CutStr(GeoLocator(p, n)) })
+
+Rem ---- the sun ----------------------------------------------------------
+
+Def GsSeedJulian(st As RckState) As RckState
+    RckReg(st, "GEOJULIAN", 3, RckPure(Fn(vs) => GsJulian(vs)), "( y m d -- jd )", "The Julian date at midnight UT on a calendar date. The sun words take one of these, because geo never reads a clock.")
+
+Def GsJulian(vs As List Of Cell) As RckWork
+    Select Case RckNumArg("GEOJULIAN", First(vs))
+        Case Ok(y)
+            GsJulianM(y, Nth(vs, 2), Nth(vs, 3))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("GEOJULIAN did not answer")
+
+Def GsJulianM(y As Number, b As Cell, c As Cell) As RckWork
+    Select Case RckNumArg("GEOJULIAN", b)
+        Case Ok(m)
+            GsJulianD(y, m, c)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("GEOJULIAN did not answer")
+
+Def GsJulianD(y As Number, m As Number, c As Cell) As RckWork
+    Select Case RckNumArg("GEOJULIAN", c)
+        Case Ok(d)
+            GsJulianOf(y, m, d)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("GEOJULIAN did not answer")
+
+Def GsJulianOf(y As Number, m As Number, d As Number) As RckWork
+    If m < 1 Or m > 12 Or d < 1 Or d > 31 Then
+        RckWorkBad("GEOJULIAN needs a month in 1..12 and a day in 1..31, got " & Str(m) & " and " & Str(d))
+    Else
+        RckVals({ CutNum(GeoJulian(y, m, d)) })
+
+Def GsSeedSunrise(st As RckState) As RckState
+    RckReg(st, "GEOSUNRISE", 2, RckPure(Fn(vs) => GsPtOpt("GEOSUNRISE", vs, GeoSunRise)), "( p jd -- list )", "Sunrise as UTC hours in a one-item LIST, or an empty LIST inside a polar day or night. LENGTH asks whether the sun rose at all.")
+
+Def GsSeedSunset(st As RckState) As RckState
+    RckReg(st, "GEOSUNSET", 2, RckPure(Fn(vs) => GsPtOpt("GEOSUNSET", vs, GeoSunSet)), "( p jd -- list )", "Sunset as UTC hours in a one-item LIST, or an empty LIST where there is none. The same shape as GEOSUNRISE and for the same reason.")
+
+Def GsSeedDayLength(st As RckState) As RckState
+    RckReg(st, "GEODAYLENGTH", 2, RckPure(Fn(vs) => GsPtNum("GEODAYLENGTH", vs, GeoDayLength)), "( p jd -- h )", "The hours of daylight, 0 through 24. Always a number, even where there is no sunrise to have.")
+
+Rem ---- the seed -----------------------------------------------------------
+
+Def RckSeedGeo(st As RckState) As RckState
+    Let s1 = GsSeedDist(RckSeeding(st, "seed-geo"))
+    Let s2 = GsSeedBearing(s1)
+    Let s3 = GsSeedDest(s2)
+    Let s4 = GsSeedMid(s3)
+    Let s5 = GsSeedRouteLen(s4)
+    Let s6 = GsSeedCross(s5)
+    Let s7 = GsSeedBounds(s6)
+    Let s8 = GsSeedArea(s7)
+    Let s9 = GsSeedSimplify(s8)
+    Let s10 = GsSeedDms(s9)
+    Let s11 = GsSeedParse(s10)
+    Let s12 = GsSeedHash(s11)
+    Let s13 = GsSeedLocator(s12)
+    Let s14 = GsSeedCompass(s13)
+    Let s15 = GsSeedJulian(s14)
+    Let s16 = GsSeedSunrise(s15)
+    Let s17 = GsSeedSunset(s16)
+    Let s18 = GsSeedDayLength(s17)
+    GsSeedHorizon(s18)

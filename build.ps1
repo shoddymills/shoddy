@@ -200,6 +200,11 @@ function Invoke-Test {
     # relaxation's nor the relaxation rounded.
     Native $Mill run tst/sparse.shoddy
     Native $Mill run tst/mip.shoddy
+    # geo is the same argument once more, and its fixtures are worked by
+    # the spherical law of cosines where the machine uses haversine -- a
+    # different formula reaching the same number, so a mistyped one
+    # disagrees instead of agreeing with itself.
+    Native $Mill run tst/geo.shoddy
     # The net demo is the only end-to-end exercise of the socket words: it
     # stands up a server, connects a client to it and trades lines, both
     # ends in one process on loopback. --allow-net is required because the
@@ -222,17 +227,19 @@ function Invoke-Test {
 
 # The machine suites. Every machines/<name>.shoddy that has one is graded
 # here, by name rather than by glob: a suite that stops being listed is a
-# suite that stops running, and the whole point of this list is that nine
-# of them had stopped running without anyone noticing. isamdump runs after
-# isamtest and takes DELETE, because it reopens the file isamtest leaves
-# behind - the round trip across two processes is the thing being proved,
-# and DELETE clears up after it.
+# suite that stops running, and that is how nine of them once stopped
+# running unnoticed. The list itself lives in scripts/gate/steps.mjs —
+# THE ONLY COPY. This script and build.sh both read it through node, after
+# three hand-kept copies drifted apart and dropped seedterminaltest
+# between them; scripts/verify-suites.js (preflight) proves the roster
+# complete. isamdump runs after isamtest and takes DELETE, because it
+# reopens the file isamtest leaves behind - the round trip across two
+# processes is the thing being proved, and DELETE clears up after it.
 function Invoke-MachineSuites {
     Assert-Mill
-    foreach ($suite in 'csvtest', 'cuttletest', 'htmltest', 'jsontest', 'nettest', 'neuraltest',
-                       'randomtest', 'reckonertest', 'regextest', 'seedtest', 'seedbuiltintest', 'seedengtest',
-                       'seedbuzzertest', 'seedfintest', 'seedhttpstest', 'seedisamtest', 'seedmiptest', 'seedneuraltest', 'seednettest', 'seedreciotest', 'seedregextest', 'seedsimplextest', 'seedsparsetest', 'seedvt100test', 'shakertest',
-                       'xmltest') {
+    $suites = (& node --input-type=module -e "const m = await import('./scripts/gate/steps.mjs'); console.log(m.MACHINE_SUITES.join(' '))").Trim() -split ' '
+    if ($LASTEXITCODE -ne 0 -or $suites.Count -lt 1) { throw 'could not read MACHINE_SUITES from scripts/gate/steps.mjs' }
+    foreach ($suite in $suites) {
         Write-Host "==> tst/$suite.shoddy"
         Native $Mill run "tst/$suite.shoddy"
     }

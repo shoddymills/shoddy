@@ -129,7 +129,31 @@ Rem afterwards rather than something the engine walks.
 Def RckTapeCap() As Number
     500
 
-Rem How wide the WORDS listing packs its names.
+Rem THE SESSION WORD WIDTH, in bits: how wide a machine word the bit
+Rem operations pretend to be working in. A mode and not an argument,
+Rem beside RckFmt and RckAngle, because it is a property of the session
+Rem that several seeds read and not a fact about any one call. Bit words
+Rem carrying a width argument each is what the seeds did before it
+Rem existed, and forty of them would have been forty repetitions of a
+Rem number nobody changes between one line and the next.
+Rem
+Rem 1 to 53. The ceiling is where a double stops counting consecutive
+Rem whole numbers — 2 ^ 53 + 1 IS 2 ^ 53 — so a 54-bit word cannot
+Rem represent its own top bit. That is an engine fact about Number and
+Rem is why it is stated here rather than borrowed: bool.shoddy reaches
+Rem the same 53 from the same arithmetic, and seedbooltest asserts the
+Rem two agree rather than either including the other for it.
+Def RckMaxWidth() As Number
+    53
+
+Rem Thirty-two, which is the width somebody means when they have not
+Rem said. bool.shoddy's BoolBits() is the same number for the same
+Rem reason; neither machine includes the other to get it.
+Def RckWidthStart() As Number
+    32
+
+Rem How wide the WORDS listing packs its names. Nothing to do with
+Rem RckMaxWidth above: this one is a column count for text.
 Def RckListWidth() As Number
     68
 
@@ -283,6 +307,7 @@ Type RckState
     RckTape  As List Of String
     RckFore  As List Of Stack
     RckOpen  As List Of RckRes
+    RckWidth As Number
 
 Rem What evaluating a line answers. Both cases carry output lines for the
 Rem shell to print, and the failing case carries the state as it was.
@@ -322,12 +347,14 @@ Type RckRow
 
 Rem ---- building a state ------------------------------------------------
 
-Rem Empty of everything, RAD, STD. Radians because that is what the tree
-Rem speaks everywhere else and PI 2 / SIN should work before anything is
-Rem set; DEG is one word away and exists for entry, which is the only
-Rem thing it exists for.
+Rem Empty of everything, RAD, STD, thirty-two bits. Radians because that
+Rem is what the tree speaks everywhere else and PI 2 / SIN should work
+Rem before anything is set; DEG is one word away and exists for entry,
+Rem which is the only thing it exists for. The width starts where
+Rem RckWidthStart says, so a session that never types WIDTH sees exactly
+Rem what the bit words did before the mode existed.
 Def RckBare() As RckState
-    RckState(CutNew(), { }, { }, CutFmtStd(), RckRadians(), { }, None(), RckCoreName(), 0, False, { }, { }, { })
+    RckState(CutNew(), { }, { }, CutFmtStd(), RckRadians(), { }, None(), RckCoreName(), 0, False, { }, { }, { }, RckWidthStart())
 
 Rem The engine core seeded. This is what a mill starts from, and what a
 Rem seed file is handed.
@@ -768,6 +795,8 @@ Def RckCoreRest() As List Of RckEntry
       RckCoreOf("SCI", 1, RckCore("SCI"), "( n -- )", "Show numbers in scientific notation to n places."),
       RckCoreOf("ENG", 1, RckCore("ENG"), "( n -- )", "Show numbers in engineering notation to n places."),
       RckCoreOf("STD", 0, RckCore("STD"), "( -- )", "Show numbers at their own precision."),
+      RckCoreOf("WIDTH", 1, RckCore("WIDTH"), "( n -- )", "Work the bit words in an n-bit word, 1 to " & Str(RckMaxWidth()) & ". It does not change how numbers are shown."),
+      RckCoreOf("WIDTH?", 0, RckCore("WIDTH?"), "( -- n )", "How wide the bit words think the word is; WIDTH sets it and it starts at " & Str(RckWidthStart()) & "."),
       RckCoreOf("SIN", 1, RckCore("SIN"), "( a -- x )", "Sine of an angle, in the current angle mode."),
       RckCoreOf("COS", 1, RckCore("COS"), "( a -- x )", "Cosine of an angle, in the current angle mode."),
       RckCoreOf("TAN", 1, RckCore("TAN"), "( a -- x )", "Tangent of an angle, in the current angle mode."),
@@ -1214,10 +1243,11 @@ Def RckWalkOne(st As RckState, t As String, more As List Of String, out As List 
 
 Rem A token is a string, then a number, then a word — in that order, and
 Rem "a number" is exactly what Val would accept, IsNumeric being the
-Rem question Val answers. Val is strtod and takes a leading number off a
-Rem longer token, so 3X reads as 3 rather than as a word; that laxity is
-Rem the language's own and is inherited rather than corrected here, since
-Rem a dictionary name starting with a digit is not a name anyone writes.
+Rem question Val answers. Val takes the whole token as one number or
+Rem none at all, so 3X is a word here — an unknown one, refused by name —
+Rem never 3. That strictness is the language's own and is inherited
+Rem rather than corrected, so this tokenizer and the seeds can never
+Rem disagree about what a number is.
 Def RckAtom(st As RckState, t As String, more As List Of String, out As List Of String) As RckRun
     If RckIsText(t) Then
         RckPushedOn(st, t, CutStr(RckTextOf(t)), more, out)
@@ -1724,6 +1754,10 @@ Def RckCoreDo(st As RckState, tag As String, args As List Of Cell, out As List O
             RckWent(With(st, RckAngle = RckRadians()), out)
         Case "STD"
             RckWent(With(st, RckFmt = CutFmtStd()), out)
+        Case "WIDTH"
+            RckWidthSet(st, args, out)
+        Case "WIDTH?"
+            RckWent(RckPushed(st, CutNum(RckWidth(st))), out)
         Case "FIX"
             RckDigits(st, "FIX", CutModeFix(), args, out)
         Case "SCI"
@@ -1955,6 +1989,33 @@ Def RckDigitsAt(st As RckState, word As String, mode As String, n As Number, out
         RckBroke(word & " shows at most 11 places, not " & Str(n), out)
     Else
         RckWent(With(st, RckFmt = CutFmt(mode, n)), out)
+
+Rem ---- the word width --------------------------------------------------
+Rem VALIDATED HERE AND NOWHERE ELSE. Every word that later reads
+Rem RckWidth reads a number already known to be whole and inside 1..53,
+Rem so no seed repeats this check and no seed can forget it. RckWholeArg
+Rem has already refused a negative and a fraction by the time this runs,
+Rem which leaves only the two ends to name.
+Rem
+Rem It sets a mode and pushes nothing, exactly as FIX and DEG do. WIDTH?
+Rem is the one that answers, and it is a separate word because a name
+Rem cannot carry two arities — the price this design pays, paid in a
+Rem name rather than in a second mode.
+
+Def RckWidthSet(st As RckState, args As List Of Cell, out As List Of String) As RckRun
+    Select Case RckWholeArg("WIDTH", First(args))
+        Case Ok(n)
+            RckWidthAt(st, n, out)
+        Case Err(w, at)
+            RckBroke(w, out)
+        Case Else
+            RckBroke("WIDTH did not answer", out)
+
+Def RckWidthAt(st As RckState, n As Number, out As List Of String) As RckRun
+    If n < 1 Or n > RckMaxWidth() Then
+        RckBroke("WIDTH needs a width from 1 to " & Str(RckMaxWidth()) & ", got " & Str(n), out)
+    Else
+        RckWent(With(st, RckWidth = n), out)
 
 Rem ---- trigonometry, and the one mode there is -------------------------
 Rem The angle mode governs evaluation INSIDE the engine and travels no

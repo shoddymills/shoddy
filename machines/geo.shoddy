@@ -1,0 +1,1905 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem geo.shoddy — Shoddy standard library: the Earth as arithmetic
+Rem
+Rem Everything you can compute about a position on the Earth without
+Rem asking anybody. How far apart two points are and which way one lies
+Rem from the other; where you end up steering a bearing for a distance;
+Rem the great-circle midpoint and the point a fraction of the way along.
+Rem
+Rem PURE THROUGHOUT, AND NO NETWORK ANYWHERE NEAR IT. This machine
+Rem includes no networking machine, so it cannot acquire one by
+Rem accident: there is no geocoding here, no tiles, no elevation and no
+Rem address search. A coordinate arrives as two numbers or it does not
+Rem arrive.
+Rem
+Rem Conventions, all of them load-bearing. Each is a decision a caller
+Rem will otherwise get backwards and get a PLAUSIBLE wrong number for,
+Rem which is the only kind worth writing down:
+Rem
+Rem   * DEGREES AT EVERY BOUNDARY — a deliberate divergence from
+Rem     eng.shoddy, whose header says in as many words that it takes
+Rem     radians everywhere. A coordinate is WRITTEN in degrees
+Rem     everywhere on Earth: every receiver, every map, every URL. A
+Rem     radians surface would put a conversion at every call site, and
+Rem     the conversion is where the mistakes are. Radians exist inside
+Rem     this machine and never cross it. Bearings are degrees too.
+Rem
+Rem   * METRES FOR EVERY DISTANCE, AND THERE IS NO UNIT MODE. A mode is
+Rem     state, this machine has none, and a distance whose unit depends
+Rem     on a setting made three screens ago is the exact fault eng's
+Rem     header calls the worst thing about the calculators it was
+Rem     compiled from. Convert at the edge, where the policy lives:
+Rem     EngConvert(d, EngMetre(), EngNauticalMile()) is eng's job and
+Rem     eng already carries the nautical mile.
+Rem
+Rem   * BEARINGS ARE 0..360, NORTH IS 0, CLOCKWISE. Compass convention,
+Rem     not mathematical convention: this machine answers a bearing a
+Rem     navigator can steer, not an angle from the positive x-axis.
+Rem     Every word normalises through GeoWrapBrg before answering, so no
+Rem     caller ever sees -170.
+Rem
+Rem   * THE EARTH IS A SPHERE HERE, AND THE ERROR HAS A NUMBER.
+Rem     Haversine on a mean-radius sphere is within about 0.5 % of the
+Rem     ellipsoidal answer — a few kilometres on a transatlantic leg, a
+Rem     few metres across a city. That is the figure, rather than the
+Rem     word "approximate". Vincenty and the ellipsoid are deliberately
+Rem     absent: iterative, non-convergent for near-antipodal points, and
+Rem     roughly double the conceptual weight to buy 0.5 %. Survey
+Rem     accuracy needs a geodesy machine, and that is a different design.
+Rem
+Rem   * THE ANTIMERIDIAN IS THE BUG. Longitude wraps at +-180, and every
+Rem     naive midpoint, bounding box and route length breaks crossing it
+Rem     — usually by computing a path the long way round the planet.
+Rem     Every word doing longitude arithmetic goes through GeoWrapLon.
+Rem     CALLERS GET THIS RIGHT FOR FREE OR THE MACHINE HAS FAILED.
+Rem     Note that haversine itself needs no help: sin(dLon / 2) squared
+Rem     has a period of 360 degrees, so 179 E to 179 W is two degrees
+Rem     apart and not three hundred and fifty-eight. GeoEquirect is the
+Rem     one that does need help, and gets it.
+Rem
+Rem   * NEVER COMPARE TWO POINTS WITH =. Records compare structurally,
+Rem     so GeoPt(53.72, -1.86) = GeoPt(53.72, -1.86) is True — and one
+Rem     arrived at by arithmetic never will be. GeoNear(a, b, metres) is
+Rem     the only comparison offered, exactly as EngCNear is for complex
+Rem     numbers and for the same reason.
+Rem
+Rem   * THE POLES ARE THE OTHER BUG. Every direction from the north pole
+Rem     is south. GeoBearing from a pole answers the bearing of the
+Rem     meridian being left along, which is what navigation uses: from
+Rem     GeoAt(90, 0) to a point on the same meridian it is 180, and from
+Rem     GeoAt(-90, 0) it is 0. Nothing here divides by a cosine, so the
+Rem     pole is an ordinary input rather than a hole.
+Rem
+Rem   * FIELD NAMES CARRY THE PREFIX. A Type creates one accessor word
+Rem     per field and an accessor loses every naming contest, so a file
+Rem     anywhere with a local called Lat would shadow a bare accessor of
+Rem     that name throughout. GeoLat and GeoLon are prefixed for that
+Rem     reason and not for tidiness.
+Rem
+Rem   * EVERY WORD IS PURE. Nothing here reads a clock, a file or a
+Rem     socket, which is what keeps geo out of the capability system
+Rem     entirely — clock.shoddy is optional in every manifest, and a geo
+Rem     that reached for "today" would drag that optionality into a
+Rem     machine that is otherwise arithmetic.
+Rem
+Rem   * NO WORD HERE MAY BE CALLED GeoMean. stats.shoddy already
+Rem     publishes one and it is a geometric mean, nothing to do with
+Rem     geography. The spherical average of a set of points is
+Rem     GeoCentroid.
+Rem
+Rem Includes math.shoddy for Rad, Deg, Clamp and Hypot, as eng.shoddy
+Rem does. It does NOT include eng: eng duplicates Rad and Deg, drags in
+Rem stats, seq and str behind it, and this machine converts nothing.
+Rem Includes julian.shoddy for the calendar: GeoJulian is one line over
+Rem it, so the Gregorian leap rules are spelled once in the tree rather
+Rem than once per machine that needs a date.
+Rem ==================================================================
+
+Rem ---- the builtins this machine is built on -------------------------
+Rem
+Rem NOT Defs. The engine dispatches these; they are listed because a
+Rem reader checking a formula here should not have to leave the file to
+Rem find out what argument order they take. Trigonometry is in RADIANS,
+Rem which is why every one of them sits behind Rad and Deg.
+
+Rem Sin(x) Cos(x) Tan(x)                              ( rad -- y )
+Rem     The three, taking radians.
+
+Rem Asin(x As Number) As Number                       ( x -- rad )
+Rem Acos(x As Number) As Number                       ( x -- rad )
+Rem     The inverse sine and cosine. OUTSIDE -1..1 THERE IS NO REAL
+Rem     ANSWER, and rounding carries a just past 1 often enough that
+Rem     every use below is wrapped in Clamp.
+
+Rem Atn2(y As Number, x As Number) As Number          ( y x -- rad )
+Rem     The angle of the point (x, y), in the right quadrant. NOTE THE
+Rem     ARGUMENT ORDER: y first, as in C's atan2. Getting it backwards
+Rem     is the mistake this subject is famous for, and it produces a
+Rem     bearing that looks entirely reasonable. math's Angle(dx, dy)
+Rem     takes it the other way round, which is the trap.
+
+Rem Sqr(x As Number) As Number                        ( x -- y )
+Rem     The square root, named for BASIC's SQR. A NEGATIVE ABORTS, which
+Rem     is the other reason for Clamp.
+
+Rem Wrap(a As Number, b As Number) As Number          ( a b -- r )
+Rem     FLOORED modulo: the answer takes its sign from b, so
+Rem     Wrap(-1, 360) is 359 where -1 Mod 360 is -1. This one builtin is
+Rem     the whole of GeoWrapLon and GeoWrapBrg, and it is why neither
+Rem     needed writing by hand.
+
+Rem Abs(x) Negate(x)                                  ( x -- y )
+Rem Pi() As Number                                    ( -- pi )
+Rem     Magnitude, sign turned round, and the constant — a zero-argument
+Rem     word, not a bare name.
+
+Include "math.shoddy"
+Include "seq.shoddy"
+Include "str.shoddy"
+Include "julian.shoddy"
+
+Rem ---- the sphere ------------------------------------------------------
+
+Rem The IUGG mean Earth radius, in metres. A word and not a literal, so
+Rem the one place it is decided is visible — and so a caller working on
+Rem another body can see exactly what to substitute.
+Def GeoRadius() As Number
+    6371008.8
+
+Rem ---- the type --------------------------------------------------------
+
+Rem Latitude first, because that is the order a coordinate is written in
+Rem everywhere. Both degrees. Fields are POSITIONAL, so inserting one
+Rem here would shift every later constructor argument in the tree
+Rem silently.
+Type GeoPt
+    GeoLat As Number
+    GeoLon As Number
+
+Rem ---- wrapping, which is most of the correctness ----------------------
+
+Rem Longitude folded into (-180, 180]. Public, because a caller doing
+Rem their own longitude arithmetic needs the same fold this machine uses.
+Rem
+Rem HALF-OPEN AT THE WEST END, and written this way round on purpose.
+Rem The obvious Wrap(lon + 180, 360) - 180 gives [-180, 180) instead: it
+Rem sends 180 to -180, which is the same meridian spelled the other way
+Rem and the wrong end to collapse. This form sends -180 to 180.
+Rem
+Rem A LONGITUDE ALREADY IN RANGE COMES BACK BIT FOR BIT, and the test
+Rem for that is not redundant. Subtracting from 180 and back is NOT the
+Rem identity in floating point: -0.1278 returns as -0.12780000000000058,
+Rem which is a fifty-nanometre lie and enough to put a point outside its
+Rem own bounding box. Every word here folds its longitudes through this,
+Rem so without the guard nothing would ever compare equal to itself.
+Def GeoWrapLon(lon As Number) As Number
+    If lon > -180 And lon <= 180 Then
+        lon
+    Else
+        180 - Wrap(180 - lon, 360)
+
+Rem A bearing folded into [0, 360). The compass twin of GeoWrapLon, and
+Rem public for the same reason: a caller adding 90 to a course needs the
+Rem fold this machine's own answers went through.
+Def GeoWrapBrg(brg As Number) As Number
+    Wrap(brg, 360)
+
+Rem ---- construction ----------------------------------------------------
+
+Rem One set of rules for both builders, so there are not two.
+Rem
+Rem THE WORD NAME IS AN ARGUMENT because GeoAt must abort naming GEOAT
+Rem and GeoTryAt must refuse naming GEOTRYAT — an error naming the other
+Rem one is an error a caller cannot act on.
+Rem
+Rem The tests are written POSITIVELY (lat >= -90 And lat <= 90) rather
+Rem than as their negations, and that is what makes "not finite" fall
+Rem out for free: every comparison against a NaN is False, and an
+Rem infinity fails the bound, so both are refused by the range check
+Rem without a separate word for them.
+Def GeoChkAt(word As String, lat As Number, lon As Number) As Result
+    If Not (lat >= -90 And lat <= 90) Then
+        Err(word & ": LATITUDE '" & Str(lat) & "' IS OUTSIDE -90..90", 0)
+    Else
+        If Not (lon >= -180 And lon <= 180) Then
+            Err(word & ": LONGITUDE '" & Str(lon) & "' IS OUTSIDE -180..180", 0)
+        Else
+            Ok(GeoPt(lat, lon))
+
+Rem The total twin, for a coordinate that came from outside. There is no
+Rem position to report, so At is 0 throughout: the offending value is a
+Rem number that was handed over, not a character in a string that was
+Rem read. GeoParse is where a position means something.
+Def GeoTryAt(lat As Number, lon As Number) As Result
+    GeoChkAt("GEOTRYAT", lat, lon)
+
+Rem The checked builder, DEFINED OVER THE TOTAL TWIN — the pairing bool
+Rem and str both use. A bad coordinate from inside the program is a bug
+Rem in the program and aborts.
+Def GeoAt(lat As Number, lon As Number) As GeoPt
+    Select Case GeoChkAt("GEOAT", lat, lon)
+        Case Ok(p)
+            p
+        Case Err(why, at)
+            Error(why)
+        Case Else
+            Error("GEOAT: THE DOMAIN CHECK DID NOT ANSWER")
+
+Rem ---- radians, internal -----------------------------------------------
+Rem The boundary is degrees (see the header); these two are where it is
+Rem crossed, and every formula below reads its angles through them.
+
+Def GeoLatR(p As GeoPt) As Number
+    Rad(GeoLat(p))
+
+Def GeoLonR(p As GeoPt) As Number
+    Rad(GeoLon(p))
+
+Rem ---- two points ------------------------------------------------------
+
+Rem The central angle between two points, in radians — the quantity
+Rem every other word here is really about, with GeoDistance the one that
+Rem multiplies it by a radius.
+Rem
+Rem HAVERSINE RATHER THAN THE LAW OF COSINES. The cosine form is shorter
+Rem and loses its precision on short legs, which is where most of the
+Rem questions are: acos of something very near 1 throws away half the
+Rem significant digits. Clamp guards Sqr against a rounding error
+Rem carrying h a hair past 1 or below 0.
+Def GeoArc(a As GeoPt, b As GeoPt) As Number
+    Let dLat = GeoLatR(b) - GeoLatR(a)
+    Let dLon = GeoLonR(b) - GeoLonR(a)
+    Let h = Sin(dLat / 2) ^ 2 + Cos(GeoLatR(a)) * Cos(GeoLatR(b)) * Sin(dLon / 2) ^ 2
+    2 * Atn2(Sqr(Clamp(h, 0, 1)), Sqr(Clamp(1 - h, 0, 1)))
+
+Rem The great-circle distance, in metres.
+Def GeoDistance(a As GeoPt, b As GeoPt) As Number
+    GeoRadius() * GeoArc(a, b)
+
+Rem The INITIAL bearing — the course to steer as you leave a. It changes
+Rem continuously along a great circle, which is what GeoFinalBearing is
+Rem about and what makes a rhumb line a different question.
+Def GeoBearing(a As GeoPt, b As GeoPt) As Number
+    Let dLon = GeoLonR(b) - GeoLonR(a)
+    Let y = Sin(dLon) * Cos(GeoLatR(b))
+    Let x = Cos(GeoLatR(a)) * Sin(GeoLatR(b)) - Sin(GeoLatR(a)) * Cos(GeoLatR(b)) * Cos(dLon)
+    GeoWrapBrg(Deg(Atn2(y, x)))
+
+Rem The bearing on ARRIVAL, and NOT the initial bearing reversed. On a
+Rem short leg the two are within a degree or two and the difference
+Rem looks like noise; London to New York leaves on 288 and arrives on
+Rem 231, where the reversed initial bearing would say 108. That is a
+Rem hundred and twenty degrees of wrong, and it is why this word exists.
+Def GeoFinalBearing(a As GeoPt, b As GeoPt) As Number
+    GeoWrapBrg(GeoBearing(b, a) + 180)
+
+Rem The direct problem: where you end up steering brg for m metres.
+Rem
+Rem The answer is built with GeoPt rather than GeoAt because it is
+Rem provably in domain — Asin cannot answer outside -90..90 and
+Rem GeoWrapLon cannot answer outside its own range — so a check here
+Rem would cost every caller something to prove nothing.
+Def GeoDestination(a As GeoPt, brg As Number, m As Number) As GeoPt
+    Let d = m / GeoRadius()
+    Let br = Rad(brg)
+    Let lat = Asin(Clamp(Sin(GeoLatR(a)) * Cos(d) + Cos(GeoLatR(a)) * Sin(d) * Cos(br), -1, 1))
+    Let lon = GeoLonR(a) + Atn2(Sin(br) * Sin(d) * Cos(GeoLatR(a)), Cos(d) - Sin(GeoLatR(a)) * Sin(lat))
+    GeoPt(Deg(lat), GeoWrapLon(Deg(lon)))
+
+Rem The point a fraction of the way along the great circle from a to b.
+Rem f outside 0..1 EXTRAPOLATES, deliberately: the same interpolation
+Rem run past its ends is how you continue a track, and refusing it would
+Rem buy nothing.
+Def GeoAlong(a As GeoPt, b As GeoPt, f As Number) As GeoPt
+    Let d = GeoArc(a, b)
+    If d = 0 Then
+        a
+    Else
+        GeoAlongAt(a, b, f, d)
+
+Rem Spherical interpolation, through 3-D vectors rather than through the
+Rem coordinates. Averaging the coordinates is what puts a point either
+Rem side of the antimeridian on the far side of the planet; the vector
+Rem form has no such case, so there is no case to special-case.
+Def GeoAlongAt(a As GeoPt, b As GeoPt, f As Number, d As Number) As GeoPt
+    Let u = Sin((1 - f) * d) / Sin(d)
+    Let v = Sin(f * d) / Sin(d)
+    Let x = u * Cos(GeoLatR(a)) * Cos(GeoLonR(a)) + v * Cos(GeoLatR(b)) * Cos(GeoLonR(b))
+    Let y = u * Cos(GeoLatR(a)) * Sin(GeoLonR(a)) + v * Cos(GeoLatR(b)) * Sin(GeoLonR(b))
+    Let z = u * Sin(GeoLatR(a)) + v * Sin(GeoLatR(b))
+    GeoPt(Deg(Atn2(z, Hypot(x, y))), GeoWrapLon(Deg(Atn2(y, x))))
+
+Rem The great-circle midpoint, DEFINED OVER GeoAlong so there is one
+Rem interpolation and not two. NOT the average of the two coordinates:
+Rem the midpoint of 179 E and 179 W is on the antimeridian, where the
+Rem coordinate average is 0 — a point in the Gulf of Guinea, half a
+Rem planet from either end.
+Def GeoMidpoint(a As GeoPt, b As GeoPt) As GeoPt
+    GeoAlong(a, b, 0.5)
+
+Rem The point diametrically opposite: through the centre and out the
+Rem other side.
+Def GeoAntipode(a As GeoPt) As GeoPt
+    GeoPt(Negate(GeoLat(a)), GeoWrapLon(GeoLon(a) + 180))
+
+Rem The fast flat-Earth approximation, and it EARNS ITS PLACE BY BEING
+Rem HONEST ABOUT BEING WRONG. It is one cosine and a hypotenuse against
+Rem haversine's four transcendentals, and it is good enough to RANK
+Rem candidates before measuring a shortlist properly. It is not good
+Rem enough to be a distance: over the Atlantic it is out by 250 km.
+Rem Reaching for it as a distance is a misreading of what it is for.
+Rem
+Rem Unlike haversine this one is NOT naturally periodic, so the
+Rem longitude difference is folded before it is used — without that, two
+Rem points either side of the antimeridian measure the long way round.
+Def GeoEquirect(a As GeoPt, b As GeoPt) As Number
+    Let x = Rad(GeoWrapLon(GeoLon(b) - GeoLon(a))) * Cos((GeoLatR(a) + GeoLatR(b)) / 2)
+    Let y = GeoLatR(b) - GeoLatR(a)
+    GeoRadius() * Hypot(x, y)
+
+Rem The only comparison this machine offers between two points, and the
+Rem reason the header says never to use = on one. Structural equality on
+Rem a computed coordinate is a test that passes in the fixture and fails
+Rem in the field.
+Def GeoNear(a As GeoPt, b As GeoPt, metres As Number) As Boolean
+    GeoDistance(a, b) <= metres
+
+Rem ---- where two paths cross -------------------------------------------
+Rem The words that are genuinely hard by hand, and the reason someone
+Rem reaches for a machine rather than a formula sheet.
+
+Rem The angular tolerance below which two directions are treated as the
+Rem same. A word rather than a literal because it is a judgement, and
+Rem because the one place it is decided should be visible.
+Rem
+Rem IT EXISTS BECAUSE EXACT ZERO IS THE WRONG TEST. Two paths along the
+Rem equator are one circle, and the angle between them comes out of Rad
+Rem and Sin as 1.2e-16 rather than 0 — so a test for equality with zero
+Rem would report a crossing for a circle with itself.
+Def GeoEps() As Number
+    0.000000000001
+
+Rem The SIGNED perpendicular distance from the great circle through a and
+Rem b, POSITIVE TO THE RIGHT of the track a -> b.
+Rem
+Rem SIGNED ON PURPOSE. "Two hundred metres off track" is half an answer;
+Rem which side is the other half, and an absolute value throws it away
+Rem where a caller cannot get it back. Abs is one word for a caller who
+Rem does not want it.
+Def GeoCrossTrack(p As GeoPt, a As GeoPt, b As GeoPt) As Number
+    GeoRadius() * Asin(Clamp(Sin(GeoArc(a, p)) * Sin(Rad(GeoBearing(a, p) - GeoBearing(a, b))), -1, 1))
+
+Rem How far along a -> b the nearest point to p lies, in metres.
+Rem NEGATIVE when p is behind a, which is what makes it useful for
+Rem clamping to a segment rather than to a whole great circle.
+Def GeoAlongTrack(p As GeoPt, a As GeoPt, b As GeoPt) As Number
+    Let ahead = Sgn(Cos(Rad(GeoBearing(a, p) - GeoBearing(a, b))))
+    Let xt = GeoCrossTrack(p, a, b) / GeoRadius()
+    GeoRadius() * ahead * Acos(Clamp(Cos(GeoArc(a, p)) / Cos(xt), -1, 1))
+
+Rem The foot of the perpendicular from p, CLAMPED TO THE SEGMENT — so a
+Rem point beyond either end answers that end, which is what "nearest
+Rem point on this leg" means and what the great circle on its own does
+Rem not give.
+Def GeoClosestOnLeg(p As GeoPt, a As GeoPt, b As GeoPt) As GeoPt
+    Let span = GeoDistance(a, b)
+    If span = 0 Then
+        a
+    Else
+        GeoDestination(a, GeoBearing(a, b), Clamp(GeoAlongTrack(p, a, b), 0, span))
+
+Rem Where two great circles — each given as a point and a bearing —
+Rem cross.
+Rem
+Rem AN OPTION AND NOT AN ABORT, because two paths describing the same
+Rem circle is an ordinary configuration and not a bug in the caller. It
+Rem is also the only way to answer None: any two DISTINCT great circles
+Rem cross, always, so "no crossing" means "one circle", never "they
+Rem missed each other".
+Def GeoIntersect(a As GeoPt, brgA As Number, b As GeoPt, brgB As Number) As Option
+    Let d12 = GeoArc(a, b)
+    If d12 = 0 Then
+        GeoIntersectHere(a, brgA, brgB)
+    Else
+        GeoIntersectApart(a, brgA, b, brgB, d12)
+
+Rem Two paths leaving the SAME point already cross there. Unless the two
+Rem bearings describe one circle — 45 and 225 are the same line walked
+Rem the other way — in which case they meet everywhere and there is no
+Rem one crossing to name.
+Def GeoIntersectHere(a As GeoPt, brgA As Number, brgB As Number) As Option
+    If Wrap(brgA - brgB, 180) = 0 Then
+        None()
+    Else
+        Some(a)
+
+Def GeoIntersectApart(a As GeoPt, brgA As Number, b As GeoPt, brgB As Number, d12 As Number) As Option
+    Let a1 = Rad(brgA - GeoBearing(a, b))
+    Let a2 = Rad(GeoBearing(b, a) - brgB)
+    If Abs(Sin(a1)) < GeoEps() And Abs(Sin(a2)) < GeoEps() Then
+        None()
+    Else
+        GeoIntersectOn(a, brgA, d12, a1, a2)
+
+Def GeoIntersectOn(a As GeoPt, brgA As Number, d12 As Number, a1 As Number, a2 As Number) As Option
+    Let a3 = Acos(Clamp(Negate(Cos(a1)) * Cos(a2) + Sin(a1) * Sin(a2) * Cos(d12), -1, 1))
+    Let d13 = Atn2(Sin(d12) * Sin(a1) * Sin(a2), Cos(a2) + Cos(a1) * Cos(a3))
+    Some(GeoNearerCrossing(GeoDestination(a, brgA, GeoRadius() * d13), d13))
+
+Rem TWO GREAT CIRCLES CROSS TWICE, at antipodes. This answers the one
+Rem nearer to a, which is the crossing a navigator means; the other one
+Rem is GeoAntipode of whatever comes back.
+Def GeoNearerCrossing(p As GeoPt, d13 As Number) As GeoPt
+    If Abs(d13) > Pi() / 2 Then
+        GeoAntipode(p)
+    Else
+        p
+
+Rem ======================================================================
+Rem ROUTES
+Rem ======================================================================
+Rem A route is a List Of GeoPt and nothing else — no type, no wrapper,
+Rem no builder. It is what a caller already has.
+Rem
+Rem EVERY WALK BELOW IS SELF-TAIL-RECURSIVE AND BUILDS ITS ANSWER WITH
+Rem Prepend, REVERSING AT THE END. That is not a style preference. A GPS
+Rem trace is tens of thousands of points; Append is O(n) so appending in
+Rem a loop is O(n squared), and seq's ZipWith is Nth-based so pairing a
+Rem list with its own Rest is O(n squared) too. Self-tail-recursion
+Rem compiles to a loop, so these run in constant stack — MUTUAL
+Rem recursion would not, which is why the leg distance is bound with a
+Rem Let inside the branch rather than passed to a second word.
+
+Rem Each leg, n - 1 of them. Fewer than two points is no legs.
+Def GeoRouteLegs(pts As List Of GeoPt) As List Of Number
+    If Length(pts) < 2 Then
+        { }
+    Else
+        Reverse(GeoLegsGo(Rest(pts), First(pts), { }))
+
+Rem NOTHING HERE IS CALLED rest, AND THAT IS NOT A STYLE CHOICE. Names
+Rem are case-insensitive, so a parameter called rest IS the Rest builtin
+Rem inside its own body: Rest(rest) then answers the list unchanged and
+Rem the walk never finishes. It costs an afternoon to find because the
+Rem code is obviously right and the linter has nothing to say about it.
+Def GeoLegsGo(more As List Of GeoPt, prev As GeoPt, acc As List Of Number) As List Of Number
+    If IsEmpty(more) Then
+        acc
+    Else
+        GeoLegsGo(Rest(more), First(more), Prepend(GeoDistance(prev, First(more)), acc))
+
+Rem The total, in metres. AN EMPTY OR ONE-POINT ROUTE IS 0, NOT AN
+Rem ERROR: a route with nowhere to go has a length and it is zero. Only
+Rem a malformed ELEMENT aborts, and it aborts in GeoAt where it was
+Rem built.
+Def GeoRouteLength(pts As List Of GeoPt) As Number
+    Fold(GeoRouteLegs(pts), 0, Fn(a, d) => a + d)
+
+Rem Distance from the start to each point: n of them, the first 0 and
+Rem the last equal to GeoRouteLength. One per POINT, where GeoRouteLegs
+Rem gives one per LEG — the off-by-one between them is the whole reason
+Rem both exist.
+Def GeoRouteCumulative(pts As List Of GeoPt) As List Of Number
+    If IsEmpty(pts) Then
+        { }
+    Else
+        Reverse(GeoCumGo(GeoRouteLegs(pts), 0, { 0 }))
+
+Def GeoCumGo(legs As List Of Number, run As Number, acc As List Of Number) As List Of Number
+    If IsEmpty(legs) Then
+        acc
+    Else
+        GeoCumGo(Rest(legs), run + First(legs), Prepend(run + First(legs), acc))
+
+Rem The initial bearing of each leg — the course to steer, leg by leg.
+Def GeoRouteBearings(pts As List Of GeoPt) As List Of Number
+    If Length(pts) < 2 Then
+        { }
+    Else
+        Reverse(GeoBrgsGo(Rest(pts), First(pts), { }))
+
+Def GeoBrgsGo(more As List Of GeoPt, prev As GeoPt, acc As List Of Number) As List Of Number
+    If IsEmpty(more) Then
+        acc
+    Else
+        GeoBrgsGo(Rest(more), First(more), Prepend(GeoBearing(prev, First(more)), acc))
+
+Rem The point m metres along the route, interpolated within its leg.
+Rem
+Rem AN OPTION, because past the end of a route is ABSENCE and not a
+Rem caller bug — the same classification bool draws between a refusal, a
+Rem Result and a None. Before the start is absence too.
+Def GeoRouteAt(pts As List Of GeoPt, m As Number) As Option
+    If IsEmpty(pts) Or m < 0 Then
+        None()
+    Else
+        GeoAtGo(pts, m)
+
+Def GeoAtGo(pts As List Of GeoPt, m As Number) As Option
+    If IsEmpty(Rest(pts)) Then
+        GeoAtEnd(First(pts), m)
+    Else
+        Let leg = GeoDistance(First(pts), Nth(pts, 2))
+        If m <= leg Then
+            Some(GeoDestination(First(pts), GeoBearing(First(pts), Nth(pts, 2)), m))
+        Else
+            GeoAtGo(Rest(pts), m - leg)
+
+Rem The slack allowed at the end of a route, in metres.
+Rem
+Rem IT EXISTS BECAUSE THE TWO WAYS OF ADDING UP A ROUTE DISAGREE IN THE
+Rem LAST BIT. GeoRouteLength adds the legs; the walk below subtracts them
+Rem one at a time, and the two roundings are not the same one. So asking
+Rem for the point at exactly the route's own length can arrive a
+Rem fraction of a nanometre PAST the end and answer None, which is the
+Rem one answer that is plainly wrong. A millimetre of slack closes it,
+Rem and a millimetre is four orders of magnitude inside the half a per
+Rem cent the sphere itself costs.
+Def GeoNudge() As Number
+    0.001
+
+Rem The last point is the route's end, and by the time the walk reaches
+Rem here the distance still to run should be nothing.
+Def GeoAtEnd(p As GeoPt, m As Number) As Option
+    If m <= GeoNudge() Then
+        Some(p)
+    Else
+        None()
+
+Rem ---- the nearest point on a route ------------------------------------
+
+Rem What GeoNearestOn answers. Four numbers because three of them are
+Rem the questions a caller asks next: how far off am I, how far along am
+Rem I, and which leg am I on.
+Type GeoHit
+    HitPoint As GeoPt
+    HitAway  As Number
+    HitAlong As Number
+    HitLeg   As Number
+
+Rem The nearest point on the route to p, as a record.
+Rem
+Rem THIS IS THE WORD THAT NEEDS GeoClosestOnLeg, and the reason the
+Rem cross-track family is built before the route family rather than
+Rem after it.
+Def GeoNearestOn(pts As List Of GeoPt, p As GeoPt) As GeoHit
+    If IsEmpty(pts) Then
+        Error("GEONEARESTON: AN EMPTY ROUTE HAS NO NEAREST POINT")
+    Else
+        GeoNearGo(Rest(pts), p, First(pts), 1, 0, GeoHit(First(pts), GeoDistance(p, First(pts)), 0, 1))
+
+Def GeoNearGo(more As List Of GeoPt, p As GeoPt, prev As GeoPt, k As Number, run As Number, best As GeoHit) As GeoHit
+    If IsEmpty(more) Then
+        best
+    Else
+        Let foot = GeoClosestOnLeg(p, prev, First(more))
+        GeoNearGo(Rest(more), p, First(more), k + 1, run + GeoDistance(prev, First(more)),
+                  GeoNearBetter(best, GeoHit(foot, GeoDistance(p, foot), run + GeoDistance(prev, foot), k)))
+
+Def GeoNearBetter(best As GeoHit, cand As GeoHit) As GeoHit
+    If HitAway(cand) < HitAway(best) Then
+        cand
+    Else
+        best
+
+Rem ---- simplify and resample -------------------------------------------
+
+Rem Douglas-Peucker, tolerance in metres. What makes a recorded track
+Rem usable: a GPS trace is tens of thousands of points, most of them
+Rem noise about a line the walker actually walked.
+Rem
+Rem BOTH ENDPOINTS ARE PRESERVED AND THE RESULT IS NEVER LONGER THAN THE
+Rem INPUT. It works on an ARRAY rather than the list, because the
+Rem recursion addresses sub-ranges by index and Nth on a list is O(n)
+Rem where on an array it is O(1).
+Def GeoSimplify(pts As List Of GeoPt, m As Number) As List Of GeoPt
+    If Length(pts) < 3 Then
+        pts
+    Else
+        GeoSimplifyAt(ToArray(pts), m, Length(pts))
+
+Def GeoSimplifyAt(ar As Array Of GeoPt, m As Number, n As Number) As List Of GeoPt
+    Concat(Prepend(Nth(ar, 1), GeoDpBetween(ar, m, 1, n)), { Nth(ar, n) })
+
+Rem The points to keep STRICTLY BETWEEN i and j, in order.
+Def GeoDpBetween(ar As Array Of GeoPt, m As Number, i As Number, j As Number) As List Of GeoPt
+    If j - i < 2 Then
+        { }
+    Else
+        GeoDpSplit(ar, m, i, j, GeoDpFarthest(ar, i, j))
+
+Def GeoDpSplit(ar As Array Of GeoPt, m As Number, i As Number, j As Number, far As Pair) As List Of GeoPt
+    If Snd(far) <= m Then
+        { }
+    Else
+        Concat(Concat(GeoDpBetween(ar, m, i, Fst(far)), { Nth(ar, Fst(far)) }),
+               GeoDpBetween(ar, m, Fst(far), j))
+
+Rem The index between i and j lying furthest off the chord, and how far
+Rem off it lies, as a Pair. A Fold rather than a recursion so the walk
+Rem is a loop whatever the range length.
+Def GeoDpFarthest(ar As Array Of GeoPt, i As Number, j As Number) As Pair
+    Fold(Range(i + 1, j - 1), Pair(i + 1, -1),
+         Fn(best, k) => GeoDpBetter(best, k, Abs(GeoCrossTrack(Nth(ar, k), Nth(ar, i), Nth(ar, j)))))
+
+Def GeoDpBetter(best As Pair, k As Number, d As Number) As Pair
+    If d > Snd(best) Then
+        Pair(k, d)
+    Else
+        best
+
+Rem The route re-cut at a fixed spacing — the other half of the same
+Rem need as GeoSimplify. A track at even spacing is what a profile, an
+Rem animation, or a fair comparison between two tracks wants.
+Rem
+Rem THE LAST POINT IS ALWAYS KEPT, whether or not it falls on the
+Rem spacing, so the resampled route still ends where the original did.
+Def GeoResample(pts As List Of GeoPt, m As Number) As List Of GeoPt
+    If Length(pts) < 2 Or m <= 0 Then
+        pts
+    Else
+        Reverse(Prepend(Last(pts), GeoResampleGo(Rest(pts), First(pts), m, m, { First(pts) })))
+
+Rem One walk of the legs, dropping a point every m metres — O(n + k).
+Rem Asking GeoRouteAt once per sample would be O(n * k) and is the
+Rem obvious wrong way to write this. When a sample lands inside the
+Rem current leg the walk continues FROM THAT SAMPLE, which is also what
+Rem keeps the samples on the great circle rather than on a chord.
+Def GeoResampleGo(more As List Of GeoPt, prev As GeoPt, m As Number, need As Number, acc As List Of GeoPt) As List Of GeoPt
+    If IsEmpty(more) Then
+        acc
+    Else
+        Let leg = GeoDistance(prev, First(more))
+        If leg < need Then
+            GeoResampleGo(Rest(more), First(more), m, need - leg, acc)
+        Else
+            Let cut = GeoDestination(prev, GeoBearing(prev, First(more)), need)
+            GeoResampleGo(more, cut, m, m, Prepend(cut, acc))
+
+Rem n points along the great circle from a to b, INCLUDING BOTH ENDS.
+Rem
+Rem THE DRAWING WORD. A great circle is a curve on every map projection,
+Rem so a route drawn as two-point straight lines is visibly wrong over
+Rem any distance. Sampling it into a polyline is what lets plotter,
+Rem scribbler and a Sparky canvas show the real path. It is the one word
+Rem here whose purpose is a picture.
+Def GeoWaypoints(a As GeoPt, b As GeoPt, n As Number) As List Of GeoPt
+    If n < 2 Then
+        Error("GEOWAYPOINTS: NEEDS AT LEAST TWO POINTS, GOT " & Str(n))
+    Else
+        Map(Range(0, n - 1), Fn(k) => GeoAlong(a, b, k / (n - 1)))
+
+Rem ---- vectors, which is how the spherical mean is honest -------------
+
+Rem A point as a unit vector on the sphere, x through (0, 0), y through
+Rem (0, 90 E), z through the north pole.
+Def GeoUnitVec(p As GeoPt) As List Of Number
+    { Cos(GeoLatR(p)) * Cos(GeoLonR(p)), Cos(GeoLatR(p)) * Sin(GeoLonR(p)), Sin(GeoLatR(p)) }
+
+Def GeoVecAdd(a As List Of Number, b As List Of Number) As List Of Number
+    { Nth(a, 1) + Nth(b, 1), Nth(a, 2) + Nth(b, 2), Nth(a, 3) + Nth(b, 3) }
+
+Rem The direction of a vector, as a point on the sphere. The magnitude
+Rem is discarded, which is what makes this the normalising step.
+Def GeoVecPt(v As List Of Number) As GeoPt
+    GeoPt(Deg(Atn2(Nth(v, 3), Hypot(Nth(v, 1), Nth(v, 2)))), GeoWrapLon(Deg(Atn2(Nth(v, 2), Nth(v, 1)))))
+
+Rem The spherical mean of a set of points.
+Rem
+Rem THIS MUST GO THROUGH 3-D VECTORS AND THAT IS THE WHOLE POINT.
+Rem Averaging latitudes and longitudes puts the centroid of two points
+Rem either side of the antimeridian on the wrong side of the planet, and
+Rem the centroid of a ring around the pole nowhere near it. Convert to
+Rem unit vectors, add, normalise, convert back — and neither case needs
+Rem mentioning again.
+Rem
+Rem A PERFECTLY BALANCED SET HAS NO CENTROID: two antipodal points sum
+Rem to the zero vector, which has no direction. That answers GeoPt(0, 0)
+Rem rather than aborting, and a caller who can produce such a set should
+Rem know it is meaningless.
+Def GeoCentroid(pts As List Of GeoPt) As GeoPt
+    If IsEmpty(pts) Then
+        Error("GEOCENTROID: AN EMPTY SET HAS NO CENTROID")
+    Else
+        GeoVecPt(Fold(pts, { 0, 0, 0 }, Fn(a, p) => GeoVecAdd(a, GeoUnitVec(p))))
+
+Rem ---- area -------------------------------------------------------------
+
+Rem The area of a spherical polygon, in square metres, BY SPHERICAL
+Rem EXCESS: the interior angles of a spherical polygon sum to more than
+Rem a flat one's, and the surplus IS the area.
+Rem
+Rem NOT THE TRAPEZOID FORMULA, which is what most answers to this
+Rem question give. That one treats each edge as straight in latitude and
+Rem longitude rather than as a great circle, and it is out by about one
+Rem per cent on a ten-degree triangle — small enough to look right and
+Rem large enough to matter.
+Rem
+Rem WINDING DOES NOT MATTER, AND THE POLYGON IS THE SMALLER REGION. A
+Rem closed ring divides the sphere in two and the two areas sum to the
+Rem whole surface; a ring wound the other way measures the complement.
+Rem This answers whichever is smaller, which is what a caller means in
+Rem every case but one — a polygon genuinely covering more than half the
+Rem Earth comes back as its complement, and nothing here can tell.
+Def GeoArea(pts As List Of GeoPt) As Number
+    GeoAreaAt(GeoOpenRing(pts))
+
+Rem R5.7 seen from the other end. The caller may close the ring by
+Rem repeating the first point or leave it open; the angle sum wants each
+Rem vertex exactly once, so a repeat is removed here and both spellings
+Rem mean the same polygon.
+Def GeoOpenRing(pts As List Of GeoPt) As List Of GeoPt
+    If Length(pts) < 2 Then
+        pts
+    Else
+        If GeoLat(Last(pts)) = GeoLat(First(pts)) And GeoLon(Last(pts)) = GeoLon(First(pts)) Then
+            Taken(pts, Length(pts) - 1)
+        Else
+            pts
+
+Def GeoAreaAt(vs As List Of GeoPt) As Number
+    If Length(vs) < 3 Then
+        Error("GEOAREA: A POLYGON NEEDS AT LEAST THREE DISTINCT POINTS, GOT " & Str(Length(vs)))
+    Else
+        GeoAreaWound(vs, GeoExcess(ToArray(vs), Length(vs)))
+
+Rem The spherical excess of a ring, in radians. This IS the area, in
+Rem units of R squared — that is what the excess theorem says.
+Def GeoExcess(vs As Array Of GeoPt, n As Number) As Number
+    Rad(GeoAngleSum(vs, n) - (n - 2) * 180)
+
+Rem A ring wound the other way measures the complement, and the
+Rem complement of a small polygon is very nearly the whole sphere. So
+Rem the obvious repair — answer 4 Pi minus it — subtracts two numbers
+Rem that agree to four significant figures and throws those four away to
+Rem cancellation. WALKING THE REVERSED RING INSTEAD gets the small
+Rem number directly, at full precision, for the cost of one more pass on
+Rem the inputs that need it.
+Rem The parameter is exc and not e because math publishes E() for
+Rem Euler's number, and names are case-insensitive: a parameter called e
+Rem IS that word inside this body. Nothing here wants it, but the next
+Rem edit might.
+Def GeoAreaWound(vs As List Of GeoPt, exc As Number) As Number
+    If exc > 2 * Pi() Then
+        GeoExcess(ToArray(Reverse(vs)), Length(vs)) * GeoRadius() ^ 2
+    Else
+        exc * GeoRadius() ^ 2
+
+Def GeoAngleSum(vs As Array Of GeoPt, n As Number) As Number
+    Fold(Range(1, n), 0, Fn(a, k) => a + GeoVertexAngle(vs, n, k))
+
+Rem The interior angle at vertex k, as the turn from the edge back to
+Rem the previous vertex round to the edge on to the next. Wrap does the
+Rem index arithmetic as well as the angle: Wrap(k, n) + 1 is the next
+Rem index and Wrap(k - 2, n) + 1 the previous, both 1-based and both
+Rem closing the ring without a special case at either end.
+Def GeoVertexAngle(vs As Array Of GeoPt, n As Number, k As Number) As Number
+    Let here = Nth(vs, k)
+    Wrap(GeoBearing(here, Nth(vs, Wrap(k, n) + 1)) - GeoBearing(here, Nth(vs, Wrap(k - 2, n) + 1)), 360)
+
+Rem ======================================================================
+Rem BOXES, AND CHEAP FILTERING
+Rem ======================================================================
+Rem THE BOX EXISTS TO MAKE FILTERING CHEAP. Measuring the distance to
+Rem every point in a large set is expensive; a box test is four
+Rem comparisons. Shortlisting with a box and then measuring the
+Rem shortlist properly is the standard shape, and saying so here is what
+Rem stops somebody putting GeoDistance inside a Filter over ten thousand
+Rem points.
+
+Rem BoxWraps is a field and not a derivation because a box crossing the
+Rem antimeridian has BoxWest > BoxEast, and that is also what a box of
+Rem one point on the line looks like. A flag is how GeoInBox knows
+Rem rather than guesses.
+Type GeoBox
+    BoxSouth As Number
+    BoxNorth As Number
+    BoxWest  As Number
+    BoxEast  As Number
+    BoxWraps As Boolean
+
+Rem The eastward span from west to east, 0..360. The full circle is
+Rem spelled -180 to 180 and would come back as 0 from Wrap alone, so it
+Rem is named here rather than discovered downstream.
+Def GeoBoxSpan(b As GeoBox) As Number
+    If BoxWest(b) = -180 And BoxEast(b) = 180 Then
+        360
+    Else
+        Wrap(BoxEast(b) - BoxWest(b), 360)
+
+Def GeoBoxOf(south As Number, north As Number, west As Number, east As Number) As GeoBox
+    GeoBox(south, north, west, east, west > east)
+
+Rem Membership, antimeridian-aware. A wrapping box is the arc that goes
+Rem east off the end of the range and comes back on at the other, so its
+Rem test is an Or where an ordinary box's is an And — which is the one
+Rem line a caller writing this by hand gets wrong.
+Def GeoInBox(p As GeoPt, box As GeoBox) As Boolean
+    If GeoLat(p) < BoxSouth(box) Or GeoLat(p) > BoxNorth(box) Then
+        False
+    Else
+        GeoInBoxLon(GeoWrapLon(GeoLon(p)), box)
+
+Def GeoInBoxLon(lon As Number, box As GeoBox) As Boolean
+    If BoxWraps(box) Then
+        lon >= BoxWest(box) Or lon <= BoxEast(box)
+    Else
+        lon >= BoxWest(box) And lon <= BoxEast(box)
+
+Rem The lat/lon window enclosing everything within m metres of centre.
+Rem
+Rem NAMED GeoBoxAround AND NOT GeoBox because Type GeoBox already
+Rem publishes GeoBox as its constructor, and a Def of that name would be
+Rem a second word with one spelling. The tree's rule when a word and a
+Rem constructor compete is that they do not: one of them is renamed.
+Rem
+Rem NEAR A POLE IT CLAMPS LATITUDE AND WIDENS LONGITUDE TO THE FULL
+Rem CIRCLE. That is correct and surprising — once the circle reaches the
+Rem pole every longitude is inside it — so it is said here rather than
+Rem left to be discovered.
+Def GeoBoxAround(centre As GeoPt, m As Number) As GeoBox
+    Let dLat = Deg(m / GeoRadius())
+    Let south = Clamp(GeoLat(centre) - dLat, -90, 90)
+    Let north = Clamp(GeoLat(centre) + dLat, -90, 90)
+    GeoBoxSpread(south, north, GeoLon(centre), GeoBoxDLon(centre, m, south, north))
+
+Def GeoBoxDLon(centre As GeoPt, m As Number, south As Number, north As Number) As Number
+    If south <= -90 Or north >= 90 Then
+        180
+    Else
+        GeoBoxDLonAt(Sin(m / GeoRadius()) / Cos(Rad(GeoLat(centre))))
+
+Def GeoBoxDLonAt(r As Number) As Number
+    If r >= 1 Then
+        180
+    Else
+        Deg(Asin(r))
+
+Def GeoBoxSpread(south As Number, north As Number, lon As Number, dLon As Number) As GeoBox
+    If dLon >= 180 Then
+        GeoBox(south, north, -180, 180, False)
+    Else
+        GeoBoxOf(south, north, GeoWrapLon(lon - dLon), GeoWrapLon(lon + dLon))
+
+Rem The enclosing box of a route or any other set of points.
+Rem
+Rem LATITUDE IS JUST THE MIN AND THE MAX. LONGITUDE IS NOT, and that is
+Rem the whole difficulty: the tightest arc enclosing a set of longitudes
+Rem is the COMPLEMENT OF THE WIDEST GAP between them. Sort them, find
+Rem the largest step from one to the next — counting the step across the
+Rem antimeridian as one of them — and the box is everything else. That
+Rem is what gives a route from 179 E to 179 W a box two degrees wide
+Rem instead of one spanning the planet.
+Def GeoRouteBounds(pts As List Of GeoPt) As GeoBox
+    If IsEmpty(pts) Then
+        Error("GEOROUTEBOUNDS: AN EMPTY ROUTE HAS NO BOUNDS")
+    Else
+        GeoBoundsAt(Map(pts, GeoLat), ToArray(Sort(Map(pts, GeoLon))), Length(pts))
+
+Def GeoBoundsAt(lats As List Of Number, lons As Array Of Number, n As Number) As GeoBox
+    GeoBoundsLon(Fold(lats, First(lats), Fn(a, x) => Min(a, x)),
+                 Fold(lats, First(lats), Fn(a, x) => Max(a, x)),
+                 lons, n, GeoWidestGap(lons, n))
+
+Def GeoBoundsLon(south As Number, north As Number, lons As Array Of Number, n As Number, gap As Number) As GeoBox
+    If gap = 0 Then
+        GeoBoxOf(south, north, Nth(lons, 1), Nth(lons, n))
+    Else
+        GeoBoxOf(south, north, Nth(lons, gap + 1), Nth(lons, gap))
+
+Rem The index after which the widest gap lies, or 0 when the widest gap
+Rem is the one across the antimeridian — in which case plain min-to-max
+Rem is already the tight answer.
+Def GeoWidestGap(lons As Array Of Number, n As Number) As Number
+    If n < 2 Then
+        0
+    Else
+        Fold(Range(1, n - 1), 0, Fn(best, i) => GeoGapBetter(lons, n, best, i))
+
+Def GeoGapBetter(lons As Array Of Number, n As Number, best As Number, i As Number) As Number
+    If Nth(lons, i + 1) - Nth(lons, i) > GeoGapAt(lons, n, best) Then
+        i
+    Else
+        best
+
+Def GeoGapAt(lons As Array Of Number, n As Number, i As Number) As Number
+    If i = 0 Then
+        Nth(lons, 1) + 360 - Nth(lons, n)
+    Else
+        Nth(lons, i + 1) - Nth(lons, i)
+
+Rem The smallest box containing both, chosen between the only two arcs
+Rem that can be it: west of x round to east of y, or west of y round to
+Rem east of x. Whichever is narrower and actually covers both wins; when
+Rem neither does, the two are far enough apart that the honest answer is
+Rem every longitude.
+Def GeoBoxUnion(x As GeoBox, y As GeoBox) As GeoBox
+    GeoUnionPick(GeoBoxOf(Min(BoxSouth(x), BoxSouth(y)), Max(BoxNorth(x), BoxNorth(y)), BoxWest(x), BoxEast(y)),
+                 GeoBoxOf(Min(BoxSouth(x), BoxSouth(y)), Max(BoxNorth(x), BoxNorth(y)), BoxWest(y), BoxEast(x)),
+                 x, y)
+
+Def GeoUnionPick(ax As GeoBox, ay As GeoBox, x As GeoBox, y As GeoBox) As GeoBox
+    If GeoBoxCovers(ax, x) And GeoBoxCovers(ax, y) And GeoBoxSpan(ax) <= GeoBoxSpan(ay) Then
+        ax
+    Else
+        GeoUnionElse(ax, ay, x, y)
+
+Def GeoUnionElse(ax As GeoBox, ay As GeoBox, x As GeoBox, y As GeoBox) As GeoBox
+    If GeoBoxCovers(ay, x) And GeoBoxCovers(ay, y) Then
+        ay
+    Else
+        If GeoBoxCovers(ax, x) And GeoBoxCovers(ax, y) Then
+            ax
+        Else
+            GeoBox(BoxSouth(ax), BoxNorth(ax), -180, 180, False)
+
+Def GeoBoxCovers(outer As GeoBox, inner As GeoBox) As Boolean
+    Wrap(BoxWest(inner) - BoxWest(outer), 360) + GeoBoxSpan(inner) <= GeoBoxSpan(outer) + GeoEps()
+
+Rem The middle of a box, going east from its west edge — so the centre
+Rem of a box across the antimeridian is on the antimeridian and not at
+Rem zero, which is where averaging the two edges would put it.
+Def GeoBoxCentre(box As GeoBox) As GeoPt
+    GeoPt((BoxSouth(box) + BoxNorth(box)) / 2, GeoWrapLon(BoxWest(box) + GeoBoxSpan(box) / 2))
+
+Rem ---- the enclosing circle --------------------------------------------
+
+Type GeoCircle
+    CircleCentre As GeoPt
+    CircleRadius As Number
+
+Rem A circle covering every point: the spherical centroid, and the
+Rem distance to whichever point is furthest from it.
+Rem
+Rem NOT THE MINIMAL ENCLOSING CIRCLE, and the difference is stated
+Rem rather than glossed. The smallest possible circle is a harder
+Rem problem with an iterative answer; this one is a single pass, always
+Rem covers, and is what a caller wants for a map viewport or a coarse
+Rem proximity bound.
+Def GeoBoundingCircle(pts As List Of GeoPt) As GeoCircle
+    If IsEmpty(pts) Then
+        Error("GEOBOUNDINGCIRCLE: AN EMPTY SET HAS NO ENCLOSING CIRCLE")
+    Else
+        GeoCircleRound(GeoCentroid(pts), pts)
+
+Def GeoCircleRound(c As GeoPt, pts As List Of GeoPt) As GeoCircle
+    GeoCircle(c, Fold(pts, 0, Fn(a, p) => Max(a, GeoDistance(c, p))))
+
+Rem ======================================================================
+Rem COORDINATES AS TEXT
+Rem ======================================================================
+Rem A coordinate arrives as text far more often than as two numbers, and
+Rem in more spellings than anyone expects.
+Rem
+Rem EVERYTHING THAT READS TEXT ANSWERS Result, and every one reports the
+Rem 1-based position of what it could not read. A string is external
+Rem text: a malformed one is a fact about the input, not a bug in the
+Rem program, so it comes back as a value.
+
+Rem The marks, built from their character codes rather than typed. A
+Rem literal degree sign in a source file is one bad save away from
+Rem mojibake, and there is a gate in this repo that scans the whole tree
+Rem for exactly that. Chr(176) cannot be got wrong by an editor.
+Def GeoDegSign() As String
+    Chr(176)
+
+Def GeoMinSign() As String
+    "'"
+
+Def GeoSecSign() As String
+    Chr(34)
+
+Rem ---- writing an angle out --------------------------------------------
+
+Rem An angle as degrees, minutes and seconds, with the seconds to the
+Rem given number of places.
+Rem
+Rem THE WHOLE ANGLE IS ROUNDED TO SECONDS FIRST, then split. Rounding
+Rem the seconds last is what produces 53 degrees 43 minutes 60 seconds,
+Rem which is the classic way this word goes wrong.
+Def GeoDms(deg As Number, places As Number) As String
+    GeoDmsOf(RoundTo(Abs(deg) * 3600, places), places, GeoSignText(deg))
+
+Def GeoSignText(x As Number) As String
+    If x < 0 Then
+        "-"
+    Else
+        ""
+
+Rem Split across three Defs rather than three lines: a line continues
+Rem onto the next ONLY inside open brackets, so an expression broken
+Rem before a leading & is not one expression at all. It compiles, and
+Rem then underflows the stack at run time.
+Def GeoDmsOf(total As Number, places As Number, sign As String) As String
+    sign & GeoDmsDegs(total) & GeoDmsMins(total) & GeoSecsText(Wrap(total, 60), places)
+
+Def GeoDmsDegs(total As Number) As String
+    Str(Floor(total / 3600)) & GeoDegSign()
+
+Def GeoDmsMins(total As Number) As String
+    PadZero(Floor(Wrap(total, 3600) / 60), 2) & GeoMinSign()
+
+Rem ToFixed does the decimals but not the leading zero, and a coordinate
+Rem written 53 degrees 43 minutes 5.0 seconds rather than 05.0 is the
+Rem one that will not line up in a column.
+Def GeoSecsText(s As Number, places As Number) As String
+    If s < 10 Then
+        "0" & ToFixed(s, places) & GeoSecSign()
+    Else
+        ToFixed(s, places) & GeoSecSign()
+
+Rem The paste form every mapping tool accepts: latitude, comma,
+Rem longitude, both decimal.
+Def GeoFormat(p As GeoPt, places As Number) As String
+    ToFixed(GeoLat(p), places) & ", " & ToFixed(GeoLon(p), places)
+
+Rem ---- reading text back -----------------------------------------------
+
+Rem A run of numbers with the hemisphere letter that governs them, which
+Rem is what one half of a written coordinate is.
+Type GeoPart
+    PartNums As List Of Number
+    PartHemi As String
+
+Rem Every character this parser is willing to see. Anything else is
+Rem named with its position rather than skipped, because a parser that
+Rem quietly ignores what it does not understand is a parser that reads
+Rem "53.72 SOUTH" as north.
+Def GeoTextOk() As String
+    "0123456789.+-NSEW ," & GeoDegSign() & GeoMinSign() & GeoSecSign()
+
+Def GeoNumChars() As String
+    "0123456789.+-"
+
+Rem Validate, then walk. Splitting it this way is what lets the walk
+Rem itself be total: by the time it runs, every character is one it
+Rem knows and every run of digits is a number, so it has nothing left to
+Rem refuse and needs to answer no Result of its own.
+Def GeoScanned(word As String, s As String) As Result
+    If Len(s) = 0 Then
+        Err(word & ": THE EMPTY STRING IS NOT A COORDINATE", 0)
+    Else
+        GeoScanChars(word, s, GeoFirstBad(s, 1))
+
+Def GeoScanChars(word As String, s As String, bad As Number) As Result
+    If bad > 0 Then
+        Err(word & ": CANNOT READ '" & Mid(s, bad, 1) & "' AT POSITION " & Str(bad), bad)
+    Else
+        GeoScanNums(word, s, GeoFirstBadNum(s, 1))
+
+Def GeoScanNums(word As String, s As String, bad As Number) As Result
+    If bad > 0 Then
+        Err(word & ": '" & Mid(s, bad, GeoRunEnd(s, bad) - bad) & "' AT POSITION " & Str(bad) & " IS NOT A NUMBER", bad)
+    Else
+        Ok(GeoPartsGo(s, 1, "", { }, "", { }))
+
+Def GeoFirstBad(s As String, k As Number) As Number
+    If k > Len(s) Then
+        0
+    Else
+        If Instr(GeoTextOk(), Mid(s, k, 1)) = 0 Then
+            k
+        Else
+            GeoFirstBad(s, k + 1)
+
+Rem The start of the first run of number characters that is not a
+Rem number. Val reads "1.2.3" as 1.2 and says nothing, which is the
+Rem silent wrong answer this exists to prevent.
+Def GeoFirstBadNum(s As String, k As Number) As Number
+    If k > Len(s) Then
+        0
+    Else
+        If Instr(GeoNumChars(), Mid(s, k, 1)) = 0 Then
+            GeoFirstBadNum(s, k + 1)
+        Else
+            GeoCheckRun(s, k, GeoRunEnd(s, k))
+
+Def GeoRunEnd(s As String, k As Number) As Number
+    If k > Len(s) Then
+        k
+    Else
+        If Instr(GeoNumChars(), Mid(s, k, 1)) = 0 Then
+            k
+        Else
+            GeoRunEnd(s, k + 1)
+
+Def GeoCheckRun(s As String, k As Number, fin As Number) As Number
+    If GeoNumOk(Mid(s, k, fin - k)) Then
+        GeoFirstBadNum(s, fin)
+    Else
+        k
+
+Rem A number token this machine will accept: an optional leading sign,
+Rem then digits with at most one decimal point, and at least one digit.
+Rem
+Rem WRITTEN OUT RATHER THAN LEFT TO IsNumeric, AND THAT IS NOT
+Rem FASTIDIOUSNESS. IsNumeric("1.2.3") answers True, and Val then reads
+Rem it as 1.2 and says nothing — so a coordinate typed with one stray
+Rem full stop would parse to a real place several hundred miles from the
+Rem one intended. Val is not total either: Val("--4") aborts outright.
+Rem Between them that is a silent wrong answer and a crash, so every
+Rem token is checked here before Val is allowed to see it.
+Def GeoNumOk(t As String) As Boolean
+    GeoNumBody(t, GeoSignLen(t) + 1, 0, 0)
+
+Def GeoSignLen(t As String) As Number
+    If Len(t) = 0 Then
+        0
+    Else
+        GeoSignAt(Left(t, 1))
+
+Def GeoSignAt(ch As String) As Number
+    If Instr("+-", ch) > 0 Then
+        1
+    Else
+        0
+
+Def GeoNumBody(t As String, k As Number, digits As Number, dots As Number) As Boolean
+    If k > Len(t) Then
+        digits > 0 And dots <= 1
+    Else
+        GeoNumCh(t, k, digits, dots, Mid(t, k, 1))
+
+Def GeoNumCh(t As String, k As Number, digits As Number, dots As Number, ch As String) As Boolean
+    If Instr("0123456789", ch) > 0 Then
+        GeoNumBody(t, k + 1, digits + 1, dots)
+    Else
+        If ch = "." Then
+            GeoNumBody(t, k + 1, digits, dots + 1)
+        Else
+            False
+
+Rem ---- the walk, which cannot fail --------------------------------------
+
+Def GeoPartsGo(s As String, k As Number, tok As String, nums As List Of Number, hemi As String, parts As List Of GeoPart) As List Of GeoPart
+    If k > Len(s) Then
+        Reverse(GeoShut(GeoTok(nums, tok), hemi, parts))
+    Else
+        GeoPartsCh(s, k, tok, nums, hemi, parts, Mid(s, k, 1))
+
+Def GeoPartsCh(s As String, k As Number, tok As String, nums As List Of Number, hemi As String, parts As List Of GeoPart, ch As String) As List Of GeoPart
+    If Instr(GeoNumChars(), ch) > 0 Then
+        GeoPartsGo(s, k + 1, tok & ch, nums, hemi, parts)
+    Else
+        If Instr("NSEW", ch) > 0 Then
+            GeoPartsHemi(s, k, GeoTok(nums, tok), hemi, parts, ch)
+        Else
+            If ch = "," Then
+                GeoPartsGo(s, k + 1, "", { }, "", GeoShut(GeoTok(nums, tok), hemi, parts))
+            Else
+                GeoPartsGo(s, k + 1, "", GeoTok(nums, tok), hemi, parts)
+
+Rem A HEMISPHERE LETTER EITHER FOLLOWS ITS NUMBERS OR LEADS THEM, and
+Rem both spellings are in common use — 53 43 12 N and N53 43 12. So a
+Rem letter arriving with numbers already collected closes them, but with
+Rem WHICHEVER LETTER IS ALREADY PENDING if one is: in N53 43 12 W1 51 36
+Rem the W closes the northern half and then leads the western one.
+Def GeoPartsHemi(s As String, k As Number, nums As List Of Number, hemi As String, parts As List Of GeoPart, ch As String) As List Of GeoPart
+    If IsEmpty(nums) Then
+        GeoPartsGo(s, k + 1, "", { }, ch, parts)
+    Else
+        If hemi = "" Then
+            GeoPartsGo(s, k + 1, "", { }, "", Prepend(GeoPart(nums, ch), parts))
+        Else
+            GeoPartsGo(s, k + 1, "", { }, ch, Prepend(GeoPart(nums, hemi), parts))
+
+Def GeoTok(nums As List Of Number, tok As String) As List Of Number
+    If tok = "" Then
+        nums
+    Else
+        Append(nums, Val(tok))
+
+Def GeoShut(nums As List Of Number, hemi As String, parts As List Of GeoPart) As List Of GeoPart
+    If IsEmpty(nums) And hemi = "" Then
+        parts
+    Else
+        Prepend(GeoPart(nums, hemi), parts)
+
+Rem ---- turning the parts into an answer ---------------------------------
+
+Def GeoPartOk(p As GeoPart) As Boolean
+    Length(PartNums(p)) >= 1 And Length(PartNums(p)) <= 3
+
+Rem Minutes and seconds add to the MAGNITUDE. -1 51 36 is -1.86 and not
+Rem -1 + 0.86; getting it backwards is the classic DMS bug and it shows
+Rem only in the western and southern hemispheres, which is why it
+Rem survives so long in so much code.
+Def GeoSigned(d As Number, part As Number) As Number
+    If d < 0 Then
+        d - part
+    Else
+        d + part
+
+Def GeoDegOf(ns As List Of Number) As Number
+    If Length(ns) = 1 Then
+        First(ns)
+    Else
+        If Length(ns) = 2 Then
+            GeoSigned(First(ns), Abs(Nth(ns, 2)) / 60)
+        Else
+            GeoSigned(First(ns), Abs(Nth(ns, 2)) / 60 + Abs(Nth(ns, 3)) / 3600)
+
+Def GeoPartSign(h As String) As Number
+    If h = "S" Or h = "W" Then
+        -1
+    Else
+        1
+
+Def GeoPartDeg(p As GeoPart) As Number
+    GeoPartSign(PartHemi(p)) * GeoDegOf(PartNums(p))
+
+Rem A whole coordinate in any accepted spelling.
+Rem
+Rem THE ACCEPTED SET IS EXHAUSTIVE AND SHORT, and the tests list every
+Rem one of them: a decimal pair; DMS with the degree, minute and second
+Rem marks; DMS in plain ASCII; N, S, E or W before or after its numbers;
+Rem comma or whitespace between the two halves. A parser whose accepted
+Rem set is prose is a parser nobody can predict.
+Def GeoParse(s As String) As Result
+    GeoParseAt("GEOPARSE", GeoScanned("GEOPARSE", Upper(Trim(s))))
+
+Def GeoParseAt(word As String, r As Result) As Result
+    Select Case r
+        Case Ok(parts)
+            GeoPartsEnd(word, parts)
+        Case Err(why, at)
+            Err(why, at)
+        Case Else
+            Err(word & ": THE SCAN DID NOT ANSWER", 0)
+
+Def GeoPartsEnd(word As String, parts As List Of GeoPart) As Result
+    If Length(parts) = 2 Then
+        GeoTwoParts(word, Nth(parts, 1), Nth(parts, 2))
+    Else
+        If Length(parts) = 1 Then
+            GeoOnePart(word, First(parts))
+        Else
+            Err(word & ": EXPECTED TWO COORDINATES, FOUND " & Str(Length(parts)), 0)
+
+Rem Bare numbers with no letters and no comma: two, four or six of them
+Rem split evenly down the middle, latitude first. Anything else is a
+Rem shape this parser will not guess at.
+Def GeoOnePart(word As String, p As GeoPart) As Result
+    If PartHemi(p) = "" And Wrap(Length(PartNums(p)), 2) = 0 And Length(PartNums(p)) >= 2 And Length(PartNums(p)) <= 6 Then
+        GeoTwoParts(word, GeoPart(Taken(PartNums(p), Length(PartNums(p)) / 2), ""),
+                          GeoPart(DropN(PartNums(p), Length(PartNums(p)) / 2), ""))
+    Else
+        Err(word & ": EXPECTED TWO COORDINATES", 0)
+
+Rem WHICH HALF IS THE LATITUDE IS DECIDED BY THE LETTERS WHEN THERE ARE
+Rem ANY. E or W on the first half means the caller wrote longitude
+Rem first, which is rarer but perfectly legal and unambiguous.
+Def GeoTwoParts(word As String, a As GeoPart, b As GeoPart) As Result
+    If GeoPartOk(a) And GeoPartOk(b) Then
+        GeoOrdered(word, a, b)
+    Else
+        Err(word & ": A COORDINATE IS ONE, TWO OR THREE NUMBERS", 0)
+
+Def GeoOrdered(word As String, a As GeoPart, b As GeoPart) As Result
+    If Instr("EW", PartHemi(a)) > 0 Then
+        GeoChkAt(word, GeoPartDeg(b), GeoPartDeg(a))
+    Else
+        GeoChkAt(word, GeoPartDeg(a), GeoPartDeg(b))
+
+Rem One angle, not a pair — the total twin for a single written bearing
+Rem or a single written latitude.
+Def GeoFromDms(s As String) As Result
+    GeoFromDmsAt("GEOFROMDMS", GeoScanned("GEOFROMDMS", Upper(Trim(s))))
+
+Def GeoFromDmsAt(word As String, r As Result) As Result
+    Select Case r
+        Case Ok(parts)
+            GeoOneAngle(word, parts)
+        Case Err(why, at)
+            Err(why, at)
+        Case Else
+            Err(word & ": THE SCAN DID NOT ANSWER", 0)
+
+Def GeoOneAngle(word As String, parts As List Of GeoPart) As Result
+    If Length(parts) = 1 And GeoPartOk(First(parts)) Then
+        Ok(GeoPartDeg(First(parts)))
+    Else
+        Err(word & ": EXPECTED ONE ANGLE, NOT A COORDINATE PAIR", 0)
+
+Rem ---- the compass ------------------------------------------------------
+
+Rem SIXTEEN POINTS, NOT THIRTY-TWO. The half-winds — north east by north
+Rem and its friends — are a nineteenth-century sailing surface, and a
+Rem machine offering them would be answering a question nobody asks.
+Def GeoCompassPoints() As List Of String
+    { "N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE",
+      "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW" }
+
+Rem The half-sector added before the floor is what makes north the
+Rem sector CENTRED on 0 rather than the one starting at it.
+Def GeoCompass(brg As Number) As String
+    Nth(GeoCompassPoints(), Wrap(Floor(GeoWrapBrg(brg) / 22.5 + 0.5), 16) + 1)
+
+Def GeoFromCompass(s As String) As Result
+    GeoFromCompassAt(Upper(Trim(s)), IndexOf(GeoCompassPoints(), Upper(Trim(s))))
+
+Def GeoFromCompassAt(s As String, k As Number) As Result
+    If k = 0 Then
+        Err("GEOFROMCOMPASS: '" & s & "' IS NOT ONE OF THE SIXTEEN COMPASS POINTS", 0)
+    Else
+        Ok((k - 1) * 22.5)
+
+Rem ---- geohash ----------------------------------------------------------
+
+Rem A GEOHASH IS A BOX, NOT A POINT, and GeoHashBox is the word that
+Rem says so. GeoFromHash answers the centre for convenience and names
+Rem the precision it just discarded; treating that centre as the place
+Rem is the single commonest geohash misunderstanding, and this surface
+Rem is built to correct it rather than encode it.
+Rem
+Rem The alphabet drops a, i, l and o, which is why a hash never spells
+Rem an accidental word and why "abc" is not one.
+Def GeoHashAlphabet() As String
+    "0123456789bcdefghjkmnpqrstuvwxyz"
+
+Rem The whole world, as the cell every hash starts from.
+Type GeoCell
+    CellS As Number
+    CellN As Number
+    CellW As Number
+    CellE As Number
+
+Def GeoWorldCell() As GeoCell
+    GeoCell(-90, 90, -180, 180)
+
+Rem THE BITS ALTERNATE, LONGITUDE FIRST. That single fact is the whole
+Rem format, and it is why a six-character cell is twice as wide as it is
+Rem tall: fifteen bits go to longitude's 360 degrees and fifteen to
+Rem latitude's 180.
+Def GeoHash(p As GeoPt, n As Number) As String
+    If n < 1 Then
+        Error("GEOHASH: LENGTH MUST BE AT LEAST 1, GOT " & Str(n))
+    Else
+        GeoHashGo(p, n * 5, 0, GeoWorldCell(), 0, 0, "")
+
+Def GeoHashGo(p As GeoPt, total As Number, i As Number, c As GeoCell, acc As Number, bits As Number, out As String) As String
+    If i >= total Then
+        out
+    Else
+        If Wrap(i, 2) = 0 Then
+            GeoHashStep(p, total, i, c, acc, bits, out, GeoHashPick(GeoLon(p), (CellW(c) + CellE(c)) / 2))
+        Else
+            GeoHashStep(p, total, i, c, acc, bits, out, GeoHashPick(GeoLat(p), (CellS(c) + CellN(c)) / 2))
+
+Def GeoHashPick(v As Number, mid As Number) As Number
+    If v > mid Then
+        1
+    Else
+        0
+
+Def GeoHashStep(p As GeoPt, total As Number, i As Number, c As GeoCell, acc As Number, bits As Number, out As String, bit As Number) As String
+    If bits = 4 Then
+        GeoHashGo(p, total, i + 1, GeoHashHalf(c, i, bit), 0, 0,
+                  out & Mid(GeoHashAlphabet(), acc * 2 + bit + 1, 1))
+    Else
+        GeoHashGo(p, total, i + 1, GeoHashHalf(c, i, bit), acc * 2 + bit, bits + 1, out)
+
+Rem One bisection: the axis comes from whether the bit index is even,
+Rem which is the same rule going in and coming out.
+Def GeoHashHalf(c As GeoCell, i As Number, bit As Number) As GeoCell
+    If Wrap(i, 2) = 0 Then
+        GeoHashHalfLon(c, bit)
+    Else
+        GeoHashHalfLat(c, bit)
+
+Def GeoHashHalfLon(c As GeoCell, bit As Number) As GeoCell
+    If bit = 1 Then
+        GeoCell(CellS(c), CellN(c), (CellW(c) + CellE(c)) / 2, CellE(c))
+    Else
+        GeoCell(CellS(c), CellN(c), CellW(c), (CellW(c) + CellE(c)) / 2)
+
+Def GeoHashHalfLat(c As GeoCell, bit As Number) As GeoCell
+    If bit = 1 Then
+        GeoCell((CellS(c) + CellN(c)) / 2, CellN(c), CellW(c), CellE(c))
+    Else
+        GeoCell(CellS(c), (CellS(c) + CellN(c)) / 2, CellW(c), CellE(c))
+
+Rem The cell a geohash names, as a GeoBox. THIS IS WHAT A GEOHASH IS.
+Def GeoHashBox(s As String) As Result
+    GeoHashBoxAs("GEOHASHBOX", Lower(Trim(s)))
+
+Def GeoHashBoxAs(word As String, s As String) As Result
+    If Len(s) = 0 Then
+        Err(word & ": THE EMPTY STRING IS NOT A GEOHASH", 0)
+    Else
+        GeoHashRead(word, s, 1, GeoWorldCell())
+
+Def GeoHashRead(word As String, s As String, k As Number, c As GeoCell) As Result
+    If k > Len(s) Then
+        Ok(GeoBoxOf(CellS(c), CellN(c), CellW(c), CellE(c)))
+    Else
+        GeoHashChar(word, s, k, c, Instr(GeoHashAlphabet(), Mid(s, k, 1)) - 1)
+
+Def GeoHashChar(word As String, s As String, k As Number, c As GeoCell, d As Number) As Result
+    If d < 0 Then
+        Err(word & ": '" & Mid(s, k, 1) & "' AT POSITION " & Str(k) & " IS NOT A GEOHASH CHARACTER", k)
+    Else
+        GeoHashRead(word, s, k + 1, GeoHashBitsOf(c, d, (k - 1) * 5, 0))
+
+Rem The five bits of one character, most significant first.
+Def GeoHashBitsOf(c As GeoCell, d As Number, base As Number, j As Number) As GeoCell
+    If j > 4 Then
+        c
+    Else
+        GeoHashBitsOf(GeoHashHalf(c, base + j, Floor(d / 2 ^ (4 - j)) Mod 2), d, base, j + 1)
+
+Rem The centre of the cell. ITS DESCRIPTION IS THE PRECISION IT THREW
+Rem AWAY: a six-character hash names a box about 1.2 km by 0.6 km, and
+Rem this is the middle of it, not where anything actually is.
+Def GeoFromHash(s As String) As Result
+    GeoHashMid(GeoHashBoxAs("GEOFROMHASH", Lower(Trim(s))))
+
+Def GeoHashMid(r As Result) As Result
+    Select Case r
+        Case Ok(b)
+            Ok(GeoBoxCentre(b))
+        Case Err(why, at)
+            Err(why, at)
+        Case Else
+            Err("GEOFROMHASH: THE CELL DID NOT ANSWER", 0)
+
+Rem The eight adjacent cells. THIS IS THE WORD THAT MAKES GEOHASHES
+Rem USEFUL: proximity search by shared prefix fails at every cell
+Rem boundary, where two points a metre apart share no prefix at all, and
+Rem searching the neighbours too is the standard repair.
+Def GeoHashNeighbours(s As String) As List Of String
+    Select Case GeoHashBoxAs("GEOHASHNEIGHBOURS", Lower(Trim(s)))
+        Case Ok(b)
+            GeoHashRing(b, Len(Trim(s)))
+        Case Err(why, at)
+            Error(why)
+        Case Else
+            Error("GEOHASHNEIGHBOURS: THE CELL DID NOT ANSWER")
+
+Def GeoRingSteps() As List Of List Of Number
+    { { 1, -1 }, { 1, 0 }, { 1, 1 }, { 0, -1 },
+      { 0, 1 }, { -1, -1 }, { -1, 0 }, { -1, 1 } }
+
+Def GeoHashRing(b As GeoBox, n As Number) As List Of String
+    Map(GeoRingSteps(),
+        Fn(o) => GeoHash(GeoStepOff(GeoBoxCentre(b),
+                                    Nth(o, 1) * (BoxNorth(b) - BoxSouth(b)),
+                                    Nth(o, 2) * (BoxEast(b) - BoxWest(b))), n))
+
+Rem Stepping off a cell CLAMPS AT THE POLES AND WRAPS AT THE
+Rem ANTIMERIDIAN, so a cell against the date line really does get its
+Rem neighbours from the other side of it — which is the case the whole
+Rem word exists for and the one a caller would otherwise miss.
+Def GeoStepOff(c As GeoPt, dLat As Number, dLon As Number) As GeoPt
+    GeoPt(Clamp(GeoLat(c) + dLat, -90, 90), GeoWrapLon(GeoLon(c) + dLon))
+
+Rem ---- Maidenhead -------------------------------------------------------
+
+Rem IN BECAUSE IT IS REAL AND DELIGHTFUL. Amateur radio has located
+Rem itself this way for forty years, IO91wm is a thing people say out
+Rem loud, and it is twenty lines. A machine that can tell a student
+Rem their grid square has earned their attention in a way a haversine
+Rem has not.
+Rem
+Rem The levels alternate letters and digits, and each level's count is
+Rem how many cells it cuts its parent into: 18 fields, then 10 squares,
+Rem then 24 subsquares, then 10 again. Longitude is cut by the same
+Rem count as latitude at every level, which is why a square is always
+Rem twice as wide in degrees as it is tall.
+Def GeoLocCounts() As List Of Number
+    { 18, 10, 24, 10 }
+
+Def GeoLocator(p As GeoPt, n As Number) As String
+    If n < 2 Or n > 8 Or Wrap(n, 2) <> 0 Then
+        Error("GEOLOCATOR: LENGTH MUST BE 2, 4, 6 OR 8, GOT " & Str(n))
+    Else
+        GeoLocGo(GeoLon(p) + 180, GeoLat(p) + 90, 360, 180, 1, n, "")
+
+Def GeoLocGo(x As Number, y As Number, xs As Number, ys As Number, level As Number, n As Number, out As String) As String
+    If level * 2 > n Then
+        out
+    Else
+        GeoLocCut(x, y, xs, ys, level, n, out, Nth(GeoLocCounts(), level))
+
+Def GeoLocCut(x As Number, y As Number, xs As Number, ys As Number, level As Number, n As Number, out As String, cnt As Number) As String
+    Let vx = Floor(x / (xs / cnt))
+    Let vy = Floor(y / (ys / cnt))
+    GeoLocGo(x - vx * xs / cnt, y - vy * ys / cnt, xs / cnt, ys / cnt, level + 1, n,
+             out & GeoLocMark(vx, cnt) & GeoLocMark(vy, cnt))
+
+Rem A level of ten is written with digits and any other level with
+Rem letters — upper case for the field, lower for the subsquare, which
+Rem is the convention every logbook uses.
+Def GeoLocMark(v As Number, cnt As Number) As String
+    If cnt = 10 Then
+        Str(v)
+    Else
+        If cnt = 18 Then
+            Chr(Asc("A") + v)
+        Else
+            Chr(Asc("a") + v)
+
+Rem The centre of the square a locator names.
+Def GeoFromLocator(s As String) As Result
+    GeoLocCheck(Trim(s), Len(Trim(s)))
+
+Def GeoLocCheck(s As String, n As Number) As Result
+    If n < 2 Or n > 8 Or Wrap(n, 2) <> 0 Then
+        Err("GEOFROMLOCATOR: '" & s & "' MUST BE 2, 4, 6 OR 8 CHARACTERS", 0)
+    Else
+        GeoLocRead(s, n, 1, 0, 0, 360, 180)
+
+Def GeoLocRead(s As String, n As Number, k As Number, x As Number, y As Number, xs As Number, ys As Number) As Result
+    If k > n Then
+        GeoChkAt("GEOFROMLOCATOR", y + ys / 2 - 90, x + xs / 2 - 180)
+    Else
+        GeoLocPair(s, n, k, x, y, xs, ys, Nth(GeoLocCounts(), (k + 1) / 2))
+
+Def GeoLocPair(s As String, n As Number, k As Number, x As Number, y As Number, xs As Number, ys As Number, cnt As Number) As Result
+    If GeoLocVal(Mid(s, k, 1), cnt) < 0 Then
+        Err("GEOFROMLOCATOR: '" & Mid(s, k, 1) & "' AT POSITION " & Str(k) & " IS NOT VALID THERE", k)
+    Else
+        If GeoLocVal(Mid(s, k + 1, 1), cnt) < 0 Then
+            Err("GEOFROMLOCATOR: '" & Mid(s, k + 1, 1) & "' AT POSITION " & Str(k + 1) & " IS NOT VALID THERE", k + 1)
+        Else
+            GeoLocRead(s, n, k + 2,
+                       x + GeoLocVal(Mid(s, k, 1), cnt) * xs / cnt,
+                       y + GeoLocVal(Mid(s, k + 1, 1), cnt) * ys / cnt,
+                       xs / cnt, ys / cnt)
+
+Rem A locator character's value at a level of that many cells, or -1.
+Rem Case does not matter: IO91WM and io91wm are the same square, and
+Rem people write both.
+Def GeoLocVal(ch As String, cnt As Number) As Number
+    If cnt = 10 Then
+        Instr("0123456789", ch) - 1
+    Else
+        GeoLocLetter(Instr("ABCDEFGHIJKLMNOPQRSTUVWX", Upper(ch)) - 1, cnt)
+
+Def GeoLocLetter(d As Number, cnt As Number) As Number
+    If d >= cnt Then
+        -1
+    Else
+        d
+
+Rem ======================================================================
+Rem THE SUN
+Rem ======================================================================
+Rem Where the sun is, and when it rises and sets, for any position and
+Rem any date. The most interesting thing a latitude and a longitude
+Rem know, and entirely computable from them.
+Rem
+Rem THE DATE IS AN ARGUMENT AND IS NEVER READ. This is what keeps geo
+Rem out of the capability system: clock.shoddy is optional in every
+Rem manifest, and a geo that reached for "today" would drag that
+Rem optionality into a machine that is otherwise arithmetic. GeoJulian
+Rem is the bridge, and a caller crosses it deliberately.
+Rem
+Rem TIMES ARE UTC HOURS AS A Number, 13.5 meaning half past one in the
+Rem afternoon. Not a string and not a clock type: this machine does no
+Rem formatting and knows no time zone. GeoZoneOffset and clock.shoddy
+Rem are how a caller gets local time, at the edge, where the policy
+Rem lives. A time may fall outside 0..24, which means the event happens
+Rem on the UTC day either side of the one asked about — that is honest
+Rem rather than tidy, and wrapping it would break the guarantee that
+Rem sunrise and sunset straddle solar noon.
+Rem
+Rem ACCURACY IS A NUMBER, NOT THE WORD "APPROXIMATE". This is the
+Rem low-precision solar position algorithm, good to about a minute of
+Rem arc, so rise and set are good to about a minute of time. Ample for
+Rem anything but observation, and stated so nobody discovers it by
+Rem disagreeing with an almanac.
+
+Rem The altitude of the sun's CENTRE at the moment we call sunrise.
+Rem
+Rem SUNRISE IS THE UPPER LIMB CLEARING THE HORIZON WITH REFRACTION, not
+Rem the centre crossing it: about 34 minutes of arc of refraction plus
+Rem 16 of semi-diameter. That is six minutes of time, and it is the
+Rem commonest reason two implementations disagree. A word rather than a
+Rem literal so it can be seen and substituted.
+Def GeoSunAltitude() As Number
+    -0.833
+
+Rem The Julian date at 00:00 UT on a Gregorian calendar date — one
+Rem line over julian.shoddy, where the calendar is spelled once for the
+Rem whole tree, century rules and all.
+Rem
+Rem DELIBERATELY OVER THE RAW CONSTRUCTOR rather than JulOf. This word
+Rem has always normalised an out-of-range date through its arithmetic
+Rem rather than refusing it — seedgeo's guard admits any day up to 31
+Rem and relies on exactly that — and the migration's promise was
+Rem bit-for-bit. A caller who wants the refusing way in has JulOf, one
+Rem Include away.
+Def GeoJulian(y As Number, m As Number, d As Number) As Number
+    JulDayNumber(JulDate(y, m, d))
+
+Rem Days since J2000.0 at a given UTC hour of that date.
+Def GeoJ2000(jd As Number, hours As Number) As Number
+    jd - 2451545 + hours / 24
+
+Rem ---- the sun's place on the ecliptic ---------------------------------
+
+Def GeoSunMeanLon(n As Number) As Number
+    Wrap(280.46 + 0.9856474 * n, 360)
+
+Def GeoSunAnomaly(n As Number) As Number
+    Wrap(357.528 + 0.9856003 * n, 360)
+
+Rem The equation of the centre, to two terms. This is the whole of the
+Rem approximation: the Earth's orbit is an ellipse and this is how far
+Rem ahead of or behind the mean sun the real one runs.
+Def GeoSunEclLon(n As Number) As Number
+    Wrap(GeoSunMeanLon(n) + 1.915 * Sin(Rad(GeoSunAnomaly(n))) + 0.02 * Sin(Rad(2 * GeoSunAnomaly(n))), 360)
+
+Def GeoObliquity(n As Number) As Number
+    23.439 - 0.0000004 * n
+
+Def GeoDeclOf(n As Number) As Number
+    Deg(Asin(Clamp(Sin(Rad(GeoObliquity(n))) * Sin(Rad(GeoSunEclLon(n))), -1, 1)))
+
+Def GeoRightAsc(n As Number) As Number
+    Deg(Atn2(Cos(Rad(GeoObliquity(n))) * Sin(Rad(GeoSunEclLon(n))), Cos(Rad(GeoSunEclLon(n)))))
+
+Rem Four minutes of time to the degree, over the gap between where the
+Rem mean sun is and where the real one is.
+Rem
+Rem GeoWrapLon does the fold to (-180, 180] here, and it is doing angle
+Rem arithmetic rather than geography: without it a gap of 359 degrees
+Rem would read as a day and a half of error instead of one degree.
+Def GeoEoTOf(n As Number) As Number
+    4 * GeoWrapLon(GeoSunMeanLon(n) - GeoRightAsc(n))
+
+Rem Both of these take only a date, so both are answered for 12:00 UT —
+Rem the midpoint of the day, and near enough for quantities that move by
+Rem less than half a degree and a few seconds across one.
+Def GeoSolarDeclination(jd As Number) As Number
+    GeoDeclOf(GeoJ2000(jd, 12))
+
+Def GeoEquationOfTime(jd As Number) As Number
+    GeoEoTOf(GeoJ2000(jd, 12))
+
+Rem ---- where the sun is at an instant ----------------------------------
+
+Type GeoSun
+    SunElevation As Number
+    SunAzimuth   As Number
+
+Rem The sun's elevation above the horizon and its azimuth, at a UTC hour
+Rem of a given date. AZIMUTH IS FROM NORTH, CLOCKWISE, the same
+Rem convention as every bearing here — so a caller can point a compass
+Rem at the answer without converting it.
+Def GeoSunPos(p As GeoPt, jd As Number, hours As Number) As GeoSun
+    GeoSunAt(p, GeoDeclOf(GeoJ2000(jd, hours)), GeoSunHourAngle(p, jd, hours))
+
+Rem The hour angle: how far the sun is past the meridian, in degrees,
+Rem west positive. True solar time is clock time corrected by the
+Rem equation of time and by how far the place is from its meridian.
+Def GeoSunHourAngle(p As GeoPt, jd As Number, hours As Number) As Number
+    GeoWrapLon(hours * 15 + GeoEoTOf(GeoJ2000(jd, hours)) / 4 + GeoLon(p) - 180)
+
+Def GeoSunAt(p As GeoPt, dec As Number, ha As Number) As GeoSun
+    GeoSun(Deg(Asin(Clamp(Sin(GeoLatR(p)) * Sin(Rad(dec)) + Cos(GeoLatR(p)) * Cos(Rad(dec)) * Cos(Rad(ha)), -1, 1))),
+           GeoSunAzim(p, dec, ha))
+
+Rem The standard azimuth formula measures from SOUTH; the 180 turns it
+Rem into a compass bearing. At noon in the northern hemisphere that
+Rem gives 180 and in the southern it gives 0, which is the check worth
+Rem keeping in mind when reading it.
+Def GeoSunAzim(p As GeoPt, dec As Number, ha As Number) As Number
+    GeoWrapBrg(Deg(Atn2(Sin(Rad(ha)), Cos(Rad(ha)) * Sin(GeoLatR(p)) - Tan(Rad(dec)) * Cos(GeoLatR(p)))) + 180)
+
+Rem ---- rise, set and the day between them -------------------------------
+
+Rem Solar noon in UTC hours: twelve, shifted west by the longitude and
+Rem corrected by the equation of time. ALWAYS DEFINED, which is exactly
+Rem why it is a separate word from rise and set — inside a polar day
+Rem there is still a moment when the sun is highest.
+Def GeoSunNoon(p As GeoPt, jd As Number) As Number
+    12 - GeoLon(p) / 15 - GeoEquationOfTime(jd) / 60
+
+Rem The hour angle at which the sun reaches a given altitude, in
+Rem degrees, or None when it never does.
+Rem
+Rem THE TEST IS WRITTEN POSITIVELY so that a NaN falls out as None. At
+Rem the exact pole the cosine of the latitude is zero and the division
+Rem is 0/0; every comparison against the NaN that produces is False, so
+Rem the pole answers "no rise or set" rather than a number nobody could
+Rem use.
+Def GeoHourAngle(p As GeoPt, jd As Number, alt As Number) As Option
+    GeoHourAngleAt((Sin(Rad(alt)) - Sin(GeoLatR(p)) * Sin(Rad(GeoSolarDeclination(jd))))
+                   / (Cos(GeoLatR(p)) * Cos(Rad(GeoSolarDeclination(jd)))))
+
+Def GeoHourAngleAt(c As Number) As Option
+    If c >= -1 And c <= 1 Then
+        Some(Deg(Acos(c)))
+    Else
+        None()
+
+Rem AN OPTION, AND IT IS NOT DECORATION. Above the Arctic circle in June
+Rem the sun does not rise, because it never set. That is an ordinary
+Rem answer, not an error and not a sentinel — and a library returning
+Rem midnight, or aborting, would be wrong in the two places the question
+Rem is most interesting.
+Def GeoSunRise(p As GeoPt, jd As Number) As Option
+    GeoSunEvent(p, jd, GeoHourAngle(p, jd, GeoSunAltitude()), -1)
+
+Def GeoSunSet(p As GeoPt, jd As Number) As Option
+    GeoSunEvent(p, jd, GeoHourAngle(p, jd, GeoSunAltitude()), 1)
+
+Def GeoSunEvent(p As GeoPt, jd As Number, h As Option, side As Number) As Option
+    Select Case h
+        Case Some(ha)
+            Some(GeoSunNoon(p, jd) + side * ha / 15)
+        Case Else
+            None()
+
+Rem 0 through 24 hours.
+Rem
+Rem WHERE THERE IS NO RISE OR SET THE ANSWER IS STILL A NUMBER, and
+Rem which one is decided by whether the latitude and the declination are
+Rem on the same side of the equator: same side and the sun is up all
+Rem day, opposite sides and it is down all day.
+Def GeoDayLength(p As GeoPt, jd As Number) As Number
+    GeoDayLengthAt(GeoHourAngle(p, jd, GeoSunAltitude()), GeoLat(p), GeoSolarDeclination(jd))
+
+Def GeoDayLengthAt(h As Option, lat As Number, dec As Number) As Number
+    Select Case h
+        Case Some(ha)
+            2 * ha / 15
+        Case Else
+            GeoPolarDay(lat, dec)
+
+Def GeoPolarDay(lat As Number, dec As Number) As Number
+    If lat * dec > 0 Then
+        24
+    Else
+        0
+
+Rem The pair of times the sun passes a given depression below the
+Rem horizon, morning first: 6 for civil twilight, 12 for nautical, 18
+Rem for astronomical. None where the sun never gets that low, which is
+Rem why a northern summer has no astronomical night.
+Def GeoTwilight(p As GeoPt, jd As Number, depress As Number) As Option
+    GeoTwilightAt(p, jd, GeoHourAngle(p, jd, Negate(Abs(depress))))
+
+Def GeoTwilightAt(p As GeoPt, jd As Number, h As Option) As Option
+    Select Case h
+        Case Some(ha)
+            Some({ GeoSunNoon(p, jd) - ha / 15, GeoSunNoon(p, jd) + ha / 15 })
+        Case Else
+            None()
+
+Rem ======================================================================
+Rem NAVIGATION
+Rem ======================================================================
+Rem A RHUMB LINE IS NOT A GREAT CIRCLE, AND THE DIFFERENCE IS THE POINT
+Rem OF THIS PART. A great circle is the shortest path; a rhumb line
+Rem holds ONE COMPASS BEARING the whole way, and it is what a vessel can
+Rem actually steer without continuously re-plotting. A navigation answer
+Rem computed on a great circle is the wrong answer to the question that
+Rem was asked. London to New York differs by over fifty kilometres
+Rem between the two.
+
+Rem The stretched latitude of the Mercator projection, in radians. A
+Rem rhumb line is a STRAIGHT LINE on that projection — that is the whole
+Rem reason the projection exists, and the whole content of the three
+Rem words below. It runs to infinity at the poles, where a rhumb line
+Rem spirals in without arriving.
+Def GeoStretch(latR As Number) As Number
+    Log(Tan(Pi() / 4 + latR / 2))
+
+Rem The ratio that turns a longitude difference into a distance along a
+Rem rhumb line. Due east or west the stretched latitudes are equal and
+Rem the ratio is 0/0, so the limit — the cosine of the latitude — is
+Rem used instead. That case is a parallel, which is the commonest rhumb
+Rem line there is, so it is not an edge case at all.
+Def GeoRhumbQ(dLat As Number, dPsi As Number, latR As Number) As Number
+    If Abs(dPsi) > 0.00000001 Then
+        dLat / dPsi
+    Else
+        Cos(latR)
+
+Def GeoRhumbDistance(a As GeoPt, b As GeoPt) As Number
+    GeoRhumbDistAt(GeoLatR(b) - GeoLatR(a), Rad(GeoWrapLon(GeoLon(b) - GeoLon(a))),
+                   GeoStretch(GeoLatR(b)) - GeoStretch(GeoLatR(a)), GeoLatR(a))
+
+Def GeoRhumbDistAt(dLat As Number, dLon As Number, dPsi As Number, latR As Number) As Number
+    GeoRadius() * Hypot(dLat, GeoRhumbQ(dLat, dPsi, latR) * dLon)
+
+Rem The bearing you actually steer, and it does not change along the
+Rem way — which is what GeoFinalBearing exists to say is untrue of a
+Rem great circle.
+Def GeoRhumbBearing(a As GeoPt, b As GeoPt) As Number
+    GeoWrapBrg(Deg(Atn2(Rad(GeoWrapLon(GeoLon(b) - GeoLon(a))),
+                        GeoStretch(GeoLatR(b)) - GeoStretch(GeoLatR(a)))))
+
+Def GeoRhumbDestination(a As GeoPt, brg As Number, m As Number) As GeoPt
+    GeoRhumbTo(a, Rad(brg), m / GeoRadius())
+
+Def GeoRhumbTo(a As GeoPt, br As Number, d As Number) As GeoPt
+    GeoRhumbAt(a, br, d, GeoPolarFold(GeoLatR(a) + d * Cos(br)))
+
+Rem Running off the top of the world. A rhumb line steered far enough
+Rem north reaches the pole and carries on down the far side, so the
+Rem latitude reflects rather than growing past ninety.
+Def GeoPolarFold(latR As Number) As Number
+    If Abs(latR) > Pi() / 2 Then
+        Sgn(latR) * Pi() - latR
+    Else
+        latR
+
+Def GeoRhumbAt(a As GeoPt, br As Number, d As Number, lat2 As Number) As GeoPt
+    GeoPt(Deg(lat2), GeoWrapLon(GeoLon(a) + Deg(d * Sin(br) / GeoRhumbQ(lat2 - GeoLatR(a), GeoStretch(lat2) - GeoStretch(GeoLatR(a)), GeoLatR(a)))))
+
+Rem ---- how far you can see ---------------------------------------------
+
+Rem The distance to the horizon from a height h, in metres — where the
+Rem line of sight grazes the sphere.
+Rem
+Rem GEOMETRIC, WITH NO REFRACTION. The atmosphere bends light downward
+Rem and pushes the true horizon out by something like eight per cent,
+Rem which is why the mariner's rule of thumb carries a larger constant.
+Rem That coefficient depends on the weather; this word answers the
+Rem geometry and says which it is, rather than baking in a number that
+Rem is right on an average afternoon.
+Def GeoHorizon(h As Number) As Number
+    If h <= 0 Then
+        0
+    Else
+        GeoRadius() * Acos(Clamp(GeoRadius() / (GeoRadius() + h), -1, 1))
+
+Rem When a light of one height becomes visible from another: the moment
+Rem the two horizons touch.
+Def GeoGeographicRange(h1 As Number, h2 As Number) As Number
+    GeoHorizon(h1) + GeoHorizon(h2)
+
+Rem ---- dead reckoning ---------------------------------------------------
+
+Rem A start and a list of legs, each a two-element list of bearing and
+Rem distance in metres.
+Rem
+Rem THIS IS Fold IN ONE WORD, and it is here as much for the teaching as
+Rem for the navigation: it is the shape of every "I went this way and
+Rem then that way" question, and it shows a reader what Fold is FOR in a
+Rem domain they can picture.
+Def GeoDeadReckon(a As GeoPt, legs As List Of List Of Number) As GeoPt
+    Fold(legs, a, Fn(p, leg) => GeoDestination(p, Nth(leg, 1), Nth(leg, 2)))
+
+Rem The NAUTICAL time zone for a longitude: fifteen degrees wide and
+Rem CENTRED on its meridian, so seven degrees east is still zone zero.
+Rem
+Rem NAUTICAL AND NOT POLITICAL, AND IT SAYS SO LOUDLY. Political time
+Rem zones are a database that changes several times a year, and a
+Rem machine shipping one would ship a value that goes silently stale.
+Rem This is arithmetic, and it is genuinely what is used at sea.
+Def GeoZoneOffset(lon As Number) As Number
+    Round(GeoWrapLon(lon) / 15)
+
+Rem ---- three dimensions -------------------------------------------------
+
+Rem Earth-centred, Earth-fixed Cartesian coordinates in metres, as a
+Rem three-element list: x out through zero north zero east, y through
+Rem the equator at ninety east, z through the north pole.
+Rem
+Rem THE BRIDGE TO THREE DIMENSIONS — the representation every satellite
+Rem and every 3-D renderer wants, and the one that makes GeoCentroid
+Rem obviously correct rather than surprising, since it is the same unit
+Rem vector with a radius on it.
+Rem
+Rem SPHERICAL, like everything else here. A survey-grade ECEF uses the
+Rem ellipsoid, and the gap is the same half a per cent this machine
+Rem costs throughout.
+Def GeoEcef(p As GeoPt, alt As Number) As List Of Number
+    Map(GeoUnitVec(p), Fn(c) => c * (GeoRadius() + alt))
+
+Rem Back again. THE ALTITUDE IS DISCARDED because a GeoPt is a position
+Rem on the sphere and has nowhere to keep one; GeoEcefHeight is how a
+Rem caller gets it back.
+Def GeoFromEcef(xyz As List Of Number) As GeoPt
+    GeoVecPt(xyz)
+
+Def GeoEcefHeight(xyz As List Of Number) As Number
+    Hypot(Hypot(Nth(xyz, 1), Nth(xyz, 2)), Nth(xyz, 3)) - GeoRadius()

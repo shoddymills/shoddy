@@ -1,0 +1,408 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem ephemeris.shoddy — Shoddy standard library: the sky as arithmetic
+Rem
+Rem Where everything is, for any observer and any date: sidereal time,
+Rem the transform from a sky position to an altitude and a compass
+Rem azimuth, the sun and the moon as sky positions, the moon's phase,
+Rem age, distance, rise and set, and the five naked-eye planets from
+Rem Keplerian elements. The machine geo.shoddy's out-of-scope promised.
+Rem
+Rem PURE THROUGHOUT, AND NO CLOCK ANYWHERE NEAR IT. Every word takes a
+Rem Julian date and a UTC hour as arguments; julian.shoddy makes one
+Rem from a calendar date (JulDayNumber, or geo's GeoJulian which is the
+Rem same word by another name), and clock.shoddy's ClockDate supplies
+Rem "today" at the caller's edge. Nothing here is a capability.
+Rem
+Rem THE BOUNDARY WITH GEO, STATED SO IT CANNOT DRIFT. geo answers the
+Rem sun AS EXPERIENCED AT A PLACE — rise, set, noon, day length,
+Rem twilight — and stays the canonical word for all of those. This
+Rem machine answers the SKY AS OBSERVED FROM A PLACE: where any body
+Rem is, in anyone's sky, at any instant. EphSun exists here because the
+Rem moon's phase and every planet's geometry need the sun's position,
+Rem and because "where is the sun in MY sky right now" is EphAltAz of
+Rem it — a different question from geo's, spelled differently. The two
+Rem machines' suns are two small private models of one star, and
+Rem tst/ephemeris.shoddy asserts they agree within the joint stated
+Rem accuracy, so the tolerated duplication is tested rather than
+Rem trusted.
+Rem
+Rem Conventions, all of them load-bearing:
+Rem
+Rem   * DEGREES AT EVERY BOUNDARY, exactly as geo and for geo's stated
+Rem     reasons. Right ascension is degrees 0..360, not hours — one
+Rem     unit for every angle, and a reader who wants hours divides by
+Rem     15 visibly. Declination and altitude are degrees either side
+Rem     of zero; azimuth is geo's compass convention, 0..360, north 0,
+Rem     clockwise, so a caller can point a compass at a planet.
+Rem
+Rem   * A SKY POSITION IS EphSky AND NOT GeoPt, DELIBERATELY, though
+Rem     both live on a sphere. Declination is latitude-shaped and right
+Rem     ascension longitude-shaped, but GeoWrapLon folds into
+Rem     (-180, 180] and would mangle a right ascension — and a word
+Rem     accepting either record would someday be handed the wrong one
+Rem     silently. Two meanings, two types.
+Rem
+Rem   * METRES FOR THE ONE DISTANCE, as geo says metres. There is no
+Rem     unit mode; eng converts at the edge.
+Rem
+Rem   * ACCURACY IS A NUMBER, PER BODY. The sun is the low-precision
+Rem     model geo uses, good to about a minute of arc. The moon is the
+Rem     Astronomical Almanac's low-precision series: about a third of a
+Rem     degree in longitude, a fifth in latitude, GEOCENTRIC — the
+Rem     parallax an observer on the surface adds (up to a degree) is
+Rem     deliberately not modelled, and the rise altitude below folds
+Rem     its average into the horizon instead, which is the almanac's
+Rem     own convention for rise times. The planets are the JPL
+Rem     approximate Keplerian elements, valid 1800..2050, worst case
+Rem     well under a degree there. Rise and set times are good to a few
+Rem     minutes, which is also what the moon's own motion makes of any
+Rem     almanac's minute.
+Rem
+Rem   * OPTION IS THE DESIGN FOR RISE AND SET, exactly as it is in geo:
+Rem     a circumpolar moon has no rise because it never set, and near a
+Rem     pole that is an ordinary answer, not an error. THE SCAN IS THE
+Rem     UTC DAY, 0..24: roughly once a month a calendar day genuinely
+Rem     has no moonrise — the moon rises about fifty minutes later each
+Rem     day and one rise falls the far side of midnight — and that day
+Rem     answers None honestly rather than borrowing tomorrow's.
+Rem
+Rem   * EVERY ANGLE SUM IS WRAPPED BEFORE IT IS ANSWERED, and the moon
+Rem     series wraps INSIDE too: 481268 degrees a century is the mean
+Rem     motion, and by 2050 the raw sum is six figures. Wrap is floored
+Rem     modulo, so dates before J2000 come out 0..360 like everything
+Rem     else.
+Rem
+Rem   * FIELD NAMES CARRY THE PREFIX — EphRa, EphDec, EphAlt, EphAzim —
+Rem     because an accessor loses every naming contest, and Alt, Dec
+Rem     and Ra are words a program wants as locals.
+Rem
+Rem   * NO PARAMETER HERE IS CALLED e. math publishes E() for Euler's
+Rem     number and names are case-insensitive, so the eccentric anomaly
+Rem     is ea and the eccentricity ec, exactly as geo renamed its
+Rem     excess for the same reason.
+Rem
+Rem Includes geo.shoddy for the observer — a GeoPt, its radian
+Rem accessors, and the two wraps — and math.shoddy for Rad, Deg, Clamp
+Rem and Hypot. It does not include julian: every date arrives as a
+Rem Julian day NUMBER, which is julian's (and geo's) to make.
+Rem ==================================================================
+
+Include "geo.shoddy"
+Include "math.shoddy"
+
+Rem ---- the types -------------------------------------------------------
+
+Rem A position on the celestial sphere: right ascension 0..360 and
+Rem declination -90..90, both degrees, equinox of date. Fields are
+Rem POSITIONAL; inserting one would shift every constructor in the
+Rem tree silently.
+Type EphSky
+    EphRa  As Number
+    EphDec As Number
+
+Rem What an observer sees: altitude above the horizon and compass
+Rem azimuth, both degrees.
+Type EphView
+    EphAlt  As Number
+    EphAzim As Number
+
+Rem ---- time, in the three shapes the formulas want ----------------------
+
+Rem Days since J2000.0 at a UTC hour of a Julian date — the sun's
+Rem clock, as in geo.
+Def EphDays(jd As Number, hours As Number) As Number
+    jd + hours / 24 - 2451545
+
+Rem The same span in Julian centuries — the moon's and the planets'
+Rem clock, because their published rates are per century.
+Def EphT(jd As Number, hours As Number) As Number
+    EphDays(jd, hours) / 36525
+
+Rem Greenwich mean sidereal time, in degrees 0..360. The one formula
+Rem that turns a clock time into a direction in the sky, and the whole
+Rem reason a star rises four minutes earlier each night.
+Def EphSidereal(jd As Number, hours As Number) As Number
+    Wrap(280.46061837 + 360.98564736629 * EphDays(jd, hours), 360)
+
+Rem ---- frames ------------------------------------------------------------
+
+Rem The obliquity of the ecliptic — the tilt that makes seasons — to
+Rem the same first-order rate geo's sun uses.
+Def EphObliquity(n As Number) As Number
+    23.439 - 0.0000004 * n
+
+Rem Ecliptic longitude and latitude to right ascension and declination.
+Rem THE ONE FRAME CHANGE IN THE MACHINE: the sun, the moon and every
+Rem planet come out of their models in ecliptic coordinates and cross
+Rem here exactly once.
+Def EphSkyOf(lam As Number, beta As Number, n As Number) As EphSky
+    EphSkyAt(Rad(lam), Rad(beta), Rad(EphObliquity(n)))
+
+Def EphSkyAt(lr As Number, br As Number, er As Number) As EphSky
+    EphSky(Wrap(Deg(Atn2(Sin(lr) * Cos(er) - Tan(br) * Sin(er), Cos(lr))), 360),
+           Deg(Asin(Clamp(Sin(br) * Cos(er) + Cos(br) * Sin(er) * Sin(lr), -1, 1))))
+
+Rem ---- the observer ------------------------------------------------------
+
+Rem A sky position, as seen from a place at an instant. The hour angle
+Rem is local sidereal time less right ascension, west positive — the
+Rem same convention as geo's sun — and the azimuth formula is geo's:
+Rem measured from south by the mathematics, turned into a compass
+Rem bearing by the 180.
+Def EphAltAz(p As GeoPt, sky As EphSky, jd As Number, hours As Number) As EphView
+    EphViewAt(p, EphDec(sky), EphSidereal(jd, hours) + GeoLon(p) - EphRa(sky))
+
+Def EphViewAt(p As GeoPt, dec As Number, ha As Number) As EphView
+    EphView(Deg(Asin(Clamp(Sin(GeoLatR(p)) * Sin(Rad(dec)) + Cos(GeoLatR(p)) * Cos(Rad(dec)) * Cos(Rad(ha)), -1, 1))),
+            GeoWrapBrg(Deg(Atn2(Sin(Rad(ha)), Cos(Rad(ha)) * Sin(GeoLatR(p)) - Tan(Rad(dec)) * Cos(GeoLatR(p)))) + 180))
+
+Rem The angle between two sky positions. HAVERSINE, NOT THE LAW OF
+Rem COSINES, for geo's stated reason: the cosine form throws away half
+Rem its digits exactly where the interesting questions are — a moon
+Rem two degrees from the sun, a planet near conjunction.
+Def EphSeparation(a As EphSky, b As EphSky) As Number
+    Let dDec = Rad(EphDec(b) - EphDec(a))
+    Let dRa = Rad(EphRa(b) - EphRa(a))
+    Let h = Sin(dDec / 2) ^ 2 + Cos(Rad(EphDec(a))) * Cos(Rad(EphDec(b))) * Sin(dRa / 2) ^ 2
+    Deg(2 * Atn2(Sqr(Clamp(h, 0, 1)), Sqr(Clamp(1 - h, 0, 1))))
+
+Rem ---- the sun -----------------------------------------------------------
+Rem The same low-precision model as geo's sun words — mean longitude,
+Rem mean anomaly, the equation of the centre to two terms — good to
+Rem about a minute of arc. Kept private on geo's side and private
+Rem here; the AGREEMENT of the two is asserted in tst/ephemeris.shoddy.
+
+Def EphSunMean(n As Number) As Number
+    Wrap(280.46 + 0.9856474 * n, 360)
+
+Def EphSunAnom(n As Number) As Number
+    Wrap(357.528 + 0.9856003 * n, 360)
+
+Def EphSunLon(n As Number) As Number
+    Wrap(EphSunMean(n) + 1.915 * Sin(Rad(EphSunAnom(n))) + 0.02 * Sin(Rad(2 * EphSunAnom(n))), 360)
+
+Rem The sun as a sky position. For rise, set, noon and day length at a
+Rem place, geo remains the machine; this word exists because the
+Rem moon's phase and every planet's elongation are measured from it,
+Rem and because EphAltAz of it answers where the sun stands in YOUR
+Rem sky, which is a question geo does not spell.
+Def EphSun(jd As Number, hours As Number) As EphSky
+    EphSkyOf(EphSunLon(EphDays(jd, hours)), 0, EphDays(jd, hours))
+
+Rem ---- the moon ----------------------------------------------------------
+Rem The Astronomical Almanac's low-precision series: seven terms of
+Rem longitude, four of latitude, five of parallax. About a third of a
+Rem degree in longitude — GEOCENTRIC, see the header. Time is in
+Rem Julian centuries because the published rates are.
+
+Def EphMoonLon(t As Number) As Number
+    Wrap(218.32 + 481267.881 * t
+         + 6.29 * Sin(Rad(Wrap(135.0 + 477198.87 * t, 360)))
+         - 1.27 * Sin(Rad(Wrap(259.3 - 413335.36 * t, 360)))
+         + 0.66 * Sin(Rad(Wrap(235.7 + 890534.22 * t, 360)))
+         + 0.21 * Sin(Rad(Wrap(269.9 + 954397.74 * t, 360)))
+         - 0.19 * Sin(Rad(Wrap(357.5 + 35999.05 * t, 360)))
+         - 0.11 * Sin(Rad(Wrap(186.5 + 966404.03 * t, 360))), 360)
+
+Def EphMoonLat(t As Number) As Number
+    (5.13 * Sin(Rad(Wrap(93.3 + 483202.02 * t, 360)))
+     + 0.28 * Sin(Rad(Wrap(228.2 + 960400.89 * t, 360)))
+     - 0.28 * Sin(Rad(Wrap(318.3 + 6003.15 * t, 360)))
+     - 0.17 * Sin(Rad(Wrap(217.6 - 407332.21 * t, 360))))
+
+Rem The equatorial horizontal parallax, in degrees — the moon's
+Rem distance written as an angle, which is how the almanac carries it.
+Def EphMoonPar(t As Number) As Number
+    (0.9508
+     + 0.0518 * Cos(Rad(Wrap(135.0 + 477198.87 * t, 360)))
+     + 0.0095 * Cos(Rad(Wrap(259.3 - 413335.36 * t, 360)))
+     + 0.0078 * Cos(Rad(Wrap(235.7 + 890534.22 * t, 360)))
+     + 0.0028 * Cos(Rad(Wrap(269.9 + 954397.74 * t, 360))))
+
+Def EphMoon(jd As Number, hours As Number) As EphSky
+    EphSkyOf(EphMoonLon(EphT(jd, hours)), EphMoonLat(EphT(jd, hours)), EphDays(jd, hours))
+
+Rem In metres: the Earth's equatorial radius over the sine of the
+Rem parallax, which is what a parallax is.
+Def EphMoonDistance(jd As Number, hours As Number) As Number
+    6378140 / Sin(Rad(EphMoonPar(EphT(jd, hours))))
+
+Rem ---- phase -------------------------------------------------------------
+
+Def EphSynodic() As Number
+    29.530588853
+
+Rem The illuminated fraction, 0 at new through 1 at full — computed
+Rem from the full angular separation of sun and moon, latitude
+Rem included, which is what makes it honest during an eclipse.
+Def EphMoonPhase(jd As Number, hours As Number) As Number
+    (1 - Cos(Rad(EphSeparation(EphMoon(jd, hours), EphSun(jd, hours))))) / 2
+
+Rem Days since new moon, 0 up to a synodic month. Phase says how much
+Rem is lit; age says whether it is waxing or waning, which the
+Rem fraction alone cannot.
+Def EphMoonAge(jd As Number, hours As Number) As Number
+    Wrap(EphMoonLon(EphT(jd, hours)) - EphSunLon(EphDays(jd, hours)), 360) / 360 * EphSynodic()
+
+Rem ---- moonrise and moonset ----------------------------------------------
+
+Rem The altitude of the moon's centre at the moment we call moonrise:
+Rem the almanac's convention, which folds the average of the parallax
+Rem this machine does not model against the refraction and
+Rem semi-diameter it also does not model. A word, not a literal, so it
+Rem can be seen and substituted — exactly GeoSunAltitude's shape.
+Def EphMoonAltitude() As Number
+    0.125
+
+Rem The moon's altitude margin over the rise altitude, at a UTC hour —
+Rem the function whose sign changes ARE moonrise and moonset.
+Def EphMoonUp(p As GeoPt, jd As Number, hours As Number) As Number
+    EphAlt(EphAltAz(p, EphMoon(jd, hours), jd, hours)) - EphMoonAltitude()
+
+Rem UTC hours of moonrise, or None — see the header for both ways None
+Rem is an ordinary answer. UNLIKE THE SUN there is no closed form: the
+Rem moon moves its own width in an hour, so the day is walked hourly
+Rem for a sign change and the crossing is then bisected. Twenty
+Rem bisections is a third of a second of time, far inside the model.
+Def EphMoonRise(p As GeoPt, jd As Number) As Option
+    EphMoonCross(p, jd, 1)
+
+Def EphMoonSet(p As GeoPt, jd As Number) As Option
+    EphMoonCross(p, jd, -1)
+
+Rem dir is 1 for a rise (margin crosses upward) and -1 for a set. The
+Rem first crossing in the day is the one answered.
+Def EphMoonCross(p As GeoPt, jd As Number, dir As Number) As Option
+    EphCrossGo(p, jd, dir, 1, EphMoonUp(p, jd, 0))
+
+Def EphCrossGo(p As GeoPt, jd As Number, dir As Number, k As Number, prev As Number) As Option
+    If k > 24 Then
+        None()
+    Else
+        Let now = EphMoonUp(p, jd, k)
+        If dir * prev < 0 And dir * now >= 0 Then
+            Some(EphCrossAt(p, jd, k - 1, k, dir, 20))
+        Else
+            EphCrossGo(p, jd, dir, k + 1, now)
+
+Def EphCrossAt(p As GeoPt, jd As Number, lo As Number, hi As Number, dir As Number, k As Number) As Number
+    Let mid = (lo + hi) / 2
+    If k <= 0 Then
+        mid
+    Else
+        If dir * EphMoonUp(p, jd, mid) < 0 Then
+            EphCrossAt(p, jd, mid, hi, dir, k - 1)
+        Else
+            EphCrossAt(p, jd, lo, mid, dir, k - 1)
+
+Rem ---- the planets -------------------------------------------------------
+Rem The JPL approximate Keplerian elements, J2000 values plus rates per
+Rem century, valid 1800..2050. Six numbers and six rates per body:
+Rem a (AU), e, inclination, mean longitude, longitude of perihelion,
+Rem longitude of the ascending node — the last four in degrees.
+Rem
+Rem THE CHOOSERS ARE WORDS, because Shoddy has no enum and a session
+Rem should read EPHMARS, not 4. THE NUMBERING KEEPS THE EARTH'S SEAT:
+Rem Mercury 1, Venus 2, Mars 4 — slot 3 is the Earth-Moon barycentre,
+Rem which the geocentric subtraction below uses and a caller cannot
+Rem ask for, because the Earth's position in the Earth's sky is where
+Rem you are standing.
+
+Def EphMercury() As Number
+    1
+
+Def EphVenus() As Number
+    2
+
+Def EphMars() As Number
+    4
+
+Def EphJupiter() As Number
+    5
+
+Def EphSaturn() As Number
+    6
+
+Rem { a, aDot, e, eDot, i, iDot, L, LDot, peri, periDot, node, nodeDot }
+Def EphElems(k As Number) As List Of Number
+    Select Case k
+        Case 1
+            { 0.38709927, 0.00000037, 0.20563593, 0.00001906, 7.00497902, -0.00594749,
+              252.2503235, 149472.67411175, 77.45779628, 0.16047689, 48.33076593, -0.12534081 }
+        Case 2
+            { 0.72333566, 0.0000039, 0.00677672, -0.00004107, 3.39467605, -0.0007889,
+              181.9790995, 58517.81538729, 131.60246718, 0.00268329, 76.67984255, -0.27769418 }
+        Case 3
+            { 1.00000261, 0.00000562, 0.01671123, -0.00004392, -0.00001531, -0.01294668,
+              100.46457166, 35999.37244981, 102.93768193, 0.32327364, 0, 0 }
+        Case 4
+            { 1.52371034, 0.00001847, 0.0933941, 0.00007882, 1.84969142, -0.00813131,
+              -4.55343205, 19140.30268499, -23.94362959, 0.44441088, 49.55953891, -0.29257343 }
+        Case 5
+            { 5.202887, -0.00011607, 0.04838624, -0.00013253, 1.30439695, -0.00183714,
+              34.39644051, 3034.74612775, 14.72847983, 0.21252668, 100.47390909, 0.20469106 }
+        Case Else
+            { 9.53667594, -0.0012506, 0.05386179, -0.00050991, 2.48599187, 0.00193609,
+              49.95424423, 1222.49362201, 92.59887831, -0.41897216, 113.66242448, -0.28867794 }
+
+Rem Kepler's equation, M = E - e sin E, solved by Newton in degrees.
+Rem ea IS THE ECCENTRIC ANOMALY AND NOT e — math publishes E() for
+Rem Euler's number and names are case-insensitive. Eight iterations is
+Rem far past convergence for every eccentricity in the table.
+Def EphKepler(m As Number, ec As Number, ea As Number, k As Number) As Number
+    If k <= 0 Then
+        ea
+    Else
+        EphKepler(m, ec, ea + (m - (ea - Deg(ec * Sin(Rad(ea))))) / (1 - ec * Cos(Rad(ea))), k - 1)
+
+Rem A body's heliocentric ecliptic position at t centuries, in AU, as
+Rem { x, y, z } — R4's one public vector spelling does not apply: this
+Rem list never crosses the machine's surface.
+Def EphHelio(k As Number, t As Number) As List Of Number
+    EphHelioAt(EphElems(k), t)
+
+Def EphHelioAt(el As List Of Number, t As Number) As List Of Number
+    Let ec = Nth(el, 3) + Nth(el, 4) * t
+    Let ml = Nth(el, 7) + Nth(el, 8) * t
+    Let peri = Nth(el, 9) + Nth(el, 10) * t
+    Let m = Wrap(ml - peri, 360)
+    EphHelioOf(Nth(el, 1) + Nth(el, 2) * t, ec,
+               Rad(Nth(el, 5) + Nth(el, 6) * t),
+               Rad(EphKepler(m, ec, m + Deg(ec) * Sin(Rad(m)), 8)),
+               Rad(peri - (Nth(el, 11) + Nth(el, 12) * t)),
+               Rad(Nth(el, 11) + Nth(el, 12) * t))
+
+Rem In-plane coordinates from the eccentric anomaly, then the standard
+Rem rotation through the argument of perihelion, the inclination and
+Rem the node, spelled once.
+Def EphHelioOf(a As Number, ec As Number, inc As Number, ea As Number, w As Number, node As Number) As List Of Number
+    Let xp = a * (Cos(ea) - ec)
+    Let yp = a * Sqr(Clamp(1 - ec * ec, 0, 1)) * Sin(ea)
+    { xp * (Cos(w) * Cos(node) - Sin(w) * Sin(node) * Cos(inc)) - yp * (Sin(w) * Cos(node) + Cos(w) * Sin(node) * Cos(inc)),
+      xp * (Cos(w) * Sin(node) + Sin(w) * Cos(node) * Cos(inc)) + yp * (Cos(w) * Cos(node) * Cos(inc) - Sin(w) * Sin(node)),
+      xp * Sin(w) * Sin(inc) + yp * Cos(w) * Sin(inc) }
+
+Rem A planet as a sky position: its heliocentric place, less the
+Rem Earth's, read as geocentric ecliptic and crossed into the
+Rem equatorial frame. Light-time, aberration and nutation are below
+Rem the stated accuracy and deliberately absent.
+Def EphPlanet(which As Number, jd As Number, hours As Number) As EphSky
+    If which = 3 Then
+        Error("EPHPLANET: PLANET 3 IS THE EARTH, WHICH IS WHERE YOU ARE STANDING — GEO ANSWERS FOR IT")
+    Else
+        If which = 1 Or which = 2 Or which = 4 Or which = 5 Or which = 6 Then
+            EphPlanetSky(which, jd, hours)
+        Else
+            Error("EPHPLANET: THERE IS NO PLANET '" & Str(which) & "' IN THE TABLE — USE EPHMERCURY THROUGH EPHSATURN")
+
+Def EphPlanetSky(k As Number, jd As Number, hours As Number) As EphSky
+    EphGeoSky(EphHelio(k, EphT(jd, hours)), EphHelio(3, EphT(jd, hours)), EphDays(jd, hours))
+
+Def EphGeoSky(pv As List Of Number, ev As List Of Number, n As Number) As EphSky
+    Let gx = Nth(pv, 1) - Nth(ev, 1)
+    Let gy = Nth(pv, 2) - Nth(ev, 2)
+    Let gz = Nth(pv, 3) - Nth(ev, 3)
+    EphSkyOf(Deg(Atn2(gy, gx)), Deg(Atn2(gz, Hypot(gx, gy))), n)

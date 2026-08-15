@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Fettler — file, search and edit tools for a model and a script. One program, two front ends, and no shell between it and the file.">
+<title>Fettler | Shoddy</title>
+<link rel="stylesheet" href="style.css">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="alternate icon" href="favicon.ico" sizes="48x48">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+</head>
+<body>
+<div class="topbar"><div class="inner">
+  <div class="row">
+    <a class="phase" href="index.html"><img class="mark" src="media/brand/shoddy-icon.svg" alt="" width="23" height="23">Shoddy · Documentation</a>
+    <span class="spacer"></span>
+    <nav class="docnav meta" aria-label="About"><a href="heritage.html">Heritage</a><a href="authorship.html">Authorship</a></nav>
+  </div>
+  <nav class="docnav main" aria-label="Documentation"><a href="tutorials/index.html">Tutorials</a><a href="guide.html">Guide</a><a href="quickref.html">Reference</a><a href="machines/index.html">Machines</a><a href="mills/index.html">Mills</a><a href="stack.html">Stack</a><a href="spec.html">Spec</a><a href="setup.html">Setup</a><a href="vscode.html">VS Code</a><a href="assistants.html">AI</a><a href="build.html">Toolchain</a><a href="hosting.html">Hosting</a><a href="errors.html">Errors</a></nav>
+</div></div>
+<div class="wrap">
+<header class="mast">
+<p class="eyebrow">Shoddy Documentation</p>
+<h1 id="fettler">Fettler</h1>
+<p class="kicker">File, search and edit tools for a model and a script. One program, two front ends, and no shell between it and the file.</p>
+</header>
+
+<p>Fettler performs the operations an assistant actually carries out on
+source files: find a file, search its contents, read it, write it, edit
+it, move it, copy it, delete it, and run a named build task. It is
+written entirely in C#, it ships from this repository, and it installs
+as one thing.</p>
+
+<div class="takeaway"><b>The project is Fettler; the command is
+<code>fettle</code>.</b> The imperative, because <code>fettle move a.txt
+b.txt</code> reads as an instruction and <code>fettler move</code> does
+not. Both spellings are correct and neither is a typo.</div>
+
+<h2 id="why">1. Why it exists</h2>
+
+<p>Today these operations reach a source tree through a shell — Git Bash
+on one machine, Windows PowerShell 5.1 on another — and the shell is
+where they break. Quoting, <code>&amp;&amp;</code> versus <code>;</code>,
+<code>/dev/null</code> versus <code>NUL</code>, here-string termination,
+native stderr becoming a terminating error under PowerShell 5.1: none of
+these are file problems, and all of them are paid on every single
+operation. A program that takes an argument array and answers a typed
+result does not have that layer at all.</p>
+
+<table>
+<tr><th>The caller sees</th><th>Because</th></tr>
+<tr><td>the same behaviour on Windows and macOS</td><td>one program, one code path, no shell dialect between it and the file</td></tr>
+<tr><td>a batch of edits that either all apply or none do</td><td>edits are resolved against the files as read, before anything is written</td></tr>
+<tr><td>a file that still has its CRLF line endings after an edit</td><td>encoding and line endings are detected on read and restored on write</td></tr>
+<tr><td>a write that survives a crash halfway through</td><td>writes stage and replace rather than truncate and fill</td></tr>
+<tr><td>a script that still has its execute bit</td><td>the one permission bit git tracks is carried by copy and by move</td></tr>
+<tr><td>a refusal instead of an escape when a path climbs out of a root</td><td>containment is checked before the operation, not after</td></tr>
+<tr><td>a <code>.ps1</code> and a <code>.sh</code> that are both three lines long</td><td>the logic is in the program, so the twins cannot drift</td></tr>
+<tr><td>no second thing to install</td><td>it ships in this repository's release, beside what already ships</td></tr>
+</table>
+
+<h2 id="verbs">2. The verbs</h2>
+
+<p>One verb per operation, and <b>the CLI verb and the MCP tool name are
+the same word</b>. Two vocabularies for one surface would break parity
+on the first day, so both front ends reach the operations through one
+dispatcher — which makes a capability available to a model and not to a
+script unwritable rather than merely forbidden.</p>
+
+<table>
+<tr><th>Verb</th><th>What it answers</th></tr>
+<tr><td><code>find</code></td><td>paths matching a glob, with size and modified time</td></tr>
+<tr><td><code>search</code></td><td>matching lines as records — path, line, column, text — for several patterns at once</td></tr>
+<tr><td><code>read</code></td><td>content, encoding, line ending, trailing-newline state and a content hash, for several paths at once</td></tr>
+<tr><td><code>write</code></td><td>the file created or replaced</td></tr>
+<tr><td><code>edit</code></td><td>a batch applied, or the first edit that failed</td></tr>
+<tr><td><code>replace</code></td><td>one substitution everywhere it appears across a glob</td></tr>
+<tr><td><code>new</code> / <code>mkdir</code></td><td>an empty file; a directory</td></tr>
+<tr><td><code>move</code> / <code>copy</code> / <code>delete</code></td><td>the operation, and what guarantee it gave</td></tr>
+<tr><td><code>exec</code></td><td>the executable bit, set or cleared</td></tr>
+<tr><td><code>tasks</code> / <code>run</code></td><td>the declared tasks; one of them, with its streams and exit code</td></tr>
+<tr><td><code>batch</code></td><td>several operations sent as one</td></tr>
+<tr><td><code>serve</code></td><td>nothing — it becomes the MCP front end on stdio</td></tr>
+</table>
+
+<pre><code>$ fettle find "src/**/*.cs" --sort mtime --limit 3
+src/Fettler/Glob.cs           4812  2026-08-14T09:22:07Z
+src/Fettler/PathRoot.cs       6104  2026-08-13T17:40:11Z
+src/Fettler/Edits.cs         11233  2026-08-12T08:05:52Z
+3 files (77 excluded: bin, obj, .git - pass --include-generated)</code></pre>
+
+<h2 id="boundary">3. The boundary</h2>
+
+<p>Every path lies inside a declared root, and <b>more than one root may
+be declared</b>. That is the ordinary case rather than the exotic one: an
+assistant working here has a repository, a sibling repository and a
+scratch directory, and a single root would refuse work its own harness
+already permits — pushing it back into the shell, which is the one
+outcome the whole design exists to prevent.</p>
+
+<pre><code>fettle serve --root repo=/work/shoddy --root scratch=/tmp/scratch
+fettle move scratch:draft.md repo:docs/notes.md</code></pre>
+
+<p>Containment does not weaken for being enumerated. Every path resolves
+inside some root by the same rule; both ends of a move or a copy are
+checked; a root that does not exist is a startup failure naming it; and
+an operation crossing from one root to another <em>says</em> that it
+crossed, because moving a file between two trust domains is something
+the caller is entitled to see.</p>
+
+<p><b>Containment is decided by walking down from the volume, not by
+inspecting the deepest component.</b> Given <code>root/a/b</code> where
+<code>a</code> is a link out of the tree, <code>b</code> is not itself a
+link and looks perfectly contained; only resolving <code>a</code> on the
+way past catches it. Windows junctions are resolved exactly as symbolic
+links are — they are both reparse points, junctions are what build
+tooling plants, and a boundary that handles only one has a hole exactly
+where a tree is most likely to have one.</p>
+
+<div class="takeaway"><b>The known limit, stated rather than implied.</b>
+Path comparison does not defend against another process replacing a
+component between the check and the operation that follows it. Closing
+that needs operating-system support Fettler does not have. The boundary
+is a boundary, not a defence against a hostile process sharing the
+root.</div>
+
+<h2 id="metadata">4. What it touches besides content</h2>
+
+<p>A tool that edits files is asked this by every reviewer, so the answer
+is on this page rather than in the source.</p>
+
+<table>
+<tr><th>Thing</th><th>What Fettler does</th></tr>
+<tr><td><b>The executable bit</b></td><td>preserved by copy and move, reported by read and find, settable by <code>exec</code>. It is the one permission git tracks, because it is the only one meaning the same thing on both platforms. NTFS has none, so it is reported absent rather than invented.</td></tr>
+<tr><td><b>Attributes, alternate data streams, extended attributes</b></td><td>carried across a staged write, or the answer names what could not be. A Mark-of-the-Web or a <code>com.apple.quarantine</code> flag dropped by an edit is a security marker weakened as a side effect of changing text.</td></tr>
+<tr><td><b>The Windows read-only attribute</b></td><td>read and named in the refusal, never met as an obscure OS error. <code>delete --force</code> clears it explicitly.</td></tr>
+<tr><td><b>Links and junctions</b></td><td>reported with their targets, and never created — creating a symbolic link on Windows needs Developer Mode or elevation, so the verb would fail confusingly on a required platform.</td></tr>
+<tr><td><b>Modified time</b></td><td>reported; preserved on copy only when asked. Both branches are explicit, because doing nothing is <em>not</em> the same on both platforms: Windows carries the time across where POSIX <code>cp</code> gives a new one.</td></tr>
+<tr><td><b>Everything else about permissions</b></td><td>nothing. No <code>chmod</code>, no <code>chown</code>, no ACL editing. POSIX modes and Windows ACLs do not map onto one another, and an abstraction over them would be a falsehood told in a table.</td></tr>
+</table>
+
+<h2 id="stated">5. The rules a caller has to know</h2>
+
+<table>
+<tr><th>Rule</th><th>What it is</th></tr>
+<tr><td><b>Glob</b></td><td><code>*</code> stays within one path segment; <code>**</code> matches any number of whole segments including none; <code>?</code> is one character and does not cross a separator. <b>Matching is case-insensitive on every platform</b> — both required platforms have case-insensitive filesystems, so fixing it here means a pattern behaves identically everywhere.</td></tr>
+<tr><td><b>Exclusions</b></td><td><code>.git</code>, <code>bin</code>, <code>obj</code>, <code>artifacts</code> and <code>node_modules</code> are skipped by name, the count is reported, and <code>--include-generated</code> turns it off. <code>.gitignore</code> is deliberately not honoured: implementing its rules subtly wrong hides files while appearing to work.</td></tr>
+<tr><td><b>Attributes never decide matching</b></td><td>a dotfile is an ordinary file and a Windows hidden file is an ordinary file. Both are matched normally and both are reported.</td></tr>
+<tr><td><b>Regular expressions</b></td><td>.NET's dialect, which is neither PCRE nor ripgrep's. Every expression runs under a bound — the non-backtracking engine where the pattern allows it, an explicit timeout where it does not — so a runaway pattern is an error rather than the end of the tool.</td></tr>
+<tr><td><b>Encoding</b></td><td>a byte-order mark decides and is preserved; absent one, content that decodes as UTF-8 is UTF-8; anything else is binary and is refused. No statistical guess is made, because a wrong guess corrupts a file on the way out.</td></tr>
+<tr><td><b>Ordering</b></td><td>results are ordered before any limit is applied, so the same query returns the same answer in the same order and a truncated result says that it was truncated.</td></tr>
+<tr><td><b>What runs at once</b></td><td>read-only operations run concurrently; operations that mutate the tree are serialized against each other; <code>run</code> holds neither lock, so a four-minute gate does not stall a read and can be cancelled part-way.</td></tr>
+</table>
+
+<h2 id="tasks">6. Running things</h2>
+
+<p><code>run</code> executes only what a <code>fettle-tasks</code> file
+at the root declares, and never composes a shell command — the program
+is launched with its arguments as a list. The declaration format is
+<b>one argument per line</b>, so there is no quoting syntax in it to get
+wrong: a file that cannot express a quoting rule cannot carry a quoting
+bug.</p>
+
+<pre><code>build:
+  pwsh
+  -File
+  build.ps1
+
+gate:
+  node
+  scripts/gate/driver.mjs
+  gate
+  --resume</code></pre>
+
+<div class="takeaway"><b>That file is trusted input.</b> Containment
+guards paths; it does not and cannot guard the command list, which is
+read from a file inside the very root Fettler was pointed at. Whoever
+can write it chooses what a caller — a model included — can execute.
+This is a position, not an oversight: the alternative puts the
+declaration somewhere the repository's own contributors cannot change
+alongside the build it belongs to. Point Fettler at a tree you
+trust.</div>
+
+<h2 id="not">7. What it deliberately does not do</h2>
+
+<p>Version control — nothing here wraps git, and mixing the two would
+put history-rewriting commands behind a file-editing tool. Remote or
+networked transport — a tool reachable over a socket is a different
+threat model and a different document. A trash or undo store. Binary
+editing. Language-aware editing, which would need a parser per language
+and a reason to trust it. Creating links. Setting a timestamp to a value
+the caller names, which is a forgery capability with no use here.</p>
+
+<h2 id="name">8. Where the name comes from</h2>
+
+<p>A <b>fettler</b> kept the carding engines in order. Carding is the
+stage that combs tangled fibre into a web fit for spinning, and the
+engine does it with rollers wrapped in <em>card clothing</em> — a dense
+bed of fine wire teeth. Those teeth load up with matted fibre, oil and
+dirt, and a loaded card cards nothing. The fettler stripped them,
+cleaned them, set them back to their proper height and spacing, and
+repaired what had bent.</p>
+
+<p>He made no cloth. Not a yard of it. His whole job was keeping the
+machines that made cloth in a state where they could — which is this
+tool's relationship to everything around it. Fettler compiles nothing,
+runs nothing, and produces no program of its own. It keeps the material
+in order so the machines that do produce something can.</p>
+
+<p><em>To fettle</em> is the plain English for exactly that: to put
+right, to make ready, to set in order. It survives in ordinary use in
+<em>in fine fettle</em>, so the name carries its own meaning without a
+glossary — which is more than can be said for most tools named after a
+trade.</p>
+
+<p>The names not taken, so the question is not re-opened: <b>Millwright</b>
+had the right instinct against the wrong object, maintaining the
+machinery rather than the material it runs on. <b>Mender</b> was exact
+for the editing half and undersold the other five verbs. <b>Overlooker</b>
+was the right domain with the wrong emphasis — supervision rather than
+repair. <b>Tuner</b> was genuinely apt and hopelessly overloaded.
+<b>Mungo</b> is already taken elsewhere in this family. Card grinder,
+strapper and oiler are all real mill trades and all name one job, where
+this tool does six unrelated ones.</p>
+
+<footer>Named for the shoddy mills of the West Riding: Useless Things Made
+Useful Through Skill (<a href="heritage.html">the heritage of the name</a>).<br>
+&copy; 2026 Stephen Vincent Foster</footer>
+</div>
+</body>
+</html>

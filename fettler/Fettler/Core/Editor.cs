@@ -1,3 +1,5 @@
+using System.Text;
+
 namespace Fettler.Core;
 
 /// <summary>
@@ -207,13 +209,14 @@ public static class Editor
             // the overlap check would miss.
             string region = file.Text[from..to];
             return Result<Resolved>.Ok(new Resolved(
-                from, to - from, region.Replace(r.Find, r.With, StringComparison.Ordinal),
+                from, to - from,
+                region.Replace(r.Find, InTheFilesEndings(file, r.With), StringComparison.Ordinal),
                 LineOf(starts, found[0]),
                 $"replace {found.Count} x \"{Shorten(r.Find)}\" -> \"{Shorten(r.With)}\""));
         }
 
         return Result<Resolved>.Ok(new Resolved(
-            found[0], r.Find.Length, r.With, LineOf(starts, found[0]),
+            found[0], r.Find.Length, InTheFilesEndings(file, r.With), LineOf(starts, found[0]),
             $"replace \"{Shorten(r.Find)}\" -> \"{Shorten(r.With)}\""));
     }
 
@@ -229,12 +232,14 @@ public static class Editor
         // Inserting after a last line that has no ending has to supply
         // one first, or the new text joins the old line rather than
         // following it.
+        string incoming = InTheFilesEndings(file, i.Text);
+
         if (i.Line == file.Lines.Count && !file.FinalNewline && file.Lines.Count > 0)
             return Result<Resolved>.Ok(new Resolved(
-                file.Text.Length, 0, ending + i.Text, i.Line, "insert after (adding a final newline first)"));
+                file.Text.Length, 0, ending + incoming, i.Line, "insert after (adding a final newline first)"));
 
         return Result<Resolved>.Ok(new Resolved(
-            i.Line == 0 ? 0 : starts[i.Line], 0, i.Text + ending, i.Line, "insert after"));
+            i.Line == 0 ? 0 : starts[i.Line], 0, incoming + ending, i.Line, "insert after"));
     }
 
     static Result<Resolved> ResolveDelete(TextFile file, Edit.DeleteLines d, int index)
@@ -283,6 +288,46 @@ public static class Editor
         }
 
         return Result<string>.Ok(text);
+    }
+
+    /// <summary>
+    /// Text the caller supplied, written in the line endings the file
+    /// actually uses.
+    ///
+    /// <para><b>Text an edit inserts is normalised; text already in the
+    /// file is not.</b> A caller composing a replacement cannot be
+    /// expected to know what a file's endings are, and on Windows the
+    /// shell decides for them - a PowerShell here-string is CRLF whatever
+    /// the file is. Splicing that in verbatim leaves a file disagreeing
+    /// with itself by one line, which nothing notices until a version
+    /// control system does. That happened in this repository, to this
+    /// file's own project, and is why this exists.</para>
+    ///
+    /// <para>Existing lines keep their own endings, so R10.2's
+    /// byte-identical round trip still holds: reading a mixed file and
+    /// writing it back unchanged changes nothing. Only what an edit
+    /// brings in is made to match.</para>
+    /// </summary>
+    static string InTheFilesEndings(TextFile file, string text)
+    {
+        if (text.Length == 0) return text;
+
+        string ending = TextIo.EndingText(file.LineEnding);
+        var rewritten = new StringBuilder(text.Length);
+
+        for (int i = 0; i < text.Length; i++)
+        {
+            char c = text[i];
+            if (c == '\r')
+            {
+                rewritten.Append(ending);
+                if (i + 1 < text.Length && text[i + 1] == '\n') i++;
+            }
+            else if (c == '\n') rewritten.Append(ending);
+            else rewritten.Append(c);
+        }
+
+        return rewritten.ToString();
     }
 
     // ---- line arithmetic ----

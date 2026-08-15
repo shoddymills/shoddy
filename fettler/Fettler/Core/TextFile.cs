@@ -38,6 +38,7 @@ public sealed record TextFile(
     IReadOnlyList<Line> Lines,
     string EncodingName,
     LineEnding LineEnding,
+    bool MixedEndings,
     bool FinalNewline,
     string Hash,
     long Bytes)
@@ -153,6 +154,7 @@ public static class TextIo
             lines,
             name,
             DominantEnding(lines),
+            Mixed(lines),
             FinalNewline: lines.Count > 0 && lines[^1].Ending.Length > 0,
             Hash: HashOf(raw),
             Bytes: raw.Length));
@@ -247,6 +249,30 @@ public static class TextIo
         if (lf == 0 && crlf == 0 && cr == 0) return LineEnding.None;
         if (crlf >= lf && crlf >= cr) return LineEnding.CrLf;
         return lf >= cr ? LineEnding.Lf : LineEnding.Cr;
+    }
+
+    /// <summary>
+    /// Whether the file disagrees with itself about line endings.
+    ///
+    /// <para>Reported, never corrected: R10.2's byte-identical round trip
+    /// means a file read and written back unchanged is unchanged, mixture
+    /// and all. But reporting only the DOMINANT ending hides the mixture
+    /// entirely, and a single stray CRLF in an otherwise LF file is
+    /// exactly what nobody notices - it stayed invisible here until git
+    /// complained about it, two commits after it was introduced.</para>
+    /// </summary>
+    static bool Mixed(IReadOnlyList<Line> lines)
+    {
+        bool lf = false, crlf = false, cr = false;
+        foreach (Line line in lines)
+            switch (line.Ending)
+            {
+                case "\n": lf = true; break;
+                case "\r\n": crlf = true; break;
+                case "\r": cr = true; break;
+            }
+
+        return (lf ? 1 : 0) + (crlf ? 1 : 0) + (cr ? 1 : 0) > 1;
     }
 
     public static string EndingText(LineEnding ending) => ending switch

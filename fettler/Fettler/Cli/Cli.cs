@@ -348,6 +348,7 @@ public static class Command
                     w.WriteNumber("lines", s.TotalLines);
                     w.WriteString("encoding", s.EncodingName);
                     w.WriteString("line_ending", s.LineEnding);
+                    w.WriteBoolean("line_ending_mixed", s.MixedEndings);
                     w.WriteBoolean("final_newline", s.FinalNewline);
                     w.WriteString("hash", s.Hash);
                     w.WriteNumber("bytes", s.Bytes);
@@ -362,7 +363,7 @@ public static class Command
         foreach (ReadSlice s in result.Value)
         {
             text.Append(Show(bench, s.Path)).Append("  ").Append(s.EncodingName)
-                .Append("  ").Append(s.LineEnding)
+                .Append("  ").Append(s.LineEnding).Append(s.MixedEndings ? " (MIXED)" : "")
                 .Append("  final-newline: ").Append(s.FinalNewline ? "yes" : "no")
                 .Append("  lines ").Append(s.From).Append('-').Append(s.To)
                 .Append(" of ").AppendLine(s.TotalLines.ToString());

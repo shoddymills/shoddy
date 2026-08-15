@@ -31,6 +31,7 @@ public sealed record ReadSlice(
     int TotalLines,
     string EncodingName,
     string LineEnding,
+    bool MixedEndings,
     bool FinalNewline,
     string Hash,
     long Bytes,
@@ -157,7 +158,8 @@ public sealed class Bench : IDisposable
 
             slices.Add(new ReadSlice(
                 path.Value, text, from, to, file.LineCount, file.EncodingName,
-                TextIo.EndingName(file.LineEnding), file.FinalNewline, file.Hash, file.Bytes,
+                TextIo.EndingName(file.LineEnding), file.MixedEndings, file.FinalNewline,
+                file.Hash, file.Bytes,
                 Tree.Facts(path.Value.Full, isDirectory: false)));
         }
 

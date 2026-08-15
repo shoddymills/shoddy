@@ -114,6 +114,24 @@ Every path must resolve inside one of them. A move between two roots
 works and says that it crossed, because moving a file between two trust
 domains is something the caller is entitled to see.
 
+## Line endings
+
+**Text an edit brings in is rewritten into the file's own line endings.**
+A caller composing a replacement cannot be expected to know a file's
+endings, and on Windows the shell decides for them — a PowerShell
+here-string is CRLF whatever the file is. Splicing that in verbatim leaves
+a file disagreeing with itself by one line, which nothing notices until a
+version control system does.
+
+**Text already in the file is left exactly as it was**, so a mixed file
+read and written back unchanged is still byte-identical. Only what the
+edit brings in is made to match.
+
+**`read` says when a file disagrees with itself**, marking it `(MIXED)`
+next to the dominant ending, and setting `line_ending_mixed` in the
+machine-readable answer. Reporting only the dominant ending is what hid a
+stray CRLF here for two commits.
+
 ## Arguments it will not guess at
 
 **A flag no verb knows is refused, never ignored.** Ignoring one does not

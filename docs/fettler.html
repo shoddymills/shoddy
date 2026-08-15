@@ -105,16 +105,18 @@ script unwritable rather than merely forbidden.</p>
 <tr><th>Verb</th><th>What it answers</th></tr>
 <tr><td><code>find</code></td><td>paths matching a glob, with size and modified time</td></tr>
 <tr><td><code>search</code></td><td>matching lines as records — path, line, column, text — for several patterns at once</td></tr>
-<tr><td><code>read</code></td><td>content, encoding, line ending, trailing-newline state and a content hash, for several paths at once</td></tr>
+<tr><td><code>read</code></td><td>content, encoding, line ending, trailing-newline state and a content hash, for several paths at once — and <a href="#types">notebooks, PDFs and images</a>, not only source</td></tr>
 <tr><td><code>write</code></td><td>the file created or replaced</td></tr>
 <tr><td><code>edit</code></td><td>a batch applied, or the first edit that failed</td></tr>
 <tr><td><code>replace</code></td><td>one substitution everywhere it appears across a glob</td></tr>
 <tr><td><code>new</code> / <code>mkdir</code></td><td>an empty file; a directory</td></tr>
 <tr><td><code>move</code> / <code>copy</code> / <code>delete</code></td><td>the operation, and what guarantee it gave</td></tr>
 <tr><td><code>exec</code></td><td>the executable bit, set or cleared</td></tr>
-<tr><td><code>roots</code></td><td>the declared roots, their paths, and which one an unqualified path lands in</td></tr>
+<tr><td><code>roots</code></td><td>the declared trees, their paths, <b>what may be done in each</b>, and which one an unqualified path lands in</td></tr>
 <tr><td><code>tasks</code> / <code>run</code></td><td>the declared tasks; one of them, with its streams and exit code</td></tr>
 <tr><td><code>batch</code></td><td>several operations sent as one</td></tr>
+<tr><td><code>doctor</code></td><td>whether this tool is wired into each assistant client, and what still lets the boundary be gone round (<a href="fettler-setup.html#doctor">setup page</a>)</td></tr>
+<tr><td><code>setup</code></td><td>the wiring, written — the one verb an assistant is not offered</td></tr>
 <tr><td><code>serve</code></td><td>nothing — it becomes the MCP front end on stdio</td></tr>
 </table>
 
@@ -124,65 +126,47 @@ src/Fettler/PathRoot.cs       6104  2026-08-13T17:40:11Z
 src/Fettler/Edits.cs         11233  2026-08-12T08:05:52Z
 3 files (77 excluded: bin, obj, .git - pass --include-generated)</code></pre>
 
-<h2 id="boundary">3. The boundary</h2>
+<h2 id="boundary">3. The boundary, in brief</h2>
 
-<p>Every path lies inside a declared root, and <b>more than one root may
-be declared</b>. That is the ordinary case rather than the exotic one: an
-assistant working here has a repository, a sibling repository and a
-scratch directory, and a single root would refuse work its own harness
-already permits — pushing it back into the shell, which is the one
-outcome the whole design exists to prevent.</p>
+<p>Every path lies inside a declared <b>tree</b>, and more than one tree
+may be declared. That is the ordinary case rather than the exotic one: an
+assistant working here has a folder of code, a sibling folder and a
+scratch directory, and a single tree would refuse work its own harness
+already permits — pushing it back into the shell, which is the one outcome
+the whole design exists to prevent.</p>
 
-<pre><code>fettle serve --root repo=/work/shoddy --root scratch=/tmp/scratch
-fettle move scratch:draft.md repo:docs/notes.md</code></pre>
-
-<p><b>A tree declares its own boundary.</b> Typing two absolute roots onto
-every command is not something anyone does for long, and the way out that
-suggests itself — a small shell script per platform holding the paths and
-passing them through — is worse than the problem: it puts a shell back
-between the caller and the files, which is the thing Fettler exists to
-remove, and being a twin pair it has to be kept in step by hand. A file at
-the top of the tree says it once instead:</p>
+<p>A file at the top of the tree says it once, so nobody types a boundary
+onto every command:</p>
 
 <pre><code>{
-  "roots": {
-    "repo": "."
+  "trees": {
+    "work": { "path": "." }
   }
 }</code></pre>
 
-<p>With no <code>--root</code> on the command line, <code>fettle</code>
-takes the nearest <code>.fettler.json</code> at or above the current
-directory. <b>Its paths are relative to the file, never to whoever is
-asking</b> — which is the whole point of it. A path read against the
-caller's working directory names a different tree from every directory; read
-against the file's own directory it names one tree from everywhere, so the
-same command means the same thing three levels down, and the file can be
-checked in.</p>
+<p>With no flag, <code>fettle</code> takes the nearest
+<code>.fettler.json</code> at or above the current directory. <b>Its paths
+are relative to the file, never to whoever is asking</b> — which is the
+whole point of it. A path read against the caller's working directory
+names a different tree from every directory; read against the file's own
+directory it names one tree from everywhere, so the same command means the
+same thing three levels down and the file can be checked in.</p>
 
-<div class="takeaway"><b>The command line replaces the file rather than
-adding to it.</b> Merging would leave a caller unable to <em>narrow</em> the
-boundary — the tree's own roots would stay open beside whatever was asked
-for, and "just this directory, please" would be unsayable.
-<code>--config PATH</code> names a different file;
-<code>--no-config</code> turns the search off and leaves the current
-directory as the root. <code>fettle roots</code> answers what is declared
-<em>and which file declared it</em>, which is better than learning the
-boundary by being refused by it.</div>
+<div class="takeaway"><b>What a tree grants, where a permission may come
+from, and the three files this tool refuses to write are a page of their
+own: <a href="fettler-boundary.html">the boundary</a>.</b> Read it before
+writing a <code>.fettler.json</code>. In one line: the folder the file
+sits in is writable, every other tree is read-only unless the file says
+more, <code>--root</code> on a command line can only ever grant
+<code>list read</code>, and declaring nothing at all is a refusal rather
+than a quiet fallback to wherever you happen to be standing.</div>
 
-<p><b>A malformed configuration is refused, never fallen back from.</b>
-Quietly reverting to the current directory would move the boundary without
-saying so, and usually <em>widen</em> it — a caller's working directory
-tends to sit above the root they meant — which is the one direction a
-containment mistake must never fail in.</p>
-
-
-<p>Containment does not weaken for being enumerated.
- Every path resolves
-inside some root by the same rule; both ends of a move or a copy are
-checked; a root that does not exist is a startup failure naming it; and
-an operation crossing from one root to another <em>says</em> that it
-crossed, because moving a file between two trust domains is something
-the caller is entitled to see.</p>
+<p>Containment does not weaken for being enumerated. Every path resolves
+inside some tree by the same rule; both ends of a move or a copy are
+checked; a tree that does not exist is a startup failure naming it; and an
+operation crossing from one tree to another <em>says</em> that it crossed,
+because moving a file between two trust domains is something the caller is
+entitled to see.</p>
 
 <p><b>Containment is decided by walking down from the volume, not by
 inspecting the deepest component.</b> Given <code>root/a/b</code> where
@@ -198,7 +182,47 @@ Path comparison does not defend against another process replacing a
 component between the check and the operation that follows it. Closing
 that needs operating-system support Fettler does not have. The boundary
 is a boundary, not a defence against a hostile process sharing the
-root.</div>
+tree.</div>
+
+<h3 id="types">What it can read</h3>
+
+<p>Fettler is the <em>only</em> reader on a machine where the assistant's
+own has been denied, so it has to handle every type a developer
+legitimately holds — or that file is simply unopenable.</p>
+
+<table>
+<tr><th>Type</th><th>How it comes back</th></tr>
+<tr><td>Text, in any encoding a byte-order mark names, plus UTF-8</td><td>lines, with the encoding, the line ending, whether the endings are <em>mixed</em>, and a hash</td></tr>
+<tr><td>CSV</td><td>as text — which is why a spreadsheet exported as CSV needs nothing special</td></tr>
+<tr><td>Notebooks (<code>.ipynb</code>)</td><td>cells, sources and outputs, rendered — not the JSON they are stored in</td></tr>
+<tr><td>PDF</td><td>text, page by page, each page announced so a citation can name one</td></tr>
+<tr><td>Images (png, jpg, gif, webp)</td><td>mime type and dimensions, read from the header without decoding a pixel; over MCP the bytes go as a native image part, and a terminal gets the facts instead</td></tr>
+<tr><td>Anything else binary</td><td>refused, saying so</td></tr>
+</table>
+
+<p><b><code>read</code> stops at 2000 lines</b> unless <code>--to</code>
+says otherwise, and says how many are left and how to ask for them.
+<code>find</code> stops at a thousand and <code>search</code> at two
+hundred; <code>read</code> had no limit at all, which would have made
+routing every read through this tool <em>worse</em> for a caller's context
+than the reader it replaces. A notebook's non-text output is measured
+rather than pasted, for the same reason: one output cell routinely holds a
+megabyte of base64 for a picture nobody can see.</p>
+
+<p><b>Word and Excel are deliberately out of scope.</b> Export Word as PDF
+and Excel as CSV, both of which this then reads. That is one conversion a
+developer already knows how to do, against an office-format parser that
+would be a permanent maintenance liability for a tool that edits source
+trees.</p>
+
+<p><b>Plugins were rejected, on this design's own terms.</b> Running a
+<em>declared, named</em> command needs an explicit <code>execute</code>
+grant; a plugin loader is arbitrary code execution, in process, at full
+trust, with no such gate — a larger hole than any this design closes,
+opened for file formats. If extensibility is genuinely wanted later, the
+honest form already exists: a declared converter task, gated by
+<code>execute</code>.</p>
+
 
 <h3 id="arguments">Arguments it will not guess at</h3>
 
@@ -335,193 +359,68 @@ references no other project in this repository:</p>
 <pre><code>cd fettler
 ./build.ps1 publish        # or ./build.sh publish</code></pre>
 
+<div class="takeaway"><b>Getting it onto <code>PATH</code> is the step
+everything else assumes, and the step most likely to be skipped.</b> Every
+registration in this documentation launches a bare <code>fettle</code>;
+if nothing resolves it, the server never starts and the assistant simply
+does not have the tools. <code>fettle doctor</code> says so in as many
+words, and <code>fettle setup</code> will fall back to the absolute path
+of the binary you ran it with rather than write a registration it knows
+will fail.</div>
+
+<p><em>Considered and not taken:</em> a
+<code>dotnet tool install --global</code> package, which would put it on
+<code>PATH</code> on all three platforms with one command. It needs a
+published NuGet feed, which is a publication decision rather than a build
+one, so the archive plus a documented step is what ships today.</p>
+
 <h2 id="mcp">8. Configuring an assistant to use it</h2>
 
 <p><code>serve</code> starts the MCP front end on stdio. It is a
-subcommand rather than a second executable name because selecting a
-front end by the name it was invoked under is a Unix convention resting
-on a mechanism not in ordinary use on Windows.</p>
+subcommand rather than a second executable name because selecting a front
+end by the name it was invoked under is a Unix convention resting on a
+symbolic link, and symbolic links are the one thing Windows makes
+awkward.</p>
 
-<h3 id="contract">The contract</h3>
-
-<p>Client configuration formats move faster than this page does. The
-contract does not: <b>launch <code>fettle serve</code> against the tree it
-may touch, and speak JSON-RPC over stdin and stdout.</b> The roots come
-from that tree's <code>.fettler.json</code>, found from the server's own
-working directory; where a client offers a workspace variable, name the
-file with <code>--config</code> rather than trusting a working directory
-you did not choose. A second tree, or a client with no project at all,
-still takes <code>--root NAME=PATH</code>. Every form below is that one
-fact wearing a
-different set of keys, so if one has drifted, check the client's own
-documentation and give it the same command and arguments.</p>
-
-<div class="takeaway"><b>Register Fettler per <em>workspace</em>, not per
-user</b> — the opposite of the advice on
-<a href="mills/sparky.html">the sparky page</a>, and for a stated
-reason. Sparky is a calculator and is about no project, so it belongs in
-the user-level file once. Fettler's roots <em>are</em> the project: a
-server registered globally would point every workspace at one
-repository, and the boundary would be wrong everywhere but one.</div>
-
-<h3 id="vscode">Visual Studio Code</h3>
-
-<p>The workspace file <code>.vscode/mcp.json</code>, which checks in with
-the repository so everyone opening the folder gets the same tools and
-the same roots. Command Palette &rarr; <em>MCP: Open Workspace
-Configuration</em> creates it if it is not there:</p>
-
-<div class="promptbox"><button class="copy">Copy</button><pre><code class="language-json">{
-  "servers": {
-    "fettler": {
-      "type": "stdio",
-      "command": "fettle",
-      "args": [
-        "serve",
-        "--config", "${workspaceFolder}/.fettler.json"
-      ]
-    }
-  }
-}</code></pre></div>
-
-<p><code>${workspaceFolder}</code> is what keeps the entry portable
-between machines — it is the one place a checked-in MCP file can name a
-path without naming somebody's home directory. Open the Chat view, switch
-to <b>Agent</b> mode, and the tools appear in the tool picker under
-<em>fettler</em>.</p>
-
-<p>The Shoddy language extension and Fettler are unrelated and coexist
-happily: one gives the editor an understanding of <code>.shoddy</code>
-files, the other gives the assistant a way to change them. See
-<a href="vscode.html">the VS Code page</a> for the extension.</p>
-
-<h3 id="clients">The other clients</h3>
-
-<p><b>Claude Code</b> — one command, no file to edit. Project scope is
-the default and is right here, for the reason above:</p>
-
-<div class="promptbox"><button class="copy">Copy</button><pre><code class="language-sh">claude mcp add fettler -- fettle serve</code></pre></div>
-
-<p>It registers the same server for the terminal and the VS Code panel
-alike. The checked-in equivalent is <code>.mcp.json</code> at the
-project root:</p>
-
-<div class="promptbox"><button class="copy">Copy</button><pre><code class="language-json">{
+<pre><code>{
   "mcpServers": {
-    "fettler": {
-      "command": "fettle",
-      "args": ["serve"]
-    }
-  }
-}</code></pre></div>
-
-<p><b>Claude Desktop</b> — <code>claude_desktop_config.json</code>
-(<code>%APPDATA%\Claude\</code> on Windows,
-<code>~/Library/Application Support/Claude/</code> on macOS). Absolute
-paths, since the desktop app has no workspace to be relative to:</p>
-
-<div class="promptbox"><button class="copy">Copy</button><pre><code class="language-json">{
-  "mcpServers": {
-    "fettler": {
-      "command": "C:\\tools\\fettle.exe",
-      "args": ["serve", "--config", "C:\\github\\shoddy\\.fettler.json"]
-    }
-  }
-}</code></pre></div>
-
-<p><b>Anything else</b> — a client that speaks MCP over stdio needs no
-adapter. Launch the executable, write one JSON-RPC message per line to
-its stdin, read one per line from its stdout. Diagnostics go to stderr
-and never to stdout, so nothing the server reports can corrupt the
-stream.</p>
-
-<div class="takeaway"><b>More than one root is the ordinary case.</b> An
-assistant working on a repository usually also has a sibling repository
-and a scratch directory. Name them all in the tree's
-<code>.fettler.json</code>, or pass one <code>--root</code> each; either
-way paths are then written <code>name:path</code>, and with a single root
-they stay bare. One root refuses work the assistant's own harness
-already permits, and it goes back to the shell to do it — which is the
-outcome the whole design exists to prevent.</div>
-
-<h3 id="exclusive">Making it the only route to the tree</h3>
-
-<p>Registering the server makes Fettler <em>available</em>. It does not
-make it <em>used</em>: a model with its own file tools will reach for
-them out of habit, which is exactly what happened the first time this
-tool was finished and the very next task was carried out without it.
-Habit is not a reason, and guidance alone does not fix it. Denying the
-built-in tools does.</p>
-
-<p><b>Claude Code</b> has a permission system, so there it is enforceable
-rather than requested. <code>.claude/settings.json</code>:</p>
-
-<pre><code class="language-json">{
-  "permissions": {
-    "deny": [
-      "Read", "Write", "Edit", "NotebookEdit",
-      "Glob", "Grep",
-      "Bash(rm:*)", "Bash(mv:*)", "Bash(cp:*)",
-      "Bash(sed:*)", "Bash(cat:*)", "Bash(find:*)"
-    ],
-    "allow": ["mcp__fettler"]
+    "fettler": { "command": "fettle", "args": ["serve"] }
   }
 }</code></pre>
 
-<p>With the built-in file tools denied, every read, search and edit has
-to go through Fettler, and every one of them is bounded by a declared
-root, crash-safe on write, and all-or-nothing across a batch. The
-<code>Bash</code> entries close the side door: without them a model
-simply shells out to <code>sed</code> and the boundary is decorative.</p>
+<p><b>No root or config flag appears there, and none can.</b> The server
+learns its trees at launch from the <code>.fettler.json</code> in the
+folder it starts in, before the model has said anything, and no tool
+schema carries a way to name a different one. Every call then runs against
+a boundary fixed at that moment.</p>
 
-<div class="takeaway"><b>Check the deny syntax against your version.</b>
-Permission rule matching has changed across Claude Code releases, and a
-rule that silently fails to match is worse than no rule at all — it
-reads as enforcement and is not. Confirm it bites by asking the
-assistant to read a file and watching it be refused.</div>
+<div class="takeaway"><b>The five clients, both levels, the diagnostic,
+the scaffolder, the exclusion list and the session hook are a page of
+their own: <a href="fettler-setup.html">setting it up</a>.</b> Read it
+once per machine. The short version is three commands:
 
-<p><b>GitHub Copilot in VS Code</b> has no permission system to deny a
-tool with, and the asymmetry is worth stating plainly rather than
-papering over. Two levers exist, neither as strong as a deny rule, so
-use both:</p>
+<pre><code>fettle doctor                              # what is wired up, and what goes round it
+fettle setup claude-code --local --dry-run # what would change
+fettle setup claude-code --local --hooks   # change it</code></pre></div>
 
-<table>
-<tr><th>Lever</th><th>What it is worth</th></tr>
-<tr><td>The <b>Agent</b> mode tool picker in the Chat view — switch the built-in file tools off and leave <em>fettler</em> on</td><td>Real while the session lasts, but a per-user toggle nobody else on the team inherits</td></tr>
-<tr><td><code>.github/copilot-instructions.md</code></td><td>Checks in with the repository and is read on every request — but it is guidance, and a model can drift from it</td></tr>
-</table>
-
-<div class="promptbox"><button class="copy">Copy</button><pre><code class="language-md">## File work goes through Fettler
-
-Use the `fettler` tools for every file operation: find, search, read,
-write, edit, replace, move, copy, delete. Do not use the built-in file
-tools, and do not shell out to `sed`, `cat`, `find` or `mv`.
-
-Read returns a hash. Pass it back as `expect` on an edit, so an edit
-against a file that changed underneath you is refused rather than
-silently clobbering someone else&#39;s work.
-
-Prefer one call to several: read takes many paths, search takes many
-patterns, batch takes many operations, and replace does one
-substitution across a whole glob. The expensive part of a call is the
-call.</code></pre></div>
-
-<p><b>Claude Desktop, and anything else with neither lever</b> — put the same block in <code>CLAUDE.md</code> or whatever that client reads as project instructions. It is the same words; only the filename changes.</p>
-
-<p>That block is guidance and a model can drift from it, which is why it
-is the fallback rather than the mechanism. Where a permission system
-exists, use it.</p>
+<p><b>Registering it makes it available; only an exclusion makes it the
+route.</b> That distinction is the whole of the setup page's fourth
+section, and it is the thing most likely to be skipped — a perfectly
+registered server that habit never reaches for is the case this project
+actually hit.</p>
 
 <h3 id="verify">Checking it took</h3>
 
-<p>Three questions, in order of how much they prove:</p>
+<p>Four questions, in order of how much they prove:</p>
 
 <table>
 <tr><th>Ask the assistant to…</th><th>What a correct setup does</th></tr>
-<tr><td>list the tools it has</td><td><code>fettler</code> appears with all fifteen verbs</td></tr>
+<tr><td>list the tools it has</td><td><code>fettler</code> appears, with <code>doctor</code> among the verbs</td></tr>
+<tr><td>ask for the roots</td><td>the trees come back with what may be done in each, not only where they are</td></tr>
 <tr><td>read a file</td><td>it uses the Fettler tool, and the answer carries an encoding, a line ending and a hash</td></tr>
-<tr><td>read <code>/etc/passwd</code> or <code>C:\Windows\win.ini</code></td><td>refused as outside every declared root — and refused identically whether or not the file is there</td></tr>
+<tr><td>read <code>/etc/passwd</code> or <code>C:\Windows\win.ini</code></td><td>refused as outside every declared tree — and refused identically whether or not the file is there</td></tr>
 </table>
+
 
 <h2 id="not">9. What it deliberately does not do</h2>
 

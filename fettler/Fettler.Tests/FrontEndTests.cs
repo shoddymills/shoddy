@@ -33,6 +33,26 @@ public sealed class FrontEndTests
     /// A constraint that is not tested is a constraint that lasts until
     /// somebody is in a hurry, so this reads the built assemblies.
     /// </summary>
+    /// <summary>
+    /// The allowlist R1.2 permits, spelled out here as well as in the
+    /// csproj, so adding a package means changing a test on purpose
+    /// rather than watching one stop failing.
+    ///
+    /// <para>PdfPig ships seven assemblies from one package. Naming all
+    /// seven is the point: the test knows exactly what was let in, and a
+    /// package that quietly grew an eighth would be caught.</para>
+    /// </summary>
+    static readonly string[] Allowed =
+    [
+        "UglyToad.PdfPig",
+        "UglyToad.PdfPig.Core",
+        "UglyToad.PdfPig.DocumentLayoutAnalysis",
+        "UglyToad.PdfPig.Fonts",
+        "UglyToad.PdfPig.Package",
+        "UglyToad.PdfPig.Tokenization",
+        "UglyToad.PdfPig.Tokens",
+    ];
+
     [Fact]
     public void TheShippedAssembliesReferenceNothingOutsideTheirOwnLane()
     {
@@ -60,8 +80,9 @@ public sealed class FrontEndTests
                 Assert.False(reference.StartsWith("Shoddy.", StringComparison.Ordinal),
                     $"{name} references {reference}: Fettler shares this repository and nothing else (R1.2)");
 
-                Assert.True(ours.Contains(reference) || framework,
-                    $"{name} references {reference}, which is neither Fettler's own nor the framework (R1.2)");
+                Assert.True(ours.Contains(reference) || framework || Allowed.Contains(reference),
+                    $"{name} references {reference}, which is neither Fettler's own, "
+                    + "nor the framework, nor on R1.2's allowlist");
             }
         }
     }
@@ -79,9 +100,16 @@ public sealed class FrontEndTests
         {
             if (type.Namespace?.StartsWith("Fettler.Core", StringComparison.Ordinal) != true) continue;
 
+            // R3.1 revised to match its own reason (9b.5): the core's
+            // SURFACE may not take or return a protocol type. Its
+            // internals may parse JSON, because configuration is JSON and
+            // always was - RootsFile has read it since the day it was
+            // written. A core that SPEAKS a protocol has stopped being
+            // one; a core that PARSES a config file has not, and a test
+            // that forbade the second was testing more than the reason
+            // supports.
             foreach (MethodInfo method in type.GetMethods(
-                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static
-                | BindingFlags.DeclaredOnly))
+                BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly))
             {
                 Assert.False(method.ReturnType.FullName?.Contains("System.Text.Json") == true,
                     $"{type.Name}.{method.Name} answers a System.Text.Json type; the core must not (R3.1)");
@@ -429,12 +457,29 @@ public sealed class FrontEndTests
         [
             "find", "search", "read", "write", "edit", "replace", "new", "mkdir",
             "move", "copy", "delete", "exec", "roots", "tasks", "run", "batch",
+
+            // A model diagnosing its own wiring is the point of this one:
+            // otherwise the only way to find out why a tool is missing is
+            // to ask a person to open a terminal.
+            "doctor",
         ];
+
+        // `setup` is the ONE verb deliberately not offered to a model,
+        // and the reason is not squeamishness. Setup writes the client
+        // configuration files - including the one naming the command that
+        // launches this very server - so a model holding it could point
+        // its own boundary at a different binary, or grant back the
+        // permissions the deny list removes. Parity is a rule about
+        // capability, not about reach: scaffolding a machine is a
+        // person's act, performed once, in a terminal.
+        string[] byHandOnly = ["setup"];
 
         foreach (string verb in verbs)
             Assert.Contains(verb, tools);
         foreach (string tool in tools)
             Assert.Contains(tool, verbs);
+        foreach (string verb in byHandOnly)
+            Assert.DoesNotContain(verb, tools);
 
         // And one operation answers the same thing through both doors.
         string? called = await server.AnswerAsync("""

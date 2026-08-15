@@ -30,6 +30,9 @@ public sealed class Arguments
         "case-sensitive", "include-generated", "count", "files-only", "sort-modified",
         "preserve-times", "all", "on", "off", "help", "version",
 
+        // doctor and setup
+        "quiet", "hook", "global", "local", "hooks", "deny",
+
         // R5.11: each names a stream rather than a value, so the parser
         // must not eat the following argument as one.
         "replace-stdin", "with-stdin", "text-stdin",
@@ -89,6 +92,9 @@ public sealed class Arguments
 
         // move, copy, delete, exec, run
         "recursive", "preserve-times", "force", "on", "off", "timeout",
+
+        // doctor and setup, which look at the machine rather than a tree
+        "client", "quiet", "hook", "global", "local", "hooks", "deny", "command",
     };
 
     /// <summary>Whether any verb accepts this flag. Public so a test can
@@ -172,32 +178,43 @@ public sealed class Arguments
     public string? At(int index) => index < positional.Count ? positional[index] : null;
 
     /// <summary>
-    /// The roots of R8.7, and where they come from when the command line
+    /// The trees of R8.7, and where they come from when the command line
     /// does not say (R8.9).
     ///
     /// <para>Declared as <c>--root NAME=PATH</c>, repeatable. A bare
     /// <c>--root PATH</c> still works and is named <c>root</c>, so the
-    /// single-root form stays exactly as short as it was and nothing
-    /// about an existing caller changes.</para>
+    /// single-tree form stays exactly as short as it was.</para>
     ///
     /// <para><b>The command line REPLACES the file rather than adding to
     /// it.</b> Merging would leave a caller unable to narrow the
     /// boundary: whatever they asked for, the tree's own configuration
     /// would still be open beside it, and "just this directory, please"
-    /// would be unsayable.</para>
+    /// would be unsayable. The personal overlay of
+    /// <see cref="RootsFile.LocalFileName"/> DOES merge, and the
+    /// difference is deliberate - that is one tree's configuration
+    /// layered on itself, not a caller overriding a tree.</para>
     ///
-    /// <para>Finding no configuration is not a failure - the current
-    /// directory is a perfectly good root, and it is what a caller
-    /// outside any configured tree means. Finding a BROKEN one is, and
-    /// stops the run rather than quietly widening the boundary to the
-    /// cwd.</para>
+    /// <para><b>--root grants <c>list read</c> and nothing else, with no
+    /// override.</b> It stays because the MCP server has to be launched
+    /// somehow and because ad-hoc reading is genuinely useful; it can no
+    /// longer hand anybody write access. To write to a tree you put a
+    /// file in it, which is a deliberate, reviewable act by a person
+    /// inside the tree it governs - and it is the act a caller, model
+    /// included, cannot perform, because
+    /// <see cref="Fettler.Core.RuleFiles"/> refuses it.</para>
+    ///
+    /// <para><b>Finding no configuration is now a refusal.</b> It used to
+    /// fall back to the current directory, which is the "searching
+    /// around" this boundary exists to stop: a cwd above the intended
+    /// tree contains the intended tree, so the fallback silently WIDENED
+    /// the boundary exactly when nobody had stated one.</para>
     /// </summary>
     public Result<Roots> DeclaredRoots()
     {
         IReadOnlyList<string> declared = Values("root");
         if (declared.Count > 0)
         {
-            var decls = new List<RootDecl>();
+            var decls = new List<TreeDecl>();
             foreach (string entry in declared)
             {
                 int equals = entry.IndexOf('=');
@@ -205,33 +222,34 @@ public sealed class Arguments
                 // A bare Windows path has a colon in it and no equals, so
                 // the split is on equals alone and never on the colon that
                 // makes C:\ a volume.
-                if (equals <= 0) decls.Add(new RootDecl(decls.Count == 0 ? "root" : $"root{decls.Count}", entry));
-                else decls.Add(new RootDecl(entry[..equals], entry[(equals + 1)..]));
+                (string name, string path) = equals <= 0
+                    ? (decls.Count == 0 ? "root" : $"root{decls.Count}", entry)
+                    : (entry[..equals], entry[(equals + 1)..]);
+
+                decls.Add(new TreeDecl(name, path, Permissions.ReadOnly));
             }
 
-            return Roots.Open(decls);
+            return Roots.Open(decls, "--root on the command line, which grants list read only");
         }
 
         if (Value("config") is { } named)
         {
-            Result<RootsFile.Found> told = RootsFile.Read(named);
+            Result<RootsFile.Found> told = RootsFile.ReadWithOverlay(named);
             return told.IsOk
-                ? Roots.Open(told.Value.Roots, told.Value.File)
+                ? Roots.Open(told.Value.Trees, told.Value.Origin)
                 : told.Carry<Roots>();
         }
 
         if (!Has("no-config"))
         {
             Result<RootsFile.Found> found = RootsFile.Discover(Directory.GetCurrentDirectory());
-            if (found.IsOk) return Roots.Open(found.Value.Roots, found.Value.File);
+            if (found.IsOk) return Roots.Open(found.Value.Trees, found.Value.Origin);
 
-            // NotFound is the ordinary case and falls through to the cwd;
-            // anything else means a configuration WAS there and was wrong.
+            // Anything but NotFound means a configuration WAS there and
+            // was wrong, and its own message says what.
             if (found.Failure!.Outcome != Outcome.NotFound) return found.Carry<Roots>();
         }
 
-        return Roots.Open(
-            [new RootDecl("root", Directory.GetCurrentDirectory())],
-            $"the current directory, because no --root and no {RootsFile.FileName}");
+        return Result<Roots>.Fail(Outcome.Invalid, Roots.NothingDeclared);
     }
 }

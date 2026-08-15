@@ -16,7 +16,7 @@ public sealed class ContainmentTests
 
         foreach (string attempt in new[] { "../escape.txt", "a/../../escape.txt", "./../../etc/passwd" })
         {
-            Result<ContainedPath> resolved = box.Roots.Resolve(attempt);
+            Result<ContainedPath> resolved = box.Roots.Resolve(attempt, Permission.Read);
             Assert.False(resolved.IsOk, $"'{attempt}' should not resolve");
             Assert.Equal(Outcome.OutsideRoot, resolved.Failure!.Outcome);
         }
@@ -28,7 +28,7 @@ public sealed class ContainmentTests
         using var box = new Sandbox();
         Directory.CreateDirectory(box.Full("a/b"));
 
-        Result<ContainedPath> resolved = box.Roots.Resolve("a/b/../b");
+        Result<ContainedPath> resolved = box.Roots.Resolve("a/b/../b", Permission.Read);
         Assert.True(resolved.IsOk, resolved.Failure?.Message);
     }
 
@@ -38,7 +38,7 @@ public sealed class ContainmentTests
         using var box = new Sandbox();
         string elsewhere = OperatingSystem.IsWindows() ? @"C:\Windows\System32\drivers\etc\hosts" : "/etc/passwd";
 
-        Result<ContainedPath> resolved = box.Roots.Resolve(elsewhere);
+        Result<ContainedPath> resolved = box.Roots.Resolve(elsewhere, Permission.Read);
         Assert.False(resolved.IsOk);
         Assert.Equal(Outcome.OutsideRoot, resolved.Failure!.Outcome);
     }
@@ -59,8 +59,8 @@ public sealed class ContainmentTests
 
         try
         {
-            Result<ContainedPath> present = box.Roots.Resolve(real);
-            Result<ContainedPath> missing = box.Roots.Resolve(absent);
+            Result<ContainedPath> present = box.Roots.Resolve(real, Permission.Read);
+            Result<ContainedPath> missing = box.Roots.Resolve(absent, Permission.Read);
 
             Assert.False(present.IsOk);
             Assert.False(missing.IsOk);
@@ -103,7 +103,7 @@ public sealed class ContainmentTests
 
         try
         {
-            Result<ContainedPath> resolved = box.Roots.Resolve("bridge/secret.txt");
+            Result<ContainedPath> resolved = box.Roots.Resolve("bridge/secret.txt", Permission.Read);
             Assert.False(resolved.IsOk, "a link mid-path must not carry the destination out of the root");
             Assert.Equal(Outcome.OutsideRoot, resolved.Failure!.Outcome);
         }
@@ -119,7 +119,7 @@ public sealed class ContainmentTests
     {
         string absent = Path.Combine(Path.GetTempPath(), $"fettle-absent-{Guid.NewGuid():N}");
 
-        Result<Core.Roots> opened = Core.Roots.Open([new RootDecl("root", absent)]);
+        Result<Core.Roots> opened = Core.Roots.Open([new TreeDecl("root", absent, Permissions.Full)]);
 
         Assert.False(opened.IsOk);
         Assert.Equal(Outcome.NotFound, opened.Failure!.Outcome);
@@ -134,12 +134,12 @@ public sealed class ContainmentTests
         using var box = new Sandbox("scratch");
         File.WriteAllText(Path.Combine(box.Extra["scratch"], "draft.md"), "draft");
 
-        Result<ContainedPath> inScratch = box.Roots.Resolve("scratch:draft.md");
+        Result<ContainedPath> inScratch = box.Roots.Resolve("scratch:draft.md", Permission.Read);
         Assert.True(inScratch.IsOk, inScratch.Failure?.Message);
         Assert.Equal("scratch", inScratch.Value.RootName);
 
         Result<ContainedPath> nowhere = box.Roots.Resolve(
-            Path.Combine(Path.GetTempPath(), "fettle-nowhere", "x.txt"));
+            Path.Combine(Path.GetTempPath(), "fettle-nowhere", "x.txt"), Permission.Read);
         Assert.False(nowhere.IsOk);
         Assert.Equal(Outcome.OutsideRoot, nowhere.Failure!.Outcome);
     }
@@ -164,7 +164,7 @@ public sealed class ContainmentTests
     public void ASingleLetterCannotBeARootName()
     {
         using var box = new Sandbox();
-        Result<Core.Roots> opened = Core.Roots.Open([new RootDecl("c", box.Root)]);
+        Result<Core.Roots> opened = Core.Roots.Open([new TreeDecl("c", box.Root, Permissions.Full)]);
 
         Assert.False(opened.IsOk);
         Assert.Equal(Outcome.Invalid, opened.Failure!.Outcome);
@@ -175,7 +175,7 @@ public sealed class ContainmentTests
     {
         using var box = new Sandbox();
 
-        Result<ContainedPath> resolved = box.Roots.Resolve("CON");
+        Result<ContainedPath> resolved = box.Roots.Resolve("CON", Permission.Read);
         Assert.False(resolved.IsOk);
         Assert.Equal(Outcome.Invalid, resolved.Failure!.Outcome);
         Assert.Contains("CON", resolved.Failure.Message);

@@ -25,7 +25,7 @@ public static class ToolCatalogue
 
     static readonly Tool[] Tools =
     [
-        new("find", "Paths matching a glob, with size and modified time. Ordered by path, or by recency with sort=mtime.", """
+        new("find", "Paths matching a glob, with size and modified time. Ordered by path, or by recency with sort=mtime. The glob is relative to a declared tree, not to any working directory.", """
             {"type":"object","properties":{
               "pattern":{"type":"string","description":"glob; * stays within a segment, ** crosses segments, matching is case-insensitive"},
               "in":{"type":"string","description":"which root to search when more than one is open"},
@@ -37,7 +37,7 @@ public static class ToolCatalogue
             }}
             """),
 
-        new("search", "Matching lines as records: path, line, column, text, optional context. Takes several patterns at once.", """
+        new("search", "Matching lines as records: path, line, column, text, optional context. Takes several patterns at once. Searches only inside declared trees; there is nothing outside them to search.", """
             {"type":"object","required":["patterns"],"properties":{
               "patterns":{"type":"array","items":{"type":"string"},"description":".NET regular expressions unless literal is true"},
               "glob":{"type":"string","description":"restrict to a subset of files"},
@@ -52,15 +52,15 @@ public static class ToolCatalogue
             }}
             """),
 
-        new("read", "Content, encoding, line ending, trailing-newline state and a content hash. Takes several paths in one call.", """
+        new("read", "Content, encoding, line ending, trailing-newline state and a content hash. Takes several paths in one call. Reads notebooks as cells, PDFs as text per page, and images as facts plus a native image part - so this is the reader for every file type, not only for source. Stops at 2000 lines unless `to` says otherwise, and says how many were left.", """
             {"type":"object","required":["paths"],"properties":{
               "paths":{"type":"array","items":{"type":"string"}},
               "from":{"type":"integer"},
-              "to":{"type":"integer"}
+              "to":{"type":"integer","description":"lifts the default 2000-line cap; say what you need"}
             }}
             """),
 
-        new("write", "Create or replace a file, keeping its encoding and line endings unless told otherwise.", """
+        new("write", "Create or replace a file, keeping its encoding and line endings unless told otherwise. Needs create where nothing is there and update where something is; a read-only tree grants neither.", """
             {"type":"object","required":["path","text"],"properties":{
               "path":{"type":"string"},
               "text":{"type":"string"},
@@ -124,7 +124,7 @@ public static class ToolCatalogue
             }}
             """),
 
-        new("roots", "The declared roots, their paths, and which one an unqualified path lands in. Ask this before guessing why something was refused.", """
+        new("roots", "The declared trees, their paths, WHAT MAY BE DONE in each and in any scope inside it, and which one an unqualified path lands in. Ask this first, and before guessing why something was refused.", """
             {"type":"object","properties":{}}
             """),
 
@@ -133,9 +133,17 @@ public static class ToolCatalogue
             {"type":"object","properties":{}}
             """),
 
-        new("run", "Run a declared task, capturing its streams and exit code. Never composes a shell command.", """
+        new("run", "Run a declared task, capturing its streams and exit code. Never composes a shell command. Needs the tree it runs in to grant execute, which is never granted by default.", """
             {"type":"object","required":["name"],"properties":{
               "name":{"type":"string"},"timeout":{"type":"integer","description":"seconds; 0 means no timeout"}
+            }}
+            """),
+
+        new("doctor", "Whether this tool is wired into each assistant client, at both levels, and what on this machine still lets the boundary be gone round. Diagnoses; never changes anything.", """
+            {"type":"object","properties":{
+              "client":{"type":"string","enum":["claude-code","claude-desktop","vscode-copilot","github-copilot"],
+                        "description":"narrows the REPORT; every client is scanned either way"},
+              "quiet":{"type":"boolean","description":"leave out what is healthy or does not apply"}
             }}
             """),
 
@@ -166,13 +174,13 @@ public static class ToolCatalogue
         w.WriteEndObject();
     }
 
-    public static async Task<Result<string>> InvokeAsync(
+    public static async Task<Result<ToolAnswer>> InvokeAsync(
         Bench bench, string name, JsonElement arguments, CancellationToken cancel)
     {
         bool known = false;
         foreach (Tool tool in Tools) if (tool.Name == name) { known = true; break; }
         if (!known)
-            return Result<string>.Fail(Outcome.Invalid, $"no tool called '{name}'");
+            return Result<ToolAnswer>.Fail(Outcome.Invalid, $"no tool called '{name}'");
 
         var argv = new List<string> { name, "--json" };
         string stdin = string.Empty;
@@ -294,6 +302,10 @@ public static class ToolCatalogue
                 Positional("name"); Flag("timeout", "timeout");
                 break;
 
+            case "doctor":
+                Flag("client", "client"); Flag("quiet", "quiet");
+                break;
+
             case "batch":
                 Inline("script");
                 break;
@@ -307,7 +319,84 @@ public static class ToolCatalogue
         // whichever way it went. The caller reads "ok" in the payload;
         // the server marks isError from the exit code.
         return result.ExitCode == ExitCodes.Ok
-            ? Result<string>.Ok(result.Stdout.TrimEnd())
-            : Result<string>.Fail(new Failure(Outcome.Refused, result.Stdout.TrimEnd()));
+            ? Result<ToolAnswer>.Ok(Lift(result.Stdout.TrimEnd()))
+            : Result<ToolAnswer>.Fail(new Failure(Outcome.Refused, result.Stdout.TrimEnd()));
+    }
+
+    /// <summary>
+    /// An image the MCP answer carries natively rather than as text.
+    /// </summary>
+    public sealed record ImagePart(string MimeType, string Base64);
+
+    /// <summary>What a tool call produced: the machine-readable answer,
+    /// and any images that go beside it rather than inside it.</summary>
+    public sealed record ToolAnswer(string Text, IReadOnlyList<ImagePart> Images)
+    {
+        public static ToolAnswer Of(string text) => new(text, []);
+    }
+
+    /// <summary>
+    /// Move any base64 image out of the JSON text and into a native image
+    /// part.
+    ///
+    /// <para><b>The one deliberate departure from R3.6's byte-identity,
+    /// and the reason is arithmetic.</b> An image left in the text costs
+    /// a caller a screenful of base64 they cannot look at; carried
+    /// natively it costs the same bytes once and can actually be seen.
+    /// Leaving it in BOTH places would cost it twice. Everything else
+    /// about the answer is the CLI's own JSON, unchanged - only the
+    /// <c>base64</c> field moves, and the mime type, size and hash stay
+    /// where they were, so nothing is lost from the text.</para>
+    /// </summary>
+    static ToolAnswer Lift(string text)
+    {
+        if (!text.Contains("\"base64\"", StringComparison.Ordinal)) return ToolAnswer.Of(text);
+
+        JsonDocument doc;
+        try { doc = JsonDocument.Parse(text); }
+        catch (JsonException) { return ToolAnswer.Of(text); }
+
+        using (doc)
+        {
+            if (doc.RootElement.ValueKind != JsonValueKind.Object
+                || !doc.RootElement.TryGetProperty("files", out JsonElement files)
+                || files.ValueKind != JsonValueKind.Array)
+                return ToolAnswer.Of(text);
+
+            var images = new List<ImagePart>();
+            var buffer = new MemoryStream();
+
+            using (var w = new Utf8JsonWriter(buffer, new JsonWriterOptions { Indented = false }))
+            {
+                w.WriteStartObject();
+                foreach (JsonProperty top in doc.RootElement.EnumerateObject())
+                {
+                    if (top.Name != "files") { top.WriteTo(w); continue; }
+
+                    w.WriteStartArray("files");
+                    foreach (JsonElement file in top.Value.EnumerateArray())
+                    {
+                        w.WriteStartObject();
+                        foreach (JsonProperty field in file.EnumerateObject())
+                        {
+                            if (field.Name == "base64")
+                            {
+                                images.Add(new ImagePart(
+                                    file.TryGetProperty("mime_type", out JsonElement m) && m.ValueKind == JsonValueKind.String
+                                        ? m.GetString()! : "application/octet-stream",
+                                    field.Value.GetString() ?? ""));
+                                continue;
+                            }
+                            field.WriteTo(w);
+                        }
+                        w.WriteEndObject();
+                    }
+                    w.WriteEndArray();
+                }
+                w.WriteEndObject();
+            }
+
+            return new ToolAnswer(System.Text.Encoding.UTF8.GetString(buffer.ToArray()), images);
+        }
     }
 }

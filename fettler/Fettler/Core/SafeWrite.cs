@@ -6,6 +6,7 @@ public sealed record Saved(
     long Bytes,
     string EncodingName,
     LineEnding LineEnding,
+    bool MixedEndings,
     bool FinalNewline,
     string Hash,
     bool Created,
@@ -41,11 +42,18 @@ public static class SafeWrite
         Result<Saved> saved = Bytes(path, bytes, overwrite);
         if (!saved.IsOk) return saved;
 
+        // Defect 1.2: `read` says when a file disagrees with itself about
+        // line endings, and `write` said nothing - so a file could be
+        // made mixed by a write and only found out about on the next
+        // read, or by version control two commits later. The mixture is
+        // computed from what was actually written rather than from what
+        // was asked for.
         IReadOnlyList<Line> lines = TextIo.SplitLines(text);
         return Result<Saved>.Ok(saved.Value with
         {
             EncodingName = encodingName,
             LineEnding = ending,
+            MixedEndings = TextIo.Mixed(lines),
             FinalNewline = lines.Count > 0 && lines[^1].Ending.Length > 0,
         });
     }
@@ -107,7 +115,7 @@ public static class SafeWrite
             : Metadata.Apply(full, carried);
 
         return Result<Saved>.Ok(new Saved(
-            path, content.Length, "utf-8", LineEnding.Lf,
+            path, content.Length, "utf-8", LineEnding.Lf, MixedEndings: false,
             FinalNewline: false, Hash: TextIo.HashOf(content),
             Created: !exists, MetadataLost: lost));
     }

@@ -21,6 +21,18 @@ public sealed class TaskTests
     }
 
     /// <summary>
+    /// A tree that may actually run something.
+    ///
+    /// <para>B.8: <c>execute</c> is never a default, in any tree,
+    /// including the one the configuration sits in - so every test that
+    /// runs a task has to say so, and the three that do are the three
+    /// where it matters. The alternative, a sandbox that quietly granted
+    /// it, would have made the whole rule untested by making it
+    /// invisible.</para>
+    /// </summary>
+    const Permission Runnable = Permissions.Full | Permission.Execute;
+
+    /// <summary>
     /// R10.12 and R7.3: an argument containing a space, a double quote
     /// and a backslash arrives at the child exactly as given.
     ///
@@ -36,11 +48,16 @@ public sealed class TaskTests
         string? fettle = Fettle();
         if (fettle is null) return;
 
-        using var box = new Sandbox();
+        using var box = new Sandbox(Runnable);
 
         const string awkward = """a "quoted" thing and \a\back\slash and  two spaces""";
         box.Write("subject.txt", $"before\n{awkward}\nafter\n");
 
+        // The child gets --root because there is no implicit current
+        // directory any more (B.3): a bare `fettle search` outside a
+        // configured tree refuses, which is the point. A read-only tree
+        // is all a search needs, and all --root can grant.
+        //
         // The glob keeps the search off the declaration file, which
         // necessarily contains the same awkward string.
         box.Write(Tasks.FileName, $"""
@@ -48,6 +65,8 @@ public sealed class TaskTests
             echo:
               {fettle}
               search
+              --root
+              {box.Root}
               --literal
               --json
               --glob
@@ -126,7 +145,7 @@ public sealed class TaskTests
     [Fact]
     public async Task ATaskThatOutrunsItsTimeoutIsKilledAndSaidToHaveBeen()
     {
-        using var box = new Sandbox();
+        using var box = new Sandbox(Runnable);
         box.Write(Tasks.FileName, $"forever:\n  {LongRunning()}\n");
 
         var clock = System.Diagnostics.Stopwatch.StartNew();
@@ -147,7 +166,7 @@ public sealed class TaskTests
     [Fact]
     public async Task ATaskCanBeCancelledMidFlight()
     {
-        using var box = new Sandbox();
+        using var box = new Sandbox(Runnable);
         box.Write(Tasks.FileName, $"forever:\n  {LongRunning()}\n");
 
         using var cancelling = new CancellationTokenSource();

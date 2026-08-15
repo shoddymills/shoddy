@@ -43,7 +43,7 @@ public static class FileOps
     /// is already there (R6.6).</summary>
     public static Result<MadeReport> NewFile(Roots roots, string path)
     {
-        Result<ContainedPath> p = roots.Resolve(path);
+        Result<ContainedPath> p = roots.Resolve(path, Permission.Create);
         if (!p.IsOk) return p.Carry<MadeReport>();
 
         if (File.Exists(p.Value.Full) || Directory.Exists(p.Value.Full))
@@ -68,7 +68,7 @@ public static class FileOps
 
     public static Result<MadeReport> MakeDirectory(Roots roots, string path)
     {
-        Result<ContainedPath> p = roots.Resolve(path);
+        Result<ContainedPath> p = roots.Resolve(path, Permission.Create);
         if (!p.IsOk) return p.Carry<MadeReport>();
 
         if (File.Exists(p.Value.Full))
@@ -103,10 +103,26 @@ public static class FileOps
         guard = RefuseWildcard<MoveReport>(to, "move");
         if (!guard.IsOk) return guard;
 
-        Result<ContainedPath> source = roots.Resolve(from);
+        // B.7: a move is TWO permissions, and which two depends on where
+        // it lands. Rename on the source and create at the destination
+        // covers reorganising within a scope; leaving the scope needs
+        // delete as well, because from here a file that leaves is gone
+        // either way. That is what makes "may reorganise, may not
+        // destroy" expressible.
+        Result<ContainedPath> source = roots.Resolve(from, Permission.Rename);
         if (!source.IsOk) return source.Carry<MoveReport>();
-        Result<ContainedPath> target = roots.Resolve(to);
+        Result<ContainedPath> target = roots.Resolve(to, Permission.Create);
         if (!target.IsOk) return target.Carry<MoveReport>();
+
+        string governing = source.Value.Governing.Length == 0
+            ? roots.PathOf(source.Value.RootName)
+            : source.Value.Governing;
+
+        if (!Roots.IsWithin(governing, target.Value.Full))
+        {
+            Result<ContainedPath> leaving = Roots.Allow(source.Value, Permission.Delete);
+            if (!leaving.IsOk) return leaving.Carry<MoveReport>();
+        }
 
         bool isDirectory = Directory.Exists(source.Value.Full);
         if (!isDirectory && !File.Exists(source.Value.Full))
@@ -119,6 +135,11 @@ public static class FileOps
             if (!overwrite)
                 return Result<MoveReport>.Fail(Outcome.TargetExists,
                     "something is already there; pass overwrite to replace it", target.Value.Display);
+
+            // Replacing something destroys it, so the destination needs
+            // delete as well as create.
+            Result<ContainedPath> replacing = Roots.Allow(target.Value, Permission.Delete);
+            if (!replacing.IsOk) return replacing.Carry<MoveReport>();
 
             Result<MoveReport> readOnly = SafeWrite.RefuseIfReadOnly<MoveReport>(target.Value.Full, target.Value);
             if (!readOnly.IsOk) return readOnly;
@@ -221,10 +242,16 @@ public static class FileOps
     public static Result<CopyReport> Copy(Roots roots, string from, string to, bool recursive,
         bool overwrite, bool preserveTimes)
     {
-        Result<ContainedPath> source = roots.Resolve(from);
+        Result<ContainedPath> source = roots.Resolve(from, Permission.Read);
         if (!source.IsOk) return source.Carry<CopyReport>();
-        Result<ContainedPath> target = roots.Resolve(to);
+        Result<ContainedPath> target = roots.Resolve(to, Permission.Create);
         if (!target.IsOk) return target.Carry<CopyReport>();
+
+        if (overwrite && (File.Exists(target.Value.Full) || Directory.Exists(target.Value.Full)))
+        {
+            Result<ContainedPath> replacing = Roots.Allow(target.Value, Permission.Delete);
+            if (!replacing.IsOk) return replacing.Carry<CopyReport>();
+        }
 
         bool crossed = !source.Value.RootName.Equals(target.Value.RootName, Roots.PathComparison);
 
@@ -233,6 +260,13 @@ public static class FileOps
             if (!recursive)
                 return Result<CopyReport>.Fail(Outcome.Refused,
                     "that is a directory; pass recursive to copy a tree", source.Value.Display);
+
+            // A recursive copy reads everything below the source without
+            // naming any of it, so a hidden scope inside would be copied
+            // out into the open where anything may read it.
+            Result<ContainedPath> readable =
+                roots.AllowThroughout(source.Value, Permission.List | Permission.Read);
+            if (!readable.IsOk) return readable.Carry<CopyReport>();
 
             var skipped = new List<string>();
             int files = 0, directories = 0;
@@ -348,7 +382,7 @@ public static class FileOps
         Result<DeleteReport> guard = RefuseWildcard<DeleteReport>(path, "delete");
         if (!guard.IsOk) return guard;
 
-        Result<ContainedPath> p = roots.Resolve(path);
+        Result<ContainedPath> p = roots.Resolve(path, Permission.Delete);
         if (!p.IsOk) return p.Carry<DeleteReport>();
 
         bool isDirectory = Directory.Exists(p.Value.Full);
@@ -372,6 +406,14 @@ public static class FileOps
             if ((files > 0 || directories > 1) && !recursive)
                 return Result<DeleteReport>.Fail(Outcome.Refused,
                     "the directory is not empty; pass recursive", p.Value.Display);
+
+            // And a recursive delete reaches paths it never named, which
+            // may be governed by a scope of their own.
+            if (recursive)
+            {
+                Result<ContainedPath> throughout = roots.AllowThroughout(p.Value, Permission.Delete);
+                if (!throughout.IsOk) return throughout.Carry<DeleteReport>();
+            }
 
             try
             {
@@ -425,7 +467,10 @@ public static class FileOps
     /// </summary>
     public static Result<ExecReport> SetExecutable(Roots roots, string path, bool executable)
     {
-        Result<ContainedPath> p = roots.Resolve(path);
+        // The executable bit is a property of the file, so changing it is
+        // an update to the file - not the `execute` permission, which
+        // governs whether a TASK may run.
+        Result<ContainedPath> p = roots.Resolve(path, Permission.Update);
         if (!p.IsOk) return p.Carry<ExecReport>();
 
         if (!File.Exists(p.Value.Full))

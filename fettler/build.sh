@@ -41,11 +41,19 @@ case "$command" in
             dir="$pub/fettle/$rid"
             run publish fettle -c Release -r "$rid" --self-contained \
                 -p:PublishSingleFile=true -o "$dir"
+
+            # Apache-2.0 requires the licence and any NOTICE to travel with
+            # a distributed binary, and fettle bundles PdfPig into the one
+            # file it ships. So the notice goes IN THE ARCHIVE - not merely
+            # in the repository, which a person downloading a release never
+            # sees. A licence obligation nobody can read has not been met.
+            cp ../NOTICE "$dir/NOTICE"
+
             if [ "$rid" = "win-x64" ]; then
-                (cd "$dir" && zip -q "../../fettle$suffix-$rid.zip" fettle.exe)
+                (cd "$dir" && zip -q "../../fettle$suffix-$rid.zip" fettle.exe NOTICE)
             else
                 chmod +x "$dir/fettle"
-                tar -czf "$pub/fettle$suffix-$rid.tar.gz" -C "$dir" fettle
+                tar -czf "$pub/fettle$suffix-$rid.tar.gz" -C "$dir" fettle NOTICE
             fi
         done
         ls -1 "$pub" | grep '^fettle' | sed 's/^/  -> /'

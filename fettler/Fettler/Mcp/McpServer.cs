@@ -157,7 +157,7 @@ public sealed class McpServer : IDisposable
 
         try
         {
-            Result<string> answer = await ToolCatalogue
+            Result<ToolCatalogue.ToolAnswer> answer = await ToolCatalogue
                 .InvokeAsync(bench, name, arguments, source.Token).ConfigureAwait(false);
 
             // A failed tool is a successful protocol message carrying
@@ -167,10 +167,25 @@ public sealed class McpServer : IDisposable
             {
                 w.WriteStartObject();
                 w.WriteStartArray("content");
+
                 w.WriteStartObject();
                 w.WriteString("type", "text");
-                w.WriteString("text", answer.IsOk ? answer.Value : Describe(answer.Failure!));
+                w.WriteString("text", answer.IsOk ? answer.Value.Text : Describe(answer.Failure!));
                 w.WriteEndObject();
+
+                // An image goes as an image. The content model carries
+                // one natively and nothing here has to understand the
+                // pixels - it is one more content type in one place.
+                if (answer.IsOk)
+                    foreach (ToolCatalogue.ImagePart image in answer.Value.Images)
+                    {
+                        w.WriteStartObject();
+                        w.WriteString("type", "image");
+                        w.WriteString("data", image.Base64);
+                        w.WriteString("mimeType", image.MimeType);
+                        w.WriteEndObject();
+                    }
+
                 w.WriteEndArray();
                 if (!answer.IsOk) w.WriteBoolean("isError", true);
                 w.WriteEndObject();
@@ -185,6 +200,41 @@ public sealed class McpServer : IDisposable
             inFlight.TryRemove(key, out _);
         }
     }
+
+    /// <summary>
+    /// What every client is told at <c>initialize</c>, before the model
+    /// has said anything.
+    ///
+    /// <para><b>B.16: this is the highest-leverage grounding there is.</b>
+    /// It is read at the moment a tool is chosen, it ships with the tool,
+    /// it needs no setup by anybody, and it reaches every client at once.
+    /// It is also the only one that needs nobody's cooperation - a rule
+    /// in a CLAUDE.md has to be written by the user, kept up to date by
+    /// the user, and read by a model that has a great deal else in front
+    /// of it.</para>
+    ///
+    /// <para><b>The working-directory clause is here because instruction
+    /// alone demonstrably failed.</b> In the session that produced this
+    /// design the assistant had extensive grounding, reached for
+    /// <c>Set-Location</c> on nearly every command anyway, and needed
+    /// three corrections. Saying it here is worth doing and is not
+    /// sufficient; what makes it stick is that Fettler needs no working
+    /// directory at all, so there is nothing for the habit to be for.</para>
+    /// </summary>
+    public const string Instructions =
+        "File, search and edit operations over a bounded set of declared trees. "
+        + "Paths resolve against those trees, never against a working directory: "
+        + "there is no current directory here, changing directory does nothing, and "
+        + "reaching for one is a sign the wrong tool is being used. "
+        + "Paths are written name:path when more than one tree is open. "
+        + "Call roots FIRST to see the trees, what each grants, and which one an "
+        + "unqualified path lands in - rather than discovering the boundary by being refused. "
+        + "A tree may be read-only, and a scope inside it may grant more or less than the tree does. "
+        + "Read returns a hash; pass it back as expect on an edit to prove the file has not moved. "
+        + $"Declared tasks come from a {Tasks.FileName} file at the top of a tree, and running one "
+        + "needs that tree to grant execute, which is never granted by default. "
+        + $"{RootsFile.FileName}, {RootsFile.LocalFileName} and {Tasks.FileName} are the files that say "
+        + "what this tool may do, and this tool does not write them - a person edits those.";
 
     static string Describe(Failure failure) =>
         $"{ExitCodes.NameOf(failure.Outcome)}: {failure.Message}"
@@ -210,12 +260,7 @@ public sealed class McpServer : IDisposable
             w.WriteString("name", "fettler");
             w.WriteString("version", Command.Version);
             w.WriteEndObject();
-            w.WriteString("instructions",
-                "File, search and edit operations over a bounded set of roots. "
-                + "Paths are written name:path when more than one root is open. "
-                + "Call roots to see the boundary rather than discovering it by being refused. "
-                + "Read returns a hash; pass it back as expect on an edit to prove the file has not moved. "
-                + $"Declared tasks come from a {Tasks.FileName} file at the root.");
+            w.WriteString("instructions", Instructions);
             w.WriteEndObject();
         };
     }

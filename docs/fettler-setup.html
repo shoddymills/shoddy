@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Wiring Fettler into an assistant — the five clients, the doctor, the scaffolder, the exclusion list, and the session hook.">
+<title>Fettler: Setting It Up | Shoddy</title>
+<link rel="stylesheet" href="style.css">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="alternate icon" href="favicon.ico" sizes="48x48">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+</head>
+<body>
+<div class="topbar"><div class="inner">
+  <div class="row">
+    <a class="phase" href="index.html"><img class="mark" src="media/brand/shoddy-icon.svg" alt="" width="23" height="23">Shoddy · Documentation</a>
+    <span class="spacer"></span>
+    <nav class="docnav meta" aria-label="About"><a href="heritage.html">Heritage</a><a href="authorship.html">Authorship</a></nav>
+  </div>
+  <nav class="docnav main" aria-label="Documentation"><a href="tutorials/index.html">Tutorials</a><a href="guide.html">Guide</a><a href="quickref.html">Reference</a><a href="machines/index.html">Machines</a><a href="mills/index.html">Mills</a><a href="stack.html">Stack</a><a href="spec.html">Spec</a><a href="setup.html">Setup</a><a href="vscode.html">VS Code</a><a href="assistants.html">AI</a><a href="build.html">Toolchain</a><a href="hosting.html">Hosting</a><span class="here">Fettler</span><a href="errors.html">Errors</a></nav>
+</div></div>
+<div class="wrap">
+<header class="mast">
+<p class="eyebrow">Shoddy Documentation · Fettler</p>
+<h1 id="setup">Setting It Up</h1>
+<p class="kicker">The clients, the doctor, the scaffolder, the exclusion list and the session hook. Read this once per machine.</p>
+</header>
+
+<p>Registering Fettler with an assistant makes it <em>available</em>. Only
+an exclusion makes it the <em>route</em>. This page is both halves, and
+the diagnostic that tells you which one you have. The verbs are on
+<a href="fettler.html">the Fettler page</a>; what a tree grants is on
+<a href="fettler-boundary.html">the boundary page</a>.</p>
+
+<h2 id="install">1. Install it first</h2>
+
+<div class="takeaway"><b>Every registration below launches
+<code>fettle</code>. If it is not on <code>PATH</code>, nothing
+starts.</b> That is not a hypothetical: every example in this
+documentation named a bare <code>fettle</code> for a while, on a machine
+where nothing resolved it, and the server had never once run.</div>
+
+<p>Take the archive for your operating system from the release, put the
+binary somewhere on <code>PATH</code>, and check:</p>
+
+<div class="code"><pre><code>fettle --version</code></pre></div>
+
+<p><b>If you would rather not</b>, <code>fettle setup</code> writes the
+absolute path of the binary you ran it with, so a registration works
+without an installation step. It says which it did. The portable form is
+better and the fallback is honest.</p>
+
+<p><em>A distribution route considered and not taken:</em> a
+<code>dotnet tool install --global</code> package would put it on
+<code>PATH</code> on all three platforms with one command. It needs a
+published NuGet feed, which is a publication decision rather than a build
+one, so the archive plus a documented step is what ships today.</p>
+
+<h2 id="doctor">2. <code>fettle doctor</code></h2>
+
+<p>Two jobs in one verb: is Fettler wired into each client, and is
+anything on this machine letting the assistant go round it.</p>
+
+<div class="code"><pre><code>fettle doctor [--json] [--quiet] [--hook] [--client NAME]</code></pre></div>
+
+<p><b>It checks every client at both levels every time.</b>
+<code>--client</code> narrows the <em>report</em>, never the scan, so "it
+looked fine" can never mean "it only looked at one".</p>
+
+<p><b>It never writes.</b> Diagnosis and repair are separate verbs, so a
+check run in a session hook can never change a machine. Repair is
+<code>setup</code>.</p>
+
+<p><b>It never prints a secret.</b> <code>~/.claude/.credentials.json</code>
+sits in the same directory as files it reads. It names files and keys and
+never values.</p>
+
+<h3 id="verdicts">The four verdicts</h3>
+
+<table>
+<tr><th>Verdict</th><th>Means</th><th>Exit</th></tr>
+<tr><td><code>n/a</code></td><td>The client is not installed, or has nothing at this level. Claude Desktop has no project scope at all, so its repo level is always this.</td><td>never a failure</td></tr>
+<tr><td><code>absent</code></td><td>The client is here; Fettler is not registered with it.</td><td>warning</td></tr>
+<tr><td><code>broken</code></td><td>Registered and wrong: the command resolves to nothing, the configuration will not parse, a tree does not exist.</td><td>failure</td></tr>
+<tr><td><code>healthy</code></td><td>Registered, and the command it names actually resolves.</td><td>—</td></tr>
+</table>
+
+<p>Exit codes: <b>0</b> healthy or not applicable, <b>1</b> warnings only,
+<b>2</b> anything broken. <code>--hook</code> always exits 0.</p>
+
+<h3 id="clients">The clients, and the files behind them</h3>
+
+<table>
+<tr><th>Client</th><th>Global</th><th>Repo</th></tr>
+<tr><td>Claude Code (CLI, and the VS&nbsp;Code extension, which shares its registry)</td><td><code>~/.claude.json</code>, <code>~/.claude/settings.json</code>, <code>~/.claude/CLAUDE.md</code></td><td><code>.mcp.json</code>, <code>.claude/settings.json</code>, <code>.claude/settings.local.json</code>, <code>CLAUDE.md</code></td></tr>
+<tr><td>Claude Desktop</td><td><code>%APPDATA%\Claude\claude_desktop_config.json</code>; on macOS <code>~/Library/Application&nbsp;Support/Claude/</code></td><td>none — no project scope</td></tr>
+<tr><td>VS Code Copilot Chat</td><td><code>%APPDATA%\Code\User\mcp.json</code> and <code>settings.json</code></td><td><code>.vscode/mcp.json</code>, <code>.vscode/settings.json</code></td></tr>
+<tr><td>GitHub Copilot coding agent</td><td>—</td><td><code>.github/copilot-instructions.md</code></td></tr>
+</table>
+
+<p><b>Claude Code in VS Code is deliberately not a fifth client.</b> It
+shares the CLI's registry exactly, so reporting it separately would double
+every verdict and let the two disagree.</p>
+
+<h3 id="overrides">What it looks for besides the registration</h3>
+
+<p>A client can be perfectly registered and never used, which is exactly
+what happened on the machine this was written for.</p>
+
+<table>
+<tr><th>Check</th><th>What it is really looking for</th></tr>
+<tr><td>2.6</td><td>An <code>allow</code> entry pre-approving a shell command that writes files — <code>sed&nbsp;-i</code>, <code>cp</code>, <code>rm</code>, <code>Set-Content</code>, a redirect. Each is a route round the boundary that runs without a prompt.</td></tr>
+<tr><td>2.7</td><td>An <code>allow</code> on the built-in <code>Read</code>, <code>Write</code> or <code>Edit</code>. Habit reaches for the built-in first; an allow removes the last friction.</td></tr>
+<tr><td>2.8</td><td>Nothing <em>denying</em> the built-in editors. Registration makes Fettler an option; a deny makes it the route.</td></tr>
+<tr><td>2.9</td><td>An <code>additionalDirectories</code> wider than the declared trees. Two boundaries that disagree means the narrower one is decorative.</td></tr>
+<tr><td>2.10</td><td>No mention of Fettler in <code>CLAUDE.md</code> or <code>copilot-instructions.md</code>. Guidance is a weak lever; its absence guarantees the habit wins.</td></tr>
+<tr><td>2.11</td><td>Duplicate or case-variant project keys. Approvals attach to one spelling and silently do not apply to the other. Live on the machine this was written for, twice.</td></tr>
+<tr><td>2.12</td><td>A registered server whose command is not launchable — resolved the way the client would, through <code>PATH</code> and <code>PATHEXT</code>.</td></tr>
+<tr><td>2.13</td><td>A <code>settings.local.json</code>. Uncommitted and personal, so anything granted there never appears in review.</td></tr>
+<tr><td>2.14</td><td>Auto-approval of arbitrary chat tools, which reinstates every route the boundary removes.</td></tr>
+<tr><td>B.17</td><td>A rule appearing in <b>both</b> <code>allow</code> and <code>deny</code>. See below.</td></tr>
+</table>
+
+<h3 id="precedence">On <code>deny</code> versus <code>allow</code></h3>
+
+<p>Which wins is the client's to decide, and Fettler is a separate process
+that cannot observe another program resolving its own rules. So it
+reports the <em>conflict</em> and names the fix that is correct under
+either precedence: <b>remove the allow</b>. An answer that does not depend
+on the assumption beats a guess at it.</p>
+
+<h2 id="scaffold">3. <code>fettle setup</code></h2>
+
+<div class="code"><pre><code>fettle setup &lt;client&gt; | --all [--global | --local] [--dry-run] [--force] [--hooks] [--deny] [--command PATH]
+
+  clients: claude-code · claude-desktop · vscode-copilot · github-copilot</code></pre></div>
+
+<p>A command rather than a <code>.ps1</code> and a <code>.sh</code>, so
+there is one implementation instead of two that must be kept in step by
+hand — a mistake this project made once and undid.</p>
+
+<p><b>It merges into JSON and never clobbers.</b> These files hold other
+people's servers, other people's permission grants and a hook array that
+is already doing something. It reads, adds or updates Fettler's own key,
+and preserves everything else. It backs up to
+<code>&lt;file&gt;.fettler-backup</code> before its first write and says
+where that went. <code>--dry-run</code> prints what it would do and
+touches nothing.</p>
+
+<h3 id="corrects">What it will and will not correct</h3>
+
+<ul>
+<li><b>It corrects the wiring</b> — a missing or wrong registration, a
+missing <code>.fettler.json</code>, a missing instruction block, a missing
+hook.</li>
+<li><b>It does not silently correct policy.</b> An existing
+<code>allow</code> entry is your own configuration; removing it changes
+how you work. Setup <em>names</em> the conflicting entries and leaves
+them.</li>
+<li><b>It cannot correct installation.</b> A binary that is not on
+<code>PATH</code> is not a configuration edit, and setup says so rather
+than writing a registration it knows will fail to launch.</li>
+<li><b>It creates a <code>.fettler.json</code>, and never changes one.</b>
+Creating where none exists is scaffolding; rewriting one is the escape the
+boundary page closes, and belongs to a person with an editor.</li>
+</ul>
+
+<p>Re-running changes nothing the second time — for the JSON and for the
+marker-delimited instruction block alike. A registration that already says
+something <em>different</em> needs <code>--force</code>, so setup never
+quietly reshapes somebody else's choice.</p>
+
+<p><b><code>setup</code> is the one verb an assistant is not offered.</b>
+It writes the file naming the command that launches the server, so a model
+holding it could point its own boundary at a different binary, or grant
+back the permissions the deny list removes. <code>doctor</code> <em>is</em>
+offered, because a model diagnosing its own wiring beats asking a person
+to open a terminal.</p>
+
+<h2 id="exclusions">4. The exclusion list is two lists</h2>
+
+<h3 id="builtin">Half one — the built-in tools. Short, closed, winnable.</h3>
+
+<p>Six entries, no arguments, no platform variants:</p>
+
+<table>
+<tr><th>Tool</th><th>Why</th></tr>
+<tr><td><code>Write</code></td><td>mutation</td></tr>
+<tr><td><code>Edit</code></td><td>mutation</td></tr>
+<tr><td><code>NotebookEdit</code></td><td>mutation</td></tr>
+<tr><td><code>Grep</code></td><td>this is what <code>search</code> replaces, and where the drift happens</td></tr>
+<tr><td><code>Glob</code></td><td>the same, for <code>find</code></td></tr>
+<tr><td><code>Read</code></td><td><b>denied, with no path-scoped exception</b></td></tr>
+</table>
+
+<p>This works because <b>the Fettler tools have different names</b>
+(<code>mcp__fettler__edit</code> and so on), so denying the built-ins does
+not disarm the assistant — it <em>routes</em> it.</p>
+
+<p><b><code>Read</code> is the one people wave through</b>, on the
+reasoning that reading is not the risk. It is. A blanket
+<code>Read</code> defeats containment for reads, the <code>read</code>
+permission, and hidden scopes entirely — a scope with no <code>list</code>
+is invisible to <code>search</code> and one call away from being read in
+full. The harm sits squarely inside the threat model: cancelled
+requirements read back as current, and a credentials file in the same
+directory as the configuration being examined.</p>
+
+<p>Denying it is affordable only because Fettler reads
+<a href="fettler.html#types">everything the developer actually has</a> —
+notebooks, images and PDF included. The deny and those readers are one
+shipment.</p>
+
+<h3 id="shell">Half two — the shell. Long, open-ended, unwinnable as a blocklist.</h3>
+
+<p>A sample of what a blocklist would have to name: <code>sed -i</code>,
+<code>cp</code>, <code>mv</code>, <code>rm</code>, <code>tee</code>,
+<code>dd</code>, <code>install</code>, <code>ln</code>,
+<code>truncate</code>, <code>patch</code>, <code>touch</code>,
+<code>git checkout|restore|clean|apply</code>; and
+<code>Set-Content</code>, <code>Add-Content</code>, <code>Out-File</code>,
+<code>Copy-Item</code>, <code>Move-Item</code>, <code>Remove-Item</code>,
+<code>New-Item</code>, <code>Rename-Item</code> with their aliases and the
+<code>cmd</code> forms; and macOS's <code>sed -i ''</code>, which is the
+same command with different syntax from the GNU form, so even a shared
+entry needs writing twice; and <code>python -c</code>,
+<code>node -e</code>, <code>perl -pi -e</code>, <code>awk</code>.</p>
+
+<p>And then <code>echo x &gt; file</code> defeats all of it, because
+<code>&gt;</code> turns <b>any</b> command into a writer.</p>
+
+<div class="takeaway"><b>So do not write one.</b> Deny the shell tools and
+allowlist the few commands actually needed — the build, the test runner,
+<code>git status|log|diff</code>. That is the only form of this that can
+be finished.</div>
+
+<p><b>Windows has two shell tools, not one.</b> The machine this was
+written for named <code>Bash</code> twenty-two times in its settings and
+<code>PowerShell</code> zero — while PowerShell was the shell used for
+essentially every command in the session. A Bash-only list would have
+caught none of it. The doctor checks both.</p>
+
+<h2 id="hooks">5. The session hook</h2>
+
+<div class="code"><pre><code>fettle setup claude-code --local --hooks</code></pre></div>
+
+<p>Runs <code>fettle doctor --hook</code> at the start of each session,
+which is where a diagnostic will actually be read. It is silent when
+everything is healthy or not applicable, prints a short block naming only
+what is wrong otherwise, and <b>always exits 0</b> — a diagnostic that can
+stop a session from starting will be removed within a week. It carries a
+timeout.</p>
+
+<p><b>It is appended to whatever hook array is already there</b>, never
+substituted for it, and it is not installed twice.</p>
+
+<p><em>Decided against:</em> a <code>UserPromptSubmit</code> hook, which
+would re-run this on every message for a state that changes perhaps
+monthly. Rejected as noise. <em>Left as its own proposal:</em> a
+<code>PreToolUse</code> hook intercepting the built-in editors and
+redirecting to Fettler, which would <em>enforce</em> what the deny list
+requests. Larger, riskier, and worth its own decision rather than being
+folded in here.</p>
+
+<p><b>To remove it</b>, delete Fettler's entry from the
+<code>SessionStart</code> array in <code>.claude/settings.json</code>.
+There is a backup beside that file from the first time setup wrote it.</p>
+
+<h2 id="grounding">6. Where to say it so it is read</h2>
+
+<p>Ranked by how much each actually changes behaviour.</p>
+
+<table>
+<tr><th>Rank</th><th>Where</th><th>Why</th></tr>
+<tr><td>1</td><td>The MCP <code>instructions</code> string and the per-verb tool descriptions</td><td>Read at the moment a tool is chosen, ships with the tool, needs setup by nobody, reaches every client at once. Ours to write.</td></tr>
+<tr><td>2</td><td>The <code>SessionStart</code> hook</td><td>Automatic, and costs one line.</td></tr>
+<tr><td>3</td><td>Global <code>CLAUDE.md</code></td><td>Where standing rules already live and demonstrably work.</td></tr>
+<tr><td>4</td><td>Repo <code>CLAUDE.md</code> and <a href="assistants.html">the grounding page</a></td><td>Project scope, and the canonical long form.</td></tr>
+<tr><td>5</td><td><code>permissions.deny</code></td><td>Enforcement rather than instruction — the only one that does not rely on anything being read.</td></tr>
+</table>
+
+<div class="takeaway"><b>Instruction is the weak lever, and it is worth
+being honest about it.</b> In the session that produced this design the
+assistant had extensive grounding, reached for a working directory on
+nearly every command anyway, and needed three corrections. Ranks 1–4 are
+worth doing and none is sufficient. <b>What works is removing the
+need</b>: Fettler wants no working directory now that trees are declared,
+and everything else that did — a build, <code>git</code>, a script — has a
+cwd-free form (<code>git -C</code>, an absolute path,
+<code>fettle run</code>).</div>
+
+<h2 id="check">7. Checking it took</h2>
+
+<table>
+<tr><th>Ask the assistant to…</th><th>What a correct setup does</th></tr>
+<tr><td>list the tools it has</td><td><code>fettler</code> appears, and <code>doctor</code> is among the verbs</td></tr>
+<tr><td>ask for the roots</td><td>the trees come back with <b>what may be done in each</b>, not only where they are</td></tr>
+<tr><td>read a file</td><td>it uses the Fettler tool, and the answer carries an encoding, a line ending and a hash</td></tr>
+<tr><td>read <code>/etc/passwd</code> or <code>C:\Windows\win.ini</code></td><td>refused as outside every declared tree — and refused identically whether or not the file is there</td></tr>
+<tr><td>write <code>.fettler.json</code></td><td>refused as <code>governed</code>, whatever the tree grants</td></tr>
+<tr><td>edit a file with the built-in editor</td><td>refused by the deny list, and it reaches for Fettler instead</td></tr>
+</table>
+
+<footer>Named for the shoddy mills of the West Riding: Useless Things Made
+Useful Through Skill (<a href="heritage.html">the heritage of the name</a>).<br>
+&copy; 2026 Stephen Vincent Foster</footer>
+</div>
+</body>
+</html>

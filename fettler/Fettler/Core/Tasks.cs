@@ -60,7 +60,7 @@ public static class Tasks
     /// </summary>
     public static Result<IReadOnlyList<TaskDecl>> Read(Roots roots)
     {
-        Result<ContainedPath> path = roots.Resolve(FileName);
+        Result<ContainedPath> path = roots.Resolve(FileName, Permission.Read);
         if (!path.IsOk) return path.Carry<IReadOnlyList<TaskDecl>>();
 
         if (!File.Exists(path.Value.Full))
@@ -159,18 +159,28 @@ public static class Tasks
         if (!found.IsOk) return found.Carry<TaskRun>();
         TaskDecl task = found.Value;
 
-        string workingDirectory;
-        if (task.WorkingDirectory is { } declared)
-        {
-            // R8.2 explicitly includes the working directory of a task.
-            Result<ContainedPath> cwd = roots.Resolve(declared);
-            if (!cwd.IsOk) return cwd.Carry<TaskRun>();
-            workingDirectory = cwd.Value.Full;
-        }
-        else
-        {
-            workingDirectory = roots.PathOf(roots.Names[0]);
-        }
+        // B.8: the working directory decides. `execute` is never granted
+        // by default in any tree, including the one the configuration
+        // sits in, because that tree is writable by definition and
+        // `fettle-tasks` lives inside it - write-by-default plus
+        // execute-by-default is arbitrary code execution, and it defeats
+        // every other permission at once, since a scope protected from
+        // `delete` means nothing to a task that can run `del`.
+        //
+        // R8.2 explicitly includes the working directory of a task.
+        Result<ContainedPath> cwd = roots.Resolve(
+            task.WorkingDirectory ?? $"{roots.Names[0]}:", Permission.Execute);
+
+        if (!cwd.IsOk)
+            return cwd.Failure!.Outcome == Outcome.Refused
+                ? Result<TaskRun>.Fail(Outcome.Refused,
+                    $"'{task.Name}' would run in a tree that does not grant execute. "
+                    + "Add \"execute\" to that tree's or scope's \"can\" in "
+                    + $"{RootsFile.FileName}. It is never granted by default.",
+                    cwd.Failure.Path)
+                : cwd.Carry<TaskRun>();
+
+        string workingDirectory = cwd.Value.Full;
 
         var info = new ProcessStartInfo
         {

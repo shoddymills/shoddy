@@ -35,11 +35,24 @@ references no other project in this repository, so there is no
 ## What is pinned
 
 - **`net10.0`**, matching the rest of the repository.
-- **No `ProjectReference` or `PackageReference` in what ships.** This is
-  load-bearing and tested two ways: `FrontEndTests` reads the built
-  assemblies' references, and `.github/workflows/fettler.yml` greps the
-  project files. A constraint that is not tested lasts until somebody is
-  in a hurry.
+- **No `ProjectReference`, ever.** That is the part carrying the reason:
+  Fettler shares this repository, its release and its version number with
+  what else lives here, and shares nothing else.
+- **A `PackageReference` only from a tested allowlist.** Each entry must
+  meet all of: a permissive licence (MIT, Apache-2.0, BSD) and never
+  copyleft; pure managed with no native assets, because `fettle` publishes
+  self-contained and single-file per OS; a minimal transitive closure; and
+  active maintenance. The allowlist today is one package, **PdfPig**
+  (Apache-2.0, pure managed, zero transitive dependencies), and it is
+  there because the assistant's own reader is denied outright — which
+  makes `fettle` the only reader, so a developer holding a PDF would
+  otherwise be stranded. Its licence travels in `NOTICE` at the top of
+  this repository, as Apache-2.0 requires.
+- **The allowlist is tested from outside.** `FrontEndTests` reads the
+  built assemblies' references and names all seven PdfPig assemblies
+  explicitly, so adding a package means changing a test on purpose rather
+  than watching one stop failing. A constraint that is not tested lasts
+  until somebody is in a hurry.
 - **The MCP protocol is hand-rolled.** A preview-versioned SDK would be
   this tool's most volatile dependency sitting on its least stable
   layer; a few hundred lines is the cheaper exposure.
@@ -54,65 +67,113 @@ ordinary use on Windows, so it is a subcommand instead.
 {
   "mcpServers": {
     "fettler": {
-      "command": "/path/to/fettle",
-      "args": ["serve", "--root", "repo=/path/to/your/repository"]
+      "command": "fettle",
+      "args": ["serve"]
     }
   }
 }
 ```
 
-**`--root NAME=PATH` is repeatable**, and more than one is the ordinary
-case: an assistant working here has a repository, a sibling repository
-and a scratch directory. Declare each and paths are written `name:path`;
-declare one and paths are written bare, exactly as they always were.
+**No root or config flag appears there, and none can.** The server learns
+its trees at launch, from the `.fettler.json` in the folder it starts in,
+before the model has said anything — and no tool schema carries a way to
+name a different one. Every call then runs against a boundary fixed at
+that moment.
 
-```
---root repo=/work/shoddy --root notes=/work/shoddy-planning --root scratch=/tmp/scratch
-```
-
-
-**A tree can declare its own roots**, so nobody has to type them onto every
-command. `fettle` takes the nearest `.fettler.json` at or above the current
-directory whenever no `--root` is given:
+**A tree declares its own boundary**, so nobody types one onto every
+command. `fettle` takes the nearest `.fettler.json` at or above the
+current directory:
 
 ```json
 {
-  "roots": {
-    "repo": "."
+  "trees": {
+    "work": { "path": "." },
+    "curriculum": {
+      "path": "../shoddy-curriculum",
+      "can": ["list", "read"],
+      "scopes": {
+        "requirements":           { "can": ["list", "read", "create", "update", "rename"] },
+        "requirements/cancelled": { "can": [] }
+      }
+    }
   }
 }
 ```
 
 **Its paths are relative to the file, never to whoever is asking** — which
 is the whole point of it. Read against the caller's working directory a
-relative root names a different tree from every directory; read against the
-file's own directory it names one tree from everywhere, so the same command
-means the same thing three levels down and the file can be checked in.
+relative path names a different tree from every directory; read against
+the file's own directory it names one tree from everywhere, so the same
+command means the same thing three levels down and the file can be checked
+in.
 
-`--config PATH` names a different file and `--no-config` turns the search
-off. Any `--root` on the command line **replaces** the file rather than
-adding to it, because merging would leave a caller unable to narrow the
-boundary. A malformed configuration is refused, never fallen back from:
-reverting to the current directory would move the boundary without saying
-so, and usually widen it.
+The seven permissions are `list read create update rename delete execute`.
+The tree the file sits in gets all but `execute`; **every other tree gets
+`list read`** unless `can` says more; **`execute` is never a default
+anywhere**. A scope *replaces* what its tree grants rather than adding to
+it, so it can take a permission away — and a scope with no `list` is not
+there at all as far as `find` and `search` are concerned.
 
-**Use absolute paths.** A relative root binds the boundary to whatever
-directory `fettle` was launched from, so the same command means
-different things from different places — and a caller that has to keep
-correcting its working directory has gone back to doing shell work by
-another name. `fettle roots` says what is declared:
+**`--root PATH` grants `list read` and nothing else, with no override.** It
+stays because the server has to be launched somehow and ad-hoc reading is
+useful; it cannot hand anybody write access. To write to a tree you put a
+file in it, which is a deliberate act by a person inside the tree it
+governs — and the act a caller cannot perform, because `.fettler.json`,
+`.fettler.local.json` and `fettle-tasks` are refused by every write path
+at every permission level. That refusal has its own outcome, `governed`,
+and its own exit code, 11.
+
+`--config PATH` names a different file and keeps full expressiveness.
+`--no-config` turns the search off. Any `--root` **replaces** the file
+rather than adding to it, because merging would leave a caller unable to
+narrow the boundary. A `.fettler.local.json` beside the checked-in file
+*is* merged over it — that is one tree's configuration layered on itself
+rather than a caller overriding a tree — and it is gitignored, so a
+machine's own trees need not be checked in.
+
+**Declaring nothing at all is a refusal**, not a fallback to the current
+directory. A working directory usually sits *above* the tree somebody
+meant, so the old fallback silently widened the boundary at exactly the
+moment nobody had stated one.
+
+A malformed configuration is refused, never fallen back from, and the old
+`roots` shape is refused with the migration named rather than
+reinterpreted — a root granted everything, and reading it as a tree would
+grant more than the file says.
+
+`fettle roots` answers what is declared, what may be done in each, and
+which file said so:
 
 ```
 $ fettle roots
-repo        /work/shoddy  (default)
-notes       /work/shoddy-planning
-scratch     /tmp/scratch
+work        /work/shoddy  (default)
+            can: list read create update rename delete
+curriculum  /work/shoddy-curriculum
+            can: list read
+            requirements  can: list read create update rename
+            requirements/cancelled  can: nothing
+
+declared by /work/shoddy/.fettler.json
 ```
 
+Every path must resolve inside one of them. A move between two trees works
+and says that it crossed, because moving a file between two trust domains
+is something the caller is entitled to see.
 
-Every path must resolve inside one of them. A move between two roots
-works and says that it crossed, because moving a file between two trust
-domains is something the caller is entitled to see.
+## Is it wired up?
+
+```
+fettle doctor
+```
+
+Two jobs in one verb: whether Fettler is registered with each assistant
+client — Claude Code, Claude Desktop, VS Code Copilot, the GitHub Copilot
+agent — at both the global and the repository level, and what on this
+machine still lets the boundary be gone round. It never writes, never
+prints a secret, and reads only a compiled-in list of well-known
+configuration paths. `fettle setup CLIENT --local` writes the wiring;
+`--dry-run` shows it first. See `docs/fettler-setup.html`.
+
 
 ## Line endings
 
@@ -158,11 +219,20 @@ is left alone.
 ## The verbs, and their exit codes
 
 `find`, `search`, `read`, `write`, `edit`, `replace`, `new`, `mkdir`,
-`move`, `copy`, `delete`, `exec`, `roots`, `tasks`, `run`, `batch` — and `serve`,
-which is not an operation. **The CLI verb and the MCP tool name are the
-same word**, and both front ends reach the operations through one
-dispatcher, so a capability available to a model and not to a script is
-unwritable rather than merely forbidden.
+`move`, `copy`, `delete`, `exec`, `roots`, `tasks`, `run`, `batch`,
+`doctor`, `setup` — and `serve`, which is not an operation. **The CLI verb
+and the MCP tool name are the same word**, and both front ends reach the
+operations through one dispatcher, so a capability available to a model
+and not to a script is unwritable rather than merely forbidden.
+
+**`setup` is the one deliberate exception**, and a test asserts it stays
+one. It writes the client configuration files — including the one naming
+the command that launches the server — so a model holding it could point
+its own boundary at a different binary, or grant back the permissions the
+deny list removes. Parity is a rule about capability, not about reach:
+scaffolding a machine is a person's act, performed once, in a terminal.
+`doctor` *is* offered, because a model diagnosing its own wiring beats
+asking somebody to open a terminal for it.
 
 | Code | Meaning |
 |---|---|
@@ -177,6 +247,7 @@ unwritable rather than merely forbidden.
 | 8 | refused — Fettler declined, for a stated reason |
 | 9 | **denied — the operating system declined** |
 | 10 | timed-out |
+| 11 | **governed — the path names a file that says what this tool may do** |
 
 **8 and 9 are deliberately different.** Refused means Fettler declined;
 denied means the platform did, for an operation Fettler was perfectly

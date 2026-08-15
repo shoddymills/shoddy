@@ -55,11 +55,19 @@ switch ($Command) {
             $dir = Join-Path $pub "fettle\$rid"
             Run @('publish', 'fettle', '-c', 'Release', '-r', $rid, '--self-contained',
                   '-p:PublishSingleFile=true', '-o', $dir)
+
+            # Apache-2.0 requires the licence and any NOTICE to travel with
+            # a distributed binary, and fettle bundles PdfPig into the one
+            # file it ships. So the notice goes IN THE ARCHIVE - not merely
+            # in the repository, which a person downloading a release never
+            # sees. A licence obligation nobody can read has not been met.
+            Copy-Item (Join-Path $PSScriptRoot '..\NOTICE') $dir -Force
+
             if ($rid -eq 'win-x64') {
-                Compress-Archive -Path (Join-Path $dir 'fettle.exe') `
+                Compress-Archive -Path @((Join-Path $dir 'fettle.exe'), (Join-Path $dir 'NOTICE')) `
                     -DestinationPath (Join-Path $pub "fettle$suffix-$rid.zip") -Force
             } else {
-                tar -czf (Join-Path $pub "fettle$suffix-$rid.tar.gz") -C $dir fettle
+                tar -czf (Join-Path $pub "fettle$suffix-$rid.tar.gz") -C $dir fettle NOTICE
                 if ($LASTEXITCODE -ne 0) {
                     Write-Host "STOPPED: tar failed for $rid (exit $LASTEXITCODE)." -ForegroundColor Red
                     exit 1

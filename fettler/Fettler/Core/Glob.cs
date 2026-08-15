@@ -64,6 +64,40 @@ public sealed class Glob
     public bool Matches(string relativePath) =>
         regex.IsMatch(Normalize(relativePath.Replace('\\', '/')));
 
+    /// <summary>
+    /// The longest run of whole directory segments at the front of the
+    /// pattern that contain no wildcard - so <c>src/main/**/*.cs</c>
+    /// answers <c>src/main</c>, and <c>**/*.cs</c> answers nothing.
+    ///
+    /// <para>Defect 1.3: without this a search walks the entire tree and
+    /// then discards nearly all of it. Rooted at a home directory that
+    /// made a one-file search exceed two minutes. The prefix is a
+    /// property of the pattern alone, so deriving it here keeps the walk
+    /// and the match agreeing about what the pattern means.</para>
+    ///
+    /// <para><b>Only whole segments, and only before the first
+    /// wildcard.</b> A partial segment like <c>src/ma*</c> yields
+    /// <c>src</c> and not <c>src/ma</c>, because the prefix is used to
+    /// pick a directory to start from and half a directory name is not
+    /// one.</para>
+    /// </summary>
+    public string FixedPrefix
+    {
+        get
+        {
+            string p = Pattern.Replace('\\', '/');
+            int lastSeparator = -1;
+
+            for (int i = 0; i < p.Length; i++)
+            {
+                if (p[i] is '*' or '?') break;
+                if (p[i] == '/') lastSeparator = i;
+            }
+
+            return lastSeparator <= 0 ? string.Empty : p[..lastSeparator];
+        }
+    }
+
     static string Normalize(string s) =>
         s.IsNormalized(NormalizationForm.FormC) ? s : s.Normalize(NormalizationForm.FormC);
 

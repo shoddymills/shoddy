@@ -51,6 +51,17 @@ public enum Outcome
     /// <summary>The request itself did not make sense - an unknown verb,
     /// a missing argument, a pattern that will not compile.</summary>
     Invalid = 9,
+
+    /// <summary>
+    /// The path names a file that tells Fettler what it may do, and
+    /// Fettler does not write those (see <see cref="RuleFiles"/>).
+    ///
+    /// <para>Its own member rather than <see cref="Refused"/> because
+    /// nothing is missing: no permission, flag or configuration would
+    /// have allowed it, and a caller sent looking for one is being sent
+    /// somewhere there is nothing to find.</para>
+    /// </summary>
+    Governed = 10,
 }
 
 /// <summary>

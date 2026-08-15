@@ -13,16 +13,27 @@ namespace Fettler.Tests;
 public sealed class Sandbox : IDisposable
 {
     public Sandbox(params string[] extraRoots)
+        : this(Permissions.Full, null, extraRoots) { }
+
+    /// <summary>
+    /// A sandbox whose main tree grants exactly what a test says, with
+    /// scopes if it needs them. The ordinary case is
+    /// <see cref="Permissions.Full"/>, which is what the tree holding the
+    /// configuration gets, so most tests do not mention permissions at
+    /// all - and the ones that DO are testing the boundary rather than
+    /// tripping over it.
+    /// </summary>
+    public Sandbox(Permission can, IReadOnlyList<ScopeDecl>? scopes = null, params string[] extraRoots)
     {
         Root = Directory.CreateTempSubdirectory("fettle-test-").FullName;
 
-        var decls = new List<RootDecl> { new("root", Root) };
+        var decls = new List<TreeDecl> { new("root", Root, can, scopes) };
         foreach (string name in extraRoots)
         {
             string path = Path.Combine(Path.GetTempPath(), $"fettle-{name}-{Guid.NewGuid():N}");
             Directory.CreateDirectory(path);
             Extra[name] = path;
-            decls.Add(new RootDecl(name, path));
+            decls.Add(new TreeDecl(name, path, Permissions.Full));
         }
 
         Result<Core.Roots> opened = Core.Roots.Open(decls);
@@ -43,7 +54,7 @@ public sealed class Sandbox : IDisposable
 
     public ContainedPath Path_(string relative)
     {
-        Result<ContainedPath> p = Roots.Resolve(relative);
+        Result<ContainedPath> p = Roots.Resolve(relative, Permission.Read);
         Assert.True(p.IsOk, p.Failure?.Message);
         return p.Value;
     }

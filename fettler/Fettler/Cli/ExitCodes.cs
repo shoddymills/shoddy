@@ -31,6 +31,11 @@ public static class ExitCodes
 
     public const int TimedOut = 10;
 
+    /// <summary>The path governs Fettler, so Fettler will not write it.
+    /// Distinct from Refused because no flag, permission or configuration
+    /// changes the answer.</summary>
+    public const int Governed = 11;
+
     public static int Of(Outcome outcome) => outcome switch
     {
         Outcome.Ok => Ok,
@@ -43,6 +48,7 @@ public static class ExitCodes
         Outcome.Refused => Refused,
         Outcome.Denied => Denied,
         Outcome.TimedOut => TimedOut,
+        Outcome.Governed => Governed,
         _ => Fault,
     };
 
@@ -60,6 +66,7 @@ public static class ExitCodes
         Outcome.Refused => "refused",
         Outcome.Denied => "denied",
         Outcome.TimedOut => "timed-out",
+        Outcome.Governed => "governed",
         _ => "fault",
     };
 }

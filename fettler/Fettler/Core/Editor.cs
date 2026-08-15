@@ -41,6 +41,7 @@ public sealed record EditedFile(
     int EditsApplied,
     string Hash,
     bool Written,
+    bool MixedEndings,
     IReadOnlyList<string> MetadataLost);
 
 /// <summary>What the batch did, or would have done.</summary>
@@ -83,7 +84,11 @@ public static class Editor
 
         foreach (FileEdits fileEdits in batch)
         {
-            Result<ContainedPath> path = roots.Resolve(fileEdits.Path);
+            // An edit changes an existing file, so it is always update -
+            // there is no branch on existence here, because an edit to a
+            // file that is not there is a NotFound from the read below
+            // rather than a creation.
+            Result<ContainedPath> path = roots.Resolve(fileEdits.Path, Permission.Update);
             if (!path.IsOk) return path.Carry<EditAnswer>();
 
             Result<TextFile> read = TextIo.Read(path.Value);
@@ -135,7 +140,8 @@ public static class Editor
                     file.Path.Display));
 
             written.Add(new EditedFile(
-                file.Path, edits.Count, saved.Value.Hash, Written: true, saved.Value.MetadataLost));
+                file.Path, edits.Count, saved.Value.Hash, Written: true,
+                saved.Value.MixedEndings, saved.Value.MetadataLost));
         }
 
         return Result<EditAnswer>.Ok(new EditAnswer(written, plan, DryRun: false));
@@ -183,13 +189,37 @@ public static class Editor
         // Every occurrence that fits entirely inside the scoped region.
         // Overlapping matches are not counted twice: the scan resumes
         // after the match it just took.
-        var found = new List<int>();
-        for (int at = from; at <= to - r.Find.Length;)
+        List<int> Scan(string needle)
         {
-            int hit = file.Text.IndexOf(r.Find, at, to - at, StringComparison.Ordinal);
-            if (hit < 0) break;
-            found.Add(hit);
-            at = hit + r.Find.Length;
+            var hits = new List<int>();
+            for (int at = from; at <= to - needle.Length;)
+            {
+                int hit = file.Text.IndexOf(needle, at, to - at, StringComparison.Ordinal);
+                if (hit < 0) break;
+                hits.Add(hit);
+                at = hit + needle.Length;
+            }
+            return hits;
+        }
+
+        // Defect 1.1: an anchor spanning more than one line carries
+        // whatever endings the caller's shell produced, and a CRLF anchor
+        // never matches an LF file no matter how right it looks. The
+        // exact match is tried FIRST, so a caller who genuinely means
+        // CRLF still wins on a CRLF file; only when that finds nothing is
+        // the anchor retried in the file's own endings. A fallback, not a
+        // change of primary semantics.
+        string find = r.Find;
+        List<int> found = Scan(find);
+
+        if (found.Count == 0)
+        {
+            string retried = InTheFilesEndings(file, r.Find);
+            if (!retried.Equals(r.Find, StringComparison.Ordinal))
+            {
+                List<int> again = Scan(retried);
+                if (again.Count > 0) { find = retried; found = again; }
+            }
         }
 
         if (found.Count == 0)
@@ -210,13 +240,13 @@ public static class Editor
             string region = file.Text[from..to];
             return Result<Resolved>.Ok(new Resolved(
                 from, to - from,
-                region.Replace(r.Find, InTheFilesEndings(file, r.With), StringComparison.Ordinal),
+                region.Replace(find, InTheFilesEndings(file, r.With), StringComparison.Ordinal),
                 LineOf(starts, found[0]),
                 $"replace {found.Count} x \"{Shorten(r.Find)}\" -> \"{Shorten(r.With)}\""));
         }
 
         return Result<Resolved>.Ok(new Resolved(
-            found[0], r.Find.Length, InTheFilesEndings(file, r.With), LineOf(starts, found[0]),
+            found[0], find.Length, InTheFilesEndings(file, r.With), LineOf(starts, found[0]),
             $"replace \"{Shorten(r.Find)}\" -> \"{Shorten(r.With)}\""));
     }
 

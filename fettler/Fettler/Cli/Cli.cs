@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using Fettler.Clients;
 using Fettler.Core;
 
 namespace Fettler.Cli;
@@ -124,6 +125,8 @@ public static class Command
             "exec" => await Exec(bench, args, json, cancel).ConfigureAwait(false),
             "tasks" => TaskList(bench, json),
             "roots" => RootList(bench, json),
+            "doctor" => Diagnose(bench, args, json),
+            "setup" => Setup(bench, args, json),
             "run" => await Run(bench, args, json, cancel).ConfigureAwait(false),
             "batch" => await Batch(bench, args, json, cancel).ConfigureAwait(false),
             _ => Failed(new Failure(Outcome.Invalid, $"no verb called '{args.Verb}'; try: fettle help"), json),
@@ -342,10 +345,31 @@ public static class Command
                 {
                     w.WriteStartObject();
                     w.WriteString("path", Show(bench, s.Path));
+                    w.WriteString("kind", Typed.NameOf(s.Kind));
+
+                    if (s.Image is { } image)
+                    {
+                        w.WriteString("mime_type", image.MimeType);
+                        w.WriteNumber("width", image.Width);
+                        w.WriteNumber("height", image.Height);
+                        w.WriteNumber("bytes", image.Bytes);
+                        w.WriteString("hash", s.Hash);
+                        // The bytes travel base64 in the machine-readable
+                        // answer. The MCP front end lifts them out into a
+                        // native image part rather than leaving a caller
+                        // to read base64 as prose.
+                        w.WriteString("base64", Convert.ToBase64String(image.Content));
+                        WriteFacts(w, s.Facts);
+                        w.WriteEndObject();
+                        continue;
+                    }
+
                     w.WriteString("text", s.Text);
                     w.WriteNumber("from", s.From);
                     w.WriteNumber("to", s.To);
                     w.WriteNumber("lines", s.TotalLines);
+                    w.WriteBoolean("truncated", s.Truncated);
+                    if (s.Truncated) w.WriteNumber("lines_remaining", s.Remaining);
                     w.WriteString("encoding", s.EncodingName);
                     w.WriteString("line_ending", s.LineEnding);
                     w.WriteBoolean("line_ending_mixed", s.MixedEndings);
@@ -362,7 +386,18 @@ public static class Command
         var text = new StringBuilder();
         foreach (ReadSlice s in result.Value)
         {
-            text.Append(Show(bench, s.Path)).Append("  ").Append(s.EncodingName)
+            if (s.Image is { } image)
+            {
+                // A terminal cannot show a picture, so it is told what
+                // there is instead of being sent a screenful of base64.
+                text.Append(Show(bench, s.Path)).Append("  ").Append(image.MimeType)
+                    .Append("  ").Append(image.Width).Append('x').Append(image.Height)
+                    .Append("  ").Append(image.Bytes).AppendLine(" bytes");
+                continue;
+            }
+
+            text.Append(Show(bench, s.Path)).Append("  ").Append(Typed.NameOf(s.Kind))
+                .Append("  ").Append(s.EncodingName)
                 .Append("  ").Append(s.LineEnding).Append(s.MixedEndings ? " (MIXED)" : "")
                 .Append("  final-newline: ").Append(s.FinalNewline ? "yes" : "no")
                 .Append("  lines ").Append(s.From).Append('-').Append(s.To)
@@ -371,6 +406,13 @@ public static class Command
             int number = s.From;
             foreach (Line line in TextIo.SplitLines(s.Text))
                 text.Append((number++).ToString().PadLeft(5)).Append(" | ").AppendLine(line.Text);
+
+            // 9b.8: a truncated answer must never read as a complete one,
+            // and must say the way to see the rest.
+            if (s.Truncated)
+                text.Append("... ").Append(s.Remaining)
+                    .Append(" more line(s); pass --from ").Append(s.To + 1)
+                    .AppendLine(" to go on, or --to for a range");
         }
 
         return Ok(text.ToString());
@@ -429,10 +471,28 @@ public static class Command
                 w.WriteStartArray("roots");
                 foreach (string name in names)
                 {
+                    Grant grant = bench.Roots.GrantOf(name);
+                    string full = bench.Roots.PathOf(name);
+
                     w.WriteStartObject();
                     w.WriteString("name", name);
-                    w.WriteString("path", bench.Roots.PathOf(name));
+                    w.WriteString("path", full);
+                    w.WriteString("can", Permissions.Write(grant.Can));
                     w.WriteBoolean("default", name.Equals(names[0], Core.Roots.PathComparison));
+
+                    if (grant.Scopes.Count > 0)
+                    {
+                        w.WriteStartArray("scopes");
+                        foreach (Scope scope in grant.Scopes)
+                        {
+                            w.WriteStartObject();
+                            w.WriteString("path", Path.GetRelativePath(full, scope.Path).Replace('\\', '/'));
+                            w.WriteString("can", Permissions.Write(scope.Can));
+                            w.WriteEndObject();
+                        }
+                        w.WriteEndArray();
+                    }
+
                     w.WriteEndObject();
                 }
                 w.WriteEndArray();
@@ -440,16 +500,233 @@ public static class Command
                 w.WriteString("source", bench.Roots.Origin);
             }));
 
+        // B.9: what may be DONE in each tree, not only where it is. A
+        // boundary a caller can see only by being refused by it is one
+        // they learn by trial against a security check.
         var text = new StringBuilder();
         foreach (string name in names)
-            text.Append(name.PadRight(12)).Append(bench.Roots.PathOf(name))
+        {
+            Grant grant = bench.Roots.GrantOf(name);
+            string full = bench.Roots.PathOf(name);
+
+            text.Append(name.PadRight(12)).Append(full)
                 .AppendLine(name.Equals(names[0], Core.Roots.PathComparison) ? "  (default)" : "");
+            text.Append(' ', 12).Append("can: ").AppendLine(Permissions.Write(grant.Can));
+
+            foreach (Scope scope in grant.Scopes)
+                text.Append(' ', 12)
+                    .Append(Path.GetRelativePath(full, scope.Path).Replace('\\', '/'))
+                    .Append("  can: ").AppendLine(Permissions.Write(scope.Can));
+        }
 
         // Where the boundary came from, not only what it is: a caller
         // who disagrees with it has to know which file to open.
         text.AppendLine().Append("declared by ").AppendLine(bench.Roots.Origin);
 
         return Ok(text.ToString());
+    }
+
+    // ---- the machine, rather than the tree ----
+
+    /// <summary>
+    /// R8's exception, made narrow: the doctor reads a compiled-in list
+    /// of well-known configuration paths and nothing else. The tree it
+    /// reports on is the first declared tree, which is the one a
+    /// repo-level configuration would sit in.
+    /// </summary>
+    static Machine MachineFor(Bench bench) =>
+        Machine.Real(bench.Roots.PathOf(bench.Roots.Names[0]));
+
+    static CliResult Diagnose(Bench bench, Arguments args, bool json)
+    {
+        Diagnosis diagnosis = Doctor.Examine(MachineFor(bench), bench.Roots, Version);
+
+        string? only = args.Value("client");
+        if (only is not null && !Places.Clients.Contains(only))
+            return Failed(new Failure(Outcome.Invalid,
+                $"no client called '{only}'; they are: {string.Join(", ", Places.Clients)}"), json);
+
+        // --client narrows the REPORT, never the scan, so "it looked
+        // fine" can never mean "it only looked at one".
+        IReadOnlyList<ClientReport> shown = only is null
+            ? diagnosis.Clients
+            : [.. diagnosis.Clients.Where(c => c.Client == only)];
+
+        // --hook: silent when nothing is wrong, and ALWAYS exit 0. A
+        // diagnostic that can stop a session from starting will be
+        // removed within a week.
+        if (args.Has("hook"))
+        {
+            if (!diagnosis.AnyBroken && !diagnosis.AnyWarning) return Ok(string.Empty);
+
+            var brief = new StringBuilder("fettle doctor:").AppendLine();
+            foreach (ClientReport c in shown)
+                if (c.Verdict is Verdict.Broken or Verdict.Absent)
+                    brief.Append("  ").Append(c.Client).Append(' ').Append(Word(c.Level))
+                         .Append(": ").Append(Word(c.Verdict))
+                         .Append(" - ").AppendLine(c.Detail);
+
+            foreach (Finding f in diagnosis.Findings.Where(f => f.Serious))
+                brief.Append("  ").Append(f.Check).Append(": ").AppendLine(f.Message);
+
+            brief.AppendLine("  run: fettle doctor");
+            return Ok(brief.ToString());
+        }
+
+        if (json)
+            return Ok(Json(w =>
+            {
+                w.WriteStartObject("installation");
+                w.WriteString("binary", diagnosis.Install.Binary);
+                w.WriteString("version", diagnosis.Install.Version);
+                w.WriteBoolean("on_path", diagnosis.Install.OnPath);
+                if (diagnosis.Install.PathBinary is { } p) w.WriteString("path_binary", p);
+                w.WriteEndObject();
+
+                w.WriteStartArray("clients");
+                foreach (ClientReport c in shown)
+                {
+                    w.WriteStartObject();
+                    w.WriteString("client", c.Client);
+                    w.WriteString("level", Word(c.Level));
+                    w.WriteString("verdict", Word(c.Verdict));
+                    w.WriteString("detail", c.Detail);
+                    if (c.Where is { } where) w.WriteString("where", where);
+                    w.WriteEndObject();
+                }
+                w.WriteEndArray();
+
+                w.WriteStartArray("findings");
+                foreach (Finding f in diagnosis.Findings)
+                {
+                    w.WriteStartObject();
+                    w.WriteString("check", f.Check);
+                    w.WriteString("severity", f.Serious ? "serious" : "note");
+                    w.WriteString("message", f.Message);
+                    if (f.Where is { } where) w.WriteString("where", where);
+                    w.WriteEndObject();
+                }
+                w.WriteEndArray();
+            }), Code(diagnosis));
+
+        var text = new StringBuilder();
+        text.Append("fettle ").Append(diagnosis.Install.Version).Append("  ").AppendLine(diagnosis.Install.Binary);
+        text.Append("on PATH: ").AppendLine(diagnosis.Install.OnPath
+            ? diagnosis.Install.PathBinary
+            : "no - every registration naming a bare 'fettle' will fail to launch");
+        text.AppendLine();
+
+        foreach (ClientReport c in shown)
+        {
+            if (args.Has("quiet") && c.Verdict is Verdict.NotApplicable or Verdict.Healthy) continue;
+            text.Append(c.Client.PadRight(16)).Append(Word(c.Level).PadRight(8))
+                .Append(Word(c.Verdict).PadRight(10))
+                .AppendLine(c.Detail);
+            if (c.Where is { } where) text.Append(' ', 24).AppendLine(where);
+        }
+
+        if (diagnosis.Findings.Count > 0)
+        {
+            text.AppendLine().AppendLine("what could let the assistant go round the boundary:");
+            foreach (Finding f in diagnosis.Findings)
+            {
+                text.Append("  ").Append(f.Serious ? "! " : "- ").Append(f.Check).Append("  ").AppendLine(f.Message);
+                if (f.Where is { } where) text.Append(' ', 6).AppendLine(where);
+            }
+        }
+
+        return new CliResult(Code(diagnosis), text.ToString(), string.Empty);
+    }
+
+    /// <summary>0 healthy or not applicable, 1 warnings only, 2 anything
+    /// broken - so a script can act without reading prose.</summary>
+    static int Code(Diagnosis diagnosis) =>
+        diagnosis.AnyBroken ? 2 : diagnosis.AnyWarning ? 1 : 0;
+
+    static string Word(Level level) => level == Level.Global ? "global" : "repo";
+
+    /// <summary>The verdict as it reads in a column. "n/a" rather than
+    /// "notapplicable", because the long form is both ugly and wider than
+    /// the column, and n/a is what the report means.</summary>
+    static string Word(Verdict verdict) => verdict switch
+    {
+        Verdict.NotApplicable => "n/a",
+        Verdict.Absent => "absent",
+        Verdict.Broken => "broken",
+        _ => "healthy",
+    };
+
+    static CliResult Setup(Bench bench, Arguments args, bool json)
+    {
+        if (args.At(0) is not { } client && !args.Has("all"))
+            return Failed(new Failure(Outcome.Invalid,
+                $"setup needs a client, or --all; the clients are: {string.Join(", ", Places.Clients)}"), json);
+
+        if (args.Has("global") && args.Has("local"))
+            return Failed(new Failure(Outcome.Invalid, "setup takes --global or --local, not both"), json);
+
+        Machine machine = MachineFor(bench);
+        Level level = args.Has("global") ? Level.Global : Level.Repo;
+
+        IReadOnlyList<string> clients = args.Has("all") ? Places.Clients : [args.At(0)!];
+
+        var changes = new List<Change>();
+        var notes = new List<string>();
+
+        foreach (string one in clients)
+        {
+            Result<Scaffolding> done = Scaffold.Apply(machine, new Scaffold.Options(
+                one, level,
+                DryRun: args.Has("dry-run"),
+                Force: args.Has("force"),
+                Hooks: args.Has("hooks"),
+                Deny: args.Has("deny"),
+                Command: args.Value("command")), Version);
+
+            // --all skips what does not apply on this machine rather than
+            // failing the run, which is the whole point of asking for all.
+            if (!done.IsOk)
+            {
+                if (args.Has("all") && done.Failure!.Outcome == Outcome.Invalid) continue;
+                return Failed(done.Failure!, json);
+            }
+
+            changes.AddRange(done.Value.Changes);
+            notes.AddRange(done.Value.Notes);
+        }
+
+        if (json)
+            return Ok(Json(w =>
+            {
+                w.WriteBoolean("dry_run", args.Has("dry-run"));
+                w.WriteStartArray("changes");
+                foreach (Change c in changes)
+                {
+                    w.WriteStartObject();
+                    w.WriteString("path", c.Path);
+                    w.WriteString("what", c.What);
+                    w.WriteBoolean("applied", c.Applied);
+                    if (c.Backup is { } backup) w.WriteString("backup", backup);
+                    w.WriteEndObject();
+                }
+                w.WriteEndArray();
+                w.WriteStartArray("notes");
+                foreach (string n in notes) w.WriteStringValue(n);
+                w.WriteEndArray();
+            }));
+
+        var human = new StringBuilder();
+        human.AppendLine(args.Has("dry-run") ? "would change:" : "changed:");
+        foreach (Change c in changes)
+        {
+            human.Append("  ").Append(c.Path).Append("  ").AppendLine(c.What);
+            if (c.Backup is { } backup) human.Append("     backed up to ").AppendLine(backup);
+        }
+        if (changes.Count == 0) human.AppendLine("  nothing; it was already as it should be");
+
+        foreach (string n in notes) human.Append("note: ").AppendLine(n);
+
+        return Ok(human.ToString());
     }
 
     // ---- mutating verbs ----
@@ -497,6 +774,7 @@ public static class Command
                 w.WriteNumber("bytes", s.Bytes);
                 w.WriteString("encoding", s.EncodingName);
                 w.WriteString("line_ending", TextIo.EndingName(s.LineEnding));
+                w.WriteBoolean("line_ending_mixed", s.MixedEndings);
                 w.WriteBoolean("final_newline", s.FinalNewline);
                 w.WriteString("hash", s.Hash);
                 WriteLost(w, s.MetadataLost);
@@ -505,7 +783,7 @@ public static class Command
         var human = new StringBuilder()
             .Append(s.Created ? "wrote " : "replaced ").Append(Show(bench, s.Path))
             .Append("  ").Append(s.Bytes).Append(" bytes  ").Append(s.EncodingName)
-            .Append("  ").Append(TextIo.EndingName(s.LineEnding))
+            .Append("  ").Append(TextIo.EndingName(s.LineEnding)).Append(s.MixedEndings ? " (MIXED)" : "")
             .Append("  final-newline: ").AppendLine(s.FinalNewline ? "yes" : "no");
 
         AppendLost(human, s.MetadataLost);
@@ -546,6 +824,7 @@ public static class Command
                     w.WriteString("path", Show(bench, f.Path));
                     w.WriteNumber("edits", f.EditsApplied);
                     w.WriteString("hash", f.Hash);
+                    w.WriteBoolean("line_ending_mixed", f.MixedEndings);
                     WriteLost(w, f.MetadataLost);
                     w.WriteEndObject();
                 }
@@ -569,7 +848,8 @@ public static class Command
                  .Append(answer.Files.Count).AppendLine(answer.Files.Count == 1 ? " file" : " files");
             foreach (EditedFile f in answer.Files)
             {
-                human.Append("   ").Append(Show(bench, f.Path)).Append("  ").AppendLine(f.Hash[..12]);
+                human.Append("   ").Append(Show(bench, f.Path)).Append("  ").Append(f.Hash[..12])
+                     .AppendLine(f.MixedEndings ? "  (MIXED line endings)" : "");
                 AppendLost(human, f.MetadataLost);
             }
         }
@@ -833,6 +1113,8 @@ public static class Command
 
     static CliResult Ok(string stdout) => new(ExitCodes.Ok, stdout, string.Empty);
 
+    static CliResult Ok(string stdout, int code) => new(code, stdout, string.Empty);
+
     /// <summary>
     /// R3.7 in one place: a failure in machine-readable mode is a
     /// complete result on <b>stdout</b>, never on stderr, because a
@@ -910,19 +1192,17 @@ public static class Command
         fettle - find, search, read, write, edit, move, copy, delete, and run a declared task.
 
         Global flags, accepted by every verb:
-          --root NAME=PATH     a root, repeatable; paths are then written name:path.
-                               Prefer an ABSOLUTE path: a relative one binds the
-                               boundary to the current directory, so the same
-                               command means different things from different
-                               places. `roots` says what is declared, and where
-                               it was declared.
-                               With no --root at all, the nearest .fettler.json
-                               at or above the current directory declares them,
-                               and its paths are read relative to ITSELF - so
-                               the boundary is the same from anywhere in the
-                               tree. Failing that, the current directory.
-          --config PATH        use this .fettler.json rather than searching
-          --no-config          do not search; the current directory is the root
+          --config PATH        the .fettler.json to use, rather than searching
+          --root PATH          a tree for READING only, repeatable as NAME=PATH.
+                               It cannot grant write at any level: to write to a
+                               tree, put a .fettler.json in it. With neither flag,
+                               the nearest .fettler.json at or above the current
+                               directory declares the trees, and its paths are read
+                               relative to ITSELF - so the boundary is the same from
+                               anywhere inside the tree. With none of those, fettle
+                               refuses: there is no implicit current directory.
+          --no-config          do not search for one, so a command refuses as it
+                               would from outside any configured tree
           --json               the machine-readable result, complete, on stdout
           --include-generated  do not skip bin, obj, .git, artifacts, node_modules
           --exclude GLOB       skip more, repeatable
@@ -935,6 +1215,8 @@ public static class Command
                  --pattern-stdin, one per line, so a shell never gets to
                  eat a quote out of it.
           read PATH... [--from N] [--to N]
+                 Text, notebooks, PDFs and images. Stops at 2000 lines and says
+                 how many are left; --to asks for more.
           write PATH --stdin [--overwrite] [--encoding E] [--eol lf|crlf]
           edit PATH [--expect HASH] [--dry-run] and one of:
                  --replace S --with S [--between 120-140] [--all]
@@ -952,16 +1234,33 @@ public static class Command
           delete PATH [--recursive] [--force]
           exec PATH --on | --off
           tasks
-          roots                 the declared roots, their paths, and which is default
+          roots                 the trees, their paths, and what may be done in each
           run NAME [--timeout SECONDS]
           batch --script FILE
+          doctor [--client NAME] [--quiet] [--hook]
+                 whether this tool is wired into each assistant client, at both
+                 levels, and what still lets the boundary be gone round
+          setup CLIENT | --all [--global | --local] [--dry-run] [--force]
+                [--hooks] [--deny] [--command PATH]
+                 clients: claude-code, claude-desktop, vscode-copilot, github-copilot
           serve                 become the MCP front end on stdio
+
+        Permissions, granted only by a .fettler.json:
+          list read create update rename delete execute
+          The tree that file sits in gets all but execute; every other tree gets
+          list read. execute is never a default anywhere. A scope inside a tree
+          replaces what the tree grants, so it can take a permission away, and a
+          scope with no `list` is not there at all as far as find and search go.
+          .fettler.json, .fettler.local.json and fettle-tasks say what this tool
+          may do, and it does not write them. See docs/fettler-boundary.html.
 
         An unknown flag is refused, never ignored: ignoring one would eat the
         argument after it and answer a different question confidently.
 
         Exit codes: 0 ok, 2 invalid, 3 not-found, 4 outside-root, 5 target-exists,
-                    6 stale, 7 conflict, 8 refused, 9 denied, 10 timed-out.
+                    6 stale, 7 conflict, 8 refused, 9 denied, 10 timed-out,
+                    11 governed. doctor answers 0, 1 for warnings, 2 for broken.
 
         """;
 }
+

@@ -261,7 +261,7 @@ public static class TextIo
     /// exactly what nobody notices - it stayed invisible here until git
     /// complained about it, two commits after it was introduced.</para>
     /// </summary>
-    static bool Mixed(IReadOnlyList<Line> lines)
+    public static bool Mixed(IReadOnlyList<Line> lines)
     {
         bool lf = false, crlf = false, cr = false;
         foreach (Line line in lines)

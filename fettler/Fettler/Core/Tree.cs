@@ -108,7 +108,20 @@ public static class Tree
         var found = new List<FoundFile>();
         int excluded = 0;
 
-        Walk(root, root, rootName, excludes, found, ref excluded, pattern, since);
+        // Defect 1.3: start where the pattern says, rather than walking
+        // everything and discarding it. A prefix naming a directory that
+        // is not there means no file can match, so the walk is the empty
+        // one rather than the whole tree.
+        string from = root;
+        if (pattern is not null && pattern.FixedPrefix is { Length: > 0 } prefix)
+        {
+            string start = Path.Combine(root, prefix.Replace('/', Path.DirectorySeparatorChar));
+            if (!Roots.IsWithin(root, start) || !Directory.Exists(start))
+                return new Bounded<FoundFile>([], false, 0);
+            from = start;
+        }
+
+        Walk(roots, root, from, rootName, excludes, found, ref excluded, pattern, since);
 
         // R4.12: order before any limit is applied, so two runs over an
         // unchanged tree return the same hits in the same order. A
@@ -130,9 +143,18 @@ public static class Tree
     }
 
     static void Walk(
-        string root, string directory, string rootName, Excludes excludes,
+        Roots roots, string root, string directory, string rootName, Excludes excludes,
         List<FoundFile> into, ref int excluded, Glob? pattern, DateTimeOffset? since)
     {
+        Grant grant = roots.GrantOf(rootName);
+        bool scoped = grant.Scopes.Count > 0;
+
+        // B.6: absent `list` is not "may not be enumerated", it is "is
+        // not there". Nothing hidden reaches the results, the excluded
+        // COUNT, or the time the walk takes - a total that moved when a
+        // scope was hidden would be a way to probe for it.
+        bool Listable(string full) => !scoped || grant.At(root, full).Can.HasFlag(Permission.List);
+
         IEnumerable<string> entries;
         try
         {
@@ -155,6 +177,10 @@ public static class Tree
 
             if (isDirectory)
             {
+                // Before the exclusion count, so a hidden directory adds
+                // nothing to any total.
+                if (!Listable(entry)) continue;
+
                 if (excludes.SkipsDirectory(name)) { excluded += CountUnder(entry); continue; }
 
                 // A directory that is a link is not descended into: the
@@ -163,9 +189,11 @@ public static class Tree
                 // and risk a cycle.
                 if (Facts(entry, isDirectory: true).Link != LinkKind.None) continue;
 
-                Walk(root, entry, rootName, excludes, into, ref excluded, pattern, since);
+                Walk(roots, root, entry, rootName, excludes, into, ref excluded, pattern, since);
                 continue;
             }
+
+            if (!Listable(entry)) continue;
 
             string relative = Path.GetRelativePath(root, entry).Replace('\\', '/');
             if (excludes.SkipsPath(relative)) { excluded++; continue; }
@@ -179,7 +207,7 @@ public static class Tree
             if (since is not null && modified <= since.Value) continue;
 
             into.Add(new FoundFile(
-                new ContainedPath(rootName, entry, relative),
+                roots.Describe(rootName, entry, relative),
                 Safe(() => info.Length, 0L),
                 modified,
                 Facts(entry, isDirectory: false)));

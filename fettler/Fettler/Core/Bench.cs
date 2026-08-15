@@ -35,7 +35,18 @@ public sealed record ReadSlice(
     bool FinalNewline,
     string Hash,
     long Bytes,
-    FileFacts Facts);
+    FileFacts Facts,
+    FileKind Kind = FileKind.Text,
+    ImageFacts? Image = null)
+{
+    /// <summary>Whether the answer stops short of the end of the file.
+    /// Named rather than left to be worked out from three numbers,
+    /// because a truncated answer that reads as a complete one is how a
+    /// caller confidently acts on half a file (R4.10).</summary>
+    public bool Truncated => To < TotalLines;
+
+    public int Remaining => Math.Max(0, TotalLines - To);
+}
 
 public sealed record ReplacePlan(string Path, int Occurrences);
 
@@ -133,6 +144,23 @@ public sealed class Bench : IDisposable
     /// MCP front end a call costs a model turn, which is seconds and a
     /// block of context against a few milliseconds of reading.
     /// </summary>
+    /// <summary>
+    /// How many lines <c>read</c> answers when the caller did not say.
+    ///
+    /// <para><b>9b.8, and it is a context bug rather than a safety
+    /// one.</b> <c>find</c> stops at a thousand and <c>search</c> at two
+    /// hundred; <c>read</c> had no limit at all and answered the whole
+    /// file. The assistant's own reader truncates at two thousand - so
+    /// denying that one and routing everything through an uncapped
+    /// <c>read</c> would have made the context budget WORSE, quietly, and
+    /// the tool would have got the blame for feeling slow.</para>
+    ///
+    /// <para>Two thousand matches what it replaces, so nobody has to
+    /// relearn a number. Saying <c>to</c> lifts the cap: an explicit
+    /// range is a caller who knows what they are asking for.</para>
+    /// </summary>
+    public const int DefaultLineCap = 2000;
+
     public Result<IReadOnlyList<ReadSlice>> Read(ReadRequest request)
     {
         if (request.Paths.Count == 0)
@@ -141,29 +169,81 @@ public sealed class Bench : IDisposable
         var slices = new List<ReadSlice>(request.Paths.Count);
         foreach (string given in request.Paths)
         {
-            Result<ContainedPath> path = Roots.Resolve(given);
+            Result<ContainedPath> path = Roots.Resolve(given, Permission.Read);
             if (!path.IsOk) return path.Carry<IReadOnlyList<ReadSlice>>();
 
-            Result<TextFile> read = TextIo.Read(path.Value);
-            if (!read.IsOk) return read.Carry<IReadOnlyList<ReadSlice>>();
-
-            TextFile file = read.Value;
-            int from = Math.Max(1, request.From ?? 1);
-            int to = Math.Min(file.LineCount, request.To ?? file.LineCount);
-            if (to < from) to = from - 1;
-
-            string text = to < from
-                ? string.Empty
-                : TextIo.Join(file.Lines.Skip(from - 1).Take(to - from + 1));
-
-            slices.Add(new ReadSlice(
-                path.Value, text, from, to, file.LineCount, file.EncodingName,
-                TextIo.EndingName(file.LineEnding), file.MixedEndings, file.FinalNewline,
-                file.Hash, file.Bytes,
-                Tree.Facts(path.Value.Full, isDirectory: false)));
+            Result<ReadSlice> one = ReadOne(path.Value, request);
+            if (!one.IsOk) return one.Carry<IReadOnlyList<ReadSlice>>();
+            slices.Add(one.Value);
         }
 
         return Result<IReadOnlyList<ReadSlice>>.Ok(slices);
+    }
+
+    Result<ReadSlice> ReadOne(ContainedPath path, ReadRequest request)
+    {
+        FileKind kind = Typed.KindOf(path.Full);
+
+        // An image has no lines, so the line machinery below would answer
+        // nonsense. It gets its own shape: the facts, and the bytes for
+        // whoever can show them.
+        if (kind == FileKind.Image)
+        {
+            Result<ImageFacts> image = Typed.ReadImage(path);
+            if (!image.IsOk) return image.Carry<ReadSlice>();
+
+            return Result<ReadSlice>.Ok(new ReadSlice(
+                path, string.Empty, 0, 0, 0, "binary", "none", false, false,
+                TextIo.HashOf(image.Value.Content), image.Value.Bytes,
+                Tree.Facts(path.Full, isDirectory: false), kind, image.Value));
+        }
+
+        // A notebook and a PDF are rendered to text and then sliced like
+        // any other text, so --from and --to mean the same thing for
+        // every kind and a caller has one rule to learn.
+        Result<string> rendered = kind switch
+        {
+            FileKind.Notebook => Typed.ReadNotebook(path),
+            FileKind.Pdf => Typed.ReadPdf(path),
+            _ => Result<string>.Ok(string.Empty),
+        };
+
+        if (!rendered.IsOk) return rendered.Carry<ReadSlice>();
+
+        TextFile file;
+        if (kind is FileKind.Notebook or FileKind.Pdf)
+        {
+            Result<byte[]> raw = TextIo.ReadBytes(path);
+            if (!raw.IsOk) return raw.Carry<ReadSlice>();
+
+            IReadOnlyList<Line> lines = TextIo.SplitLines(rendered.Value);
+            file = new TextFile(path, rendered.Value, lines, "utf-8", LineEnding.Lf, false,
+                lines.Count > 0 && lines[^1].Ending.Length > 0,
+                // The hash is of the FILE, not of the rendering, because
+                // its job is to prove the file on disk has not moved.
+                TextIo.HashOf(raw.Value), raw.Value.Length);
+        }
+        else
+        {
+            Result<TextFile> read = TextIo.Read(path);
+            if (!read.IsOk) return read.Carry<ReadSlice>();
+            file = read.Value;
+        }
+
+        int from = Math.Max(1, request.From ?? 1);
+        int to = request.To ?? Math.Min(file.LineCount, from + DefaultLineCap - 1);
+        to = Math.Min(file.LineCount, to);
+        if (to < from) to = from - 1;
+
+        string text = to < from
+            ? string.Empty
+            : TextIo.Join(file.Lines.Skip(from - 1).Take(to - from + 1));
+
+        return Result<ReadSlice>.Ok(new ReadSlice(
+            path, text, from, to, file.LineCount, file.EncodingName,
+            TextIo.EndingName(file.LineEnding), file.MixedEndings, file.FinalNewline,
+            file.Hash, file.Bytes,
+            Tree.Facts(path.Full, isDirectory: false), kind));
     }
 
     public Result<IReadOnlyList<TaskDecl>> TaskList() => Tasks.Read(Roots);
@@ -174,7 +254,10 @@ public sealed class Bench : IDisposable
         string? encoding = null, string? lineEnding = null, CancellationToken cancel = default) =>
         Mutating(() =>
         {
-            Result<ContainedPath> p = Roots.Resolve(path);
+            // Create if nothing is there, update if something is: the
+            // caller wrote one command, but which permission it needs is
+            // a fact about the tree, not about the wording.
+            Result<ContainedPath> p = Roots.ResolveForWrite(path);
             if (!p.IsOk) return p.Carry<Saved>();
 
             // R4.2: a file that arrived as CRLF with a BOM leaves that

@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Fettler's boundary — trees, scopes, the seven permissions, where a permission may come from, and the three files this tool will not write.">
+<title>Fettler: the Boundary | Shoddy</title>
+<link rel="stylesheet" href="style.css">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="alternate icon" href="favicon.ico" sizes="48x48">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+</head>
+<body>
+<div class="topbar"><div class="inner">
+  <div class="row">
+    <a class="phase" href="index.html"><img class="mark" src="media/brand/shoddy-icon.svg" alt="" width="23" height="23">Shoddy · Documentation</a>
+    <span class="spacer"></span>
+    <nav class="docnav meta" aria-label="About"><a href="heritage.html">Heritage</a><a href="authorship.html">Authorship</a></nav>
+  </div>
+  <nav class="docnav main" aria-label="Documentation"><a href="tutorials/index.html">Tutorials</a><a href="guide.html">Guide</a><a href="quickref.html">Reference</a><a href="machines/index.html">Machines</a><a href="mills/index.html">Mills</a><a href="stack.html">Stack</a><a href="spec.html">Spec</a><a href="setup.html">Setup</a><a href="vscode.html">VS Code</a><a href="assistants.html">AI</a><a href="build.html">Toolchain</a><a href="hosting.html">Hosting</a><span class="here">Fettler</span><a href="errors.html">Errors</a></nav>
+</div></div>
+<div class="wrap">
+<header class="mast">
+<p class="eyebrow">Shoddy Documentation · Fettler</p>
+<h1 id="boundary">The Boundary</h1>
+<p class="kicker">Trees, scopes, the seven permissions, and the three files this tool will not write. Read this when deciding policy.</p>
+</header>
+
+<p>Every path Fettler touches lies inside a <b>tree</b> somebody declared,
+and everything that may be done inside one is stated rather than assumed.
+This page is what to read before writing a <code>.fettler.json</code>. The
+verbs are on <a href="fettler.html">the Fettler page</a>; wiring it into a
+client is on <a href="fettler-setup.html">the setup page</a>.</p>
+
+<div class="takeaway"><b>The threat is inadvertent assistant action. It is
+not a determined person.</b> Whoever runs Fettler can open a terminal and
+do anything they like; nothing here tries to stop them, and a design that
+did would be both impossible and insulting. The measure of success is that
+a careless assistant cannot widen its own boundary — not that the boundary
+cannot be widened.</div>
+
+<h2 id="model">1. A tree, and scopes inside it</h2>
+
+<p>A tree is a path and a set of permissions. Permissions may be narrowed —
+or widened — at any depth inside it by a <b>scope</b>. The most specific
+scope containing a path decides, and it <b>replaces</b> rather than adds,
+so a scope can take a permission away.</p>
+
+<div class="code"><pre><code>{
+  "trees": {
+    "work": {
+      "path": ".",
+      "can": ["list", "read", "create", "update", "rename", "delete"]
+    },
+    "curriculum": {
+      "path": "../shoddy-curriculum",
+      "can": ["list", "read"],
+      "scopes": {
+        "requirements":           { "can": ["list", "read", "create", "update", "rename"] },
+        "requirements/cancelled": { "can": [] }
+      }
+    }
+  }
+}</code></pre></div>
+
+<p>That reads: the curriculum is readable throughout; its
+<code>requirements</code> folder may be added to, changed and reorganised
+but never destroyed; and <code>cancelled</code> is not there at all as far
+as anything can tell.</p>
+
+<p><b>A tree, not a repository.</b> A folder with no version control in it
+is the ordinary case, not an exception. Nothing in the configuration, the
+default names or this page assumes a checkout, a remote or a
+<code>.git</code>.</p>
+
+<h2 id="permissions">2. The seven permissions</h2>
+
+<table>
+<tr><th>Verb</th><th>Grants</th></tr>
+<tr><td><code>list</code></td><td>appears in <code>find</code> and <code>search</code>. <b>Absent means hidden</b> — the path does not exist as far as anything can tell.</td></tr>
+<tr><td><code>read</code></td><td>content may be read</td></tr>
+<tr><td><code>create</code></td><td>a file or directory that is not there may be made</td></tr>
+<tr><td><code>update</code></td><td>an existing file's content may be changed</td></tr>
+<tr><td><code>rename</code></td><td>may be renamed, or moved <b>within this scope or into a descendant of it</b></td></tr>
+<tr><td><code>delete</code></td><td>may be removed — <em>and</em> moved <b>out</b> of this scope, which from here is the same thing</td></tr>
+<tr><td><code>execute</code></td><td>a declared task may run with this as its working directory</td></tr>
+</table>
+
+<p><b>Move is two permissions, not one.</b> Moving into a subfolder needs
+<code>rename</code> on the source and <code>create</code> at the
+destination. Moving <em>out</em> of a scope needs <code>delete</code> as
+well, because a file that leaves is gone from here either way. That is
+what makes "may reorganise, may not destroy" expressible at all.</p>
+
+<p>A move that <em>replaces</em> something needs <code>delete</code> at the
+destination too, whatever the verb was called: replacing a file destroys
+it.</p>
+
+<h3 id="recursive">Verbs that do not name what they touch</h3>
+
+<p>A recursive delete and a recursive copy reach paths nobody wrote down,
+which is how a protected scope gets taken anyway. Both are refused when a
+scope inside the target does not grant what the operation needs. The
+refusal names no path — saying <em>where</em> would tell a caller where a
+hidden scope is — so it costs one bit of information and buys a
+destructive operation refused out loud instead of half-done in
+silence.</p>
+
+<h2 id="defaults">3. The defaults, which are the safe ones</h2>
+
+<table>
+<tr><th>Situation</th><th>Default</th></tr>
+<tr><td>The tree the configuration file sits in</td><td><code>list read create update rename delete</code></td></tr>
+<tr><td><b>Every other tree</b></td><td><code>list read</code> — strictly read-only, overridable only in a configuration file</td></tr>
+<tr><td><code>execute</code>, anywhere</td><td><b>never</b> granted by default, in any tree, including the one the file sits in</td></tr>
+<tr><td>No tree declared at all</td><td><b>refuse, and say how to declare one.</b> There is no implicit current directory, ever.</td></tr>
+</table>
+
+<p>The default is decided by <em>where</em> the tree is, not by how its
+path was spelled, so <code>"."</code> and an absolute path to the same
+folder mean the same thing.</p>
+
+<p><b>Why there is no implicit current directory.</b> There used to be:
+with no flag and no configuration, the folder you happened to be in became
+a tree. That is the "searching around" this boundary exists to stop, and
+it failed in the one direction a containment mistake must never fail in —
+a current directory usually sits <em>above</em> the tree somebody meant,
+so the fallback silently widened the boundary at exactly the moment
+nobody had stated one.</p>
+
+<h2 id="whence">4. Where a permission may come from</h2>
+
+<p>This is the load-bearing rule, and it is the answer to
+<code>--root</code>.</p>
+
+<table>
+<tr><th>Source</th><th>May grant</th></tr>
+<tr><td>A <code>.fettler.json</code> in the tree</td><td><b>anything.</b> Writing one is a deliberate, reviewable act by a person, inside the tree it governs.</td></tr>
+<tr><td><code>--config PATH</code></td><td><b>anything</b>, because naming a file is the same deliberate act.</td></tr>
+<tr><td><code>--root PATH</code> on a command line</td><td><b><code>list read</code>, and nothing else, with no override.</b></td></tr>
+</table>
+
+<p><code>--root</code> stays because the MCP server has to be launched
+somehow and because ad-hoc reading is genuinely useful. It can no longer
+hand anybody write access. <b>To write to a tree you put a file in it.</b></p>
+
+<p>The single exception, and the only one: <b><code>setup</code> may write
+outside every tree</b>, to a compiled-in list of client-configuration
+paths and nowhere else — the same closed list <code>doctor</code> reads.
+Nothing else in the tool may write outside a tree that granted it.</p>
+
+<h2 id="rules">5. Fettler never writes its own rules</h2>
+
+<div class="takeaway"><b>This is the rule that makes every other rule
+hold.</b> Without it the permission model is decoration.</div>
+
+<p>The demonstration was two commands long, and it worked:</p>
+
+<div class="code"><pre><code>$ fettle --root tmp=... write tmp:fettle-tasks --stdin
+wrote fettle-tasks  72 bytes
+
+$ fettle --root tmp=... run probe
+probe: exit 0 in 0.0s
+[stdout] I-WROTE-THIS-TASK-MYSELF-THEN-RAN-IT</code></pre></div>
+
+<p>Fettler wrote its own task declaration and then executed it. It could
+write <code>.fettler.json</code> the same way — the file the permissions
+come from. So two things follow.</p>
+
+<p><b><code>execute</code> must not be a default, even on the tree the
+configuration sits in.</b> That tree is writable by definition and
+<code>fettle-tasks</code> lives inside it, so write-by-default plus
+execute-by-default is arbitrary code execution — and it defeats every
+other permission at once, because a scope protected from
+<code>delete</code> means nothing to a task that can run
+<code>del</code>.</p>
+
+<p><b>And an explicit grant is not enough on its own.</b> If the task file
+can be written by the thing the grant applies to, the grant has no bound:
+whoever holds <code>execute</code> also chooses what executes.</p>
+
+<p>Therefore, compiled in and not configurable at any permission level:</p>
+
+<table>
+<tr><th>File</th><th>Rule</th></tr>
+<tr><td><code>fettle-tasks</code></td><td>never created, written, edited, renamed, moved or deleted through Fettler</td></tr>
+<tr><td><code>.fettler.json</code></td><td>as above</td></tr>
+<tr><td><code>.fettler.local.json</code></td><td>as above</td></tr>
+</table>
+
+<p>Matched by name at any depth, so a configuration in a subdirectory is
+protected too; and matched by <em>name</em>, so
+<code>fettle-tasks.md</code> and <code>.fettler.json.bak</code> are
+ordinary files. Reading them is fine and stays fine — a caller asking what
+the rules are is the opposite of the problem.</p>
+
+<p>The refusal has its own outcome and its own wording — <em>these are the
+rules this tool works under, and it does not edit them</em> — and its own
+exit code, <b>11</b>. It is deliberately not a permission denial, because
+nothing is missing: no grant would have allowed it, and a caller sent
+looking for one is being sent somewhere there is nothing to find.
+<code>setup</code> may <b>create</b> a configuration where none exists;
+changing one is a person's job with an ordinary editor.</p>
+
+<h2 id="assistant">6. Why an assistant cannot override any of this</h2>
+
+<p>Worth stating plainly, because it is the whole point.</p>
+
+<ul>
+<li><b>A model never supplies the boundary.</b> The MCP server learns its
+trees at launch, from a client configuration a person wrote, before the
+model has said anything. Every tool call then runs against a boundary
+fixed at that moment.</li>
+<li><b>No tool can name a tree it was not given.</b> No tool schema
+carries a root or a config flag, and a test asserts that none ever will.
+The only related field is <code>in</code>, which <em>selects among</em>
+trees already open.</li>
+<li><b><code>--root</code> cannot grant write at all</b>, so even a
+careless launch cannot hand write access to anybody.</li>
+<li><b>And the model cannot edit the files that would grant it more.</b>
+That was the actual hole: not the flag, but that the tool would happily
+rewrite the document governing it and then act on the new version.</li>
+</ul>
+
+<p>So the answer to <em>why does an MCP server need a root</em> is that it
+does not need <code>--root</code> — it needs <b>a boundary, from a source
+the model cannot write</b>. A file in the tree is that source.</p>
+
+<h2 id="hidden">7. Hidden is not secret</h2>
+
+<p>A scope with no <code>list</code> is absent from <code>find</code> and
+<code>search</code>, absent from their counts and totals, and a direct
+path to it is refused <b>in the same words</b> as a path outside every
+tree — including a path to a file that was never there. The difference
+between hidden and absent cannot be probed.</p>
+
+<p>It is not encryption and does not pretend to be. Somebody at a terminal
+can open the folder. What it stops is an assistant finding cancelled
+requirements by searching and reading them back as current.</p>
+
+<h2 id="local">8. A personal overlay</h2>
+
+<p>The checked-in <code>.fettler.json</code> can only name trees that ship
+with the tree itself, because a tree that does not exist is a startup
+failure. A gitignored <code>.fettler.local.json</code> beside it is merged
+over the top, so a machine's own trees need not be typed on every
+command.</p>
+
+<p>A name in both files is the overlay's <b>entirely</b> rather than
+field-by-field: nobody reading two files side by side could say what a
+field-level merge produced without running it. Merging is right here and
+wrong for <code>--root</code>, and the difference is that this is one
+tree's configuration layered on itself, not a caller overriding a tree.</p>
+
+<h2 id="threat">9. What this defends against, and what it does not</h2>
+
+<p>The bound stated at the top is load-bearing, because it says how far
+each rule has to go.</p>
+
+<ul>
+<li><b>The rule-file refusal has to be reliable, not tamper-proof.</b> It
+must never be reached by a tool call in normal use. It does not have to
+survive somebody editing <code>.fettler.json</code> in a text editor —
+that person is the author of the rules, not a threat to them.</li>
+<li><b>No integrity checking, no signing, no lockfiles.</b> All of that
+defends against an adversary who is not in the model.</li>
+<li><b>Path comparison is what containment is.</b> It does not defend
+against another process replacing a component between the check and the
+operation. Closing that needs operating-system support this does not have,
+and a synced folder — Dropbox, OneDrive, a network share — is where it is
+likeliest to matter. Those are ordinary trees and get no special handling,
+because none exists and none is wanted.</li>
+</ul>
+
+<p>Stated because the alternative is scope creep: every rule here could be
+hardened indefinitely against an attacker nobody is worried about.</p>
+
+<h2 id="migration">10. What changed, for anyone upgrading</h2>
+
+<p>Four breaking changes, and each one is a thing that used to work.</p>
+
+<table>
+<tr><th>Was</th><th>Is</th></tr>
+<tr><td><code>{"roots": {"work": "."}}</code></td><td><code>{"trees": {"work": {"path": "."}}}</code>. The old shape is <b>refused</b>, with the migration named, rather than quietly reinterpreted — a root granted everything, and reading it as a tree would grant more than the file says.</td></tr>
+<tr><td><code>--root</code> granted full access</td><td><code>--root</code> grants <code>list read</code>. Write comes only from a file in the tree.</td></tr>
+<tr><td>No configuration meant the current directory</td><td>No configuration is a refusal naming how to declare a tree.</td></tr>
+<tr><td><code>run</code> worked wherever a task was declared</td><td><code>run</code> needs <code>execute</code>, which is never granted by default.</td></tr>
+</table>
+
+<footer>Named for the shoddy mills of the West Riding: Useless Things Made
+Useful Through Skill (<a href="heritage.html">the heritage of the name</a>).<br>
+&copy; 2026 Stephen Vincent Foster</footer>
+</div>
+</body>
+</html>

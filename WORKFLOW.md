@@ -190,7 +190,14 @@ merge is in progress, and neither branch nor tag already exists.
 
 Actions → **Release**. It verifies the tag matches `package.json`, rebuilds
 from scratch, composes the body from `release-notes/vX.Y.Z.md`, and publishes
-the GitHub Release with the `.vsix` and one sparky archive per OS attached.
+the GitHub Release with the `.vsix`, one sparky archive per OS and one
+fettle archive per OS attached. It also records a deployment for each of
+`sparky` and `fettler`, which is what puts them in the repo home's
+Deployments sidebar beside Pages.
+
+The unix archives are cut on the Linux runner deliberately: the execute
+bit only survives a tar made on a filesystem that has one, and a `fettle`
+that arrives without it does not run.
 
 ```powershell
 git log --oneline --graph -6      # feature bubble + release bubble

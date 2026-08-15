@@ -1,8 +1,16 @@
 name: Fettler
 
-# The Fettler host lane's CI, separate from core CI and path-filtered to
-# hosts/fettler/** - core CI ignores hosts/** entirely, so without this
-# file nothing builds or tests this lane at all.
+# Fettler's own CI, path-filtered to fettler/**.
+#
+# Fettler is NOT a host and does not live under hosts/. A host carries a
+# woven mill into some other kind of application; Fettler compiles
+# nothing, runs no mill, and references nothing in src/ (R1.2), so it
+# sits at the repository root beside machines/ and mills/ rather than
+# inside a folder describing something it is not.
+#
+# That placement is why ci.yml names fettler/** in its paths-ignore
+# alongside hosts/**: without it, every change here would drag the whole
+# mill build and test path along behind it for no reason.
 #
 # windows-latest AND macos-latest, both required and neither the
 # reference platform (R9.1). Several tests in R10 cannot execute on one
@@ -18,9 +26,9 @@ name: Fettler
 on:
   push:
     branches: [main]
-    paths: ['hosts/fettler/**', '.github/workflows/fettler.yml']
+    paths: ['fettler/**', '.github/workflows/fettler.yml']
   pull_request:
-    paths: ['hosts/fettler/**', '.github/workflows/fettler.yml']
+    paths: ['fettler/**', '.github/workflows/fettler.yml']
   workflow_dispatch:
 
 permissions:
@@ -39,15 +47,15 @@ jobs:
       - name: No project reference leaves the lane
         run: |
           if grep -rE '<ProjectReference[^>]*Include="[^"]*\.\.[/\\]\.\.[/\\]' \
-               hosts/fettler --include='*.csproj'; then
-            echo 'hosts/fettler must not reference any project outside its own lane (R1.2)'
+               fettler --include='*.csproj'; then
+            echo 'fettler must not reference any project outside its own lane (R1.2)'
             exit 1
           fi
 
       - name: No third-party package rides along in what ships
         run: |
           if grep -rE '<PackageReference' \
-               hosts/fettler/Fettler/Fettler.csproj hosts/fettler/fettle/fettle.csproj; then
+               fettler/Fettler/Fettler.csproj fettler/fettle/fettle.csproj; then
             echo 'the shipped projects take no package: the protocol is hand-rolled over System.Text.Json (R1.5)'
             exit 1
           fi
@@ -55,8 +63,8 @@ jobs:
       - name: The build twins have not drifted apart
         run: |
           for verb in build test release publish; do
-            grep -q "$verb" hosts/fettler/build.ps1 || { echo "build.ps1 lost $verb"; exit 1; }
-            grep -q "$verb" hosts/fettler/build.sh  || { echo "build.sh lost $verb";  exit 1; }
+            grep -q "$verb" fettler/build.ps1 || { echo "build.ps1 lost $verb"; exit 1; }
+            grep -q "$verb" fettler/build.sh  || { echo "build.sh lost $verb";  exit 1; }
           done
 
   lane:
@@ -77,26 +85,26 @@ jobs:
       # workload to pair with an exact SDK, as the MAUI lane does.
 
       - name: Build the lane
-        working-directory: hosts/fettler
+        working-directory: fettler
         run: dotnet build Fettler.slnx -c Release
 
       # R9.3: the hazards each have a test rather than a comment, and the
       # tests run on both platforms. The skip list is printed so a
       # platform-specific test that stopped running is visible.
       - name: Test the lane
-        working-directory: hosts/fettler
+        working-directory: fettler
         run: dotnet test Fettler.Tests -c Release --logger "console;verbosity=normal"
 
       # R2.5: drive the built binary end to end on every push, so the
       # shipped artefact cannot rot between releases. This is the
       # published single-file executable, not a dotnet run.
       - name: Publish the single-file executable
-        working-directory: hosts/fettler
+        working-directory: fettler
         run: dotnet publish fettle -c Release --self-contained -p:PublishSingleFile=true -o published
 
       - name: Drive it (unix)
         if: runner.os != 'Windows'
-        working-directory: hosts/fettler
+        working-directory: fettler
         run: |
           set -euo pipefail
           exe=./published/fettle
@@ -119,7 +127,7 @@ jobs:
 
       - name: Drive it (windows)
         if: runner.os == 'Windows'
-        working-directory: hosts/fettler
+        working-directory: fettler
         shell: pwsh
         run: |
           $exe = './published/fettle.exe'
@@ -143,7 +151,7 @@ jobs:
       # binary starts, answers, and stops when stdin closes.
       - name: Drive the MCP front end (unix)
         if: runner.os != 'Windows'
-        working-directory: hosts/fettler
+        working-directory: fettler
         run: |
           set -euo pipefail
           printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}' \
@@ -153,7 +161,7 @@ jobs:
 
       - name: Drive the MCP front end (windows)
         if: runner.os == 'Windows'
-        working-directory: hosts/fettler
+        working-directory: fettler
         shell: pwsh
         run: |
           $request = '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}'

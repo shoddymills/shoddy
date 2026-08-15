@@ -124,7 +124,12 @@ public static class ToolCatalogue
             }}
             """),
 
+        new("roots", "The declared roots, their paths, and which one an unqualified path lands in. Ask this before guessing why something was refused.", """
+            {"type":"object","properties":{}}
+            """),
+
         new("tasks", "The declared tasks and what each runs.", """
+
             {"type":"object","properties":{}}
             """),
 

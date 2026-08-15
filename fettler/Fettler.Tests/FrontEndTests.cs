@@ -249,7 +249,91 @@ public sealed class FrontEndTests
         }
     }
 
+    /// <summary>
+    /// Found by using the tool rather than by reading it: <c>--version</c>
+    /// parses as a flag and leaves no verb behind, so an empty-verb test
+    /// placed first swallowed it and printed the help. Both spellings are
+    /// asserted, because it is the flag form a script reaches for.
+    /// </summary>
+    [Theory]
+    [InlineData("--version")]
+    [InlineData("version")]
+    public async Task VersionAnswersTheVersionAndNotTheHelp(string spelling)
+    {
+        using var box = new Sandbox();
+
+        CliResult said = await Run(box, spelling);
+
+        Assert.Equal(ExitCodes.Ok, said.ExitCode);
+        Assert.StartsWith("fettle ", said.Stdout);
+        Assert.DoesNotContain("Global flags", said.Stdout);
+    }
+
+    [Fact]
+    public async Task HelpIsStillTheAnswerWhenNothingWasAsked()
+    {
+        using var box = new Sandbox();
+
+        Assert.Contains("Global flags", (await Run(box)).Stdout);
+        Assert.Contains("Global flags", (await Run(box, "help")).Stdout);
+    }
+
+    /// <summary>
+    /// R10.37 and R8.8: a caller can ask what it is bounded to, rather
+    /// than discovering the boundary by being refused by it.
+    /// </summary>
+    [Fact]
+    public async Task RootsAnswersEveryDeclaredRootAndWhichIsDefault()
+    {
+        using var box = new Sandbox("scratch");
+
+        CliResult listed = await Run(box, "roots", "--json");
+        JsonElement answer = Parse(listed.Stdout);
+
+        Assert.Equal(2, answer.GetProperty("count").GetInt32());
+
+        JsonElement first = answer.GetProperty("roots")[0];
+        Assert.Equal("root", first.GetProperty("name").GetString());
+        Assert.True(first.GetProperty("default").GetBoolean(),
+            "the first declared root is where an unqualified path lands");
+        Assert.Equal(box.Root, first.GetProperty("path").GetString());
+
+        JsonElement second = answer.GetProperty("roots")[1];
+        Assert.Equal("scratch", second.GetProperty("name").GetString());
+        Assert.False(second.GetProperty("default").GetBoolean());
+    }
+
+    /// <summary>
+    /// R8.4 survives the pointer R8.8 adds: the refusal names the
+    /// boundary in constant text, so it still cannot report whether
+    /// anything is there.
+    /// </summary>
+    [Fact]
+    public async Task TheOutsideRootRefusalPointsAtTheBoundaryWithoutLeaking()
+    {
+        using var box = new Sandbox();
+
+        string real = Path.Combine(Path.GetTempPath(), $"fettle-leak-{Guid.NewGuid():N}.txt");
+        File.WriteAllText(real, "here");
+        string absent = Path.Combine(Path.GetTempPath(), $"fettle-leak-{Guid.NewGuid():N}.txt");
+
+        try
+        {
+            CliResult present = await Run(box, "read", real, "--json");
+            CliResult missing = await Run(box, "read", absent, "--json");
+
+            Assert.Equal(missing.ExitCode, present.ExitCode);
+            Assert.Equal(missing.Stdout, present.Stdout);
+            Assert.Contains("roots", Parse(present.Stdout).GetProperty("message").GetString());
+        }
+        finally
+        {
+            File.Delete(real);
+        }
+    }
+
     // ---- R10.14: exit codes ----
+
 
     [Fact]
     public async Task EachFailureClassProducesItsOwnExitCode()
@@ -344,7 +428,7 @@ public sealed class FrontEndTests
         string[] verbs =
         [
             "find", "search", "read", "write", "edit", "replace", "new", "mkdir",
-            "move", "copy", "delete", "exec", "tasks", "run", "batch",
+            "move", "copy", "delete", "exec", "roots", "tasks", "run", "batch",
         ];
 
         foreach (string verb in verbs)

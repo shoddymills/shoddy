@@ -427,6 +427,18 @@ it. [The sparky page](https://shoddymills.github.io/shoddy/mills/sparky.html)
 carries the registration shapes for Claude Desktop, Claude Code and VS Code,
 and the grounding prompt the server also serves itself.
 
+Beside it is **fettle** — [Fettler](https://shoddymills.github.io/shoddy/fettler.html),
+the file, search and edit tools an assistant actually needs. Find,
+search, read, write, edit, replace, move, copy, delete and run a
+declared task, as one program with an MCP front end and a command line,
+bounded to roots you declare and with no shell anywhere between it and
+the file. It is what stops an assistant reaching your source tree
+through quoting rules that differ on every machine. Its page carries the
+registration for VS Code, GitHub Copilot, Claude Code and Claude
+Desktop, and the settings that make it the *only* route to the tree
+rather than merely an available one.
+
+
 ---
 
 ### Build from source

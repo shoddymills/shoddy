@@ -234,7 +234,8 @@ public sealed class Roots
 
     static Result<ContainedPath> Outside() =>
         // One message, whatever is or is not there (R8.4).
-        Result<ContainedPath>.Fail(Outcome.OutsideRoot, "the path is outside every declared root");
+        Result<ContainedPath>.Fail(Outcome.OutsideRoot,
+            "the path is outside every declared root; ask for the roots to see the boundary");
 
     // ---- names and components ----
 

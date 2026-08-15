@@ -14,6 +14,58 @@ namespace Fettler.Cli;
 /// path: there, a batch arrives inside the request as structured data,
 /// so there is no file and no question.</para>
 /// </summary>
+/// <summary>
+/// Where an edit's text comes from: the flag itself, a file, or stdin.
+///
+/// <para><b>R5.11, and it exists because the tool was awkward to use on
+/// its own documentation.</b> Supplying a paragraph of prose meant
+/// hand-escaping it into JSON - every quote, every newline - which is
+/// error-prone enough that the honest way to do it was to write a
+/// program that generated the edit script. Needing a second language to
+/// drive the editing tool is a defect in the editing tool, not a clever
+/// workaround, and a reader following the documentation would hit the
+/// same wall without necessarily having that second language.</para>
+///
+/// <para>So <c>--replace</c>, <c>--with</c> and <c>--text</c> each gain
+/// a <c>-file</c> and a <c>-stdin</c> spelling. The text then travels as
+/// bytes on a stream and no escaping happens anywhere.</para>
+/// </summary>
+sealed class TextSupply(Arguments args, TextReader stdin)
+{
+    bool stdinTaken;
+
+    public Result<string?> Read(string name)
+    {
+        if (args.Value(name) is { } inline) return Result<string?>.Ok(inline);
+
+        if (args.Value(name + "-file") is { } file)
+        {
+            try { return Result<string?>.Ok(File.ReadAllText(file)); }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+            {
+                return Result<string?>.Fail(Outcome.NotFound,
+                    $"cannot read --{name}-file: {e.Message}", file);
+            }
+        }
+
+        if (args.Has(name + "-stdin"))
+        {
+            // Stdin is one stream and can be spent once. Two flags
+            // claiming it would silently give the second one nothing,
+            // which is the kind of quiet wrong answer this tool exists
+            // to avoid.
+            if (stdinTaken)
+                return Result<string?>.Fail(Outcome.Invalid,
+                    "only one of --replace-stdin, --with-stdin and --text-stdin can be used at a time");
+
+            stdinTaken = true;
+            return Result<string?>.Ok(stdin.ReadToEnd());
+        }
+
+        return Result<string?>.Ok(null);
+    }
+}
+
 public static class EditScript
 {
     /// <summary>
@@ -21,7 +73,7 @@ public static class EditScript
     /// a batch from a file, and a batch spanning files from the same
     /// file (R5.7).
     /// </summary>
-    public static Result<IReadOnlyList<FileEdits>> Build(Arguments args)
+    public static Result<IReadOnlyList<FileEdits>> Build(Arguments args, TextReader stdin)
     {
         // The MCP front end carries its script inside the request rather
         // than in a file, so both spellings reach one parser.
@@ -32,19 +84,58 @@ public static class EditScript
         if (path is null)
             return Result<IReadOnlyList<FileEdits>>.Fail(Outcome.Invalid, "edit needs a path");
 
-        if (args.Value("replace") is not { } find)
-            return Result<IReadOnlyList<FileEdits>>.Fail(Outcome.Invalid,
-                "edit needs --replace TEXT --with TEXT, or --script FILE");
-
-        string with = args.Value("with") ?? string.Empty;
+        var supply = new TextSupply(args, stdin);
 
         Result<(int? From, int? To)> range = Range(args);
         if (!range.IsOk) return range.Carry<IReadOnlyList<FileEdits>>();
 
+        Result<Edit> edit = OneEdit(args, supply, range.Value);
+        if (!edit.IsOk) return edit.Carry<IReadOnlyList<FileEdits>>();
+
         return Result<IReadOnlyList<FileEdits>>.Ok([
-            new FileEdits(path, args.Value("expect"),
-                [new Edit.Replace(find, with, range.Value.From, range.Value.To, args.Has("all"))])
+            new FileEdits(path, args.Value("expect"), [edit.Value])
         ]);
+    }
+
+    static Result<Edit> OneEdit(Arguments args, TextSupply supply, (int? From, int? To) range)
+    {
+        // Delete needs no text at all, so it is tested first and cannot
+        // be confused with an empty replacement.
+        if (args.Value("delete") is { } lines)
+        {
+            string[] parts = lines.Split(["..", "-", ":"], StringSplitOptions.RemoveEmptyEntries);
+            if (!int.TryParse(parts[0], out int from))
+                return Result<Edit>.Fail(Outcome.Invalid, $"--delete wants a line or a range like 150-151 (got '{lines}')");
+
+            int to = parts.Length > 1 && int.TryParse(parts[1], out int t) ? t : from;
+            return Result<Edit>.Ok(new Edit.DeleteLines(from, to));
+        }
+
+        if (args.Has("insert-after"))
+        {
+            Result<string?> text = supply.Read("text");
+            if (!text.IsOk) return text.Carry<Edit>();
+
+            if (text.Value is null)
+                return Result<Edit>.Fail(Outcome.Invalid,
+                    "--insert-after needs --text, --text-file or --text-stdin");
+
+            return Result<Edit>.Ok(new Edit.InsertAfter(args.Int("insert-after", 0), text.Value));
+        }
+
+        Result<string?> find = supply.Read("replace");
+        if (!find.IsOk) return find.Carry<Edit>();
+
+        if (find.Value is null)
+            return Result<Edit>.Fail(Outcome.Invalid,
+                "edit needs --replace (or --replace-file, or --replace-stdin), "
+                + "or --insert-after, or --delete, or --script FILE");
+
+        Result<string?> with = supply.Read("with");
+        if (!with.IsOk) return with.Carry<Edit>();
+
+        return Result<Edit>.Ok(new Edit.Replace(
+            find.Value, with.Value ?? string.Empty, range.From, range.To, args.Has("all")));
     }
 
     /// <summary>
@@ -122,10 +213,20 @@ public static class EditScript
         {
             index++;
 
-            if (Text(e, "replace") is { } find)
+            // R5.11 inside a script too: "replaceFile", "withFile" and
+            // "textFile" name a file holding the text, so a script that
+            // moves a paragraph does not have to carry the paragraph
+            // escaped into JSON.
+            Result<string?> find = Sourced(e, "replace");
+            if (!find.IsOk) return find.Carry<IReadOnlyList<Edit>>();
+
+            if (find.Value is { } finding)
             {
+                Result<string?> with = Sourced(e, "with");
+                if (!with.IsOk) return with.Carry<IReadOnlyList<Edit>>();
+
                 built.Add(new Edit.Replace(
-                    find, Text(e, "with") ?? string.Empty,
+                    finding, with.Value ?? string.Empty,
                     Number(e, "from"), Number(e, "to"),
                     e.TryGetProperty("all", out JsonElement all) && all.ValueKind == JsonValueKind.True));
                 continue;
@@ -133,7 +234,10 @@ public static class EditScript
 
             if (Number(e, "insertAfter") is { } after)
             {
-                built.Add(new Edit.InsertAfter(after, Text(e, "text") ?? string.Empty));
+                Result<string?> text = Sourced(e, "text");
+                if (!text.IsOk) return text.Carry<IReadOnlyList<Edit>>();
+
+                built.Add(new Edit.InsertAfter(after, text.Value ?? string.Empty));
                 continue;
             }
 
@@ -148,6 +252,22 @@ public static class EditScript
         }
 
         return Result<IReadOnlyList<Edit>>.Ok(built);
+    }
+
+    /// <summary>A script field, either inline or naming a file that
+    /// holds it (R5.11). Null means the field was not given at all,
+    /// which is different from being given as empty.</summary>
+    static Result<string?> Sourced(JsonElement owner, string name)
+    {
+        if (Text(owner, name) is { } inline) return Result<string?>.Ok(inline);
+
+        if (Text(owner, name + "File") is not { } file) return Result<string?>.Ok(null);
+
+        try { return Result<string?>.Ok(File.ReadAllText(file)); }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            return Result<string?>.Fail(Outcome.NotFound, $"cannot read \"{name}File\": {e.Message}", file);
+        }
     }
 
     internal static string? Text(JsonElement owner, string name) =>

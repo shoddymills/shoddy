@@ -62,11 +62,14 @@ public static class Command
 
     static CliResult? Trivial(Arguments args, bool json)
     {
-        if (args.Verb.Length == 0 || args.Verb is "help" or "--help" or "-h" || args.Has("help"))
-            return new CliResult(ExitCodes.Ok, Help(), string.Empty);
-
+        // Version before help, and not the other way round: `--version`
+        // parses as a flag and leaves no verb behind, so an empty-verb
+        // test placed first swallows it and prints the help instead.
         if (args.Verb is "version" || args.Has("version"))
             return new CliResult(ExitCodes.Ok, "fettle " + Version + Environment.NewLine, string.Empty);
+
+        if (args.Verb.Length == 0 || args.Verb is "help" or "--help" or "-h" || args.Has("help"))
+            return new CliResult(ExitCodes.Ok, Help(), string.Empty);
 
         return null;
     }
@@ -94,7 +97,7 @@ public static class Command
             "search" => Search(bench, args, json),
             "read" => Read(bench, args, json),
             "write" => await Write(bench, args, json, stdin, cancel).ConfigureAwait(false),
-            "edit" => await Edit(bench, args, json, cancel).ConfigureAwait(false),
+            "edit" => await Edit(bench, args, json, stdin, cancel).ConfigureAwait(false),
             "replace" => await Replace(bench, args, json, cancel).ConfigureAwait(false),
             "new" => await Simple(bench.NewFileAsync(args.At(0) ?? "", cancel), json,
                         r => $"created {r.Path.Display}").ConfigureAwait(false),
@@ -105,6 +108,7 @@ public static class Command
             "delete" => await Delete(bench, args, json, cancel).ConfigureAwait(false),
             "exec" => await Exec(bench, args, json, cancel).ConfigureAwait(false),
             "tasks" => TaskList(bench, json),
+            "roots" => RootList(bench, json),
             "run" => await Run(bench, args, json, cancel).ConfigureAwait(false),
             "batch" => await Batch(bench, args, json, cancel).ConfigureAwait(false),
             _ => Failed(new Failure(Outcome.Invalid, $"no verb called '{args.Verb}'; try: fettle help"), json),
@@ -358,17 +362,72 @@ public static class Command
         return Ok(text.ToString());
     }
 
+    /// <summary>
+    /// R8.8: a caller can ask what it is bounded to.
+    ///
+    /// <para>Without this the only way to discover the boundary is to be
+    /// refused by it, which is learning by trial against a security
+    /// check. It matters most on the MCP front end, where the model never
+    /// sees the command line that declared the roots and so has no other
+    /// way to know they exist, what they are called, or which one an
+    /// unqualified path lands in.</para>
+    /// </summary>
+    static CliResult RootList(Bench bench, bool json)
+    {
+        IReadOnlyList<string> names = bench.Roots.Names;
+
+        if (json)
+            return Ok(Json(w =>
+            {
+                w.WriteStartArray("roots");
+                foreach (string name in names)
+                {
+                    w.WriteStartObject();
+                    w.WriteString("name", name);
+                    w.WriteString("path", bench.Roots.PathOf(name));
+                    w.WriteBoolean("default", name.Equals(names[0], Core.Roots.PathComparison));
+                    w.WriteEndObject();
+                }
+                w.WriteEndArray();
+                w.WriteNumber("count", names.Count);
+            }));
+
+        var text = new StringBuilder();
+        foreach (string name in names)
+            text.Append(name.PadRight(12)).Append(bench.Roots.PathOf(name))
+                .AppendLine(name.Equals(names[0], Core.Roots.PathComparison) ? "  (default)" : "");
+
+        return Ok(text.ToString());
+    }
+
     // ---- mutating verbs ----
+
 
     static async Task<CliResult> Write(Bench bench, Arguments args, bool json, TextReader stdin, CancellationToken cancel)
     {
         string? path = args.At(0);
         if (path is null) return Failed(new Failure(Outcome.Invalid, "write needs a path"), json);
 
-        // A file's worth of text does not belong on a command line.
-        string text = args.Has("stdin") || args.Value("text") is null
-            ? await stdin.ReadToEndAsync(cancel).ConfigureAwait(false)
-            : args.Value("text")!;
+        // R5.11's reasoning applied to write: the source of the content
+        // is explicit, and never inferred. Falling back to stdin when
+        // nothing was said made `fettle write PATH` sit and block on a
+        // stream nobody was going to write to - the same hang that Tasks
+        // deliberately prevents by closing a child's stdin, left
+        // unguarded in Fettler's own front end.
+        string text;
+        if (args.Value("text") is { } inline) text = inline;
+        else if (args.Value("text-file") is { } file)
+        {
+            try { text = File.ReadAllText(file); }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+            {
+                return Failed(new Failure(Outcome.NotFound, $"cannot read --text-file: {e.Message}", file), json);
+            }
+        }
+        else if (args.Has("stdin")) text = await stdin.ReadToEndAsync(cancel).ConfigureAwait(false);
+        else return Failed(new Failure(Outcome.Invalid,
+            "write needs its content named: --stdin, --text TEXT, or --text-file PATH"), json);
+
 
         Result<Saved> saved = await bench.WriteAsync(
             path, text, args.Has("overwrite"), args.Value("encoding"), args.Value("eol"), cancel)
@@ -400,9 +459,9 @@ public static class Command
         return Ok(human.ToString());
     }
 
-    static async Task<CliResult> Edit(Bench bench, Arguments args, bool json, CancellationToken cancel)
+    static async Task<CliResult> Edit(Bench bench, Arguments args, bool json, TextReader stdin, CancellationToken cancel)
     {
-        Result<IReadOnlyList<FileEdits>> batch = EditScript.Build(args);
+        Result<IReadOnlyList<FileEdits>> batch = EditScript.Build(args, stdin);
         if (!batch.IsOk) return Failed(batch.Failure!, json);
 
         Result<EditAnswer> applied = await bench.EditAsync(batch.Value, args.Has("dry-run"), cancel)
@@ -798,7 +857,11 @@ public static class Command
         fettle - find, search, read, write, edit, move, copy, delete, and run a declared task.
 
         Global flags, accepted by every verb:
-          --root NAME=PATH     a root, repeatable; paths are then written name:path
+          --root NAME=PATH     a root, repeatable; paths are then written name:path.
+                               Prefer an ABSOLUTE path: a relative one binds the
+                               boundary to the current directory, so the same
+                               command means different things from different
+                               places. `roots` says what is declared.
           --json               the machine-readable result, complete, on stdout
           --include-generated  do not skip bin, obj, .git, artifacts, node_modules
           --exclude GLOB       skip more, repeatable
@@ -809,7 +872,14 @@ public static class Command
                          [--context N] [--limit N] [--count] [--files-only]
           read PATH... [--from N] [--to N]
           write PATH --stdin [--overwrite] [--encoding E] [--eol lf|crlf]
-          edit PATH [--replace S --with S [--between A B]] [--script F] [--expect HASH] [--dry-run]
+          edit PATH [--expect HASH] [--dry-run] and one of:
+                 --replace S --with S [--between 120-140] [--all]
+                 --insert-after N --text S
+                 --delete 150-151
+                 --script FILE
+               Any of --replace, --with and --text may instead be given as
+               --NAME-file PATH or --NAME-stdin, so text with quotes and
+               newlines in it never has to be escaped onto a command line.
           replace FIND WITH [--glob G] [--dry-run]
           new PATH
           mkdir PATH
@@ -818,6 +888,7 @@ public static class Command
           delete PATH [--recursive] [--force]
           exec PATH --on | --off
           tasks
+          roots                 the declared roots, their paths, and which is default
           run NAME [--timeout SECONDS]
           batch --script FILE
           serve                 become the MCP front end on stdio

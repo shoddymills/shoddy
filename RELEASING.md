@@ -321,7 +321,25 @@ For a local, untagged build the same step is `./build.ps1 install` (or the
 `.sh` twin): it installs the `.vsix` for whatever version `package.json`
 names, and refuses if that exact package hasn't been built yet.
 
+### The two binaries attached beside it
+
+The release also carries **sparky** and **fettle**, one self-contained
+executable per OS. Smoke-test whichever you changed:
+
+```sh
+tar -xzf fettle-X.Y.Z-linux-x64.tar.gz
+./fettle --version
+./fettle --root repo=/some/checkout roots     # the boundary it will enforce
+```
+
+**Check the unix archives came from the Linux runner.** The execute bit
+only survives a tar made on a filesystem that has one, so an archive cut
+on Windows carries a `fettle` that will not run. `release.yml` asserts
+this on every release, and the check is there because Fettler's own R6.9
+is the clause about that bit — shipping it wrong would be a poor joke.
+
 ## 5 — Website
+
 
 Nothing to do. Merges that touch `docs/**` trigger the
 [Deploy docs to Pages](.github/workflows/pages.yml) workflow, which regenerates the

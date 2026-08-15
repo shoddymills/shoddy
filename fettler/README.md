@@ -70,6 +70,20 @@ declare one and paths are written bare, exactly as they always were.
 --root repo=/work/shoddy --root notes=/work/shoddy-planning --root scratch=/tmp/scratch
 ```
 
+**Use absolute paths.** A relative root binds the boundary to whatever
+directory `fettle` was launched from, so the same command means
+different things from different places — and a caller that has to keep
+correcting its working directory has gone back to doing shell work by
+another name. `fettle roots` says what is declared:
+
+```
+$ fettle roots
+repo        /work/shoddy  (default)
+notes       /work/shoddy-planning
+scratch     /tmp/scratch
+```
+
+
 Every path must resolve inside one of them. A move between two roots
 works and says that it crossed, because moving a file between two trust
 domains is something the caller is entitled to see.
@@ -77,7 +91,7 @@ domains is something the caller is entitled to see.
 ## The verbs, and their exit codes
 
 `find`, `search`, `read`, `write`, `edit`, `replace`, `new`, `mkdir`,
-`move`, `copy`, `delete`, `exec`, `tasks`, `run`, `batch` — and `serve`,
+`move`, `copy`, `delete`, `exec`, `roots`, `tasks`, `run`, `batch` — and `serve`,
 which is not an operation. **The CLI verb and the MCP tool name are the
 same word**, and both front ends reach the operations through one
 dispatcher, so a capability available to a model and not to a script is

@@ -1,3 +1,4 @@
+using Fettler.Cli;
 using Fettler.Core;
 using Xunit;
 
@@ -190,6 +191,102 @@ public sealed class EditTests
 
         Assert.True(done.IsOk, done.Failure?.Message);
         Assert.Equal("one\r\ninserted\r\ntwo\r\n", box.ReadText("a.txt"));
+    }
+
+    // ---- R10.36: edit text from a file or a stream (R5.11) ----
+
+    /// <summary>
+    /// The clause exists because the tool was awkward on its own
+    /// documentation: supplying a paragraph meant hand-escaping every
+    /// quote and newline into JSON, which in practice meant writing a
+    /// program to generate the edit script. Needing a second language to
+    /// drive the editing tool is a defect in the editing tool.
+    /// </summary>
+    [Fact]
+    public async Task ReplacementTextCanComeFromAFile()
+    {
+        using var box = new Sandbox();
+        box.Write("page.html", "<p>OLD</p>\n");
+
+        // Exactly the shape that was painful: quotes and newlines.
+        const string awkward = "<div class=\"takeaway\">\n  <b>New</b> text\n</div>";
+        box.Write("replacement.txt", awkward);
+
+        CliResult done = await Command.RunAsync(
+            ["edit", "page.html", "--replace", "OLD", "--with-file", box.Full("replacement.txt")],
+            new StringReader(string.Empty), box.Bench);
+
+        Assert.Equal(0, done.ExitCode);
+        Assert.Equal($"<p>{awkward}</p>\n", box.ReadText("page.html"));
+    }
+
+    [Fact]
+    public async Task ReplacementTextCanComeFromStdin()
+    {
+        using var box = new Sandbox();
+        box.Write("page.html", "<p>OLD</p>\n");
+
+        CliResult done = await Command.RunAsync(
+            ["edit", "page.html", "--replace", "OLD", "--with-stdin"],
+            new StringReader("piped \"text\""), box.Bench);
+
+        Assert.Equal(0, done.ExitCode);
+        Assert.Equal("<p>piped \"text\"</p>\n", box.ReadText("page.html"));
+    }
+
+    [Fact]
+    public async Task TwoFlagsCannotBothClaimStdin()
+    {
+        using var box = new Sandbox();
+        box.Write("page.html", "<p>OLD</p>\n");
+
+        CliResult refused = await Command.RunAsync(
+            ["edit", "page.html", "--replace-stdin", "--with-stdin"],
+            new StringReader("OLD"), box.Bench);
+
+        // Stdin is one stream and can be spent once. The second flag
+        // would silently get nothing, which is the quiet wrong answer
+        // this tool exists to avoid.
+        Assert.Equal(ExitCodes.Invalid, refused.ExitCode);
+        Assert.Equal("<p>OLD</p>\n", box.ReadText("page.html"));
+    }
+
+    [Fact]
+    public async Task InsertAndDeleteAreReachableFromTheCommandLine()
+    {
+        using var box = new Sandbox();
+        box.Write("a.txt", "one\ntwo\nthree\n");
+
+        CliResult inserted = await Command.RunAsync(
+            ["edit", "a.txt", "--insert-after", "1", "--text-stdin"],
+            new StringReader("inserted"), box.Bench);
+        Assert.Equal(0, inserted.ExitCode);
+        Assert.Equal("one\ninserted\ntwo\nthree\n", box.ReadText("a.txt"));
+
+        CliResult deleted = await Command.RunAsync(
+            ["edit", "a.txt", "--delete", "2-3"], new StringReader(string.Empty), box.Bench);
+        Assert.Equal(0, deleted.ExitCode);
+        Assert.Equal("one\nthree\n", box.ReadText("a.txt"));
+    }
+
+    [Fact]
+    public async Task AScriptFieldCanNameAFileHoldingItsText()
+    {
+        using var box = new Sandbox();
+        box.Write("a.txt", "before MARK after\n");
+        box.Write("body.txt", "a \"quoted\"\nmulti-line body");
+
+        box.Write("edits.json",
+            $$"""
+              {"edits": [{"replace": "MARK", "withFile": {{System.Text.Json.JsonSerializer.Serialize(box.Full("body.txt"))}}}]}
+              """);
+
+        CliResult done = await Command.RunAsync(
+            ["edit", "a.txt", "--script", box.Full("edits.json")],
+            new StringReader(string.Empty), box.Bench);
+
+        Assert.Equal(0, done.ExitCode);
+        Assert.Equal("before a \"quoted\"\nmulti-line body after\n", box.ReadText("a.txt"));
     }
 
     // ---- R10.34: replace ----

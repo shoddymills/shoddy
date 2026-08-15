@@ -213,6 +213,7 @@ public sealed class McpServer : IDisposable
             w.WriteString("instructions",
                 "File, search and edit operations over a bounded set of roots. "
                 + "Paths are written name:path when more than one root is open. "
+                + "Call roots to see the boundary rather than discovering it by being refused. "
                 + "Read returns a hash; pass it back as expect on an edit to prove the file has not moved. "
                 + $"Declared tasks come from a {Tasks.FileName} file at the root.");
             w.WriteEndObject();

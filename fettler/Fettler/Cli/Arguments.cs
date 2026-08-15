@@ -29,6 +29,10 @@ public sealed class Arguments
         "json", "overwrite", "recursive", "force", "dry-run", "stdin", "literal",
         "case-sensitive", "include-generated", "count", "files-only", "sort-modified",
         "preserve-times", "all", "on", "off", "help", "version",
+
+        // R5.11: each names a stream rather than a value, so the parser
+        // must not eat the following argument as one.
+        "replace-stdin", "with-stdin", "text-stdin",
     };
 
     public static Arguments Parse(IReadOnlyList<string> argv)

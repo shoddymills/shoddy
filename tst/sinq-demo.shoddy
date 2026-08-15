@@ -1,0 +1,165 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem sinq-demo.shoddy -- the worked example for the sinq machine.
+Rem
+Rem This is a sample of USE, and it is documentation that has to keep
+Rem working: docs/machines/sinq.html reproduces it line for line, and
+Rem the gate runs it, so the page cannot drift from a program that no
+Rem longer compiles. It ASSERTS NOTHING -- tst/sinq.shoddy is where
+Rem the behaviour is graded. What this file proves is that a query
+Rem against a real graph still READS the way the page says it does.
+Rem
+Rem One deep type graph (customers -> orders), one catalogue to join
+Rem against, one self-holding type (an org tree), and one matrix. Every
+Rem query below is written out of EXISTING library words plus the ones
+Rem sinq adds. Note what is NOT here: no adapter for the Matrix, no
+Rem cast, no schema declaration, no query string. The accessors --
+Rem Orders, Area, Sku, Subs -- are the schema, and they are checked at
+Rem compile time.
+Rem
+Rem   mill run tst/sinq-demo.shoddy
+Rem ==================================================================
+
+Rem The paths are spelled out because a bare Include resolves against
+Rem THIS directory first, and tst/sinq.shoddy would shadow the machine.
+Rem seq is asked for in its own right: sinq includes it, but a machine
+Rem hands over the words it DECLARES and not the ones it includes in
+Rem turn, so Pair, Fst and Snd have to be named here.
+Include "../machines/sinq.shoddy"
+Include "../machines/seq.shoddy"
+Include "../machines/stats.shoddy"
+Include "../machines/matrix.shoddy"
+Include "../machines/str.shoddy"
+
+Rem ---- the graph --------------------------------------------------------
+
+Type Order
+    Sku   As String
+    Qty   As Number
+    Price As Number
+
+Type Cust
+    CustName As String
+    Area     As String
+    Orders   As List Of Order
+
+Type Cat
+    CatSku   As String
+    CatTitle As String
+
+Rem a type that holds itself -- the deep graph case
+Type Unit
+    UnitName  As String
+    Headcount As Number
+    Subs      As List Of Unit
+
+Rem ---- the words a query is written out of ------------------------------
+
+Def OrderValue(o As Order) As Number
+    Qty(o) * Price(o)
+
+Def CustSpend(c As Cust) As Number
+    Sum(Map(Orders(c), OrderValue))
+
+Rem ---- the queries ------------------------------------------------------
+
+Rem Every large order, biggest first. The language's own pipeline form,
+Rem reading exactly like a LINQ chain. The threshold is a lambda because
+Rem it is used once and nowhere else; OrderValue is a named word because
+Rem three separate queries below read it.
+Def LargeOrders(cs As List Of Cust) As List Of Order
+    cs
+        SelectMany(Orders)
+        Filter(Fn(o) => OrderValue(o) >= 100)
+        OrderByDesc(OrderValue)
+
+Rem Revenue by area. GroupBy is sinq's; Sum is stats'.
+Def RevenueByArea(cs As List Of Cust) As List Of Pair
+    Map(GroupBy(cs, Area), Fn(g) => Pair(GKey(g), Sum(Map(GItems(g), CustSpend))))
+
+Rem Two keys: spend descending, then name ascending for the ties.
+Def Ranked(cs As List Of Cust) As List Of String
+    Map(OrderWith(cs, ThenBy(Descending(ByKey(CustSpend)), ByKey(CustName))), CustName)
+
+Rem An inner join onto the catalogue.
+Def Titled(os As List Of Order, book As List Of Cat) As List Of String
+    JoinOn(os, book, Sku, CatSku, Fn(o, p) => CatTitle(p) & " x" & Str(Qty(o)))
+
+Rem The whole org tree flattened, then totalled with stats' Sum.
+Def TotalHeads(root As Unit) As Number
+    Sum(Map(Descendants(root, Subs), Headcount))
+
+Def Main()
+    Rem HOW A LITERAL MAPS TO A TYPE. A record is built POSITIONALLY: the
+    Rem constructor takes the fields in the order the Type declares them
+    Rem and NOTHING names them at the call site, so a reader has to count.
+    Rem That is why the columns below are lined up and each block is headed
+    Rem by the fields filling it. It is also why inserting a field into a
+    Rem Type is a silent break -- every later argument shifts one place and
+    Rem still compiles, so long as the kinds happen to match.
+    Rem
+    Rem A literal continues across lines only because it is inside open
+    Rem brackets; there is no continuation character in the language.
+
+    Rem      CatSku  CatTitle
+    Let book = {
+        Cat("WARP", "Warp beam"),
+        Cat("WEFT", "Weft yarn"),
+        Cat("SHOD", "Shoddy bale")
+    }
+
+    Rem Dyson is listed BEFORE Brook and both spend exactly 120, so the
+    Rem tie-break is doing real work: a correct ThenBy answers "Brook,
+    Rem Dyson" by name, and a sort that merely inherited source order
+    Rem would answer "Dyson, Brook".
+    Rem
+    Rem      CustName     Area        Orders, each Order(Sku, Qty, Price)
+    Let cs = {
+        Cust("Ackroyd",  "Dewsbury", { Order("WARP",  4, 30), Order("WEFT",  2, 15) }),
+        Cust("Dyson",    "Batley",   { Order("SHOD", 10, 12) }),
+        Cust("Crowther", "Dewsbury", { Order("WEFT",  1, 15), Order("WARP", 20, 30) }),
+        Cust("Brook",    "Batley",   { Order("SHOD", 10, 12) })
+    }
+
+    Print("-- large orders, biggest first --")
+    Each(LargeOrders(cs), Fn(o) => Print("   " & Sku(o) & " " & Str(OrderValue(o))))
+
+    Print("-- revenue by area --")
+    Each(RevenueByArea(cs), Fn(p) => Print("   " & Fst(p) & " " & Str(Snd(p))))
+
+    Print("-- ranked: spend desc, then name asc --")
+    Print("   " & Join(Ranked(cs), ", "))
+
+    Print("-- orders joined to the catalogue --")
+    Each(Titled(SelectMany(cs, Orders), book), Fn(s) => Print("   " & s))
+
+    Print("-- distinct skus, and set words --")
+    Let skus = Distinct(Map(SelectMany(cs, Orders), Sku))
+    Print("   distinct:  " & Join(skus, ", "))
+    Print("   except:    " & Join(Except(skus, { "WEFT" }), ", "))
+    Print("   intersect: " & Join(Intersect(skus, { "WEFT", "JUTE" }), ", "))
+
+    Rem The self-holding type. Subs is a List Of Unit, so a Unit's third
+    Rem argument is another literal of exactly this shape, all the way
+    Rem down -- the indentation on the page IS the tree in the data.
+    Rem
+    Rem   Unit(UnitName, Headcount, Subs)
+    Let org = Unit("Mill", 3, {
+        Unit("Spinning", 12, {
+            Unit("Nights", 4, { })
+        }),
+        Unit("Weaving", 9, { })
+    })
+    Print("-- org tree --")
+    Print("   units: " & Str(Length(Descendants(org, Subs))))
+    Print("   heads: " & Str(TotalHeads(org)))
+
+    Rem a Matrix needs no adapter: its Cells are already an Array, and an
+    Rem Array is already a sequence. Same for a vector.
+    Let m = Mat(2, 3, { 5, 0, 7, 0, 2, 0 })
+    Print("-- matrix --")
+    Print("   nonzero cells: " & Str(Length(Filter(ToList(Cells(m)), Fn(v) => v <> 0))))
+    Print("   sorted desc:   " & Str(First(OrderByDesc(ToList(Cells(m)), Fn(v) => v))))
+    Print("   row sums:      " & Join(Map(Map(Range(1, Rows(m)), Fn(r) => Sum(ToList(MatRow(m, r)))), Str), ", "))

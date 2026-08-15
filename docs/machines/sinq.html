@@ -48,6 +48,75 @@ Let best = OrderByDesc(staff, Pay)
 Let dept = GroupBy(staff, Dept)
 Let both = OrderWith(staff, ThenBy(ByKey(Dept), Descending(ByKey(Pay))))</code></pre>
 
+<h2 id="history">A Brief History of the Query</h2>
+<p>Two traditions had to meet before a line like <code>OrderByDesc(staff, Pay)</code>
+could exist, and for about thirty-five years they barely spoke to each other.</p>
+
+<p>The first begins in 1970 with <strong>Edgar Codd</strong>, an English
+mathematician at IBM's San Jose laboratory, and a paper with the forbidding
+title <em>A Relational Model of Data for Large Shared Data Banks</em>. Codd's
+argument was that programs should stop walking to their data. Every database of
+the day made you thread pointers from record to record by hand, so the shape of
+the files was welded into the shape of the program, and moving a file broke the
+lot. Codd said: describe the data as plain tables of rows, then ask a
+<em>question</em> and let the machine work out the walking. IBM built a language
+on it — <strong>Donald Chamberlin</strong> and <strong>Raymond Boyce</strong>
+called it SEQUEL in 1974, and renamed it <strong>SQL</strong> when the original
+name turned out to belong to a British aircraft firm. What survived is not any
+of the engines it was written for but its <em>vocabulary</em>:
+<code>SELECT</code>, <code>WHERE</code>, <code>GROUP BY</code>,
+<code>JOIN</code>, <code>ORDER BY</code>. Half a century on, those words are
+still how people say what they want from a pile of records.</p>
+
+<p>The second tradition is older and comes from the opposite direction. In the
+1930s <strong>Alonzo Church</strong> was after the foundations of mathematics
+rather than anybody's payroll file, and he built the <strong>lambda
+calculus</strong>: an entire theory of computation out of one idea, that you can
+name an argument and substitute for it. A function became a thing you could hand
+about like any other value, with no name of its own if it did not want one.
+<strong>John McCarthy</strong> put it into a real language with LISP in 1958,
+and for decades that was where it stayed — the anonymous function was a
+functional-programming idea, and databases were an industrial one, and the two
+communities shared conferences with nobody in common.</p>
+
+<p>They were married in <strong>LINQ</strong>, designed by
+<strong>Erik Meijer</strong> and colleagues at Microsoft and shipped with C# 3.0
+in 2007. The move that made it work was noticing that Codd's clauses were never
+really about <em>tables</em>: they were about <em>sequences</em>, and each one
+needs exactly one small piece of caller-supplied code to say <em>which</em> or
+<em>by what</em> — which is precisely what a lambda is. So a query written in
+SQL's vocabulary could be desugared into ordinary method calls taking anonymous
+functions, and suddenly the same five words worked on a list in memory, an XML
+document, or a table across a network.</p>
+
+<p>Shoddy arrives at that junction already holding both halves. It has had the
+lambda since the beginning — <code>Fn(x) =&gt; …</code> is Church's idea with a
+BASIC accent — and it has had the chain, because the
+<a href="../spec.html">pipeline form</a> already lets a deeper-indented line
+read as the next stage. What it did not have was Codd's little word
+<strong>by</strong>. So <code>sinq</code> adds no query syntax at all: no
+<code>from</code>, no <code>select</code>, no string for anything to parse. It
+adds the missing vocabulary as ordinary words, and the two-hundred-year-old
+arithmetic of the mill accounts comes out reading like this:</p>
+
+<table>
+<tr><th>SQL</th><th>Shoddy</th><th>Whose word</th></tr>
+<tr><td><code>SELECT price * qty</code></td><td><code>Map(os, OrderValue)</code></td><td>builtin</td></tr>
+<tr><td><code>WHERE value &gt;= 100</code></td><td><code>Filter(os, Fn(o) =&gt; OrderValue(o) &gt;= 100)</code></td><td>builtin</td></tr>
+<tr><td><code>ORDER BY value DESC</code></td><td><code>OrderByDesc(os, OrderValue)</code></td><td><strong>sinq</strong></td></tr>
+<tr><td><code>ORDER BY a, b DESC</code></td><td><code>OrderWith(os, ThenBy(ByKey(A), Descending(ByKey(B))))</code></td><td><strong>sinq</strong></td></tr>
+<tr><td><code>GROUP BY area</code></td><td><code>GroupBy(cs, Area)</code></td><td><strong>sinq</strong></td></tr>
+<tr><td><code>JOIN book ON sku</code></td><td><code>JoinOn(os, book, Sku, CatSku, pick)</code></td><td><strong>sinq</strong></td></tr>
+<tr><td><code>SELECT DISTINCT</code></td><td><code>Distinct(xs)</code></td><td><strong>sinq</strong></td></tr>
+<tr><td><code>SUM(price)</code></td><td><code>Sum(Map(os, Price))</code></td><td><a href="stats.html">stats</a></td></tr>
+<tr><td><code>FROM orders</code></td><td>— the sequence you started with</td><td>—</td></tr>
+</table>
+
+<p>There is no <code>FROM</code> because there is nothing to name: the query
+begins with the value itself. And there is no query <em>language</em> here at
+all — which, for a machine whose whole argument is that the words were mostly
+lying about already, is the point rather than an omission.</p>
+
 <h2 id="why">Why It's Useful</h2>
 <p>The one query verb the standard library lacked is <strong>by</strong>. Every
 existing sequence word takes a predicate or nothing at all.</p>
@@ -159,6 +228,228 @@ Map(Range(1, Rows(m)), Fn(r) =&gt; Sum(ToList(MatRow(m, r))))     ' a sum per ro
 and a <a href="json.html">Json</a> document through <code>JItems</code> and
 <code>JMembers</code>, both of which hand back ordinary lists. An adapter layer
 here would have bought nothing and cost a dependency.</p>
+
+<h2 id="example">A Worked Example</h2>
+<p>Everything above, in one program that runs. It is
+<code>tst/sinq-demo.shoddy</code> in the repo, and the gate runs it on every
+release, so what follows cannot drift from a program that no longer compiles:</p>
+
+<pre class="basic"><code>Rem ==================================================================
+Rem sinq-demo.shoddy -- the worked example for the sinq machine.
+Rem
+Rem This is a sample of USE, and it is documentation that has to keep
+Rem working: docs/machines/sinq.html reproduces it line for line, and
+Rem the gate runs it, so the page cannot drift from a program that no
+Rem longer compiles. It ASSERTS NOTHING -- tst/sinq.shoddy is where
+Rem the behaviour is graded. What this file proves is that a query
+Rem against a real graph still READS the way the page says it does.
+Rem
+Rem One deep type graph (customers -&gt; orders), one catalogue to join
+Rem against, one self-holding type (an org tree), and one matrix. Every
+Rem query below is written out of EXISTING library words plus the ones
+Rem sinq adds. Note what is NOT here: no adapter for the Matrix, no
+Rem cast, no schema declaration, no query string. The accessors --
+Rem Orders, Area, Sku, Subs -- are the schema, and they are checked at
+Rem compile time.
+Rem
+Rem   mill run tst/sinq-demo.shoddy
+Rem ==================================================================
+
+Rem The paths are spelled out because a bare Include resolves against
+Rem THIS directory first, and tst/sinq.shoddy would shadow the machine.
+Rem seq is asked for in its own right: sinq includes it, but a machine
+Rem hands over the words it DECLARES and not the ones it includes in
+Rem turn, so Pair, Fst and Snd have to be named here.
+Include "../machines/sinq.shoddy"
+Include "../machines/seq.shoddy"
+Include "../machines/stats.shoddy"
+Include "../machines/matrix.shoddy"
+Include "../machines/str.shoddy"
+
+Rem ---- the graph --------------------------------------------------------
+
+Type Order
+    Sku   As String
+    Qty   As Number
+    Price As Number
+
+Type Cust
+    CustName As String
+    Area     As String
+    Orders   As List Of Order
+
+Type Cat
+    CatSku   As String
+    CatTitle As String
+
+Rem a type that holds itself -- the deep graph case
+Type Unit
+    UnitName  As String
+    Headcount As Number
+    Subs      As List Of Unit
+
+Rem ---- the words a query is written out of ------------------------------
+
+Def OrderValue(o As Order) As Number
+    Qty(o) * Price(o)
+
+Def CustSpend(c As Cust) As Number
+    Sum(Map(Orders(c), OrderValue))
+
+Rem ---- the queries ------------------------------------------------------
+
+Rem Every large order, biggest first. The language's own pipeline form,
+Rem reading exactly like a LINQ chain. The threshold is a lambda because
+Rem it is used once and nowhere else; OrderValue is a named word because
+Rem three separate queries below read it.
+Def LargeOrders(cs As List Of Cust) As List Of Order
+    cs
+        SelectMany(Orders)
+        Filter(Fn(o) =&gt; OrderValue(o) &gt;= 100)
+        OrderByDesc(OrderValue)
+
+Rem Revenue by area. GroupBy is sinq's; Sum is stats'.
+Def RevenueByArea(cs As List Of Cust) As List Of Pair
+    Map(GroupBy(cs, Area), Fn(g) =&gt; Pair(GKey(g), Sum(Map(GItems(g), CustSpend))))
+
+Rem Two keys: spend descending, then name ascending for the ties.
+Def Ranked(cs As List Of Cust) As List Of String
+    Map(OrderWith(cs, ThenBy(Descending(ByKey(CustSpend)), ByKey(CustName))), CustName)
+
+Rem An inner join onto the catalogue.
+Def Titled(os As List Of Order, book As List Of Cat) As List Of String
+    JoinOn(os, book, Sku, CatSku, Fn(o, p) =&gt; CatTitle(p) &amp; " x" &amp; Str(Qty(o)))
+
+Rem The whole org tree flattened, then totalled with stats' Sum.
+Def TotalHeads(root As Unit) As Number
+    Sum(Map(Descendants(root, Subs), Headcount))
+
+Def Main()
+    Rem HOW A LITERAL MAPS TO A TYPE. A record is built POSITIONALLY: the
+    Rem constructor takes the fields in the order the Type declares them
+    Rem and NOTHING names them at the call site, so a reader has to count.
+    Rem That is why the columns below are lined up and each block is headed
+    Rem by the fields filling it. It is also why inserting a field into a
+    Rem Type is a silent break -- every later argument shifts one place and
+    Rem still compiles, so long as the kinds happen to match.
+    Rem
+    Rem A literal continues across lines only because it is inside open
+    Rem brackets; there is no continuation character in the language.
+
+    Rem      CatSku  CatTitle
+    Let book = {
+        Cat("WARP", "Warp beam"),
+        Cat("WEFT", "Weft yarn"),
+        Cat("SHOD", "Shoddy bale")
+    }
+
+    Rem Dyson is listed BEFORE Brook and both spend exactly 120, so the
+    Rem tie-break is doing real work: a correct ThenBy answers "Brook,
+    Rem Dyson" by name, and a sort that merely inherited source order
+    Rem would answer "Dyson, Brook".
+    Rem
+    Rem      CustName     Area        Orders, each Order(Sku, Qty, Price)
+    Let cs = {
+        Cust("Ackroyd",  "Dewsbury", { Order("WARP",  4, 30), Order("WEFT",  2, 15) }),
+        Cust("Dyson",    "Batley",   { Order("SHOD", 10, 12) }),
+        Cust("Crowther", "Dewsbury", { Order("WEFT",  1, 15), Order("WARP", 20, 30) }),
+        Cust("Brook",    "Batley",   { Order("SHOD", 10, 12) })
+    }
+
+    Print("-- large orders, biggest first --")
+    Each(LargeOrders(cs), Fn(o) =&gt; Print("   " &amp; Sku(o) &amp; " " &amp; Str(OrderValue(o))))
+
+    Print("-- revenue by area --")
+    Each(RevenueByArea(cs), Fn(p) =&gt; Print("   " &amp; Fst(p) &amp; " " &amp; Str(Snd(p))))
+
+    Print("-- ranked: spend desc, then name asc --")
+    Print("   " &amp; Join(Ranked(cs), ", "))
+
+    Print("-- orders joined to the catalogue --")
+    Each(Titled(SelectMany(cs, Orders), book), Fn(s) =&gt; Print("   " &amp; s))
+
+    Print("-- distinct skus, and set words --")
+    Let skus = Distinct(Map(SelectMany(cs, Orders), Sku))
+    Print("   distinct:  " &amp; Join(skus, ", "))
+    Print("   except:    " &amp; Join(Except(skus, { "WEFT" }), ", "))
+    Print("   intersect: " &amp; Join(Intersect(skus, { "WEFT", "JUTE" }), ", "))
+
+    Rem The self-holding type. Subs is a List Of Unit, so a Unit's third
+    Rem argument is another literal of exactly this shape, all the way
+    Rem down -- the indentation on the page IS the tree in the data.
+    Rem
+    Rem   Unit(UnitName, Headcount, Subs)
+    Let org = Unit("Mill", 3, {
+        Unit("Spinning", 12, {
+            Unit("Nights", 4, { })
+        }),
+        Unit("Weaving", 9, { })
+    })
+    Print("-- org tree --")
+    Print("   units: " &amp; Str(Length(Descendants(org, Subs))))
+    Print("   heads: " &amp; Str(TotalHeads(org)))
+
+    Rem a Matrix needs no adapter: its Cells are already an Array, and an
+    Rem Array is already a sequence. Same for a vector.
+    Let m = Mat(2, 3, { 5, 0, 7, 0, 2, 0 })
+    Print("-- matrix --")
+    Print("   nonzero cells: " &amp; Str(Length(Filter(ToList(Cells(m)), Fn(v) =&gt; v &lt;&gt; 0))))
+    Print("   sorted desc:   " &amp; Str(First(OrderByDesc(ToList(Cells(m)), Fn(v) =&gt; v))))
+    Print("   row sums:      " &amp; Join(Map(Map(Range(1, Rows(m)), Fn(r) =&gt; Sum(ToList(MatRow(m, r)))), Str), ", "))</code></pre>
+
+<h3>What it prints</h3>
+<pre><code>-- large orders, biggest first --
+   WARP 600
+   WARP 120
+   SHOD 120
+   SHOD 120
+-- revenue by area --
+   Dewsbury 765
+   Batley 240
+-- ranked: spend desc, then name asc --
+   Crowther, Ackroyd, Brook, Dyson
+-- orders joined to the catalogue --
+   Warp beam x4
+   Weft yarn x2
+   Shoddy bale x10
+   Weft yarn x1
+   Warp beam x20
+   Shoddy bale x10
+-- distinct skus, and set words --
+   distinct:  WARP, WEFT, SHOD
+   except:    WARP, SHOD
+   intersect: WEFT
+-- org tree --
+   units: 4
+   heads: 28
+-- matrix --
+   nonzero cells: 3
+   sorted desc:   7
+   row sums:      12, 2</code></pre>
+
+<p>Five lines of that output are doing real work rather than decorating the
+page:</p>
+
+<ul>
+<li><strong><code>Crowther, Ackroyd, Brook, Dyson</code></strong> &mdash; Dyson
+is listed <em>before</em> Brook in the source and the two spend exactly the
+same. Answering <code>Brook, Dyson</code> is what proves the tie-break ran at
+all; an implementation that quietly inherited source order says
+<code>Dyson, Brook</code> and looks just as plausible.</li>
+<li><strong><code>Dewsbury</code> before <code>Batley</code></strong> &mdash;
+groups come back in first-appearance order, which is neither alphabetical nor
+the order the keys were first hashed into anything.</li>
+<li><strong>Six joined rows, and none for an unmatched SKU</strong> &mdash;
+<code>JoinOn</code> is an inner join in left order.</li>
+<li><strong><code>row sums: 12, 2</code></strong> &mdash; a <code>Matrix</code>
+queried with no adapter at all, through <code>Cells</code> and
+<code>MatRow</code>, both of which are already sequences.</li>
+<li><strong>The threshold in <code>LargeOrders</code> is a lambda and
+<code>OrderValue</code> is a named word</strong> &mdash; the house rule
+(<code>Fn(x) =&gt; &hellip;</code> for a predicate used once, a name for
+anything read more than once), and evidence that taking the sequence first
+lets a lambda sit in a pipeline stage without ceremony.</li>
+</ul>
 
 <h2 id="hood">Under the Hood</h2>
 

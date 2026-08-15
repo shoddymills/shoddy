@@ -225,6 +225,12 @@ function Invoke-Test {
     # everything else and the tutorial cannot drift from code that no
     # longer compiles.
     Native $Mill run tutorials/spiro/test.shoddy
+    # The sinq demo is the same argument for a machine rather than a
+    # tutorial: docs/machines/sinq.html reproduces it line for line, so
+    # running it here is what stops the page showing a program that no
+    # longer compiles. It asserts nothing -- tst/sinq.shoddy grades the
+    # behaviour; this proves the example still READS as documented.
+    Native $Mill run tst/sinq-demo.shoddy
     # Everything else the tree can prove about itself: a suite for every
     # machine that has one, and every mill's own suite. Both existed
     # before and neither ran here, which meant a release could ship a

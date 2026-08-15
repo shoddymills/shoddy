@@ -251,6 +251,16 @@ export function gateSteps({ splitDotnetTest }) {
         cmd: [MILL, 'run', 'tutorials/spiro/test.shoddy'],
         remedy: 'The tutorial is documentation that has to keep working. Fix the code or the page.',
     });
+    // The sinq demo asserts nothing — tst/sinq.shoddy grades the behaviour.
+    // What this step proves is that the worked example reproduced on
+    // docs/machines/sinq.html still COMPILES against the machine as it
+    // stands, which is the half a page of prose cannot check for itself.
+    steps.push({
+        id: 'tst-sinq-demo', title: 'the sinq worked example still runs', timeoutSec: 300,
+        cmd: [MILL, 'run', 'tst/sinq-demo.shoddy'],
+        remedy: 'The example on docs/machines/sinq.html is this file. Fix whichever '
+            + 'drifted, and check the printed output still matches the page.',
+    });
 
     for (const suite of MACHINE_SUITES) {
         steps.push({

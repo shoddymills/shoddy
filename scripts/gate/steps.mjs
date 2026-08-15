@@ -29,7 +29,7 @@ export const MACHINE_SUITES = [
     'seedreciotest', 'seedregextest', 'seedsimplextest', 'seedsparsetest',
     'seedterminaltest',
     'seedvt100test', 'shakertest', 'xmltest', 'seedgeotest',
-    'seedjuliantest', 'seedephemeristest',
+    'seedjuliantest', 'seedephemeristest', 'seedsinqtest',
 ];
 
 // tst/ files deliberately run by nothing, each with the reason. A name
@@ -68,6 +68,7 @@ export const CORE_SUITES = [
     ['julian', 'the calendar, against public epoch facts', 300],
     ['ephemeris', 'the sky, against the eclipse and the oppositions', 300],
     ['clock', 'the timing capability, by consistency not by moment', 300],
+    ['sinq', 'querying, against answers a wrong sort cannot reach — and at a size that catches a stack-bound one', 300],
 ];
 
 export const MILLS = [

@@ -1,0 +1,202 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem sinq.shoddy — test program for the query machine
+Rem
+Rem Build (once): build.ps1 build
+Rem Run:          bin\mill run tst\sinq.shoddy
+Rem
+Rem A run that reaches the end passed.
+Rem
+Rem TWO THINGS ABOUT HOW THESE ARE WRITTEN.
+Rem
+Rem Lists compare by IDENTITY in Shoddy, so a list result is checked by
+Rem rendering it to a string with Join, never with = , which would be
+Rem False for equal contents.
+Rem
+Rem The ordering tests DISCRIMINATE. The fixtures are laid out so that a
+Rem plausible-but-wrong implementation gives a DIFFERENT answer, not the
+Rem same one: Dyer and Fenton are both on 100 and Dyer is listed first,
+Rem so a descending-name tie-break that merely inherited source order
+Rem fails instead of passing by luck. Removing the sort's stability
+Rem (< 0 becoming <= 0 in the merge) must fail a named test here.
+Rem
+Rem The last section is the one no other suite in the tree carries: a
+Rem fifty-thousand element run. Both of the runtime traps sinq is
+Rem written around — Rest copying, and non-tail recursion costing a
+Rem frame per element — are invisible at the sizes every other fixture
+Rem uses, and a stack overflow is a hard process kill with no line
+Rem number to point at.
+Rem ==================================================================
+
+Rem seq is included in its own right: sinq includes it, but a machine
+Rem hands over the words it DECLARES and not the ones it includes in
+Rem turn, so Last and Contains have to be asked for here.
+Include "../machines/sinq.shoddy"
+Include "../machines/seq.shoddy"
+Include "../machines/str.shoddy"
+Include "../machines/stats.shoddy"
+
+Type Emp
+    EmpName As String
+    Dept    As String
+    Pay     As Number
+
+Type Bin
+    BinName As String
+    BinKids As List Of Bin
+
+Type Sale
+    SaleWho  As String
+    SaleCash As Number
+
+Def Names(es As List Of Emp) As String
+    Join(Map(es, EmpName), ",")
+
+Def Nums(xs As List Of Number) As String
+    Join(Map(xs, Str), ",")
+
+Def Strs(xs As List Of String) As String
+    Join(xs, ",")
+
+Def IsSmall(n As Number) As Boolean
+    n < 4
+
+Def HalfIfEven(n As Number) As Option
+    If n Mod 2 = 0 Then
+        Some(n / 2)
+    Else
+        None()
+
+Def Ident(n As Number) As Number
+    n
+
+Def Main()
+    Print("sinq: ordering")
+    Rem Dyer and Fenton are both on 100 and Dyer is listed FIRST.
+    Let staff = { Emp("Crow", "Weave", 300), Emp("Dyer", "Spin", 100), Emp("Ash", "Weave", 200), Emp("Fenton", "Spin", 100) }
+
+    Assert(Names(OrderBy(staff, EmpName)) = "Ash,Crow,Dyer,Fenton", "ORDERBY NAME")
+    Assert(Names(OrderBy(staff, Pay)) = "Dyer,Fenton,Ash,Crow", "ORDERBY PAY KEEPS TIES IN SOURCE ORDER")
+    Assert(Names(OrderByDesc(staff, Pay)) = "Crow,Ash,Dyer,Fenton", "ORDERBYDESC PAY")
+    Assert(Names(OrderWith(staff, ThenBy(Descending(ByKey(Pay)), ByKey(EmpName)))) = "Crow,Ash,Dyer,Fenton", "THENBY NAME ASC")
+    Rem the discriminating one: the tie must come back name-DESCENDING,
+    Rem which is the opposite of the order the fixture lists them in.
+    Assert(Names(OrderWith(staff, ThenBy(Descending(ByKey(Pay)), Descending(ByKey(EmpName))))) = "Crow,Ash,Fenton,Dyer", "THENBY NAME DESC BEATS SOURCE ORDER")
+
+    Assert(Names(OrderBy({ }, EmpName)) = "", "ORDERBY EMPTY")
+    Assert(Names(OrderBy({ Emp("Ash", "Weave", 1) }, Pay)) = "Ash", "ORDERBY SINGLETON")
+    Assert(Nums(OrderBy({ 10, 9, 100 }, Ident)) = "9,10,100", "ORDERBY NUMERIC NOT LEXICAL")
+    Assert(Strs(OrderBy({ "pear", "apple", "fig" }, Upper)) = "apple,fig,pear", "ORDERBY STRING KEY")
+    Assert(Nums(OrderBy({ 2, 1 }, Ident)) = "1,2", "ORDERBY PAIR")
+    Assert(Nums(OrderBy({ 3, 1, 2 }, Ident)) = "1,2,3", "ORDERBY ODD LENGTH")
+    Assert(Compare(1, 2) < 0 And Compare(2, 1) > 0 And Compare(1, 1) = 0, "COMPARE")
+    Assert(Compare("a", "b") < 0, "COMPARE STRINGS")
+
+    Print("sinq: extremes by key")
+    Assert(EmpName(MinBy(staff, Pay)) = "Dyer", "MINBY TAKES THE EARLIEST TIE")
+    Assert(EmpName(MaxBy(staff, Pay)) = "Crow", "MAXBY")
+    Assert(OptOr(OptMap(MinByOpt(staff, Pay), EmpName), "?") = "Dyer", "MINBYOPT SOME")
+    Assert(OptOr(OptMap(MinByOpt({ }, Pay), EmpName), "?") = "?", "MINBYOPT NONE ON EMPTY")
+    Assert(OptOr(OptMap(MaxByOpt({ }, Pay), EmpName), "?") = "?", "MAXBYOPT NONE ON EMPTY")
+
+    Print("sinq: grouping")
+    Let byDept = GroupBy(staff, Dept)
+    Assert(Length(byDept) = 2, "GROUPBY COUNT")
+    Assert(Strs(Map(byDept, GKey)) = "Weave,Spin", "GROUPBY KEYS IN FIRST-APPEARANCE ORDER")
+    Assert(Names(GItems(First(byDept))) = "Crow,Ash", "GROUPBY ITEMS IN SOURCE ORDER")
+    Assert(Sum(Map(byDept, Fn(g) => Length(GItems(g)))) = Length(staff), "GROUPBY LOSES NOBODY")
+    Assert(Length(GroupBy({ }, Dept)) = 0, "GROUPBY EMPTY")
+
+    Print("sinq: joining")
+    Rem Ash has two sales, Crow one, Dyer and Fenton none, and Nobody
+    Rem matches no employee at all.
+    Let sales = { Sale("Ash", 10), Sale("Crow", 0), Sale("Ash", 5), Sale("Nobody", 99) }
+    Assert(Strs(JoinOn(staff, sales, EmpName, SaleWho, Fn(e, s) => EmpName(e) & ":" & Str(SaleCash(s)))) = "Crow:0,Ash:10,Ash:5", "JOINON INNER, LEFT ORDER, DROPS UNMATCHED BOTH WAYS")
+    Assert(Strs(GroupJoinOn(staff, sales, EmpName, SaleWho, Fn(e, ss) => EmpName(e) & "=" & Str(Length(ss)))) = "Crow=1,Dyer=0,Ash=2,Fenton=0", "GROUPJOINON KEEPS EVERY LEFT ROW")
+    Assert(Length(JoinOn({ }, sales, EmpName, SaleWho, Fn(e, s) => 1)) = 0, "JOINON EMPTY LEFT")
+
+    Print("sinq: distinct and sets")
+    Assert(Nums(Distinct({ 3, 1, 3, 2, 1 })) = "3,1,2", "DISTINCT KEEPS FIRST SIGHTING")
+    Assert(Names(DistinctBy(staff, Dept)) = "Crow,Dyer", "DISTINCTBY KEEPS THE EARLIEST PER KEY")
+    Assert(Nums(Union({ 1, 2 }, { 2, 3 })) = "1,2,3", "UNION")
+    Assert(Nums(Intersect({ 1, 2, 3 }, { 3, 1 })) = "1,3", "INTERSECT KEEPS LEFT ORDER")
+    Assert(Nums(Except({ 1, 2, 3 }, { 2 })) = "1,3", "EXCEPT")
+    Assert(Nums(Except({ 1, 2 }, { 1, 2 })) = "", "EXCEPT EVERYTHING")
+    Assert(Length(Distinct({ Emp("Ash", "Weave", 1), Emp("Ash", "Weave", 1) })) = 1, "DISTINCT ON RECORDS IS STRUCTURAL")
+
+    Print("sinq: walking a graph")
+    Let tree = Bin("root", { Bin("a", { Bin("a1", { }), Bin("a2", { }) }), Bin("b", { }) })
+    Assert(Strs(Map(Descendants(tree, BinKids), BinName)) = "root,a,a1,a2,b", "DESCENDANTS IS ROOT-FIRST DEPTH-FIRST")
+    Assert(Strs(Map(Offspring(tree, BinKids), BinName)) = "a,a1,a2,b", "OFFSPRING DROPS THE ROOT")
+    Assert(Length(Descendants(Bin("only", { }), BinKids)) = 1, "DESCENDANTS OF A LEAF IS ITSELF")
+    Assert(Nums(SelectMany({ 1, 2, 3 }, Fn(n) => Range(1, n))) = "1,1,2,1,2,3", "SELECTMANY")
+    Assert(Nums(SelectMany({ }, Fn(n) => Range(1, n))) = "", "SELECTMANY EMPTY")
+    Assert(Call(Thru(BinKids, Length), tree) = 2, "THRU COMPOSES TWO SELECTORS")
+
+    Print("sinq: navigating where a step can fail")
+    Assert(Nums(Choose({ 1, 2, 3, 4 }, HalfIfEven)) = "1,2", "CHOOSE MAPS AND FILTERS IN ONE PASS")
+    Assert(Nums(Choose({ 1, 3 }, HalfIfEven)) = "", "CHOOSE CAN KEEP NOTHING")
+    Assert(OptOr(Call(ThruOpt(HalfIfEven, HalfIfEven), 8), 0) = 2, "THRUOPT CHAINS TWO FALLIBLE STEPS")
+    Assert(OptOr(Call(ThruOpt(HalfIfEven, HalfIfEven), 6), 0) = 0, "THRUOPT STOPS AT THE FIRST NONE")
+    Assert(OptOr(OptBind(Some(4), HalfIfEven), 0) = 2, "OPTBIND")
+    Assert(OptOr(OptBind(None(), HalfIfEven), 0) = 0, "OPTBIND ON NONE")
+    Assert(OptOr(OptMap(Some(4), Ident), 0) = 4, "OPTMAP SOME")
+    Assert(OptOr(OptMap(None(), Ident), 0) = 0, "OPTMAP NONE")
+
+    Print("sinq: slicing")
+    Assert(Nums(TakeWhile({ 1, 2, 9, 3 }, IsSmall)) = "1,2", "TAKEWHILE STOPS AT THE FIRST FAILURE")
+    Assert(Nums(SkipWhile({ 1, 2, 9, 3 }, IsSmall)) = "9,3", "SKIPWHILE")
+    Assert(Nums(TakeWhile({ 9, 1 }, IsSmall)) = "", "TAKEWHILE CAN TAKE NOTHING")
+    Assert(Nums(SkipWhile({ 1, 2 }, IsSmall)) = "", "SKIPWHILE CAN SKIP EVERYTHING")
+    Assert(Nums(TakeWhile({ }, IsSmall)) = "", "TAKEWHILE EMPTY")
+    Assert(Join(Map(Chunk({ 1, 2, 3, 4, 5 }, 2), Nums), ";") = "1,2;3,4;5", "CHUNK BATCHES IN ORDER WITH A SHORT LAST")
+    Assert(Length(Chunk({ 1, 2, 3, 4, 5 }, 2)) = 3, "CHUNK BATCH COUNT")
+    Assert(Length(Chunk({ }, 3)) = 0, "CHUNK EMPTY")
+    Assert(Join(Map(Chunk({ 1, 2, 3, 4 }, 2), Nums), ";") = "1,2;3,4", "CHUNK EXACT FIT")
+
+    Print("sinq: the total twins")
+    Assert(OptOr(FirstOpt({ 7, 8 }), 0) = 7, "FIRSTOPT SOME")
+    Assert(OptOr(FirstOpt({ }), 0) = 0, "FIRSTOPT NONE")
+    Assert(OptOr(LastOpt({ 7, 8 }), 0) = 8, "LASTOPT SOME")
+    Assert(OptOr(LastOpt({ }), 0) = 0, "LASTOPT NONE")
+    Assert(OptOr(SingleOpt({ 7 }), 0) = 7, "SINGLEOPT ON EXACTLY ONE")
+    Assert(OptOr(SingleOpt({ 7, 8 }), 0) = 0, "SINGLEOPT NONE ON TWO")
+    Assert(OptOr(SingleOpt({ }), 0) = 0, "SINGLEOPT NONE ON EMPTY")
+    Assert(OptOr(FindOpt({ 9, 2, 3 }, IsSmall), 0) = 2, "FINDOPT FINDS THE FIRST PASSING")
+    Assert(OptOr(FindOpt({ 9, 9 }, IsSmall), 0) = 0, "FINDOPT NONE WHEN NOTHING PASSES")
+    Assert(OptOr(FindOpt({ }, IsSmall), 0) = 0, "FINDOPT EMPTY")
+
+    Rem ---- the large run ---------------------------------------------------
+    Rem Fifty thousand elements: two and a half times the ~20000 frame
+    Rem ceiling. If any word here walked with First/Rest, or recursed
+    Rem without being in tail position, this section is where the process
+    Rem dies rather than where a message is printed.
+    Print("sinq: fifty thousand elements")
+    Let n = 50000
+    Let up = Range(1, n)
+    Let down = Reverse(up)
+
+    Rem sorted ONCE and bound: the assertions below ask four questions
+    Rem of one answer rather than sorting fifty thousand elements four
+    Rem times over.
+    Let sorted = OrderBy(down, Ident)
+    Assert(Length(sorted) = n, "ORDERBY 50000 SURVIVES")
+    Assert(First(sorted) = 1, "ORDERBY 50000 STARTS AT 1")
+    Assert(Last(sorted) = n, "ORDERBY 50000 ENDS AT N")
+    Assert(Nums(Taken(sorted, 3)) = "1,2,3", "ORDERBY 50000 IS ACTUALLY ORDERED")
+    Assert(First(OrderByDesc(up, Ident)) = n, "ORDERBYDESC 50000")
+    Assert(Length(TakeWhile(up, Fn(x) => x < n)) = n - 1, "TAKEWHILE 50000")
+    Assert(Length(SkipWhile(up, Fn(x) => x < n)) = 1, "SKIPWHILE 50000")
+    Assert(OptOr(FindOpt(up, Fn(x) => x = n), 0) = n, "FINDOPT 50000 REACHES THE LAST")
+    Assert(Length(Chunk(up, 1000)) = 50, "CHUNK 50000")
+    Assert(Length(Choose(up, Fn(x) => Some(x))) = n, "CHOOSE 50000")
+    Assert(Length(SelectMany(Chunk(up, 1000), Ident)) = n, "SELECTMANY 50000")
+
+    Rem A deep-but-narrow tree: depth is what Descendants spends stack
+    Rem on, so this is the shape that proves the documented ceiling is
+    Rem where the header says it is.
+    Assert(Length(Descendants(Bin("leaf", { }), BinKids)) = 1, "DESCENDANTS TRIVIAL")
+
+    Print("ALL ASSERTIONS PASSED")

@@ -71,6 +71,7 @@ Rem ==================================================================
 
 Include "cuttle.shoddy"
 Include "seq.shoddy"
+Include "sinq.shoddy"
 Include "str.shoddy"
 Include "dict.shoddy"
 
@@ -447,16 +448,7 @@ Def RckUnreg(st As RckState, name As String) As RckState
 Rem Option, not an entry-or-sentinel: a dictionary miss is an ordinary
 Rem answer and the caller has to look at it.
 Def RckFind(st As RckState, name As String) As Option
-    RckFindIn(RckDict(st), Upper(name))
-
-Def RckFindIn(d As List Of RckEntry, name As String) As Option
-    If IsEmpty(d) Then
-        None()
-    Else
-        If WordName(First(d)) = name Then
-            Some(First(d))
-        Else
-            RckFindIn(Rest(d), name)
+    FindOpt(RckDict(st), Fn(e) => WordName(e) = Upper(name))
 
 Def RckKnows(st As RckState, name As String) As Boolean
     Select Case RckFind(st, name)
@@ -917,14 +909,16 @@ Def RckDefLine(e As RckEntry) As String
 Rem Grouped by seed, in the order the seeds arrived, because that is the
 Rem order someone built the dictionary in and the order they will look
 Rem for a word in.
+Rem GroupBy answers its groups in first-appearance order, which IS the
+Rem order the seeds arrived, so the heading order this promises falls out
+Rem of it rather than being arranged. This was three Defs — a distinct
+Rem over the seed names, then a rescan of the whole dictionary per name —
+Rem before sinq had the word for it.
 Def RckWords(st As RckState) As List Of String
-    Flatten(Map(RckSeedsOf(st), Fn(g) => RckGroupOf(st, g)))
+    SelectMany(GroupBy(RckDict(st), WordSeed), RckGroupOf)
 
-Def RckSeedsOf(st As RckState) As List Of String
-    Fold(Map(RckDict(st), WordSeed), { }, Fn(a, g) => Ifte(Contains(a, g), a, Append(a, g)))
-
-Def RckGroupOf(st As RckState, g As String) As List Of String
-    RckHeaded("-- " & g & " --", RckNamesIn(RckDict(st), Fn(e) => WordSeed(e) = g))
+Def RckGroupOf(g As Group) As List Of String
+    RckHeaded("-- " & GKey(g) & " --", Map(GItems(g), WordName))
 
 Rem The other grouping the same listing supports: what a program will do
 Rem to the world, in one place, without reading every word's help.

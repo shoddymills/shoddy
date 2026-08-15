@@ -25,11 +25,32 @@ Rem where a reader goes looking for them. The flat reference is section
 Rem 10 of docs/spec.html, and the stack effects below are the ones the
 Rem compiler's own Effects.cs table declares.
 Rem
-Rem TWO SEQUENCE KINDS, AND THE DIFFERENCE IS THE WHOLE DESIGN. A LIST
-Rem is a linked list: First and Rest are free, Nth walks. An ARRAY is
-Rem contiguous: Nth is O(1), and Rest would have to copy. Recurse over
-Rem lists; index into arrays; ToArray and ToList convert. Everything
-Rem here counts from 1.
+Rem TWO SEQUENCE KINDS. A LIST is what First, Rest and Prepend are for
+Rem and what structural recursion reads; an ARRAY is fixed-length and
+Rem what Nth is for. ToArray and ToList convert. Everything here counts
+Rem from 1.
+Rem
+Rem WHAT THIS HEADER USED TO SAY, AND WHY IT WAS CHANGED. It said "a
+Rem LIST is a linked list: First and Rest are free". That was wrong, and
+Rem being wrong in the first place a reader looks made it expensive: a
+Rem list is contiguous underneath, so REST HANDS BACK A COPY OF THE
+Rem TAIL. Walking n elements with First/Rest therefore copies about
+Rem n^2/2 of them — measured at 74 ms for 12500 elements and 3585 ms for
+Rem 50000, which is four to six times per doubling, not two.
+Rem
+Rem So: RECURSE OVER LISTS FOR SHAPE, NOT FOR SPEED. A few dozen
+Rem elements, or a shape that is genuinely a head and a tail, is what
+Rem First/Rest is for. To visit every element of a long sequence, Fold
+Rem (a builtin loop), or ToArray once and index with Nth. sinq.shoddy is
+Rem written that way throughout and its header explains the rest.
+Rem
+Rem AND MIND WHERE THE RECURSIVE CALL SITS. Only SELF-tail-recursion
+Rem becomes a loop. Taken below builds its answer with Prepend on the
+Rem way OUT of the recursion, so it costs a stack frame per element and
+Rem overflows somewhere past twenty thousand — a hard process kill, not
+Rem an Error. Mutual recursion is not optimised either. An accumulator
+Rem threaded in and Reversed at the end is the shape that is safe at any
+Rem length; shaker.shoddy's ShakeTakeN is the worked example.
 Rem
 Rem ALL NINETEEN ARE PURE, including SetNth — it answers a NEW sequence
 Rem and leaves the original alone, which is what makes them safe to
@@ -76,8 +97,10 @@ Rem First(xs As List Of t) As t                       ( xs -- v )
 Rem     The first element. Aborts on an empty sequence.
 
 Rem Rest(xs As List Of t) As List Of t                ( xs -- ys )
-Rem     Everything after the first. LISTS ONLY: on an array it would
-Rem     have to copy, and the point of an array is that it does not.
+Rem     Everything after the first. LISTS ONLY — an array refuses it.
+Rem     NOT FREE: it copies the tail, so a First/Rest walk over a long
+Rem     list is quadratic. Fine for a handful; Fold or ToArray+Nth for a
+Rem     thousand. See the header.
 
 Rem Nth(xs As List Of t, k As Number) As t            ( xs k -- v )
 Rem     The k-th element, counting from 1. Aborts outside the range.
@@ -86,8 +109,11 @@ Rem     O(1) on an array, a walk on a list.
 Rem ---- building a new one ----
 
 Rem Prepend(v As t, xs As List Of t) As List Of t     ( v xs -- ys )
-Rem     xs with v on the front. LISTS ONLY, and free — this is the pair
-Rem     to First/Rest that structural recursion is written with.
+Rem     xs with v on the front. LISTS ONLY — the pair to First/Rest
+Rem     that structural recursion is written with. Like Rest it copies,
+Rem     so building a long list one Prepend at a time is quadratic too;
+Rem     the way round it is to Fold onto an accumulator and Reverse once
+Rem     at the end.
 
 Rem SetNth(xs As List Of t, k As Number, v As t) As List Of t
 Rem                                                   ( xs k v -- ys )

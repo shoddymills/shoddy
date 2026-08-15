@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="reckoner seed: querying a list — machines/seeds/seedsinq.shoddy">
+<title>seedsinq — A Reckoner Seed | Shoddy Machines</title>
+<link rel="stylesheet" href="../style.css">
+<link rel="icon" href="../favicon.svg" type="image/svg+xml">
+<link rel="alternate icon" href="../favicon.ico" sizes="48x48">
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+</head>
+<body>
+<div class="topbar"><div class="inner">
+  <div class="row">
+    <a class="phase" href="index.html"><img class="mark" src="../media/brand/shoddy-icon.svg" alt="" width="23" height="23">Shoddy · The Machines</a>
+    <span class="spacer"></span>
+    <nav class="docnav meta" aria-label="About"><a href="../heritage.html">Heritage</a><a href="../authorship.html">Authorship</a></nav>
+  </div>
+  <nav class="docnav main" aria-label="Documentation"><a href="../tutorials/index.html">Tutorials</a><a href="../guide.html">Guide</a><a href="../quickref.html">Reference</a><span class="here">Machines</span><a href="../mills/index.html">Mills</a><a href="../stack.html">Stack</a><a href="../spec.html">Spec</a><a href="../setup.html">Setup</a><a href="../vscode.html">VS Code</a><a href="../assistants.html">AI</a><a href="../build.html">Toolchain</a><a href="../hosting.html">Hosting</a><a href="../errors.html">Errors</a></nav>
+</div></div>
+<div class="wrap">
+
+
+<header class="mast has-icon"><div><p class="eyebrow"><a href="index.html#runtime-stack">The Machines &middot; Runtime stack</a></p><h1>seedsinq</h1><p class="kicker">A reckoner seed: querying a list — machines/seeds/seedsinq.shoddy</p></div><img class="micon" src="../media/icons/seedsinq.svg" alt="the seedsinq machine&#39;s icon"></header>
+<nav class="pagenav pagenav-top" aria-label="Machines, in catalog order"><a href="seedephemeris.html" class="prev"><span class="pnwrap"><span class="dir">&larr; Previous machine</span><span class="ttl">seedephemeris</span></span></a><a href="index.html" class="all">All machines</a></nav>
+
+<h2 id="summary">Summary</h2>
+<p><code>seedsinq</code> puts <a href="sinq.html">sinq</a> at the prompt:
+<code>SORTBY SORTBYDESC GROUPBY MINBY MAXBY FINDFIRST TAKEWHILE
+SKIPWHILE</code> take a <code>LIST</code> and a <code>PROGRAM</code>;
+<code>DISTINCT UNION INTERSECT EXCEPT CHUNK</code> take lists alone.</p>
+
+<pre><code>{ 3 1 2 } [ ] SORTBY              x: { 1 2 3 }
+{ 1 2 3 4 } [ 2 MOD ] SORTBY      x: { 2 4 1 3 }
+{ 1 2 3 4 } [ 2 MOD ] GROUPBY     x: { ( 1 { 1 3 } ) ( 0 { 2 4 } ) }
+{ 1 2 3 4 5 } 2 CHUNK             x: { { 1 2 } { 3 4 } { 5 } }</code></pre>
+
+<h2 id="why">Why It's Useful</h2>
+<p>Eight of these thirteen words take a <strong>program</strong> as an
+argument, and that is the whole point of the seed. A word that orders by a key
+is useless without a way to say what the key <em>is</em>, and at a prompt the
+only way to say it is to type a program.</p>
+
+<p>That is possible because <a href="reckoner.html">reckoner</a> opens
+<code>RckPureOver</code> to a seed for exactly this reason: a word whose argument
+is a <code>[ … ]</code> program has to be able to <em>run</em> it, and running one
+needs the dictionary, the registers and the modes it was typed against.
+<code>CALL</code> in <a href="seedbuiltin.html">seedbuiltin</a> is the model
+this seed follows; <a href="seedeng.html">seedeng</a>'s <code>ENGDERIV</code>
+and friends are the same shape.</p>
+
+<p>Two rules come with it. The program sees the <strong>caller's whole
+session</strong> — it may name a word defined a line earlier and may
+<code>RCL</code> a register — and whatever it changes is
+<strong>discarded</strong>, because it runs in a sub-evaluation whose state does
+not thread home.</p>
+
+<pre><code>: TENS 10 * ;
+{ 3 1 2 } [ TENS ] SORTBY         x: { 1 2 3 }</code></pre>
+
+<h2 id="guide">User's Guide</h2>
+
+<h3>The empty program is the identity key</h3>
+<p><code>[ ]</code> leaves the element exactly as it found it, so
+<code>SORTBY</code> with an empty program orders a list by its own values —
+which is what <code>SORTL</code> in <a href="seedseq.html">seedseq</a> does, and
+the two agree.</p>
+
+<h3>A key may be a number, a string or a flag</h3>
+<p>Numbers and strings are what the <code>&lt;</code> underneath
+<code>Compare</code> accepts. A <strong>flag</strong> is admitted as well, and
+has to be: the predicate words are typed as comparisons, and a comparison
+answers <code>True</code> or <code>False</code>, not 1 or 0. Refusing a flag
+would have made <code>TAKEWHILE</code>, <code>SKIPWHILE</code> and
+<code>FINDFIRST</code> unusable with the very programs they exist for.
+<code>False</code> sorts before <code>True</code>.</p>
+
+<p>Anything else — a list as a key, say — is refused <em>by name</em> rather
+than mis-sorted, on <code>SORTL</code>'s precedent.</p>
+
+<h3>Keys are computed before anything is ordered</h3>
+<p>Every selector word runs the program over the whole list first and refuses on
+the first failure, in seedeng's pre-flight pattern. A key program that failed
+halfway would otherwise leave a half-ordered answer that looked fine. It also
+means the program runs <strong>once per element</strong> rather than once per
+comparison, which for a sort is the difference between n and n&nbsp;log&nbsp;n
+evaluations of whatever was typed.</p>
+
+<h3>A group is a pair, so it is already a dictionary</h3>
+<p><code>GROUPBY</code> answers a list of <code>PAIR</code> cells — key, then
+member list — which is precisely the shape
+<a href="seeddict.html">seeddict</a>'s words read, so
+<code>DGET</code> works on the answer without learning anything new.</p>
+
+<h2 id="words">Word Reference</h2>
+<table>
+<tr><th>Word</th><th>Description</th></tr>
+<tr><td>SORTBY ( list prog -- list )</td><td>The list ordered by what the program answers for each element. Equal keys keep the order they were in, so ordering twice orders by both.</td></tr>
+<tr><td>SORTBYDESC ( list prog -- list )</td><td>The same, largest first. Equal keys still keep the order they were in.</td></tr>
+<tr><td>GROUPBY ( list prog -- list )</td><td>The list gathered into groups by what the program answers, each group a PAIR of the key and its members. Groups come out in the order their keys were first seen, members in the order they were in.</td></tr>
+<tr><td>MINBY ( list prog -- x )</td><td>The element whose key is smallest. A tie answers the earliest one. Refuses an empty list rather than inventing an answer.</td></tr>
+<tr><td>MAXBY ( list prog -- x )</td><td>The element whose key is largest, ties to the earliest.</td></tr>
+<tr><td>FINDFIRST ( list prog -- x )</td><td>The first element the program answers nonzero for. Refuses when nothing matches, so a miss cannot be mistaken for a value.</td></tr>
+<tr><td>TAKEWHILE ( list prog -- list )</td><td>The run at the front the program answers nonzero for, stopping at the first it does not.</td></tr>
+<tr><td>SKIPWHILE ( list prog -- list )</td><td>Everything from the first element the program answers zero for onwards.</td></tr>
+<tr><td>DISTINCT ( list -- list )</td><td>The list with later repeats dropped, keeping the first sighting of each value in place.</td></tr>
+<tr><td>UNION ( list list -- list )</td><td>Everything in either, each value once, the first list's order first.</td></tr>
+<tr><td>INTERSECT ( list list -- list )</td><td>Only what is in both, in the first list's order.</td></tr>
+<tr><td>EXCEPT ( list list -- list )</td><td>What is in the first and not the second, in the first list's order.</td></tr>
+<tr><td>CHUNK ( list n -- list )</td><td>The list cut into batches of n, the last one short if it has to be. Refuses a size below one, which would never finish.</td></tr>
+</table>
+
+<h2 id="cannot">What It Will Not Do</h2>
+<p><strong>Nothing typed here can end the session.</strong> That is not a
+courtesy — it is the seed's job, and two words needed real work to keep it.
+sinq's <code>Chunk</code> <em>aborts</em> on a batch size below one and its
+<code>MinBy</code> aborts on an empty list, so <code>CHUNK</code>,
+<code>MINBY</code> and <code>MAXBY</code> each catch that case before it can
+reach the machine and refuse with a reason instead.</p>
+
+<p><strong>The set words compare cells structurally</strong>, which means they
+work on numbers, strings and pairs and cannot speak about a list of lists: two
+separately built lists of the same items are never equal in Shoddy. Order by a
+number or a string key when that comes up.</p>
+
+<p><strong>There is no join here.</strong> <code>JoinOn</code> and
+<code>GroupJoinOn</code> take three programs between them — two key selectors
+and a combiner — and a stack word taking three programs is harder to type
+correctly than the <code>GROUPBY</code> it would be built from. They stay
+available to a mill that includes <a href="sinq.html">sinq</a> directly.</p>
+
+<h2 id="usedby">Who Uses It</h2>
+<table>
+<tr><th></th><th>User</th><th>How</th></tr>
+<tr><td class="uicon"><a href="../mills/halifax.html"><img src="../media/icons/halifax.svg" alt=""></a></td><td><a href="../mills/halifax.html">halifax</a></td><td>Folded last, so it is the last heading <code>WORDS</code> prints.</td></tr>
+<tr><td class="uicon"><a href="../mills/sparky.html"><img src="../media/icons/sparky.svg" alt=""></a></td><td><a href="../mills/sparky.html">sparky</a></td><td>Sparky folds it too, so a model calling <code>eval</code> reaches the same words halifax puts at a prompt.</td></tr>
+</table>
+<p>A mill claims this seed by folding <code>RckSeedSinq</code> over its reckoner
+state, which is all halifax does.</p>
+
+<h2 id="uses">The Machines It Uses</h2>
+<table>
+<tr><th></th><th>Machine</th><th>Why</th></tr>
+<tr><td class="uicon"><a href="cuttle.html"><img src="../media/icons/cuttle.svg" alt=""></a></td><td><a href="cuttle.html">cuttle</a></td><td>The <code>Cell</code> type — <code>CutList</code>, <code>CutPair</code>, <code>CutProg</code> and the rest — every word here reads and answers.</td></tr>
+<tr><td class="uicon"><a href="reckoner.html"><img src="../media/icons/reckoner.svg" alt=""></a></td><td><a href="reckoner.html">reckoner</a></td><td><code>RckReg</code>, <code>RckSeeding</code>, the argument readers, and <code>RckPureOver</code> with <code>RckProgArg</code>/<code>RckProgOn</code> — which is what makes a program argument possible at all.</td></tr>
+<tr><td class="uicon"><a href="sinq.html"><img src="../media/icons/sinq.svg" alt=""></a></td><td><a href="sinq.html">sinq</a></td><td>Every word here is one of sinq's, wrapped in guards. The ordering, grouping and set logic is all the machine's.</td></tr>
+<tr><td class="uicon"><a href="seq.html"><img src="../media/icons/seq.svg" alt=""></a></td><td><a href="seq.html">seq</a></td><td><code>Pair</code>, <code>Fold</code>, <code>Reverse</code> and <code>First</code> for the decorated elements the selector words carry.</td></tr>
+</table>
+
+<nav class="pagenav pagenav-bottom" aria-label="Machines, in catalog order">
+  <a href="seedephemeris.html" class="prev"><span class="pnwrap"><span class="dir">&larr; Previous machine</span><span class="ttl">seedephemeris</span></span></a>
+  <a href="index.html" class="all">All machines</a>
+</nav>
+<footer>Named for the shoddy mills of the West Riding: Useless Things Made
+Useful Through Skill (<a href="../heritage.html">the heritage of the name</a>).<br>
+&copy; 2026 Stephen Vincent Foster</footer>
+</div>
+</body>
+</html>

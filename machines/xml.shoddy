@@ -84,6 +84,7 @@ Rem ==================================================================
 
 Include "seq.shoddy"
 Include "dict.shoddy"
+Include "sinq.shoddy"
 Include "str.shoddy"
 
 Type Xml = XDocument(XNodes As List Of Xml) | XElem(XTag As String, XAttrs As List Of Pair, XKids As List Of Xml) | XText(XChars As String) | XComment(XBody As String) | XPI(XTarget As String, XData As String) | XCData(XRaw As String) | XDoctype(XDtd As String)
@@ -819,16 +820,18 @@ Def XPad(indent As Number, level As Number) As String
     StrRep(" ", indent * level)
 
 Rem ---- canonical -------------------------------------------------------
-Rem Sort is documented as ascending over all-numbers or all-strings, so
-Rem it will not sort a List Of Pair by name. Sort the NAMES — a List Of
-Rem String — and map them back through the attribute list to rebuild.
+Rem The Sort builtin is ascending over all-numbers or all-strings and so
+Rem will not sort a List Of Pair by name. This used to sort the NAMES and
+Rem map each one back through the attribute list — correct, but a DictGet
+Rem scan per name. sinq's OrderBy takes the key selector directly, so the
+Rem attributes are ordered where they stand.
 
 Def XmlCanonical(x As Xml) As Xml
     Select Case x
         Case XDocument(ns)
             XDocument(Map(ns, XmlCanonical))
         Case XElem(tag, attrs, kids)
-            XElem(tag, Map(Sort(DictKeys(attrs)), Fn(k) => Pair(k, DictGet(attrs, k))), Map(kids, XmlCanonical))
+            XElem(tag, OrderBy(attrs, Fst), Map(kids, XmlCanonical))
         Case Else
             x
 

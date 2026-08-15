@@ -25,6 +25,16 @@ files never leave the app container, and five of the nine capabilities
 are pure or acknowledgement-only (B4.9). No API key ships because
 there is no built-in service to authenticate to (B4.6).
 
+**Machines with no capability at all are not in the table, and `sinq` is
+the newest of them.** Its thirteen words sort, group, join and slice a
+list that is already on the stack: no file, no socket, no device, no
+clock. It therefore needs no manifest line, no entitlement and no
+permission on any platform, and it reaches the app the moment halifax
+folds its seed. This paragraph exists because a machine's *absence* from
+the table above is meant to be a statement — that it costs nothing —
+rather than an oversight, and the only way to tell those apart is to say
+so.
+
 The exclusion (B4.11) needs no platform entry at all: `seednet`
 registers `NETGET` and `NETREQUEST` only, so no listen, accept or
 blocking-wait word is reachable from the app's dictionary on any

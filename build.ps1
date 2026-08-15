@@ -205,6 +205,15 @@ function Invoke-Test {
     # different formula reaching the same number, so a mistyped one
     # disagrees instead of agreeing with itself.
     Native $Mill run tst/geo.shoddy
+    # sinq is graded two ways, because a query machine can be wrong in two
+    # unrelated places. Its ordering fixtures are built so a wrong-but-
+    # plausible sort DISAGREES -- ties are listed in the opposite order to
+    # the answer, so one that merely inherited the input order fails --
+    # and its last section runs fifty thousand elements, which is the only
+    # suite in the tree big enough to catch a word that walks a list with
+    # Rest or recurses without being in tail position. Both are invisible
+    # at the sizes every other fixture uses.
+    Native $Mill run tst/sinq.shoddy
     # The net demo is the only end-to-end exercise of the socket words: it
     # stands up a server, connects a client to it and trades lines, both
     # ends in one process on loopback. --allow-net is required because the

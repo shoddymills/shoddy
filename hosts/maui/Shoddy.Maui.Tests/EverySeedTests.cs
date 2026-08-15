@@ -62,6 +62,14 @@ public class EverySeedTests : IClassFixture<EverySeedTests.SeedHarness>
         // GMST at J2000.0 itself — the epoch constant, reached only if
         // the day count and the wrap are both right.
         ["seedephemeris"] = new(new[] { "2451544.5 12 EPHSIDEREAL" }, "280.46"),
+        // Ordered by remainder, so the answer is not the input, not the
+        // input reversed, and not the input plainly sorted — it is the
+        // one arrangement that needs the program to have been RUN as a
+        // key and the equal keys to have kept their order. A SORTBY that
+        // ignored the program says { 1 2 3 4 }; one that sorted by the
+        // element says the same; an unstable one says { 4 2 1 3 } or
+        // { 2 4 3 1 }. Only the real thing says this.
+        ["seedsinq"] = new(new[] { "{ 1 2 3 4 } [ 2 MOD ] SORTBY" }, "{ 2 4 1 3 }"),
         ["seedhtml"] = new(new[] { "\"<b>hi</b>\" HTMLPARSE HTMLTEXT" }, "<b>hi</b>"),
         ["seedhttps"] = new(new[] { "\"nonsense\" HTTPSTATUS" }, "0"),
         ["seedisam"] = new(new[]

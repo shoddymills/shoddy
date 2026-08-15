@@ -1,0 +1,145 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem seedsinqtest.shoddy — test program for seedsinq.shoddy
+Rem
+Rem Assert-driven, in the seedsparsetest / seedtest pattern: it prints
+Rem what it is doing and stops the run at the first assertion that
+Rem fails, ending with ALL ASSERTIONS PASSED when it does not.
+Rem
+Rem THE GUARD LIST IS THE TEST LIST. Every refusal this seed can answer
+Rem is walked below exactly once, and each is checked with Refuses,
+Rem which asserts three things at a stroke: the word said no, it said
+Rem why, and the session came through it with its stack and its
+Rem arithmetic intact. Nothing typed at a prompt may end the session —
+Rem the machine's Chunk ABORTS on a bad batch size and MinBy ABORTS on
+Rem an empty list, so the seed has to catch both before they get there,
+Rem and these are the assertions that prove it does.
+Rem
+Rem THE ORDERING TESTS DISCRIMINATE. The stability fixture pairs equal
+Rem keys with distinguishable values and lists them in the opposite
+Rem order to the answer, so a sort that merely inherited the input order
+Rem fails here instead of passing by luck.
+Rem
+Rem Run: bin\mill run tst\seedsinqtest.shoddy   (from the repo root)
+Rem ==================================================================
+
+Include "../machines/cuttle.shoddy"
+Include "../machines/reckoner.shoddy"
+Include "../machines/seq.shoddy"
+Include "../machines/str.shoddy"
+Include "../machines/seeds/seedsinq.shoddy"
+Include "../machines/seeds/seedbuiltin.shoddy"
+
+Def Ran(st As RckState, line As String) As RckState
+    Select Case RckEval(st, line)
+        Case RckNext(st2, out)
+            st2
+        Case RckStop(st2, why, out)
+            st2
+        Case Else
+            st
+
+Def Bad(st As RckState, line As String) As Boolean
+    Select Case RckEval(st, line)
+        Case RckStop(st2, why, out)
+            True
+        Case Else
+            False
+
+Def Why(st As RckState, line As String) As String
+    Select Case RckEval(st, line)
+        Case RckStop(st2, why, out)
+            why
+        Case Else
+            ""
+
+Def Text(st As RckState) As String
+    Join(Map(CutCells(RckStack(st)), Fn(c) => CutShow(c, RckFmt(st))), " | ")
+
+Def Refuses(st As RckState, line As String, part As String) As Boolean
+    Bad(st, line) And Instr(Why(st, line), part) > 0 And Text(Ran(st, line)) = Text(st) And Text(Ran(Ran(st, line), "1 1 +")) = Text(Ran(st, "1 1 +"))
+
+Def Main()
+    Let s0 = RckSeedBuiltin(RckSeedSinq(RckNew()))
+
+    Print("--- the thirteen words are registered and carry their metadata ---")
+    Assert(RckKnows(s0, "SORTBY") And RckKnows(s0, "SORTBYDESC") And RckKnows(s0, "GROUPBY"), "THE THREE THAT ORDER AND GATHER")
+    Assert(RckKnows(s0, "MINBY") And RckKnows(s0, "MAXBY") And RckKnows(s0, "FINDFIRST"), "THE THREE THAT PICK ONE")
+    Assert(RckKnows(s0, "TAKEWHILE") And RckKnows(s0, "SKIPWHILE"), "THE TWO THAT SLICE ON A CONDITION")
+    Assert(RckKnows(s0, "DISTINCT") And RckKnows(s0, "UNION") And RckKnows(s0, "INTERSECT") And RckKnows(s0, "EXCEPT") And RckKnows(s0, "CHUNK"), "AND THE FIVE THAT NEED NO PROGRAM")
+    Assert(All(RckDict(s0), Fn(e) => WordEffect(e) <> "" And WordDesc(e) <> ""), "NO WORD IS WITHOUT AN EFFECT LINE AND A DESCRIPTION")
+    Assert(All(RckDict(s0), Fn(e) => Length(RckHelp(s0, WordName(e))) = 3), "AND HELP ANSWERS FOR EVERY ONE OF THEM")
+    Rem Nothing here reads a file or draws anything, so nothing here may
+    Rem claim to touch the world.
+    Assert(All(RckDict(s0), Fn(e) => Instr(Lower(WordEffect(e)), "handle") = 0), "NO WORD'S EFFECT STRING MENTIONS A HANDLE")
+
+    Print("--- SORTBY, with the empty program as the identity key ---")
+    Assert(Text(Ran(s0, "{ 3 1 2 } [ ] SORTBY")) = "{ 1 2 3 }", "SORTBY ORDERS NUMBERS")
+    Assert(Text(Ran(s0, "{ 3 1 2 } [ ] SORTBYDESC")) = "{ 3 2 1 }", "SORTBYDESC ORDERS THEM BACK")
+    Assert(Text(Ran(s0, "{ } [ ] SORTBY")) = "{ }", "SORTBY OF NOTHING IS NOTHING")
+    Assert(Text(Ran(s0, "{ 7 } [ ] SORTBY")) = "{ 7 }", "SORTBY OF ONE IS ITSELF")
+    Assert(Text(Ran(s0, "{ 10 9 100 } [ ] SORTBY")) = "{ 9 10 100 }", "SORTBY IS NUMERIC, NOT LEXICAL")
+    Assert(Text(Ran(s0, "{ \"pear\" \"apple\" \"fig\" } [ ] SORTBY")) = "{ \"apple\" \"fig\" \"pear\" }", "SORTBY ORDERS STRINGS TOO")
+
+    Print("--- the key is what the program answers, not the element ---")
+    Rem Ordered by remainder: the evens keep 2 before 4, the odds 1
+    Rem before 3, which is the stability claim as well as the key claim.
+    Assert(Text(Ran(s0, "{ 1 2 3 4 } [ 2 MOD ] SORTBY")) = "{ 2 4 1 3 }", "SORTBY USES THE PROGRAM'S ANSWER AND KEEPS TIES IN ORDER")
+    Rem Descending on the same key must move the groups and NOT the
+    Rem members: a sort that reversed the whole list would say 3 1 4 2.
+    Assert(Text(Ran(s0, "{ 1 2 3 4 } [ 2 MOD ] SORTBYDESC")) = "{ 1 3 2 4 }", "SORTBYDESC MOVES THE GROUPS, NOT THE MEMBERS")
+    Assert(Text(Ran(s0, "{ 1 2 3 } [ NEGATE ] SORTBY")) = "{ 3 2 1 }", "A COMPUTED KEY ORDERS BY ITSELF")
+
+    Print("--- GROUPBY gathers into pairs of key and members ---")
+    Assert(Text(Ran(s0, "{ 1 2 3 4 } [ 2 MOD ] GROUPBY")) = "{ ( 1 { 1 3 } ) ( 0 { 2 4 } ) }", "GROUPBY KEYS IN FIRST-SEEN ORDER, MEMBERS IN SOURCE ORDER")
+    Assert(Text(Ran(s0, "{ } [ ] GROUPBY")) = "{ }", "GROUPBY OF NOTHING IS NOTHING")
+    Assert(Text(Ran(s0, "{ 5 5 5 } [ ] GROUPBY")) = "{ ( 5 { 5 5 5 } ) }", "ONE KEY IS ONE GROUP")
+
+    Print("--- MINBY, MAXBY and FINDFIRST ---")
+    Assert(Text(Ran(s0, "{ 3 1 2 } [ ] MINBY")) = "1", "MINBY")
+    Assert(Text(Ran(s0, "{ 3 1 2 } [ ] MAXBY")) = "3", "MAXBY")
+    Assert(Text(Ran(s0, "{ 3 1 2 } [ NEGATE ] MINBY")) = "3", "MINBY ON A COMPUTED KEY")
+    Assert(Text(Ran(s0, "{ 4 7 9 } [ 5 > ] FINDFIRST")) = "7", "FINDFIRST TAKES THE FIRST THE PROGRAM LIKES")
+
+    Print("--- TAKEWHILE and SKIPWHILE ---")
+    Assert(Text(Ran(s0, "{ 1 2 9 3 } [ 4 < ] TAKEWHILE")) = "{ 1 2 }", "TAKEWHILE STOPS AT THE FIRST FAILURE")
+    Assert(Text(Ran(s0, "{ 1 2 9 3 } [ 4 < ] SKIPWHILE")) = "{ 9 3 }", "SKIPWHILE RESUMES THERE")
+    Assert(Text(Ran(s0, "{ 9 1 } [ 4 < ] TAKEWHILE")) = "{ }", "TAKEWHILE CAN TAKE NOTHING")
+    Assert(Text(Ran(s0, "{ 1 2 } [ 4 < ] SKIPWHILE")) = "{ }", "SKIPWHILE CAN SKIP EVERYTHING")
+
+    Print("--- the five that need no program ---")
+    Assert(Text(Ran(s0, "{ 3 1 3 2 1 } DISTINCT")) = "{ 3 1 2 }", "DISTINCT KEEPS THE FIRST SIGHTING")
+    Assert(Text(Ran(s0, "{ 1 2 } { 2 3 } UNION")) = "{ 1 2 3 }", "UNION")
+    Assert(Text(Ran(s0, "{ 1 2 3 } { 3 1 } INTERSECT")) = "{ 1 3 }", "INTERSECT KEEPS LEFT ORDER")
+    Assert(Text(Ran(s0, "{ 1 2 3 } { 2 } EXCEPT")) = "{ 1 3 }", "EXCEPT")
+    Assert(Text(Ran(s0, "{ 1 2 3 4 5 } 2 CHUNK")) = "{ { 1 2 } { 3 4 } { 5 } }", "CHUNK LEAVES A SHORT LAST BATCH")
+    Assert(Text(Ran(s0, "{ } 3 CHUNK")) = "{ }", "CHUNK OF NOTHING IS NOTHING")
+    Assert(Text(Ran(s0, "{ \"a\" \"b\" \"a\" } DISTINCT")) = "{ \"a\" \"b\" }", "DISTINCT ON STRINGS")
+
+    Print("--- every refusal, and the session survives all of them ---")
+    Assert(Refuses(s0, "7 [ ] SORTBY", "a LIST"), "SORTBY REFUSES A NUMBER WHERE THE LIST GOES")
+    Assert(Refuses(s0, "{ 1 2 } 7 SORTBY", "a PROGRAM"), "SORTBY REFUSES A NUMBER WHERE THE PROGRAM GOES")
+    Assert(Refuses(s0, "{ 1 2 } [ ] [ ] GROUPBY", "a LIST"), "GROUPBY REFUSES A PROGRAM WHERE THE LIST GOES")
+    Rem A key that is neither a number nor a string cannot be ordered, so
+    Rem it is refused by name rather than sorted by accident.
+    Assert(Refuses(s0, "{ 1 2 } [ DROP { 1 } ] SORTBY", "a NUMBER, a STRING or a TRUE/FALSE key"), "SORTBY REFUSES A LIST AS A KEY")
+    Assert(Refuses(s0, "{ } [ ] MINBY", "something in it"), "MINBY REFUSES AN EMPTY LIST INSTEAD OF ABORTING")
+    Assert(Refuses(s0, "{ } [ ] MAXBY", "something in it"), "MAXBY REFUSES AN EMPTY LIST INSTEAD OF ABORTING")
+    Assert(Refuses(s0, "{ 1 2 } [ 9 > ] FINDFIRST", "found nothing"), "FINDFIRST REFUSES A MISS INSTEAD OF INVENTING ONE")
+    Assert(Refuses(s0, "{ 1 2 3 } 0 CHUNK", "1 or more"), "CHUNK REFUSES A ZERO BATCH INSTEAD OF NEVER FINISHING")
+    Rem A negative never reaches the size guard: RckWholeArg turns it
+    Rem away first, with its own wording. Both refusals are the seed's
+    Rem job done — this asserts which one actually fires, so the day one
+    Rem of them stops firing the test says which.
+    Assert(Refuses(s0, "{ 1 2 3 } -1 CHUNK", "whole number of 0 or more"), "CHUNK REFUSES A NEGATIVE BATCH AT THE ARITY GUARD")
+    Assert(Refuses(s0, "7 { 1 } UNION", "a LIST"), "UNION REFUSES A NUMBER ON THE LEFT")
+    Assert(Refuses(s0, "{ 1 } 7 UNION", "a LIST"), "UNION REFUSES A NUMBER ON THE RIGHT")
+    Assert(Refuses(s0, "7 DISTINCT", "a LIST"), "DISTINCT REFUSES A NUMBER")
+
+    Print("--- a program may name a word the session defined a line earlier ---")
+    Let s1 = Ran(s0, ": TENS 10 * ;")
+    Assert(Text(Ran(s1, "{ 3 1 2 } [ TENS ] SORTBY")) = "{ 1 2 3 }", "A USER WORD WORKS AS A KEY PROGRAM")
+
+    Print("ALL ASSERTIONS PASSED")

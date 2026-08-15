@@ -270,6 +270,27 @@ public static class TextIo
     /// a BOM or a line ending changing underneath a caller is exactly the
     /// kind of move it must catch.
     /// </summary>
+    /// <summary>
+    /// Text with a leading byte-order mark taken off.
+    ///
+    /// <para>A BOM is a fact about a FILE's encoding, not a character in
+    /// its content, and it belongs at the head of a file or nowhere.
+    /// Text arriving on a stream carries one whenever the producer felt
+    /// like emitting one - Windows PowerShell does, from
+    /// <c>[Console]::OutputEncoding</c>, even when told not to - and
+    /// keeping it is silently wrong every time: a search pattern
+    /// prefixed with U+FEFF matches nothing, and replacement text
+    /// prefixed with one splices an invisible character into the MIDDLE
+    /// of a file, where no BOM has any meaning at all. Both were
+    /// observed before this existed.</para>
+    ///
+    /// <para>Only the first one goes, and only at the very front. A BOM
+    /// later in the text is a zero-width no-break space that somebody
+    /// may have meant.</para>
+    /// </summary>
+    public static string WithoutMark(string text) =>
+        text.Length > 0 && text[0] == '\uFEFF' ? text[1..] : text;
+
     public static string HashOf(byte[] raw) =>
         Convert.ToHexStringLower(SHA256.HashData(raw));
 }

@@ -70,6 +70,32 @@ declare one and paths are written bare, exactly as they always were.
 --root repo=/work/shoddy --root notes=/work/shoddy-planning --root scratch=/tmp/scratch
 ```
 
+
+**A tree can declare its own roots**, so nobody has to type them onto every
+command. `fettle` takes the nearest `.fettler.json` at or above the current
+directory whenever no `--root` is given:
+
+```json
+{
+  "roots": {
+    "repo": "."
+  }
+}
+```
+
+**Its paths are relative to the file, never to whoever is asking** — which
+is the whole point of it. Read against the caller's working directory a
+relative root names a different tree from every directory; read against the
+file's own directory it names one tree from everywhere, so the same command
+means the same thing three levels down and the file can be checked in.
+
+`--config PATH` names a different file and `--no-config` turns the search
+off. Any `--root` on the command line **replaces** the file rather than
+adding to it, because merging would leave a caller unable to narrow the
+boundary. A malformed configuration is refused, never fallen back from:
+reverting to the current directory would move the boundary without saying
+so, and usually widen it.
+
 **Use absolute paths.** A relative root binds the boundary to whatever
 directory `fettle` was launched from, so the same command means
 different things from different places — and a caller that has to keep
@@ -87,6 +113,29 @@ scratch     /tmp/scratch
 Every path must resolve inside one of them. A move between two roots
 works and says that it crossed, because moving a file between two trust
 domains is something the caller is entitled to see.
+
+## Arguments it will not guess at
+
+**A flag no verb knows is refused, never ignored.** Ignoring one does not
+produce a failure, it produces a *wrong answer*: a flag taking a value also
+swallows the argument after it, so a misspelt `--gob "*.cs"` eats the
+pattern and the search then runs against the whole tree and reports what it
+found with complete confidence.
+
+**A pattern may arrive as bytes rather than as an argument.**
+`--pattern-file PATH` and `--pattern-stdin` take one pattern per line, the
+same shape a `fettle-tasks` file uses for its arguments. The pattern is the
+argument a shell is likeliest to spoil — quotes, backslashes and a leading
+`--` all mean something to somebody first — and the damage is silent,
+because a mangled pattern does not fail, it matches something else.
+
+**A leading byte-order mark on a stream is taken off.** A BOM is a fact
+about a file's encoding, not a character in its content, and it belongs at
+the head of a file or nowhere. Windows PowerShell emits one whether asked
+to or not; keeping it made a search pattern match nothing and spliced an
+invisible character into the middle of a source file. A mark further along
+is left alone.
+
 
 ## The verbs, and their exit codes
 

@@ -54,9 +54,22 @@ public sealed class Roots
             ? StringComparison.OrdinalIgnoreCase
             : StringComparison.Ordinal;
 
-    readonly List<(string Name, string Full)> roots;
+﻿    readonly List<(string Name, string Full)> roots;
 
-    Roots(List<(string, string)> roots) => this.roots = roots;
+    Roots(List<(string, string)> roots, string? origin)
+    {
+        this.roots = roots;
+        Origin = origin ?? "the command line";
+    }
+
+    /// <summary>Where these roots were declared, in words, so `roots`
+    /// can say it. A caller looking at a refusal needs to know which
+    /// boundary refused them before they can change it, and on the MCP
+    /// front end the command line is not something the model ever
+    /// saw.</summary>
+    public string Origin { get; }
+
+
 
     /// <summary>The declared names, in the order they were declared. The
     /// first is the default for an unqualified relative path.</summary>
@@ -82,7 +95,7 @@ public sealed class Roots
     /// directory the caller named is one they meant, so a typo is
     /// reported instead of materialised.</para>
     /// </summary>
-    public static Result<Roots> Open(IReadOnlyList<RootDecl> declared)
+    public static Result<Roots> Open(IReadOnlyList<RootDecl> declared, string? origin = null)
     {
         if (declared.Count == 0)
             return Result<Roots>.Fail(Outcome.Invalid, "no root was declared; at least one is required");
@@ -120,7 +133,7 @@ public sealed class Roots
             opened.Add((d.Name, TrimTrailingSeparator(resolved ?? full)));
         }
 
-        return Result<Roots>.Ok(new Roots(opened));
+        return Result<Roots>.Ok(new Roots(opened, origin));
     }
 
     /// <summary>

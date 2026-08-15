@@ -59,7 +59,7 @@ sealed class TextSupply(Arguments args, TextReader stdin)
                     "only one of --replace-stdin, --with-stdin and --text-stdin can be used at a time");
 
             stdinTaken = true;
-            return Result<string?>.Ok(stdin.ReadToEnd());
+            return Result<string?>.Ok(TextIo.WithoutMark(stdin.ReadToEnd()));
         }
 
         return Result<string?>.Ok(null);

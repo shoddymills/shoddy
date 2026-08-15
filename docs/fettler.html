@@ -136,12 +136,45 @@ outcome the whole design exists to prevent.</p>
 <pre><code>fettle serve --root repo=/work/shoddy --root scratch=/tmp/scratch
 fettle move scratch:draft.md repo:docs/notes.md</code></pre>
 
-<div class="takeaway"><b>Declare roots as absolute paths.</b> A relative
-root binds the boundary to the current directory, so the same command
-means different things from different places — and a caller that has to
-keep correcting its working directory has quietly gone back to doing
-shell work. <code>fettle roots</code> answers what is declared, which is
-better than learning the boundary by being refused by it.</div>
+<p><b>A tree declares its own boundary.</b> Typing two absolute roots onto
+every command is not something anyone does for long, and the way out that
+suggests itself — a small shell script per platform holding the paths and
+passing them through — is worse than the problem: it puts a shell back
+between the caller and the files, which is the thing Fettler exists to
+remove, and being a twin pair it has to be kept in step by hand. A file at
+the top of the tree says it once instead:</p>
+
+<pre><code>{
+  "roots": {
+    "repo": "."
+  }
+}</code></pre>
+
+<p>With no <code>--root</code> on the command line, <code>fettle</code>
+takes the nearest <code>.fettler.json</code> at or above the current
+directory. <b>Its paths are relative to the file, never to whoever is
+asking</b> — which is the whole point of it. A path read against the
+caller's working directory names a different tree from every directory; read
+against the file's own directory it names one tree from everywhere, so the
+same command means the same thing three levels down, and the file can be
+checked in.</p>
+
+<div class="takeaway"><b>The command line replaces the file rather than
+adding to it.</b> Merging would leave a caller unable to <em>narrow</em> the
+boundary — the tree's own roots would stay open beside whatever was asked
+for, and "just this directory, please" would be unsayable.
+<code>--config PATH</code> names a different file;
+<code>--no-config</code> turns the search off and leaves the current
+directory as the root. <code>fettle roots</code> answers what is declared
+<em>and which file declared it</em>, which is better than learning the
+boundary by being refused by it.</div>
+
+<p><b>A malformed configuration is refused, never fallen back from.</b>
+Quietly reverting to the current directory would move the boundary without
+saying so, and usually <em>widen</em> it — a caller's working directory
+tends to sit above the root they meant — which is the one direction a
+containment mistake must never fail in.</p>
+
 
 <p>Containment does not weaken for being enumerated.
  Every path resolves
@@ -166,6 +199,36 @@ component between the check and the operation that follows it. Closing
 that needs operating-system support Fettler does not have. The boundary
 is a boundary, not a defence against a hostile process sharing the
 root.</div>
+
+<h3 id="arguments">Arguments it will not guess at</h3>
+
+<p><b>A flag no verb knows is refused, never ignored.</b> Ignoring one does
+not produce a failure, it produces a <em>wrong answer</em>: a flag that
+takes a value also swallows the argument after it, so a misspelt
+<code>--gob "*.cs"</code> eats the pattern, and the search then runs
+against the whole tree and reports what it found with complete
+confidence. This was found by typing <code>--totally-made-up</code> at the
+tool and watching it exit zero.</p>
+
+<div class="takeaway"><b>A pattern may arrive as bytes rather than as an
+argument.</b> <code>--pattern-file PATH</code> and
+<code>--pattern-stdin</code> take one pattern per line, the same shape a
+<code>fettle-tasks</code> file uses. The pattern is the argument a shell
+is likeliest to spoil — quotes, backslashes and a leading <code>--</code>
+all mean something to somebody before Fettler sees them — and the damage
+is silent, because a mangled pattern does not fail, it matches something
+else. This is the same argument as <code>--with-file</code> for edit text,
+in the place it turns out to matter just as much.</div>
+
+<p><b>A byte-order mark on a stream is not content.</b> A BOM is a fact
+about a file's encoding and belongs at the head of a file or nowhere, so a
+leading one is taken off anything read from stdin. Keeping it was wrong
+twice over in one afternoon: a search pattern prefixed with U+FEFF matched
+nothing at all, and replacement text prefixed with one spliced an
+invisible character into the <em>middle</em> of a source file. Windows
+PowerShell emits one whether or not it is asked to. A mark further along
+is left alone — there it is a zero-width no-break space somebody may have
+meant.</p>
 
 <h2 id="metadata">4. What it touches besides content</h2>
 
@@ -264,9 +327,14 @@ on a mechanism not in ordinary use on Windows.</p>
 <h3 id="contract">The contract</h3>
 
 <p>Client configuration formats move faster than this page does. The
-contract does not: <b>launch <code>fettle serve</code> with one
-<code>--root NAME=PATH</code> per tree it may touch, and speak JSON-RPC
-over stdin and stdout.</b> Every form below is that one fact wearing a
+contract does not: <b>launch <code>fettle serve</code> against the tree it
+may touch, and speak JSON-RPC over stdin and stdout.</b> The roots come
+from that tree's <code>.fettler.json</code>, found from the server's own
+working directory; where a client offers a workspace variable, name the
+file with <code>--config</code> rather than trusting a working directory
+you did not choose. A second tree, or a client with no project at all,
+still takes <code>--root NAME=PATH</code>. Every form below is that one
+fact wearing a
 different set of keys, so if one has drifted, check the client's own
 documentation and give it the same command and arguments.</p>
 
@@ -292,8 +360,7 @@ Configuration</em> creates it if it is not there:</p>
       "command": "fettle",
       "args": [
         "serve",
-        "--root", "repo=${workspaceFolder}",
-        "--root", "notes=${workspaceFolder}/../shoddy-planning"
+        "--config", "${workspaceFolder}/.fettler.json"
       ]
     }
   }
@@ -315,7 +382,7 @@ files, the other gives the assistant a way to change them. See
 <p><b>Claude Code</b> — one command, no file to edit. Project scope is
 the default and is right here, for the reason above:</p>
 
-<div class="promptbox"><button class="copy">Copy</button><pre><code class="language-sh">claude mcp add fettler -- fettle serve --root repo=.</code></pre></div>
+<div class="promptbox"><button class="copy">Copy</button><pre><code class="language-sh">claude mcp add fettler -- fettle serve</code></pre></div>
 
 <p>It registers the same server for the terminal and the VS Code panel
 alike. The checked-in equivalent is <code>.mcp.json</code> at the
@@ -325,7 +392,7 @@ project root:</p>
   "mcpServers": {
     "fettler": {
       "command": "fettle",
-      "args": ["serve", "--root", "repo=."]
+      "args": ["serve"]
     }
   }
 }</code></pre></div>
@@ -339,7 +406,7 @@ paths, since the desktop app has no workspace to be relative to:</p>
   "mcpServers": {
     "fettler": {
       "command": "C:\\tools\\fettle.exe",
-      "args": ["serve", "--root", "repo=C:\\github\\shoddy"]
+      "args": ["serve", "--config", "C:\\github\\shoddy\\.fettler.json"]
     }
   }
 }</code></pre></div>
@@ -350,11 +417,12 @@ its stdin, read one per line from its stdout. Diagnostics go to stderr
 and never to stdout, so nothing the server reports can corrupt the
 stream.</p>
 
-<div class="takeaway"><b><code>--root</code> is repeatable, and more than
-one is the ordinary case.</b> An assistant working on a repository
-usually also has a sibling repository and a scratch directory. Declare
-each and paths are written <code>name:path</code>; declare one and paths
-stay bare. A single root refuses work the assistant's own harness
+<div class="takeaway"><b>More than one root is the ordinary case.</b> An
+assistant working on a repository usually also has a sibling repository
+and a scratch directory. Name them all in the tree's
+<code>.fettler.json</code>, or pass one <code>--root</code> each; either
+way paths are then written <code>name:path</code>, and with a single root
+they stay bare. One root refuses work the assistant's own harness
 already permits, and it goes back to the shell to do it — which is the
 outcome the whole design exists to prevent.</div>
 

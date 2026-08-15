@@ -77,6 +77,21 @@ public static class Command
     static async Task<CliResult> Run(
         Bench bench, Arguments args, bool json, TextReader stdin, CancellationToken cancel)
     {
+        // R3.14: a flag no verb knows is refused here, before anything
+        // runs, because ignoring one does not produce a failure - it
+        // produces a WRONG ANSWER. A flag taking a value eats the
+        // argument after it, so a misspelt `--gob "*.cs"` swallows the
+        // pattern, and the command then searches the whole tree for
+        // something else and reports it with complete confidence.
+        IReadOnlyList<string> unknown = args.UnknownFlags;
+        if (unknown.Count > 0)
+        {
+            var named = new List<string>();
+            foreach (string flag in unknown) named.Add("--" + flag);
+            return Failed(new Failure(Outcome.Invalid,
+                $"no such flag: {string.Join(", ", named)} - try: fettle help"), json);
+        }
+
         try
         {
             return await Dispatch(bench, args, json, stdin, cancel).ConfigureAwait(false);
@@ -94,7 +109,7 @@ public static class Command
         args.Verb switch
         {
             "find" => Find(bench, args, json),
-            "search" => Search(bench, args, json),
+            "search" => Search(bench, args, json, stdin),
             "read" => Read(bench, args, json),
             "write" => await Write(bench, args, json, stdin, cancel).ConfigureAwait(false),
             "edit" => await Edit(bench, args, json, stdin, cancel).ConfigureAwait(false),
@@ -173,14 +188,45 @@ public static class Command
         return Ok(text.AppendLine().ToString());
     }
 
-    static CliResult Search(Bench bench, Arguments args, bool json)
+    /// <summary>One pattern per line, blank lines dropped and nothing
+    /// trimmed - a trailing space can be part of a pattern. The shape is
+    /// the fettle-tasks format's, deliberately: a second rule for
+    /// splitting a file into strings is a second rule to get wrong.</summary>
+    static void AddLines(List<string> into, string text)
+    {
+        foreach (string line in text.Replace("\r\n", "\n").Split('\n'))
+            if (line.Length > 0) into.Add(line);
+    }
+
+    static CliResult Search(Bench bench, Arguments args, bool json, TextReader stdin)
     {
         var patterns = new List<string>(args.Values("pattern"));
         if (args.At(0) is { } first) patterns.Insert(0, first);
         for (int i = 1; i < args.Positional.Count; i++) patterns.Add(args.Positional[i]);
 
+        // R4.20: the pattern is the argument a shell is likeliest to
+        // mangle before Fettler ever sees it - quotes, backslashes and a
+        // leading -- all mean something to somebody first - so it may
+        // arrive as bytes instead. This is R5.11's argument about edit
+        // text, applied where it turns out to matter just as much: an
+        // eaten quote does not fail, it silently searches for something
+        // else.
+        if (args.Value("pattern-file") is { } file)
+        {
+            try { AddLines(patterns, File.ReadAllText(file)); }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+            {
+                return Failed(new Failure(Outcome.NotFound,
+                    $"cannot read --pattern-file: {e.Message}", file), json);
+            }
+        }
+
+        if (args.Has("pattern-stdin")) AddLines(patterns, TextIo.WithoutMark(stdin.ReadToEnd()));
+
         if (patterns.Count == 0)
-            return Failed(new Failure(Outcome.Invalid, "search needs a pattern"), json);
+            return Failed(new Failure(Outcome.Invalid,
+                "search needs a pattern: one written plainly, -e PATTERN, "
+                + "--pattern-file PATH or --pattern-stdin"), json);
 
         Result<SearchAnswer> result = bench.Search(new SearchRequest(
             patterns,
@@ -390,12 +436,17 @@ public static class Command
                 }
                 w.WriteEndArray();
                 w.WriteNumber("count", names.Count);
+                w.WriteString("source", bench.Roots.Origin);
             }));
 
         var text = new StringBuilder();
         foreach (string name in names)
             text.Append(name.PadRight(12)).Append(bench.Roots.PathOf(name))
                 .AppendLine(name.Equals(names[0], Core.Roots.PathComparison) ? "  (default)" : "");
+
+        // Where the boundary came from, not only what it is: a caller
+        // who disagrees with it has to know which file to open.
+        text.AppendLine().Append("declared by ").AppendLine(bench.Roots.Origin);
 
         return Ok(text.ToString());
     }
@@ -424,7 +475,8 @@ public static class Command
                 return Failed(new Failure(Outcome.NotFound, $"cannot read --text-file: {e.Message}", file), json);
             }
         }
-        else if (args.Has("stdin")) text = await stdin.ReadToEndAsync(cancel).ConfigureAwait(false);
+        else if (args.Has("stdin"))
+            text = TextIo.WithoutMark(await stdin.ReadToEndAsync(cancel).ConfigureAwait(false));
         else return Failed(new Failure(Outcome.Invalid,
             "write needs its content named: --stdin, --text TEXT, or --text-file PATH"), json);
 
@@ -861,7 +913,15 @@ public static class Command
                                Prefer an ABSOLUTE path: a relative one binds the
                                boundary to the current directory, so the same
                                command means different things from different
-                               places. `roots` says what is declared.
+                               places. `roots` says what is declared, and where
+                               it was declared.
+                               With no --root at all, the nearest .fettler.json
+                               at or above the current directory declares them,
+                               and its paths are read relative to ITSELF - so
+                               the boundary is the same from anywhere in the
+                               tree. Failing that, the current directory.
+          --config PATH        use this .fettler.json rather than searching
+          --no-config          do not search; the current directory is the root
           --json               the machine-readable result, complete, on stdout
           --include-generated  do not skip bin, obj, .git, artifacts, node_modules
           --exclude GLOB       skip more, repeatable
@@ -870,6 +930,9 @@ public static class Command
           find PATTERN [--sort mtime] [--limit N] [--since TIME]
           search PATTERN [-e PATTERN]... [--glob G] [--literal] [--case-sensitive]
                          [--context N] [--limit N] [--count] [--files-only]
+                 A pattern may instead arrive as --pattern-file PATH or
+                 --pattern-stdin, one per line, so a shell never gets to
+                 eat a quote out of it.
           read PATH... [--from N] [--to N]
           write PATH --stdin [--overwrite] [--encoding E] [--eol lf|crlf]
           edit PATH [--expect HASH] [--dry-run] and one of:
@@ -892,6 +955,9 @@ public static class Command
           run NAME [--timeout SECONDS]
           batch --script FILE
           serve                 become the MCP front end on stdio
+
+        An unknown flag is refused, never ignored: ignoring one would eat the
+        argument after it and answer a different question confidently.
 
         Exit codes: 0 ok, 2 invalid, 3 not-found, 4 outside-root, 5 target-exists,
                     6 stale, 7 conflict, 8 refused, 9 denied, 10 timed-out.

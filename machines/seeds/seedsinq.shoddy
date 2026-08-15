@@ -1,0 +1,308 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem seedsinq.shoddy — reckoner seed: querying a list
+Rem
+Rem SORTBY, SORTBYDESC, GROUPBY, MINBY, MAXBY, FINDFIRST, TAKEWHILE and
+Rem SKIPWHILE take a LIST and a PROGRAM; DISTINCT, UNION, INTERSECT,
+Rem EXCEPT and CHUNK take lists alone.
+Rem
+Rem     { 3 1 2 } [ ] SORTBY            -> { 1 2 3 }
+Rem     { 1 2 3 4 } [ 2 MOD ] GROUPBY   -> { ( 1 . { 1 3 } ) ( 0 . { 2 4 } ) }
+Rem
+Rem THE PROGRAM ARGUMENT IS THE WHOLE POINT, and it is why eight of the
+Rem thirteen words here are RckPureOver rather than RckPure. A program
+Rem cannot be run without the dictionary, the registers and the modes it
+Rem was typed against, and RckPureOver is the reach reckoner.shoddy opens
+Rem to a seed for exactly that. CALL in seedbuiltin.shoddy is the model
+Rem followed here; seedeng's ENGDERIV and friends are the same shape.
+Rem
+Rem Two rules the language sets and this seed inherits: the program sees
+Rem the CALLER'S WHOLE SESSION — it may name a word defined a line
+Rem earlier and may RCL a register — and whatever it changes is
+Rem DISCARDED, because it runs in a sub-evaluation whose state does not
+Rem thread home.
+Rem
+Rem KEYS ARE COMPUTED BEFORE ANYTHING IS ORDERED. Every one of the
+Rem selector words runs the program over the whole list first and
+Rem refuses on the first failure, in seedeng's pre-flight pattern. A key
+Rem program that fails halfway would otherwise leave a half-ordered
+Rem answer that looks fine.
+Rem
+Rem A KEY MUST BE A NUMBER, A STRING OR A FLAG. The first two are what
+Rem the < underneath Compare accepts; a flag is admitted because the
+Rem predicate words are typed as comparisons and a comparison answers
+Rem True or False. Anything else is refused BY NAME rather than silently
+Rem mis-sorted, on SORTL's precedent in seedseq.shoddy.
+Rem ==================================================================
+
+Include "cuttle.shoddy"
+Include "reckoner.shoddy"
+Include "sinq.shoddy"
+Include "seq.shoddy"
+
+Rem ---- reading a key off a cell -------------------------------------------
+
+Rem A FLAG counts as a key, and has to. TAKEWHILE, SKIPWHILE and
+Rem FINDFIRST are predicate words, and a predicate typed at this prompt
+Rem ends in a comparison — [ 5 > ] answers True or False, not 1 or 0.
+Rem Refusing a flag here would have made three of the thirteen words
+Rem unusable with the very programs they are for. False sorts before
+Rem True, which is the order 0 before 1 would have given anyway.
+Def SnqbSortable(word As String, c As Cell) As Result
+    Select Case c
+        Case CutNum(x)
+            Ok(x)
+        Case CutStr(s)
+            Ok(s)
+        Case CutBool(b)
+            Ok(Ifte(b, 1, 0))
+        Case Else
+            Err(RckKindWhy(word, "a NUMBER, a STRING or a TRUE/FALSE key", c), 0)
+
+Rem The decorated element. Three fields and not two, because the key is
+Rem needed in BOTH forms: SnqbKey is the bare Number or String, which is
+Rem what Compare can order, and SnqbCell is that same key still wrapped
+Rem as a cell, which is what GROUPBY has to hand back to the stack.
+Rem Shoddy has no runtime type test, so a bare key cannot be re-wrapped
+Rem later — it has to be kept.
+Rem
+Rem Decorating like this also means the program runs ONCE PER ELEMENT
+Rem rather than once per comparison, which for a sort is the difference
+Rem between n and n log n evaluations of whatever was typed.
+Type SnqbHit
+    SnqbKey  As t
+    SnqbCell As Cell
+    SnqbVal  As Cell
+
+Def SnqbKeyPair(word As String, ks As List Of SnqbHit, kc As Cell, x As Cell) As Result
+    Select Case SnqbSortable(word, kc)
+        Case Ok(k)
+            Ok(Prepend(SnqbHit(k, kc, x), ks))
+        Case Err(w, at)
+            Err(w, at)
+        Case Else
+            Err(word & " did not answer", 0)
+
+Def SnqbKeyNext(word As String, st As RckState, ts As List Of String, ks As List Of SnqbHit, x As Cell) As Result
+    Select Case RckProgOn(word, st, ts, x)
+        Case Ok(kc)
+            SnqbKeyPair(word, ks, kc, x)
+        Case Err(w, at)
+            Err(w, at)
+        Case Else
+            Err(word & " did not answer", 0)
+
+Def SnqbKeyAdd(word As String, st As RckState, ts As List Of String, acc As Result, x As Cell) As Result
+    Select Case acc
+        Case Ok(ks)
+            SnqbKeyNext(word, st, ts, ks, x)
+        Case Err(w, at)
+            acc
+        Case Else
+            acc
+
+Rem Every key, or the first reason there is not one. Reverse puts them
+Rem back in source order, which is what the stable sort then relies on.
+Def SnqbKeys(word As String, st As RckState, ts As List Of String, xs As List Of Cell) As Result
+    SnqbKeysDone(Fold(xs, Ok({ }), Fn(acc, x) => SnqbKeyAdd(word, st, ts, acc, x)))
+
+Def SnqbKeysDone(r As Result) As Result
+    Select Case r
+        Case Ok(ks)
+            Ok(Reverse(ks))
+        Case Err(w, at)
+            Err(w, at)
+        Case Else
+            r
+
+Rem ---- the shape every selector word shares --------------------------------
+Rem list on the bottom, program on top, keys computed, then the answer.
+
+Def SnqbOver(word As String, st As RckState, vs As List Of Cell, done As [ List Of SnqbHit -- RckWork ]) As RckWork
+    Select Case RckListArg(word, Nth(vs, 1))
+        Case Ok(xs)
+            SnqbOverProg(word, st, xs, Nth(vs, 2), done)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Def SnqbOverProg(word As String, st As RckState, xs As List Of Cell, pc As Cell, done As [ List Of SnqbHit -- RckWork ]) As RckWork
+    Select Case RckProgArg(word, pc)
+        Case Ok(ts)
+            SnqbOverKeys(word, st, ts, xs, done)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Def SnqbOverKeys(word As String, st As RckState, ts As List Of String, xs As List Of Cell, done As [ List Of SnqbHit -- RckWork ]) As RckWork
+    Select Case SnqbKeys(word, st, ts, xs)
+        Case Ok(ks)
+            Call(done, ks)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Rem ---- SORTBY and SORTBYDESC ------------------------------------------------
+
+Def SnqbSorted(ks As List Of SnqbHit) As RckWork
+    RckVals({ CutList(Map(OrderBy(ks, SnqbKey), SnqbVal)) })
+
+Def SnqbSortedDesc(ks As List Of SnqbHit) As RckWork
+    RckVals({ CutList(Map(OrderByDesc(ks, SnqbKey), SnqbVal)) })
+
+Def SnqbSeedSort(st As RckState) As RckState
+    Let s1 = RckReg(st, "SORTBY", 2, RckPureOver(Fn(sst, vs) => SnqbOver("SORTBY", sst, vs, SnqbSorted)), "( list prog -- list )", "The list ordered by what the program answers for each element. Equal keys keep the order they were in, so ordering twice orders by both.")
+    RckReg(s1, "SORTBYDESC", 2, RckPureOver(Fn(sst, vs) => SnqbOver("SORTBYDESC", sst, vs, SnqbSortedDesc)), "( list prog -- list )", "The same, largest first. Equal keys still keep the order they were in.")
+
+Rem ---- GROUPBY ----------------------------------------------------------------
+Rem A group is a PAIR cell of key and member list, so the answer is a
+Rem reckoner dictionary and DICTGET reads it without learning anything.
+
+Rem The key cell comes off the group's FIRST member — the earliest
+Rem element with that key — and every member carries the same one, so
+Rem which is taken does not matter beyond being one that exists.
+Def SnqbGroupCell(g As Group) As Cell
+    CutPair(Pair(SnqbCell(First(GItems(g))), CutList(Map(GItems(g), SnqbVal))))
+
+Def SnqbGrouped(ks As List Of SnqbHit) As RckWork
+    RckVals({ CutList(Map(GroupBy(ks, SnqbKey), SnqbGroupCell)) })
+
+Def SnqbSeedGroup(st As RckState) As RckState
+    RckReg(st, "GROUPBY", 2, RckPureOver(Fn(sst, vs) => SnqbOver("GROUPBY", sst, vs, SnqbGrouped)), "( list prog -- list )", "The list gathered into groups by what the program answers, each group a PAIR of the key and its members. Groups come out in the order their keys were first seen, members in the order they were in.")
+
+Rem ---- MINBY, MAXBY, FINDFIRST --------------------------------------------------
+
+Def SnqbLeast(ks As List Of SnqbHit) As RckWork
+    Select Case MinByOpt(ks, SnqbKey)
+        Case Some(h)
+            RckVals({ SnqbVal(h) })
+        Case None
+            RckWorkBad("MINBY needs a list with something in it")
+
+Def SnqbMost(ks As List Of SnqbHit) As RckWork
+    Select Case MaxByOpt(ks, SnqbKey)
+        Case Some(h)
+            RckVals({ SnqbVal(h) })
+        Case None
+            RckWorkBad("MAXBY needs a list with something in it")
+
+Rem A key of 0 is the reckoner's false, matching HOW the rest of the
+Rem dictionary reads a flag; anything else counts as a hit.
+Def SnqbFound(ks As List Of SnqbHit) As RckWork
+    Select Case FindOpt(ks, Fn(h) => SnqbKey(h) <> 0)
+        Case Some(h)
+            RckVals({ SnqbVal(h) })
+        Case None
+            RckWorkBad("FINDFIRST found nothing the program answered nonzero for")
+
+Def SnqbSeedPick(st As RckState) As RckState
+    Let s1 = RckReg(st, "MINBY", 2, RckPureOver(Fn(sst, vs) => SnqbOver("MINBY", sst, vs, SnqbLeast)), "( list prog -- x )", "The element whose key is smallest. A tie answers the earliest one. Refuses an empty list rather than inventing an answer.")
+    Let s2 = RckReg(s1, "MAXBY", 2, RckPureOver(Fn(sst, vs) => SnqbOver("MAXBY", sst, vs, SnqbMost)), "( list prog -- x )", "The element whose key is largest, ties to the earliest.")
+    RckReg(s2, "FINDFIRST", 2, RckPureOver(Fn(sst, vs) => SnqbOver("FINDFIRST", sst, vs, SnqbFound)), "( list prog -- x )", "The first element the program answers nonzero for. Refuses when nothing matches, so a miss cannot be mistaken for a value.")
+
+Rem ---- TAKEWHILE and SKIPWHILE -------------------------------------------------
+
+Def SnqbTaken(ks As List Of SnqbHit) As RckWork
+    RckVals({ CutList(Map(TakeWhile(ks, Fn(h) => SnqbKey(h) <> 0), SnqbVal)) })
+
+Def SnqbSkipped(ks As List Of SnqbHit) As RckWork
+    RckVals({ CutList(Map(SkipWhile(ks, Fn(h) => SnqbKey(h) <> 0), SnqbVal)) })
+
+Def SnqbSeedSlice(st As RckState) As RckState
+    Let s1 = RckReg(st, "TAKEWHILE", 2, RckPureOver(Fn(sst, vs) => SnqbOver("TAKEWHILE", sst, vs, SnqbTaken)), "( list prog -- list )", "The run at the front the program answers nonzero for, stopping at the first it does not.")
+    RckReg(s1, "SKIPWHILE", 2, RckPureOver(Fn(sst, vs) => SnqbOver("SKIPWHILE", sst, vs, SnqbSkipped)), "( list prog -- list )", "Everything from the first element the program answers zero for onwards.")
+
+Rem ---- the words that need no program --------------------------------------------
+Rem Cells compare structurally, so these mean what they should on
+Rem numbers, strings and pairs. A list OF LISTS is the exception: lists
+Rem compare by identity, so two separately built ones are never equal.
+
+Def SnqbOneList(word As String, vs As List Of Cell, done As [ List Of Cell -- RckWork ]) As RckWork
+    Select Case RckListArg(word, First(vs))
+        Case Ok(xs)
+            Call(done, xs)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Def SnqbTwoLists(word As String, vs As List Of Cell, done As [ List Of Cell List Of Cell -- RckWork ]) As RckWork
+    Select Case RckListArg(word, Nth(vs, 1))
+        Case Ok(xs)
+            SnqbTwoRight(word, xs, Nth(vs, 2), done)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Def SnqbTwoRight(word As String, xs As List Of Cell, c As Cell, done As [ List Of Cell List Of Cell -- RckWork ]) As RckWork
+    Select Case RckListArg(word, c)
+        Case Ok(ys)
+            Call(done, xs, ys)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Def SnqbDistinct(vs As List Of Cell) As RckWork
+    SnqbOneList("DISTINCT", vs, Fn(xs) => RckVals({ CutList(Distinct(xs)) }))
+
+Def SnqbUnion(vs As List Of Cell) As RckWork
+    SnqbTwoLists("UNION", vs, Fn(xs, ys) => RckVals({ CutList(Union(xs, ys)) }))
+
+Def SnqbIntersect(vs As List Of Cell) As RckWork
+    SnqbTwoLists("INTERSECT", vs, Fn(xs, ys) => RckVals({ CutList(Intersect(xs, ys)) }))
+
+Def SnqbExcept(vs As List Of Cell) As RckWork
+    SnqbTwoLists("EXCEPT", vs, Fn(xs, ys) => RckVals({ CutList(Except(xs, ys)) }))
+
+Def SnqbChunkOf(xs As List Of Cell, n As Number) As RckWork
+    RckVals({ CutList(Map(Chunk(xs, n), CutList)) })
+
+Def SnqbChunkSize(xs As List Of Cell, c As Cell) As RckWork
+    Select Case RckWholeArg("CHUNK", c)
+        Case Ok(n)
+            SnqbChunkGuard(xs, n)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("CHUNK did not answer")
+
+Rem The guard is here rather than left to the machine because the
+Rem machine's Chunk ABORTS on a size below one, and a seed word must
+Rem refuse instead: nothing typed at a prompt may end the session.
+Def SnqbChunkGuard(xs As List Of Cell, n As Number) As RckWork
+    If n < 1 Then
+        RckWorkBad("CHUNK needs a batch size of 1 or more")
+    Else
+        SnqbChunkOf(xs, n)
+
+Def SnqbChunk(vs As List Of Cell) As RckWork
+    Select Case RckListArg("CHUNK", Nth(vs, 1))
+        Case Ok(xs)
+            SnqbChunkSize(xs, Nth(vs, 2))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("CHUNK did not answer")
+
+Def SnqbSeedSets(st As RckState) As RckState
+    Let s1 = RckReg(st, "DISTINCT", 1, RckPure(Fn(vs) => SnqbDistinct(vs)), "( list -- list )", "The list with later repeats dropped, keeping the first sighting of each value in place.")
+    Let s2 = RckReg(s1, "UNION", 2, RckPure(Fn(vs) => SnqbUnion(vs)), "( list list -- list )", "Everything in either, each value once, the first list's order first.")
+    Let s3 = RckReg(s2, "INTERSECT", 2, RckPure(Fn(vs) => SnqbIntersect(vs)), "( list list -- list )", "Only what is in both, in the first list's order.")
+    Let s4 = RckReg(s3, "EXCEPT", 2, RckPure(Fn(vs) => SnqbExcept(vs)), "( list list -- list )", "What is in the first and not the second, in the first list's order.")
+    RckReg(s4, "CHUNK", 2, RckPure(Fn(vs) => SnqbChunk(vs)), "( list n -- list )", "The list cut into batches of n, the last one short if it has to be. Refuses a size below one, which would never finish.")
+
+Rem ---- the seed --------------------------------------------------------------------
+
+Def RckSeedSinq(st As RckState) As RckState
+    Let s1 = SnqbSeedSort(RckSeeding(st, "seed-sinq"))
+    Let s2 = SnqbSeedGroup(s1)
+    Let s3 = SnqbSeedPick(s2)
+    Let s4 = SnqbSeedSlice(s3)
+    SnqbSeedSets(s4)

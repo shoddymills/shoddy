@@ -1,0 +1,639 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Querying a sequence — machines/sinq.shoddy">
+<title>sinq — Querying a sequence | Shoddy Machines</title>
+<link rel="stylesheet" href="../style.css">
+<link rel="icon" href="../favicon.svg" type="image/svg+xml">
+<link rel="alternate icon" href="../favicon.ico" sizes="48x48">
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+</head>
+<body>
+<div class="topbar"><div class="inner">
+  <div class="row">
+    <a class="phase" href="index.html"><img class="mark" src="../media/brand/shoddy-icon.svg" alt="" width="23" height="23">Shoddy · The Machines</a>
+    <span class="spacer"></span>
+    <nav class="docnav meta" aria-label="About"><a href="../heritage.html">Heritage</a><a href="../authorship.html">Authorship</a></nav>
+  </div>
+  <nav class="docnav main" aria-label="Documentation"><a href="../tutorials/index.html">Tutorials</a><a href="../guide.html">Guide</a><a href="../quickref.html">Reference</a><span class="here">Machines</span><a href="../mills/index.html">Mills</a><a href="../stack.html">Stack</a><a href="../spec.html">Spec</a><a href="../setup.html">Setup</a><a href="../vscode.html">VS Code</a><a href="../assistants.html">AI</a><a href="../build.html">Toolchain</a><a href="../hosting.html">Hosting</a><a href="../errors.html">Errors</a></nav>
+</div></div>
+<div class="wrap">
+
+
+<header class="mast has-icon"><div><p class="eyebrow"><a href="index.html#sequences-text">The Machines &middot; Sequences &amp; text</a></p><h1>sinq</h1><p class="kicker">Querying a sequence — machines/sinq.shoddy</p></div><img class="micon" src="../media/icons/sinq.svg" alt="the sinq machine&#39;s icon"></header>
+<nav class="pagenav pagenav-top" aria-label="Machines, in catalog order"><a href="seq.html" class="prev"><span class="pnwrap"><span class="dir">&larr; Previous machine</span><span class="ttl">seq</span></span></a><a href="index.html" class="all">All machines</a><a class="next" href="str.html"><span class="pnwrap"><span class="ttl">str</span><span class="dir">Next machine &rarr;</span></span></a></nav>
+
+<h2 id="summary">Summary</h2>
+<p><code>sinq</code> — Shoddy INtegrated Query — is the half of a query the
+rest of the library could not express: ordering by a <em>key</em>, grouping
+into groups, joining two sequences, the set words, and walking a record graph
+that holds itself.</p>
+
+<p>It is deliberately small, and the reason is worth stating up front:
+<strong>almost every query word you want already exists somewhere else.</strong>
+<code>Map</code>, <code>Filter</code>, <code>Fold</code> and <code>Sort</code>
+are builtins. <code>Any</code>, <code>All</code>, <code>CountIf</code>,
+<code>Contains</code>, <code>Taken</code>, <code>DropN</code>,
+<code>Flatten</code> and <code>Zip</code> are <a href="seq.html">seq</a>'s.
+<code>Sum</code>, <code>Average</code>, <code>Maximum</code>,
+<code>Median</code> and <code>Freq</code> are <a href="stats.html">stats</a>'.
+This machine re-declares none of them. It adds the six things that were
+genuinely missing and stops.</p>
+
+<pre class="basic"><code>Include "sinq.shoddy"
+
+Let best = OrderByDesc(staff, Pay)
+Let dept = GroupBy(staff, Dept)
+Let both = OrderWith(staff, ThenBy(ByKey(Dept), Descending(ByKey(Pay))))</code></pre>
+
+<h2 id="history">A Brief History of the Query</h2>
+<p>Two traditions had to meet before a line like <code>OrderByDesc(staff, Pay)</code>
+could exist, and for about thirty-five years they barely spoke to each other.</p>
+
+<p>The first begins in 1970 with <strong>Edgar Codd</strong>, an English
+mathematician at IBM's San Jose laboratory, and a paper with the forbidding
+title <em>A Relational Model of Data for Large Shared Data Banks</em>. Codd's
+argument was that programs should stop walking to their data. Every database of
+the day made you thread pointers from record to record by hand, so the shape of
+the files was welded into the shape of the program, and moving a file broke the
+lot. Codd said: describe the data as plain tables of rows, then ask a
+<em>question</em> and let the machine work out the walking. IBM built a language
+on it — <strong>Donald Chamberlin</strong> and <strong>Raymond Boyce</strong>
+called it SEQUEL in 1974, and renamed it <strong>SQL</strong> when the original
+name turned out to belong to a British aircraft firm. What survived is not any
+of the engines it was written for but its <em>vocabulary</em>:
+<code>SELECT</code>, <code>WHERE</code>, <code>GROUP BY</code>,
+<code>JOIN</code>, <code>ORDER BY</code>. Half a century on, those words are
+still how people say what they want from a pile of records.</p>
+
+<p>The second tradition is older and comes from the opposite direction. In the
+1930s <strong>Alonzo Church</strong> was after the foundations of mathematics
+rather than anybody's payroll file, and he built the <strong>lambda
+calculus</strong>: an entire theory of computation out of one idea, that you can
+name an argument and substitute for it. A function became a thing you could hand
+about like any other value, with no name of its own if it did not want one.
+<strong>John McCarthy</strong> put it into a real language with LISP in 1958,
+and for decades that was where it stayed — the anonymous function was a
+functional-programming idea, and databases were an industrial one, and the two
+communities shared conferences with nobody in common.</p>
+
+<p>They were married in <strong>LINQ</strong>, designed by
+<strong>Erik Meijer</strong> and colleagues at Microsoft and shipped with C# 3.0
+in 2007. The move that made it work was noticing that Codd's clauses were never
+really about <em>tables</em>: they were about <em>sequences</em>, and each one
+needs exactly one small piece of caller-supplied code to say <em>which</em> or
+<em>by what</em> — which is precisely what a lambda is. So a query written in
+SQL's vocabulary could be desugared into ordinary method calls taking anonymous
+functions, and suddenly the same five words worked on a list in memory, an XML
+document, or a table across a network.</p>
+
+<p>Shoddy arrives at that junction already holding both halves. It has had the
+lambda since the beginning — <code>Fn(x) =&gt; …</code> is Church's idea with a
+BASIC accent — and it has had the chain, because the
+<a href="../spec.html">pipeline form</a> already lets a deeper-indented line
+read as the next stage. What it did not have was Codd's little word
+<strong>by</strong>. So <code>sinq</code> adds no query syntax at all: no
+<code>from</code>, no <code>select</code>, no string for anything to parse. It
+adds the missing vocabulary as ordinary words, and the two-hundred-year-old
+arithmetic of the mill accounts comes out reading like this:</p>
+
+<table>
+<tr><th>SQL</th><th>Shoddy</th><th>Whose word</th></tr>
+<tr><td><code>SELECT price * qty</code></td><td><code>Map(os, OrderValue)</code></td><td>builtin</td></tr>
+<tr><td><code>WHERE value &gt;= 100</code></td><td><code>Filter(os, Fn(o) =&gt; OrderValue(o) &gt;= 100)</code></td><td>builtin</td></tr>
+<tr><td><code>ORDER BY value DESC</code></td><td><code>OrderByDesc(os, OrderValue)</code></td><td><strong>sinq</strong></td></tr>
+<tr><td><code>ORDER BY a, b DESC</code></td><td><code>OrderWith(os, ThenBy(ByKey(A), Descending(ByKey(B))))</code></td><td><strong>sinq</strong></td></tr>
+<tr><td><code>GROUP BY area</code></td><td><code>GroupBy(cs, Area)</code></td><td><strong>sinq</strong></td></tr>
+<tr><td><code>JOIN book ON sku</code></td><td><code>JoinOn(os, book, Sku, CatSku, pick)</code></td><td><strong>sinq</strong></td></tr>
+<tr><td><code>SELECT DISTINCT</code></td><td><code>Distinct(xs)</code></td><td><strong>sinq</strong></td></tr>
+<tr><td><code>SUM(price)</code></td><td><code>Sum(Map(os, Price))</code></td><td><a href="stats.html">stats</a></td></tr>
+<tr><td><code>FROM orders</code></td><td>— the sequence you started with</td><td>—</td></tr>
+</table>
+
+<p>There is no <code>FROM</code> because there is nothing to name: the query
+begins with the value itself. And there is no query <em>language</em> here at
+all — which, for a machine whose whole argument is that the words were mostly
+lying about already, is the point rather than an omission.</p>
+
+<h2 id="why">Why It's Useful</h2>
+<p>The one query verb the standard library lacked is <strong>by</strong>. Every
+existing sequence word takes a predicate or nothing at all.</p>
+
+<p><code>Sort</code> is the sharpest case. It is a builtin, it is
+ascending-only, it takes no key selector, and handed a record it does not sort
+badly — it stops the program:</p>
+
+<pre class="basic"><code>ERROR: SORT expects all NUMBERs or all STRINGs</code></pre>
+
+<p>So "the staff, highest paid first" — the most ordinary report there is —
+could not be written without hand-rolling a sort. Several machines did exactly
+that, and a couple wrote an apology into the source while they were at it.</p>
+
+<p>The same gap runs through the rest. <a href="stats.html">stats</a>'
+<code>Freq</code> gives you key&nbsp;&rarr;&nbsp;<em>count</em>; nothing gave
+you key&nbsp;&rarr;&nbsp;<em>the items themselves</em>. Nothing joined two
+sequences on a key. <a href="json.html">json</a>'s <code>JPath</code> and
+<a href="xml.html">xml</a>'s <code>XPath</code> walk their own formats, but a
+record type of your own — the thing the language most encourages — had no
+walker at all.</p>
+
+<h2 id="guide">User's Guide</h2>
+
+<h3>Queries read as chains, and no syntax was added to make them</h3>
+<p>Every word here takes its sequence as the <em>first</em> argument. That is
+not decoration: it is what lets the language's own pipeline form — a statement
+continued on deeper-indented lines — read top to bottom like a method chain.</p>
+
+<pre class="basic"><code>Def LargeOrders(cs As List Of Cust) As List Of Order
+    cs
+        SelectMany(Orders)
+        Filter(Fn(o) =&gt; OrderValue(o) &gt;= 100)
+        OrderByDesc(OrderValue)</code></pre>
+
+<p><code>Orders</code> and <code>OrderValue</code> are passed as bare names —
+an accessor is an ordinary function value. <strong>The accessors are the
+schema</strong>, and unlike a query typed as a string they are checked when the
+program is built.</p>
+
+<h3>Ordering, and why comparers rather than key selectors</h3>
+<p>A comparer is <code>[ t t -- Number ]</code>: negative if the first sorts
+first, zero if neither does, positive otherwise. Four words build and combine
+them, and one runs one.</p>
+
+<pre class="basic"><code>OrderBy(staff, Pay)                                  ' by one key
+OrderByDesc(staff, Pay)                              ' the same, reversed
+OrderWith(staff, ThenBy(ByKey(Dept), ByKey(Name)))   ' by two</code></pre>
+
+<p>C# hangs <code>ThenBy</code> off an <code>IOrderedEnumerable</code> that
+<code>OrderBy</code> hands back — a type whose only job is to remember the
+comparison so far. Here the comparer <em>is</em> an ordinary value, so
+<code>ThenBy</code> composes two of them and no such type is needed. It also
+means a custom order — rank by an arbitrary scale, say — needs no new
+machinery.</p>
+
+<p><strong>The sort is stable</strong>, and that is load-bearing rather than a
+nicety: a tie takes from the left run, which is exactly what makes
+<code>ThenBy</code> produce the right answer.</p>
+
+<h3>Grouping and joining</h3>
+<p><code>GroupBy</code> answers a list of <code>Group</code>, each with a
+<code>GKey</code> and its <code>GItems</code>. Groups come back in
+<strong>first-appearance</strong> order and their items in <strong>source</strong>
+order — what C# guarantees, and what makes a grouped report reproducible run to
+run.</p>
+
+<pre class="basic"><code>Map(GroupBy(cs, Area), Fn(g) =&gt; Pair(GKey(g), Sum(Map(GItems(g), Spend))))</code></pre>
+
+<p><code>JoinOn</code> is the inner join: one result per matching pair, in left
+order, dropping unmatched elements from both sides. <code>GroupJoinOn</code>
+gives one result per <em>left</em> element with the whole list of its matches,
+empty where there are none — which is the left outer join, and the reason
+<code>JoinOn</code> needs no "OrDefault" twin.</p>
+
+<p>The name <code>Join</code> was not available: <a href="str.html">str</a>
+owns it, for joining strings with a separator.</p>
+
+<h3>Walking a graph</h3>
+<p><code>Descendants</code> takes a root and a <em>child selector</em>, so it
+works on any type that holds a list of itself without this machine knowing
+anything about it.</p>
+
+<pre class="basic"><code>Type Unit
+    UnitName  As String
+    Headcount As Number
+    Subs      As List Of Unit
+
+Sum(Map(Descendants(org, Subs), Headcount))</code></pre>
+
+<p><strong>Cycles cannot happen, and that is a guarantee rather than an
+assumption.</strong> Nothing mutates in Shoddy, so a record cannot be made to
+refer to itself — there is no way to tie the knot after construction. A graph
+of records is therefore always a finite tree, which is why there is no
+visited-set here and none is needed.</p>
+
+<h3>Lists, Arrays, Vectors and Matrices</h3>
+<p>There are no adapter words for these, on purpose, because none is needed.
+<code>Map</code>, <code>Filter</code> and <code>Sort</code> keep the input's
+kind, so an array is already a sequence. A vector is
+<code>Array Of Number</code> — <a href="matrix.html">matrix</a> declares no
+separate type. And a <code>Matrix</code>'s <code>Cells</code> is an array
+already:</p>
+
+<pre class="basic"><code>Filter(ToList(Cells(m)), Fn(v) =&gt; v &lt;&gt; 0)                      ' the nonzero cells
+Map(Range(1, Rows(m)), Fn(r) =&gt; Sum(ToList(MatRow(m, r))))     ' a sum per row</code></pre>
+
+<p>A <a href="csv.html">CsvSheet</a> is queried through <code>CsvDicts</code>,
+and a <a href="json.html">Json</a> document through <code>JItems</code> and
+<code>JMembers</code>, both of which hand back ordinary lists. An adapter layer
+here would have bought nothing and cost a dependency.</p>
+
+<h2 id="example">A Worked Example</h2>
+<p>Everything above, in one program that runs. It is
+<code>tst/sinq-demo.shoddy</code> in the repo, and the gate runs it on every
+release, so what follows cannot drift from a program that no longer compiles:</p>
+
+<pre class="basic"><code>Rem ==================================================================
+Rem sinq-demo.shoddy -- the worked example for the sinq machine.
+Rem
+Rem This is a sample of USE, and it is documentation that has to keep
+Rem working: docs/machines/sinq.html reproduces it line for line, and
+Rem the gate runs it, so the page cannot drift from a program that no
+Rem longer compiles. It ASSERTS NOTHING -- tst/sinq.shoddy is where
+Rem the behaviour is graded. What this file proves is that a query
+Rem against a real graph still READS the way the page says it does.
+Rem
+Rem One deep type graph (customers -&gt; orders), one catalogue to join
+Rem against, one self-holding type (an org tree), and one matrix. Every
+Rem query below is written out of EXISTING library words plus the ones
+Rem sinq adds. Note what is NOT here: no adapter for the Matrix, no
+Rem cast, no schema declaration, no query string. The accessors --
+Rem Orders, Area, Sku, Subs -- are the schema, and they are checked at
+Rem compile time.
+Rem
+Rem   mill run tst/sinq-demo.shoddy
+Rem ==================================================================
+
+Rem The paths are spelled out because a bare Include resolves against
+Rem THIS directory first, and tst/sinq.shoddy would shadow the machine.
+Rem seq is asked for in its own right: sinq includes it, but a machine
+Rem hands over the words it DECLARES and not the ones it includes in
+Rem turn, so Pair, Fst and Snd have to be named here.
+Include "../machines/sinq.shoddy"
+Include "../machines/seq.shoddy"
+Include "../machines/stats.shoddy"
+Include "../machines/matrix.shoddy"
+Include "../machines/str.shoddy"
+
+Rem ---- the graph --------------------------------------------------------
+
+Type Order
+    Sku   As String
+    Qty   As Number
+    Price As Number
+
+Type Cust
+    CustName As String
+    Area     As String
+    Orders   As List Of Order
+
+Type Cat
+    CatSku   As String
+    CatTitle As String
+
+Rem a type that holds itself -- the deep graph case
+Type Unit
+    UnitName  As String
+    Headcount As Number
+    Subs      As List Of Unit
+
+Rem ---- the words a query is written out of ------------------------------
+
+Def OrderValue(o As Order) As Number
+    Qty(o) * Price(o)
+
+Def CustSpend(c As Cust) As Number
+    Sum(Map(Orders(c), OrderValue))
+
+Rem ---- the queries ------------------------------------------------------
+
+Rem Every large order, biggest first. The language's own pipeline form,
+Rem reading exactly like a LINQ chain. The threshold is a lambda because
+Rem it is used once and nowhere else; OrderValue is a named word because
+Rem three separate queries below read it.
+Def LargeOrders(cs As List Of Cust) As List Of Order
+    cs
+        SelectMany(Orders)
+        Filter(Fn(o) =&gt; OrderValue(o) &gt;= 100)
+        OrderByDesc(OrderValue)
+
+Rem Revenue by area. GroupBy is sinq's; Sum is stats'.
+Def RevenueByArea(cs As List Of Cust) As List Of Pair
+    Map(GroupBy(cs, Area), Fn(g) =&gt; Pair(GKey(g), Sum(Map(GItems(g), CustSpend))))
+
+Rem Two keys: spend descending, then name ascending for the ties.
+Def Ranked(cs As List Of Cust) As List Of String
+    Map(OrderWith(cs, ThenBy(Descending(ByKey(CustSpend)), ByKey(CustName))), CustName)
+
+Rem An inner join onto the catalogue.
+Def Titled(os As List Of Order, book As List Of Cat) As List Of String
+    JoinOn(os, book, Sku, CatSku, Fn(o, p) =&gt; CatTitle(p) &amp; " x" &amp; Str(Qty(o)))
+
+Rem The whole org tree flattened, then totalled with stats' Sum.
+Def TotalHeads(root As Unit) As Number
+    Sum(Map(Descendants(root, Subs), Headcount))
+
+Def Main()
+    Rem HOW A LITERAL MAPS TO A TYPE. A record is built POSITIONALLY: the
+    Rem constructor takes the fields in the order the Type declares them
+    Rem and NOTHING names them at the call site, so a reader has to count.
+    Rem That is why the columns below are lined up and each block is headed
+    Rem by the fields filling it. It is also why inserting a field into a
+    Rem Type is a silent break -- every later argument shifts one place and
+    Rem still compiles, so long as the kinds happen to match.
+    Rem
+    Rem A literal continues across lines only because it is inside open
+    Rem brackets; there is no continuation character in the language.
+
+    Rem      CatSku  CatTitle
+    Let book = {
+        Cat("WARP", "Warp beam"),
+        Cat("WEFT", "Weft yarn"),
+        Cat("SHOD", "Shoddy bale")
+    }
+
+    Rem Dyson is listed BEFORE Brook and both spend exactly 120, so the
+    Rem tie-break is doing real work: a correct ThenBy answers "Brook,
+    Rem Dyson" by name, and a sort that merely inherited source order
+    Rem would answer "Dyson, Brook".
+    Rem
+    Rem      CustName     Area        Orders, each Order(Sku, Qty, Price)
+    Let cs = {
+        Cust("Ackroyd",  "Dewsbury", { Order("WARP",  4, 30), Order("WEFT",  2, 15) }),
+        Cust("Dyson",    "Batley",   { Order("SHOD", 10, 12) }),
+        Cust("Crowther", "Dewsbury", { Order("WEFT",  1, 15), Order("WARP", 20, 30) }),
+        Cust("Brook",    "Batley",   { Order("SHOD", 10, 12) })
+    }
+
+    Print("-- large orders, biggest first --")
+    Each(LargeOrders(cs), Fn(o) =&gt; Print("   " &amp; Sku(o) &amp; " " &amp; Str(OrderValue(o))))
+
+    Print("-- revenue by area --")
+    Each(RevenueByArea(cs), Fn(p) =&gt; Print("   " &amp; Fst(p) &amp; " " &amp; Str(Snd(p))))
+
+    Print("-- ranked: spend desc, then name asc --")
+    Print("   " &amp; Join(Ranked(cs), ", "))
+
+    Print("-- orders joined to the catalogue --")
+    Each(Titled(SelectMany(cs, Orders), book), Fn(s) =&gt; Print("   " &amp; s))
+
+    Print("-- distinct skus, and set words --")
+    Let skus = Distinct(Map(SelectMany(cs, Orders), Sku))
+    Print("   distinct:  " &amp; Join(skus, ", "))
+    Print("   except:    " &amp; Join(Except(skus, { "WEFT" }), ", "))
+    Print("   intersect: " &amp; Join(Intersect(skus, { "WEFT", "JUTE" }), ", "))
+
+    Rem The self-holding type. Subs is a List Of Unit, so a Unit's third
+    Rem argument is another literal of exactly this shape, all the way
+    Rem down -- the indentation on the page IS the tree in the data.
+    Rem
+    Rem   Unit(UnitName, Headcount, Subs)
+    Let org = Unit("Mill", 3, {
+        Unit("Spinning", 12, {
+            Unit("Nights", 4, { })
+        }),
+        Unit("Weaving", 9, { })
+    })
+    Print("-- org tree --")
+    Print("   units: " &amp; Str(Length(Descendants(org, Subs))))
+    Print("   heads: " &amp; Str(TotalHeads(org)))
+
+    Rem a Matrix needs no adapter: its Cells are already an Array, and an
+    Rem Array is already a sequence. Same for a vector.
+    Let m = Mat(2, 3, { 5, 0, 7, 0, 2, 0 })
+    Print("-- matrix --")
+    Print("   nonzero cells: " &amp; Str(Length(Filter(ToList(Cells(m)), Fn(v) =&gt; v &lt;&gt; 0))))
+    Print("   sorted desc:   " &amp; Str(First(OrderByDesc(ToList(Cells(m)), Fn(v) =&gt; v))))
+    Print("   row sums:      " &amp; Join(Map(Map(Range(1, Rows(m)), Fn(r) =&gt; Sum(ToList(MatRow(m, r)))), Str), ", "))</code></pre>
+
+<h3>What it prints</h3>
+<pre><code>-- large orders, biggest first --
+   WARP 600
+   WARP 120
+   SHOD 120
+   SHOD 120
+-- revenue by area --
+   Dewsbury 765
+   Batley 240
+-- ranked: spend desc, then name asc --
+   Crowther, Ackroyd, Brook, Dyson
+-- orders joined to the catalogue --
+   Warp beam x4
+   Weft yarn x2
+   Shoddy bale x10
+   Weft yarn x1
+   Warp beam x20
+   Shoddy bale x10
+-- distinct skus, and set words --
+   distinct:  WARP, WEFT, SHOD
+   except:    WARP, SHOD
+   intersect: WEFT
+-- org tree --
+   units: 4
+   heads: 28
+-- matrix --
+   nonzero cells: 3
+   sorted desc:   7
+   row sums:      12, 2</code></pre>
+
+<p>Five lines of that output are doing real work rather than decorating the
+page:</p>
+
+<ul>
+<li><strong><code>Crowther, Ackroyd, Brook, Dyson</code></strong> &mdash; Dyson
+is listed <em>before</em> Brook in the source and the two spend exactly the
+same. Answering <code>Brook, Dyson</code> is what proves the tie-break ran at
+all; an implementation that quietly inherited source order says
+<code>Dyson, Brook</code> and looks just as plausible.</li>
+<li><strong><code>Dewsbury</code> before <code>Batley</code></strong> &mdash;
+groups come back in first-appearance order, which is neither alphabetical nor
+the order the keys were first hashed into anything.</li>
+<li><strong>Six joined rows, and none for an unmatched SKU</strong> &mdash;
+<code>JoinOn</code> is an inner join in left order.</li>
+<li><strong><code>row sums: 12, 2</code></strong> &mdash; a <code>Matrix</code>
+queried with no adapter at all, through <code>Cells</code> and
+<code>MatRow</code>, both of which are already sequences.</li>
+<li><strong>The threshold in <code>LargeOrders</code> is a lambda and
+<code>OrderValue</code> is a named word</strong> &mdash; the house rule
+(<code>Fn(x) =&gt; &hellip;</code> for a predicate used once, a name for
+anything read more than once), and evidence that taking the sequence first
+lets a lambda sit in a pipeline stage without ceremony.</li>
+</ul>
+
+<h2 id="hood">Under the Hood</h2>
+
+<p>Two properties of the runtime shape nearly every word in this machine. Both
+were measured rather than assumed, and a natural-looking implementation hits
+both.</p>
+
+<h3>Rest copies, so a First/Rest walk is quadratic</h3>
+<p>A Shoddy list is contiguous underneath, so <code>Rest</code> hands back a
+<em>copy</em> of the tail. Walking n elements that way copies about n²/2 of
+them:</p>
+
+<table>
+<tr><th>Elements</th><th>A tail-recursive First/Rest walk</th></tr>
+<tr><td>6,250</td><td>40 ms</td></tr>
+<tr><td>12,500</td><td>74 ms</td></tr>
+<tr><td>25,000</td><td>636 ms</td></tr>
+<tr><td>50,000</td><td>3,585 ms</td></tr>
+</table>
+
+<p>Nothing here walks a list that way. Words that must visit every element
+either <code>Fold</code> — a builtin loop — or <code>ToArray</code> once and
+index with <code>Nth</code>, which is O(1) on an array. The sort is a merge
+sort over an array for the same reason.</p>
+
+<h3>Only self-tail-recursion becomes a loop</h3>
+<p>Entirely separate, and nothing to do with lists. A recursive call that is not
+the last thing a word does costs a live stack frame per element, and the ceiling
+is around <strong>twenty thousand</strong> frames. A stack overflow is a hard
+process kill — not an <code>Error</code>, not catchable, and with no line number
+to point at.</p>
+
+<p><strong>Mutual recursion is not optimised either</strong>, so the tidy-looking
+shape — a chain of small Defs that hands back to the first — is exactly as fatal
+as the untidy one. Every recursive word here calls <em>itself</em>, in tail
+position, carrying an accumulator that <code>Reverse</code> puts right at the
+end.</p>
+
+<p>The one deliberate exception is the sort's divide-and-conquer, which is
+mutually recursive between two words. That is safe because its depth is
+log₂(n) — seventeen frames for a hundred thousand elements — not n. Depth, not
+shape, is what matters there.</p>
+
+<h3>What things cost</h3>
+<table>
+<tr><th>Operation</th><th>Cost</th><th>Why</th></tr>
+<tr><td><code>OrderWith</code> and friends</td><td>O(n log n)</td><td>merge sort over an array</td></tr>
+<tr><td><code>GroupBy</code></td><td>O(n &times; groups)</td><td>a scan of the groups per element</td></tr>
+<tr><td><code>JoinOn</code>, <code>GroupJoinOn</code></td><td>O(n &times; m)</td><td>nested loop; no hash index</td></tr>
+<tr><td><code>Distinct</code> and the set words</td><td>O(n²)</td><td><code>Contains</code> per element</td></tr>
+<tr><td><code>SelectMany</code>, <code>Choose</code>, <code>Descendants</code></td><td>O(n)</td><td>one pass</td></tr>
+</table>
+
+<p>There is no hashing here, for the same reason <a href="dict.html">dict</a> is
+an association list and says so in its own header. That is the right trade at
+the scale this library is written for — hundreds of rows, not millions — and it
+is written down so nobody has to measure to find out.</p>
+
+<h3>Everything is eager</h3>
+<p>There is no deferred execution and no query object. <code>OrderBy</code>,
+<code>GroupBy</code> and <code>JoinOn</code> must all see every element before
+they can yield the first one, so a lazy pipeline could not stream through the
+operators that matter anyway. <code>FindOpt</code>, <code>TakeWhile</code> and
+<code>Choose</code> are the words that stop early, and they stop early by
+indexing rather than by being lazy.</p>
+
+<h3>Naming</h3>
+<p>Shoddy has one flat word namespace — <code>Include</code> splices names in,
+so a machine's helpers are exactly as public as its headline words and there is
+no such thing as a private <code>Def</code>. The words you are meant to type are
+named plainly; everything that is only scaffolding is prefixed <code>Snq</code>,
+so the surface to learn is the unprefixed list and nothing more. If you have a
+clashing name of your own, take the machine under a namespace:
+<code>Include "sinq.shoddy" As Q</code>, then <code>QOrderBy</code>.</p>
+
+<h2 id="words">Word Reference</h2>
+
+<h3>Ordering</h3>
+<table>
+<tr><th>Word</th><th>What it does</th></tr>
+<tr><td><code>Compare(a, b)</code></td><td>&minus;1, 0 or 1. The ordering under every comparer; works on Numbers and Strings, which is what <code>&lt;</code> accepts.</td></tr>
+<tr><td><code>ByKey(keyOf)</code></td><td>A selector becomes a comparer.</td></tr>
+<tr><td><code>Descending(cmp)</code></td><td>A comparer, flipped.</td></tr>
+<tr><td><code>ThenBy(lead, tie)</code></td><td>One comparer that consults <code>tie</code> only where <code>lead</code> answers zero.</td></tr>
+<tr><td><code>OrderWith(xs, cmp)</code></td><td>Stable merge sort. Answers a <strong>List</strong> whatever it was handed.</td></tr>
+<tr><td><code>OrderBy(xs, keyOf)</code></td><td>Ascending by key.</td></tr>
+<tr><td><code>OrderByDesc(xs, keyOf)</code></td><td>Descending by key.</td></tr>
+</table>
+
+<h3>The extremes by a key</h3>
+<p>stats' <code>Minimum</code> answers the smallest <em>number</em> in a list.
+These answer the <em>item</em> whose key is smallest, which is a different
+question and the one a query usually asks. Ties go to the earliest, matching the
+sort.</p>
+<table>
+<tr><th>Word</th><th>What it does</th></tr>
+<tr><td><code>MinByOpt(xs, keyOf)</code></td><td><code>Some</code> the item with the smallest key, <code>None</code> on an empty sequence.</td></tr>
+<tr><td><code>MinBy(xs, keyOf)</code></td><td>The same, aborting on empty. Written over the Opt twin, so there is one set of rules and not two.</td></tr>
+<tr><td><code>MaxByOpt(xs, keyOf)</code> / <code>MaxBy</code></td><td>The same pair, largest key.</td></tr>
+</table>
+
+<h3>Grouping and joining</h3>
+<table>
+<tr><th>Word</th><th>What it does</th></tr>
+<tr><td><code>Type Group</code></td><td><code>GKey</code> and <code>GItems</code>.</td></tr>
+<tr><td><code>GroupBy(xs, keyOf)</code></td><td>Groups in first-appearance order, items in source order.</td></tr>
+<tr><td><code>JoinOn(xs, ys, xKeyOf, yKeyOf, pick)</code></td><td>Inner join, one result per matching pair, left order.</td></tr>
+<tr><td><code>GroupJoinOn(xs, ys, xKeyOf, yKeyOf, pick)</code></td><td>One result per left element with its whole match list — the left outer join.</td></tr>
+</table>
+
+<h3>Distinct and sets</h3>
+<p>Records compare structurally, so these mean what they should on a record.
+<strong>Lists compare by identity</strong> — two separately built lists of the
+same items are not equal — so a sequence <em>of lists</em> is the one shape these
+words cannot speak about; use <code>DistinctBy</code> with a Number or String key
+when that comes up.</p>
+<table>
+<tr><th>Word</th><th>What it does</th></tr>
+<tr><td><code>Distinct(xs)</code></td><td>Later repeats dropped; the first sighting stays in place.</td></tr>
+<tr><td><code>DistinctBy(xs, keyOf)</code></td><td>The earliest per key wins.</td></tr>
+<tr><td><code>Union(xs, ys)</code></td><td>Everything in either, once each.</td></tr>
+<tr><td><code>Intersect(xs, ys)</code></td><td>Only what is in both, in left order.</td></tr>
+<tr><td><code>Except(xs, ys)</code></td><td>In the first and not the second, in left order.</td></tr>
+</table>
+
+<h3>Walking a graph</h3>
+<table>
+<tr><th>Word</th><th>What it does</th></tr>
+<tr><td><code>SelectMany(xs, f)</code></td><td>The one-to-many hop: <code>Flatten</code> of a <code>Map</code>.</td></tr>
+<tr><td><code>Thru(f, g)</code></td><td>Two selectors composed into one deep read.</td></tr>
+<tr><td><code>Descendants(root, kidsOf)</code></td><td>Root first, then each child's whole subtree, depth first. Costs a frame per level of <em>depth</em>, not per node.</td></tr>
+<tr><td><code>Offspring(root, kidsOf)</code></td><td>The same without the root.</td></tr>
+</table>
+
+<h3>Navigating where a step can fail</h3>
+<p><code>Option</code> has no accessor word by design, so <code>Select Case</code>
+is the only way in. These are where that is written once instead of at every
+hop.</p>
+<table>
+<tr><th>Word</th><th>What it does</th></tr>
+<tr><td><code>OptMap(o, f)</code></td><td>Apply <code>f</code> inside a <code>Some</code>.</td></tr>
+<tr><td><code>OptBind(o, f)</code></td><td>The same where <code>f</code> itself answers an <code>Option</code>.</td></tr>
+<tr><td><code>OptOr(o, dflt)</code></td><td>The value, or the fallback.</td></tr>
+<tr><td><code>ThruOpt(f, g)</code></td><td><code>Thru</code> for steps that can fail; stops at the first <code>None</code>.</td></tr>
+<tr><td><code>Choose(xs, f)</code></td><td>Map and filter in one pass — keep only what <code>f</code> had an answer for, unwrapped.</td></tr>
+</table>
+
+<h3>Slicing, and the total twins</h3>
+<p>seq has <code>Taken</code> and <code>DropN</code> for a <em>count</em>. These
+stop on a <em>condition</em>, which nothing had.</p>
+<table>
+<tr><th>Word</th><th>What it does</th></tr>
+<tr><td><code>TakeWhile(xs, p)</code></td><td>The run at the front that passes <code>p</code>.</td></tr>
+<tr><td><code>SkipWhile(xs, p)</code></td><td>Everything from the first failure onwards.</td></tr>
+<tr><td><code>Chunk(xs, n)</code></td><td>Fixed-size batches, the last one short. Refuses a size below one, which would never finish.</td></tr>
+<tr><td><code>FirstOpt(xs)</code> / <code>LastOpt(xs)</code></td><td><code>First</code> and <code>Last</code> without the abort.</td></tr>
+<tr><td><code>SingleOpt(xs)</code></td><td><code>Some</code> only when there is exactly one — for the query that expects a unique answer and wants to be told when it did not get one.</td></tr>
+<tr><td><code>FindOpt(xs, p)</code></td><td>The first element passing <code>p</code>, without visiting the rest.</td></tr>
+</table>
+
+<h2 id="usedby">Who Uses It</h2>
+<table>
+<tr><th></th><th>User</th><th>How</th></tr>
+<tr><td class="uicon"><a href="alg.html"><img src="../media/icons/alg.svg" alt=""></a></td><td><a href="alg.html">alg</a></td><td><code>OrderWith</code> replaced the hand-written insertion sort that canonicalisation ran on every simplify, and <code>Distinct</code> the dedupe loop beside it.</td></tr>
+<tr><td class="uicon"><a href="bool.html"><img src="../media/icons/bool.svg" alt=""></a></td><td><a href="bool.html">bool</a></td><td>Quine&ndash;McCluskey rounds gather with <code>SelectMany</code> and <code>Distinct</code>, and pick their best implicant with <code>MaxBy</code>.</td></tr>
+<tr><td class="uicon"><a href="json.html"><img src="../media/icons/json.svg" alt=""></a></td><td><a href="json.html">json</a></td><td><code>OrderBy</code> sorts an object's members by key directly, where canonicalisation used to sort the keys and map them back.</td></tr>
+<tr><td class="uicon"><a href="xml.html"><img src="../media/icons/xml.svg" alt=""></a></td><td><a href="xml.html">xml</a></td><td>The same, for an element's attributes.</td></tr>
+<tr><td class="uicon"><a href="reckoner.html"><img src="../media/icons/reckoner.svg" alt=""></a></td><td><a href="reckoner.html">reckoner</a></td><td><code>WORDS</code> is a <code>GroupBy</code> over the dictionary, and <code>RckFind</code> a <code>FindOpt</code> over it.</td></tr>
+</table>
+
+<h2 id="uses">The Machines It Uses</h2>
+<table>
+<tr><th></th><th>Machine</th><th>How</th></tr>
+<tr><td class="uicon"><a href="seq.html"><img src="../media/icons/seq.svg" alt=""></a></td><td><a href="seq.html">seq</a></td><td><code>Pair</code> carries a decorated element, <code>Contains</code> is what the set words ask, and <code>Append</code> and <code>Last</code> do the rest. seq is the only thing sinq stands on, which is what lets any machine take sinq without dragging a tree in behind it.</td></tr>
+</table>
+
+<nav class="pagenav pagenav-bottom" aria-label="Machines, in catalog order">
+  <a href="seq.html" class="prev"><span class="pnwrap"><span class="dir">&larr; Previous machine</span><span class="ttl">seq</span></span></a>
+  <a href="index.html" class="all">All machines</a>
+  <a class="next" href="str.html"><span class="pnwrap"><span class="ttl">str</span><span class="dir">Next machine &rarr;</span></span></a>
+</nav>
+<footer>Named for the shoddy mills of the West Riding: Useless Things Made
+Useful Through Skill (<a href="../heritage.html">the heritage of the name</a>).<br>
+&copy; 2026 Stephen Vincent Foster</footer>
+</div>
+</body>
+</html>

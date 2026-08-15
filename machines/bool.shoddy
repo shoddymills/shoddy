@@ -66,6 +66,7 @@ Rem     than a hang.
 Rem ==================================================================
 
 Include "seq.shoddy"
+Include "sinq.shoddy"
 Include "str.shoddy"
 
 Rem ---- constants -------------------------------------------------------
@@ -967,14 +968,17 @@ Def BoolCombined(a As BoolTerm, b As BoolTerm) As BoolTerm
     Let keep = 2 ^ Vars(a) - 1 - BoolBitXor(Bits(a), Bits(b))
     BoolTerm(BoolBitAnd(Bits(a), keep), BoolBitAnd(Care(a), keep), Vars(a))
 
-Rem A BoolTerm is all-scalar, so Contains does the right thing here and
-Rem the whole algorithm can dedupe by value.
-Def BoolDedupTerms(ts As List Of BoolTerm) As List Of BoolTerm
-    Fold(ts, { }, Fn(acc, t) => Ifte(Contains(acc, t), acc, Append(acc, t)))
-
+Rem A BoolTerm is all-scalar, so a value comparison does the right thing
+Rem and the whole algorithm can dedupe with sinq's Distinct — which is
+Rem the same first-sighting rule the hand-written fold here used to
+Rem implement, under the name the rest of the tree now knows it by.
+Rem
+Rem The pairing below is a SelectMany over a Filter, and not a JoinOn:
+Rem BoolCombines is a Hamming-distance-of-one test, not an equality on
+Rem keys, so there is no key for a join to match on.
 Def BoolPiRound(ts As List Of BoolTerm) As List Of BoolTerm
-    BoolDedupTerms(Flatten(Map(ts,
-        Fn(a) => Map(Filter(ts, Fn(b) => BoolCombines(a, b)), Fn(b) => BoolCombined(a, b)))))
+    Distinct(SelectMany(ts,
+        Fn(a) => Map(Filter(ts, Fn(b) => BoolCombines(a, b)), Fn(b) => BoolCombined(a, b))))
 
 Rem The terms this round could not combine with anything: those are prime.
 Def BoolUncombined(ts As List Of BoolTerm) As List Of BoolTerm
@@ -986,12 +990,12 @@ Def BoolPiGo(ts As List Of BoolTerm, primes As List Of BoolTerm, k As Number) As
     Else
         Let nxt = BoolPiRound(ts)
         If IsEmpty(nxt) Then
-            BoolDedupTerms(Concat(primes, ts))
+            Distinct(Concat(primes, ts))
         Else
-            BoolPiGo(nxt, BoolDedupTerms(Concat(primes, BoolUncombined(ts))), k - 1)
+            BoolPiGo(nxt, Distinct(Concat(primes, BoolUncombined(ts))), k - 1)
 
 Def BoolTermsOf(ms As List Of Number, n As Number) As List Of BoolTerm
-    BoolDedupTerms(Map(ms, Fn(m) => BoolTerm(m, 2 ^ n - 1, n)))
+    Distinct(Map(ms, Fn(m) => BoolTerm(m, 2 ^ n - 1, n)))
 
 Def BoolChkMinterms(word As String, ms As List Of Number, n As Number) As List Of Number
     Map(ms, Fn(m) => Ifte(BoolChk(word, m) >= 2 ^ n,
@@ -1009,9 +1013,12 @@ Def BoolPrimeImplicants(minterms As List Of Number, n As Number) As List Of Bool
 Def BoolPiScore(t As BoolTerm, todo As List Of Number) As Number
     CountIf(todo, Fn(m) => BoolTermCovers(t, m))
 
+Rem MaxBy scores each implicant ONCE. The fold this replaced re-scored
+Rem the incumbent at every step, so a pool of n implicants cost 2n scans
+Rem of the uncovered list instead of n; ties still go to the earliest,
+Rem which is the behaviour the greedy cover was already relying on.
 Def BoolBestPi(pis As List Of BoolTerm, todo As List Of Number) As BoolTerm
-    Fold(Rest(pis), First(pis),
-         Fn(b, t) => Ifte(BoolPiScore(t, todo) > BoolPiScore(b, todo), t, b))
+    MaxBy(pis, Fn(t) => BoolPiScore(t, todo))
 
 Def BoolCoverGo(pis As List Of BoolTerm, todo As List Of Number, chosen As List Of BoolTerm, k As Number) As List Of BoolTerm
     If IsEmpty(todo) Or k <= 0 Then
@@ -1026,7 +1033,7 @@ Rem implicant into any cover at all: those go in before the greedy step
 Rem gets a say, which is what makes the result minimal in practice on
 Rem the functions a caller actually has.
 Def BoolEssentials(pis As List Of BoolTerm, ms As List Of Number) As List Of BoolTerm
-    BoolDedupTerms(Map(Filter(ms, Fn(m) => CountIf(pis, Fn(t) => BoolTermCovers(t, m)) = 1),
+    Distinct(Map(Filter(ms, Fn(m) => CountIf(pis, Fn(t) => BoolTermCovers(t, m)) = 1),
                        Fn(m) => First(Filter(pis, Fn(t) => BoolTermCovers(t, m)))))
 
 Def BoolCoverOf(pis As List Of BoolTerm, ms As List Of Number) As List Of BoolTerm

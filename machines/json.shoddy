@@ -66,6 +66,7 @@ Rem ==================================================================
 
 Include "seq.shoddy"
 Include "dict.shoddy"
+Include "sinq.shoddy"
 Include "str.shoddy"
 
 Type Json = JNull | JBool(JFlag As Boolean) | JNum(JNumber As Number) | JStr(JText As String) | JArr(JItems As List Of Json) | JObj(JMembers As List Of Pair)
@@ -616,14 +617,16 @@ Def JsonSave(path As String, j As Json)
     WriteFile(path, JsonText(j))
 
 Rem ---- canonical -------------------------------------------------------
-Rem Sort is documented as ascending over all-numbers or all-strings, so
-Rem it will not sort a List Of Pair by key. Sort the KEYS — a List Of
-Rem String — and map them back through the member list to rebuild.
+Rem The Sort builtin is ascending over all-numbers or all-strings and so
+Rem will not sort a List Of Pair by key. This used to sort the KEYS and
+Rem map each one back through the member list — correct, but a DictGet
+Rem scan per key. sinq's OrderBy takes the key selector directly, so the
+Rem members are ordered where they stand and every re-lookup is gone.
 
 Def JsonCanonical(j As Json) As Json
     Select Case j
         Case JObj(ms)
-            JObj(Map(Sort(JKeys(j)), Fn(k) => Pair(k, JsonCanonical(DictGet(ms, k)))))
+            JObj(Map(OrderBy(ms, Fst), Fn(p) => Pair(Fst(p), JsonCanonical(Snd(p)))))
         Case JArr(xs)
             JArr(Map(xs, JsonCanonical))
         Case Else

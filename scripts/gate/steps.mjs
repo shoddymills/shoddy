@@ -29,7 +29,7 @@ export const MACHINE_SUITES = [
     'seedreciotest', 'seedregextest', 'seedsimplextest', 'seedsparsetest',
     'seedterminaltest',
     'seedvt100test', 'shakertest', 'xmltest', 'seedgeotest',
-    'seedjuliantest', 'seedephemeristest',
+    'seedjuliantest', 'seedephemeristest', 'seedsinqtest',
 ];
 
 // tst/ files deliberately run by nothing, each with the reason. A name
@@ -68,6 +68,7 @@ export const CORE_SUITES = [
     ['julian', 'the calendar, against public epoch facts', 300],
     ['ephemeris', 'the sky, against the eclipse and the oppositions', 300],
     ['clock', 'the timing capability, by consistency not by moment', 300],
+    ['sinq', 'querying, against answers a wrong sort cannot reach — and at a size that catches a stack-bound one', 300],
 ];
 
 export const MILLS = [
@@ -249,6 +250,16 @@ export function gateSteps({ splitDotnetTest }) {
         id: 'tutorial-spiro', title: 'the tutorial still compiles and passes', timeoutSec: 300,
         cmd: [MILL, 'run', 'tutorials/spiro/test.shoddy'],
         remedy: 'The tutorial is documentation that has to keep working. Fix the code or the page.',
+    });
+    // The sinq demo asserts nothing — tst/sinq.shoddy grades the behaviour.
+    // What this step proves is that the worked example reproduced on
+    // docs/machines/sinq.html still COMPILES against the machine as it
+    // stands, which is the half a page of prose cannot check for itself.
+    steps.push({
+        id: 'tst-sinq-demo', title: 'the sinq worked example still runs', timeoutSec: 300,
+        cmd: [MILL, 'run', 'tst/sinq-demo.shoddy'],
+        remedy: 'The example on docs/machines/sinq.html is this file. Fix whichever '
+            + 'drifted, and check the printed output still matches the page.',
     });
 
     for (const suite of MACHINE_SUITES) {

@@ -278,6 +278,7 @@ batteries included. Full word references in
   <tr>
     <td align="left" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/regex.html"><img src="docs/media/icons/regex.svg" alt="regex" width="120"></a><br><b>regex</b><br><sub>regular expressions, compiled</sub></td>
     <td align="left" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/seq.html"><img src="docs/media/icons/seq.svg" alt="seq" width="120"></a><br><b>seq</b><br><sub>Map, Filter, Fold and friends</sub></td>
+    <td align="left" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/sinq.html"><img src="docs/media/icons/sinq.svg" alt="sinq" width="120"></a><br><b>sinq</b><br><sub>order, group, join, walk</sub></td>
     <td align="left" valign="top"><a href="https://shoddymills.github.io/shoddy/machines/str.html"><img src="docs/media/icons/str.svg" alt="str" width="120"></a><br><b>str</b><br><sub>string helpers</sub></td>
   </tr>
 </table>

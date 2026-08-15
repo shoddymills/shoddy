@@ -90,6 +90,7 @@ Rem second-order and systems ODEs; non-unary functions.
 Rem ==================================================================
 
 Include "seq.shoddy"
+Include "sinq.shoddy"
 Include "str.shoddy"
 
 Rem ---- the type --------------------------------------------------------
@@ -405,21 +406,15 @@ Def AlgArgOfC(e As AlgEx) As AlgEx
             Error("ALGARGOFC: NOT A CALL")
 
 Rem ---- sorting ---------------------------------------------------------
-Rem Insertion sort by AlgCompare. The Sort builtin orders numbers and
-Rem strings; an expression needs the total order above, so this is the one
-Rem place the machine sorts by hand.
-
-Def AlgInsert(x As AlgEx, xs As List Of AlgEx) As List Of AlgEx
-    If IsEmpty(xs) Then
-        { x }
-    Else
-        If AlgCompare(x, First(xs)) <= 0 Then
-            Prepend(x, xs)
-        Else
-            Prepend(First(xs), AlgInsert(x, Rest(xs)))
+Rem The Sort builtin orders numbers and strings; an expression needs the
+Rem total order above. That used to mean an insertion sort written out
+Rem here by hand — the one place the machine sorted for itself. sinq's
+Rem OrderWith takes exactly the comparer AlgCompare already is, so the
+Rem hand-written version is gone and canonicalisation, which calls this
+Rem on every simplify, gets n log n instead of n squared.
 
 Def AlgSort(xs As List Of AlgEx) As List Of AlgEx
-    Fold(xs, { }, Fn(acc, x) => AlgInsert(x, acc))
+    OrderWith(xs, AlgCompare)
 
 Rem ---- splitting a term ------------------------------------------------
 Rem Collecting like terms in a sum means recognising that 2*x and 3*x
@@ -861,17 +856,11 @@ Def AlgVarsGo(e As AlgEx) As List Of String
         Case Else
             { }
 
-Def AlgDedupGo(xs As List Of String, acc As List Of String) As List Of String
-    If IsEmpty(xs) Then
-        acc
-    Else
-        If Contains(acc, First(xs)) Then
-            AlgDedupGo(Rest(xs), acc)
-        Else
-            AlgDedupGo(Rest(xs), Append(acc, First(xs)))
-
+Rem Distinct then Sort: the names a formula mentions, each once, in
+Rem order. Distinct's first-sighting rule does not matter here because
+Rem Sort follows it, but it is the honest word for what this wants.
 Def AlgVarsOf(e As AlgEx) As List Of String
-    Sort(AlgDedupGo(AlgVarsGo(e), { }))
+    Sort(Distinct(AlgVarsGo(e)))
 
 Def AlgHasVar(e As AlgEx, name As String) As Boolean
     Contains(AlgVarsOf(e), name)

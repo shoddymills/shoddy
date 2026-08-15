@@ -1,0 +1,507 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem sinq.shoddy — Shoddy INtegrated Query
+Rem
+Rem The query words the library did not already have, and NOTHING else.
+Rem Sum, Average, Maximum, Minimum, Median and Freq stay in
+Rem stats.shoddy; Map, Filter, Fold, Sort, Range, Reverse and Concat
+Rem stay builtins; Any, All, CountIf, Contains, Taken, DropN, Flatten,
+Rem Zip and Pair stay in seq.shoddy. A query is written out of THOSE
+Rem words plus these, and this machine re-declares none of them.
+Rem
+Rem     Let top  = OrderByDesc(Filter(orders, IsLarge), OrderValue)
+Rem     Let bill = Sum(Map(top, OrderValue))
+Rem
+Rem WHAT WAS MISSING. The one query verb the library lacked is "by":
+Rem every existing sequence word takes a predicate or nothing.
+Rem
+Rem   1. ordering by a KEY. Sort takes no selector and refuses a record
+Rem      outright — "SORT expects all NUMBERs or all STRINGs".
+Rem   2. ordering by SEVERAL keys, stably, so ties break in order.
+Rem   3. grouping into GROUPS. stats' Freq gives key -> count; nothing
+Rem      gave key -> the items themselves.
+Rem   4. joining two sequences on a key.
+Rem   5. Distinct, Union, Intersect, Except.
+Rem   6. walking a record graph that holds itself.
+Rem
+Rem THE SEQUENCE COMES FIRST in every word here, so the language's own
+Rem pipeline form reads as a method chain with no syntax added:
+Rem
+Rem     cs
+Rem         SelectMany(Orders)
+Rem         Filter(Fn(o) => OrderValue(o) >= 100)
+Rem         OrderByDesc(OrderValue)
+Rem
+Rem NAMING. Shoddy has one flat word namespace — Include splices names
+Rem in, so a machine's helpers are exactly as public as its headline
+Rem words and there is no such thing as a private Def. The words a
+Rem caller is meant to type are named plainly; everything that is only
+Rem scaffolding is prefixed Snq, so the surface to learn is the
+Rem unprefixed list and nothing more. The prefix is Snq and not Sq
+Rem because seedseq.shoddy already owns thirty-one Sq names, and a
+Rem reader should not have to work out which machine SqLength came from.
+Rem A caller who has a clashing name of their own takes the machine
+Rem under a namespace instead: Include "sinq.shoddy" As Q, then QOrderBy.
+Rem
+Rem ---- how this machine is written, and why it is not obvious --------
+Rem
+Rem TWO RUNTIME TRAPS shape nearly every word below. Both were measured,
+Rem not assumed, and a natural-looking implementation hits both.
+Rem
+Rem TRAP 1: REST COPIES. A Shoddy list is contiguous, so Rest hands back
+Rem a COPY of the tail — walking n elements with First/Rest copies about
+Rem n^2/2 of them. Measured: 12500 elements in 74 ms, 50000 in 3585 ms.
+Rem Nothing here walks a list that way. Words that must visit every
+Rem element either Fold (a builtin loop) or ToArray once and index with
+Rem Nth, which is O(1) on an array.
+Rem
+Rem TRAP 2: ONLY SELF-TAIL-RECURSION BECOMES A LOOP. A recursive call
+Rem that is not the last thing a word does costs a live stack frame per
+Rem element, and the ceiling is about 20000 frames — a hard process
+Rem kill, not an Error, with no line number. MUTUAL recursion is not
+Rem optimised either, so the obvious tidy shape (a chain of small Defs
+Rem that hands back to the first) is exactly as fatal as the untidy one.
+Rem Every recursive word below therefore calls ITSELF, in tail position,
+Rem carrying an accumulator that Reverse puts right at the end. Helper
+Rem Defs are used freely, but only where they do not close a cycle.
+Rem
+Rem The one deliberate exception is the sort's divide-and-conquer, which
+Rem is mutually recursive between SnqSortSpan and SnqSortHalves. That is
+Rem safe because its depth is log2(n) — seventeen frames for a hundred
+Rem thousand elements — not n. Depth, not shape, is what matters there.
+Rem
+Rem COST, SAID OUT LOUD. Ordering is O(n log n). GroupBy is O(n *
+Rem groups); JoinOn and GroupJoinOn are O(n * m); Distinct and the set
+Rem words are O(n^2) — all for the reason dict.shoddy is an association
+Rem list: there is no hashing here. That is the right trade at the scale
+Rem this library is written for, and it is said here so nobody has to
+Rem measure to find out.
+Rem
+Rem EVERYTHING IS EAGER. There is no deferred execution and no query
+Rem object, because OrderBy, GroupBy and JoinOn must see every element
+Rem before they can yield the first, so a lazy pipeline could not stream
+Rem through the operators that matter anyway. FindOpt, TakeWhile and
+Rem Choose are the words that stop early, and they stop early by
+Rem indexing, not by being lazy.
+Rem
+Rem Built on seq.shoddy, and on the Option the language predeclares.
+Rem ==================================================================
+
+Include "seq.shoddy"
+
+Rem ---- ordering: comparers ----------------------------------------------
+Rem
+Rem A COMPARER is [ t t -- Number ]: negative if the first sorts first,
+Rem zero if neither does, positive otherwise. Ordering is built on
+Rem comparers rather than on key selectors alone because that is what
+Rem lets ThenBy exist at all. C# hangs tie-breaks off an
+Rem IOrderedEnumerable that OrderBy hands back; here the comparer is an
+Rem ordinary value, so ThenBy composes two of them and no such type is
+Rem needed.
+
+Rem The ordering under every comparer. Works on what < works on —
+Rem Numbers and Strings — which is exactly the set of things that can be
+Rem a sort key.
+Def Compare(a As t, b As t) As Number
+    If a < b Then
+        0 - 1
+    Else
+        SnqOver(a, b)
+
+Def SnqOver(a As t, b As t) As Number
+    If b < a Then
+        1
+    Else
+        0
+
+Rem A selector becomes a comparer: ByKey(Age) orders by age.
+Def ByKey(keyOf As [ t -- u ]) As [ t t -- Number ]
+    Fn(a, b) => Compare(Call(keyOf, a), Call(keyOf, b))
+
+Def Descending(cmp As [ t t -- Number ]) As [ t t -- Number ]
+    Fn(a, b) => 0 - Call(cmp, a, b)
+
+Rem The tie-break. ThenBy(ByKey(Dept), ByKey(Name)) is one comparer that
+Rem consults the second only where the first sees no difference.
+Def ThenBy(lead As [ t t -- Number ], tie As [ t t -- Number ]) As [ t t -- Number ]
+    Fn(a, b) => SnqTie(Call(lead, a, b), tie, a, b)
+
+Def SnqTie(r As Number, tie As [ t t -- Number ], a As t, b As t) As Number
+    If r <> 0 Then
+        r
+    Else
+        Call(tie, a, b)
+
+Rem ---- ordering: the sort ------------------------------------------------
+Rem
+Rem Merge sort over an ARRAY, because Rest copies (trap 1) and because
+Rem Nth is O(1) on an array. A tie takes from the LEFT run, which is
+Rem what makes it stable, which is what makes ThenBy mean anything — so
+Rem the comparison below is deliberately strict (< 0, never <= 0).
+Rem
+Rem The merge itself does not recurse at all: it is a Fold over the
+Rem output positions, threading Pair(i, acc) where i is how far into the
+Rem left run we are. The right-hand index is not carried because it can
+Rem be recovered — after k-1 elements have been emitted, j is k - i + 1.
+
+Def SnqTakeLeft(st As Pair, a As Array Of t) As Pair
+    Pair(Fst(st) + 1, Prepend(Nth(a, Fst(st)), Snd(st)))
+
+Def SnqTakeRight(st As Pair, b As Array Of t, k As Number) As Pair
+    Pair(Fst(st), Prepend(Nth(b, k - Fst(st) + 1), Snd(st)))
+
+Def SnqMergeStep(st As Pair, k As Number, a As Array Of t, b As Array Of t, cmp As [ t t -- Number ]) As Pair
+    If Fst(st) > Length(a) Then
+        SnqTakeRight(st, b, k)
+    Else
+        SnqMergeRight(st, k, a, b, cmp)
+
+Def SnqMergeRight(st As Pair, k As Number, a As Array Of t, b As Array Of t, cmp As [ t t -- Number ]) As Pair
+    If k - Fst(st) + 1 > Length(b) Then
+        SnqTakeLeft(st, a)
+    Else
+        SnqMergePick(st, k, a, b, cmp)
+
+Def SnqMergePick(st As Pair, k As Number, a As Array Of t, b As Array Of t, cmp As [ t t -- Number ]) As Pair
+    If Call(cmp, Nth(b, k - Fst(st) + 1), Nth(a, Fst(st))) < 0 Then
+        SnqTakeRight(st, b, k)
+    Else
+        SnqTakeLeft(st, a)
+
+Rem Every rung of the sort passes ARRAYS, so there is one conversion at
+Rem the door and one at the end rather than two per level of the
+Rem recursion.
+Def SnqMergeRuns(a As Array Of t, b As Array Of t, cmp As [ t t -- Number ]) As Array Of t
+    ToArray(Reverse(Snd(Fold(Range(1, Length(a) + Length(b)), Pair(1, { }), Fn(st, k) => SnqMergeStep(st, k, a, b, cmp)))))
+
+Rem The divide half. Mutually recursive with SnqSortHalves, and safe only
+Rem because the depth is log2(n): see the header.
+Def SnqSortSpan(arr As Array Of t, lo As Number, hi As Number, cmp As [ t t -- Number ]) As Array Of t
+    If hi <= lo Then
+        SnqSpanEnd(arr, lo, hi)
+    Else
+        SnqSortHalves(arr, lo, hi, Floor((lo + hi) / 2), cmp)
+
+Def SnqSpanEnd(arr As Array Of t, lo As Number, hi As Number) As Array Of t
+    If hi < lo Then
+        ToArray({ })
+    Else
+        ToArray({ Nth(arr, lo) })
+
+Def SnqSortHalves(arr As Array Of t, lo As Number, hi As Number, mid As Number, cmp As [ t t -- Number ]) As Array Of t
+    SnqMergeRuns(SnqSortSpan(arr, lo, mid, cmp), SnqSortSpan(arr, mid + 1, hi, cmp), cmp)
+
+Rem Answers a LIST whatever it was handed, unlike Sort, which keeps the
+Rem input's kind. Ordering has to buffer the whole sequence anyway, and
+Rem one answer shape is easier to reason about than two.
+Def OrderWith(xs As List Of t, cmp As [ t t -- Number ]) As List Of t
+    ToList(SnqSortSpan(ToArray(xs), 1, Length(xs), cmp))
+
+Def OrderBy(xs As List Of t, keyOf As [ t -- u ]) As List Of t
+    OrderWith(xs, ByKey(keyOf))
+
+Def OrderByDesc(xs As List Of t, keyOf As [ t -- u ]) As List Of t
+    OrderWith(xs, Descending(ByKey(keyOf)))
+
+Rem ---- the extremes by a key ---------------------------------------------
+Rem stats' Minimum and Maximum answer the smallest NUMBER in a list.
+Rem These answer the ITEM whose key is smallest, which is a different
+Rem question and the one a query usually asks. Ties go to the earliest,
+Rem matching the sort. The Opt twin is the real word and the aborting
+Rem one is written over it, so there is one set of rules and not two.
+
+Def SnqLowerOf(b As t, x As t, keyOf As [ t -- u ]) As Option
+    If Call(keyOf, x) < Call(keyOf, b) Then
+        Some(x)
+    Else
+        Some(b)
+
+Def SnqLower(o As Option, x As t, keyOf As [ t -- u ]) As Option
+    Select Case o
+        Case Some(b)
+            SnqLowerOf(b, x, keyOf)
+        Case None
+            Some(x)
+
+Def MinByOpt(xs As List Of t, keyOf As [ t -- u ]) As Option
+    Fold(xs, None(), Fn(o, x) => SnqLower(o, x, keyOf))
+
+Def MinBy(xs As List Of t, keyOf As [ t -- u ]) As t
+    Select Case MinByOpt(xs, keyOf)
+        Case Some(v)
+            v
+        Case None
+            Error("MINBY: EMPTY SEQUENCE")
+
+Def SnqHigherOf(b As t, x As t, keyOf As [ t -- u ]) As Option
+    If Call(keyOf, b) < Call(keyOf, x) Then
+        Some(x)
+    Else
+        Some(b)
+
+Def SnqHigher(o As Option, x As t, keyOf As [ t -- u ]) As Option
+    Select Case o
+        Case Some(b)
+            SnqHigherOf(b, x, keyOf)
+        Case None
+            Some(x)
+
+Def MaxByOpt(xs As List Of t, keyOf As [ t -- u ]) As Option
+    Fold(xs, None(), Fn(o, x) => SnqHigher(o, x, keyOf))
+
+Def MaxBy(xs As List Of t, keyOf As [ t -- u ]) As t
+    Select Case MaxByOpt(xs, keyOf)
+        Case Some(v)
+            v
+        Case None
+            Error("MAXBY: EMPTY SEQUENCE")
+
+Rem ---- grouping -----------------------------------------------------------
+Rem Groups come back in FIRST-APPEARANCE order and their items in SOURCE
+Rem order, which is what C# guarantees and what makes a grouped report
+Rem reproducible run to run.
+
+Type Group
+    GKey   As u
+    GItems As List Of t
+
+Def SnqGroupAdd(g As Group, k As u, x As t) As Group
+    If GKey(g) = k Then
+        With(g, GItems = Prepend(x, GItems(g)))
+    Else
+        g
+
+Def SnqGroupBump(gs As List Of Group, k As u, x As t) As List Of Group
+    If Any(gs, Fn(g) => GKey(g) = k) Then
+        Map(gs, Fn(g) => SnqGroupAdd(g, k, x))
+    Else
+        Append(gs, Group(k, { x }))
+
+Rem Items were pushed on the front for speed; put them back in order.
+Def SnqGroupTidy(g As Group) As Group
+    With(g, GItems = Reverse(GItems(g)))
+
+Def GroupBy(xs As List Of t, keyOf As [ t -- u ]) As List Of Group
+    Map(Fold(xs, { }, Fn(gs, x) => SnqGroupBump(gs, Call(keyOf, x), x)), SnqGroupTidy)
+
+Rem ---- joining -------------------------------------------------------------
+Rem The name Join belongs to str.shoddy, which joins strings with a
+Rem separator. These read better beside their two key selectors anyway.
+
+Def SnqMatching(ys As List Of u, xk As k, yKeyOf As [ u -- k ]) As List Of u
+    Filter(ys, Fn(y) => Call(yKeyOf, y) = xk)
+
+Def SnqMatched(x As t, ys As List Of u, xk As k, yKeyOf As [ u -- k ], pick As [ t u -- v ]) As List Of v
+    Map(SnqMatching(ys, xk, yKeyOf), Fn(y) => Call(pick, x, y))
+
+Rem Inner join: one result per matching pair, in left order, dropping
+Rem unmatched elements from both sides.
+Def JoinOn(xs As List Of t, ys As List Of u, xKeyOf As [ t -- k ], yKeyOf As [ u -- k ], pick As [ t u -- v ]) As List Of v
+    SelectMany(xs, Fn(x) => SnqMatched(x, ys, Call(xKeyOf, x), yKeyOf, pick))
+
+Rem Group join: one result per LEFT element, handed the whole list of
+Rem its matches — empty where there are none. This is the left outer
+Rem join, and the reason JoinOn needs no OrDefault twin.
+Def GroupJoinOn(xs As List Of t, ys As List Of u, xKeyOf As [ t -- k ], yKeyOf As [ u -- k ], pick As [ t List Of u -- v ]) As List Of v
+    Map(xs, Fn(x) => Call(pick, x, SnqMatching(ys, Call(xKeyOf, x), yKeyOf)))
+
+Rem ---- distinct and sets ---------------------------------------------------
+Rem Records compare STRUCTURALLY, so Distinct means what it should on a
+Rem record. LISTS compare by identity — two separately built lists of
+Rem the same items are not equal — so a sequence OF LISTS is the one
+Rem shape these words cannot speak about. Use DistinctBy with a key that
+Rem is a Number or a String when that comes up.
+
+Def SnqPushNew(acc As List Of t, x As t) As List Of t
+    If Contains(acc, x) Then
+        acc
+    Else
+        Prepend(x, acc)
+
+Def Distinct(xs As List Of t) As List Of t
+    Reverse(Fold(xs, { }, SnqPushNew))
+
+Def SnqPushNewBy(acc As Pair, x As t, k As u) As Pair
+    If Contains(Fst(acc), k) Then
+        acc
+    Else
+        Pair(Prepend(k, Fst(acc)), Prepend(x, Snd(acc)))
+
+Rem First one wins, so the survivor of a clash is the earliest. The Pair
+Rem carries the keys seen and the items kept, side by side.
+Def DistinctBy(xs As List Of t, keyOf As [ t -- u ]) As List Of t
+    Reverse(Snd(Fold(xs, Pair({ }, { }), Fn(acc, x) => SnqPushNewBy(acc, x, Call(keyOf, x)))))
+
+Def Union(xs As List Of t, ys As List Of t) As List Of t
+    Distinct(Concat(xs, ys))
+
+Def Intersect(xs As List Of t, ys As List Of t) As List Of t
+    Distinct(Filter(xs, Fn(x) => Contains(ys, x)))
+
+Def Except(xs As List Of t, ys As List Of t) As List Of t
+    Distinct(Filter(xs, Fn(x) => Not Contains(ys, x)))
+
+Rem ---- walking a graph ------------------------------------------------------
+Rem SelectMany is the one-to-many hop, and Descendants is that hop
+Rem applied to a type that holds itself.
+Rem
+Rem NOTHING MUTATES IN SHODDY, so a record cannot be made to refer to
+Rem itself — there is no way to tie the knot after construction — and a
+Rem graph of records is therefore always a finite tree. That is why
+Rem there is no cycle check here and none is needed.
+Rem
+Rem THE ONE CEILING: Descendants recurses into the tree and cannot be
+Rem made tail-recursive by an accumulator, so it costs a frame per level
+Rem of DEPTH. Depth, not size — a million-node tree twelve deep is fine,
+Rem and only a tree deeper than about twenty thousand is not. Nothing
+Rem built from records reaches that by accident.
+
+Def SelectMany(xs As List Of t, f As [ t -- List Of u ]) As List Of u
+    Flatten(Map(xs, f))
+
+Rem Compose two selectors into one deep read: Thru(Home, City) reads the
+Rem city of a person's address.
+Def Thru(f As [ t -- u ], g As [ u -- v ]) As [ t -- v ]
+    Fn(x) => Call(g, Call(f, x))
+
+Rem Root first, then each child's whole subtree, depth first.
+Def Descendants(root As t, kidsOf As [ t -- List Of t ]) As List Of t
+    Prepend(root, SelectMany(Call(kidsOf, root), Fn(k) => Descendants(k, kidsOf)))
+
+Rem Every descendant EXCEPT the root, for the common "the parts under
+Rem this one" question.
+Def Offspring(root As t, kidsOf As [ t -- List Of t ]) As List Of t
+    SelectMany(Call(kidsOf, root), Fn(k) => Descendants(k, kidsOf))
+
+Rem ---- navigating where a step can fail --------------------------------------
+Rem A graph whose hops are partial — a sum type, an Option field, a
+Rem lookup that may miss — is walked with these. Option has no accessor
+Rem word by design, so Select Case is the only way in, and these are
+Rem where that is written once instead of at every hop.
+
+Def OptMap(o As Option, f As [ t -- u ]) As Option
+    Select Case o
+        Case Some(v)
+            Some(Call(f, v))
+        Case None
+            None()
+
+Def OptBind(o As Option, f As [ t -- Option ]) As Option
+    Select Case o
+        Case Some(v)
+            Call(f, v)
+        Case None
+            None()
+
+Def OptOr(o As Option, dflt As t) As t
+    Select Case o
+        Case Some(v)
+            v
+        Case None
+            dflt
+
+Rem Thru for steps that can fail: stops at the first None instead of
+Rem aborting.
+Def ThruOpt(f As [ t -- Option ], g As [ u -- Option ]) As [ t -- Option ]
+    Fn(x) => OptBind(Call(f, x), g)
+
+Def SnqKeepSome(acc As List Of u, o As Option) As List Of u
+    Select Case o
+        Case Some(v)
+            Prepend(v, acc)
+        Case None
+            acc
+
+Rem Map and Filter in one pass: keep only the elements f had an answer
+Rem for, unwrapped. The word for "parse each of these, discard what did
+Rem not parse".
+Def Choose(xs As List Of t, f As [ t -- Option ]) As List Of u
+    Reverse(Fold(xs, { }, Fn(acc, x) => SnqKeepSome(acc, Call(f, x))))
+
+Rem ---- slicing ----------------------------------------------------------------
+Rem seq.shoddy has Taken and DropN for a COUNT. These stop on a
+Rem CONDITION, which nothing had. All three index an array rather than
+Rem walking with Rest, and recurse into themselves rather than into a
+Rem helper: see the header's two traps.
+
+Def SnqSpanOf(arr As Array Of t, lo As Number, hi As Number) As List Of t
+    Map(Range(lo, hi), Fn(i) => Nth(arr, i))
+
+Def SnqTakeWhileAt(arr As Array Of t, k As Number, p As [ t -- Boolean ], acc As List Of t) As List Of t
+    If k > Length(arr) Then
+        Reverse(acc)
+    Else
+        If Call(p, Nth(arr, k)) Then
+            SnqTakeWhileAt(arr, k + 1, p, Prepend(Nth(arr, k), acc))
+        Else
+            Reverse(acc)
+
+Def TakeWhile(xs As List Of t, p As [ t -- Boolean ]) As List Of t
+    SnqTakeWhileAt(ToArray(xs), 1, p, { })
+
+Def SnqSkipWhileAt(arr As Array Of t, k As Number, p As [ t -- Boolean ]) As List Of t
+    If k > Length(arr) Then
+        { }
+    Else
+        If Call(p, Nth(arr, k)) Then
+            SnqSkipWhileAt(arr, k + 1, p)
+        Else
+            SnqSpanOf(arr, k, Length(arr))
+
+Def SkipWhile(xs As List Of t, p As [ t -- Boolean ]) As List Of t
+    SnqSkipWhileAt(ToArray(xs), 1, p)
+
+Def SnqChunkAt(arr As Array Of t, k As Number, n As Number, acc As List Of List Of t) As List Of List Of t
+    If k > Length(arr) Then
+        Reverse(acc)
+    Else
+        SnqChunkAt(arr, k + n, n, Prepend(SnqSpanOf(arr, k, Min(k + n - 1, Length(arr))), acc))
+
+Rem Fixed-size batches, the last one short. A size below one would never
+Rem consume the sequence, so it is refused rather than hung.
+Def Chunk(xs As List Of t, n As Number) As List Of List Of t
+    If n < 1 Then
+        Error("CHUNK: SIZE MUST BE AT LEAST 1")
+    Else
+        SnqChunkAt(ToArray(xs), 1, n, { })
+
+Rem ---- the total twins of First and Last ---------------------------------------
+Rem First is a builtin and aborts on an empty sequence; seq's Last does
+Rem the same. These say "not there" in the language's own words instead,
+Rem which is what a query over a filtered list usually needs.
+
+Def FirstOpt(xs As List Of t) As Option
+    If IsEmpty(xs) Then
+        None()
+    Else
+        Some(First(xs))
+
+Def LastOpt(xs As List Of t) As Option
+    If IsEmpty(xs) Then
+        None()
+    Else
+        Some(Last(xs))
+
+Rem Some only when there is EXACTLY one — the query that expects a
+Rem unique answer and wants to be told when it did not get one.
+Def SingleOpt(xs As List Of t) As Option
+    If Length(xs) = 1 Then
+        Some(First(xs))
+    Else
+        None()
+
+Def SnqFindAt(arr As Array Of t, k As Number, p As [ t -- Boolean ]) As Option
+    If k > Length(arr) Then
+        None()
+    Else
+        If Call(p, Nth(arr, k)) Then
+            Some(Nth(arr, k))
+        Else
+            SnqFindAt(arr, k + 1, p)
+
+Rem The first element passing p, without visiting the rest. This is the
+Rem short-circuit a lazy pipeline would have bought, written out.
+Def FindOpt(xs As List Of t, p As [ t -- Boolean ]) As Option
+    SnqFindAt(ToArray(xs), 1, p)

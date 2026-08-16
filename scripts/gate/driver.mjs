@@ -99,7 +99,18 @@ const opts = {
 // an ordinary working day the tree is dirty - a gate you cannot run while
 // working is a gate you run once, at the end, which is the habit this whole
 // driver exists to break.
-function checkGitState({ strict }) {
+// The two files a release BUMPS on its way past. `package` rewrites them -
+// vsce rewrites package.json, and shoddy-release rewrites the props - and
+// then `shoddy-release` stages and commits exactly these two. So at publish
+// time they are the release's own output, not somebody's uncommitted work.
+//
+// Without this, `shoddy release <version>` could not complete at all: its
+// own package stage dirtied the tree that its own publish stage then
+// refused. Preflight does NOT allow them, and must not - it runs before
+// package, where a modified package.json really is a person's edit.
+const RELEASE_BUMPS = ['vscode-shoddy/package.json', 'Directory.Build.props'];
+
+function checkGitState({ strict, allow = [] }) {
     const problems = [], notes = [];
     const dirty = git('status', '--porcelain').out;
     if (dirty) {
@@ -110,7 +121,9 @@ function checkGitState({ strict }) {
             problems.push(`untracked build output in the tree (${untrackedBuild.length} file(s)) `
                 + '- run `shoddy clean`, or a git add -A sweeps it into a commit');
         }
-        const real = lines.filter((l) => !l.startsWith('??'));
+        const real = lines
+            .filter((l) => !l.startsWith('??'))
+            .filter((l) => !allow.includes(l.slice(3).trim().replace(/\\/g, '/')));
         if (real.length) {
             const msg = `${real.length} uncommitted change(s)`;
             if (strict) problems.push(`${msg} - commit or stash before releasing`);
@@ -189,6 +202,19 @@ function checkDoctor() {
         info(`dotnet ${dotnet}   node ${node}   global.json wants ${wanted}`);
     } catch { /* no global.json is not our problem to invent */ }
 
+    // The gate now runs the MAUI host lane, which needs a workload rather
+    // than just an SDK. Asked here so the answer arrives in three seconds
+    // rather than twenty minutes into a gate.
+    if (process.platform === 'win32') {
+        const r = spawnSync('dotnet', ['workload', 'list'], { encoding: 'utf8' });
+        if (!/maui-windows/.test(r.stdout ?? '')) {
+            problems.push('the maui-windows workload is not installed - the gate runs the '
+                + 'MAUI host lane. Install it: dotnet workload install maui-windows');
+        } else {
+            info('maui-windows workload present');
+        }
+    }
+
     const free = freeSpaceBytes(REPO);
     if (free !== null) {
         info(`free disk: ${mb(free)}`);
@@ -219,15 +245,25 @@ function freeSpaceBytes(p) {
 
 async function runSteps(steps, stage, key) {
     let list = steps;
-    if (opts.only) list = steps.filter((s) => s.id === opts.only);
+    // REFUSED, NOT RECONCILED. --from used to overwrite the list --only had
+    // just built, so `--only x --from y` ran everything from y and silently
+    // ignored --only entirely: the caller asked for one step and got sixty,
+    // with nothing said. Two contradictory instructions are a question the
+    // tool cannot answer, and guessing at one of them is the worst of the
+    // available answers.
+    if (opts.only && opts.from) {
+        bad('--only and --from contradict each other: one names a single step, the '
+            + 'other names all of them from a point onwards. Pass one.');
+        process.exit(2);
+    }
+    if (opts.only) {
+        list = steps.filter((s) => s.id === opts.only);
+        if (list.length === 0) { bad(`no step called '${opts.only}'`); process.exit(2); }
+    }
     if (opts.from) {
         const i = steps.findIndex((s) => s.id === opts.from);
         if (i < 0) { bad(`no step called '${opts.from}'`); process.exit(2); }
         list = steps.slice(i);
-    }
-    if (opts.only && list.length === 0) {
-        bad(`no step called '${opts.only}'`);
-        process.exit(2);
     }
 
     const results = [];
@@ -343,14 +379,17 @@ async function doPublish(version) {
     // be tagged. Asking for the receipt first would therefore answer "no green
     // gate", sending the reader off to run a gate that cannot fix the real
     // problem. Say what is actually wrong: commit or stash.
-    const strict = checkGitState({ strict: true });
+    const strict = checkGitState({ strict: true, allow: RELEASE_BUMPS });
     if (strict.problems.length) {
         for (const p of strict.problems) bad(p);
         return { ok: false, failed: 'dirty-tree' };
     }
 
-    // Clean, so the tree key IS the commit - which is what makes the receipt
-    // below a statement about the code that is going to carry the tag.
+    // Clean but for the version bump, so the tree key is the commit - which
+    // is what makes the receipt below a statement about the code that is
+    // going to carry the tag. If package HAS bumped, the key has moved and
+    // the receipt is looked up under the commit deliberately: the gate
+    // proved the source, and a version string is not the source.
     const sha = headSha();
     const gateIds = gateSteps({ splitDotnetTest: opts.splitTests }).map((s) => s.id);
     if (!stageIsGreen(sha, gateIds)) {

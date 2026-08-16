@@ -67,6 +67,14 @@ a step that fails prints its last 25 lines and a sentence saying what to do
 next. Nothing is judged on anything but its exit code, so a native program
 writing to stderr can never fail a run that succeeded.
 
+**The gate covers all four lanes.** Core, fettler, the MCP host and the MAUI
+host, plus the harness's own self-test and both shipped archives, driven from
+outside the repository. It did not always: three of the four test projects
+were proved only by a path-filtered workflow, so a change outside their paths
+— `Directory.Build.props`, which sets the version every one of these binaries
+reports, matched none of them — ran no suite at all. The workflows remain as
+the backstop; the gate is no longer a claim about one quarter of the repo.
+
 **Receipts are keyed to the working tree**, in `.release-state/` (gitignored) —
 the commit SHA when the tree is clean, and the SHA plus a digest of everything
 uncommitted when it is not. `gate --resume` skips steps already green for that

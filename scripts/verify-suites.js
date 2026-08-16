@@ -10,6 +10,12 @@
 // keep falling out of hand-kept lists silently — nine at once historically,
 // then seedterminaltest again in 2026 — and a suite that stops being run
 // proves nothing while looking like it does.
+//
+// MILLS is checked the same way, and for the same reason. It was the one
+// hand-kept list in that file with nothing holding it in step: a new mill
+// under mills/ would simply never be run, and the gate would go on saying
+// PASS with a whole program unproved. The two lists had the identical
+// failure mode and only one of them had a guard.
 
 const fs = require("fs");
 const path = require("path");
@@ -54,6 +60,45 @@ const root = path.resolve(__dirname, "..");
       bad++;
     }
 
-  console.log(bad === 0 ? "ALL SUITES ACCOUNTED FOR" : bad + " problem(s)");
+  // ---- the mills, both directions -------------------------------------
+  //
+  // A directory under mills/ is a mill when it has a build script, which is
+  // what the gate step actually invokes. Anything else there (notes, shared
+  // fixtures) is not a program and is not expected on the list.
+  const millsDir = path.join(root, "mills");
+  const onDisk = fs.readdirSync(millsDir, { withFileTypes: true })
+    .filter(e => e.isDirectory())
+    .map(e => e.name)
+    .filter(n => fs.existsSync(path.join(millsDir, n, "build.ps1"))
+              || fs.existsSync(path.join(millsDir, n, "build.sh")));
+  const listed = new Set(steps.MILLS);
+
+  for (const m of onDisk)
+    if (!listed.has(m)) {
+      console.log("mills/" + m + ": has a build script but MILLS does not list it — "
+        + "the gate never runs its suite; add it to MILLS in scripts/gate/steps.mjs");
+      bad++;
+    }
+  for (const m of listed)
+    if (!onDisk.includes(m)) {
+      console.log(m + ": listed in MILLS but mills/" + m + " has no build script");
+      bad++;
+    }
+
+  // Both twins, or the gate passes on one platform and not the other. The
+  // gate picks build.ps1 on Windows and build.sh everywhere else, so a mill
+  // shipping only one is a mill that fails for half the maintainers.
+  for (const m of onDisk)
+    for (const twin of ["build.ps1", "build.sh"])
+      if (!fs.existsSync(path.join(millsDir, m, twin))) {
+        console.log("mills/" + m + "/" + twin + " is missing — the gate runs "
+          + "build.ps1 on Windows and build.sh elsewhere, so this mill is "
+          + "unprovable on one of them");
+        bad++;
+      }
+
+  console.log(bad === 0
+    ? "ALL SUITES AND MILLS ACCOUNTED FOR"
+    : bad + " problem(s)");
   process.exit(bad === 0 ? 0 : 1);
 })();

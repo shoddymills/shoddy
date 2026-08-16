@@ -1,3 +1,4 @@
+using System.Reflection;
 using System.Text;
 using System.Text.Json;
 using Fettler.Clients;
@@ -108,7 +109,24 @@ public static class Command
         }
     }
 
-    public const string Version = "1.0.0";
+    /// <summary>
+    /// The release this was built from, stamped by
+    /// <c>Directory.Build.props</c> at the top of the repository, so that
+    /// fettle, sparky and the mill all answer the same number.
+    ///
+    /// <para>It was a hardcoded constant, and reported 1.0.0 for as long
+    /// as it existed while the repository shipped 2.x - which made
+    /// RELEASING.md's own smoke test, <c>./fettle --version</c> on the
+    /// downloaded archive, report a number that meant nothing.</para>
+    ///
+    /// <para>The build metadata after <c>+</c> is a commit hash, which is
+    /// useful in the mill's banner and only noise in
+    /// <c>doctor</c>'s first line, so it is trimmed here.</para>
+    /// </summary>
+    public static string Version { get; } =
+        typeof(Command).Assembly
+            .GetCustomAttribute<System.Reflection.AssemblyInformationalVersionAttribute>()
+            ?.InformationalVersion?.Split('+')[0] ?? "0.0.0";
 
     static async Task<CliResult> Dispatch(
         Bench bench, Arguments args, bool json, TextReader stdin, CancellationToken cancel) =>
@@ -127,6 +145,7 @@ public static class Command
             "move" => await Move(bench, args, json, cancel).ConfigureAwait(false),
             "copy" => await Copy(bench, args, json, cancel).ConfigureAwait(false),
             "delete" => await Delete(bench, args, json, cancel).ConfigureAwait(false),
+            "extract" => await Extract(bench, args, json, cancel).ConfigureAwait(false),
             "exec" => await Exec(bench, args, json, cancel).ConfigureAwait(false),
             "tasks" => TaskList(bench, json),
             "roots" => RootList(bench, json),
@@ -339,8 +358,27 @@ public static class Command
 
         int? from = args.Has("from") ? args.Int("from", 1) : null;
         int? to = args.Has("to") ? args.Int("to", int.MaxValue) : null;
+        int? tail = args.Has("tail") ? args.Int("tail", 0) : null;
+        string? member = args.Value("member");
 
-        Result<IReadOnlyList<ReadSlice>> result = bench.Read(new ReadRequest(paths, from, to));
+        // Two different questions, so the contradiction is named rather
+        // than resolved by precedence. Answering one of them silently is
+        // R3.14's failure in another costume: not an error, a wrong answer.
+        if (tail is not null && (from is not null || to is not null))
+            return Failed(new Failure(Outcome.Invalid,
+                "--tail is the end of the file and --from/--to is a named range;"
+                + " ask for one or the other"), json);
+
+        if (tail is < 1)
+            return Failed(new Failure(Outcome.Invalid,
+                "--tail counts lines back from the end, so it needs at least 1"), json);
+
+        if (member is not null && paths.Count != 1)
+            return Failed(new Failure(Outcome.Invalid,
+                "--member names one entry inside one archive, so read one archive at a time"), json);
+
+        Result<IReadOnlyList<ReadSlice>> result =
+            bench.Read(new ReadRequest(paths, from, to, tail, member));
         if (!result.IsOk) return Failed(result.Failure!, json);
 
         if (json)
@@ -1001,6 +1039,39 @@ public static class Command
         return Ok(human.AppendLine().ToString());
     }
 
+    static async Task<CliResult> Extract(Bench bench, Arguments args, bool json, CancellationToken cancel)
+    {
+        if (args.At(0) is not { } archive)
+            return Failed(new Failure(Outcome.Invalid, "extract needs an archive"), json);
+
+        // Where it lands is stated, never inferred from the archive's own
+        // name or from a working directory - there isn't one, and guessing
+        // a destination for an operation that writes many files is the
+        // wrong place to be helpful.
+        if (args.Value("into") is not { Length: > 0 } into)
+            return Failed(new Failure(Outcome.Invalid,
+                "extract needs --into DIR, naming where the members land"), json);
+
+        Result<Unpacked> done = await bench.ExtractAsync(archive, into, args.Has("overwrite"), cancel)
+            .ConfigureAwait(false);
+
+        if (!done.IsOk) return Failed(done.Failure!, json);
+        Unpacked u = done.Value;
+
+        if (json)
+            return Ok(Json(w =>
+            {
+                w.WriteString("archive", Show(bench, u.Archive));
+                w.WriteString("into", Show(bench, u.Into));
+                w.WriteNumber("members", u.Members);
+                w.WriteNumber("bytes", u.Bytes);
+            }));
+
+        return Ok($"extracted {u.Members}{(u.Members == 1 ? " member" : " members")}"
+            + $" ({u.Bytes} bytes) from {Show(bench, u.Archive)} into {Show(bench, u.Into)}"
+            + Environment.NewLine);
+    }
+
     static async Task<CliResult> Exec(Bench bench, Arguments args, bool json, CancellationToken cancel)
     {
         if (args.At(0) is not { } path)
@@ -1223,7 +1294,8 @@ public static class Command
         bench.Roots.IsSingle ? path.Display : path.Qualified;
 
     static string Help() => """
-        fettle - find, search, read, write, edit, move, copy, delete, and run a declared task.
+        fettle - find, search, read, write, edit, move, copy, delete, unpack an archive,
+         and run a declared task.
 
         Global flags, accepted by every verb:
           --config PATH        the .fettler.json to use, rather than searching
@@ -1248,9 +1320,21 @@ public static class Command
                  A pattern may instead arrive as --pattern-file PATH or
                  --pattern-stdin, one per line, so a shell never gets to
                  eat a quote out of it.
-          read PATH... [--from N] [--to N]
-                 Text, notebooks, PDFs and images. Stops at 2000 lines and says
-                 how many are left; --to asks for more.
+          read PATH... [--from N] [--to N] [--tail N] [--member NAME]
+                 Text, notebooks, PDFs, images and archives. Stops at 2000 lines
+                 and says how many are left; --to asks for more. --tail N is the
+                 LAST n lines - for a log or a build transcript, so reaching the
+                 end of one costs no arithmetic and no second call.
+                 A .zip, .tar, .tar.gz or .tgz reads as its MANIFEST: every
+                 member, its size, and whether it carries the execute bit.
+                 --member NAME reads one entry out of it, decoded like any other
+                 file, without unpacking anything. A lone .gz reads as whatever
+                 is underneath it.
+          extract ARCHIVE --into DIR [--overwrite]
+                 Unpack into a declared tree. Refused WHOLE if any member would
+                 land outside a tree, needs a permission it has not got, or is a
+                 link - so an archive never lands half-unpacked. Carries the
+                 execute bit. Never writes over anything without --overwrite.
           write PATH --stdin [--overwrite] [--encoding E] [--eol lf|crlf]
           edit PATH [--expect HASH] [--dry-run] and one of:
                  --replace S --with S [--between 120-140] [--all]

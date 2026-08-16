@@ -52,11 +52,21 @@ public static class ToolCatalogue
             }}
             """),
 
-        new("read", "Content, encoding, line ending, trailing-newline state and a content hash. Takes several paths in one call. Reads notebooks as cells, PDFs as text per page, and images as facts plus a native image part - so this is the reader for every file type, not only for source. Stops at 2000 lines unless `to` says otherwise, and says how many were left.", """
+        new("read", "Content, encoding, line ending, trailing-newline state and a content hash. Takes several paths in one call. Reads notebooks as cells, PDFs as text per page, and images as facts plus a native image part - so this is the reader for every file type, not only for source. Stops at 2000 lines unless `to` says otherwise, and says how many were left. For a log or a build transcript ask for `tail` instead - the end of the file, without needing to know its length.", """
             {"type":"object","required":["paths"],"properties":{
               "paths":{"type":"array","items":{"type":"string"}},
               "from":{"type":"integer"},
-              "to":{"type":"integer","description":"lifts the default 2000-line cap; say what you need"}
+              "to":{"type":"integer","description":"lifts the default 2000-line cap; say what you need"},
+              "tail":{"type":"integer","description":"the LAST n lines, counted from the end. Use this for logs and build output rather than reading the file to find out how long it is. Not combinable with from/to."},
+              "member":{"type":"string","description":"read ONE entry out of a .zip/.tar/.tar.gz instead of its manifest, decoded like any other file. Nothing is unpacked to disk."}
+            }}
+            """),
+
+        new("extract", "Unpack a .zip, .tar, .tar.gz or .tgz into a declared tree. Refused WHOLE - nothing written at all - if any member would land outside a tree, needs a permission this boundary has not granted, or is a link, so an archive never lands half-unpacked. Carries the executable bit. Read the archive first to see what is in it.", """
+            {"type":"object","required":["archive","into"],"properties":{
+              "archive":{"type":"string"},
+              "into":{"type":"string","description":"the directory the members land in; there is no working directory to default to"},
+              "overwrite":{"type":"boolean","description":"replace files already there; without it an existing file is a refusal"}
             }}
             """),
 
@@ -248,7 +258,13 @@ public static class ToolCatalogue
                     && paths.ValueKind == JsonValueKind.Array)
                     foreach (JsonElement path in paths.EnumerateArray())
                         if (path.ValueKind == JsonValueKind.String) argv.Add(path.GetString()!);
-                Flag("from", "from"); Flag("to", "to");
+                Flag("from", "from"); Flag("to", "to"); Flag("tail", "tail");
+                Flag("member", "member");
+                break;
+
+            case "extract":
+                Positional("archive");
+                Flag("into", "into"); Flag("overwrite", "overwrite");
                 break;
 
             case "write":

@@ -80,7 +80,10 @@ public sealed class Arguments
         "case-sensitive", "context", "count", "files-only",
 
         // read
-        "from", "to",
+        "from", "to", "tail", "member",
+
+        // extract
+        "into",
 
         // write
         "stdin", "overwrite", "encoding", "eol",

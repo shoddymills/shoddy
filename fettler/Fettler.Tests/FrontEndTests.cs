@@ -456,7 +456,7 @@ public sealed class FrontEndTests
         string[] verbs =
         [
             "find", "search", "read", "write", "edit", "replace", "new", "mkdir",
-            "move", "copy", "delete", "exec", "roots", "tasks", "run", "batch",
+            "move", "copy", "delete", "exec", "extract", "roots", "tasks", "run", "batch",
 
             // A model diagnosing its own wiring is the point of this one:
             // otherwise the only way to find out why a tool is missing is

@@ -22,6 +22,15 @@ public enum FileKind
     /// <summary>A PDF, read as text page by page.</summary>
     Pdf,
 
+    /// <summary>A zip or a tar, read as its manifest - the members, their
+    /// sizes and whether each carries the executable bit. Never unpacked
+    /// by reading it; <c>extract</c> is the verb that writes.</summary>
+    Archive,
+
+    /// <summary>A lone gzip: one file wearing a coat, read as whatever it
+    /// is underneath.</summary>
+    Gzip,
+
     /// <summary>Recognised as none of the above and not text.</summary>
     Binary,
 }
@@ -76,7 +85,9 @@ public static class Typed
             ".ipynb" => FileKind.Notebook,
             ".pdf" => FileKind.Pdf,
             ".png" or ".jpg" or ".jpeg" or ".gif" or ".webp" => FileKind.Image,
-            _ => FileKind.Text,
+            _ => Archives.KindOf(path) is not null ? FileKind.Archive
+               : Archives.IsLoneGzip(path) ? FileKind.Gzip
+               : FileKind.Text,
         };
     }
 
@@ -85,6 +96,8 @@ public static class Typed
         FileKind.Notebook => "notebook",
         FileKind.Image => "image",
         FileKind.Pdf => "pdf",
+        FileKind.Archive => "archive",
+        FileKind.Gzip => "gzip",
         FileKind.Binary => "binary",
         _ => "text",
     };

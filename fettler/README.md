@@ -224,11 +224,40 @@ is left alone.
 ## The verbs, and their exit codes
 
 `find`, `search`, `read`, `write`, `edit`, `replace`, `new`, `mkdir`,
-`move`, `copy`, `delete`, `exec`, `roots`, `tasks`, `run`, `batch`,
-`doctor`, `setup` — and `serve`, which is not an operation. **The CLI verb
-and the MCP tool name are the same word**, and both front ends reach the
-operations through one dispatcher, so a capability available to a model
-and not to a script is unwritable rather than merely forbidden.
+`move`, `copy`, `delete`, `exec`, `extract`, `roots`, `tasks`, `run`,
+`batch`, `doctor`, `setup` — and `serve`, which is not an operation.
+**The CLI verb and the MCP tool name are the same word**, and both front
+ends reach the operations through one dispatcher, so a capability
+available to a model and not to a script is unwritable rather than merely
+forbidden.
+
+**`read --tail N`** is the end of a file, counted backwards. A log is the
+one file read backwards, and without it reaching the end of one costs two
+calls — a read to learn the line count, then arithmetic to name a range.
+A tool that cannot cheaply answer "what did it just say" sends its caller
+to a shell, which is the thing this one exists to make unnecessary. It is
+not combinable with `--from`/`--to`: those are a different question, and
+answering one of them by precedence is a wrong answer rather than an
+error.
+
+**Archives are read and never written.** A `.zip`, `.tar`, `.tar.gz` or
+`.tgz` reads as its manifest — every member, its size, and whether it
+carries the execute bit — and `--member NAME` reads one entry out of it,
+decoded by the ordinary rules, without unpacking anything. A lone `.gz` is
+one file wearing a coat and reads as what is underneath. Neither
+`System.IO.Compression` nor `System.Formats.Tar` is a package: both are in
+the shared framework, so the R1.2 allowlist is untouched.
+
+**`extract ARCHIVE --into DIR`** is the one that writes, and it is refused
+*whole* or not at all. Every member resolves through the boundary before a
+byte is written, so zip slip is an ordinary outside-root refusal; a member
+escaping only the *destination* (`out/../elsewhere.txt`, which the
+boundary is perfectly happy with) is refused too; a link member is refused
+rather than skipped, because a skip produces an extraction that looks
+complete and is not; and the executable bit is carried, which is R6.9 and
+the reason the release tars are cut on a Linux runner. Producing an
+archive is deliberately not here: that is a build output, and building is
+what a declared task and `run` are for.
 
 **`setup` is the one deliberate exception**, and a test asserts it stays
 one. It writes the client configuration files — including the one naming

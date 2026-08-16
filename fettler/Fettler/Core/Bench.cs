@@ -20,7 +20,27 @@ public sealed record SearchRequest(
     bool IncludeGenerated = false,
     IReadOnlyList<string>? Exclude = null);
 
-public sealed record ReadRequest(IReadOnlyList<string> Paths, int? From = null, int? To = null);
+/// <summary>
+/// What to read, and which part of it.
+///
+/// <para><c>Tail</c> is the end of the file: the last N lines, whatever
+/// the length. It exists because a log is the one file read backwards,
+/// and without it the end of one costs two calls - a read to learn the
+/// line count, then arithmetic to name a range. A tool that cannot
+/// cheaply answer "what did it just say" sends its caller to a shell,
+/// which is the thing this tool exists to make unnecessary.</para>
+///
+/// <para><c>Tail</c> with <c>From</c> or <c>To</c> is refused rather than
+/// resolved by precedence: the end of the file and a named range are two
+/// different questions, and picking one silently answers the other.</para>
+/// </summary>
+public sealed record ReadRequest(
+    IReadOnlyList<string> Paths, int? From = null, int? To = null, int? Tail = null,
+    string? Member = null);
+
+/// <summary>What an extraction did: how many members were written, and
+/// where they landed.</summary>
+public sealed record Unpacked(ContainedPath Archive, ContainedPath Into, int Members, long Bytes);
 
 /// <summary>A slice of one file, as <c>read</c> answers it (R4.1).</summary>
 public sealed record ReadSlice(
@@ -198,21 +218,50 @@ public sealed class Bench : IDisposable
                 Tree.Facts(path.Full, isDirectory: false), kind, image.Value));
         }
 
-        // A notebook and a PDF are rendered to text and then sliced like
-        // any other text, so --from and --to mean the same thing for
-        // every kind and a caller has one rule to learn.
-        Result<string> rendered = kind switch
-        {
-            FileKind.Notebook => Typed.ReadNotebook(path),
-            FileKind.Pdf => Typed.ReadPdf(path),
-            _ => Result<string>.Ok(string.Empty),
-        };
+        // A member of an archive, and a lone gzip, both arrive as bytes
+        // rather than as a file on disk. Both are decoded by the ordinary
+        // rules from there, so a .md inside a zip comes back with an
+        // encoding and a line ending like any other .md - and nothing is
+        // unpacked to disk to do it.
+        Result<byte[]>? unpacked = null;
 
-        if (!rendered.IsOk) return rendered.Carry<ReadSlice>();
+        if (request.Member is { Length: > 0 } wanted)
+        {
+            if (kind != FileKind.Archive)
+                return Result<ReadSlice>.Fail(Outcome.Invalid,
+                    "--member names an entry inside an archive, and this is not one", path.Display);
+
+            unpacked = Archives.Member(path, wanted);
+        }
+        else if (kind == FileKind.Gzip)
+        {
+            unpacked = Archives.Gunzip(path);
+        }
 
         TextFile file;
-        if (kind is FileKind.Notebook or FileKind.Pdf)
+
+        if (unpacked is { } bytes)
         {
+            if (!bytes.IsOk) return bytes.Carry<ReadSlice>();
+
+            Result<TextFile> decoded = TextIo.Decode(path, bytes.Value);
+            if (!decoded.IsOk) return decoded.Carry<ReadSlice>();
+            file = decoded.Value;
+        }
+        else if (kind is FileKind.Notebook or FileKind.Pdf or FileKind.Archive)
+        {
+            // Rendered to text and then sliced like any other text, so
+            // --from, --to and --tail mean the same thing for every kind
+            // and a caller has one rule to learn.
+            Result<string> rendered = kind switch
+            {
+                FileKind.Notebook => Typed.ReadNotebook(path),
+                FileKind.Pdf => Typed.ReadPdf(path),
+                _ => Manifest(path),
+            };
+
+            if (!rendered.IsOk) return rendered.Carry<ReadSlice>();
+
             Result<byte[]> raw = TextIo.ReadBytes(path);
             if (!raw.IsOk) return raw.Carry<ReadSlice>();
 
@@ -230,9 +279,25 @@ public sealed class Bench : IDisposable
             file = read.Value;
         }
 
-        int from = Math.Max(1, request.From ?? 1);
-        int to = request.To ?? Math.Min(file.LineCount, from + DefaultLineCap - 1);
-        to = Math.Min(file.LineCount, to);
+        int from;
+        int to;
+
+        if (request.Tail is { } tail)
+        {
+            // The end of the file, named from the end, so the caller needs
+            // to know neither the length nor any arithmetic. No default
+            // cap applies: the caller named the number of lines, exactly
+            // as an explicit `to` names one.
+            to = file.LineCount;
+            from = Math.Max(1, file.LineCount - tail + 1);
+        }
+        else
+        {
+            from = Math.Max(1, request.From ?? 1);
+            to = request.To ?? Math.Min(file.LineCount, from + DefaultLineCap - 1);
+            to = Math.Min(file.LineCount, to);
+        }
+
         if (to < from) to = from - 1;
 
         string text = to < from
@@ -244,6 +309,14 @@ public sealed class Bench : IDisposable
             TextIo.EndingName(file.LineEnding), file.MixedEndings, file.FinalNewline,
             file.Hash, file.Bytes,
             Tree.Facts(path.Full, isDirectory: false), kind));
+    }
+
+    static Result<string> Manifest(ContainedPath path)
+    {
+        Result<IReadOnlyList<ArchiveMember>> members = Archives.Members(path);
+        return members.IsOk
+            ? Result<string>.Ok(Archives.Manifest(members.Value))
+            : members.Carry<string>();
     }
 
     public Result<IReadOnlyList<TaskDecl>> TaskList() => Tasks.Read(Roots);
@@ -277,6 +350,127 @@ public sealed class Bench : IDisposable
             }
 
             return SafeWrite.Text(p.Value, Retext(text, chosenEnding), chosenEncoding, chosenEnding, overwrite);
+        }, cancel);
+
+    /// <summary>
+    /// Unpack an archive into a declared tree.
+    ///
+    /// <para><b>Two passes, and the first one writes nothing.</b> Every
+    /// member is resolved through the boundary and checked for permission
+    /// before a byte is written, so an archive that would escape or that
+    /// lands anywhere it may not is refused WHOLE. A half-extracted
+    /// archive is the state nobody can see the shape of, which is the same
+    /// reason <c>edit</c> is all-or-nothing.</para>
+    ///
+    /// <para><b>Zip slip is refused by construction</b>, not by a check
+    /// bolted on: a member called <c>../../etc/passwd</c> resolves outside
+    /// every tree and comes back <see cref="Outcome.OutsideRoot"/> like
+    /// any other outside path.</para>
+    ///
+    /// <para><b>Link members are refused rather than skipped.</b> Creating
+    /// links is a stated exclusion, and a symbolic link inside a tar is
+    /// the one entry that can point out of the tree AFTER every path check
+    /// has passed. Skipping it silently would produce an extraction that
+    /// looks complete and is not, so the whole archive is refused and the
+    /// reason is named.</para>
+    ///
+    /// <para><b>The executable bit is carried.</b> R6.9 is this project's
+    /// own clause about that bit, and its release depends on a `fettle`
+    /// arriving out of a tar still executable.</para>
+    /// </summary>
+    public Task<Result<Unpacked>> ExtractAsync(string archive, string into, bool overwrite,
+        CancellationToken cancel = default) =>
+        Mutating(() =>
+        {
+            Result<ContainedPath> source = Roots.Resolve(archive, Permission.Read);
+            if (!source.IsOk) return source.Carry<Unpacked>();
+
+            Result<ContainedPath> destination = Roots.Resolve(into, Permission.List);
+            if (!destination.IsOk) return destination.Carry<Unpacked>();
+
+            Result<IReadOnlyList<ArchiveMember>> members = Archives.Members(source.Value);
+            if (!members.IsOk) return members.Carry<Unpacked>();
+
+            // ---- pass one: nothing is written ----
+
+            if (members.Value.Count > Archives.MaxMembers)
+                return Result<Unpacked>.Fail(Outcome.Refused,
+                    $"this archive names {members.Value.Count} members, past the {Archives.MaxMembers} "
+                    + "this will unpack in one go", source.Value.Display);
+
+            long total = 0;
+            var targets = new Dictionary<string, ContainedPath>(StringComparer.Ordinal);
+
+            foreach (ArchiveMember member in members.Value)
+            {
+                if (member.IsLink)
+                    return Result<Unpacked>.Fail(Outcome.Refused,
+                        $"'{member.Name}' is a link, and this does not create links - a link inside "
+                        + "an archive is the one member that can point out of the tree after every "
+                        + "path check has passed, so the archive is refused rather than part-unpacked",
+                        source.Value.Display);
+
+                if (member.IsDirectory) continue;
+
+                total += member.Length;
+                if (total > Archives.MaxTotalBytes)
+                    return Result<Unpacked>.Fail(Outcome.Refused,
+                        $"this archive unpacks to more than {Archives.MaxTotalBytes} bytes, which is "
+                        + "where this stops rather than filling the disk", source.Value.Display);
+
+                // Resolved through the boundary exactly like a path a
+                // caller typed, which is what makes an escaping member an
+                // ordinary outside-root refusal.
+                string relative = into.Length == 0 ? member.Name : into.TrimEnd('/') + "/" + member.Name;
+                Result<ContainedPath> target = overwrite
+                    ? Roots.ResolveForWrite(relative)
+                    : Roots.Resolve(relative, Permission.Create);
+
+                if (!target.IsOk) return target.Carry<Unpacked>();
+
+                // A member may climb out of the DESTINATION without
+                // leaving the tree - `out/../elsewhere.txt` normalises to
+                // somewhere the boundary is perfectly happy with, which is
+                // how "extract into out" quietly scatters files across a
+                // repository. The tree check cannot catch that one, because
+                // nothing is wrong with the path; what is wrong is that it
+                // is not where the caller said to put it.
+                if (!Roots.IsWithin(destination.Value.Full, target.Value.Full))
+                    return Result<Unpacked>.Fail(Outcome.Refused,
+                        $"'{member.Name}' would land outside {into}, which is where this was told to "
+                        + "put things; the archive is refused rather than part-unpacked",
+                        source.Value.Display);
+
+                if (!overwrite && File.Exists(target.Value.Full))
+                    return Result<Unpacked>.Fail(Outcome.TargetExists,
+                        $"'{member.Name}' is already there; pass --overwrite to replace what is",
+                        target.Value.Display);
+
+                targets[member.Name] = target.Value;
+            }
+
+            // ---- pass two: now it writes ----
+
+            long written = 0;
+            Result<int> unpacked = Archives.Unpack(source.Value, (member, content) =>
+            {
+                if (!targets.TryGetValue(member.Name, out ContainedPath? target)) return null;
+
+                string? parent = Path.GetDirectoryName(target.Full);
+                if (parent is not null) Directory.CreateDirectory(parent);
+
+                using (var file = new FileStream(target.Full, FileMode.Create, FileAccess.Write))
+                    content.CopyTo(file);
+
+                written += member.Length;
+                if (member.IsExecutable) FileOps.MarkExecutable(target.Full);
+                return null;
+            });
+
+            if (!unpacked.IsOk) return unpacked.Carry<Unpacked>();
+
+            return Result<Unpacked>.Ok(
+                new Unpacked(source.Value, destination.Value, unpacked.Value, written));
         }, cancel);
 
     public Task<Result<EditAnswer>> EditAsync(IReadOnlyList<FileEdits> batch, bool dryRun,

@@ -492,4 +492,27 @@ public static class FileOps
             return Result<ExecReport>.Fail(Outcome.Denied, TextIo.Denied(p.Value, e), p.Value.Display);
         }
     }
+
+    /// <summary>
+    /// Carry an archive member's executable bit onto the file just
+    /// written. Already resolved and already inside the boundary, so
+    /// there is no permission question left to ask here.
+    ///
+    /// <para>Silent on failure by design: the file itself is written and
+    /// correct, and a bit that could not be set on a filesystem that has
+    /// none - or has refused it - must not turn a good extraction into a
+    /// failed one. Windows has no such bit at all, which is exactly why
+    /// the release tars are cut on a Linux runner.</para>
+    /// </summary>
+    public static void MarkExecutable(string full)
+    {
+        if (OperatingSystem.IsWindows()) return;
+
+        try
+        {
+            const UnixFileMode bits = UnixFileMode.UserExecute | UnixFileMode.GroupExecute | UnixFileMode.OtherExecute;
+            File.SetUnixFileMode(full, File.GetUnixFileMode(full) | bits);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
+    }
 }

@@ -105,6 +105,74 @@ public sealed class ArgumentTests
         Assert.DoesNotContain("no such flag", said.Stdout + said.Stderr);
     }
 
+    // ---- read --tail: the end of a file, without its length ----
+
+    /// <summary>
+    /// The last n lines, counted from the end, so a caller reaching for
+    /// the end of a log needs neither the line count nor any arithmetic.
+    /// Without this the end of a file costs two calls, and the tool that
+    /// cannot answer "what did it just say" sends its caller to a shell -
+    /// which is the thing this one exists to make unnecessary.
+    /// </summary>
+    [Fact]
+    public async Task TailIsTheLastLinesCountedFromTheEnd()
+    {
+        using var box = new Sandbox();
+        box.Write("build.log", string.Concat(Enumerable.Range(1, 500).Select(i => $"line {i}\n")));
+
+        CliResult said = await Run(box, "read", "build.log", "--tail", "3");
+
+        Assert.Equal(ExitCodes.Ok, said.ExitCode);
+        Assert.Contains("line 498", said.Stdout);
+        Assert.Contains("line 500", said.Stdout);
+        Assert.DoesNotContain("line 497", said.Stdout);
+        Assert.DoesNotContain("line 1\n", said.Stdout);
+    }
+
+    /// <summary>A tail longer than the file is the whole file, not a
+    /// refusal and not a range starting below line one.</summary>
+    [Fact]
+    public async Task ATailLongerThanTheFileIsTheWholeFile()
+    {
+        using var box = new Sandbox();
+        box.Write("short.log", "one\ntwo\n");
+
+        CliResult said = await Run(box, "read", "short.log", "--tail", "99");
+
+        Assert.Equal(ExitCodes.Ok, said.ExitCode);
+        Assert.Contains("one", said.Stdout);
+        Assert.Contains("two", said.Stdout);
+    }
+
+    /// <summary>
+    /// The end of the file and a named range are two different questions.
+    /// Answering one of them by precedence would be R3.14's failure in
+    /// another costume: not an error, a confident wrong answer.
+    /// </summary>
+    [Fact]
+    public async Task TailAndARangeTogetherAreRefusedRatherThanRanked()
+    {
+        using var box = new Sandbox();
+        box.Write("build.log", "one\ntwo\nthree\n");
+
+        CliResult said = await Run(box, "read", "build.log", "--tail", "2", "--from", "1");
+
+        Assert.Equal(ExitCodes.Invalid, said.ExitCode);
+        Assert.Contains("one or the other", said.Stdout + said.Stderr);
+    }
+
+    [Fact]
+    public async Task ATailOfZeroIsRefused()
+    {
+        using var box = new Sandbox();
+        box.Write("build.log", "one\ntwo\n");
+
+        CliResult said = await Run(box, "read", "build.log", "--tail", "0");
+
+        Assert.Equal(ExitCodes.Invalid, said.ExitCode);
+        Assert.Contains("at least 1", said.Stdout + said.Stderr);
+    }
+
     /// <summary>
     /// The way out that the refusal depends on. A pattern that genuinely
     /// begins with a hyphen goes through after a bare <c>--</c>, so the

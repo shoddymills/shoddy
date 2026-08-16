@@ -331,7 +331,7 @@ it started with — the commonest reason <code>fettle</code> is "not on
 PATH" a minute after being put there.</p>
 
 <pre><code>fettle --version
-fettle 1.0.0</code></pre>
+fettle 2.3.0</code></pre>
 
 </div></div>
 
@@ -410,7 +410,7 @@ bottom half is what would let an assistant go round the boundary
 anyway:</p>
 
 <pre><code>$ fettle doctor
-fettle 1.0.0  C:\tools\fettle\fettle.exe
+fettle 2.3.0  C:\tools\fettle\fettle.exe
 on PATH: no - every registration naming a bare 'fettle' will fail to launch
 
 claude-code     global  absent    no server called 'fettler' is registered here
@@ -755,12 +755,13 @@ than merely forbidden.</p>
 <tr><th>Verb</th><th>What it answers</th></tr>
 <tr><td><code>find</code></td><td>paths matching a glob, with size and modified time</td></tr>
 <tr><td><code>search</code></td><td>matching lines as records — path, line, column, text — for several patterns at once</td></tr>
-<tr><td><code>read</code></td><td>content, encoding, line ending, trailing-newline state and a hash, for several paths at once — and <a href="#types">notebooks, PDFs and images</a></td></tr>
+<tr><td><code>read</code></td><td>content, encoding, line ending, trailing-newline state and a hash, for several paths at once — and <a href="#types">notebooks, PDFs, images and archives</a>. <code>--tail N</code> for the end of a log; <code>--member NAME</code> for one entry inside an archive</td></tr>
 <tr><td><code>write</code></td><td>the file created or replaced</td></tr>
 <tr><td><code>edit</code></td><td>a batch applied, or the first edit that failed</td></tr>
 <tr><td><code>replace</code></td><td>one substitution everywhere it appears across a glob</td></tr>
 <tr><td><code>new</code> / <code>mkdir</code></td><td>an empty file; a directory</td></tr>
 <tr><td><code>move</code> / <code>copy</code> / <code>delete</code></td><td>the operation, and what guarantee it gave</td></tr>
+<tr><td><code>extract</code></td><td>an archive unpacked into a declared tree — or refused whole, with nothing written</td></tr>
 <tr><td><code>exec</code></td><td>the executable bit, set or cleared</td></tr>
 <tr><td><code>roots</code></td><td>the declared trees, their paths, <b>what may be done in each</b>, and which one an unqualified path lands in</td></tr>
 <tr><td><code>tasks</code> / <code>run</code></td><td>the declared tasks; one of them, with its streams and exit code</td></tr>
@@ -810,6 +811,8 @@ open.</p>
 <tr><td>Notebooks (<code>.ipynb</code>)</td><td>cells, sources and outputs, rendered — not the JSON they are stored in</td></tr>
 <tr><td>PDF</td><td>text, page by page, each page announced so a citation can name one</td></tr>
 <tr><td>Images (png, jpg, gif, webp)</td><td>mime type and dimensions from the header, without decoding a pixel; over MCP the bytes go as a native image part</td></tr>
+<tr><td>Archives (<code>.zip</code>, <code>.tar</code>, <code>.tar.gz</code>, <code>.tgz</code>)</td><td>the <b>manifest</b> — every member, its size, its date, and whether it carries the execute bit. <code>--member NAME</code> reads one entry out, decoded like any other file, <b>without unpacking anything</b></td></tr>
+<tr><td>A lone <code>.gz</code></td><td>whatever is underneath it — one file wearing a coat</td></tr>
 <tr><td>Anything else binary</td><td>refused, saying so</td></tr>
 </table>
 
@@ -817,6 +820,12 @@ open.</p>
 <li><b><code>read</code> stops at 2000 lines</b> unless <code>--to</code>
 says otherwise, and says how many are left. <code>find</code> stops at a
 thousand, <code>search</code> at two hundred.</li>
+<li><b><code>--tail N</code> is the end of the file</b>, counted
+backwards, so reaching the end of a log or a build transcript needs
+neither its length nor any arithmetic. It is not combinable with
+<code>--from</code>/<code>--to</code>: the end of a file and a named range
+are two questions, and answering one of them by precedence is a confident
+wrong answer rather than an error.</li>
 <li><b>A notebook's non-text output is measured rather than pasted</b> —
 one output cell routinely holds a megabyte of base64 for a picture nobody
 can see.</li>
@@ -828,6 +837,62 @@ liability for a tool that edits source trees.</li>
 in process, at full trust, with no gate at all. A declared converter task
 is the honest form, and it already exists.</li>
 </ul>
+
+<h3 id="archives">Unpacking one</h3>
+
+<p><code>extract ARCHIVE --into DIR</code> writes; everything above only
+reads. <b>An archive is a list of paths somebody else chose</b>, which is
+exactly why the tool that already refuses a path outside a tree is the
+right one to unpack with.</p>
+
+<pre><code>$ fettle read fettle-2.3.0-win-x64.zip
+79605839  2026-08-16 16:08  - fettle.exe
+    2545  2026-08-16 14:09  - NOTICE
+    1133  2026-07-30 04:52  - LICENSE
+3 members, 79609517 bytes uncompressed
+
+$ fettle extract fettle-2.3.0-win-x64.zip --into tools
+extracted 3 members (79609517 bytes) from work:fettle-2.3.0-win-x64.zip into work:tools</code></pre>
+
+<ul>
+<li><b>Refused whole, or not at all.</b> Every member is resolved through
+the boundary before a byte is written, so an archive that would escape or
+that lands anywhere it may not leaves <em>nothing</em> behind. A
+half-unpacked archive is the state nobody can see the shape of &mdash; the
+same reason <code>edit</code> is all-or-nothing.</li>
+<li><b>Zip slip is refused by construction</b>, not by a check bolted on.
+A member called <code>../../etc/passwd</code> resolves outside every tree
+and comes back exit&nbsp;4, exactly like a path somebody typed.</li>
+<li><b>And a member that escapes only the destination is refused too.</b>
+<code>out/../elsewhere.txt</code> normalises to somewhere the boundary is
+perfectly happy with, so the tree check passes and the file still lands
+nowhere near where you said. Nothing is wrong with the path; what is wrong
+is that it is not where you put it.</li>
+<li><b>A link member is refused rather than skipped.</b> Creating links is
+out of scope anyway, and a symbolic link inside a tar is the one member
+that can point out of the tree <em>after</em> every path check has passed.
+Skipping it silently would produce an extraction that looks complete and
+is not.</li>
+<li><b>The executable bit is carried.</b> R6.9 is this project's own
+clause about that bit, and its release depends on a <code>fettle</code>
+arriving out of a tar still able to run.</li>
+<li><b>Bounded, not endured.</b> A cap on member count and on total
+unpacked bytes, refused with a reason &mdash; the same posture as the
+bound on a runaway pattern. A compressed archive can name far more content
+than it occupies, and finding that out by running out of disk is finding
+out too late.</li>
+<li><b>Nothing is overwritten without <code>--overwrite</code></b>, and an
+existing file is a refusal before anything is written rather than a
+surprise halfway through.</li>
+</ul>
+
+<div class="takeaway"><b>It reads archives and does not write them.</b>
+Producing one is a <em>build output</em>, and building is what a declared
+task and <code>run</code> are for. And <code>find</code>/<code>search</code>
+deliberately do not reach inside an archive: that would make members into
+paths, and then the boundary has to answer what a scope means inside a
+container. Read the manifest, extract, search the tree &mdash; three honest
+steps beat one murky one.</div>
 
 <h2 id="arguments">10. Arguments it will not guess at</h2>
 

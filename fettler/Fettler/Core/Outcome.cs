@@ -62,6 +62,19 @@ public enum Outcome
     /// somewhere there is nothing to find.</para>
     /// </summary>
     Governed = 10,
+
+    /// <summary>
+    /// The write would have INTRODUCED a credential that the file did
+    /// not already carry (see <see cref="Secrets"/>).
+    ///
+    /// <para>Its own member because the remedy is specific and no other
+    /// outcome suggests it: take the secret out and use a reference, or
+    /// say explicitly that this is not one. A caller told
+    /// <see cref="Refused"/> would go hunting for a permission, and a
+    /// caller told <see cref="Governed"/> would conclude nothing could
+    /// ever allow it - and something can.</para>
+    /// </summary>
+    Credential = 11,
 }
 
 /// <summary>

@@ -72,7 +72,8 @@ public static class Editor
 {
     readonly record struct Resolved(int Start, int Length, string Replacement, int Line, string Description);
 
-    public static Result<EditAnswer> Apply(Roots roots, IReadOnlyList<FileEdits> batch, bool dryRun)
+    public static Result<EditAnswer> Apply(Roots roots, IReadOnlyList<FileEdits> batch,
+                                          bool dryRun, bool allowCredential = false)
     {
         if (batch.Count == 0)
             return Result<EditAnswer>.Fail(Outcome.Invalid, "the batch is empty");
@@ -129,7 +130,8 @@ public static class Editor
         foreach ((TextFile file, List<Resolved> edits, string newText) in planned)
         {
             Result<Saved> saved = SafeWrite.Text(
-                file.Path, newText, file.EncodingName, file.LineEnding, overwrite: true);
+                file.Path, newText, file.EncodingName, file.LineEnding, overwrite: true,
+                allowCredential: allowCredential);
 
             if (!saved.IsOk)
                 return Result<EditAnswer>.Fail(new Failure(

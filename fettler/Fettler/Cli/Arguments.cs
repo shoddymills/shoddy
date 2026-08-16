@@ -32,6 +32,9 @@ public sealed class Arguments
         "case-sensitive", "include-generated", "count", "files-only", "sort-modified",
         "preserve-times", "all", "on", "off", "help", "version",
 
+        // the credential override
+        "allow-credential",
+
         // doctor and setup
         "quiet", "hook", "global", "local", "hooks", "deny",
 
@@ -87,6 +90,13 @@ public sealed class Arguments
 
         // write
         "stdin", "overwrite", "encoding", "eol",
+
+        // The credential override, offered here and by nothing else. A
+        // model driving the MCP front end has no way to ask for it, in
+        // the same way it is never offered `setup`: deciding that a
+        // high-entropy string is not a secret is a judgement about your
+        // own file, and a person makes it.
+        "allow-credential",
 
         // edit, and the R5.11 spellings of the text it is given
         "expect", "dry-run", "between", "all", "insert-after", "delete",

@@ -323,8 +323,13 @@ public sealed class Bench : IDisposable
 
     // ---- mutating: one exclusive lock, held for the operation ----
 
+    // allowCredential defaults to false and is only ever passed by the
+    // command line. The MCP front end has no way to reach it, which is
+    // the point: overriding a credential refusal is a person's judgement
+    // about their own file, in the same way `setup` is a person's act.
     public Task<Result<Saved>> WriteAsync(string path, string text, bool overwrite,
-        string? encoding = null, string? lineEnding = null, CancellationToken cancel = default) =>
+        string? encoding = null, string? lineEnding = null, CancellationToken cancel = default,
+        bool allowCredential = false) =>
         Mutating(() =>
         {
             // Create if nothing is there, update if something is: the
@@ -349,7 +354,8 @@ public sealed class Bench : IDisposable
                 }
             }
 
-            return SafeWrite.Text(p.Value, Retext(text, chosenEnding), chosenEncoding, chosenEnding, overwrite);
+            return SafeWrite.Text(p.Value, Retext(text, chosenEnding), chosenEncoding, chosenEnding,
+                                  overwrite, allowCredential);
         }, cancel);
 
     /// <summary>
@@ -474,10 +480,10 @@ public sealed class Bench : IDisposable
         }, cancel);
 
     public Task<Result<EditAnswer>> EditAsync(IReadOnlyList<FileEdits> batch, bool dryRun,
-        CancellationToken cancel = default) =>
+        CancellationToken cancel = default, bool allowCredential = false) =>
         // A dry run writes nothing, but it still reads every file in the
         // batch and must not see them half-changed by a concurrent edit.
-        Mutating(() => Editor.Apply(Roots, batch, dryRun), cancel);
+        Mutating(() => Editor.Apply(Roots, batch, dryRun, allowCredential), cancel);
 
     /// <summary>
     /// R5.10: the same substitution everywhere it appears, dry run first.

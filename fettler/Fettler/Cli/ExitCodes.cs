@@ -36,6 +36,11 @@ public static class ExitCodes
     /// changes the answer.</summary>
     public const int Governed = 11;
 
+    /// <summary>A write would have introduced a credential. Distinct
+    /// from Governed because this one CAN be allowed - by taking the
+    /// secret out, or by a person saying it is not one.</summary>
+    public const int Credential = 12;
+
     public static int Of(Outcome outcome) => outcome switch
     {
         Outcome.Ok => Ok,
@@ -49,6 +54,7 @@ public static class ExitCodes
         Outcome.Denied => Denied,
         Outcome.TimedOut => TimedOut,
         Outcome.Governed => Governed,
+        Outcome.Credential => Credential,
         _ => Fault,
     };
 
@@ -67,6 +73,7 @@ public static class ExitCodes
         Outcome.Denied => "denied",
         Outcome.TimedOut => "timed-out",
         Outcome.Governed => "governed",
+        Outcome.Credential => "credential",
         _ => "fault",
     };
 }

@@ -1,3 +1,5 @@
+using System.Text;
+
 namespace Fettler.Core;
 
 /// <summary>What a write did, including what it could not carry over.</summary>
@@ -36,10 +38,14 @@ public sealed record Saved(
 public static class SafeWrite
 {
     public static Result<Saved> Text(ContainedPath path, string text, string encodingName,
-        LineEnding ending, bool overwrite)
+        LineEnding ending, bool overwrite, bool allowCredential = false)
     {
         byte[] bytes = TextIo.Encode(text, encodingName);
-        Result<Saved> saved = Bytes(path, bytes, overwrite);
+        // The text goes down with the bytes: a UTF-16 file re-encodes to
+        // something the credential screen could not decode, and a screen
+        // that silently skipped every file in a second encoding would be
+        // worse than none, because nothing would say it had.
+        Result<Saved> saved = Bytes(path, bytes, overwrite, allowCredential, text);
         if (!saved.IsOk) return saved;
 
         // Defect 1.2: `read` says when a file disagrees with itself about
@@ -58,7 +64,8 @@ public static class SafeWrite
         });
     }
 
-    public static Result<Saved> Bytes(ContainedPath path, byte[] content, bool overwrite)
+    public static Result<Saved> Bytes(ContainedPath path, byte[] content, bool overwrite,
+        bool allowCredential = false, string? contentText = null)
     {
         string full = path.Full;
 
@@ -80,6 +87,16 @@ public static class SafeWrite
         // error that names nothing. Read it and say so instead.
         Result<Saved> readOnly = RefuseIfReadOnly<Saved>(full, path);
         if (!readOnly.IsOk) return readOnly;
+
+        // The credential net, here because every verb that puts bytes
+        // anywhere arrives at this one function - so there is one place
+        // to get it right rather than a check per verb and a gap wherever
+        // one was forgotten.
+        if (!allowCredential)
+        {
+            Result<Saved> screened = Screen(path, content, contentText, exists);
+            if (!screened.IsOk) return screened;
+        }
 
         FileMetadata carried = Metadata.Capture(full);
         string temp = Path.Combine(parent, $".fettle-{Guid.NewGuid():N}.tmp");
@@ -165,6 +182,51 @@ public static class SafeWrite
         catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
 
         return Result<T>.Ok(default!);
+    }
+
+    /// <summary>
+    /// Refuse a write that would ADD a credential the file does not
+    /// already carry.
+    ///
+    /// <para>The previous content is read through <see cref="TextIo"/>
+    /// rather than decoded here, so the baseline is whatever the file
+    /// actually says in whatever encoding it is in. A file that will not
+    /// read as text has no baseline, and everything in the new content
+    /// counts as introduced - which is the safe direction.</para>
+    ///
+    /// <para>Content that is not text is not screened at all. A scanner
+    /// hunting credentials through arbitrary binary would find them in
+    /// noise, and the refusal it produced would be unanswerable.</para>
+    /// </summary>
+    static Result<Saved> Screen(ContainedPath path, byte[] content, string? contentText,
+                                bool exists)
+    {
+        string? updated = contentText ?? AsUtf8(content);
+        if (updated is null) return Result<Saved>.Ok(default!);
+
+        string? existing = null;
+        if (exists)
+        {
+            Result<TextFile> was = TextIo.Read(path);
+            if (was.IsOk) existing = was.Value.Text;
+        }
+
+        IReadOnlyList<SecretFinding> introduced = Secrets.Introduced(existing, updated);
+        return introduced.Count == 0
+            ? Result<Saved>.Ok(default!)
+            : Result<Saved>.Fail(Outcome.Credential, Secrets.Describe(introduced), path.Display);
+    }
+
+    static string? AsUtf8(byte[] bytes)
+    {
+        try
+        {
+            return new UTF8Encoding(false, throwOnInvalidBytes: true).GetString(bytes);
+        }
+        catch (ArgumentException)
+        {
+            return null;
+        }
     }
 
     static void Discard(string temp)

@@ -282,6 +282,7 @@ asking somebody to open a terminal for it.
 | 9 | **denied — the operating system declined** |
 | 10 | timed-out |
 | 11 | **governed — the path names a file that says what this tool may do** |
+| 12 | **credential - the write would have ADDED a secret the file did not already carry** |
 
 **8 and 9 are deliberately different.** Refused means Fettler declined;
 denied means the platform did, for an operation Fettler was perfectly

@@ -806,7 +806,8 @@ public static class Command
 
 
         Result<Saved> saved = await bench.WriteAsync(
-            path, text, args.Has("overwrite"), args.Value("encoding"), args.Value("eol"), cancel)
+            path, text, args.Has("overwrite"), args.Value("encoding"), args.Value("eol"), cancel,
+            args.Has("allow-credential"))
             .ConfigureAwait(false);
 
         if (!saved.IsOk) return Failed(saved.Failure!, json);
@@ -841,7 +842,8 @@ public static class Command
         Result<IReadOnlyList<FileEdits>> batch = EditScript.Build(args, stdin);
         if (!batch.IsOk) return Failed(batch.Failure!, json);
 
-        Result<EditAnswer> applied = await bench.EditAsync(batch.Value, args.Has("dry-run"), cancel)
+        Result<EditAnswer> applied = await bench.EditAsync(batch.Value, args.Has("dry-run"), cancel,
+                args.Has("allow-credential"))
             .ConfigureAwait(false);
 
         if (!applied.IsOk) return Failed(applied.Failure!, json);
@@ -1383,7 +1385,8 @@ public static class Command
 
         Exit codes: 0 ok, 2 invalid, 3 not-found, 4 outside-root, 5 target-exists,
                     6 stale, 7 conflict, 8 refused, 9 denied, 10 timed-out,
-                    11 governed. doctor answers 0, 1 for warnings, 2 for broken.
+                    11 governed, 12 credential. doctor answers 0, 1 for warnings,
+                    2 for broken.
 
         """;
 }

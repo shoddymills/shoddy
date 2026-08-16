@@ -245,6 +245,17 @@ including the one the configuration sits in.</li>
 refused by every write path at every permission level — its own outcome,
 <code>governed</code>, exit&nbsp;11. Without this the permission model is
 decoration.</li>
+<li><b>Nor the files that say what the <em>assistant</em> may do.</b>
+<code>.mcp.json</code>, <code>.claude/settings.json</code>,
+<code>.claude/settings.local.json</code> and <code>.vscode/mcp.json</code>
+are refused on the same terms. A model that can edit its own deny list
+has no deny list, and no boundary has to be breached to reach one: a
+project's assistant configuration lives in the project.
+<code>setup</code> still writes them, because it uses plain file IO and
+resolves no path through the boundary.</li>
+<li><b>A write that would introduce a credential is refused</b> - its own
+outcome, <code>credential</code>, exit&nbsp;12. It judges the
+<em>diff</em>, so a config already holding a key stays editable.</li>
 <li><b>A scope can take permissions away</b>, not only add them — and a
 scope with no <code>list</code> is not there at all as far as
 <code>find</code> and <code>search</code> are concerned.</li>
@@ -726,6 +737,45 @@ missing: no grant would have allowed it. Without the rule the escape is
 two commands — write a task declaration, then run what you just
 wrote.</p>
 
+<h3>A write that would put a secret on disk</h3>
+
+<pre><code>$ fettle write config.json --text-file staged.json --overwrite
+refused: this write would add a credential to the file: line 14 (aws-access-key-id).
+The secret itself is deliberately not quoted back, because a refusal that named it
+would put it in the log and the transcript. Use a reference such as ${ENV_VAR}
+instead, or pass the override if this is not a credential.
+$ echo $LASTEXITCODE
+12</code></pre>
+
+<p><b>It judges what the write ADDS, not what the file contains.</b> A
+configuration that already holds a key stays editable, which is the whole
+difference between a rule people keep and a rule people switch off. Only
+a secret absent from the previous content stops anything, so
+reformatting, reordering and editing the lines around one all still
+work.</p>
+
+<p><b>The refusal never repeats what it found.</b> A line number and a
+detector name, and nothing else. A message naming the secret would write
+it into the log, the transcript, and whatever ships those onward, which
+is a worse outcome than the write it was refusing.</p>
+
+<p><b><code>--allow-credential</code> is offered by the command line and
+by nothing else.</b> No MCP tool carries it and a test asserts none ever
+will. Deciding that a high-entropy string is not a secret is a judgement
+about your own file, and a person makes it - the same reasoning that
+keeps <code>setup</code> out of a model's hands.</p>
+
+<div class="takeaway"><b>This is a safety net, not a boundary, and the
+difference is not a quibble.</b> Base64 the value, split the string in
+two, or build it from parts, and every rule here is defeated - by
+accident as easily as on purpose. It stops the ordinary accident of
+pasting a real key into a config and writing it to disk. Anyone who
+believes their content has been <em>scanned for secrets</em> has been
+misled, and the two tiers are deliberately narrow so that the refusals
+people do get are ones they believe: issued credentials whose shape their
+issuer fixed, and a secret-shaped name assigned a long, high-entropy,
+whitespace-free value that is not a <code>${REFERENCE}</code>.</div>
+
 <h3>Running a task in a tree that does not grant <code>execute</code></h3>
 
 <pre><code>$ fettle run hello
@@ -990,6 +1040,7 @@ as an <code>outcome</code> field.</p>
 <tr><td>9</td><td><code>denied</code></td><td><b>the operating system declined</b> — a sandbox, a restricted account, a read-only attribute, a file another process holds open</td></tr>
 <tr><td>10</td><td><code>timed-out</code></td><td>a task outran its timeout and was killed</td></tr>
 <tr><td>11</td><td><code>governed</code></td><td>the path names a file that says what this tool may do</td></tr>
+<tr><td>12</td><td><code>credential</code></td><td>the write would have <b>added</b> a secret the file did not already carry</td></tr>
 </table>
 
 <div class="takeaway"><b>8 and 9 are deliberately different.</b> Refused

@@ -36,24 +36,27 @@ case "$command" in
         # the ones a Windows machine makes.
         suffix=""
         [ -n "$version" ] && suffix="-$version"
-        pub="../../artifacts/publish"
+        pub="../artifacts/publish"
         for rid in win-x64 linux-x64 osx-x64 osx-arm64; do
             dir="$pub/fettle/$rid"
             run publish fettle -c Release -r "$rid" --self-contained \
                 -p:PublishSingleFile=true -o "$dir"
 
-            # Apache-2.0 requires the licence and any NOTICE to travel with
-            # a distributed binary, and fettle bundles PdfPig into the one
-            # file it ships. So the notice goes IN THE ARCHIVE - not merely
-            # in the repository, which a person downloading a release never
-            # sees. A licence obligation nobody can read has not been met.
+            # Two licence obligations, and both are met IN THE ARCHIVE -
+            # not merely in the repository, which a person downloading a
+            # release never sees. Apache-2.0 asks the licence and any
+            # NOTICE to travel with a distributed binary, and fettle
+            # bundles PdfPig into the one file it ships. MIT asks its own
+            # copyright notice to be in every copy, and this archive is a
+            # copy. An obligation nobody can read has not been met.
             cp ../NOTICE "$dir/NOTICE"
+            cp ../LICENSE "$dir/LICENSE"
 
             if [ "$rid" = "win-x64" ]; then
-                (cd "$dir" && zip -q "../../fettle$suffix-$rid.zip" fettle.exe NOTICE)
+                (cd "$dir" && zip -q "../../fettle$suffix-$rid.zip" fettle.exe NOTICE LICENSE)
             else
                 chmod +x "$dir/fettle"
-                tar -czf "$pub/fettle$suffix-$rid.tar.gz" -C "$dir" fettle NOTICE
+                tar -czf "$pub/fettle$suffix-$rid.tar.gz" -C "$dir" fettle NOTICE LICENSE
             fi
         done
         ls -1 "$pub" | grep '^fettle' | sed 's/^/  -> /'

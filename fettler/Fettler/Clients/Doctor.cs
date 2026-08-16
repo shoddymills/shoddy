@@ -235,6 +235,54 @@ public static class Doctor
                 findings.Add(new Finding("2.13", false,
                     "a personal settings file is present; anything granted there is uncommitted "
                     + "and invisible to everyone else on the project", place.Path));
+
+        // 2.15: the assistant's own scratch directory, which nothing here
+        // granted - the harness gives it - so work staged there is invisible
+        // to this boundary.
+        //
+        // It matters most at the moment the deny list lands. With the
+        // built-in Write denied and no tree covering the scratch, an
+        // assistant has nowhere to stage anything at all, and learns that at
+        // its first write rather than while running setup. Reporting it
+        // BEFORE the deny bites is the whole value of the check.
+        // Satisfied by a tree INSIDE the scratch root as well as by one
+        // containing it, because the advice is to declare the per-project
+        // folder rather than the lot. A check that cannot be cleared by
+        // doing what it says is a check people learn to scroll past.
+        if (roots is not null && ScratchRoot() is { } scratch
+            && !InSomeTree(roots, scratch) && !HasTreeInside(roots, scratch))
+            findings.Add(new Finding("2.15", false,
+                "an assistant scratch directory sits outside every declared tree, so work staged "
+                + "there is invisible to this boundary - and once the built-in Write is denied, "
+                + "nothing can write there at all. Declare the per-project folder inside it as a "
+                + $"tree in {RootsFile.LocalFileName}, which is gitignored: "
+                + "{\"trees\":{\"scratch\":{\"path\":\"<that folder>\",\"can\":"
+                + "[\"list\",\"read\",\"create\",\"update\",\"rename\",\"delete\"]}}}. "
+                + "Declare the project folder rather than this one, which holds every project's; "
+                + "and note that this tool does not write that file and setup cannot either - "
+                + "granting a tree is a person's act",
+                scratch));
+    }
+
+    /// <summary>
+    /// Where an assistant stages files, if it is there at all.
+    ///
+    /// <para>A well-known directory under the system temp, read the same way
+    /// the client-configuration paths are: a compiled-in location, probed
+    /// for existence and nothing else. Absent means absent - no finding, and
+    /// no guess about what a harness might have done instead.</para>
+    /// </summary>
+    static string? ScratchRoot()
+    {
+        try
+        {
+            string at = Path.Combine(Path.GetTempPath(), "claude");
+            return Directory.Exists(at) ? Path.GetFullPath(at) : null;
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException)
+        {
+            return null;
+        }
     }
 
     /// <summary>Shell commands that write files. Not a blocklist - a
@@ -384,6 +432,15 @@ public static class Doctor
     {
         foreach (string name in roots.Names)
             if (Roots.IsWithin(roots.PathOf(name), directory)) return true;
+        return false;
+    }
+
+    /// <summary>Whether any declared tree lies inside a directory - the
+    /// question <see cref="InSomeTree"/> asks, the other way round.</summary>
+    static bool HasTreeInside(Roots roots, string directory)
+    {
+        foreach (string name in roots.Names)
+            if (Roots.IsWithin(directory, roots.PathOf(name))) return true;
         return false;
     }
 

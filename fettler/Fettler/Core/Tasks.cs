@@ -2,12 +2,16 @@ using System.Diagnostics;
 
 namespace Fettler.Core;
 
-/// <summary>One declared task: a name and the argument list it runs.</summary>
-public sealed record TaskDecl(string Name, IReadOnlyList<string> Command, string? WorkingDirectory)
+/// <summary>One declared task: a name, the argument list it runs, and the
+/// line it was declared as.</summary>
+public sealed record TaskDecl(
+    string Name, IReadOnlyList<string> Command, string? WorkingDirectory, string? Line = null)
 {
-    /// <summary>How the task reads in a listing. Purely for display -
-    /// nothing ever parses this back, which is the point.</summary>
-    public string Display => string.Join(' ', Command);
+    /// <summary>How the task reads in a listing: the line as declared,
+    /// quotes and all. Rejoining the split words would lose the quoting
+    /// that made an argument one argument, and a listing that cannot be
+    /// compared with the file is a listing nobody can check.</summary>
+    public string Display => Line ?? string.Join(' ', Command);
 }
 
 /// <summary>What running a task produced.</summary>
@@ -28,105 +32,84 @@ public sealed record TaskRun(
 /// launched with its arguments as a list, not as a string for an
 /// interpreter to re-split. That single clause removes the entire
 /// quoting-and-dialect failure class this tool exists to escape, and it
-/// reaches back into the declaration file: <b>the file holds one
-/// argument per line</b>, so there is no quoting syntax in it to get
-/// wrong. A file that cannot express a quoting rule cannot carry a
-/// quoting bug.</para>
+/// reaches back into the declaration: the command line is split ONCE, by
+/// <see cref="Split"/>, under a grammar small enough to state in a
+/// sentence - and what the child receives is the list that produced,
+/// never a string for an interpreter to have an opinion about.</para>
 ///
-/// <para><b>The file is trusted input, and R7.6 says so out loud.</b>
-/// R8's containment guards paths; it does not and cannot guard the
-/// command list, which is read from a file inside the very root Fettler
-/// was pointed at. Whoever can write that file chooses what a caller -
-/// a model included - is able to execute. That is a deliberate position:
-/// the alternative is an allowlist maintained outside the repository,
-/// which puts the declaration somewhere the repository's own
-/// contributors cannot change alongside the build it belongs to.</para>
+/// <para><b>Tasks are declared in <c>.fettler.json</c></b>, beside the
+/// trees, because what may run in a tree and what may be done to it are
+/// one statement about one tree.</para>
+///
+/// <para><b>That configuration is trusted input, and R7.6 says so out
+/// loud.</b> R8's containment guards paths; it does not and cannot guard
+/// a command list, which is read from a file inside the very root Fettler
+/// was pointed at. Whoever can write it chooses what a caller - a model
+/// included - is able to execute. That is a deliberate position: the
+/// alternative is an allowlist maintained outside the repository, which
+/// puts the declaration somewhere the repository's own contributors
+/// cannot change alongside the build it belongs to.</para>
 /// </summary>
 public static class Tasks
 {
-    /// <summary>The declaration file, at the root, by this fixed name so
-    /// nothing has to search for it or be told where it is (R7.6).</summary>
-    public const string FileName = "fettle-tasks";
+    /// <summary>The declared tasks, as the configuration gave them.</summary>
+    public static Result<IReadOnlyList<TaskDecl>> Read(Roots roots) =>
+        Result<IReadOnlyList<TaskDecl>>.Ok(roots.Tasks);
 
     /// <summary>
-    /// Read the declared tasks.
+    /// The words of a declared command line, split once, here.
     ///
-    /// <para>The format, in full: a line ending in a colon opens a task;
-    /// every indented line after it is one argument, verbatim, with no
-    /// quoting and no escaping; a line starting with <c>#</c> is a
-    /// comment; blank lines are ignored. An indented line beginning
-    /// <c>cwd:</c> sets the working directory, which is checked for
-    /// containment like any other path (R8.2).</para>
+    /// <para><b>The whole grammar:</b> whitespace separates arguments; a
+    /// double-quoted span is one argument or part of one, and the quotes
+    /// are removed; two double quotes inside a quoted span are one literal
+    /// quote. Nothing else is special - no single quotes, no variables, no
+    /// globbing, no redirection, no operators.</para>
+    ///
+    /// <para><b>A backslash is never an escape.</b> It is an ordinary
+    /// character, so <c>"C:\Program Files\pwsh.exe"</c> means what it looks
+    /// like. Making it an escape would require every Windows path in the
+    /// file to be doubled, and a path that has to be doubled is a path that
+    /// will one day not be.</para>
+    ///
+    /// <para><b>The split happens once and the result is a list.</b> The
+    /// program is launched with that list, never with a command line for
+    /// something else to re-split, so the child receives exactly the words
+    /// this method produced.</para>
     /// </summary>
-    public static Result<IReadOnlyList<TaskDecl>> Read(Roots roots)
+    public static Result<IReadOnlyList<string>> Split(string line)
     {
-        Result<ContainedPath> path = roots.Resolve(FileName, Permission.Read);
-        if (!path.IsOk) return path.Carry<IReadOnlyList<TaskDecl>>();
+        var words = new List<string>();
+        var word = new System.Text.StringBuilder();
+        bool quoted = false, started = false;
 
-        if (!File.Exists(path.Value.Full))
-            return Result<IReadOnlyList<TaskDecl>>.Ok([]);
-
-        Result<TextFile> read = TextIo.Read(path.Value);
-        if (!read.IsOk) return read.Carry<IReadOnlyList<TaskDecl>>();
-
-        var tasks = new List<TaskDecl>();
-        string? name = null;
-        string? cwd = null;
-        var command = new List<string>();
-
-        void Close()
+        for (int i = 0; i < line.Length; i++)
         {
-            if (name is not null && command.Count > 0)
-                tasks.Add(new TaskDecl(name, command.ToArray(), cwd));
-            name = null;
-            cwd = null;
-            command.Clear();
-        }
+            char c = line[i];
 
-        int number = 0;
-        foreach (Line line in read.Value.Lines)
-        {
-            number++;
-            string text = line.Text;
-            if (text.TrimStart().StartsWith('#') || text.Trim().Length == 0) continue;
-
-            bool indented = text.Length > 0 && (text[0] == ' ' || text[0] == '\t');
-
-            // An argument keeps everything after its indentation,
-            // including trailing spaces: R7.3 promises the child receives
-            // what was written, and a format that quietly trims cannot
-            // express an argument that ends in a space.
-            string body = indented ? text.TrimStart(' ', '\t') : text.Trim();
-
-            if (!indented)
+            if (c == '"')
             {
-                Close();
-                if (!body.EndsWith(':'))
-                    return Result<IReadOnlyList<TaskDecl>>.Fail(Outcome.Invalid,
-                        $"{FileName} line {number}: a task name ends with a colon", path.Value.Display);
-
-                name = body[..^1].Trim();
-                if (name.Length == 0)
-                    return Result<IReadOnlyList<TaskDecl>>.Fail(Outcome.Invalid,
-                        $"{FileName} line {number}: the task has no name", path.Value.Display);
+                if (quoted && i + 1 < line.Length && line[i + 1] == '"') { word.Append('"'); i++; }
+                else quoted = !quoted;
+                started = true;
                 continue;
             }
 
-            if (name is null)
-                return Result<IReadOnlyList<TaskDecl>>.Fail(Outcome.Invalid,
-                    $"{FileName} line {number}: an argument before any task name", path.Value.Display);
-
-            if (body.StartsWith("cwd:", StringComparison.OrdinalIgnoreCase))
+            if (!quoted && (c == ' ' || c == '\t'))
             {
-                cwd = body[4..].Trim();
+                if (started) { words.Add(word.ToString()); word.Clear(); started = false; }
                 continue;
             }
 
-            command.Add(body);
+            word.Append(c);
+            started = true;
         }
 
-        Close();
-        return Result<IReadOnlyList<TaskDecl>>.Ok(tasks);
+        if (quoted)
+            return Result<IReadOnlyList<string>>.Fail(Outcome.Invalid,
+                "the command has a double quote that is never closed");
+
+        if (started) words.Add(word.ToString());
+        return Result<IReadOnlyList<string>>.Ok(words);
     }
 
     public static Result<TaskDecl> Find(Roots roots, string name)
@@ -140,8 +123,8 @@ public static class Tasks
 
         return Result<TaskDecl>.Fail(Outcome.NotFound,
             all.Value.Count == 0
-                ? $"there is no {FileName} at the root, so no task is declared"
-                : $"no task called '{name}'; {FileName} declares: {string.Join(", ", all.Value.Select(t => t.Name))}");
+                ? $"no task is declared; add a \"tasks\" object to {RootsFile.FileName}"
+                : $"no task called '{name}'; {RootsFile.FileName} declares: {string.Join(", ", all.Value.Select(t => t.Name))}");
     }
 
     /// <summary>
@@ -161,8 +144,8 @@ public static class Tasks
 
         // B.8: the working directory decides. `execute` is never granted
         // by default in any tree, including the one the configuration
-        // sits in, because that tree is writable by definition and
-        // `fettle-tasks` lives inside it - write-by-default plus
+        // sits in, because that tree is writable by definition and the
+        // configuration lives inside it - write-by-default plus
         // execute-by-default is arbitrary code execution, and it defeats
         // every other permission at once, since a scope protected from
         // `delete` means nothing to a task that can run `del`.

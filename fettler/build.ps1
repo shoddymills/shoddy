@@ -50,24 +50,29 @@ switch ($Command) {
         # is the clause about exactly this bit.
         $suffix = ''
         if ($Version) { $suffix = "-$Version" }
-        $pub = Join-Path $PSScriptRoot '..\..\artifacts\publish'
+        $pub = Join-Path $PSScriptRoot '..\artifacts\publish'
         foreach ($rid in @('win-x64', 'linux-x64', 'osx-x64', 'osx-arm64')) {
             $dir = Join-Path $pub "fettle\$rid"
             Run @('publish', 'fettle', '-c', 'Release', '-r', $rid, '--self-contained',
                   '-p:PublishSingleFile=true', '-o', $dir)
 
-            # Apache-2.0 requires the licence and any NOTICE to travel with
-            # a distributed binary, and fettle bundles PdfPig into the one
-            # file it ships. So the notice goes IN THE ARCHIVE - not merely
-            # in the repository, which a person downloading a release never
-            # sees. A licence obligation nobody can read has not been met.
+            # Two licence obligations, and both are met IN THE ARCHIVE -
+            # not merely in the repository, which a person downloading a
+            # release never sees. Apache-2.0 asks the licence and any
+            # NOTICE to travel with a distributed binary, and fettle
+            # bundles PdfPig into the one file it ships. MIT asks its own
+            # copyright notice to be in every copy, and this archive is a
+            # copy. An obligation nobody can read has not been met.
             Copy-Item (Join-Path $PSScriptRoot '..\NOTICE') $dir -Force
+            Copy-Item (Join-Path $PSScriptRoot '..\LICENSE') $dir -Force
 
             if ($rid -eq 'win-x64') {
-                Compress-Archive -Path @((Join-Path $dir 'fettle.exe'), (Join-Path $dir 'NOTICE')) `
+                Compress-Archive -Path @((Join-Path $dir 'fettle.exe'),
+                                         (Join-Path $dir 'NOTICE'),
+                                         (Join-Path $dir 'LICENSE')) `
                     -DestinationPath (Join-Path $pub "fettle$suffix-$rid.zip") -Force
             } else {
-                tar -czf (Join-Path $pub "fettle$suffix-$rid.tar.gz") -C $dir fettle NOTICE
+                tar -czf (Join-Path $pub "fettle$suffix-$rid.tar.gz") -C $dir fettle NOTICE LICENSE
                 if ($LASTEXITCODE -ne 0) {
                     Write-Host "STOPPED: tar failed for $rid (exit $LASTEXITCODE)." -ForegroundColor Red
                     exit 1

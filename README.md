@@ -20,8 +20,8 @@ concatenative (Forth/Joy-style) stack core that remains a legal dialect.
 Python's layout, BASIC's keywords, Joy's soul.
 
 <p align="center">
-  <img src="docs/media/shoddy-tour.gif" width="100%"
-       alt="Six cards of Shoddy: Let binds once and never rebinds; sum types with Select Case destructuring them; JsonRead returning JOk or JErr instead of throwing; Map, Filter and Fold taking Fn lambdas; the same Def Square written as typed syntax and again as stack code with Dup *; and Include pulling in the json and https machines.">
+  <a href="https://shoddymills.github.io/shoddy/index.html"><img src="docs/media/shoddy-tour.gif" width="100%"
+       alt="Six cards of Shoddy: Let binds once and never rebinds; sum types with Select Case destructuring them; JsonRead returning JOk or JErr instead of throwing; Map, Filter and Fold taking Fn lambdas; the same Def Square written as typed syntax and again as stack code with Dup *; and Include pulling in the json and https machines."></a>
 </p>
 
 Nothing mutates: `Let` binds once, updates return new values, iteration
@@ -77,6 +77,44 @@ a tuning console that goes to eleven.*
     <td width="45%" align="center" valign="middle">
       <a href="https://shoddymills.github.io/shoddy/vscode.html"><img src="docs/media/vscode-debug.svg" alt="Debugging invaders in VS Code, stopped at the collision-scoring line" width="100%"></a><br>
       <b>Debug in VS Code</b><br><sub>breakpoints, variables, call stack</sub>
+    </td>
+  </tr>
+</table>
+
+<table width="100%">
+  <tr>
+    <td width="55%" valign="middle">
+      <b>The second download is for your AI.</b> The same release page carries
+      <a href="https://shoddymills.github.io/shoddy/mills/sparky.html">sparky</a>
+      — the reckoner as an MCP server: one self-contained executable per OS,
+      with no repository and no .NET install at the far end. Point Claude
+      Desktop, Claude Code, or any stdio MCP client at it, and the model
+      computes with the whole standard library instead of guessing.
+    </td>
+    <td width="45%" align="center" valign="middle">
+      <a href="https://shoddymills.github.io/shoddy/mills/sparky.html"><img src="docs/media/sparky.svg" alt="A question asked in English on the left, and on the right the calculator's answer: labelled stack rows above a small histogram" width="100%"></a><br>
+      <b>sparky, for agents</b><br><sub>the calculator as an MCP server</sub>
+    </td>
+  </tr>
+</table>
+
+<table width="100%">
+  <tr>
+    <td width="55%" valign="middle">
+      <b>And a third, for the tree itself.</b>
+      <a href="https://shoddymills.github.io/shoddy/fettler.html">Fettler</a>
+      is the file, search and edit tools an assistant actually needs — find,
+      search, read, write, edit, replace, move, copy, delete and run a declared
+      task, as one program with an MCP front end and a command line.
+      <b>No shell anywhere between it and the file</b>, and every path bounded
+      to trees you declare. It protects the tree from the assistant without
+      getting in your way: your shell, file explorer, IDE and git are untouched.
+      <code>fettle doctor</code> says what is wired up and what still goes
+      round it.
+    </td>
+    <td width="45%" align="center" valign="middle">
+      <a href="https://shoddymills.github.io/shoddy/fettler.html"><img src="docs/media/fettler.svg" alt="A terminal showing two declared trees with their permissions, and a path from outside the boundary refused" width="100%"></a><br>
+      <b>fettle, for your files</b><br><sub>bounded file tools · no shell in between</sub>
     </td>
   </tr>
 </table>
@@ -427,16 +465,26 @@ it. [The sparky page](https://shoddymills.github.io/shoddy/mills/sparky.html)
 carries the registration shapes for Claude Desktop, Claude Code and VS Code,
 and the grounding prompt the server also serves itself.
 
-Beside it is **fettle** — [Fettler](https://shoddymills.github.io/shoddy/fettler.html),
-the file, search and edit tools an assistant actually needs. Find,
-search, read, write, edit, replace, move, copy, delete and run a
-declared task, as one program with an MCP front end and a command line,
-bounded to roots you declare and with no shell anywhere between it and
-the file. It is what stops an assistant reaching your source tree
-through quoting rules that differ on every machine. Its page carries the
-registration for VS Code, GitHub Copilot, Claude Code and Claude
-Desktop, and the settings that make it the *only* route to the tree
-rather than merely an available one.
+**The third download is `fettle`** — [Fettler](https://shoddymills.github.io/shoddy/fettler.html),
+the file, search and edit tools an assistant actually needs, and the one
+that changes how it touches your tree rather than what it knows. Find,
+search, read, write, edit, replace, move, copy, delete and run a declared
+task, as one program with an MCP front end and a command line, **bounded
+to trees you declare with no shell anywhere between it and the file**.
+That is what stops an assistant reaching your source through quoting
+rules that differ on every machine — and what makes a path outside the
+boundary a refusal rather than a surprise.
+
+```
+$ fettle read ../secrets.txt
+refused: the path is outside every declared tree; ask for the roots to see the boundary
+```
+
+Its page carries the install (including where to put the binary on
+Windows and how to get it onto `PATH`), the registration for VS Code,
+GitHub Copilot, Claude Code and Claude Desktop, `fettle doctor` to say
+whether any of it took, and the settings that make it the *only* route to
+the tree rather than merely an available one.
 
 
 ---
@@ -545,6 +593,15 @@ Adventure port ([mills/mungo-caverns/](mills/mungo-caverns/)) derives from
 Crowther & Woods via Eric Raymond's Open Adventure and is **BSD-2-Clause**; see
 its [LICENSE](mills/mungo-caverns/LICENSE) and
 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
+
+**`fettle` is the one exception to what ships where.** Fettler bundles
+**PdfPig** (Apache-2.0) so that it can read PDFs; nothing else here does.
+The mill, the machines, the VS Code extension and sparky have no PDF
+component and no dependency on one, direct or transitive. `fettle` is also
+distributed separately — its own archive per operating system, beside the
+`.vsix` and sparky rather than inside either — and each archive carries
+copies of [NOTICE](NOTICE) and [LICENSE](LICENSE), because an obligation
+that stays in the repository has not reached whoever downloaded a release.
 
 Contributions are welcome under the MIT License; see
 [CONTRIBUTING.md](CONTRIBUTING.md) and the [Code of Conduct](CODE_OF_CONDUCT.md).

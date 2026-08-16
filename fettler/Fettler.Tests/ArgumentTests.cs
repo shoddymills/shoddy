@@ -49,6 +49,79 @@ public sealed class ArgumentTests
         Assert.DoesNotContain("elsewhere", said.Stdout);
     }
 
+    /// <summary>
+    /// The same rule, one character short of being caught by it. A
+    /// one-dash argument fell straight through to the positional list, so
+    /// <c>search PATTERN -i</c> - the spelling every grep in the world
+    /// uses for case-insensitive - was taken as a SECOND PATTERN. The
+    /// search then answered the union of two questions: exit 0, a
+    /// confident list, and files in it whose only match was the literal
+    /// "-i". Found by typing it, which is the only way this one gets
+    /// found.
+    /// </summary>
+    [Fact]
+    public async Task AnUnknownShortFlagIsRefusedRatherThanReadAsAPattern()
+    {
+        using var box = new Sandbox();
+        box.Write("wanted/a.cs", "needle\n");
+        box.Write("elsewhere/b.txt", "cancel-in-progress\n");
+
+        CliResult said = await Run(box, "search", "needle", "-i");
+
+        Assert.Equal(ExitCodes.Invalid, said.ExitCode);
+        Assert.Contains("no such flag: -i", said.Stdout + said.Stderr);
+        Assert.DoesNotContain("elsewhere", said.Stdout);
+    }
+
+    /// <summary>The one short flag there is still works, so the rule above
+    /// is a rule and not a ban.</summary>
+    [Fact]
+    public async Task TheOneShortFlagThereIsStillCarriesItsPattern()
+    {
+        using var box = new Sandbox();
+        box.Write("a.cs", "alpha\n");
+        box.Write("b.cs", "beta\n");
+
+        CliResult said = await Run(box, "search", "alpha", "-e", "beta", "--files-only");
+
+        Assert.Equal(ExitCodes.Ok, said.ExitCode);
+        Assert.Contains("a.cs", said.Stdout);
+        Assert.Contains("b.cs", said.Stdout);
+    }
+
+    /// <summary><c>-e</c> with nothing after it is a missing value, not an
+    /// unknown flag. The name was right; saying "no such flag" would send
+    /// the caller looking for a typo that is not there.</summary>
+    [Fact]
+    public async Task TheShortFlagWithNothingAfterItSaysItsValueIsMissing()
+    {
+        using var box = new Sandbox();
+        box.Write("a.cs", "alpha\n");
+
+        CliResult said = await Run(box, "search", "alpha", "-e");
+
+        Assert.Equal(ExitCodes.Invalid, said.ExitCode);
+        Assert.Contains("-e needs a value", said.Stdout + said.Stderr);
+        Assert.DoesNotContain("no such flag", said.Stdout + said.Stderr);
+    }
+
+    /// <summary>
+    /// The way out that the refusal depends on. A pattern that genuinely
+    /// begins with a hyphen goes through after a bare <c>--</c>, so the
+    /// new rule closes a wrong answer without closing a real question.
+    /// </summary>
+    [Fact]
+    public async Task APatternThatReallyBeginsWithAHyphenGoesThroughADoubleDash()
+    {
+        using var box = new Sandbox();
+        box.Write("flags.txt", "cancel-in-progress\n");
+
+        CliResult said = await Run(box, "search", "--files-only", "--", "-in-pro");
+
+        Assert.Equal(ExitCodes.Ok, said.ExitCode);
+        Assert.Contains("flags.txt", said.Stdout);
+    }
+
     [Fact]
     public async Task EveryUnknownFlagIsNamed_NotJustTheFirst()
     {

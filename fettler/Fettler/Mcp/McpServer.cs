@@ -56,6 +56,7 @@ public sealed class McpServer : IDisposable
     public async Task RunAsync(CancellationToken cancel = default)
     {
         var running = new ConcurrentDictionary<Task, byte>();
+        bool first = true;
 
         while (!cancel.IsCancellationRequested)
         {
@@ -64,6 +65,16 @@ public sealed class McpServer : IDisposable
             catch (OperationCanceledException) { break; }
 
             if (line is null) break;                    // stdin closed: the way out
+
+            // A byte-order mark is the producer's habit, not the caller's
+            // content, and every other stdin path here already takes one
+            // off. Windows PowerShell prefixes one to whatever it pipes
+            // into a native program, so a client launched from a .ps1 got
+            // -32700 to its very first message and never opened a session
+            // at all. Only the front of the first line: a mark later in
+            // the stream is text somebody may have meant to send.
+            if (first) { first = false; line = TextIo.WithoutMark(line); }
+
             if (line.Trim().Length == 0) continue;
 
             // Dispatched and forgotten, deliberately: awaiting here is
@@ -187,7 +198,11 @@ public sealed class McpServer : IDisposable
                     }
 
                 w.WriteEndArray();
-                if (!answer.IsOk) w.WriteBoolean("isError", true);
+
+                // A refused operation and an unknown tool are both errors
+                // here. Only the second needs describing: the first is
+                // already a complete machine-readable answer.
+                if (!answer.IsOk || answer.Value.IsError) w.WriteBoolean("isError", true);
                 w.WriteEndObject();
             });
         }
@@ -231,14 +246,14 @@ public sealed class McpServer : IDisposable
         + "unqualified path lands in - rather than discovering the boundary by being refused. "
         + "A tree may be read-only, and a scope inside it may grant more or less than the tree does. "
         + "Read returns a hash; pass it back as expect on an edit to prove the file has not moved. "
-        + $"Declared tasks come from a {Tasks.FileName} file at the top of a tree, and running one "
-        + "needs that tree to grant execute, which is never granted by default. "
-        + $"{RootsFile.FileName}, {RootsFile.LocalFileName} and {Tasks.FileName} are the files that say "
+        + $"Declared tasks come from the \"tasks\" object in the {RootsFile.FileName} that declared "
+        + "the trees, and running one needs that tree to grant execute, which is never granted by default. "
+        + $"{RootsFile.FileName} and {RootsFile.LocalFileName} are the files that say "
         + "what this tool may do, and this tool does not write them - a person edits those.";
 
     static string Describe(Failure failure) =>
         $"{ExitCodes.NameOf(failure.Outcome)}: {failure.Message}"
-        + (failure.Path is null ? "" : $" ({failure.Path})");
+        + (failure.Path is { Length: > 0 } at ? $" ({at})" : "");
 
     Action<Utf8JsonWriter> Initialize(JsonElement parameters)
     {

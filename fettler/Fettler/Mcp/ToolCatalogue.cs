@@ -133,8 +133,8 @@ public static class ToolCatalogue
             {"type":"object","properties":{}}
             """),
 
-        new("run", "Run a declared task, capturing its streams and exit code. Never composes a shell command. Needs the tree it runs in to grant execute, which is never granted by default.", """
-            {"type":"object","required":["name"],"properties":{
+        new("run", "Run a declared task, capturing its streams and exit code. Never composes a shell command. A task is declared whole and TAKES NO ARGUMENTS: name and timeout are the only inputs, and anything else is refused rather than ignored. If you need a variant, ask for a second task to be declared. Needs the tree it runs in to grant execute, which is never granted by default.", """
+            {"type":"object","required":["name"],"additionalProperties":false,"properties":{
               "name":{"type":"string"},"timeout":{"type":"integer","description":"seconds; 0 means no timeout"}
             }}
             """),
@@ -300,6 +300,14 @@ public static class ToolCatalogue
 
             case "run":
                 Positional("name"); Flag("timeout", "timeout");
+
+                // Anything else a caller sends is an attempt to compose the
+                // command at the call. It is passed on as an extra word so
+                // the one refusal in Cli answers it by name, rather than
+                // being dropped here where nobody would learn of it.
+                if (arguments.ValueKind == JsonValueKind.Object)
+                    foreach (JsonProperty extra in arguments.EnumerateObject())
+                        if (extra.Name is not ("name" or "timeout")) argv.Add(extra.Name);
                 break;
 
             case "doctor":
@@ -315,12 +323,17 @@ public static class ToolCatalogue
             .RunAsync(argv, new StringReader(stdin), bench, cancel).ConfigureAwait(false);
 
         // R3.7 already put the complete machine-readable answer, failures
-        // included, on stdout - so the tool result is that text verbatim
-        // whichever way it went. The caller reads "ok" in the payload;
-        // the server marks isError from the exit code.
-        return result.ExitCode == ExitCodes.Ok
-            ? Result<ToolAnswer>.Ok(Lift(result.Stdout.TrimEnd()))
-            : Result<ToolAnswer>.Fail(new Failure(Outcome.Refused, result.Stdout.TrimEnd()));
+        // included, on stdout - so the tool result is that text VERBATIM
+        // whichever way it went, and the server marks isError from the
+        // exit code. Describing it again would put a word and a colon in
+        // front of a JSON document and hand the caller something that no
+        // longer parses - and the word would be the same one every time,
+        // where the payload's own "outcome" is the true one.
+        ToolAnswer answered = Lift(result.Stdout.TrimEnd());
+
+        return Result<ToolAnswer>.Ok(result.ExitCode == ExitCodes.Ok
+            ? answered
+            : answered with { IsError = true, Images = [] });
     }
 
     /// <summary>
@@ -330,7 +343,7 @@ public static class ToolCatalogue
 
     /// <summary>What a tool call produced: the machine-readable answer,
     /// and any images that go beside it rather than inside it.</summary>
-    public sealed record ToolAnswer(string Text, IReadOnlyList<ImagePart> Images)
+    public sealed record ToolAnswer(string Text, IReadOnlyList<ImagePart> Images, bool IsError = false)
     {
         public static ToolAnswer Of(string text) => new(text, []);
     }

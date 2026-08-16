@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="description" content="Fettler's boundary — trees, scopes, the seven permissions, where a permission may come from, and the three files this tool will not write.">
+<meta name="description" content="Fettler's boundary — trees, scopes, the seven permissions, where a permission may come from, and the two files this tool will not write.">
 <title>Fettler: the Boundary | Shoddy</title>
 <link rel="stylesheet" href="style.css">
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
@@ -23,14 +23,26 @@
 <header class="mast">
 <p class="eyebrow">Shoddy Documentation · Fettler</p>
 <h1 id="boundary">The Boundary</h1>
-<p class="kicker">Trees, scopes, the seven permissions, and the three files this tool will not write. Read this when deciding policy.</p>
+<p class="kicker">Trees, scopes, the seven permissions, and the two files this tool will not write. Read this when deciding policy.</p>
 </header>
 
-<p>Every path Fettler touches lies inside a <b>tree</b> somebody declared,
-and everything that may be done inside one is stated rather than assumed.
-This page is what to read before writing a <code>.fettler.json</code>. The
-verbs are on <a href="fettler.html">the Fettler page</a>; wiring it into a
-client is on <a href="fettler-setup.html">the setup page</a>.</p>
+<nav class="pagenav pagenav-top" aria-label="Fettler, in order"><a href="fettler-setup.html" class="prev"><span class="pnwrap"><span class="dir">&larr; Previous</span><span class="ttl">Setting it up</span></span></a><a href="index.html" class="all">All documentation</a><a class="next" href="fettler.html"><span class="pnwrap"><span class="ttl">Fettler</span><span class="dir">Next &rarr;</span></span></a></nav>
+
+<p><b>Nothing outside a declared tree exists.</b> Not writable, not
+readable, not listable, not knowable &mdash; a path outside every tree is
+refused with exit&nbsp;4, and refused <em>identically whether or not it is
+actually there</em>, so the refusal itself cannot be used to ask what is
+on a disk. There is no working directory to change, no path that climbs
+out, and no shell to reach past it with. <b>An assistant cannot go and
+look</b> at a sibling checkout, an archived branch, a vendored dependency
+or your home directory &mdash; so it cannot come back grounded in
+something that is not the code in front of it.</p>
+
+<p>Inside a tree, everything that may be done is stated rather than
+assumed. This page is what to read before writing a
+<code>.fettler.json</code>. The verbs are on <a href="fettler.html">the
+Fettler page</a>; wiring it into a client is on
+<a href="fettler-setup.html">the setup page</a>.</p>
 
 <div class="takeaway"><b>The threat is inadvertent assistant action. It is
 not a determined person.</b> Whoever runs Fettler can open a terminal and
@@ -39,12 +51,37 @@ did would be both impossible and insulting. The measure of success is that
 a careless assistant cannot widen its own boundary — not that the boundary
 cannot be widened.</div>
 
-<h2 id="model">1. A tree, and scopes inside it</h2>
+<h2 id="model">1. What a boundary can actually say</h2>
 
-<p>A tree is a path and a set of permissions. Permissions may be narrowed —
-or widened — at any depth inside it by a <b>scope</b>. The most specific
-scope containing a path decides, and it <b>replaces</b> rather than adds,
-so a scope can take a permission away.</p>
+<p>The question worth settling first is not how this works. It is
+<b>whether it can express the rule you already have in your head.</b>
+Most people arrive with one of these.</p>
+
+<table>
+<tr><th>The rule you want</th><th>How it is said</th></tr>
+<tr><td><b>Look, don't touch.</b> Read my source; change nothing.</td><td><code>"can": ["list", "read"]</code> &mdash; and it is the default for every tree the configuration file does not sit in, so you get it by saying nothing.</td></tr>
+<tr><td><b>Work here, not there.</b> Change the code, leave the requirements alone.</td><td>Two trees. The code tree grants writes; the other keeps the read-only default.</td></tr>
+<tr><td><b>May add and revise, may never destroy.</b></td><td><code>create update rename</code> <em>without</em> <code>delete</code>. This is the rule people usually want and the one most tooling cannot express at all.</td></tr>
+<tr><td><b>Not for you.</b> This folder does not exist as far as the assistant is concerned.</td><td><code>"can": []</code>. With no <code>list</code> it never appears in a search, and guessing the path does not help.</td></tr>
+<tr><td><b>Run the build; run nothing else.</b></td><td><code>execute</code>, plus tasks declared by name. There is no shell, so there is no <em>anything else</em> to reach for.</td></tr>
+<tr><td><b>All of that, but only under <code>src/</code>.</b></td><td>A <b>scope</b> &mdash; the same words, stated at a depth inside a tree.</td></tr>
+</table>
+
+<p>Every word in that table is one of seven, and
+<a href="#permissions">section 2</a> defines them all. They combine
+freely, per tree and per folder, which is what makes &ldquo;may
+reorganise, may not destroy&rdquo; sayable rather than a thing you hope
+for.</p>
+
+<div class="takeaway"><b>Where this pays.</b> A single read-only flag
+&mdash; the most any assistant tooling usually offers &mdash; forces one
+choice for the whole tree: either it cannot help, or it can delete your
+requirements. Every row above is a rule that flag cannot state.</div>
+
+<h3 id="scopes">Saying it at a depth</h3>
+
+<p>A tree is a path and a set of permissions. A <b>scope</b> states
+permissions somewhere inside one. A real configuration:</p>
 
 <div class="code"><pre><code>{
   "trees": {
@@ -52,21 +89,41 @@ so a scope can take a permission away.</p>
       "path": ".",
       "can": ["list", "read", "create", "update", "rename", "delete"]
     },
-    "curriculum": {
-      "path": "../shoddy-curriculum",
+    "requirements": {
+      "path": "../shoddy-requirements",
       "can": ["list", "read"],
       "scopes": {
-        "requirements":           { "can": ["list", "read", "create", "update", "rename"] },
-        "requirements/cancelled": { "can": [] }
+        "backlog":           { "can": ["list", "read", "create", "update", "rename"] },
+        "backlog/cancelled": { "can": [] }
       }
     }
   }
 }</code></pre></div>
 
-<p>That reads: the curriculum is readable throughout; its
-<code>requirements</code> folder may be added to, changed and reorganised
-but never destroyed; and <code>cancelled</code> is not there at all as far
-as anything can tell.</p>
+<p>That reads: <code>work</code> may be changed but nothing in it may be
+run; the requirements tree is readable throughout; its
+<code>backlog</code> folder may be added to, changed and reorganised but
+never destroyed; and <code>backlog/cancelled</code> is not there at all as
+far as anything can tell.</p>
+
+<p><b>Two rules decide what a given file gets</b>, and they are the two
+worth knowing before you write one of these:</p>
+
+<ul>
+<li><b>The most specific scope containing the path decides</b> &mdash; not
+the tree, and not the shallowest scope that matches. <code>cancelled</code>
+sits inside <code>backlog</code>, so <code>cancelled</code> wins there.</li>
+<li><b>A scope replaces what its tree grants; it does not add to it.</b>
+That is what lets a scope take a permission <em>away</em>, which is how a
+folder inside a readable tree ends up invisible. It is also the trap worth
+stating out loud: a scope naming <code>create</code> and nothing else
+grants <code>create</code> and nothing else &mdash; not even
+<code>read</code>.</li>
+</ul>
+
+<p>A third tree is usual and is not shown here, because it belongs in the
+gitignored overlay rather than in a file the team shares: the assistant's
+own scratch directory. <a href="#local">Section 8</a> declares it.</p>
 
 <p><b>A tree, not a repository.</b> A folder with no version control in it
 is the ordinary case, not an exception. Nothing in the configuration, the
@@ -156,41 +213,43 @@ hold.</b> Without it the permission model is decoration.</div>
 
 <p>The demonstration was two commands long, and it worked:</p>
 
-<div class="code"><pre><code>$ fettle --root tmp=... write tmp:fettle-tasks --stdin
-wrote fettle-tasks  72 bytes
+<div class="code"><pre><code>$ fettle --root tmp=... write tmp:.fettler.json --stdin
+wrote .fettler.json  118 bytes
 
 $ fettle --root tmp=... run probe
 probe: exit 0 in 0.0s
 [stdout] I-WROTE-THIS-TASK-MYSELF-THEN-RAN-IT</code></pre></div>
 
-<p>Fettler wrote its own task declaration and then executed it. It could
-write <code>.fettler.json</code> the same way — the file the permissions
-come from. So two things follow.</p>
+<p>Fettler wrote its own declaration — the trees, what may be done in
+each, and the commands it may run — and then executed one of them. So two
+things follow.</p>
 
 <p><b><code>execute</code> must not be a default, even on the tree the
-configuration sits in.</b> That tree is writable by definition and
-<code>fettle-tasks</code> lives inside it, so write-by-default plus
-execute-by-default is arbitrary code execution — and it defeats every
-other permission at once, because a scope protected from
-<code>delete</code> means nothing to a task that can run
-<code>del</code>.</p>
+configuration sits in.</b> That tree is writable by definition and the
+configuration lives inside it, so write-by-default plus execute-by-default
+is arbitrary code execution — and it defeats every other permission at
+once, because a scope protected from <code>delete</code> means nothing to
+a task that can run <code>del</code>.</p>
 
-<p><b>And an explicit grant is not enough on its own.</b> If the task file
-can be written by the thing the grant applies to, the grant has no bound:
-whoever holds <code>execute</code> also chooses what executes.</p>
+<p><b>And an explicit grant is not enough on its own.</b> If the
+declaration can be written by the thing the grant applies to, the grant
+has no bound: whoever holds <code>execute</code> also chooses what
+executes.</p>
 
 <p>Therefore, compiled in and not configurable at any permission level:</p>
 
 <table>
 <tr><th>File</th><th>Rule</th></tr>
-<tr><td><code>fettle-tasks</code></td><td>never created, written, edited, renamed, moved or deleted through Fettler</td></tr>
-<tr><td><code>.fettler.json</code></td><td>as above</td></tr>
+<tr><td><code>.fettler.json</code></td><td>never created, written, edited, renamed, moved or deleted through Fettler</td></tr>
 <tr><td><code>.fettler.local.json</code></td><td>as above</td></tr>
 </table>
 
+<p><b>Two names cover the trees and the tasks alike</b>, since a task is
+declared by the file that declares the trees.</p>
+
 <p>Matched by name at any depth, so a configuration in a subdirectory is
 protected too; and matched by <em>name</em>, so
-<code>fettle-tasks.md</code> and <code>.fettler.json.bak</code> are
+<code>.fettler.json.bak</code> and <code>.fettler.json.md</code> are
 ordinary files. Reading them is fine and stays fine — a caller asking what
 the rules are is the opposite of the problem.</p>
 
@@ -246,6 +305,36 @@ failure. A gitignored <code>.fettler.local.json</code> beside it is merged
 over the top, so a machine's own trees need not be typed on every
 command.</p>
 
+<p><b>The assistant's scratch directory is the standard case.</b> The
+harness hands it a staging folder somewhere under the system temp, with a
+path nobody else on the team shares &mdash; so it belongs here and could
+not belong in the checked-in file:</p>
+
+<div class="code"><pre><code>// .fettler.local.json &mdash; beside .fettler.json, gitignored
+{
+  "trees": {
+    "scratch": {
+      "path": "C:/Users/you/AppData/Local/Temp/claude/&lt;project-folder&gt;",
+      "can": ["list", "read", "create", "update", "rename", "delete"]
+    }
+  }
+}</code></pre></div>
+
+<ul>
+<li><b>The project folder, not its parent.</b> The parent holds every
+project's scratch, and a session working on one tree has no business
+writing into another's.</li>
+<li><b>Not the per-session folder either.</b> It changes every session,
+and a declaration that has to be rewritten that often stops being
+written.</li>
+<li><b>No <code>execute</code></b>, which is never a default anyway. A
+scratch tree is for staging text, not for running what is staged.</li>
+<li><b>Without it, denying the built-in <code>Write</code> closes staging
+altogether</b> &mdash; the harness route is denied and no tree covers the
+folder, so nothing can write there. <code>fettle doctor</code> reports
+that as <a href="fettler-setup.html#findings">2.15</a>.</li>
+</ul>
+
 <p>A name in both files is the overlay's <b>entirely</b> rather than
 field-by-field: nobody reading two files side by side could say what a
 field-level merge produced without running it. Merging is right here and
@@ -275,18 +364,11 @@ because none exists and none is wanted.</li>
 <p>Stated because the alternative is scope creep: every rule here could be
 hardened indefinitely against an attacker nobody is worried about.</p>
 
-<h2 id="migration">10. What changed, for anyone upgrading</h2>
-
-<p>Four breaking changes, and each one is a thing that used to work.</p>
-
-<table>
-<tr><th>Was</th><th>Is</th></tr>
-<tr><td><code>{"roots": {"work": "."}}</code></td><td><code>{"trees": {"work": {"path": "."}}}</code>. The old shape is <b>refused</b>, with the migration named, rather than quietly reinterpreted — a root granted everything, and reading it as a tree would grant more than the file says.</td></tr>
-<tr><td><code>--root</code> granted full access</td><td><code>--root</code> grants <code>list read</code>. Write comes only from a file in the tree.</td></tr>
-<tr><td>No configuration meant the current directory</td><td>No configuration is a refusal naming how to declare a tree.</td></tr>
-<tr><td><code>run</code> worked wherever a task was declared</td><td><code>run</code> needs <code>execute</code>, which is never granted by default.</td></tr>
-</table>
-
+<nav class="pagenav pagenav-bottom" aria-label="Fettler, in order">
+  <a href="fettler-setup.html" class="prev"><span class="pnwrap"><span class="dir">&larr; Previous</span><span class="ttl">Setting it up</span></span></a>
+  <a href="index.html" class="all">All documentation</a>
+  <a class="next" href="fettler.html"><span class="pnwrap"><span class="ttl">Fettler</span><span class="dir">Next &rarr;</span></span></a>
+</nav>
 <footer>Named for the shoddy mills of the West Riding: Useless Things Made
 Useful Through Skill (<a href="heritage.html">the heritage of the name</a>).<br>
 &copy; 2026 Stephen Vincent Foster</footer>

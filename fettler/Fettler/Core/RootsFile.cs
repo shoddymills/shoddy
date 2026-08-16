@@ -49,7 +49,7 @@ public static class RootsFile
     /// <para>The checked-in file can only name trees that ship with the
     /// tree itself, because a tree that does not exist is a startup
     /// failure. So without this there is no way to say "and my
-    /// curriculum checkout, and my planning folder" - and
+    /// requirements checkout, and my assistant's scratch folder" - and
     /// <c>--root</c> REPLACES rather than adds, so naming one sibling
     /// silently drops the main tree. Merging is right here and wrong
     /// there: this is one tree's configuration layered on itself, not a
@@ -66,6 +66,11 @@ public static class RootsFile
         public string Origin => Overlay is null ? File : $"{File} (with {Overlay})";
 
         public string? Overlay { get; init; }
+
+        /// <summary>The tasks it declared, empty when it declared none.
+        /// What may run in a tree and what may be done to it are one
+        /// statement about one tree, so one file states both.</summary>
+        public IReadOnlyList<TaskDecl> Tasks { get; init; } = [];
     }
 
     /// <summary>
@@ -117,6 +122,7 @@ public static class RootsFile
         return Result<Found>.Ok(new Found(found.Value.File, Merge(found.Value.Trees, local.Value.Trees))
         {
             Overlay = local.Value.File,
+            Tasks = MergeTasks(found.Value.Tasks, local.Value.Tasks),
         });
     }
 
@@ -228,7 +234,10 @@ public static class RootsFile
             if (decls.Count == 0)
                 return Result<Found>.Fail(Outcome.Invalid, "declares no trees", full);
 
-            return Result<Found>.Ok(new Found(full, decls));
+            Result<IReadOnlyList<TaskDecl>> tasks = ReadTasks(doc.RootElement, full);
+            if (!tasks.IsOk) return tasks.Carry<Found>();
+
+            return Result<Found>.Ok(new Found(full, decls) { Tasks = tasks.Value });
         }
     }
 
@@ -260,6 +269,9 @@ public static class RootsFile
             || pathValue.GetString() is not { Length: > 0 } raw)
             return Result<TreeDecl>.Fail(Outcome.Invalid,
                 $"tree '{entry.Name}' needs a \"path\" written as a non-empty string", file);
+
+        if (Separator(raw, $"tree '{entry.Name}' has a \"path\" that", file) is { } badPath)
+            return Result<TreeDecl>.Fail(badPath);
 
         string path;
         try
@@ -305,11 +317,160 @@ public static class RootsFile
                 Result<Permission> parsed = ReadCan(scopeCan, $"scope '{scope.Name}'", file);
                 if (!parsed.IsOk) return parsed.Carry<TreeDecl>();
 
+                if (Separator(scope.Name, $"scope '{scope.Name}' in tree '{entry.Name}'", file) is { } badScope)
+                    return Result<TreeDecl>.Fail(badScope);
+
                 scopes.Add(new ScopeDecl(scope.Name, parsed.Value));
             }
         }
 
         return Result<TreeDecl>.Ok(new TreeDecl(entry.Name, path, can, scopes));
+    }
+
+    /// <summary>
+    /// The declared tasks of R7, read from the same file that declares the
+    /// trees.
+    ///
+    /// <para><b><c>run</c> is the command line, written as one string.</b>
+    /// It is split once, by <see cref="Tasks.Split"/>, whose grammar is
+    /// whitespace and double quotes and nothing else - no variables, no
+    /// globbing, no operators, and no backslash escapes, so a Windows path
+    /// is written as it is. The program is then launched with the resulting
+    /// list, never with a command line for a shell to re-split.</para>
+    ///
+    /// <para><b>The file is trusted input, and R7.6 says so out loud.</b>
+    /// Containment guards paths; it does not and cannot guard a command
+    /// list. Whoever can write this file chooses what a caller - a model
+    /// included - is able to execute, which is why writing it is a
+    /// person's act with an editor and why <c>execute</c> is never a
+    /// default. Point Fettler at a tree you trust.</para>
+    /// </summary>
+    static Result<IReadOnlyList<TaskDecl>> ReadTasks(JsonElement root, string file)
+    {
+        if (!root.TryGetProperty("tasks", out JsonElement tasks))
+            return Result<IReadOnlyList<TaskDecl>>.Ok([]);
+
+        if (tasks.ValueKind != JsonValueKind.Object)
+            return Result<IReadOnlyList<TaskDecl>>.Fail(Outcome.Invalid,
+                "has a \"tasks\" that is not an object of name to declaration", file);
+
+        var declared = new List<TaskDecl>();
+        foreach (JsonProperty entry in tasks.EnumerateObject())
+        {
+            if (entry.Value.ValueKind != JsonValueKind.Object)
+                return Result<IReadOnlyList<TaskDecl>>.Fail(Outcome.Invalid,
+                    $"task '{entry.Name}' needs an object with a \"run\" string in it, as "
+                    + $"{{\"{entry.Name}\":{{\"run\":\"pwsh -File build.ps1\"}}}}", file);
+
+            if (!entry.Value.TryGetProperty("run", out JsonElement run)
+                || run.ValueKind != JsonValueKind.String
+                || run.GetString() is not { } line)
+                return Result<IReadOnlyList<TaskDecl>>.Fail(Outcome.Invalid,
+                    $"task '{entry.Name}' needs a \"run\" written as one string, the command line", file);
+
+            Result<IReadOnlyList<string>> split = Tasks.Split(line);
+            if (!split.IsOk)
+                return Result<IReadOnlyList<TaskDecl>>.Fail(Outcome.Invalid,
+                    $"task '{entry.Name}': {split.Failure!.Message}", file);
+
+            IReadOnlyList<string> command = split.Value;
+            if (command.Count == 0)
+                return Result<IReadOnlyList<TaskDecl>>.Fail(Outcome.Invalid,
+                    $"task '{entry.Name}' has an empty \"run\"; its first word is the program", file);
+
+            string? cwd = null;
+            if (entry.Value.TryGetProperty("cwd", out JsonElement where))
+            {
+                if (where.ValueKind != JsonValueKind.String
+                    || where.GetString() is not { Length: > 0 } named)
+                    return Result<IReadOnlyList<TaskDecl>>.Fail(Outcome.Invalid,
+                        $"task '{entry.Name}' has a \"cwd\" that is not a non-empty string", file);
+
+                if (Separator(named, $"task '{entry.Name}' has a \"cwd\" that", file) is { } bad)
+                    return Result<IReadOnlyList<TaskDecl>>.Fail(bad);
+
+                cwd = named;
+            }
+
+            foreach (TaskDecl already in declared)
+                if (already.Name.Equals(entry.Name, StringComparison.OrdinalIgnoreCase))
+                    return Result<IReadOnlyList<TaskDecl>>.Fail(Outcome.Invalid,
+                        $"task '{entry.Name}' is declared twice", file);
+
+            declared.Add(new TaskDecl(entry.Name, command, cwd, line));
+        }
+
+        return Result<IReadOnlyList<TaskDecl>>.Ok(declared);
+    }
+
+    /// <summary>
+    /// A declared path is written with forward slashes, on every platform.
+    ///
+    /// <para><b>There is no formal standard for this - there is a
+    /// convention, and it is git's:</b> relative, forward-slashed, no drive
+    /// letter. <c>.gitignore</c>, Docker, npm and VS Code's own task files
+    /// all use it, and it is the only spelling that means one thing
+    /// everywhere. Windows accepts <c>/</c> in every API; on macOS and
+    /// Linux a backslash is an ordinary character in a file name rather
+    /// than a separator, so a checked-in <c>..\tree</c> does not name a
+    /// parent there - it names a file with a backslash in it, and finds
+    /// nothing.</para>
+    ///
+    /// <para><b>Refused rather than converted</b>, because converting would
+    /// make a file legitimately called <c>a\b</c> unreachable on the
+    /// platforms where that is a legal name.</para>
+    ///
+    /// <para><b>Only a RELATIVE path is held to it.</b> A relative path is
+    /// the one that travels - it is the one worth checking in, and the one
+    /// that has to mean the same thing on the next machine. An absolute
+    /// path names a particular disk and cannot travel whatever its
+    /// separators are, so <c>C:\work\tree</c> in a gitignored
+    /// <c>.fettler.local.json</c> is a person describing their own machine
+    /// and is left alone.</para>
+    /// </summary>
+    static Failure? Separator(string raw, string what, string file) =>
+        raw.Contains('\\') && !Absolute(raw)
+            ? new Failure(Outcome.Invalid,
+                $"{what} is written with a backslash. A relative declared path uses \"/\" on "
+                + "every platform: Windows accepts it, and on macOS and Linux a backslash is "
+                + "an ordinary character in a name rather than a separator", file)
+            : null;
+
+    /// <summary>Whether a declared path names a particular disk. A drive
+    /// letter is recognised on every platform, because the question being
+    /// asked is what the author MEANT, and they meant an absolute Windows
+    /// path even when this is read on Linux.</summary>
+    static bool Absolute(string raw) =>
+        Path.IsPathRooted(raw)
+        || (raw.Length > 1 && raw[1] == ':' && char.IsLetter(raw[0]))
+        || raw.StartsWith(@"\\", StringComparison.Ordinal);
+
+    /// <summary>The overlay's tasks over the checked-in ones, by the same
+    /// rule the trees use: a name in both is the overlay's entirely, and a
+    /// name only the overlay has is added. Replacing a whole task rather
+    /// than merging its fields keeps two files readable side by side.</summary>
+    static IReadOnlyList<TaskDecl> MergeTasks(
+        IReadOnlyList<TaskDecl> shipped, IReadOnlyList<TaskDecl> local)
+    {
+        var merged = new List<TaskDecl>();
+
+        foreach (TaskDecl task in shipped)
+        {
+            TaskDecl? replacement = null;
+            foreach (TaskDecl l in local)
+                if (l.Name.Equals(task.Name, StringComparison.OrdinalIgnoreCase)) replacement = l;
+            merged.Add(replacement ?? task);
+        }
+
+        foreach (TaskDecl l in local)
+        {
+            bool already = false;
+            foreach (TaskDecl m in merged)
+                if (m.Name.Equals(l.Name, StringComparison.OrdinalIgnoreCase)) already = true;
+            if (!already) merged.Add(l);
+        }
+
+        return merged;
     }
 
     static Result<Permission> ReadCan(JsonElement value, string what, string file)

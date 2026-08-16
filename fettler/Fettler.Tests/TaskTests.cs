@@ -58,22 +58,13 @@ public sealed class TaskTests
         // configured tree refuses, which is the point. A read-only tree
         // is all a search needs, and all --root can grant.
         //
-        // The glob keeps the search off the declaration file, which
-        // necessarily contains the same awkward string.
-        box.Write(Tasks.FileName, $"""
-            # one argument per line, so there is no quoting syntax to get wrong
-            echo:
-              {fettle}
-              search
-              --root
-              {box.Root}
-              --literal
-              --json
-              --glob
-              subject.txt
-              {awkward}
-
-            """);
+        // Declared as a list here rather than as a line, because this test
+        // is about what reaches the CHILD: the awkward string is stated
+        // once and must arrive as one argument, whatever produced it.
+        box.Declare(new TaskDecl("echo",
+            [fettle, "search", "--root", box.Root, "--literal", "--json",
+             "--glob", "subject.txt", awkward],
+            null));
 
         Result<TaskRun> ran = await box.Bench.RunAsync("echo", TimeSpan.FromSeconds(60), CancellationToken.None);
 
@@ -89,21 +80,12 @@ public sealed class TaskTests
     }
 
     [Fact]
-    public void TasksAreListedFromTheDeclarationFile()
+    public void TasksAreListedFromTheConfiguration()
     {
         using var box = new Sandbox();
-        box.Write(Tasks.FileName, """
-            build:
-              pwsh
-              -File
-              build.ps1
-
-            gate:
-              node
-              scripts/gate/driver.mjs
-              gate
-              --resume
-            """);
+        box.Declare(
+            new TaskDecl("build", ["pwsh", "-File", "build.ps1"], null),
+            new TaskDecl("gate", ["node", "scripts/gate/driver.mjs", "gate", "--resume"], null));
 
         Result<IReadOnlyList<TaskDecl>> tasks = box.Bench.TaskList();
 
@@ -118,7 +100,7 @@ public sealed class TaskTests
     public async Task AnUndeclaredTaskIsNotFoundAndNamesWhatIsDeclared()
     {
         using var box = new Sandbox();
-        box.Write(Tasks.FileName, "build:\n  pwsh\n");
+        box.Declare(new TaskDecl("build", ["pwsh"], null));
 
         Result<TaskRun> ran = await box.Bench.RunAsync("gate", TimeSpan.Zero, CancellationToken.None);
 
@@ -138,15 +120,15 @@ public sealed class TaskTests
     /// forever waiting on input nobody is going to send, and that is the
     /// hang R7.5 exists to prevent rather than to demonstrate.</para>
     /// </summary>
-    static string LongRunning() => OperatingSystem.IsWindows()
-        ? "ping\n  -n\n  30\n  127.0.0.1"
-        : "sleep\n  30";
+    static string[] LongRunning() => OperatingSystem.IsWindows()
+        ? ["ping", "-n", "30", "127.0.0.1"]
+        : ["sleep", "30"];
 
     [Fact]
     public async Task ATaskThatOutrunsItsTimeoutIsKilledAndSaidToHaveBeen()
     {
         using var box = new Sandbox(Runnable);
-        box.Write(Tasks.FileName, $"forever:\n  {LongRunning()}\n");
+        box.Declare(new TaskDecl("forever", LongRunning(), null));
 
         var clock = System.Diagnostics.Stopwatch.StartNew();
         Result<TaskRun> ran = await box.Bench.RunAsync("forever", TimeSpan.FromSeconds(2), CancellationToken.None);
@@ -167,7 +149,7 @@ public sealed class TaskTests
     public async Task ATaskCanBeCancelledMidFlight()
     {
         using var box = new Sandbox(Runnable);
-        box.Write(Tasks.FileName, $"forever:\n  {LongRunning()}\n");
+        box.Declare(new TaskDecl("forever", LongRunning(), null));
 
         using var cancelling = new CancellationTokenSource();
         Task<Result<TaskRun>> running = box.Bench.RunAsync("forever", TimeSpan.Zero, cancelling.Token);

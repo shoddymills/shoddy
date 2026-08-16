@@ -86,12 +86,17 @@ public static class Command
         // something else and reports it with complete confidence.
         IReadOnlyList<string> unknown = args.UnknownFlags;
         if (unknown.Count > 0)
-        {
-            var named = new List<string>();
-            foreach (string flag in unknown) named.Add("--" + flag);
             return Failed(new Failure(Outcome.Invalid,
-                $"no such flag: {string.Join(", ", named)} - try: fettle help"), json);
-        }
+                $"no such flag: {string.Join(", ", unknown)} - try: fettle help"), json);
+
+        // The same argument one step in: the flag is known and its value
+        // is the thing that is missing. Second, so a typo at the end of a
+        // line is still answered as a typo rather than as a missing value.
+        IReadOnlyList<string> empty = args.FlagsMissingAValue;
+        if (empty.Count > 0)
+            return Failed(new Failure(Outcome.Invalid,
+                $"{string.Join(", ", empty)} needs a value, and nothing followed it"
+                + " - write --NAME= for a deliberately empty one"), json);
 
         try
         {
@@ -192,9 +197,10 @@ public static class Command
     }
 
     /// <summary>One pattern per line, blank lines dropped and nothing
-    /// trimmed - a trailing space can be part of a pattern. The shape is
-    /// the fettle-tasks format's, deliberately: a second rule for
-    /// splitting a file into strings is a second rule to get wrong.</summary>
+    /// trimmed - a trailing space can be part of a pattern. One line is
+    /// one string, which is the rule a task's "run" array states as one
+    /// element per argument: the same idea, in the format each file
+    /// has.</summary>
     static void AddLines(List<string> into, string text)
     {
         foreach (string line in text.Replace("\r\n", "\n").Split('\n'))
@@ -442,11 +448,12 @@ public static class Command
             }));
 
         if (tasks.Value.Count == 0)
-            return Ok($"no tasks declared (there is no {Tasks.FileName} at the root){Environment.NewLine}");
+            return Ok($"no tasks declared (no \"tasks\" in {RootsFile.FileName}){Environment.NewLine}");
 
         var text = new StringBuilder();
+        int column = NameColumn(tasks.Value.Select(t => t.Name));
         foreach (TaskDecl t in tasks.Value)
-            text.Append(t.Name.PadRight(12)).AppendLine(t.Display);
+            text.Append(t.Name.PadRight(column)).AppendLine(t.Display);
 
         return Ok(text.ToString());
     }
@@ -504,17 +511,18 @@ public static class Command
         // boundary a caller can see only by being refused by it is one
         // they learn by trial against a security check.
         var text = new StringBuilder();
+        int column = NameColumn(names);
         foreach (string name in names)
         {
             Grant grant = bench.Roots.GrantOf(name);
             string full = bench.Roots.PathOf(name);
 
-            text.Append(name.PadRight(12)).Append(full)
+            text.Append(name.PadRight(column)).Append(full)
                 .AppendLine(name.Equals(names[0], Core.Roots.PathComparison) ? "  (default)" : "");
-            text.Append(' ', 12).Append("can: ").AppendLine(Permissions.Write(grant.Can));
+            text.Append(' ', column).Append("can: ").AppendLine(Permissions.Write(grant.Can));
 
             foreach (Scope scope in grant.Scopes)
-                text.Append(' ', 12)
+                text.Append(' ', column)
                     .Append(Path.GetRelativePath(full, scope.Path).Replace('\\', '/'))
                     .Append("  can: ").AppendLine(Permissions.Write(scope.Can));
         }
@@ -1023,6 +1031,16 @@ public static class Command
         if (args.At(0) is not { } name)
             return Failed(new Failure(Outcome.Invalid, "run needs the name of a declared task"), json);
 
+        // A task is declared whole, so nothing is composed at the call.
+        // Dropping an extra word silently would run something other than
+        // what the caller asked for and answer 0, which is the wrong-answer
+        // shape R3.14 exists to prevent, one argument further in.
+        if (args.Positional.Count > 1)
+            return Failed(new Failure(Outcome.Invalid,
+                $"run takes a task name and nothing else; '{args.At(1)}' is extra. "
+                + "A task is declared whole and takes no arguments - declare a second "
+                + "task for the second thing you want run."), json);
+
         var timeout = TimeSpan.FromSeconds(args.Int("timeout", 0));
         Result<TaskRun> ran = await bench.RunAsync(name, timeout, cancel).ConfigureAwait(false);
         if (!ran.IsOk) return Failed(ran.Failure!, json);
@@ -1131,11 +1149,27 @@ public static class Command
                 w.WriteBoolean("ok", false);
                 w.WriteString("outcome", ExitCodes.NameOf(failure.Outcome));
                 w.WriteString("message", failure.Message);
-                if (failure.Path is { } p) w.WriteString("path", p);
+                if (failure.Path is { Length: > 0 } p) w.WriteString("path", p);
             }), string.Empty);
 
+        // An empty path is no path. It reached the caller as a bare "()"
+        // on the end of a refusal, which reads as a fact about the thing
+        // refused rather than as a field nobody filled in.
         return new CliResult(code, string.Empty,
-            $"refused: {failure.Message}" + (failure.Path is null ? "" : $" ({failure.Path})") + Environment.NewLine);
+            $"refused: {failure.Message}"
+            + (failure.Path is { Length: > 0 } at ? $" ({at})" : "") + Environment.NewLine);
+    }
+
+    /// <summary>The width of a name column, wide enough for the widest
+    /// name given. A fixed width is a fixed width until something reaches
+    /// it: a name of exactly the column's size leaves no gap at all, and
+    /// the name and the value it introduces run together into one
+    /// word.</summary>
+    static int NameColumn(IEnumerable<string> names)
+    {
+        int width = 12;
+        foreach (string name in names) width = Math.Max(width, name.Length + 2);
+        return width;
     }
 
     static string Json(Action<Utf8JsonWriter> body) => JsonBody(w =>
@@ -1233,9 +1267,11 @@ public static class Command
           copy FROM TO [--recursive] [--overwrite] [--preserve-times]
           delete PATH [--recursive] [--force]
           exec PATH --on | --off
-          tasks
+          tasks                 the declared tasks and the command line each runs
           roots                 the trees, their paths, and what may be done in each
           run NAME [--timeout SECONDS]
+                 A task is declared whole and takes NO arguments from its
+                 caller. Declare a second task rather than composing one.
           batch --script FILE
           doctor [--client NAME] [--quiet] [--hook]
                  whether this tool is wired into each assistant client, at both
@@ -1251,11 +1287,15 @@ public static class Command
           list read. execute is never a default anywhere. A scope inside a tree
           replaces what the tree grants, so it can take a permission away, and a
           scope with no `list` is not there at all as far as find and search go.
-          .fettler.json, .fettler.local.json and fettle-tasks say what this tool
-          may do, and it does not write them. See docs/fettler-boundary.html.
+          .fettler.json and .fettler.local.json say what this tool may do - the
+          trees, and the tasks - and it does not write them. See
+          docs/fettler-boundary.html.
 
-        An unknown flag is refused, never ignored: ignoring one would eat the
-        argument after it and answer a different question confidently.
+        An unknown flag is refused, never ignored - one dash or two: ignoring
+        one would eat the argument after it, or be read as a second pattern,
+        and answer a different question confidently. -e is the only short
+        flag there is. A pattern or path that starts with a hyphen goes after
+        a bare --, or through --pattern-file or --pattern-stdin.
 
         Exit codes: 0 ok, 2 invalid, 3 not-found, 4 outside-root, 5 target-exists,
                     6 stale, 7 conflict, 8 refused, 9 denied, 10 timed-out,

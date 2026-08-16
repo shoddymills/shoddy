@@ -6,16 +6,17 @@ namespace Fettler.Core;
 ///
 /// <para><b>This is the rule that makes every other rule hold.</b>
 /// Without it the permission model is decoration, and the demonstration
-/// is two commands long: declare a tree, write <c>fettle-tasks</c> into
-/// it, run what you just wrote. That was live in this tool, and it
-/// defeats every other permission at once - a scope protected from
-/// <c>delete</c> means nothing to a task that can run <c>del</c>.</para>
+/// is two commands long: declare a tree, write a task into its
+/// configuration, run what you just wrote. That was live in this tool,
+/// and it defeats every other permission at once - a scope protected
+/// from <c>delete</c> means nothing to a task that can run
+/// <c>del</c>.</para>
 ///
 /// <para><b>An explicit grant is not enough on its own either.</b> If the
-/// task file can be written by the thing the grant applies to, the grant
-/// has no bound: whoever holds <see cref="Permission.Execute"/> also
-/// chooses what executes. So the refusal is compiled in, applies at every
-/// permission level, and is not configurable.</para>
+/// declaration can be written by the thing the grant applies to, the
+/// grant has no bound: whoever holds <see cref="Permission.Execute"/>
+/// also chooses what executes. So the refusal is compiled in, applies at
+/// every permission level, and is not configurable.</para>
 ///
 /// <para><b>It is its own outcome and its own wording</b>, not a
 /// permission denial. Nothing is missing. A caller told "you lack update"
@@ -30,12 +31,11 @@ namespace Fettler.Core;
 /// </summary>
 public static class RuleFiles
 {
-    /// <summary>The three names, closed and compiled in.</summary>
+    /// <summary>The two names, closed and compiled in.</summary>
     public static readonly string[] Names =
     [
         RootsFile.FileName,
         RootsFile.LocalFileName,
-        Tasks.FileName,
     ];
 
     /// <summary>
@@ -45,7 +45,7 @@ public static class RuleFiles
     /// <c>.fettler.json</c> in a subdirectory governs that subtree when a
     /// command is run from inside it, so protecting only the one at the
     /// top would leave every other one writable. Matched by name and not
-    /// by prefix, so <c>fettle-tasks.md</c> and <c>.fettler.json.bak</c>
+    /// by prefix, so <c>.fettler.json.bak</c> and <c>.fettler.json.md</c>
     /// are ordinary files - they govern nothing, and refusing them would
     /// be superstition rather than a rule.</para>
     /// </summary>

@@ -36,19 +36,40 @@ public sealed class Sandbox : IDisposable
             decls.Add(new TreeDecl(name, path, Permissions.Full));
         }
 
+        this.declared = decls;
+
         Result<Core.Roots> opened = Core.Roots.Open(decls);
         Assert.True(opened.IsOk, opened.Failure?.Message);
         Roots = opened.Value;
         Bench = new Bench(Roots);
     }
 
+    readonly List<TreeDecl> declared;
+
     public string Root { get; }
 
     public Dictionary<string, string> Extra { get; } = [];
 
-    public Core.Roots Roots { get; }
+    public Core.Roots Roots { get; private set; }
 
-    public Bench Bench { get; }
+    public Bench Bench { get; private set; }
+
+    /// <summary>
+    /// Declare tasks, the way a <c>.fettler.json</c> does.
+    ///
+    /// <para>Reopening the boundary is the point rather than the cost: a
+    /// task is part of what a boundary declares, so a test that declares
+    /// one states the same thing the file states.</para>
+    /// </summary>
+    public void Declare(params TaskDecl[] tasks)
+    {
+        Result<Core.Roots> opened = Core.Roots.Open(declared, null, tasks);
+        Assert.True(opened.IsOk, opened.Failure?.Message);
+
+        Bench.Dispose();
+        Roots = opened.Value;
+        Bench = new Bench(Roots);
+    }
 
     public string Full(string relative) => Path.Combine(Root, relative.Replace('/', Path.DirectorySeparatorChar));
 

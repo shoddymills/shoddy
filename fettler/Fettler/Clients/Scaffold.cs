@@ -198,8 +198,9 @@ public static class Scaffold
             the tree does. Running a declared task needs `execute`, which is never granted
             by default.
 
-            `.fettler.json`, `.fettler.local.json` and `fettle-tasks` say what this tool
-            may do, and it does not write them. A person edits those.
+            `.fettler.json` and `.fettler.local.json` say what this tool may do - the
+            trees it may touch and the tasks it may run - and it does not write them.
+            A person edits those.
 
             Run `fettle doctor` if anything here looks wrong.
             {BlockClose}

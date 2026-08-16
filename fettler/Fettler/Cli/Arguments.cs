@@ -17,6 +17,8 @@ public sealed class Arguments
 {
     readonly Dictionary<string, List<string>> flags = new(StringComparer.OrdinalIgnoreCase);
     readonly List<string> positional = [];
+    readonly List<string> valueless = [];
+    readonly List<string> shortUnknown = [];
 
     public string Verb { get; private set; } = string.Empty;
 
@@ -103,17 +105,26 @@ public sealed class Arguments
     /// there and is refused here is worse than either alone.</summary>
     public static bool IsKnown(string flag) => Known.Contains(flag);
 
-    /// <summary>Flags that were given and that no verb knows.</summary>
+    /// <summary>Flags that were given and that no verb knows, spelt as
+    /// they were written - one dash or two - because a caller looking for
+    /// their typo needs to see the thing they typed.</summary>
     public IReadOnlyList<string> UnknownFlags
     {
         get
         {
             var unknown = new List<string>();
             foreach (string name in flags.Keys)
-                if (!Known.Contains(name)) unknown.Add(name);
+                if (!Known.Contains(name)) unknown.Add("--" + name);
+            unknown.AddRange(shortUnknown);
             return unknown;
         }
     }
+
+    /// <summary>Flags that take a value and were given none, because
+    /// nothing at all followed them, spelt as they were written. Kept
+    /// apart from the unknown ones so a misspelling at the end of a line
+    /// is still answered as a misspelling.</summary>
+    public IReadOnlyList<string> FlagsMissingAValue => valueless;
 
     public static Arguments Parse(IReadOnlyList<string> argv)
     {
@@ -139,15 +150,46 @@ public sealed class Arguments
                 if (inline is not null) { parsed.Add(name, inline); continue; }
                 if (i + 1 < argv.Count) { parsed.Add(name, argv[++i]); continue; }
 
+                // Nothing follows a flag that takes a value. Recorded and
+                // refused before anything runs, never guessed at: taking
+                // the switch value put the word "true" into a source file
+                // through `--insert-after N --text`, which is R3.14's own
+                // argument one step further in - the flag was known and it
+                // was its VALUE that was missing, so the wrong answer
+                // arrived as a wrong write instead. Windows PowerShell 5.1
+                // reaches this by dropping an empty argument rather than
+                // passing it, so `--text ''` lands here too; `--text=`
+                // still says deliberately-empty and is untouched.
+                parsed.valueless.Add("--" + name);
                 parsed.Add(name, "true");
                 continue;
             }
 
             // -e is the one short flag, and it is short because a search
             // carrying several patterns is a thing typed by hand.
-            if (!literalFromHere && a == "-e" && i + 1 < argv.Count)
+            if (!literalFromHere && a == "-e")
             {
-                parsed.Add("pattern", argv[++i]);
+                if (i + 1 < argv.Count) { parsed.Add("pattern", argv[++i]); continue; }
+                parsed.valueless.Add("-e");
+                continue;
+            }
+
+            // R3.14 reaches the single dash too, and it took a wrong
+            // answer to find that out. A one-dash argument used to fall
+            // straight through to the positional list, so `search PATTERN
+            // -i` - the spelling every grep in the world uses for
+            // case-insensitive - was taken as a SECOND PATTERN, and the
+            // search returned the union of two questions with complete
+            // confidence. That is the exact failure the double-dash rule
+            // exists to stop, one character short of being caught by it.
+            //
+            // A pattern or path that really does begin with a hyphen goes
+            // through a bare `--`, or through -e, --pattern-file or
+            // --pattern-stdin, which is where a shell cannot reach it
+            // either.
+            if (!literalFromHere && a.Length > 1 && a[0] == '-')
+            {
+                parsed.shortUnknown.Add(a);
                 continue;
             }
 
@@ -236,14 +278,14 @@ public sealed class Arguments
         {
             Result<RootsFile.Found> told = RootsFile.ReadWithOverlay(named);
             return told.IsOk
-                ? Roots.Open(told.Value.Trees, told.Value.Origin)
+                ? Roots.Open(told.Value.Trees, told.Value.Origin, told.Value.Tasks)
                 : told.Carry<Roots>();
         }
 
         if (!Has("no-config"))
         {
             Result<RootsFile.Found> found = RootsFile.Discover(Directory.GetCurrentDirectory());
-            if (found.IsOk) return Roots.Open(found.Value.Trees, found.Value.Origin);
+            if (found.IsOk) return Roots.Open(found.Value.Trees, found.Value.Origin, found.Value.Tasks);
 
             // Anything but NotFound means a configuration WAS there and
             // was wrong, and its own message says what.

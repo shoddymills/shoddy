@@ -46,8 +46,11 @@ references no other project in this repository, so there is no
   (Apache-2.0, pure managed, zero transitive dependencies), and it is
   there because the assistant's own reader is denied outright — which
   makes `fettle` the only reader, so a developer holding a PDF would
-  otherwise be stranded. Its licence travels in `NOTICE` at the top of
-  this repository, as Apache-2.0 requires.
+  otherwise be stranded. **Nothing else in this repository uses it** — the
+  mill, the machines, the extension and sparky have no PDF component and no
+  dependency on one — and `fettle` ships as its own archive carrying copies
+  of `NOTICE` and `LICENSE`, so the Apache-2.0 and MIT obligations reach
+  whoever downloaded it rather than stopping at the repository.
 - **The allowlist is tested from outside.** `FrontEndTests` reads the
   built assemblies' references and names all seven PdfPig assemblies
   explicitly, so adding a package means changing a test on purpose rather
@@ -88,12 +91,12 @@ current directory:
 {
   "trees": {
     "work": { "path": "." },
-    "curriculum": {
-      "path": "../shoddy-curriculum",
+    "requirements": {
+      "path": "../shoddy-requirements",
       "can": ["list", "read"],
       "scopes": {
-        "requirements":           { "can": ["list", "read", "create", "update", "rename"] },
-        "requirements/cancelled": { "can": [] }
+        "backlog":           { "can": ["list", "read", "create", "update", "rename"] },
+        "backlog/cancelled": { "can": [] }
       }
     }
   }
@@ -118,10 +121,11 @@ there at all as far as `find` and `search` are concerned.
 stays because the server has to be launched somehow and ad-hoc reading is
 useful; it cannot hand anybody write access. To write to a tree you put a
 file in it, which is a deliberate act by a person inside the tree it
-governs — and the act a caller cannot perform, because `.fettler.json`,
-`.fettler.local.json` and `fettle-tasks` are refused by every write path
-at every permission level. That refusal has its own outcome, `governed`,
-and its own exit code, 11.
+governs — and the act a caller cannot perform, because `.fettler.json`
+and `.fettler.local.json` are refused by every write path at every
+permission level. That refusal has its own outcome, `governed`, and its
+own exit code, 11. Two names cover the trees and the tasks alike, since
+one file declares both.
 
 `--config PATH` names a different file and keeps full expressiveness.
 `--no-config` turns the search off. Any `--root` **replaces** the file
@@ -146,12 +150,12 @@ which file said so:
 
 ```
 $ fettle roots
-work        /work/shoddy  (default)
-            can: list read create update rename delete
-curriculum  /work/shoddy-curriculum
-            can: list read
-            requirements  can: list read create update rename
-            requirements/cancelled  can: nothing
+work          /work/shoddy  (default)
+              can: list read create update rename delete
+requirements  /work/shoddy-requirements
+              can: list read
+              backlog  can: list read create update rename
+              backlog/cancelled  can: nothing
 
 declared by /work/shoddy/.fettler.json
 ```
@@ -202,8 +206,9 @@ pattern and the search then runs against the whole tree and reports what it
 found with complete confidence.
 
 **A pattern may arrive as bytes rather than as an argument.**
-`--pattern-file PATH` and `--pattern-stdin` take one pattern per line, the
-same shape a `fettle-tasks` file uses for its arguments. The pattern is the
+`--pattern-file PATH` and `--pattern-stdin` take one pattern per line —
+one line is one string, the same idea a task's `run` array states as one
+element per argument. The pattern is the
 argument a shell is likeliest to spoil — quotes, backslashes and a leading
 `--` all mean something to somebody first — and the damage is silent,
 because a mangled pattern does not fail, it matches something else.
@@ -283,34 +288,50 @@ retrieve an answer is broken on the primary development platform.
 
 ## Declaring tasks
 
-`run` executes only what a `fettle-tasks` file at the root declares, and
-never composes a shell command. The format is **one argument per line**,
-so there is no quoting syntax in it to get wrong — a file that cannot
-express a quoting rule cannot carry a quoting bug.
+`run` executes only what the `.fettler.json` declares, and never composes
+a shell command:
 
-```
-# a comment
-build:
-  pwsh
-  -File
-  build.ps1
-
-gate:
-  node
-  scripts/gate/driver.mjs
-  gate
-  --resume
-  cwd: .
+```json
+{
+  "trees": {
+    "work": { "path": ".", "can": ["list","read","create","update","rename","delete","execute"] }
+  },
+  "tasks": {
+    "build": { "run": "pwsh -File build.ps1" },
+    "gate":  { "run": "node scripts/gate/driver.mjs gate --resume", "cwd": "." },
+    "sign":  { "run": "signtool sign /f \"C:\\keys\\my cert.pfx\" bin/app.exe" }
+  }
+}
 ```
 
-**That file is trusted input, and this says so out loud.** Containment
-guards paths; it does not and cannot guard the command list, which is
-read from a file inside the very root Fettler was pointed at. Whoever
-can write it chooses what a caller — a model included — can execute.
-The alternative is an allowlist maintained outside the repository, which
-puts the declaration somewhere the repository's own contributors cannot
-change alongside the build it belongs to. Point Fettler at a tree you
-trust.
+**The whole grammar:** whitespace separates arguments; a double-quoted
+span is one argument, and the quotes are removed; two double quotes
+inside a quoted span are one literal quote; **a backslash is never an
+escape**, so a Windows path is written once rather than doubled. Nothing
+else is special — no single quotes, no variables, no globbing, no
+redirection, no operators — and an unclosed quote is refused. The string
+is split once and the program is launched with the resulting list.
+
+**A task takes no arguments from its caller.** `run` accepts a name and a
+timeout and nothing else; an extra word is refused rather than dropped,
+on the command line and over MCP alike. What runs is exactly what the
+file says, and a variant is a second declared task.
+
+`cwd` is optional and defaults to the top of the default tree; it is
+checked for containment like any other path. **A relative declared path
+is written with forward slashes** — the git convention — and a backslash
+in one is refused, since on macOS and Linux it is an ordinary character
+in a name rather than a separator. An absolute path names one machine
+either way and is left alone.
+
+**That declaration is trusted input, and this says so out loud.**
+Containment guards paths; it does not and cannot guard a command list,
+which is read from a file inside the very root Fettler was pointed at.
+Whoever can write it chooses what a caller — a model included — can
+execute. The alternative is an allowlist maintained outside the
+repository, which puts the declaration somewhere the repository's own
+contributors cannot change alongside the build it belongs to. Point
+Fettler at a tree you trust.
 
 ## What it deliberately does not do
 

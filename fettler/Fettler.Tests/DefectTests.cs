@@ -286,4 +286,140 @@ public sealed class DefectTests
                     + "which would let a model move its own boundary");
         }
     }
+
+    // ---- the MCP front end reads a stream too ----
+
+    /// <summary>
+    /// Found by driving the published binary from Windows PowerShell 5.1,
+    /// which prefixes a byte-order mark to whatever it pipes into a native
+    /// program: initialize came back -32700 and the session never opened
+    /// at all. Every CLI stdin path had taken the mark off since early on
+    /// and this one had not - and the CI step that drives the MCP front
+    /// end runs under pwsh 7, which emits no mark, so nothing ever saw it.
+    /// </summary>
+    [Fact]
+    public async Task ALeadingByteOrderMarkOnTheMcpStreamIsNotContent()
+    {
+        using var box = new Sandbox();
+        var written = new StringWriter();
+        const string initialize =
+            """{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}""";
+
+        using var server = new McpServer(
+            box.Bench, new StringReader("\uFEFF" + initialize + "\n"), written);
+        await server.RunAsync();
+
+        JsonElement reply = JsonDocument.Parse(written.ToString()).RootElement;
+        Assert.False(reply.TryGetProperty("error", out _), written.ToString());
+        Assert.Equal("fettler", reply.GetProperty("result")
+            .GetProperty("serverInfo").GetProperty("name").GetString());
+    }
+
+    // ---- a refused tool call is still a machine-readable answer ----
+
+    /// <summary>
+    /// R3.7 says the complete answer, failures included, is machine
+    /// readable. A refusal was being described a second time on the way
+    /// out, which put "refused: " in front of the JSON document and left
+    /// the caller something that no longer parsed - and the word was the
+    /// same one every time, where the payload's own outcome is the true
+    /// one.
+    /// </summary>
+    [Fact]
+    public async Task ARefusedToolCallCarriesTheJsonAnswerAndNothingInFrontOfIt()
+    {
+        using var box = new Sandbox();
+        using var server = new McpServer(box.Bench, TextReader.Null, TextWriter.Null);
+
+        string? reply = await server.AnswerAsync("""
+            {"jsonrpc":"2.0","id":1,"method":"tools/call",
+             "params":{"name":"read","arguments":{"paths":["absent.txt"]}}}
+            """);
+
+        JsonElement result = JsonDocument.Parse(reply!).RootElement.GetProperty("result");
+
+        Assert.True(result.GetProperty("isError").GetBoolean());
+
+        string text = result.GetProperty("content")[0].GetProperty("text").GetString()!;
+        JsonElement payload = JsonDocument.Parse(text).RootElement;
+
+        Assert.False(payload.GetProperty("ok").GetBoolean());
+        Assert.Equal("not-found", payload.GetProperty("outcome").GetString());
+    }
+
+    // ---- a known flag, and no value after it ----
+
+    /// <summary>
+    /// R3.14 refuses a flag nobody knows. This is the same wrong answer
+    /// with the name spelt right: the value was missing, the switch value
+    /// stood in for it, and `--insert-after 1 --text` wrote the word
+    /// "true" into a source file and answered 0. Windows PowerShell 5.1
+    /// gets here by dropping an empty argument rather than passing it, so
+    /// `--text ''` is the spelling that found it.
+    /// </summary>
+    [Fact]
+    public async Task AKnownFlagWithNoValueIsRefusedRatherThanGuessedAt()
+    {
+        using var box = new Sandbox();
+        box.Write("f.txt", "one\ntwo\n");
+
+        CliResult refused = await Run(box, "edit", "f.txt", "--insert-after", "1", "--text");
+
+        Assert.Equal(ExitCodes.Invalid, refused.ExitCode);
+        Assert.Contains("--text", refused.Stdout + refused.Stderr);
+        Assert.Equal("one\ntwo\n", box.ReadText("f.txt"));
+
+        // And the way to say a deliberately empty one still works, so the
+        // refusal closes a hole rather than a capability.
+        CliResult inserted = await Run(box, "edit", "f.txt", "--insert-after", "1", "--text=");
+
+        Assert.Equal(ExitCodes.Ok, inserted.ExitCode);
+        Assert.Equal("one\n\ntwo\n", box.ReadText("f.txt"));
+    }
+
+    // ---- a task takes nothing from its caller ----
+
+    /// <summary>
+    /// A task is declared whole, so nothing is composed at the call. An
+    /// extra word is refused rather than dropped: dropping it runs
+    /// something other than what the caller asked for and answers 0, which
+    /// is R3.14's wrong answer one argument further in.
+    /// </summary>
+    [Fact]
+    public async Task ATaskTakesNoArgumentsFromItsCaller()
+    {
+        using var box = new Sandbox(Permissions.Full | Permission.Execute);
+        box.Declare(new TaskDecl("hello", ["cmd"], null));
+
+        CliResult refused = await Run(box, "run", "hello", "EXTRA-ARGUMENT");
+
+        Assert.Equal(ExitCodes.Invalid, refused.ExitCode);
+        Assert.Contains("EXTRA-ARGUMENT", refused.Stdout + refused.Stderr);
+    }
+
+    // ---- a name as wide as the column it sits in ----
+
+    /// <summary>
+    /// A fixed-width name column is fixed until something reaches it. A
+    /// name of exactly the column's width leaves no gap, and the name runs
+    /// into the value it introduces as one word — which is unreadable
+    /// rather than merely untidy, since neither half can be picked out.
+    /// </summary>
+    [Fact]
+    public async Task AWideNameStillLeavesAGapBeforeItsValue()
+    {
+        using var box = new Sandbox("requirements");   // twelve characters
+        box.Declare(new TaskDecl("regenerate-all", ["cmd"], null));
+
+        CliResult trees = await Run(box, "roots");
+        CliResult tasks = await Run(box, "tasks");
+
+        Assert.Equal(ExitCodes.Ok, trees.ExitCode);
+        Assert.DoesNotContain("requirements" + box.Extra["requirements"], trees.Stdout);
+        Assert.Contains("requirements  ", trees.Stdout);
+
+        Assert.Equal(ExitCodes.Ok, tasks.ExitCode);
+        Assert.DoesNotContain("regenerate-allcmd", tasks.Stdout);
+        Assert.Contains("regenerate-all  ", tasks.Stdout);
+    }
 }

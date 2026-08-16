@@ -37,11 +37,13 @@ public sealed class BoundaryTests
         using var box = new Sandbox(Permissions.Full | Permission.Execute);
 
         Result<Saved> wrote = await box.Bench.WriteAsync(
-            Tasks.FileName, "probe:\n  echo\n  I-WROTE-THIS-MYSELF\n", overwrite: true);
+            RootsFile.FileName,
+            """{"trees":{"root":{"path":"."}},"tasks":{"probe":{"run":"echo I-WROTE-THIS-MYSELF"}}}""",
+            overwrite: true);
 
-        Assert.False(wrote.IsOk, "Fettler must not be able to write its own task declaration");
+        Assert.False(wrote.IsOk, "Fettler must not be able to write its own declaration");
         Assert.Equal(Outcome.Governed, wrote.Failure!.Outcome);
-        Assert.False(File.Exists(box.Full(Tasks.FileName)), "and nothing may be left behind");
+        Assert.False(File.Exists(box.Full(RootsFile.FileName)), "and nothing may be left behind");
     }
 
     /// <summary>
@@ -52,7 +54,6 @@ public sealed class BoundaryTests
     [Theory]
     [InlineData(".fettler.json")]
     [InlineData(".fettler.local.json")]
-    [InlineData("fettle-tasks")]
     public async Task NoWritingVerbTouchesAFileThatGovernsThisTool(string ruled)
     {
         using var box = new Sandbox();
@@ -97,14 +98,14 @@ public sealed class BoundaryTests
 
     /// <summary>
     /// The rule is by NAME, not by prefix. Refusing a file merely
-    /// resembling one of the three would be superstition rather than a
+    /// resembling one of the two would be superstition rather than a
     /// rule, and would make the tool useless for writing about itself.
     /// </summary>
     [Theory]
-    [InlineData("fettle-tasks.md")]
+    [InlineData(".fettler.json.md")]
     [InlineData(".fettler.json.bak")]
     [InlineData("notes/fettler.json")]
-    [InlineData("fettle-tasks-old")]
+    [InlineData("fettler.local.json")]
     public async Task AFileThatMerelyRESEMBLESARuleFileIsOrdinary(string ordinary)
     {
         using var box = new Sandbox();
@@ -402,7 +403,7 @@ public sealed class BoundaryTests
     public async Task RunNeedsExecuteAndSaysSoWhenItIsNotGranted()
     {
         using var box = new Sandbox(Permissions.Full);
-        box.Write(Tasks.FileName, "hello:\n  cmd\n");
+        box.Declare(new TaskDecl("hello", ["cmd"], null));
 
         Result<TaskRun> ran = await box.Bench.RunAsync("hello", TimeSpan.Zero, CancellationToken.None);
 
@@ -416,7 +417,7 @@ public sealed class BoundaryTests
     public void TasksMayStillBeLISTEDWithoutExecute()
     {
         using var box = new Sandbox(Permissions.Full);
-        box.Write(Tasks.FileName, "hello:\n  cmd\n");
+        box.Declare(new TaskDecl("hello", ["cmd"], null));
 
         Result<IReadOnlyList<TaskDecl>> tasks = box.Bench.TaskList();
 

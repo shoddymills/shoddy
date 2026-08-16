@@ -86,11 +86,20 @@ public sealed class Roots
 
     readonly List<OpenTree> trees;
 
-    Roots(List<OpenTree> trees, string? origin)
+    Roots(List<OpenTree> trees, string? origin, IReadOnlyList<TaskDecl> tasks)
     {
         this.trees = trees;
         Origin = origin ?? "the command line";
+        Tasks = tasks;
     }
+
+    /// <summary>The tasks the configuration declared, in the order it
+    /// declared them.
+    ///
+    /// <para>A boundary built from <c>--root</c> has none, and that falls
+    /// out rather than being enforced: a command line declares no file,
+    /// and a file is the only thing that can say what may run.</para></summary>
+    public IReadOnlyList<TaskDecl> Tasks { get; }
 
     /// <summary>Where these trees were declared, in words, so <c>roots</c>
     /// can say it. A caller looking at a refusal needs to know which
@@ -131,7 +140,8 @@ public sealed class Roots
     /// directory the caller named is one they meant, so a typo is
     /// reported instead of materialised.</para>
     /// </summary>
-    public static Result<Roots> Open(IReadOnlyList<TreeDecl> declared, string? origin = null)
+    public static Result<Roots> Open(
+        IReadOnlyList<TreeDecl> declared, string? origin = null, IReadOnlyList<TaskDecl>? tasks = null)
     {
         if (declared.Count == 0)
             return Result<Roots>.Fail(Outcome.Invalid, NothingDeclared);
@@ -191,7 +201,7 @@ public sealed class Roots
             opened.Add(new OpenTree(d.Name, resolved, new Grant(d.Can, scopes)));
         }
 
-        return Result<Roots>.Ok(new Roots(opened, origin));
+        return Result<Roots>.Ok(new Roots(opened, origin, tasks ?? []));
     }
 
     /// <summary>The refusal when nothing at all was declared. Its own

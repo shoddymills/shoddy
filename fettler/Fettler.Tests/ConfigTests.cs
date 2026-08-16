@@ -423,4 +423,172 @@ public sealed class ConfigTests
         Assert.Contains(RootsFile.FileName, opened.Failure.Message);
         Assert.Contains("--root", opened.Failure.Message);
     }
+
+    // ---- R7: tasks, declared by the file that declares the trees ----
+
+    /// <summary>
+    /// The command line is one string, split once. The awkward argument is
+    /// the point: a space survives because quotes group it, and a double
+    /// quote survives because a doubled one is a literal - and nothing
+    /// between the split and the child re-splits either.
+    /// </summary>
+    [Fact]
+    public void TasksAreReadFromTheFileThatDeclaresTheTrees()
+    {
+        using var tree = new Tree();
+        tree.Config("", """
+            {
+              "trees": { "work": { "path": "." } },
+              "tasks": {
+                "build": { "run": "pwsh -File build.ps1" },
+                "gate":  { "run": "node driver.mjs \"a \"\"quoted\"\" thing\"", "cwd": "src" }
+              }
+            }
+            """);
+
+        Result<RootsFile.Found> found = RootsFile.Discover(tree.Root);
+
+        Assert.True(found.IsOk, found.Failure?.Message);
+        Assert.Equal(2, found.Value.Tasks.Count);
+        Assert.Equal("build", found.Value.Tasks[0].Name);
+        Assert.Equal(["pwsh", "-File", "build.ps1"], found.Value.Tasks[0].Command);
+        Assert.Null(found.Value.Tasks[0].WorkingDirectory);
+        Assert.Equal("""a "quoted" thing""", found.Value.Tasks[1].Command[2]);
+        Assert.Equal("src", found.Value.Tasks[1].WorkingDirectory);
+    }
+
+    /// <summary>
+    /// The whole grammar, stated as assertions: whitespace separates, a
+    /// quoted span is one argument, a doubled quote inside one is a literal
+    /// quote, and <b>a backslash is an ordinary character</b> - which is
+    /// what lets a Windows path be written once rather than doubled.
+    /// </summary>
+    [Theory]
+    [InlineData("node driver.mjs", new[] { "node", "driver.mjs" })]
+    [InlineData("  node   driver.mjs  ", new[] { "node", "driver.mjs" })]
+    [InlineData(@"pwsh -File C:\tools\build.ps1", new[] { "pwsh", "-File", @"C:\tools\build.ps1" })]
+    [InlineData("pwsh -File \"C:\\Program Files\\b.ps1\"", new[] { "pwsh", "-File", @"C:\Program Files\b.ps1" })]
+    [InlineData("say \"\"\"quoted\"\"\"", new[] { "say", "\"quoted\"" })]
+    [InlineData("a \"\" b", new[] { "a", "", "b" })]
+    [InlineData("git commit -m \"one two\"", new[] { "git", "commit", "-m", "one two" })]
+    public void TheCommandGrammarIsWhitespaceAndDoubleQuotesAndNothingElse(string line, string[] expected)
+    {
+        Result<IReadOnlyList<string>> split = Tasks.Split(line);
+
+        Assert.True(split.IsOk, split.Failure?.Message);
+        Assert.Equal(expected, split.Value);
+    }
+
+    [Fact]
+    public void AQuoteThatIsNeverClosedIsRefused()
+    {
+        Result<IReadOnlyList<string>> split = Tasks.Split("pwsh -File \"build.ps1");
+
+        Assert.False(split.IsOk, "an unclosed quote must be refused, not guessed at");
+        Assert.Equal(Outcome.Invalid, split.Failure!.Outcome);
+    }
+
+    /// <summary>
+    /// A relative declared path travels, so it is held to forward slashes;
+    /// an absolute one names a disk and cannot travel whatever it uses, so
+    /// it is left alone.
+    /// </summary>
+    [Fact]
+    public void ARelativeDeclaredPathMustUseForwardSlashes()
+    {
+        using var tree = new Tree();
+        tree.Config("", """{ "trees": { "work": { "path": "..\\sibling" } } }""");
+
+        Result<RootsFile.Found> found = RootsFile.Discover(tree.Root);
+
+        Assert.False(found.IsOk, "a relative path with a backslash does not travel");
+        Assert.Equal(Outcome.Invalid, found.Failure!.Outcome);
+        Assert.Contains("backslash", found.Failure.Message);
+    }
+
+    /// <summary>
+    /// The overlay carries tasks by the same rule it carries trees: a name
+    /// in both is the overlay's entirely, a name only it has is added.
+    ///
+    /// <para>The overlay is gitignored, so a task added here is a command
+    /// that runs and never appears in a diff. That is a property of the
+    /// overlay rather than of tasks, and is equally true of a tree it
+    /// grants.</para>
+    /// </summary>
+    [Fact]
+    public void TheOverlayReplacesATaskByNameAndAddsItsOwn()
+    {
+        using var tree = new Tree();
+        tree.Config("", """
+            {
+              "trees": { "work": { "path": "." } },
+              "tasks": { "build": { "run": "pwsh -File build.ps1" } }
+            }
+            """);
+        tree.Local("", """
+            {
+              "trees": { "work": { "path": "." } },
+              "tasks": {
+                "build": { "run": "pwsh -File build.ps1 --fast" },
+                "mine":  { "run": "node scratch.mjs" }
+              }
+            }
+            """);
+
+        Result<RootsFile.Found> found = RootsFile.Discover(tree.Root);
+
+        Assert.True(found.IsOk, found.Failure?.Message);
+        Assert.Equal(2, found.Value.Tasks.Count);
+        Assert.Equal(["pwsh", "-File", "build.ps1", "--fast"], found.Value.Tasks[0].Command);
+        Assert.Equal("mine", found.Value.Tasks[1].Name);
+    }
+
+    /// <summary>
+    /// A command line declares no file, and a file is the only thing that
+    /// can say what may run. This falls out of <c>--root</c> granting
+    /// <c>list read</c> rather than being enforced separately, and the
+    /// test is here so it stays fallen out.
+    /// </summary>
+    [Fact]
+    public void ARootOnTheCommandLineDeclaresNoTasks()
+    {
+        using var tree = new Tree();
+        tree.Config("", """
+            {
+              "trees": { "work": { "path": "." } },
+              "tasks": { "build": { "run": "pwsh" } }
+            }
+            """);
+
+        Arguments args = Arguments.Parse(["roots", "--root", tree.Root]);
+        Result<Roots> opened = args.DeclaredRoots();
+
+        Assert.True(opened.IsOk, opened.Failure?.Message);
+        Assert.Empty(opened.Value.Tasks);
+    }
+
+    /// <summary>
+    /// A task that is not shaped like a task is refused with the file
+    /// named, never skipped. Skipping one silently answers "no such task"
+    /// to somebody looking straight at it.
+    /// </summary>
+    [Theory]
+    [InlineData("""{"trees":{"w":{"path":"."}},"tasks":{"build":"pwsh"}}""")]
+    [InlineData("""{"trees":{"w":{"path":"."}},"tasks":{"build":{"run":["pwsh"]}}}""")]
+    [InlineData("""{"trees":{"w":{"path":"."}},"tasks":{"build":{"run":""}}}""")]
+    [InlineData("""{"trees":{"w":{"path":"."}},"tasks":{"build":{"run":7}}}""")]
+    [InlineData("""{"trees":{"w":{"path":"."}},"tasks":{"build":{"run":"pwsh \"x"}}}""")]
+    [InlineData("""{"trees":{"w":{"path":"."}},"tasks":{"build":{"run":"pwsh","cwd":""}}}""")]
+    [InlineData("""{"trees":{"w":{"path":"."}},"tasks":{"build":{"run":"pwsh","cwd":"..\\up"}}}""")]
+    public void AMalformedTaskIsRefusedRatherThanSkipped(string json)
+    {
+        using var tree = new Tree();
+        tree.Config("", json);
+
+        Result<RootsFile.Found> found = RootsFile.Discover(tree.Root);
+
+        Assert.False(found.IsOk, "a malformed task must be refused, not skipped");
+        Assert.Equal(Outcome.Invalid, found.Failure!.Outcome);
+        Assert.Contains("build", found.Failure.Message);
+    }
 }

@@ -4,13 +4,19 @@
 //
 // The driver's whole value is four promises: a hung step is killed and
 // NAMED, a failed step prints its tail and its remedy, a passing step is
-// quiet, and receipts follow the commit. A harness whose timeout quietly
-// stopped working would look exactly like a harness that never needed it,
-// so the guarantees are asserted here rather than assumed.
+// quiet, and a receipt follows the SOURCE IT WAS EARNED AGAINST. A harness
+// whose timeout quietly stopped working would look exactly like a harness
+// that never needed it, so the guarantees are asserted here rather than
+// assumed.
+//
+// The last of the four went unasserted while this header claimed it, and it
+// was the one that broke: receipts were keyed to the commit, so `gate
+// --resume` on a dirty tree skipped all 72 steps and reported a pass in a
+// tenth of a second. Section 6 is that promise, tested.
 //
 // Runs in a few seconds and touches nothing in the tree.
 
-import { runStep, printFailure, secs } from './lib.mjs';
+import { runStep, printFailure, secs, treeKey, treeKeyFrom, keyIsClean } from './lib.mjs';
 
 let failures = 0;
 function check(name, cond, detail = '') {
@@ -95,6 +101,44 @@ console.log('\n== release harness self-test\n');
         written.some((l) => l.includes('THE-REMEDY-TEXT')));
     check('and points at the log file',
         written.some((l) => l.includes('selftest-remedy.log')));
+}
+
+// 6. A receipt key follows the SOURCE, not the commit. Computed from its
+//    inputs so the property can be proved without editing a file to do it -
+//    which also means these hold whether the tree is clean or dirty today.
+{
+    const sha = 'a'.repeat(40);
+    const none = () => null;
+    const clean = treeKeyFrom(sha, '', '', none);
+    check('a clean tree keys to the bare commit', clean === sha, `got '${clean}'`);
+    check('and reads as clean', keyIsClean(clean));
+
+    const dirty = treeKeyFrom(sha, ' M src/a.cs', '@@ -1 +1 @@\n-one\n+two', none);
+    check('an uncommitted change keys to something else', dirty !== sha);
+    check('which still names the commit it sits on', dirty.startsWith(sha));
+    check('and does NOT read as clean, so publish cannot take it',
+        !keyIsClean(dirty), `got '${dirty}'`);
+
+    // THE ONE THAT MATTERS. Same commit, same set of modified paths, one
+    // different byte of content: the old SHA-only key called these identical
+    // and skipped every step.
+    const edited = treeKeyFrom(sha, ' M src/a.cs', '@@ -1 +1 @@\n-one\n+three', none);
+    check('editing a tracked file moves the key', edited !== dirty);
+
+    // An untracked file is in no diff at all, so it has to be hashed by hand.
+    const status = '?? src/new.cs';
+    const before = treeKeyFrom(sha, status, '', () => Buffer.from('first'));
+    const after = treeKeyFrom(sha, status, '', () => Buffer.from('second'));
+    check('editing an UNTRACKED file moves the key too', before !== after);
+    check('an unreadable untracked file is survivable, not fatal',
+        typeof treeKeyFrom(sha, status, '', none) === 'string');
+
+    check('the same source twice gives the same key',
+        treeKeyFrom(sha, ' M src/a.cs', 'diff', none) === treeKeyFrom(sha, ' M src/a.cs', 'diff', none));
+
+    // And the real repository agrees with itself, which is what the driver
+    // actually calls.
+    check('the live key is stable between calls', treeKey() === treeKey());
 }
 
 console.log('');

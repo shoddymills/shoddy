@@ -108,15 +108,20 @@ it mid-work.
 
 `gate` is the whole proof: build, machines, the C# conformance suite, every
 `tst/` and machine suite, and all thirteen mills. Roughly fifteen minutes
-cold, and `--resume` skips whatever is already green **for the current
-commit**, so a retry does not repeat the hour that already passed.
+cold, and `--resume` skips whatever is already green **for the tree as it
+stands** — the commit plus anything uncommitted on top of it — so a retry
+does not repeat the hour that already passed.
+
+Edit anything and there is nothing to resume: the tree is different, so the
+gate runs in full. To re-run only what you touched, say so yourself with
+`--only` or `--from` rather than asking `--resume` to guess.
 
 Every step carries a timeout, its own log, and a remedy on failure. A step
 that hangs is killed with its whole process tree and named; nothing is judged
 on anything but its exit code.
 
 ```powershell
-scripts/shoddy.ps1 status                    # what is green for this commit
+scripts/shoddy.ps1 status                    # what is green for the tree as it stands
 scripts/shoddy.ps1 gate --only mill-halifax  # re-run one step
 scripts/shoddy.ps1 gate --from machine-jsontest
 scripts/shoddy.ps1 selftest                  # prove the harness itself

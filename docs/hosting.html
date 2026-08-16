@@ -64,6 +64,30 @@ pipeline, in order:</p>
 orchestrate, so there is no second derivation to drift. The mill is found
 three ways, in order: the <code>ShoddyToolPath</code> property, a local
 .NET tool manifest carrying <code>mill</code>, then PATH.</p>
+<p><b>Two configurations building one mill want
+<code>ShoddyBinScope</code>.</b> Woven output lands in <code>bin/</code>
+beside the mill, at the same path in every configuration ΓÇö which is fine
+until a lane builds Debug and Release back to back. A test host from the
+first still holds its woven DLLs <em>loaded</em>, and Windows refuses to
+rename a loaded assembly until its holder exits, so the second build dies
+moving a <code>Shoddy.Machines.*.dll</code> into place. No lock helps: the
+holder is not competing for the file, it is using it. Set
+<code>&lt;ShoddyBinScope&gt;cfg-$(Configuration)&lt;/ShoddyBinScope&gt;</code>
+and each configuration weaves into its own subdirectory of that
+<code>bin/</code> instead.</p>
+<ul>
+<li><b>Empty by default</b>, so a build that does not set it writes exactly
+where it always did.</li>
+<li><b>Prefix the value.</b> <code>bin/debug/</code> already means the
+instrumented weave rather than a configuration, so a bare
+<code>$(Configuration)</code> would collide with it.</li>
+<li><b>A scope is a plain name.</b> One carrying a separator, a dot or a
+colon is ignored rather than cleaned up ΓÇö a half-sanitized value would put
+build output somewhere nobody named.</li>
+<li><b>It reaches the toolchain as <code>SHODDY_BIN_SCOPE</code></b>, passed
+to every mill process the targets start, so the plan that predicts output
+paths and the weave that writes them cannot disagree.</li>
+</ul>
 <p><strong>The manifest is the contract.</strong> Each mill folder carries a
 <code>mill.manifest</code> (schema: <code>docs/schemas/mill.manifest.json</code>)
 declaring its name, core, shell, modes, capabilities, and machine closure —

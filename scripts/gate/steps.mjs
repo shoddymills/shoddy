@@ -453,19 +453,23 @@ export function gateSteps({ splitDotnetTest }) {
         steps.push({
             id: 'maui-release', title: 'the MAUI host lane builds for release', timeoutSec: 1800,
             cmd: ps('hosts/maui/build.ps1', 'release'),
-            // OBSERVED FLAKE, WRITTEN DOWN RATHER THAN SLEPT THROUGH. This
-            // step failed once with UnauthorizedAccessException from
-            // Weaver.WeaveMachine moving Shoddy.Machines.Halifax-core.dll,
-            // and passed on an immediate retry with nothing changed. A mill
-            // writes its machine DLLs to mills/<name>/bin/, which is the
-            // SAME path in Debug and Release - so a Release build starting
-            // while the previous step's test host is still exiting contends
-            // for one file. A sleep would hide it; naming it means the next
-            // person reads a known race instead of hunting a phantom.
+            // THE FLAKE THIS CARRIED IS FIXED, and the shape of it is worth
+            // keeping. The step failed intermittently with
+            // UnauthorizedAccessException from Weaver.WeaveMachine moving
+            // Shoddy.Machines.Halifax-core.dll into place: every
+            // configuration wove to the same mills/<name>/bin, so a Release
+            // build starting while the previous step's test host was still
+            // exiting tried to rename a DLL that process had LOADED - and
+            // Windows holds a loaded assembly against rename until its
+            // holder exits. Neither existing guard could help: MillGate
+            // serializes writers, and weave-beside-then-rename protects
+            // readers taking a metadata reference, but this holder was
+            // neither. The lane now sets ShoddyBinScope, so Debug and
+            // Release weave into their own subdirectories and never meet.
             remedy: 'Run it directly: hosts/maui/build.ps1 release. "Access to the path '
-                + 'is denied" on a Shoddy.Machines.*.dll is the known race: mills/<name>/bin '
-                + 'is shared across configurations, and a test host from the previous step '
-                + 'may still hold it. Re-run this step alone to confirm before believing it.',
+                + 'is denied" on a Shoddy.Machines.*.dll would mean two configurations are '
+                + 'sharing an output path again: check ShoddyBinScope is set in this lane\'s '
+                + 'csproj and reaching the mill through Shoddy.Build.targets.',
         });
         steps.push({
             id: 'maui-closure', title: 'the reckoner release carries no perch', timeoutSec: 120,

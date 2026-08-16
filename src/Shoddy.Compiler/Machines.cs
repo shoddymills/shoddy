@@ -61,6 +61,60 @@ public sealed class MachineSet
     /// compiled DLL — build output, gitignored via the global bin/ rule.</summary>
     public const string BinDir = "bin";
 
+    /// <summary>
+    /// A scope inside <see cref="BinDir"/> that keeps one build
+    /// configuration's woven output away from another's. Empty unless
+    /// SHODDY_BIN_SCOPE says otherwise, so a plain `mill` run writes
+    /// exactly where it always did.
+    ///
+    /// <para><b>Why a shared bin/ is not merely untidy.</b> Every
+    /// configuration wove to the same mills/&lt;name&gt;/bin DLL, and the
+    /// two obvious races were already closed: <c>MillGate</c> is a named
+    /// mutex and so serializes writers ACROSS processes, and
+    /// <c>Weaver.WeaveMachine</c> weaves beside then renames, so a
+    /// compiler READING the previous weave sees one whole file or the
+    /// other.</para>
+    ///
+    /// <para>Neither touches the case that actually bit: a process that
+    /// has LOADED the assembly. Windows holds a loaded assembly's file
+    /// against rename and delete until that process exits, so a Release
+    /// build starting while the previous step's test host is still
+    /// shutting down fails the final File.Move with
+    /// UnauthorizedAccessException. No lock can fix it, because the
+    /// holder is not contending for the file - it is using it, and it is
+    /// entitled to. The configurations have to stop sharing the path.</para>
+    ///
+    /// <para>Read from the environment because ShoddyWeave drives the
+    /// mill as a separate process per build: MSBuild knows the
+    /// configuration and the mill cannot be told any other way.</para>
+    /// </summary>
+    public static readonly string BinScope = ScopeFromEnvironment();
+
+    /// <summary>A scope is a plain name. Anything carrying a separator,
+    /// a dot or a colon is IGNORED rather than cleaned up, because a
+    /// half-sanitized value would put build output somewhere nobody
+    /// named - and writing to the shared path is the behaviour this has
+    /// always had, so falling back to it is safe.</summary>
+    static string ScopeFromEnvironment()
+    {
+        string raw = Environment.GetEnvironmentVariable("SHODDY_BIN_SCOPE")?.Trim() ?? "";
+        if (raw.Length == 0) return "";
+        foreach (char c in raw)
+            if (!char.IsAsciiLetterOrDigit(c) && c != '-' && c != '_')
+                return "";
+        return raw.ToLowerInvariant();
+    }
+
+    /// <summary>The directory a machine's compiled DLL lives in: bin/
+    /// beside the source, and the configuration's own subdirectory of it
+    /// when a scope is set.</summary>
+    static string BinFor(string sbPath)
+    {
+        string bin = Path.Combine(
+            Path.GetDirectoryName(Path.GetFullPath(sbPath))!, BinDir);
+        return BinScope.Length == 0 ? bin : Path.Combine(bin, BinScope);
+    }
+
     public readonly List<MachineInfo> Machines = new();
     readonly HashSet<string> loaded = new();
 
@@ -145,16 +199,14 @@ public sealed class MachineSet
         assemblyName.Replace("Shoddy.Machines.", "").ToLowerInvariant() + ".shoddy";
 
     public static string DllPathFor(string sbPath) =>
-        Path.Combine(Path.GetDirectoryName(Path.GetFullPath(sbPath))!,
-                     BinDir,
+        Path.Combine(BinFor(sbPath),
                      $"Shoddy.Machines.{AssemblyStemFor(sbPath)}.dll");
 
     /// <summary>The instrumented (debug) weave of the same machine:
     /// bin/debug/, same file name — the assembly's identity never forks,
     /// only which artifact a configuration references.</summary>
     public static string DebugDllPathFor(string sbPath) =>
-        Path.Combine(Path.GetDirectoryName(Path.GetFullPath(sbPath))!,
-                     BinDir, "debug",
+        Path.Combine(BinFor(sbPath), "debug",
                      $"Shoddy.Machines.{AssemblyStemFor(sbPath)}.dll");
 
     /// <summary>The Lexer's externalInclude hook: true = a machine DLL
@@ -220,6 +272,14 @@ public sealed class MachineSet
     {
         foreach (string lib in Shoddy.Devil.Lexer.LibDirs())
         {
+            // The configuration's own copy first, then the shared one: a
+            // scoped build that has not rebuilt every machine still
+            // resolves against the library rather than failing to find it.
+            if (BinScope.Length > 0)
+            {
+                string scoped = Path.Combine(lib, BinDir, BinScope, assemblyName + ".dll");
+                if (File.Exists(scoped)) return Path.GetFullPath(scoped);
+            }
             string inLib = Path.Combine(lib, BinDir, assemblyName + ".dll");
             if (File.Exists(inLib)) return Path.GetFullPath(inLib);
         }

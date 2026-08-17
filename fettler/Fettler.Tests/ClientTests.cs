@@ -220,15 +220,61 @@ public sealed class ClientTests
         Assert.Contains("an option", f.Message);
     }
 
+    /// <summary>The six replaced tools alone are not the whole list: a
+    /// shell left open is a route round the boundary, and
+    /// <c>node x.js</c> takes it without being a writing command.</summary>
     [Fact]
-    public void DenyingThemAllLeavesNothingToReport()
+    public void AnOpenShellIsReportedEvenWhenEveryReplacedToolIsDenied()
     {
         using var box = new Fixture();
         box.Put(Places.ClaudeCode, Level.Repo, Purpose.Policy, """
             {"permissions":{"deny":["Read","Write","Edit","NotebookEdit","Grep","Glob"]}}
             """);
 
+        Finding f = Examine(box).Findings.First(x => x.Check == "2.8");
+
+        Assert.Contains("Bash", f.Message);
+        Assert.Contains("PowerShell", f.Message);
+    }
+
+    [Fact]
+    public void DenyingThemAllLeavesNothingToReport()
+    {
+        using var box = new Fixture();
+        box.Put(Places.ClaudeCode, Level.Repo, Purpose.Policy, """
+            {"permissions":{"deny":["Read","Write","Edit","NotebookEdit","Grep","Glob","Bash","PowerShell"]}}
+            """);
+
         Assert.DoesNotContain(Examine(box).Findings, f => f.Check is "2.7" or "2.8");
+    }
+
+    /// <summary>B.17 must not fire on the configuration this tool now
+    /// writes. Denying the shell and allowing back a named command is the
+    /// intended shape; calling it a conflict would name "remove the
+    /// allow" as the fix, which is the one change that breaks it.</summary>
+    [Fact]
+    public void ANarrowedShellAllowBesideTheShellDenyIsNotAConflict()
+    {
+        using var box = new Fixture();
+        box.Put(Places.ClaudeCode, Level.Repo, Purpose.Policy, """
+            {"permissions":{"allow":["Bash(git status:*)"],"deny":["Read","Write","Edit","NotebookEdit","Grep","Glob","Bash","PowerShell"]}}
+            """);
+
+        Assert.DoesNotContain(Examine(box).Findings, f => f.Check == "B.17");
+    }
+
+    /// <summary>The exemption is for the shell and stops there: a
+    /// narrowed allow on Read is still a hole, because reading is what
+    /// Fettler does.</summary>
+    [Fact]
+    public void ANarrowedAllowOnAReplacedToolIsStillAConflict()
+    {
+        using var box = new Fixture();
+        box.Put(Places.ClaudeCode, Level.Repo, Purpose.Policy, """
+            {"permissions":{"allow":["Read(//c/x/**)"],"deny":["Read"]}}
+            """);
+
+        Assert.Contains(Examine(box).Findings, f => f.Check == "B.17");
     }
 
     /// <summary>
@@ -496,7 +542,7 @@ public sealed class ClientTests
             .RootElement.GetProperty("permissions").GetProperty("deny");
 
         string[] denied = [.. deny.EnumerateArray().Select(d => d.GetString()!)];
-        foreach (string tool in Doctor.Replaced) Assert.Contains(tool, denied);
+        foreach (string tool in Doctor.Denied) Assert.Contains(tool, denied);
     }
 
     /// <summary>--global only OFFERS: changing how the assistant may work

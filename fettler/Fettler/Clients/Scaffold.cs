@@ -96,6 +96,17 @@ public static class Scaffold
             if (!config.IsOk) return config.Carry<Scaffolding>();
             if (config.Value is { } made) changes.Add(made);
         }
+        else
+        {
+            // A global run configures the machine and declares no tree,
+            // so it leaves the one file every verb needs still missing.
+            // Saying so here is the difference between a first-time setup
+            // that works and one that reports success and then refuses
+            // every command afterwards.
+            notes.Add("this is the machine level and declares no tree; each project still needs its "
+                + "own .fettler.json - run `fettle setup " + options.Client + " --local` in the tree, "
+                + "which creates one declaring that folder as 'work'");
+        }
 
         foreach (Place place in places)
         {
@@ -293,7 +304,7 @@ public static class Scaffold
         var held = new HashSet<string>(StringComparer.Ordinal);
         foreach (JsonNode? entry in deny) if (entry is not null) held.Add(entry.ToString());
 
-        var adding = Doctor.Replaced.Where(tool => !held.Contains(tool)).ToList();
+        var adding = Doctor.Denied.Where(tool => !held.Contains(tool)).ToList();
 
         // Named, never deleted. They are the user's own configuration,
         // and a tool that quietly removes them has done exactly what this
@@ -305,6 +316,10 @@ public static class Scaffold
             {
                 if (entry is null) continue;
                 string rule = entry.ToString();
+                // Doctor.Replaced, not Doctor.Denied: a narrowed shell
+                // allow beside the shell deny written below is the shape
+                // this tool is asking for, so naming it as a conflict
+                // would be telling the user to undo the fix.
                 foreach (string tool in Doctor.Replaced)
                     if (rule == tool || rule.StartsWith(tool + "(", StringComparison.Ordinal))
                         conflicting.Add(rule);
@@ -315,28 +330,45 @@ public static class Scaffold
                     + $"are LEFT ALONE because they are yours to remove: {string.Join(", ", conflicting)}");
         }
 
-        if (adding.Count == 0) return Result<Change?>.Ok(null);
-
-        if (!write)
-        {
+        if (adding.Count > 0 && !write)
             notes.Add($"not written: {string.Join(", ", adding)} would be denied in {place.Path}. "
                 + "Changing how the assistant works in every project needs --deny said out loud");
-            return Result<Change?>.Ok(null);
-        }
 
-        foreach (string tool in adding) deny.Add(tool);
+        bool denying = write && adding.Count > 0;
+        if (denying) foreach (string tool in adding) deny.Add(tool);
 
-        Result<Change?> written = Save(machine, place.Path, root, options.DryRun,
-            $"deny the built-in {string.Join(", ", adding)}");
-        if (!written.IsOk) return written;
+        // Denying the shell stops the next build, test run and git
+        // command, and the allow list that restores them cannot be
+        // generated from here - which project needs which command is not
+        // knowable. So say it, rather than leaving somebody to discover
+        // it at the first command after a run that reported success.
+        if (denying && adding.Any(tool => Doctor.Shell.Contains(tool, StringComparer.Ordinal)))
+            notes.Add("the shell is denied too, so every command through it now stops. Allow back "
+                + "only what this project needs - \"allow\": [\"Bash(git status:*)\"] and the like "
+                + "- or declare them as tasks in .fettler.json, which run inside the boundary. "
+                + "Never allow a command that writes files");
 
-        if (options.Hooks && options.Client == Places.ClaudeCode)
+        // The hook is asked for by --hooks and by nothing else, so it must
+        // not depend on whether the deny list happened to need changing.
+        // It used to sit after an early return taken whenever the denies
+        // were ALREADY complete, which made --hooks a silent no-op on
+        // every re-run - exactly what the documented order asks for - and
+        // unreachable at --global without --deny. It reported success and
+        // installed nothing, which is the worst of the three outcomes.
+        bool hooking = options.Hooks
+            && options.Client == Places.ClaudeCode
+            && AddHook(root);
+
+        if (!denying && !hooking) return Result<Change?>.Ok(null);
+
+        string what = (denying, hooking) switch
         {
-            Result<Change?> hooked = Hook(machine, place, root, options);
-            if (!hooked.IsOk) return hooked;
-        }
+            (true, true) => $"deny the built-in {string.Join(", ", adding)}, and add fettle doctor --hook to SessionStart",
+            (true, false) => $"deny the built-in {string.Join(", ", adding)}",
+            _ => "add fettle doctor --hook to SessionStart (appended, nothing replaced)",
+        };
 
-        return written;
+        return Save(machine, place.Path, root, options.DryRun, what);
     }
 
     // ---- the session hook ----
@@ -354,7 +386,7 @@ public static class Scaffold
     /// <para><b>Bounded, and always exit 0.</b> A diagnostic that can stop
     /// a session from starting will be removed within a week.</para>
     /// </summary>
-    static Result<Change?> Hook(Machine machine, Place place, JsonObject root, Options options)
+    static bool AddHook(JsonObject root)
     {
         string command = Environment.ProcessPath ?? "fettle";
 
@@ -372,7 +404,7 @@ public static class Scaffold
 
         foreach (JsonNode? entry in sessions)
             if (entry?.ToJsonString().Contains("doctor", StringComparison.Ordinal) == true)
-                return Result<Change?>.Ok(null);
+                return false;
 
         sessions.Add(new JsonObject
         {
@@ -384,8 +416,7 @@ public static class Scaffold
             }),
         });
 
-        return Save(machine, place.Path, root, options.DryRun,
-            "add fettle doctor --hook to SessionStart (appended, nothing replaced)");
+        return true;
     }
 
     // ---- the tree's own configuration ----

@@ -53,10 +53,10 @@ is Node.
 scripts/shoddy.ps1 doctor               # is this machine fit to release?
 scripts/shoddy.ps1 preflight            # dirty tree tolerated — run it any day
 scripts/shoddy.ps1 preflight 1.0.0      # strict: clean tree, notes present, tag free
-scripts/shoddy.ps1 gate --resume        # skip what is already green for this commit
+scripts/shoddy.ps1 gate --resume        # skip what is already green for this tree
 scripts/shoddy.ps1 gate --only mill-halifax
 scripts/shoddy.ps1 gate --from machine-jsontest
-scripts/shoddy.ps1 status               # what is green for the current commit
+scripts/shoddy.ps1 status               # what is green for the tree as it stands
 scripts/shoddy.ps1 clean                # kill stale toolchain processes, remove litter
 scripts/shoddy.ps1 selftest             # prove the harness still keeps its promises
 ```
@@ -67,10 +67,31 @@ a step that fails prints its last 25 lines and a sentence saying what to do
 next. Nothing is judged on anything but its exit code, so a native program
 writing to stderr can never fail a run that succeeded.
 
-**Receipts are keyed to the commit SHA**, in `.release-state/` (gitignored).
-`gate --resume` skips steps already green for that exact commit — a retry does
-not re-run the hour of work that already passed. A timestamp would not know
-you had edited a file; a SHA does.
+**The gate covers all four lanes.** Core, fettler, the MCP host and the MAUI
+host, plus the harness's own self-test and both shipped archives, driven from
+outside the repository. It did not always: three of the four test projects
+were proved only by a path-filtered workflow, so a change outside their paths
+— `Directory.Build.props`, which sets the version every one of these binaries
+reports, matched none of them — ran no suite at all. The workflows remain as
+the backstop; the gate is no longer a claim about one quarter of the repo.
+
+**Receipts are keyed to the working tree**, in `.release-state/` (gitignored) —
+the commit SHA when the tree is clean, and the SHA plus a digest of everything
+uncommitted when it is not. `gate --resume` skips steps already green for that
+exact source, so a retry does not re-run the hour of work that already passed.
+
+This used to key on the SHA alone, on the reasoning that a timestamp does not
+know you edited a file. True, and one step short: neither does a SHA. On a
+dirty tree `--resume` skipped all 72 steps and printed a pass in a tenth of a
+second, describing a tree from before the morning's work. `publish` was never
+at risk — it demands a clean tree and a receipt for the exact commit it will
+tag — but a maintainer reading that pass was being told something false.
+
+**After an edit, `--resume` has nothing to resume and runs the lot.** That is
+the cost, and it is the point. When you know only one thing changed, say so
+yourself with `--only` or `--from`: that is a caller's claim, made by someone
+who can be right about it. `--resume` is the harness's own claim, and it may
+only make claims it can prove.
 
 **`shoddy clean` is deliberate, and the gate never does it for you.** It shuts
 the build servers down and clears orphaned test hosts, which is what you want
@@ -321,7 +342,25 @@ For a local, untagged build the same step is `./build.ps1 install` (or the
 `.sh` twin): it installs the `.vsix` for whatever version `package.json`
 names, and refuses if that exact package hasn't been built yet.
 
+### The two binaries attached beside it
+
+The release also carries **sparky** and **fettle**, one self-contained
+executable per OS. Smoke-test whichever you changed:
+
+```sh
+tar -xzf fettle-X.Y.Z-linux-x64.tar.gz
+./fettle --version
+./fettle --root repo=/some/checkout roots     # the boundary it will enforce
+```
+
+**Check the unix archives came from the Linux runner.** The execute bit
+only survives a tar made on a filesystem that has one, so an archive cut
+on Windows carries a `fettle` that will not run. `release.yml` asserts
+this on every release, and the check is there because Fettler's own R6.9
+is the clause about that bit — shipping it wrong would be a poor joke.
+
 ## 5 — Website
+
 
 Nothing to do. Merges that touch `docs/**` trigger the
 [Deploy docs to Pages](.github/workflows/pages.yml) workflow, which regenerates the

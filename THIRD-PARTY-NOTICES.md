@@ -14,11 +14,19 @@ remain under their own licenses and the copyrights of their respective owners.
 | `Silk.NET.OpenAL.Soft.Native` | see **OpenAL Soft** below | mill — bundled native audio library |
 | `xunit`, `xunit.runner.visualstudio` | Apache-2.0 / MIT | tests only (not distributed) |
 | `Microsoft.NET.Test.Sdk`, `coverlet.collector` | MIT | tests only (not distributed) |
+| `PdfPig` (UglyToad.PdfPig) | Apache-2.0 | **`fettle` only** — reading PDFs as text; see [PdfPig](#pdfpig-fettle-only) below |
 
-Everything above except the test-only rows is **redistributed in binary form**
-inside the packaged VS Code extension (`vscode-shoddy-*.vsix`), which carries a
-copy of the mill under `extension/mill/`. This notices file ships in that
-package for the same reason.
+Everything above **except the test-only rows and PdfPig** is redistributed in
+binary form inside the packaged VS Code extension (`vscode-shoddy-*.vsix`),
+which carries a copy of the mill under `extension/mill/`. This notices file
+ships in that package for the same reason.
+
+**PdfPig is the exception, and the only one.** It is bundled into `fettle`
+and into nothing else — not the mill, not the machines, not the extension,
+not sparky. Shoddy itself has no PDF component and no dependency on one,
+direct or transitive. `fettle` is distributed separately, as its own archive
+per operating system, carrying its own copies of [`NOTICE`](NOTICE) and
+[`LICENSE`](LICENSE).
 
 ### OpenAL Soft (LGPL)
 
@@ -33,6 +41,34 @@ https://github.com/kcat/openal-soft.
 
 The Silk.NET windowing native dependency (GLFW) is licensed under the
 **zlib/libpng license**. See https://www.glfw.org/license.html.
+
+### PdfPig (`fettle` only)
+
+`fettle`, the Fettler executable, bundles **PdfPig** (`UglyToad.PdfPig`,
+Apache-2.0, https://github.com/UglyToad/PdfPig) so that it can read PDF
+documents as text. It is there because Fettler is meant to be the only file
+reader an assistant has: with the built-in reader denied, a developer holding
+a PDF of the requirements would otherwise be unable to open it at all.
+
+- **Nothing else here uses it.** The mill, the machines, the VS Code
+  extension and sparky have no PDF component and no dependency on one,
+  direct or transitive. `fettler/` has no `ProjectReference` in either
+  direction, so the dependency cannot leak into them.
+- **It is distributed separately.** A release attaches `fettle-*.zip` and
+  `fettle-*.tar.gz` as their own downloads, beside the `.vsix` and sparky
+  and independent of both. Installing Shoddy does not install `fettle`, and
+  `fettle` needs none of Shoddy to run.
+- **The obligation travels with the binary.** Apache-2.0 asks the licence
+  and any notice to reach whoever receives the software, so every `fettle`
+  archive carries [`NOTICE`](NOTICE) — which reproduces the Apache-2.0 terms
+  and attributes PdfPig — and [`LICENSE`](LICENSE), Shoddy's own MIT terms.
+  A notice that stays in the repository has not reached somebody who
+  downloaded a release.
+- **The allowlist is enforced, not remembered.** `fettler/Fettler/Fettler.csproj`
+  names PdfPig as the only permitted package, `FrontEndTests` reads the built
+  assemblies and lists all seven PdfPig assemblies by name, and
+  `.github/workflows/fettler.yml` fails the build on any other package
+  reference.
 
 ## Included and adapted works
 

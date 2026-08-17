@@ -20,6 +20,7 @@
 // child runs, which a synchronous wait cannot do.
 
 import { spawn, spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import {
     appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync,
     rmSync, statSync, writeFileSync,
@@ -166,11 +167,76 @@ export function branchName() { return git('rev-parse', '--abbrev-ref', 'HEAD').o
 
 // ---- receipts ----------------------------------------------------------
 //
-// Keyed to the commit SHA, never to a timestamp: a timestamp does not know
-// you edited a file. `gate --resume` skips steps already green for THIS
-// commit, and `publish` refuses outright without a green gate for the exact
-// SHA it is about to tag. That is what stops a release discovering a problem
-// at tag time, when the tag is already public and the fix has to go forward.
+// A receipt says "these steps passed against THIS SOURCE". So the key has to
+// name the source, and the commit SHA alone does not: it names the last thing
+// you committed, not the thing on disk that the steps actually ran against.
+//
+// This file used to key on the SHA and say, right here, that a timestamp
+// "does not know you edited a file". Correct, and one step short - neither
+// does the SHA. `gate --resume` on a dirty tree skipped all 72 steps and
+// printed a pass in a tenth of a second, describing a tree from before the
+// morning's work. It is a lie a proof harness cannot afford to tell.
+//
+// So: the key is the SHA when the tree is clean, and the SHA plus a digest of
+// everything that differs from it when it is not.
+//
+//   clean tree   ->  <sha>                     unchanged from before, which
+//                                              is what keeps `publish` and
+//                                              every existing receipt working
+//   dirty tree   ->  <sha>+<12 hex of digest>  its own key; edit anything and
+//                                              it moves, so resume re-runs
+//
+// The cost is real and is the point: after an edit, `--resume` has nothing to
+// resume and runs the lot. When you know only one thing changed, say so
+// yourself with `--only` or `--from`. That is a caller's claim, made by
+// someone who can be right about it; `--resume` is the harness's own claim,
+// and it may only make claims it can prove.
+//
+// `.release-state/` is gitignored, so the receipts cannot appear in the
+// status that keys them - a fingerprint that changed every time it was
+// written would invalidate itself on every step.
+
+export function treeKey() {
+    const sha = headSha();
+    // -uall lists untracked FILES rather than their directories, so a new
+    // file cannot hide behind an unchanged folder name.
+    const status = git('status', '--porcelain', '--untracked-files=all').out;
+    // Tracked edits: the content, not merely the fact that a path is modified.
+    const diff = status ? git('diff', 'HEAD').out : '';
+    return treeKeyFrom(sha, status, diff, (rel) => {
+        try { return readFileSync(join(REPO, rel)); } catch { return null; }
+    });
+}
+
+// The key computed from its inputs rather than from the repository, so the
+// self-test can prove the property that matters - CHANGE ANYTHING AND THE KEY
+// MOVES - without editing a file to do it. A guarantee this file cannot
+// demonstrate is a guarantee it is only asserting.
+export function treeKeyFrom(sha, status, diff, readUntracked) {
+    if (!status) return sha;
+
+    const h = createHash('sha256');
+    h.update(status).update('\0').update(diff).update('\0');
+    // Untracked files appear in no diff, so hash them by hand. Ignored paths
+    // are absent from --porcelain, which keeps build output out of this.
+    for (const line of status.split('\n')) {
+        if (!line.startsWith('?? ')) continue;
+        // A path git had to C-quote will not round-trip through this strip,
+        // and neither will a file deleted between the status and the read.
+        // The path itself is in the digest regardless, so a NEW file always
+        // moves the key; only an edit to an oddly-named untracked file could
+        // slip past, which is a far smaller hole than the one being closed.
+        const rel = line.slice(3).trim().replace(/^"(.*)"$/, '$1');
+        h.update(rel).update('\0');
+        const bytes = readUntracked(rel);
+        if (bytes) h.update(bytes);
+    }
+    return `${sha}+${h.digest('hex').slice(0, 12)}`;
+}
+
+// True when the key names a commit rather than a commit plus uncommitted
+// work - which is the only state `publish` will tag.
+export function keyIsClean(key) { return !key.includes('+'); }
 
 const receiptFile = () => join(STATE, 'receipts.json');
 
@@ -178,20 +244,20 @@ export function readReceipts() {
     try { return JSON.parse(readFileSync(receiptFile(), 'utf8')); } catch { return {}; }
 }
 
-export function recordStep(sha, stage, id, status, durationMs) {
+export function recordStep(key, stage, id, status, durationMs) {
     mkdirSync(STATE, { recursive: true });
     const all = readReceipts();
-    all[sha] ??= {};
-    all[sha][id] = { stage, status, durationMs, at: new Date().toISOString() };
+    all[key] ??= {};
+    all[key][id] = { stage, status, durationMs, at: new Date().toISOString() };
     writeFileSync(receiptFile(), JSON.stringify(all, null, 2));
 }
 
-export function stepIsGreen(sha, id) {
-    return readReceipts()[sha]?.[id]?.status === 'pass';
+export function stepIsGreen(key, id) {
+    return readReceipts()[key]?.[id]?.status === 'pass';
 }
 
-export function stageIsGreen(sha, ids) {
-    const r = readReceipts()[sha] ?? {};
+export function stageIsGreen(key, ids) {
+    const r = readReceipts()[key] ?? {};
     return ids.length > 0 && ids.every((id) => r[id]?.status === 'pass');
 }
 

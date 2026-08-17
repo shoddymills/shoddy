@@ -16,7 +16,9 @@
 //                         the C# suite is sensitive to. Use when wedged.
 //
 // Flags
-//   --resume        skip steps already green for THIS commit
+//   --resume        skip steps already green for THIS TREE - the commit plus
+//                   whatever is uncommitted on top of it. Edit anything and
+//                   there is nothing to resume; use --only or --from instead.
 //   --only <id>     run one step by id
 //   --from <id>     start at that step and continue
 //   --split-tests   run the C# suite as two filtered passes. NOT the default:
@@ -34,9 +36,10 @@
 //
 // There are two rules worth knowing before reading the code:
 //
-//   Receipts are keyed to the COMMIT SHA. `gate --resume` skips what is
-//   already green for that exact commit, and `publish` REFUSES without a
-//   green gate for the SHA it is about to tag. A release therefore cannot
+//   Receipts are keyed to the WORKING TREE - the commit, plus a digest of
+//   anything uncommitted on top of it. `gate --resume` skips what is already
+//   green for that exact source, and `publish` REFUSES without a green gate
+//   for the clean commit it is about to tag. A release therefore cannot
 //   discover a problem at tag time, when the tag is already public.
 //
 //   Nothing here judges a native program on anything but its exit code.
@@ -45,9 +48,9 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import {
-    REPO, STATE, bad, branchName, git, head, headSha, info, killStaleToolchain,
-    mb, ok, printFailure, readReceipts, recordStep, removeLitter, runStep,
-    secs, stageIsGreen, stepIsGreen, warn,
+    REPO, STATE, bad, branchName, git, head, headSha, info, keyIsClean,
+    killStaleToolchain, mb, ok, printFailure, readReceipts, recordStep,
+    removeLitter, runStep, secs, stageIsGreen, stepIsGreen, treeKey, warn,
 } from './lib.mjs';
 import { gateSteps, packageSteps, preflightSteps } from './steps.mjs';
 
@@ -96,7 +99,18 @@ const opts = {
 // an ordinary working day the tree is dirty - a gate you cannot run while
 // working is a gate you run once, at the end, which is the habit this whole
 // driver exists to break.
-function checkGitState({ strict }) {
+// The two files a release BUMPS on its way past. `package` rewrites them -
+// vsce rewrites package.json, and shoddy-release rewrites the props - and
+// then `shoddy-release` stages and commits exactly these two. So at publish
+// time they are the release's own output, not somebody's uncommitted work.
+//
+// Without this, `shoddy release <version>` could not complete at all: its
+// own package stage dirtied the tree that its own publish stage then
+// refused. Preflight does NOT allow them, and must not - it runs before
+// package, where a modified package.json really is a person's edit.
+const RELEASE_BUMPS = ['vscode-shoddy/package.json', 'Directory.Build.props'];
+
+function checkGitState({ strict, allow = [] }) {
     const problems = [], notes = [];
     const dirty = git('status', '--porcelain').out;
     if (dirty) {
@@ -107,7 +121,9 @@ function checkGitState({ strict }) {
             problems.push(`untracked build output in the tree (${untrackedBuild.length} file(s)) `
                 + '- run `shoddy clean`, or a git add -A sweeps it into a commit');
         }
-        const real = lines.filter((l) => !l.startsWith('??'));
+        const real = lines
+            .filter((l) => !l.startsWith('??'))
+            .filter((l) => !allow.includes(l.slice(3).trim().replace(/\\/g, '/')));
         if (real.length) {
             const msg = `${real.length} uncommitted change(s)`;
             if (strict) problems.push(`${msg} - commit or stash before releasing`);
@@ -186,6 +202,19 @@ function checkDoctor() {
         info(`dotnet ${dotnet}   node ${node}   global.json wants ${wanted}`);
     } catch { /* no global.json is not our problem to invent */ }
 
+    // The gate now runs the MAUI host lane, which needs a workload rather
+    // than just an SDK. Asked here so the answer arrives in three seconds
+    // rather than twenty minutes into a gate.
+    if (process.platform === 'win32') {
+        const r = spawnSync('dotnet', ['workload', 'list'], { encoding: 'utf8' });
+        if (!/maui-windows/.test(r.stdout ?? '')) {
+            problems.push('the maui-windows workload is not installed - the gate runs the '
+                + 'MAUI host lane. Install it: dotnet workload install maui-windows');
+        } else {
+            info('maui-windows workload present');
+        }
+    }
+
     const free = freeSpaceBytes(REPO);
     if (free !== null) {
         info(`free disk: ${mb(free)}`);
@@ -214,42 +243,57 @@ function freeSpaceBytes(p) {
 
 // ---- running a list of steps -------------------------------------------
 
-async function runSteps(steps, stage, sha) {
+async function runSteps(steps, stage, key) {
     let list = steps;
-    if (opts.only) list = steps.filter((s) => s.id === opts.only);
+    // REFUSED, NOT RECONCILED. --from used to overwrite the list --only had
+    // just built, so `--only x --from y` ran everything from y and silently
+    // ignored --only entirely: the caller asked for one step and got sixty,
+    // with nothing said. Two contradictory instructions are a question the
+    // tool cannot answer, and guessing at one of them is the worst of the
+    // available answers.
+    if (opts.only && opts.from) {
+        bad('--only and --from contradict each other: one names a single step, the '
+            + 'other names all of them from a point onwards. Pass one.');
+        process.exit(2);
+    }
+    if (opts.only) {
+        list = steps.filter((s) => s.id === opts.only);
+        if (list.length === 0) { bad(`no step called '${opts.only}'`); process.exit(2); }
+    }
     if (opts.from) {
         const i = steps.findIndex((s) => s.id === opts.from);
         if (i < 0) { bad(`no step called '${opts.from}'`); process.exit(2); }
         list = steps.slice(i);
     }
-    if (opts.only && list.length === 0) {
-        bad(`no step called '${opts.only}'`);
-        process.exit(2);
-    }
 
     const results = [];
     let skipped = 0;
     for (const step of list) {
-        if (opts.resume && stepIsGreen(sha, step.id)) {
+        if (opts.resume && stepIsGreen(key, step.id)) {
             skipped++;
             continue;
         }
         const r = await runStep(step);
-        recordStep(sha, stage, step.id, r.status, r.durationMs);
+        recordStep(key, stage, step.id, r.status, r.durationMs);
         results.push({ id: step.id, status: r.status, durationMs: r.durationMs });
         if (r.status !== 'pass') {
             printFailure(r, step);
             return { results, skipped, failed: step.id };
         }
     }
-    if (skipped) info(`${skipped} step(s) already green for this commit, skipped`);
+    if (skipped) info(`${skipped} step(s) already green for this tree, skipped`);
     return { results, skipped, failed: null };
 }
 
 // ---- stages ------------------------------------------------------------
 
-async function doPreflight(version, sha, { strict }) {
-    head(`preflight  (commit ${sha.slice(0, 7)}, branch ${branchName()})`);
+// Every key starts with the full SHA, so the first seven characters are the
+// short commit whether or not a dirty-tree digest is appended to it.
+const shortSha = (key) => key.slice(0, 7);
+const treeNote = (key) => (keyIsClean(key) ? '' : ', plus uncommitted changes');
+
+async function doPreflight(version, key, { strict }) {
+    head(`preflight  (commit ${shortSha(key)}, branch ${branchName()}${treeNote(key)})`);
 
     const gitState = checkGitState({ strict: strict && !opts.allowDirty });
     const problems = [...checkDoctor(), ...gitState.problems, ...checkVersion(version)];
@@ -264,12 +308,19 @@ async function doPreflight(version, sha, { strict }) {
         ? `environment, git state and v${version} are coherent`
         : 'environment and git state are sound');
 
-    const r = await runSteps(preflightSteps(), 'preflight', sha);
-    return { ok: !r.failed, failed: r.failed, results: r.results };
+    const r = await runSteps(preflightSteps(), 'preflight', key);
+    return { ok: !r.failed, failed: r.failed, results: r.results, skipped: r.skipped };
 }
 
-async function doGate(sha) {
-    head(`gate  (commit ${sha.slice(0, 7)})`);
+async function doGate(key) {
+    head(`gate  (commit ${shortSha(key)}${treeNote(key)})`);
+
+    // The gate says the same thing about the tree that preflight does, and
+    // for the same reason: a gate is meant to be runnable mid-morning on a
+    // dirty tree. What it may never do is leave the reader thinking a green
+    // gate on uncommitted work is the green gate `publish` will ask for. It
+    // is not - that one is keyed to the clean commit.
+    for (const n of checkGitState({ strict: false }).notes) warn(n);
 
     // THE GATE DOES NOT TOUCH THE BUILD SERVERS, and that is the opposite of
     // what it did first. Clearing them on the way in seemed obviously right -
@@ -291,17 +342,20 @@ async function doGate(sha) {
     // before every run.
     const steps = gateSteps({ splitDotnetTest: opts.splitTests });
     info(`${steps.length} steps`);
-    const r = await runSteps(steps, 'gate', sha);
+    const r = await runSteps(steps, 'gate', key);
     if (!opts.keepLitter) {
         const { count, freedBytes } = removeLitter({ quiet: true });
         if (count) info(`cleaned ${count} build artefact(s), ${mb(freedBytes)}`);
     }
-    return { ok: !r.failed, failed: r.failed, results: r.results, stepIds: steps.map((s) => s.id) };
+    return {
+        ok: !r.failed, failed: r.failed, results: r.results,
+        skipped: r.skipped, stepIds: steps.map((s) => s.id),
+    };
 }
 
-async function doPackage(version, sha) {
+async function doPackage(version, key) {
     head(`package  ${version}`);
-    const r = await runSteps(packageSteps(version), 'package', sha);
+    const r = await runSteps(packageSteps(version), 'package', key);
     if (r.failed) return { ok: false, failed: r.failed };
     const vsix = join(REPO, 'vscode-shoddy', `vscode-shoddy-${version}.vsix`);
     if (!existsSync(vsix)) {
@@ -309,16 +363,34 @@ async function doPackage(version, sha) {
         return { ok: false, failed: 'vsix-missing' };
     }
     ok(`vscode-shoddy-${version}.vsix`);
-    return { ok: true, results: r.results };
+    return { ok: true, results: r.results, skipped: r.skipped };
 }
 
 // The only stage that mutates history. It does NOT reimplement the tag/push/
 // merge sequence: shoddy-release.* already owns that, it is tested, and a
 // second copy of a routine that pushes tags is exactly the kind of duplicate
 // this driver exists to avoid. What publish adds is the guard in FRONT of it.
-async function doPublish(version, sha) {
+async function doPublish(version) {
     head(`publish  v${version}`);
 
+    // THE TREE IS CHECKED BEFORE THE RECEIPT, and the order is load-bearing.
+    // A receipt is keyed to the source it was earned against, so on a dirty
+    // tree it is keyed to the uncommitted work - never to the commit about to
+    // be tagged. Asking for the receipt first would therefore answer "no green
+    // gate", sending the reader off to run a gate that cannot fix the real
+    // problem. Say what is actually wrong: commit or stash.
+    const strict = checkGitState({ strict: true, allow: RELEASE_BUMPS });
+    if (strict.problems.length) {
+        for (const p of strict.problems) bad(p);
+        return { ok: false, failed: 'dirty-tree' };
+    }
+
+    // Clean but for the version bump, so the tree key is the commit - which
+    // is what makes the receipt below a statement about the code that is
+    // going to carry the tag. If package HAS bumped, the key has moved and
+    // the receipt is looked up under the commit deliberately: the gate
+    // proved the source, and a version string is not the source.
+    const sha = headSha();
     const gateIds = gateSteps({ splitDotnetTest: opts.splitTests }).map((s) => s.id);
     if (!stageIsGreen(sha, gateIds)) {
         bad(`no green gate for commit ${sha.slice(0, 7)}`);
@@ -327,12 +399,6 @@ async function doPublish(version, sha) {
         return { ok: false, failed: 'no-receipt' };
     }
     ok(`gate is green for ${sha.slice(0, 7)}`);
-
-    const strict = checkGitState({ strict: true });
-    if (strict.problems.length) {
-        for (const p of strict.problems) bad(p);
-        return { ok: false, failed: 'dirty-tree' };
-    }
 
     console.log('');
     info('This will, through scripts/shoddy-release:');
@@ -374,9 +440,15 @@ function summarise(stages, startedAt) {
     const total = Date.now() - startedAt;
     head('summary');
     for (const [name, res] of stages) {
-        const mark = res.ok ? 'PASS' : 'FAIL';
         const n = res.results?.length ?? 0;
-        console.log(`   ${mark.padEnd(5)} ${name.padEnd(10)} ${n} step(s)${res.failed ? `  first failure: ${res.failed}` : ''}`);
+        const skipped = res.skipped ?? 0;
+        // A stage that ran NOTHING does not get to say PASS. It passed
+        // earlier, against this same tree, and that is a different sentence -
+        // the one `--resume` was reading out as though it had just proved it.
+        const mark = res.ok ? (n === 0 && skipped > 0 ? 'SKIP' : 'PASS') : 'FAIL';
+        const detail = res.failed ? `  first failure: ${res.failed}`
+            : skipped ? `  (${skipped} already green for this tree)` : '';
+        console.log(`   ${mark.padEnd(5)} ${name.padEnd(10)} ${n} step(s) run${detail}`);
     }
     info(`total ${secs(total)}`);
     if (opts.json) {
@@ -388,10 +460,15 @@ function summarise(stages, startedAt) {
 }
 
 function doStatus() {
-    const sha = headSha();
-    head(`status  (commit ${sha.slice(0, 7)}, branch ${branchName()})`);
-    const r = readReceipts()[sha];
-    if (!r) { info('nothing recorded for this commit yet'); return; }
+    const key = treeKey();
+    head(`status  (commit ${shortSha(key)}, branch ${branchName()}${treeNote(key)})`);
+    const r = readReceipts()[key];
+    if (!r) {
+        info(keyIsClean(key)
+            ? 'nothing recorded for this commit yet'
+            : 'nothing recorded for this tree yet - it has changed since the last gate');
+        return;
+    }
     const byStage = {};
     for (const [id, v] of Object.entries(r)) {
         byStage[v.stage] ??= { pass: 0, fail: 0 };
@@ -402,8 +479,17 @@ function doStatus() {
     }
     const gateIds = gateSteps({ splitDotnetTest: opts.splitTests }).map((s) => s.id);
     console.log('');
-    if (stageIsGreen(sha, gateIds)) ok('gate is green - publish would be allowed');
-    else info('gate is not fully green for this commit - publish would refuse');
+    if (!stageIsGreen(key, gateIds)) {
+        info('gate is not fully green for this tree - publish would refuse');
+    } else if (keyIsClean(key)) {
+        ok('gate is green - publish would be allowed');
+    } else {
+        // Green, and genuinely so - but earned against uncommitted work, which
+        // is not a thing that can be tagged. Saying "publish would be allowed"
+        // here would be the old lie wearing a new key.
+        ok('gate is green for the tree as it stands, including uncommitted work');
+        info('publish still refuses: it tags a commit, so commit first and gate that.');
+    }
 }
 
 // ---- main --------------------------------------------------------------
@@ -411,8 +497,11 @@ function doStatus() {
 async function main() {
     const startedAt = Date.now();
     const version = positional[0];
-    const sha = headSha();
-    if (!sha) { bad('not inside a git repository'); process.exit(2); }
+    if (!headSha()) { bad('not inside a git repository'); process.exit(2); }
+    // Taken ONCE, before any step runs. A step that writes into the tree -
+    // `package` bumps versions - would otherwise move the key underneath its
+    // own run and record its receipts against a source that never existed.
+    const key = treeKey();
 
     switch (cmd) {
         case 'doctor': {
@@ -444,40 +533,40 @@ async function main() {
         }
 
         case 'preflight': {
-            const r = await doPreflight(version, sha, { strict: Boolean(version) });
+            const r = await doPreflight(version, key, { strict: Boolean(version) });
             summarise([['preflight', r]], startedAt);
             process.exit(r.ok ? 0 : 1);
         }
         case 'gate': {
-            const r = await doGate(sha);
+            const r = await doGate(key);
             summarise([['gate', r]], startedAt);
             process.exit(r.ok ? 0 : 1);
         }
         case 'package': {
             if (!version) { bad('package needs a version: shoddy package 2.0.3'); process.exit(2); }
-            const r = await doPackage(version, sha);
+            const r = await doPackage(version, key);
             summarise([['package', r]], startedAt);
             process.exit(r.ok ? 0 : 1);
         }
         case 'publish': {
             if (!version) { bad('publish needs a version: shoddy publish 2.0.3'); process.exit(2); }
-            const r = await doPublish(version, sha);
+            const r = await doPublish(version);
             summarise([['publish', r]], startedAt);
             process.exit(r.ok ? 0 : 1);
         }
         case 'release': {
             if (!version) { bad('release needs a version: shoddy release 2.0.3'); process.exit(2); }
             const stages = [];
-            const pre = await doPreflight(version, sha, { strict: true });
+            const pre = await doPreflight(version, key, { strict: true });
             stages.push(['preflight', pre]);
             if (!pre.ok) { summarise(stages, startedAt); process.exit(1); }
-            const gate = await doGate(sha);
+            const gate = await doGate(key);
             stages.push(['gate', gate]);
             if (!gate.ok) { summarise(stages, startedAt); process.exit(1); }
-            const pkg = await doPackage(version, sha);
+            const pkg = await doPackage(version, key);
             stages.push(['package', pkg]);
             if (!pkg.ok) { summarise(stages, startedAt); process.exit(1); }
-            const pub = await doPublish(version, sha);
+            const pub = await doPublish(version);
             stages.push(['publish', pub]);
             summarise(stages, startedAt);
             process.exit(pub.ok ? 0 : 1);

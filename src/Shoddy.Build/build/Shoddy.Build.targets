@@ -86,6 +86,30 @@
        ShoddyMill item. -->
   <!-- Batches per (mill, mode): one folder may be declared twice, once
        per mode, and each declaration is its own weave. -->
+  <!-- The scope a configuration's woven output lives in, under each
+       mill's bin/. EMPTY BY DEFAULT, which is exactly the behaviour this
+       always had: every configuration writes mills/<name>/bin.
+
+       Set it on a lane that builds the same mill in two configurations
+       at once. Windows holds a LOADED assembly's file against rename
+       until the holding process exits, so a Release weave landing on a
+       DLL a Debug test host has open fails its final move - and no lock
+       helps, because the holder is using the file rather than competing
+       for it.
+
+       It travels as an environment variable because the mill runs as a
+       separate process per Exec below, and every one of them has to
+       agree: the plan step reports the output paths MSBuild uses for
+       incremental build, so a plan computed at one scope and a weave
+       written at another would rebuild forever.
+
+       (Flags are named without their leading dashes here on purpose: an
+       XML comment may not contain a double hyphen, and putting one in
+       this file breaks every project that imports it.) -->
+  <PropertyGroup>
+    <ShoddyBinScope Condition="'$(ShoddyBinScope)' == ''"></ShoddyBinScope>
+  </PropertyGroup>
+
   <Target Name="_ShoddyPlan" DependsOnTargets="ShoddyResolveTool"
           Condition="'@(ShoddyMill)' != ''"
           Outputs="%(ShoddyMill.Identity)|%(ShoddyMill.Mode)">
@@ -97,6 +121,7 @@
     <!-- Verify: a stale machines section is a build error naming the
          drift, exactly as at the command line. -->
     <Exec Command="$(_ShoddyMillCmd) manifest &quot;%(ShoddyMill.FullPath)&quot;"
+          EnvironmentVariables="SHODDY_BIN_SCOPE=$(ShoddyBinScope)"
           CustomErrorRegularExpression="error SHODDY[0-9]+"
           CustomWarningRegularExpression="warning SHODDY[0-9]+" />
 
@@ -106,12 +131,14 @@
          add, because default-deny is only humane when refusal is
          self-documenting (C2.4b). -->
     <Exec Command="$(_ShoddyMillCmd) manifest --gate &quot;%(ShoddyMill.Grant)&quot; --mode %(ShoddyMill.Mode) &quot;%(ShoddyMill.FullPath)&quot;"
+          EnvironmentVariables="SHODDY_BIN_SCOPE=$(ShoddyBinScope)"
           CustomErrorRegularExpression="error SHODDY[0-9]+"
           CustomWarningRegularExpression="warning SHODDY[0-9]+" />
 
     <!-- Harvest the plan. Lines are kind-prefixed; anything unprefixed
          (a machine being rebuilt narrates to stderr) is ignored. -->
     <Exec Command="$(_ShoddyMillCmd) manifest --inputs &quot;%(ShoddyMill.FullPath)&quot;"
+          EnvironmentVariables="SHODDY_BIN_SCOPE=$(ShoddyBinScope)"
           ConsoleToMSBuild="true" EchoOff="true" StandardOutputImportance="low">
       <Output TaskParameter="ConsoleOutput" PropertyName="_SPOut" />
     </Exec>
@@ -253,7 +280,8 @@
   <Target Name="_ShoddyWeaveEach" DependsOnTargets="_ShoddyPlan"
           Condition="'@(ShoddyMill)' != ''"
           Inputs="%(ShoddyPlanned.Inputs)" Outputs="%(ShoddyPlanned.OutDll)">
-    <Exec Command="$(_ShoddyMillCmd) %(ShoddyPlanned.Verb) &quot;%(ShoddyPlanned.WeaveIn)&quot;" />
+    <Exec Command="$(_ShoddyMillCmd) %(ShoddyPlanned.Verb) &quot;%(ShoddyPlanned.WeaveIn)&quot;"
+          EnvironmentVariables="SHODDY_BIN_SCOPE=$(ShoddyBinScope)" />
   </Target>
 
   <!-- Wire the artifacts into the consuming build: references (woven

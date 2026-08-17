@@ -102,21 +102,41 @@ scripts/shoddy.ps1 preflight        # ~3s, read-only, tolerates a dirty tree
 scripts/shoddy.ps1 gate --resume    # the expensive proof
 ```
 
-`preflight` checks the environment, the git state and all five `verify-*`
+`preflight` checks the environment, the git state and all six `verify-*`
 gates. It is read-only and mutates nothing, so there is no reason not to run
 it mid-work.
 
-`gate` is the whole proof: build, machines, the C# conformance suite, every
-`tst/` and machine suite, and all thirteen mills. Roughly fifteen minutes
-cold, and `--resume` skips whatever is already green **for the current
-commit**, so a retry does not repeat the hour that already passed.
+`gate` is the whole proof, and **it covers all four lanes** — core, fettler,
+the MCP host and the MAUI host:
+
+| | what it runs |
+|---|---|
+| the harness | its own self-test, first, before anything trusts a receipt |
+| core | the mill, every mill.manifest, the C# conformance suite, every `tst/` and machine suite, all thirteen mills |
+| fettler | its 288 tests, its Release build, its archives, and the shipped binary driven from one |
+| MCP host | sparky's suite, its Release closure, its archives, and the shipped server driven over stdio |
+| MAUI host | reckoner's suite and the assertion that its release carries no debug transport |
+| headless | the container mill weaves, and `run` refuses by name rather than crashing |
+
+**Three of those four suites used to run nowhere but a workflow**, and every
+one of those workflows is path-filtered — so a change outside their paths
+triggered none of them. `Directory.Build.props` sets the version all of
+these binaries report and matched no filter at all.
+
+Roughly twenty minutes cold, and `--resume` skips whatever is already green
+**for the tree as it stands** — the commit plus anything uncommitted on top
+of it — so a retry does not repeat the hour that already passed.
+
+Edit anything and there is nothing to resume: the tree is different, so the
+gate runs in full. To re-run only what you touched, say so yourself with
+`--only` or `--from` rather than asking `--resume` to guess.
 
 Every step carries a timeout, its own log, and a remedy on failure. A step
 that hangs is killed with its whole process tree and named; nothing is judged
 on anything but its exit code.
 
 ```powershell
-scripts/shoddy.ps1 status                    # what is green for this commit
+scripts/shoddy.ps1 status                    # what is green for the tree as it stands
 scripts/shoddy.ps1 gate --only mill-halifax  # re-run one step
 scripts/shoddy.ps1 gate --from machine-jsontest
 scripts/shoddy.ps1 selftest                  # prove the harness itself
@@ -190,7 +210,14 @@ merge is in progress, and neither branch nor tag already exists.
 
 Actions → **Release**. It verifies the tag matches `package.json`, rebuilds
 from scratch, composes the body from `release-notes/vX.Y.Z.md`, and publishes
-the GitHub Release with the `.vsix` and one sparky archive per OS attached.
+the GitHub Release with the `.vsix`, one sparky archive per OS and one
+fettle archive per OS attached. It also records a deployment for each of
+`sparky` and `fettler`, which is what puts them in the repo home's
+Deployments sidebar beside Pages.
+
+The unix archives are cut on the Linux runner deliberately: the execute
+bit only survives a tar made on a filesystem that has one, and a `fettle`
+that arrives without it does not run.
 
 ```powershell
 git log --oneline --graph -6      # feature bubble + release bubble

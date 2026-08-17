@@ -5,7 +5,8 @@
 #
 # The whole release, from a clean repo, in one shot:
 #   main fast-forwarded to origin/main -> release/VX.Y.Z cut -> ./build.ps1 all X.Y.Z
-#   (clean + test + package; a red test stops everything) -> commit package.json ->
+#   (clean + test + package; a red test stops everything) -> commit the two
+#   version files ->
 #   push branch -> tag vX.Y.Z -> push tag -> merge --no-ff into main -> push.
 #
 # Pushing the tag is what ships: the Release workflow rebuilds on a clean runner
@@ -126,8 +127,20 @@ if (-not (Test-Path $Vsix)) { Fail "expected package $Vsix was not produced." }
 $pkg = (Get-Content vscode-shoddy/package.json -Raw | ConvertFrom-Json).version
 if ($pkg -ne $Version) { Fail "package.json version is '$pkg', expected '$Version'." }
 
+# The compiled binaries carry their version from Directory.Build.props, not
+# from package.json, so it is bumped here too. Without this the mill, sparky
+# and fettle would keep reporting the PREVIOUS release while their archives
+# were named for this one - which is the state that made a hardcoded 1.0.0
+# survive unnoticed through 2.2.0.
+$props = Get-Content Directory.Build.props -Raw
+$bumped = $props -replace '<Version>[0-9]+\.[0-9]+\.[0-9]+</Version>', "<Version>$Version</Version>"
+if ($bumped -eq $props -and $props -notmatch "<Version>$([regex]::Escape($Version))</Version>") {
+    Fail "could not find a <Version> element to bump in Directory.Build.props."
+}
+Set-Content Directory.Build.props -Value $bumped -NoNewline -Encoding utf8
+
 # --- publish: the version bump is the only artifact that belongs in the commit ---
-G add vscode-shoddy/package.json
+G add vscode-shoddy/package.json Directory.Build.props
 G commit -m "$Tag release"
 G push -u origin $Branch
 G tag $Tag

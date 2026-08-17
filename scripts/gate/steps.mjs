@@ -106,10 +106,17 @@ export function preflightSteps() {
             remedy: 'A host project has reached into mill internals. See the script output.',
         },
         {
-            id: 'suites', title: 'every tst suite is run or excluded', timeoutSec: 60,
+            id: 'suites', title: 'every tst suite and mill is run or excluded', timeoutSec: 60,
             cmd: ['node', 'scripts/verify-suites.js'],
-            remedy: 'A tst/*.shoddy fell out of the roster. Add it to MACHINE_SUITES '
-                + 'in scripts/gate/steps.mjs, or to TST_EXCLUSIONS with the reason.',
+            remedy: 'A tst/*.shoddy or a mills/* fell out of the roster. Add it to '
+                + 'MACHINE_SUITES or MILLS in scripts/gate/steps.mjs, or to '
+                + 'TST_EXCLUSIONS with the reason.',
+        },
+        {
+            id: 'lanes', title: 'the lane boundaries hold', timeoutSec: 60,
+            cmd: ['node', 'scripts/verify-lanes.js'],
+            remedy: 'A lane has reached into another one, or fettler has taken a package '
+                + 'that is not on R1.2\'s allowlist. The message names the rule and the file.',
         },
     ];
 }
@@ -120,11 +127,33 @@ export function preflightSteps() {
 
 export function gateSteps({ splitDotnetTest }) {
     const steps = [
+        // FIRST, AND CHEAP. Every result below this line is recorded through
+        // the harness in lib.mjs, and a harness whose timeout or whose
+        // receipt key had quietly stopped working would look exactly like
+        // one that was never needed. `shoddy selftest` existed as a verb
+        // nobody had a reason to type - which is the way an unrun check
+        // rots. It takes four seconds; there is no argument for leaving it
+        // to memory.
+        {
+            id: 'selftest', title: 'the harness keeps its own guarantees', timeoutSec: 120,
+            cmd: ['node', 'scripts/gate/selftest.mjs'],
+            remedy: 'The driver cannot keep its own promises, so nothing below this line '
+                + 'means what it says. Read the log before trusting any gate.',
+        },
         {
             id: 'build-mill', title: 'publish the mill', timeoutSec: 900,
             cmd: ['dotnet', 'publish', 'src/Shoddy.Mill', '-c', 'Release', '-o', 'bin'],
             remedy: 'A compile error, or bin/mill.exe is locked by a running process. '
                 + 'Run `shoddy clean` and try again.',
+        },
+        // Straight after the mill, because it needs the mill and nothing
+        // else, and because a stale manifest breaks a HOST lane twenty
+        // minutes later - which is a long way from the file that is wrong.
+        {
+            id: 'manifests', title: 'every mill.manifest describes its mill', timeoutSec: 300,
+            cmd: ['node', 'scripts/verify-manifests.js'],
+            remedy: 'A generated file has drifted from the mill it describes. The message '
+                + 'names the mill and the regeneration command.',
         },
     ];
 
@@ -294,6 +323,175 @@ export function gateSteps({ splitDotnetTest }) {
                 + `mills/${m}/${millScript} test`,
         });
     }
+
+    // ---- the lanes the gate used to walk straight past -----------------
+    //
+    // Four test projects live in this repository and this gate ran ONE of
+    // them. Fettler's 288 tests, the MCP host's suite and the MAUI host's
+    // suite were each proved only by a workflow, and every one of those
+    // workflows is PATH-FILTERED: fettler.yml runs on fettler/**, mcp.yml
+    // on hosts/mcp/**, maui.yml on hosts/maui/**.
+    //
+    // So a change OUTSIDE those paths triggered none of them. That is not
+    // hypothetical - Directory.Build.props sets the version every one of
+    // these binaries reports, and it matches no lane's path filter at all.
+    // A green local gate plus a green CI run could both be true of a tree
+    // where three of the four suites had never been executed.
+    //
+    // These run last because they are independent: nothing above depends on
+    // them, so a failure here is read without unpicking anything else.
+    const ps = (script, ...args) => ['powershell', '-NoProfile', '-NonInteractive',
+        '-ExecutionPolicy', 'Bypass', '-File', script, ...args];
+    const win = process.platform === 'win32';
+
+    // Fettler needs NOTHING built first - R1.2 forbids it to reference any
+    // project here, so there is no mill for it to wait on.
+    steps.push({
+        id: 'fettler-test', title: 'the fettler lane: 288 tests', timeoutSec: 900,
+        cmd: win ? ps('fettler/build.ps1', 'test') : ['./fettler/build.sh', 'test'],
+        remedy: 'Run it directly: fettler/build.ps1 test. Three skips are expected on '
+            + 'Windows - a POSIX execute bit and two filename hazards have no meaning '
+            + 'here, and they run on the macOS leg of fettler.yml.',
+    });
+    // fettler.yml builds and tests this lane in RELEASE; build.ps1 test is
+    // Debug. Compiling the lane the way CI does is seconds, and a
+    // configuration only ever built on a runner is one that can break there
+    // and nowhere else.
+    steps.push({
+        id: 'fettler-release', title: 'the fettler lane builds for release', timeoutSec: 900,
+        cmd: win ? ps('fettler/build.ps1', 'release') : ['./fettler/build.sh', 'release'],
+        remedy: 'Run it directly: fettler/build.ps1 release.',
+    });
+    // THE ARTIFACT, NOT THE SOURCE. Everything above proves the code; these
+    // two prove the file a person downloads. A self-contained single-file
+    // publish fails in ways a build cannot - a trimmed assembly, an entry
+    // point that never starts - and release.yml cuts these archives FROM
+    // THE TAG, so without this the discovery happens after the tag is
+    // public and the fix has to go forward.
+    steps.push({
+        id: 'fettler-publish', title: 'cut the fettle release archives', timeoutSec: 1800,
+        cmd: win ? ps('fettler/build.ps1', 'publish') : ['./fettler/build.sh', 'publish'],
+        remedy: 'Run it directly: fettler/build.ps1 publish.',
+    });
+    steps.push({
+        id: 'fettler-shipped', title: 'the shipped fettle runs from its archive',
+        timeoutSec: 600,
+        cmd: ['node', 'scripts/verify-shipped.js', 'fettle'],
+        remedy: 'The archive for this platform was unpacked outside the repository and '
+            + 'driven. A failure here is in what ships, not in what builds.',
+    });
+
+    // Both host lanes need bin/mill.exe, which build-mill has already
+    // published at the top of this list: ShoddyWeave drives it.
+    //
+    // AND BOTH NEED THEIR OWN `build` FIRST, which is not a formality. Each
+    // lane's `test` verb runs `dotnet test <Lane>.Tests` and nothing else,
+    // so it builds the TEST project's graph - while the suites read the
+    // APP's build output to see what got linked. Skip the build and the
+    // enumeration finds an empty directory and reports every machine as
+    // missing, which reads like a catastrophic isolation failure and is
+    // really an unbuilt app. Both workflows run build before test for this
+    // reason; so does this.
+    steps.push({
+        id: 'mcp-build', title: 'the MCP host lane builds', timeoutSec: 900,
+        cmd: win ? ps('hosts/mcp/build.ps1') : ['./hosts/mcp/build.sh'],
+        remedy: 'Run it directly: hosts/mcp/build.ps1. If it stops at a missing '
+            + 'bin/mill.exe, build-mill above did not leave one.',
+    });
+    steps.push({
+        id: 'mcp-test', title: 'the MCP host lane: sparky\'s suite', timeoutSec: 900,
+        cmd: win ? ps('hosts/mcp/build.ps1', 'test') : ['./hosts/mcp/build.sh', 'test'],
+        remedy: 'Run it directly: hosts/mcp/build.ps1 test.',
+    });
+    steps.push({
+        id: 'mcp-release', title: 'the MCP host lane builds for release', timeoutSec: 900,
+        cmd: win ? ps('hosts/mcp/build.ps1', 'release') : ['./hosts/mcp/build.sh', 'release'],
+        remedy: 'Run it directly: hosts/mcp/build.ps1 release.',
+    });
+    steps.push({
+        id: 'mcp-closure', title: 'sparky links no window, audio or toolchain', timeoutSec: 120,
+        cmd: ['node', 'scripts/verify-closure.js', 'sparky'],
+        remedy: 'The server has linked past its floor, or an unfolded seed reached its '
+            + 'closure. A csproj says what was asked for; this reads what arrived.',
+    });
+    steps.push({
+        id: 'mcp-publish', title: 'cut the sparky release archives', timeoutSec: 1800,
+        cmd: win ? ps('hosts/mcp/build.ps1', 'publish') : ['./hosts/mcp/build.sh', 'publish'],
+        remedy: 'Run it directly: hosts/mcp/build.ps1 publish.',
+    });
+    steps.push({
+        id: 'mcp-shipped', title: 'the shipped sparky answers on stdio', timeoutSec: 600,
+        cmd: ['node', 'scripts/verify-shipped.js', 'sparky'],
+        remedy: 'The archive was unpacked outside the repository and driven over stdio. '
+            + 'It answers initialize and then computes, because a server carrying no '
+            + 'woven core passes the first and fails the second.',
+    });
+
+    // MAUI is Windows-only and always has been - maui.yml runs on
+    // windows-latest and the workload is maui-windows. On any other
+    // platform there is nothing to run rather than something being
+    // skipped, and saying so out loud beats a step that silently passes.
+    if (win) {
+        steps.push({
+            id: 'maui-build', title: 'the MAUI host lane builds', timeoutSec: 1800,
+            cmd: ps('hosts/maui/build.ps1'),
+            remedy: 'Run it directly: hosts/maui/build.ps1. If the workload is missing: '
+                + 'dotnet workload install maui-windows.',
+        });
+        steps.push({
+            id: 'maui-test', title: 'the MAUI host lane: reckoner\'s suite', timeoutSec: 1800,
+            cmd: ps('hosts/maui/build.ps1', 'test'),
+            // The suite asks the environment which assertions have a device
+            // behind them. Canvas and audio proofs need the desktop harness
+            // and are not a hosted-runner gate, so the same variable CI sets
+            // is set here - otherwise this machine would be asserting things
+            // maui.yml never does, and the two would disagree about green.
+            env: { SHODDY_HEADLESS_CI: '1' },
+            remedy: 'Run it directly: hosts/maui/build.ps1 test. If the workload is '
+                + 'missing: dotnet workload install maui-windows.',
+        });
+        steps.push({
+            id: 'maui-release', title: 'the MAUI host lane builds for release', timeoutSec: 1800,
+            cmd: ps('hosts/maui/build.ps1', 'release'),
+            // THE FLAKE THIS CARRIED IS FIXED, and the shape of it is worth
+            // keeping. The step failed intermittently with
+            // UnauthorizedAccessException from Weaver.WeaveMachine moving
+            // Shoddy.Machines.Halifax-core.dll into place: every
+            // configuration wove to the same mills/<name>/bin, so a Release
+            // build starting while the previous step's test host was still
+            // exiting tried to rename a DLL that process had LOADED - and
+            // Windows holds a loaded assembly against rename until its
+            // holder exits. Neither existing guard could help: MillGate
+            // serializes writers, and weave-beside-then-rename protects
+            // readers taking a metadata reference, but this holder was
+            // neither. The lane now sets ShoddyBinScope, so Debug and
+            // Release weave into their own subdirectories and never meet.
+            remedy: 'Run it directly: hosts/maui/build.ps1 release. "Access to the path '
+                + 'is denied" on a Shoddy.Machines.*.dll would mean two configurations are '
+                + 'sharing an output path again: check ShoddyBinScope is set in this lane\'s '
+                + 'csproj and reaching the mill through Shoddy.Build.targets.',
+        });
+        steps.push({
+            id: 'maui-closure', title: 'the reckoner release carries no perch', timeoutSec: 120,
+            cmd: ['node', 'scripts/verify-closure.js', 'reckoner'],
+            remedy: 'B7.4: a release artifact must not carry the debug transport. '
+                + 'Check what the release configuration excludes.',
+        });
+    }
+
+    // C8, as much of it as a machine with a display can prove. The weave
+    // and the refusal are the half that breaks when somebody edits the
+    // mill; the absence of a native dependency needs the bare container,
+    // and ci.yml remains the authority on that. The Release build it reads
+    // is the one warm-mill-headless already made.
+    steps.push({
+        id: 'headless-floor', title: 'the headless mill weaves and refuses by name',
+        timeoutSec: 600,
+        cmd: ['node', 'scripts/verify-headless.js'],
+        remedy: 'A crash and a refusal are both non-zero and only one is correct. The '
+            + 'message must name "headless" and "full mill" so the reader knows which '
+            + 'build they have.',
+    });
 
     return steps;
 }

@@ -36,6 +36,33 @@ public static class Command
         if (early is not null) return early;
 
         Result<Roots> roots = args.DeclaredRoots();
+
+        // setup and doctor configure a MACHINE; they do not work in a
+        // tree. Neither resolves a path through the boundary - both reach
+        // a compiled-in list of well-known configuration paths and
+        // nothing else - so requiring a declared tree bought no
+        // containment and cost the bootstrap entirely: setup carries the
+        // scaffolder for .fettler.json, which made the file it would
+        // write the file required to run it, and doctor refused to
+        // diagnose the commonest broken state there is. On a fresh
+        // machine no documented sequence worked.
+        //
+        // So these two, and only these two, fall back to the current
+        // directory READ-ONLY. That is not the old implicit-cwd fallback
+        // returning: it cannot widen anything, because read-only is all
+        // it grants and no verb that touches a tree is reachable this
+        // way. And only when NOTHING was declared - a configuration that
+        // is present and malformed still refuses, because falling back
+        // from a broken boundary is how a boundary silently widens.
+        if (!roots.IsOk
+            && args.Verb is "setup" or "doctor"
+            && roots.Failure!.Message == Roots.NothingDeclared)
+        {
+            roots = Roots.Open(
+                [new TreeDecl("work", Directory.GetCurrentDirectory(), Permissions.ReadOnly)],
+                "the current directory, because setup and doctor configure a machine rather than work in a tree");
+        }
+
         if (!roots.IsOk) return Failed(roots.Failure!, json);
 
         using var bench = new Bench(roots.Value);
@@ -1375,7 +1402,7 @@ public static class Command
           scope with no `list` is not there at all as far as find and search go.
           .fettler.json and .fettler.local.json say what this tool may do - the
           trees, and the tasks - and it does not write them. See
-          docs/fettler-boundary.html.
+          docs/fettler.html.
 
         An unknown flag is refused, never ignored - one dash or two: ignoring
         one would eat the argument after it, or be read as a second pattern,

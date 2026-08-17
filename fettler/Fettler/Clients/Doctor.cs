@@ -305,6 +305,25 @@ public static class Doctor
     public static readonly string[] Replaced =
         ["Read", "Write", "Edit", "NotebookEdit", "Grep", "Glob"];
 
+    /// <summary>The shell tools. Fettler replaces no shell and never
+    /// will, which is why these are not on <see cref="Replaced"/> - but a
+    /// shell is a complete route round the boundary, and <c>node x.js</c>
+    /// reaches it while being none of <see cref="Mutating"/>.
+    ///
+    /// <para>Denying these two NAMES is as short, closed and
+    /// platform-identical as denying the six. What cannot be finished is
+    /// enumerating the commands behind them, and that is the ALLOW list's
+    /// job, not this one's: deny the shell, then allow back the few
+    /// commands a project actually needs. Leaving the deny out because
+    /// the allow cannot be generated left every project reporting healthy
+    /// with the shell wide open.</para></summary>
+    public static readonly string[] Shell = ["Bash", "PowerShell"];
+
+    /// <summary>Everything <c>setup</c> denies and 2.8 expects to find
+    /// denied: the tools Fettler replaces, and the shells it does
+    /// not.</summary>
+    public static readonly string[] Denied = [.. Replaced, .. Shell];
+
     static void Policy(Machine machine, Place place, Roots? roots, List<Finding> findings)
     {
         Result<JsonDocument> read = ReadJson(machine, place.Path);
@@ -368,8 +387,9 @@ public static class Doctor
                 place.Path));
 
         // 2.8: registering Fettler makes it available; only a deny makes
-        // it the route.
-        var missing = Replaced.Where(r => !denied.Any(d =>
+        // it the route. Both lists, because a shell left open is a route
+        // round the boundary exactly as an undenied Write is.
+        var missing = Denied.Where(r => !denied.Any(d =>
             d.Equals(r, StringComparison.Ordinal) || d.StartsWith(r + "(", StringComparison.Ordinal))).ToList();
 
         if (missing.Count > 0 && place.Level == Level.Repo)
@@ -389,8 +409,18 @@ public static class Doctor
         // is right under EITHER precedence - remove the allow - rather
         // than a deny that may or may not win. An answer that does not
         // depend on the assumption is better than a guess at it.
+        // A NARROWED allow on a shell whose bare name is denied is the
+        // intended shape rather than a conflict - `deny: Bash` closes the
+        // shell and `allow: Bash(git status:*)` reopens the two or three
+        // commands the project needs. Reporting that as contested would
+        // name "remove the allow" as the fix, which is the one change
+        // that breaks the configuration this tool now writes. No such
+        // exemption for the replaced tools: a narrow allow on Read is
+        // still a hole, because reading is precisely what Fettler does.
         var contested = allowed
             .Where(a => denied.Any(d => Same(a, d)))
+            .Where(a => !(Shell.Contains(Tool(a), StringComparer.Ordinal)
+                          && a.Length > Tool(a).Length))
             .Distinct(StringComparer.Ordinal)
             .ToList();
 

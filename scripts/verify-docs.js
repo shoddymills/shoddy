@@ -216,10 +216,14 @@ for (const [dir, names] of [["machines", machineNames], ["mills", mills]])
       { console.log("docs/" + dir + "/" + f + ": page with no " + dir.replace(/s$/, "") + " behind it"); bad++; }
 
 // ---- navigation: one nav bar, copied into every page ----
-// The bar is two <nav class="docnav"> rows — "meta" (Story, Authorship)
-// beside the wordmark, "main" beneath — so every row is collected and the
+// The bar is two <nav class="docnav"> rows — "meta" (Fettler,
+// Heritage, Authorship) beside the wordmark, "main" beneath — so every row is collected and the
 // items compared as one sequence. Checking only the first would leave the
-// twelve items in the second row unguarded.
+// thirteen items in the second row unguarded.
+// Items may carry a class of their own (Fettler wears "tool" in the meta row),
+// so the item pattern allows attributes after the href and after "here".
+// Requiring a bare > silently dropped any classed item from the key, and an
+// item that never matches on any page can never be reported as differing.
 const pages = [];
 (function walk(d) {
   for (const f of fs.readdirSync(d)) {
@@ -234,7 +238,7 @@ for (const p of pages) {
   const rel = path.relative(root, p).replace(/\\/g, "/");
   if (!rows.length) { console.log(rel + ": no nav bar"); bad++; continue; }
   const key = rows
-    .flatMap(r => [...r[1].matchAll(/<(?:a href="[^"]+"|span class="here")>([^<]+)</g)])
+    .flatMap(r => [...r[1].matchAll(/<(?:a href="[^"]+"[^>]*|span class="here[^"]*")>([^<]+)</g)])
     .map(x => x[1].trim()).join(" | ");
   (navs[key] = navs[key] || []).push(rel);
 }

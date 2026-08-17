@@ -127,6 +127,47 @@ permission level. That refusal has its own outcome, `governed`, and its
 own exit code, 11. Two names cover the trees and the tasks alike, since
 one file declares both.
 
+The same refusal covers the files that say what the **assistant** may do:
+`.mcp.json`, `.claude/settings.json`, `.claude/settings.local.json` and
+`.vscode/mcp.json`. No boundary has to be breached to reach one, because
+a project's assistant configuration lives in the project - so the file
+governing the assistant and a file the assistant may write were the same
+file until this existed. A model that can edit its own deny list has no
+deny list. Matched on the last two segments, so a bare `settings.json`
+and `.vscode/settings.json` stay ordinary; `CLAUDE.md` is left out
+because it persuades rather than permits. `setup` still writes all of
+them, because it uses plain file IO and resolves no path through the
+boundary.
+
+## A write that would put a secret on disk
+
+Refused, with its own outcome `credential` and its own exit code, 12.
+**It judges the diff, not the file**: only a credential absent from the
+previous content stops a write, so a config that already holds a key
+stays editable - which is the difference between a rule people keep and a
+rule people switch off.
+
+Two tiers. Structural patterns match credentials whose shape their issuer
+fixed: AWS key ids, GitHub and Slack tokens, Stripe live keys, Google API
+keys, PEM private-key headers. The second tier is a guess and gated hard
+because of it - a secret-shaped name assigned a long, high-entropy,
+whitespace-free value that is not a reference, so an empty password and a
+value naming an environment variable both pass.
+
+**The refusal never repeats what it found.** A line number and a detector
+name only: a message naming the secret would write it into the log and
+the transcript, which is worse than the write it was refusing.
+
+**`--allow-credential` is offered by the command line and by nothing
+else.** No MCP tool carries it and a test asserts none ever will, for the
+same reason `setup` is never offered: deciding a high-entropy string is
+not a secret is a judgement about your own file, and a person makes it.
+
+**It is a safety net, not a boundary.** Base64 the value or split the
+string and every rule here is defeated, by accident as easily as on
+purpose. It stops the ordinary accident of pasting a real key into a
+config, not an adversary.
+
 `--config PATH` names a different file and keeps full expressiveness.
 `--no-config` turns the search off. Any `--root` **replaces** the file
 rather than adding to it, because merging would leave a caller unable to

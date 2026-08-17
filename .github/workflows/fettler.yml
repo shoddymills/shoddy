@@ -171,9 +171,22 @@ jobs:
           echo "$out" | grep -q '"outcome":"not-found"' || { echo "expected not-found on stdout"; exit 1; }
           [ "$code" = "3" ] || { echo "expected exit 3, got $code"; exit 1; }
 
+          # --root grants list read and can NEVER grant more, at any
+          # level, with no override. So a write through one is refused,
+          # and asserting that is the point: this step used to ask --root
+          # for the execute bit and read the documented refusal as a
+          # broken build.
+          out=$("$exe" --root smoke exec src/A.cs --on --json) && code=0 || code=$?
+          [ "$code" = "8" ] || { echo "expected --root to refuse a write with exit 8, got $code: $out"; exit 1; }
+
+          # To write to a tree you put a file in it. Paths in it resolve
+          # against the file's own directory, so "." is smoke/ wherever
+          # this runs from.
+          printf '%s\n' '{"trees":{"smoke":{"path":".","can":["list","read","create","update","rename","delete"]}}}' > smoke/.fettler.json
+
           # R6.9: the bit this whole clause is about, on the platform
           # that has one.
-          "$exe" --root smoke exec src/A.cs --on --json
+          "$exe" --config smoke/.fettler.json exec src/A.cs --on --json
           [ -x smoke/src/A.cs ] || { echo "exec --on did not set the executable bit"; exit 1; }
 
       - name: Drive it (windows)
@@ -181,6 +194,16 @@ jobs:
         working-directory: fettler
         shell: pwsh
         run: |
+          # fettle answers with an exit code, and a non-zero one is an
+          # ANSWER rather than a failure - asserting them is this step's
+          # whole job. GitHub sets $ErrorActionPreference='stop' for its
+          # pwsh shell, and pwsh 7.4 turns a native command's non-zero
+          # exit into a TERMINATING error under it. So `read absent.cs`,
+          # whose entire point is to come back 3, killed the step before
+          # the line that checks for 3 ever ran.
+          $ErrorActionPreference = 'Continue'
+          $PSNativeCommandUseErrorActionPreference = $false
+
           $exe = './published/fettle.exe'
           New-Item -ItemType Directory -Force smoke/src | Out-Null
           Set-Content smoke/src/A.cs "public sealed class A" -Encoding utf8
@@ -196,6 +219,11 @@ jobs:
           $out = & $exe --root smoke read absent.cs --json
           if ($LASTEXITCODE -ne 3) { throw "expected exit 3, got $LASTEXITCODE" }
           if ($out -notmatch '"outcome":"not-found"') { throw "expected not-found on stdout, got: $out" }
+
+          # --root grants list read and can never grant more, whatever
+          # the verb. The unix lane asserts the same thing through exec.
+          $refused = & $exe --root smoke write src/B.cs --text 'public sealed class B' --json
+          if ($LASTEXITCODE -ne 8) { throw "expected --root to refuse a write with exit 8, got $LASTEXITCODE : $refused" }
 
       # R3.2: the MCP front end speaks on stdio, and stdout carries the
       # protocol and nothing else. One initialize is enough to prove the

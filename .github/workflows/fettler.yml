@@ -216,14 +216,26 @@ jobs:
           # turns a native program's redirected stderr into
           # NativeCommandError records and sets $? false even on exit 0.
           # Reading the answer must therefore need no redirection at all.
+          Write-Host "pwsh $($PSVersionTable.PSVersion); EAP=$ErrorActionPreference; native=$PSNativeCommandUseErrorActionPreference"
+
           $out = & $exe --root smoke read absent.cs --json
-          if ($LASTEXITCODE -ne 3) { throw "expected exit 3, got $LASTEXITCODE" }
-          if ($out -notmatch '"outcome":"not-found"') { throw "expected not-found on stdout, got: $out" }
+          $code = $LASTEXITCODE
+          Write-Host "read absent.cs -> code=$code out=$out"
+          if ($code -ne 3) { Write-Host "expected exit 3, got $code"; exit 1 }
+          if ($out -notmatch '"outcome":"not-found"') { Write-Host "expected not-found on stdout, got: $out"; exit 1 }
 
           # --root grants list read and can never grant more, whatever
           # the verb. The unix lane asserts the same thing through exec.
           $refused = & $exe --root smoke write src/B.cs --text 'public sealed class B' --json
-          if ($LASTEXITCODE -ne 8) { throw "expected --root to refuse a write with exit 8, got $LASTEXITCODE : $refused" }
+          $code = $LASTEXITCODE
+          Write-Host "root write -> code=$code out=$refused"
+          if ($code -ne 8) { Write-Host "expected --root to refuse a write with exit 8, got $code"; exit 1 }
+
+          # Every assertion above passed, and the LAST thing this step ran
+          # was a command that answered 8 on purpose. GitHub's pwsh wrapper
+          # ends with `exit $LASTEXITCODE`, so without this the step fails
+          # carrying the exit code of an assertion that SUCCEEDED.
+          exit 0
 
       # R3.2: the MCP front end speaks on stdio, and stdout carries the
       # protocol and nothing else. One initialize is enough to prove the

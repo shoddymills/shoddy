@@ -80,8 +80,14 @@ ordinary use on Windows, so it is a subcommand instead.
 **No root or config flag appears there, and none can.** The server learns
 its trees at launch, from the `.fettler.json` in the folder it starts in,
 before the model has said anything — and no tool schema carries a way to
-name a different one. Every call then runs against a boundary fixed at
-that moment.
+name a different one. **Every call then re-reads that same file**,
+overlay included, so an edit binds on the very next request: a granted
+task appears, a revoked permission takes, and no restart is involved. A
+malformed edit refuses every request, naming the fault, until it is
+fixed ΓÇö never falling back to the last good reading, since a boundary
+held wider than the file states is the one direction this must never
+fail in. Deleting the file refuses too, rather than searching again:
+the file found at launch is the file, for the life of the server.
 
 **A tree declares its own boundary**, so nobody types one onto every
 command. `fettle` takes the nearest `.fettler.json` at or above the
@@ -119,7 +125,8 @@ there at all as far as `find` and `search` are concerned.
 
 **`--root PATH` grants `list read` and nothing else, with no override.** It
 stays because the server has to be launched somehow and ad-hoc reading is
-useful; it cannot hand anybody write access. To write to a tree you put a
+useful; it cannot hand anybody write access, and ΓÇö having no file behind
+it ΓÇö it is the one boundary a running server never re-reads. To write to a tree you put a
 file in it, which is a deliberate act by a person inside the tree it
 governs — and the act a caller cannot perform, because `.fettler.json`
 and `.fettler.local.json` are refused by every write path at every

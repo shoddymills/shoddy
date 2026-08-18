@@ -53,20 +53,28 @@ public static class Program
     {
         Arguments args = Arguments.Parse(argv);
 
-        Result<Roots> roots = args.DeclaredRoots();
-        if (!roots.IsOk)
+        Result<Boundary> boundary = args.DeclaredBoundary();
+        if (!boundary.IsOk)
         {
             // R8.5: a root the caller named that does not exist is a
             // startup failure naming the path, not a directory Fettler
             // quietly creates. This one goes to stderr because there is
             // no protocol session yet to carry it.
-            Console.Error.WriteLine($"fettle serve: {roots.Failure!.Message}"
-                + (roots.Failure.Path is null ? "" : $" ({roots.Failure.Path})"));
-            return ExitCodes.Of(roots.Failure.Outcome);
+            Console.Error.WriteLine($"fettle serve: {boundary.Failure!.Message}"
+                + (boundary.Failure.Path is null ? "" : $" ({boundary.Failure.Path})"));
+            return ExitCodes.Of(boundary.Failure.Outcome);
         }
 
-        using var bench = new Bench(roots.Value);
-        using var server = new McpServer(bench, Console.In, Console.Out);
+        // A boundary read from a file is re-read from that same file
+        // before every request, so an edit binds without a restart;
+        // --root declares one with no file behind it, and that one
+        // stays as launched.
+        Func<Result<Roots>>? reload = boundary.Value.File is { } file
+            ? () => RootsFile.Reopen(file)
+            : null;
+
+        using var bench = new Bench(boundary.Value.Roots);
+        using var server = new McpServer(bench, Console.In, Console.Out, reload);
 
         await server.RunAsync(cancel).ConfigureAwait(false);
         return ExitCodes.Ok;

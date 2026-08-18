@@ -96,13 +96,36 @@ public sealed record ReplaceAnswer(
 /// </summary>
 public sealed class Bench : IDisposable
 {
-    readonly SemaphoreSlim mutation = new(1, 1);
+    readonly SemaphoreSlim mutation;
+    readonly bool sharedGate;
 
-    public Bench(Roots roots) => Roots = roots;
+    public Bench(Roots roots)
+    {
+        Roots = roots;
+        mutation = new SemaphoreSlim(1, 1);
+    }
+
+    /// <summary>
+    /// A snapshot of the same workbench under a fresh boundary: serve's
+    /// per-request Bench. R3.11's execution model is a property of the
+    /// TREE, not of one reading of its declaration, so the snapshot
+    /// shares the gate of the Bench it was taken from - two requests
+    /// mutating under two readings of the file still take turns.
+    /// Disposing a snapshot leaves the shared gate standing.
+    /// </summary>
+    public Bench(Roots roots, Bench gate)
+    {
+        Roots = roots;
+        mutation = gate.mutation;
+        sharedGate = true;
+    }
 
     public Roots Roots { get; }
 
-    public void Dispose() => mutation.Dispose();
+    public void Dispose()
+    {
+        if (!sharedGate) mutation.Dispose();
+    }
 
     // ---- read-only: no lock, freely concurrent ----
 

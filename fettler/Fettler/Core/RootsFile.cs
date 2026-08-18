@@ -127,6 +127,27 @@ public static class RootsFile
     }
 
     /// <summary>
+    /// The boundary, re-read from a named configuration and opened.
+    ///
+    /// <para><b>This is serve's per-request read.</b> The CLI reads the
+    /// file fresh on every command because every command is a fresh
+    /// process; a server that read it once would hold a boundary the
+    /// file no longer states, and stay wider than a person's revocation
+    /// until somebody thought to restart it - the one direction a
+    /// boundary must never fail in. What is re-read is the FILE FOUND AT
+    /// LAUNCH, never a fresh discovery: a configuration that has gone
+    /// missing refuses, because walking up from where it was could find
+    /// a broader one above it.</para>
+    /// </summary>
+    public static Result<Roots> Reopen(string file)
+    {
+        Result<Found> found = ReadWithOverlay(file);
+        return found.IsOk
+            ? Roots.Open(found.Value.Trees, found.Value.Origin, found.Value.Tasks)
+            : found.Carry<Roots>();
+    }
+
+    /// <summary>
     /// The overlay's trees over the checked-in ones: a name in both is
     /// the overlay's ENTIRELY, and a name only the overlay has is added.
     ///

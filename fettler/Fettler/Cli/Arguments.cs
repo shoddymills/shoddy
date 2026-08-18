@@ -266,6 +266,19 @@ public sealed class Arguments
     /// </summary>
     public Result<Roots> DeclaredRoots()
     {
+        Result<Boundary> boundary = DeclaredBoundary();
+        return boundary.IsOk ? Result<Roots>.Ok(boundary.Value.Roots) : boundary.Carry<Roots>();
+    }
+
+    /// <summary>
+    /// <see cref="DeclaredRoots"/>, keeping hold of where the boundary
+    /// came from. The CLI never asks - a process reads its configuration
+    /// once by construction - but serve does: the file is what it
+    /// re-reads before every request, and a boundary with no file behind
+    /// it (--root) is the one that stays as launched.
+    /// </summary>
+    public Result<Boundary> DeclaredBoundary()
+    {
         IReadOnlyList<string> declared = Values("root");
         if (declared.Count > 0)
         {
@@ -284,27 +297,39 @@ public sealed class Arguments
                 decls.Add(new TreeDecl(name, path, Permissions.ReadOnly));
             }
 
-            return Roots.Open(decls, "--root on the command line, which grants list read only");
+            return From(Roots.Open(decls, "--root on the command line, which grants list read only"), null);
         }
 
         if (Value("config") is { } named)
         {
             Result<RootsFile.Found> told = RootsFile.ReadWithOverlay(named);
             return told.IsOk
-                ? Roots.Open(told.Value.Trees, told.Value.Origin, told.Value.Tasks)
-                : told.Carry<Roots>();
+                ? From(Roots.Open(told.Value.Trees, told.Value.Origin, told.Value.Tasks), told.Value.File)
+                : told.Carry<Boundary>();
         }
 
         if (!Has("no-config"))
         {
             Result<RootsFile.Found> found = RootsFile.Discover(Directory.GetCurrentDirectory());
-            if (found.IsOk) return Roots.Open(found.Value.Trees, found.Value.Origin, found.Value.Tasks);
+            if (found.IsOk)
+                return From(Roots.Open(found.Value.Trees, found.Value.Origin, found.Value.Tasks), found.Value.File);
 
             // Anything but NotFound means a configuration WAS there and
             // was wrong, and its own message says what.
-            if (found.Failure!.Outcome != Outcome.NotFound) return found.Carry<Roots>();
+            if (found.Failure!.Outcome != Outcome.NotFound) return found.Carry<Boundary>();
         }
 
-        return Result<Roots>.Fail(Outcome.Invalid, Roots.NothingDeclared);
+        return Result<Boundary>.Fail(Outcome.Invalid, Roots.NothingDeclared);
     }
+
+    static Result<Boundary> From(Result<Roots> opened, string? file) =>
+        opened.IsOk
+            ? Result<Boundary>.Ok(new Boundary(opened.Value, file))
+            : opened.Carry<Boundary>();
 }
+
+/// <summary>The boundary and where it came from: the opened trees, and
+/// the configuration file they were read from - null when --root
+/// declared them on the command line, the one source with no file to
+/// re-read.</summary>
+public sealed record Boundary(Roots Roots, string? File);

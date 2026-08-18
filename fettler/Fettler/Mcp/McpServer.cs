@@ -37,14 +37,26 @@ public sealed class McpServer : IDisposable
     readonly Bench bench;
     readonly TextReader input;
     readonly TextWriter output;
+    readonly Func<Result<Roots>>? reload;
     readonly SemaphoreSlim writing = new(1, 1);
     readonly ConcurrentDictionary<string, CancellationTokenSource> inFlight = new();
 
-    public McpServer(Bench bench, TextReader input, TextWriter output)
+    /// <summary>
+    /// <paramref name="reload"/> is the per-request re-read of the
+    /// boundary: called before every tools/call, and its answer is the
+    /// boundary that call runs against. Null means the boundary is fixed
+    /// for the life of the server - the --root case, and every caller
+    /// that opened its trees directly. A re-read that fails refuses the
+    /// call it was read for, never falls back to the previous reading:
+    /// serving a boundary the file no longer states is how a person's
+    /// revocation quietly fails to bind.
+    /// </summary>
+    public McpServer(Bench bench, TextReader input, TextWriter output, Func<Result<Roots>>? reload = null)
     {
         this.bench = bench;
         this.input = input;
         this.output = output;
+        this.reload = reload;
     }
 
     public void Dispose()
@@ -166,10 +178,28 @@ public sealed class McpServer : IDisposable
         using var source = CancellationTokenSource.CreateLinkedTokenSource(cancel);
         inFlight[key] = source;
 
+        // The boundary THIS call runs against. Re-read when there is a
+        // file to re-read - unconditionally, not gated on a modification
+        // time, so the behaviour is deterministic: every call answers
+        // against the file as it is now, and an edit binds on the very
+        // next one. The snapshot shares the launch Bench's mutation
+        // gate, so R3.11's turn-taking spans boundary readings.
+        Bench boundary = bench;
+        Bench? snapshot = null;
+
         try
         {
+            if (reload is not null)
+            {
+                Result<Roots> current = reload();
+                if (!current.IsOk) return Ok(id, Refusal(current.Failure!));
+
+                snapshot = new Bench(current.Value, bench);
+                boundary = snapshot;
+            }
+
             Result<ToolCatalogue.ToolAnswer> answer = await ToolCatalogue
-                .InvokeAsync(bench, name, arguments, source.Token).ConfigureAwait(false);
+                .InvokeAsync(boundary, name, arguments, source.Token).ConfigureAwait(false);
 
             // A failed tool is a successful protocol message carrying
             // isError, not a JSON-RPC error: the model is meant to read
@@ -212,6 +242,7 @@ public sealed class McpServer : IDisposable
         }
         finally
         {
+            snapshot?.Dispose();
             inFlight.TryRemove(key, out _);
         }
     }
@@ -249,11 +280,30 @@ public sealed class McpServer : IDisposable
         + $"Declared tasks come from the \"tasks\" object in the {RootsFile.FileName} that declared "
         + "the trees, and running one needs that tree to grant execute, which is never granted by default. "
         + $"{RootsFile.FileName} and {RootsFile.LocalFileName} are the files that say "
-        + "what this tool may do, and this tool does not write them - a person edits those.";
+        + "what this tool may do, and this tool does not write them - a person edits those. "
+        + "An edit to them binds on the next request: serve re-reads both before every call.";
 
     static string Describe(Failure failure) =>
         $"{ExitCodes.NameOf(failure.Outcome)}: {failure.Message}"
         + (failure.Path is { Length: > 0 } at ? $" ({at})" : "");
+
+    /// <summary>A tools/call answer that is all refusal: the failure's
+    /// description as the one content part, marked isError. Used when
+    /// the boundary itself cannot be read - there is no operation to
+    /// answer with, and a JSON-RPC error would read as a broken server
+    /// rather than a stated refusal the model can act on.</summary>
+    static Action<Utf8JsonWriter> Refusal(Failure failure) => w =>
+    {
+        w.WriteStartObject();
+        w.WriteStartArray("content");
+        w.WriteStartObject();
+        w.WriteString("type", "text");
+        w.WriteString("text", Describe(failure));
+        w.WriteEndObject();
+        w.WriteEndArray();
+        w.WriteBoolean("isError", true);
+        w.WriteEndObject();
+    };
 
     Action<Utf8JsonWriter> Initialize(JsonElement parameters)
     {

@@ -138,12 +138,12 @@ public static class ToolCatalogue
             {"type":"object","properties":{}}
             """),
 
-        new("tasks", "The declared tasks and what each runs.", """
+        new("tasks", "The declared tasks and what each runs: \"run\" is the line as declared, and \"command\" is the argument list that would actually be launched, with any declared values already filled in.", """
 
             {"type":"object","properties":{}}
             """),
 
-        new("run", "Run a declared task, capturing its streams and exit code. Never composes a shell command. A task is declared whole and TAKES NO ARGUMENTS: name and timeout are the only inputs, and anything else is refused rather than ignored. If you need a variant, ask for a second task to be declared. Needs the tree it runs in to grant execute, which is never granted by default.", """
+        new("run", "Run a declared task, capturing its streams and exit code. Never composes a shell command. A task is declared whole and TAKES NO ARGUMENTS: name and timeout are the only inputs, and anything else is refused rather than ignored. If you need a variant, ask for a second task to be declared. A command line MAY carry values the configuration declares under \"replacements\", written {like-this} - those come from the file, never from you, and a person edits that file. The result reports the argument list that was actually launched. Needs the tree it runs in to grant execute, which is never granted by default.", """
             {"type":"object","required":["name"],"additionalProperties":false,"properties":{
               "name":{"type":"string"},"timeout":{"type":"integer","description":"seconds; 0 means no timeout"}
             }}

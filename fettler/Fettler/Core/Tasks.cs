@@ -15,6 +15,12 @@ public sealed record TaskDecl(
 }
 
 /// <summary>What running a task produced.</summary>
+/// <param name="Command">The argument list that was actually launched,
+/// with any placeholders already filled. Reported back because a
+/// declaration can carry a value the caller did not choose and cannot
+/// see: serve re-reads the configuration before every request, so the
+/// value can change between the listing and the run, and echoing what
+/// ran is the whole of the answer to which one was used.</param>
 public sealed record TaskRun(
     string Name,
     int ExitCode,
@@ -22,7 +28,8 @@ public sealed record TaskRun(
     string Stderr,
     TimeSpan Duration,
     bool TimedOut,
-    bool Cancelled);
+    bool Cancelled,
+    IReadOnlyList<string>? Command = null);
 
 /// <summary>
 /// The declared-task facility of R7, so builds, tests and gates can be
@@ -111,6 +118,154 @@ public static class Tasks
         if (started) words.Add(word.ToString());
         return Result<IReadOnlyList<string>>.Ok(words);
     }
+
+    /// <summary>
+    /// The declared words with their placeholders filled in, one word at
+    /// a time.
+    ///
+    /// <para><b>This runs AFTER <see cref="Split"/>, and that ordering is
+    /// the whole of its safety.</b> Substituting into the command LINE
+    /// and splitting afterwards would hand the grammar a value: a value
+    /// of <c>two words</c> would silently become two arguments, and one
+    /// carrying a quote would change the parse or fail as an unterminated
+    /// span. That is precisely the quoting failure class the split-once
+    /// rule exists to remove, re-entered through a side door. Filled into
+    /// a word, a value is one argument whatever is in it.</para>
+    ///
+    /// <para><b>A placeholder may be part of a word.</b>
+    /// <c>--message={note}</c> is one argument, and needs no rule of its
+    /// own - it falls out of replacing within the word.</para>
+    ///
+    /// <para><b>One pass, no recursion.</b> A value containing a brace is
+    /// inserted literally and never looked up again, so a replacement
+    /// cannot assemble another placeholder and there is no cycle to
+    /// check for.</para>
+    ///
+    /// <para><b>Only an IDENTIFIER between braces is a placeholder.</b>
+    /// The grammar had no braces before this, so a command line carrying
+    /// one was ordinary and correct - a PowerShell scriptblock, a jq
+    /// filter, a format string. Reading every <c>{...}</c> as a name
+    /// would turn each of those into an undeclared-name refusal and break
+    /// configurations that were right the day before. So
+    /// <c>{ $_.Name }</c> is text and <c>{feature-branch}</c> is a name,
+    /// and the rule that separates them is stated in <see cref="IsName"/>
+    /// rather than left to luck.</para>
+    ///
+    /// <para><b><c>{{</c> is a literal brace</b>, the same doubling
+    /// <see cref="Split"/> already uses for a quote - for the case the
+    /// identifier rule cannot cover, a command line that must carry the
+    /// text <c>{feature-branch}</c> itself. A backslash is not an escape
+    /// here either. A lone <c>}</c> is unremarkable and needs no
+    /// doubling.</para>
+    ///
+    /// <para><b>An unresolved name is refused, never passed through.</b>
+    /// Of the three things this could do - fill, refuse, pass through -
+    /// passing through is the only one that SUCCEEDS at the wrong thing:
+    /// <c>shoddy-feature.ps1 new {feature-branch}</c> does not fail, it
+    /// creates a branch called <c>{feature-branch}</c>.</para>
+    /// </summary>
+    public static Result<IReadOnlyList<string>> Fill(
+        IReadOnlyList<string> words,
+        IReadOnlyDictionary<string, string> replacements,
+        string task,
+        string file)
+    {
+        var filled = new List<string>(words.Count);
+
+        foreach (string word in words)
+        {
+            Result<string> one = FillWord(word, replacements, task, file);
+            if (!one.IsOk) return one.Carry<IReadOnlyList<string>>();
+            filled.Add(one.Value);
+        }
+
+        return Result<IReadOnlyList<string>>.Ok(filled);
+    }
+
+    static Result<string> FillWord(
+        string word, IReadOnlyDictionary<string, string> replacements, string task, string file)
+    {
+        // The overwhelmingly common word has no brace in it at all, and
+        // rebuilding it character by character to discover that would be
+        // work for nothing.
+        if (!word.Contains('{')) return Result<string>.Ok(word);
+
+        var built = new System.Text.StringBuilder();
+
+        for (int i = 0; i < word.Length; i++)
+        {
+            char c = word[i];
+
+            if (c != '{') { built.Append(c); continue; }
+
+            if (i + 1 < word.Length && word[i + 1] == '{') { built.Append('{'); i++; continue; }
+
+            int close = word.IndexOf('}', i + 1);
+
+            // Not a name, or never closed: ordinary text, left exactly as
+            // it was written. This is the clause that keeps every command
+            // line that already contained a brace working unchanged.
+            if (close < 0 || !IsName(word, i + 1, close))
+            {
+                built.Append(c);
+                continue;
+            }
+
+            string name = word[(i + 1)..close];
+
+            if (!replacements.TryGetValue(name, out string? value))
+                return Result<string>.Fail(Outcome.Invalid,
+                    replacements.Count == 0
+                        ? $"task '{task}' uses {{{name}}}, and no \"replacements\" are declared. "
+                          + $"Add one to {RootsFile.FileName}, or to the {RootsFile.LocalFileName} "
+                          + "beside it for a value that is yours rather than the project's"
+                        : $"task '{task}' uses {{{name}}}, which is not declared; \"replacements\" has: "
+                          + string.Join(", ", replacements.Keys.OrderBy(k => k, StringComparer.Ordinal)),
+                    file);
+
+            built.Append(value);
+            i = close;
+        }
+
+        return Result<string>.Ok(built.ToString());
+    }
+
+    /// <summary>
+    /// Whether <c>word[from..to]</c> is a name a replacement could be
+    /// declared under: a letter, then letters, digits, dots, underscores
+    /// or hyphens.
+    ///
+    /// <para>Deliberately narrow. Everything it excludes - a space, a
+    /// dollar, a pipe, a colon, a quote - is something that appears in
+    /// the braces people already write on command lines, and every one of
+    /// those has to keep meaning what it meant.</para>
+    ///
+    /// <para><b>A letter has to come first, and that rule earns its
+    /// keep:</b> it is what leaves <c>{0}</c> and <c>{1}</c> alone. A
+    /// .NET format string is exactly the shape a digits-only name would
+    /// claim, and one in a declared command would otherwise become an
+    /// undeclared-name refusal.</para>
+    ///
+    /// <para>The same charset is required of a declared replacement's
+    /// name, so a name that can be declared can always be referred
+    /// to.</para>
+    /// </summary>
+    public static bool IsName(string word, int from, int to)
+    {
+        if (to <= from) return false;
+        if (!char.IsAsciiLetter(word[from])) return false;
+
+        for (int i = from + 1; i < to; i++)
+        {
+            char c = word[i];
+            if (!char.IsAsciiLetterOrDigit(c) && c != '.' && c != '_' && c != '-') return false;
+        }
+
+        return true;
+    }
+
+    /// <summary>Whether a whole string is a usable replacement name.</summary>
+    public static bool IsName(string name) => IsName(name, 0, name.Length);
 
     public static Result<TaskDecl> Find(Roots roots, string name)
     {
@@ -225,7 +380,7 @@ public static class Tasks
         int exit = timedOut || cancelled ? -1 : SafeExitCode(process);
 
         var run = new TaskRun(task.Name, exit, stdout.ToString(), stderr.ToString(),
-            stopwatch.Elapsed, timedOut, cancelled);
+            stopwatch.Elapsed, timedOut, cancelled, task.Command);
 
         if (timedOut)
             return Result<TaskRun>.Fail(new Failure(Outcome.TimedOut,

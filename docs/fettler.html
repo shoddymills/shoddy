@@ -146,6 +146,17 @@ than the work &mdash; so the work is not the thing to optimise.</div>
 encoding (how its characters are stored as bytes), its line endings, and
 its trailing newline are detected on read and restored on write. Nothing
 is ever silently normalised.</li>
+<li><b>Text you send arrives as UTF-8, whatever the console is set
+to.</b> Both streams name their encoding rather than inheriting the
+console's code page, so a character outside ASCII &mdash; an em-dash, an
+accent, a CJK character &mdash; reaches disk as the bytes you meant.
+This is stated because the inherited default is wrong on Windows: under
+a code page like 437 the three bytes of an em-dash decode as three
+separate characters and are written back out as six. <b>Silently</b>
+&mdash; the round trip is self-consistent, so the hash still matches and
+nothing downstream can tell. And it reaches past writing: a search for a
+non-ASCII pattern matches nothing and says so calmly, which is the worse
+of the two.</li>
 <li><b>Edits are all-or-nothing across every file they touch.</b> Every
 edit is resolved against the files as they were read, before anything is
 written.</li>
@@ -803,7 +814,8 @@ split once, and the program is launched with the resulting list.</li>
 <code>run</code> accepts a name and a timeout, and nothing else. An
 extra word is <em>refused</em>, on the command line and over MCP alike,
 rather than dropped. What runs is therefore exactly what the file says,
-every time. A variant is a second declared task, not a composed one.
+every time. A variant is a second declared task, or a value the file
+declares &mdash; never something composed at the call.
 
 <div class="promptbox"><button class="copy">Copy</button><pre><code>$ fettle run build --release
 refused: no such flag: --release - try: fettle help
@@ -815,6 +827,56 @@ thing you want run.</code></pre></div></div>
 <p><code>cwd</code> &mdash; the folder the task runs in &mdash; is
 optional, defaults to the top of the default tree, and is checked for
 containment like any other path.</p>
+
+<h3 id="replacements">Values the file supplies</h3>
+
+<p>Declaring a second task answers <code>test</code> versus
+<code>machines</code>. It cannot answer <em>the branch to cut</em> or
+<em>the note to commit under</em>, which are strings invented fresh each
+time. A command line may name a value the configuration declares:</p>
+
+<div class="promptbox"><button class="copy">Copy</button><pre><code>"replacements": {
+  "feature-branch": "hebdenbridge"
+},
+"tasks": {
+  "feature": { "run": "pwsh -File scripts/shoddy-feature.ps1 new {feature-branch}" }
+}</code></pre></div>
+
+<ul>
+<li><b>Filling happens after the split, into a word.</b> A value is one
+argument whatever is in it &mdash; a space does not make two arguments,
+a quote does not change the parse. Filling the LINE and splitting
+afterwards would hand the grammar a value, which is the entire failure
+class the split-once rule exists to remove.</li>
+<li><b>A placeholder may be part of a word.</b>
+<code>--message={note}</code> and <code>v{release-tag}</code> are each
+one argument.</li>
+<li><b>Only an identifier between braces is a name</b> &mdash; a letter,
+then letters, digits, dots, underscores or hyphens. Everything else is
+ordinary text, so <code>{ $_.Name }</code>, <code>{a:.b}</code> and
+<code>{0}</code> go on meaning what they meant. Write <code>{{</code>
+for a literal brace where a name would otherwise be read.</li>
+<li><b>One pass.</b> A value carrying braces is inserted literally and
+never looked up again, so a replacement cannot build another.</li>
+<li><b>An undeclared name is refused</b> and the configuration does not
+load. It is never passed through &mdash; passed through,
+<code>new {feature-branch}</code> does not fail, it creates a branch
+called <code>{feature-branch}</code>.</li>
+<li><b>The overlay is where a value belongs.</b>
+<code>.fettler.local.json</code> is gitignored and its replacements
+merge over the checked-in ones name by name, so the project declares the
+task while today's branch name stays out of the diff.</li>
+<li><b>They are not for secrets.</b> <code>tasks</code> shows every
+value, deliberately, so that what is listed is what runs. A token
+belongs in the environment of the process a task launches.</li>
+</ul>
+
+<div class="takeaway"><b>The value in the file is the authorization.</b>
+Fettler will not write its own configuration, so a branch name or a
+commit message in it is there because a person typed it. A task whose
+placeholder nobody declared refuses to run at all &mdash; the resting
+state is inert, and arming it is a deliberate edit by somebody who can
+edit that file.</div>
 
 <div class="takeaway"><b>That configuration is trusted input.</b>
 Containment guards paths. It does not and cannot guard a command list,

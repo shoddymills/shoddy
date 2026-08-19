@@ -502,6 +502,13 @@ public static class Command
                 {
                     w.WriteStartObject();
                     w.WriteString("name", t.Name);
+                    // Both spellings, deliberately. "run" is the line as
+                    // DECLARED, placeholders and all, so the listing can
+                    // be compared with the file; "command" is what would
+                    // actually be launched. Showing only one of them
+                    // leaves the caller trusting a listing that is wrong
+                    // in one direction or the other.
+                    w.WriteString("run", t.Display);
                     w.WriteStartArray("command");
                     foreach (string part in t.Command) w.WriteStringValue(part);
                     w.WriteEndArray();
@@ -1150,6 +1157,12 @@ public static class Command
             return Ok(Json(w =>
             {
                 w.WriteString("task", r.Name);
+                if (r.Command is { } launched)
+                {
+                    w.WriteStartArray("command");
+                    foreach (string part in launched) w.WriteStringValue(part);
+                    w.WriteEndArray();
+                }
                 w.WriteNumber("exit_code", r.ExitCode);
                 w.WriteString("stdout", r.Stdout);
                 w.WriteString("stderr", r.Stderr);
@@ -1385,6 +1398,9 @@ public static class Command
           run NAME [--timeout SECONDS]
                  A task is declared whole and takes NO arguments from its
                  caller. Declare a second task rather than composing one.
+                 A command line may name values the configuration declares
+                 under "replacements", written {like-this}; the value is
+                 the file's and an undeclared name is refused.
           batch --script FILE
           doctor [--client NAME] [--quiet] [--hook]
                  whether this tool is wired into each assistant client, at both

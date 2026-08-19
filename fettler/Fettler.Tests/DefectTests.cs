@@ -315,6 +315,85 @@ public sealed class DefectTests
             .GetProperty("serverInfo").GetProperty("name").GetString());
     }
 
+    /// <summary>
+    /// Text a caller sends arrives as UTF-8, and the bytes that reach
+    /// disk are the ones it meant.
+    ///
+    /// <para><b>The defect.</b> <c>fettle serve</c> handed
+    /// <c>Console.In</c> to the server, and on Windows that decodes stdin
+    /// with the CONSOLE'S INPUT CODE PAGE - 437 or 850 on a default
+    /// install. The three UTF-8 bytes of an em-dash were read as three
+    /// separate characters and then written back out as UTF-8 in their
+    /// own right: six bytes where there should be three. Silently - the
+    /// round trip is self-consistent, so the hash matched and nothing
+    /// downstream could tell. <c>Console.OutputEncoding</c> had been set
+    /// since early on and the input side never was; the asymmetry was the
+    /// whole of it.</para>
+    ///
+    /// <para>It reached further than writing. A search for a non-ASCII
+    /// pattern matched nothing and said so calmly, which is the worse of
+    /// the two failures.</para>
+    ///
+    /// <para><b>What this covers and what it does not.</b> The server is
+    /// driven from real UTF-8 BYTES, through the reader the fix builds,
+    /// so the whole chain below the front end is held to it. The single
+    /// line it cannot reach is the wiring in <c>Program.Main</c> - and
+    /// that is exactly why nothing caught this, since every other MCP
+    /// test uses <c>TextReader.Null</c> or a <c>StringReader</c>, and a
+    /// StringReader cannot reproduce the fault because by then the
+    /// decoding has already happened.</para>
+    /// </summary>
+    [Fact]
+    public async Task TextFromTheCallerArrivesAsUtf8WhateverTheConsoleCodePageIs()
+    {
+        using var box = new Sandbox();
+
+        // An em-dash, curly quotes and an arrow: characters whose UTF-8
+        // bytes a code page reads as several apiece.
+        // Built from code points rather than written as literals. Not
+        // squeamishness: this file has to state the expected bytes
+        // exactly, and a literal here would be at the mercy of whatever
+        // wrote the file - which is the defect above, met while writing
+        // the test for it.
+        string awkward = "em-dash " + (char)0x2014 + " curly " + (char)0x2019
+            + "quote" + (char)0x2019 + " arrow " + (char)0x2192;
+
+        // The default encoder escapes non-ASCII to \uXXXX, which would
+        // put pure ASCII on the wire and prove nothing at all. This is
+        // the raw payload a real client sends.
+        string call = JsonSerializer.Serialize(
+            new
+            {
+                jsonrpc = "2.0",
+                id = 1,
+                method = "tools/call",
+                @params = new
+                {
+                    name = "write",
+                    arguments = new { path = "note.md", text = awkward },
+                },
+            },
+            new JsonSerializerOptions
+            {
+                Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+            });
+
+        var encoding = new System.Text.UTF8Encoding(false);
+        var pipe = new MemoryStream(encoding.GetBytes(call + "\n"));
+        using var reader = new StreamReader(pipe, encoding);
+
+        var written = new StringWriter();
+        using var server = new McpServer(box.Bench, reader, written);
+        await server.RunAsync();
+
+        Assert.DoesNotContain("\"isError\":true", written.ToString());
+        Assert.Equal(awkward, box.ReadText("note.md"));
+
+        // Stated in bytes too: a character comparison would still pass if
+        // both sides were wrong in the same direction.
+        Assert.Equal(encoding.GetBytes(awkward), box.ReadRaw("note.md"));
+    }
+
     // ---- a refused tool call is still a machine-readable answer ----
 
     /// <summary>

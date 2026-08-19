@@ -27,8 +27,8 @@
 <p class="kicker">Every builtin word, type, and syntax form &mdash; plus a map of the machines.</p>
 </header>
 <p class="note">Case-insensitive; convention is PascalCase for words and types,
-camelCase for variables. Indexes are 1-based.
-Everything is immutable &mdash; "update" words return new values.
+camelCase for variables. Indexes are 1-based: counting starts at 1.
+Everything is immutable &mdash; values never change; "update" words return new values.
 Every word on this page is built into the mill. The standard library (the
 machines, brought in with <code>Include</code>) is mapped in
 <a href="#machines">The machines</a> below; each machine&rsquo;s full word
@@ -38,7 +38,7 @@ reference lives on <a href="machines/index.html">its own page</a>.</p>
 <table>
 <tr><th>Form</th><th>Meaning</th></tr>
 <tr><td>Def Name(p As t, ...) As r</td><td>Function, expression-syntax body. Last value = result; no RETURN. Implicit binding of parameters.</td></tr>
-<tr><td>Def Name ( a b -- c )</td><td>Function, concatenative (stack) body; signature is documentation.</td></tr>
+<tr><td>Def Name ( a b -- c )</td><td>Function, concatenative (stack) body; the signature is documentation. ( a b -- c ) reads: takes a and b off the stack, leaves c &mdash; inputs before the dashes, outputs after.</td></tr>
 <tr><td>Def Main()</td><td>Entry point.</td></tr>
 <tr><td>Type Name &#8629; fields</td><td>Record declaration: indented <code>field As Type</code> lines. Declare before use.</td></tr>
 <tr><td>Type Name = v1(f, ...) | v2</td><td>Sum type: each variant is a constructor/pattern. Bare variant = zero fields (construct as <code>v2()</code>).</td></tr>
@@ -59,25 +59,25 @@ Operators need spaces around them: <code>count + 1</code>, not <code>count+1</co
 <h2>Types</h2>
 <table>
 <tr><th>Type</th><th>Notes</th></tr>
-<tr><td>Number</td><td>IEEE double; the only numeric type. Whole numbers exact to 2<sup>53</sup>.</td></tr>
+<tr><td>Number</td><td>A 64-bit floating-point number (what most languages call a double; IEEE); the only numeric type. Exact for whole numbers up to 2<sup>53</sup>.</td></tr>
 <tr><td>String</td><td>Immutable. Escapes: <code>\" \\ \n \t \r</code></td></tr>
 <tr><td>Boolean</td><td>True / False. Never a number.</td></tr>
-<tr><td>Quotation&nbsp;[ t -- u ]</td><td>Function value; closes over its environment (lexical).</td></tr>
-<tr><td>List Of t</td><td>Cons list, literal <code>{ 1, 2, 3 }</code>. Recurse on these.</td></tr>
-<tr><td>Array Of t</td><td>Fixed length, O(1) Nth. Index into these.</td></tr>
-<tr><td>records (Type)</td><td>Nominal; constructor + accessors + With + Case patterns.</td></tr>
+<tr><td>Quotation&nbsp;[ t -- u ]</td><td>Function value; closes over its environment (lexical) &mdash; it remembers the variables from where it was written.</td></tr>
+<tr><td>List Of t</td><td>A cons list &mdash; a linked list; literal <code>{ 1, 2, 3 }</code>. Walk it front to back (recurse).</td></tr>
+<tr><td>Array Of t</td><td>Fixed length; Nth jumps straight to position k (O(1)). Index into these.</td></tr>
+<tr><td>records (Type)</td><td>Nominal &mdash; matched by type name, not by shape; constructor + accessors + With + Case patterns.</td></tr>
 </table>
-<p class="note">Annotations are parsed; checking is at runtime. Type variables: single lowercase letters (t, u).</p>
+<p class="note">Annotations are parsed, but checked only when the program runs. Type variables: single lowercase letters (t, u).</p>
 
 <h2>Operators (loose &rarr; tight)</h2>
 <table>
 <tr><th>Level</th><th>Operators</th><th>Notes</th></tr>
-<tr><td>1</td><td>Or</td><td rowspan="2">Short-circuit in expression bodies; strict words in stack bodies.</td></tr>
+<tr><td>1</td><td>Or</td><td rowspan="2">Short-circuit in expression bodies: the right side runs only if the answer is still open. Strict words in stack bodies: both sides have already run.</td></tr>
 <tr><td>2</td><td>And</td></tr>
 <tr><td>3</td><td>= &lt;&gt; &lt; &gt; &lt;= &gt;=</td><td>Numbers or strings; = / &lt;&gt; also booleans, records (structural), arrays.</td></tr>
 <tr><td>4</td><td>+ - &amp;</td><td>&amp; is string concatenation.</td></tr>
 <tr><td>5</td><td>* / Mod</td><td>Division / Mod by zero abort.</td></tr>
-<tr><td>6</td><td>^</td><td>Right-assoc; <code>-n ^ 2</code> = <code>-(n^2)</code> (classic BASIC).</td></tr>
+<tr><td>6</td><td>^</td><td>Groups from the right (right-assoc); <code>-n ^ 2</code> = <code>-(n^2)</code> (classic BASIC).</td></tr>
 <tr><td>prefix</td><td>Not, unary -</td><td></td></tr>
 </table>
 
@@ -91,7 +91,7 @@ Ifte(c, t, f)  ' inline     Case Person(n, a) Where a &lt; 18   ' destructure + 
                             Case Order(Person(n, _), it, t)  ' patterns nest; _ = ignore
                             Case Else               ' default (else non-match aborts)</code></pre>
 <p class="note">Both are expressions: each branch/clause block yields the value.
-Scrutinee evaluates once. Pattern names bind for guard and body; sub-patterns
+The tested value is evaluated once. Pattern names bind for guard and body; sub-patterns
 nest to any depth. <code>Case Type(...)</code> is always a pattern; equality vs
 a record: <code>Case = Type(...)</code> (or bare <code>Case None</code> for a
 zero-field variant).</p>
@@ -112,7 +112,7 @@ zero-field variant).</p>
 <tr><th>Word</th><th>Meaning</th></tr>
 <tr><td>Map(xs, f)</td><td>New sequence, f applied to each. Keeps input's kind.</td></tr>
 <tr><td>Filter(xs, p)</td><td>Keep items where p is True.</td></tr>
-<tr><td>Fold(xs, z, f)</td><td>Left fold from z: <code>Fold(xs, 0, +)</code> sums.</td></tr>
+<tr><td>Fold(xs, z, f)</td><td>Combine items into one value, left to right, starting from z (a left fold): <code>Fold(xs, 0, +)</code> sums.</td></tr>
 <tr><td>Each(xs, f)</td><td>Run f per item (for effects).</td></tr>
 <tr><td>Times(n, f)</td><td>Run f n times.</td></tr>
 <tr><td>Range(a, b)</td><td>List of a..b inclusive.</td></tr>
@@ -123,7 +123,7 @@ zero-field variant).</p>
 <tr><th>Word</th><th>Meaning</th></tr>
 <tr><td>{ a, b, c }</td><td>List literal (elements are expressions).</td></tr>
 <tr><td>First / Rest / Prepend(x, xs) / IsEmpty</td><td>List recursion kit (First/IsEmpty also arrays).</td></tr>
-<tr><td>Nth(xs, k)</td><td>k-th item; O(1) on arrays.</td></tr>
+<tr><td>Nth(xs, k)</td><td>k-th item; instant on arrays (O(1)).</td></tr>
 <tr><td>SetNth(xs, k, v)</td><td>Copy with position k = v.</td></tr>
 <tr><td>Length / Reverse / Concat</td><td>Both kinds (Concat: same kind).</td></tr>
 <tr><td>Sort(xs)</td><td>Ascending; all numbers or all strings. Keeps input's kind.</td></tr>
@@ -138,7 +138,7 @@ zero-field variant).</p>
 <tr><td>Person(Name = "ann", Age = 34)</td><td>Constructor, named fields.</td></tr>
 <tr><td>Age(p)</td><td>Accessor: every field name is a function. Dispatches on the record's type.</td></tr>
 <tr><td>With(p, Age = 35, ...)</td><td>Copy with fields changed.</td></tr>
-<tr><td>P1 = P2</td><td>Structural equality.</td></tr>
+<tr><td>P1 = P2</td><td>Structural equality: equal when all fields are equal.</td></tr>
 </table></section>
 
 <section><h2>Strings</h2>
@@ -155,7 +155,7 @@ error.</td></tr>
 <tr><td>Upper / Lower(s)</td><td>Case conversion.</td></tr>
 <tr><td>Str(n) / Val(s)</td><td>Number &harr; string. Val stops the program
 on a non-number.</td></tr>
-<tr><td>IsNumeric(s)</td><td>True iff Val(s) would succeed.</td></tr>
+<tr><td>IsNumeric(s)</td><td>True exactly when Val(s) would succeed.</td></tr>
 <tr><td>ValOr(s, FALLBACK)</td><td>Val that hands back FALLBACK instead of
 stopping.</td></tr>
 <tr><td>Chr(n) / Asc(s)</td><td>Code &harr; character.</td></tr>
@@ -185,7 +185,7 @@ cannot be skipped.</p>
 <tr><td>Some(1) = Some(1)</td><td>True &mdash; variants compare structurally, and <code>None() = None()</code> too.</td></tr>
 </table>
 <p class="note">There is no <code>Value(o)</code>: an accessor on a sum type
-is partial, so it would compile and then fail at run time on the very case
+is partial &mdash; defined for one variant only &mdash; so it would compile and then fail at run time on the very case
 the type exists to make you handle. Pick <code>Option</code> when the reason
 is always the same and <code>Result</code> when it isn't.</p></section>
 
@@ -204,10 +204,10 @@ is always the same and <code>Result</code> when it isn't.</p></section>
 <tr><td>Tanh(x)</td><td>Hyperbolic tangent &mdash; saturates to &plusmn;1, never overflows.</td></tr>
 <tr><td>Log10(n)</td><td>Base-10 log.</td></tr>
 <tr><td>Wrap(a, b)</td><td>Floored modulo: result carries b's sign (angles, indexes).</td></tr>
-<tr><td>Erf(x)</td><td>Error function &mdash; normal probabilities.</td></tr>
-<tr><td>GammaP(a, x)</td><td>Regularized lower incomplete gamma &mdash; chi-square CDF.</td></tr>
-<tr><td>BetaI(a, b, x)</td><td>Regularized incomplete beta &mdash; t and F CDFs.</td></tr>
-<tr><td>Rnd</td><td>Uniform [0,1). Impure.</td></tr>
+<tr><td>Erf(x)</td><td>Error function &mdash; the curve behind normal (bell-curve) probabilities.</td></tr>
+<tr><td>GammaP(a, x)</td><td>Regularized lower incomplete gamma &mdash; the curve behind the chi-square test's probabilities (its CDF).</td></tr>
+<tr><td>BetaI(a, b, x)</td><td>Regularized incomplete beta &mdash; the curve behind the t and F tests' probabilities (their CDFs).</td></tr>
+<tr><td>Rnd</td><td>Uniform [0,1): evenly spread from 0 up to, not including, 1. Impure.</td></tr>
 <tr><td>Seed(n)</td><td>Make Rnd reproducible.</td></tr>
 </table>
 <p class="note">There are <strong>no bitwise operators</strong> and no integer
@@ -218,7 +218,7 @@ codes and truth tables are all words in
 <section><h2>Time</h2>
 <table>
 <tr><th>Word</th><th>Meaning</th></tr>
-<tr><td>Ticks()</td><td>Monotonic milliseconds (fractional) &mdash; for measuring, never wall time.</td></tr>
+<tr><td>Ticks()</td><td>Monotonic (only ever counts up) milliseconds, fractional &mdash; for measuring, never wall time.</td></tr>
 <tr><td>Sleep(ms)</td><td>Yield the thread for ms.</td></tr>
 <tr><td>Clock()</td><td>Wall clock now &rarr; 7-element Array: year, month, day, hour, minute, second, ms.</td></tr>
 </table>
@@ -228,7 +228,7 @@ FormatDuration: <a href="machines/clock.html">clock.shoddy</a>.</p></section>
 <section><h2>I/o, errors, testing</h2>
 <table>
 <tr><th>Word</th><th>Meaning</th></tr>
-<tr><td>Print(v)</td><td>Any value + newline. Effectful; keep in Main.</td></tr>
+<tr><td>Print(v)</td><td>Any value + newline. Effectful &mdash; it acts on the world outside the program; keep in Main.</td></tr>
 <tr><td>Input(prompt)</td><td>Print prompt, read a line &rarr; String.</td></tr>
 <tr><td>InputLine(prompt)</td><td>As Input, but &rarr; a 2-element Array [atEof, text]: <code>Nth(r, 1)</code> is True only at genuine end of stream, <code>Nth(r, 2)</code> is the line. Tells EOF apart from a blank line, which Input cannot.</td></tr>
 <tr><td>InKey()</td><td>One pending keystroke &rarr; String, "" if none. Non-blocking, no echo; arrows and PF1&ndash;4 arrive as VT100 application-mode sequences for <code>EvalKey</code>.</td></tr>
@@ -260,7 +260,7 @@ record k at <code>1 + (k-1)*20</code>.</p>
 <tr><td>ScribblerShut(n)</td><td>Close the window a slot names and free the slot &rarr; Boolean. False for a slot already let go, so closing twice cannot end the run.</td></tr>
 <tr><td>NetAllowed()</td><td>&rarr; Boolean; whether the mill was started with <code>--allow-net</code>. The one word in the socket family that is not gated &mdash; the question has to stay askable when the answer is no, since every other TCP word aborts when the network is off.</td></tr>
 <tr><td>TryTcpConnect(host, port)</td><td>TCPConnect that reports failure instead of aborting &rarr; <code>Result</code>: <code>Ok(handle)</code>, or <code>Err(why, 0)</code> with <code>why</code> = <code>CANNOT REACH 'host:port' (&hellip;)</code> ending NETWORK IS DISABLED / TOO MANY OPEN SOCKETS / TIMED OUT / NO SUCH HOST OR REFUSED. Lets a word connect, ask and close inside its own body without a mistyped hostname ending the run.</td></tr>
-<tr><td>TryBOpen(path)</td><td>BOpen that reports failure instead of aborting, and opens an <em>existing</em> file only &rarr; <code>Result</code>: <code>Ok(handle)</code>, or <code>Err(why, 0)</code> with <code>why</code> = <code>CANNOT OPEN 'path' (&hellip;)</code> ending NO SUCH FILE / IS A DIRECTORY / ACCESS DENIED / UNREADABLE / TOO MANY OPEN FILES. The only way to pre-flight a binary read: BOpen creates on a failed read, so asking with it damages the answer.</td></tr>
+<tr><td>TryBOpen(path)</td><td>BOpen that reports failure instead of aborting, and opens an <em>existing</em> file only &rarr; <code>Result</code>: <code>Ok(handle)</code>, or <code>Err(why, 0)</code> with <code>why</code> = <code>CANNOT OPEN 'path' (&hellip;)</code> ending NO SUCH FILE / IS A DIRECTORY / ACCESS DENIED / UNREADABLE / TOO MANY OPEN FILES. The only way to pre-flight a binary read: BOpen creates the file when it is missing, so asking with BOpen changes the very thing you asked about.</td></tr>
 <tr><td>BClose(h)</td><td>Close.</td></tr>
 <tr><td>Seek(h, pos)</td><td>Move to byte pos (1-based).</td></tr>
 <tr><td>BPos(h) / BSize(h)</td><td>Current position / file size in bytes.</td></tr>
@@ -309,7 +309,7 @@ under bare <code>dotnet</code>.</p>
 <table>
 <tr><th>Word</th><th>Meaning</th></tr>
 <tr><td>ScribblerOpen(w, h)</td><td>&rarr; handle; opens the window.</td></tr>
-<tr><td>ScribblerClose(sc)</td><td>Close (idempotent).</td></tr>
+<tr><td>ScribblerClose(sc)</td><td>Close (idempotent &mdash; closing twice is safe).</td></tr>
 <tr><td>ScribblerTitle(sc, s)</td><td>Window title.</td></tr>
 <tr><td>ScribblerPixel(sc, x, y, r, g, b)</td><td>The one drawing primitive.</td></tr>
 <tr><td>ScribblerGetPixel(sc, x, y)</td><td>&rarr; 3-element Array r,g,b (out of bounds reads 0,0,0).</td></tr>
@@ -377,7 +377,7 @@ full word reference, a user&rsquo;s guide, and examples &mdash; start at the
 <h3>Sequences &amp; text</h3>
 <table>
 <tr><th></th><th>Machine</th><th>What it gives you</th></tr>
-<tr><td class="uicon"><a href="machines/regex.html"><img src="media/icons/regex.svg" alt="" loading="lazy"></a></td><td><a href="machines/regex.html">regex</a></td><td>Regular expressions as a compiled value — a Pike VM that never backtracks, so no input can hang it and none can end the session. No backreferences and no lookaround, which is what buys that.</td></tr>
+<tr><td class="uicon"><a href="machines/regex.html"><img src="media/icons/regex.svg" alt="" loading="lazy"></a></td><td><a href="machines/regex.html">regex</a></td><td>Regular expressions as a compiled value — a Pike VM. It never backtracks because backreferences and lookaround are left out, so no input can hang it and none can end the session.</td></tr>
 <tr><td class="uicon"><a href="machines/seq.html"><img src="media/icons/seq.svg" alt="" loading="lazy"></a></td><td><a href="machines/seq.html">seq</a></td><td>Sequences — Map/Filter/Fold and friends, over both List and Array.</td></tr>
 <tr><td class="uicon"><a href="machines/sinq.html"><img src="media/icons/sinq.svg" alt="" loading="lazy"></a></td><td><a href="machines/sinq.html">sinq</a></td><td>Querying a sequence &mdash; ordering by a key, grouping, joining, the set words, and a walker for a record graph that holds itself. The half of a query seq and stats could not express.</td></tr>
 <tr><td class="uicon"><a href="machines/str.html"><img src="media/icons/str.svg" alt="" loading="lazy"></a></td><td><a href="machines/str.html">str</a></td><td>String helpers built on Instr/Left/Right/Mid/Len &mdash; surgery, boolean conversions, number formatting.</td></tr>
@@ -402,7 +402,7 @@ full word reference, a user&rsquo;s guide, and examples &mdash; start at the
 <h3>Statistics &amp; machine learning</h3>
 <table>
 <tr><th></th><th>Machine</th><th>What it gives you</th></tr>
-<tr><td class="uicon"><a href="machines/neural.html"><img src="media/icons/neural.svg" alt="" loading="lazy"></a></td><td><a href="machines/neural.html">neural</a></td><td>Feed-forward neural networks — one hidden Tanh layer, mini-batch SGD with momentum, gradients as net-shaped values. Two heads over one backward pass: regression on squared error, classification on softmax and cross-entropy.</td></tr>
+<tr><td class="uicon"><a href="machines/neural.html"><img src="media/icons/neural.svg" alt="" loading="lazy"></a></td><td><a href="machines/neural.html">neural</a></td><td>Feed-forward neural networks — one hidden Tanh layer, mini-batch SGD with momentum (learning by many small corrections), gradients as net-shaped values. Two heads over one backward pass: regression on squared error, classification on softmax (scores turned into probabilities) and cross-entropy.</td></tr>
 <tr><td class="uicon"><a href="machines/plotter.html"><img src="media/icons/plotter.svg" alt="" loading="lazy"></a></td><td><a href="machines/plotter.html">plotter</a></td><td>Statistical charts — histogram, bar, pie, box, scatter — stats doing the arithmetic, scribbler doing the drawing.</td></tr>
 <tr><td class="uicon"><a href="machines/random.html"><img src="media/icons/random.svg" alt="" loading="lazy"></a></td><td><a href="machines/random.html">random</a></td><td>Random numbers, built on the Rnd builtin — seedless by construction; shuffling and sampling too.</td></tr>
 <tr><td class="uicon"><a href="machines/stats.html"><img src="media/icons/stats.svg" alt="" loading="lazy"></a></td><td><a href="machines/stats.html">stats</a></td><td>Statistics — descriptive measures, correlation and regression, and the classic tests with real p-values from the Erf/GammaP/BetaI builtins.</td></tr>

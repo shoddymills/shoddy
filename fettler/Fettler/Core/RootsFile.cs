@@ -71,6 +71,12 @@ public static class RootsFile
         /// What may run in a tree and what may be done to it are one
         /// statement about one tree, so one file states both.</summary>
         public IReadOnlyList<TaskDecl> Tasks { get; init; } = [];
+
+        /// <summary>The replacements it declared, empty when it declared
+        /// none: a name, and the string a task's command line gets in its
+        /// place.</summary>
+        public IReadOnlyDictionary<string, string> Replacements { get; init; } =
+            new Dictionary<string, string>(StringComparer.Ordinal);
     }
 
     /// <summary>
@@ -114,15 +120,16 @@ public static class RootsFile
         if (!found.IsOk) return found;
 
         string overlay = Path.Combine(Path.GetDirectoryName(found.Value.File)!, LocalFileName);
-        if (!File.Exists(overlay)) return found;
+        if (!File.Exists(overlay)) return Fill(found.Value);
 
         Result<Found> local = Read(overlay);
         if (!local.IsOk) return local;
 
-        return Result<Found>.Ok(new Found(found.Value.File, Merge(found.Value.Trees, local.Value.Trees))
+        return Fill(new Found(found.Value.File, Merge(found.Value.Trees, local.Value.Trees))
         {
             Overlay = local.Value.File,
             Tasks = MergeTasks(found.Value.Tasks, local.Value.Tasks),
+            Replacements = MergeReplacements(found.Value.Replacements, local.Value.Replacements),
         });
     }
 
@@ -258,7 +265,18 @@ public static class RootsFile
             Result<IReadOnlyList<TaskDecl>> tasks = ReadTasks(doc.RootElement, full);
             if (!tasks.IsOk) return tasks.Carry<Found>();
 
-            return Result<Found>.Ok(new Found(full, decls) { Tasks = tasks.Value });
+            Result<IReadOnlyDictionary<string, string>> replacements =
+                ReadReplacements(doc.RootElement, full);
+            if (!replacements.IsOk) return replacements.Carry<Found>();
+
+            // The tasks are returned with their placeholders INTACT. What
+            // fills them is Fill, after the overlay has been merged in -
+            // see ReadWithOverlay for why it cannot happen here.
+            return Result<Found>.Ok(new Found(full, decls)
+            {
+                Tasks = tasks.Value,
+                Replacements = replacements.Value,
+            });
         }
     }
 
@@ -465,6 +483,105 @@ public static class RootsFile
         Path.IsPathRooted(raw)
         || (raw.Length > 1 && raw[1] == ':' && char.IsLetter(raw[0]))
         || raw.StartsWith(@"\\", StringComparison.Ordinal);
+
+    /// <summary>
+    /// The declared replacements: a name, and the string a task's command
+    /// line gets in its place.
+    ///
+    /// <para><b>The value comes from this file and never from the
+    /// caller.</b> <c>run</c> still takes a task name and a timeout and
+    /// nothing else, so a model cannot choose any part of what a command
+    /// executes. What makes that worth having is <see cref="RuleFiles"/>:
+    /// Fettler refuses to write this file, so a branch name in it is
+    /// there because a PERSON typed it. The default state of a task with
+    /// an undeclared placeholder is to refuse, and arming it is a
+    /// deliberate human edit.</para>
+    ///
+    /// <para><b>They are not for secrets.</b> Every value is shown by
+    /// <c>tasks</c>, deliberately, so that what is listed is what runs. A
+    /// token belongs in the environment of the process a task launches,
+    /// not here.</para>
+    /// </summary>
+    static Result<IReadOnlyDictionary<string, string>> ReadReplacements(JsonElement root, string file)
+    {
+        var declared = new Dictionary<string, string>(StringComparer.Ordinal);
+
+        if (!root.TryGetProperty("replacements", out JsonElement replacements))
+            return Result<IReadOnlyDictionary<string, string>>.Ok(declared);
+
+        if (replacements.ValueKind != JsonValueKind.Object)
+            return Result<IReadOnlyDictionary<string, string>>.Fail(Outcome.Invalid,
+                "has a \"replacements\" that is not an object of name to string", file);
+
+        foreach (JsonProperty entry in replacements.EnumerateObject())
+        {
+            // The same charset a task refers to one by, so a name that can
+            // be declared can always be reached. Narrow on purpose: see
+            // Tasks.IsName for why a brace already on a command line has
+            // to keep meaning what it meant.
+            if (!Tasks.IsName(entry.Name))
+                return Result<IReadOnlyDictionary<string, string>>.Fail(Outcome.Invalid,
+                    $"replacement '{entry.Name}' has a name no task could refer to; a name is "
+                    + "letters, digits, dot, underscore or hyphen, and at least one of them", file);
+
+            // A string, because a command line word is a string. A number
+            // or a list would need a rule about how it is rendered into
+            // one, and that rule is the first sentence of a language.
+            if (entry.Value.ValueKind != JsonValueKind.String || entry.Value.GetString() is not { } value)
+                return Result<IReadOnlyDictionary<string, string>>.Fail(Outcome.Invalid,
+                    $"replacement '{entry.Name}' needs its value written as a string", file);
+
+            declared[entry.Name] = value;
+        }
+
+        return Result<IReadOnlyDictionary<string, string>>.Ok(declared);
+    }
+
+    /// <summary>
+    /// The tasks with their placeholders filled from the replacements.
+    ///
+    /// <para><b>This happens once the overlay has been merged, and not
+    /// while either file is being read.</b> The split is the point: the
+    /// checked-in file declares the task, and the gitignored one beside
+    /// it supplies today's value. Filling during the first read would
+    /// refuse a configuration that is perfectly complete the moment both
+    /// halves are in hand - and would make the useful arrangement the
+    /// unusable one.</para>
+    /// </summary>
+    static Result<Found> Fill(Found found)
+    {
+        if (found.Tasks.Count == 0) return Result<Found>.Ok(found);
+
+        var filled = new List<TaskDecl>(found.Tasks.Count);
+
+        foreach (TaskDecl task in found.Tasks)
+        {
+            Result<IReadOnlyList<string>> command =
+                Tasks.Fill(task.Command, found.Replacements, task.Name, found.File);
+            if (!command.IsOk) return command.Carry<Found>();
+
+            // Line is left exactly as declared, braces and all: it is what
+            // TaskDecl.Display shows, and a listing that cannot be
+            // compared with the file is a listing nobody can check.
+            filled.Add(task with { Command = command.Value });
+        }
+
+        return Result<Found>.Ok(found with { Tasks = filled });
+    }
+
+    /// <summary>The overlay's replacements over the checked-in ones, by
+    /// the same rule the trees and the tasks use: a name in both is the
+    /// overlay's, and a name only the overlay has is added. A replacement
+    /// is a single string, so whole-entry replacement and key-level
+    /// replacement are the same act - there is no field to merge and so
+    /// no ambiguity to create.</summary>
+    static IReadOnlyDictionary<string, string> MergeReplacements(
+        IReadOnlyDictionary<string, string> shipped, IReadOnlyDictionary<string, string> local)
+    {
+        var merged = new Dictionary<string, string>(shipped, StringComparer.Ordinal);
+        foreach (KeyValuePair<string, string> one in local) merged[one.Key] = one.Value;
+        return merged;
+    }
 
     /// <summary>The overlay's tasks over the checked-in ones, by the same
     /// rule the trees use: a name in both is the overlay's entirely, and a

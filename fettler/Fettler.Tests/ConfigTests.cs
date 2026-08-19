@@ -591,4 +591,314 @@ public sealed class ConfigTests
         Assert.Equal(Outcome.Invalid, found.Failure!.Outcome);
         Assert.Contains("build", found.Failure.Message);
     }
+
+    // ---- replacements: a value the FILE supplies, never the caller ----
+
+    /// <summary>
+    /// The whole feature in one assertion. <c>run</c> still takes a name
+    /// and a timeout and nothing else, so the value did not come from the
+    /// caller - it came from a file Fettler refuses to write, which is
+    /// what makes a branch name in it a person's act and not a model's.
+    /// </summary>
+    [Fact]
+    public void AReplacementFillsAPlaceholderInATaskCommand()
+    {
+        using var tree = new Tree();
+        tree.Config("", """
+            {
+              "replacements": { "feature-branch": "hebdenbridge" },
+              "trees": { "work": { "path": "." } },
+              "tasks": { "feature": { "run": "pwsh -File new.ps1 {feature-branch}" } }
+            }
+            """);
+
+        Result<RootsFile.Found> found = RootsFile.Discover(tree.Root);
+
+        Assert.True(found.IsOk, found.Failure?.Message);
+        Assert.Equal(["pwsh", "-File", "new.ps1", "hebdenbridge"], found.Value.Tasks[0].Command);
+    }
+
+    /// <summary>
+    /// Why filling happens AFTER the split and never before it. Filled
+    /// into the LINE, a value of "two words" would silently become two
+    /// arguments and one carrying a quote would change the parse - the
+    /// exact failure class the split-once rule exists to remove. Filled
+    /// into a WORD, every one of these is one argument holding precisely
+    /// those characters.
+    ///
+    /// <para>The <c>{another-name}</c> case is also the no-recursion
+    /// proof: the value is inserted literally and never looked up, so it
+    /// must NOT be refused for naming something undeclared.</para>
+    /// </summary>
+    [Theory]
+    [InlineData("two words")]
+    [InlineData("it's \"fine\"")]
+    [InlineData("a; rm -rf / && echo")]
+    [InlineData("{another-name}")]
+    [InlineData("")]
+    public void AFilledValueIsOneArgumentWhateverIsInIt(string value)
+    {
+        using var tree = new Tree();
+        tree.Config("", $$"""
+            {
+              "replacements": { "note": {{System.Text.Json.JsonSerializer.Serialize(value)}} },
+              "trees": { "work": { "path": "." } },
+              "tasks": { "commit": { "run": "git commit -m {note}" } }
+            }
+            """);
+
+        Result<RootsFile.Found> found = RootsFile.Discover(tree.Root);
+
+        Assert.True(found.IsOk, found.Failure?.Message);
+        Assert.Equal(["git", "commit", "-m", value], found.Value.Tasks[0].Command);
+    }
+
+    [Fact]
+    public void APlaceholderMayBePartOfAWord()
+    {
+        using var tree = new Tree();
+        tree.Config("", """
+            {
+              "replacements": { "version": "1.2.3" },
+              "trees": { "work": { "path": "." } },
+              "tasks": { "tag": { "run": "git tag v{version} -m rel-{version}" } }
+            }
+            """);
+
+        Result<RootsFile.Found> found = RootsFile.Discover(tree.Root);
+
+        Assert.True(found.IsOk, found.Failure?.Message);
+        Assert.Equal(["git", "tag", "v1.2.3", "-m", "rel-1.2.3"], found.Value.Tasks[0].Command);
+    }
+
+    /// <summary>
+    /// The clause that keeps every configuration written before this
+    /// feature working unchanged. A brace on a command line was ordinary,
+    /// and the braces people actually write hold spaces, dollars, pipes,
+    /// colons or bare digits - none of which can begin a name. Reading
+    /// every <c>{...}</c> as one would have turned each of these into an
+    /// undeclared-name refusal.
+    /// </summary>
+    [Theory]
+    [InlineData("pwsh -Command \"gci | % { $_.Name }\"")]
+    [InlineData("jq \"{a:.b}\"")]
+    [InlineData("log \"{0} of {1}\"")]
+    [InlineData("node -e \"console.log({})\"")]
+    [InlineData("awk \"{print $1}\"")]
+    public void ABraceThatIsNotANameIsOrdinaryText(string run)
+    {
+        using var tree = new Tree();
+        tree.Config("", $$"""
+            {
+              "trees": { "work": { "path": "." } },
+              "tasks": { "t": { "run": {{System.Text.Json.JsonSerializer.Serialize(run)}} } }
+            }
+            """);
+
+        Result<RootsFile.Found> found = RootsFile.Discover(tree.Root);
+
+        Assert.True(found.IsOk, found.Failure?.Message);
+
+        // Filling changed nothing at all: the command is what the split
+        // alone produces.
+        Assert.Equal(Tasks.Split(run).Value, found.Value.Tasks[0].Command);
+    }
+
+    /// <summary>A doubled brace is the escape for the one case the name
+    /// rule cannot cover: a command line that must carry the text of a
+    /// placeholder itself.</summary>
+    [Fact]
+    public void ADoubledBraceIsALiteralBraceAndNotAPlaceholder()
+    {
+        using var tree = new Tree();
+        tree.Config("", """
+            {
+              "trees": { "work": { "path": "." } },
+              "tasks": { "echo": { "run": "echo {{feature-branch}" } }
+            }
+            """);
+
+        Result<RootsFile.Found> found = RootsFile.Discover(tree.Root);
+
+        Assert.True(found.IsOk, found.Failure?.Message);
+        Assert.Equal(["echo", "{feature-branch}"], found.Value.Tasks[0].Command);
+    }
+
+    /// <summary>
+    /// An unresolved name refuses the read, names itself, and says what
+    /// IS declared - the same strictness a malformed "run" already gets.
+    /// </summary>
+    [Fact]
+    public void AnUnresolvedPlaceholderRefusesTheReadAndNamesItself()
+    {
+        using var tree = new Tree();
+        tree.Config("", """
+            {
+              "replacements": { "release-tag": "v1.0.0" },
+              "trees": { "work": { "path": "." } },
+              "tasks": { "feature": { "run": "pwsh -File new.ps1 {feature-branch}" } }
+            }
+            """);
+
+        Result<RootsFile.Found> found = RootsFile.Discover(tree.Root);
+
+        Assert.False(found.IsOk, "an unresolved placeholder must refuse, not pass through");
+        Assert.Equal(Outcome.Invalid, found.Failure!.Outcome);
+        Assert.Contains("feature-branch", found.Failure.Message);
+        Assert.Contains("feature", found.Failure.Message);
+        Assert.Contains("release-tag", found.Failure.Message);
+    }
+
+    /// <summary>A value is parked between uses rather than deleted and
+    /// retyped, so declaring one nothing refers to is ordinary.</summary>
+    [Fact]
+    public void ADeclaredButUnreferencedReplacementIsNotAnError()
+    {
+        using var tree = new Tree();
+        tree.Config("", """
+            {
+              "replacements": { "unused": "parked" },
+              "trees": { "work": { "path": "." } },
+              "tasks": { "build": { "run": "pwsh -File build.ps1" } }
+            }
+            """);
+
+        Result<RootsFile.Found> found = RootsFile.Discover(tree.Root);
+
+        Assert.True(found.IsOk, found.Failure?.Message);
+        Assert.Equal(["pwsh", "-File", "build.ps1"], found.Value.Tasks[0].Command);
+    }
+
+    /// <summary>
+    /// Why filling waits for the merge instead of happening as each file
+    /// is read. The checked-in file declares the task and the gitignored
+    /// overlay beside it carries today's value - which is the entire
+    /// reason to have both, since a branch name is one person's and one
+    /// moment's and has no business being a diff. Filling during the
+    /// first read would refuse a configuration that is complete the
+    /// instant both halves are in hand.
+    /// </summary>
+    [Fact]
+    public void TheOverlaySuppliesTheValueForATaskTheCheckedInFileDeclares()
+    {
+        using var tree = new Tree();
+        tree.Config("", """
+            {
+              "trees": { "work": { "path": "." } },
+              "tasks": { "feature": { "run": "pwsh -File new.ps1 {feature-branch}" } }
+            }
+            """);
+        tree.Local("", """
+            {
+              "replacements": { "feature-branch": "hebdenbridge" },
+              "trees": { "work": { "path": "." } }
+            }
+            """);
+
+        Result<RootsFile.Found> found = RootsFile.Discover(tree.Root);
+
+        Assert.True(found.IsOk, found.Failure?.Message);
+        Assert.Equal(["pwsh", "-File", "new.ps1", "hebdenbridge"], found.Value.Tasks[0].Command);
+    }
+
+    /// <summary>The overlay's replacements over the checked-in ones, by
+    /// the same rule the trees and the tasks already use.</summary>
+    [Fact]
+    public void TheOverlayReplacesAReplacementByNameAndAddsItsOwn()
+    {
+        using var tree = new Tree();
+        tree.Config("", """
+            {
+              "replacements": { "branch": "placeholder", "shared": "kept" },
+              "trees": { "work": { "path": "." } },
+              "tasks": { "t": { "run": "x {branch} {shared} {mine}" } }
+            }
+            """);
+        tree.Local("", """
+            {
+              "replacements": { "branch": "hebdenbridge", "mine": "extra" },
+              "trees": { "work": { "path": "." } }
+            }
+            """);
+
+        Result<RootsFile.Found> found = RootsFile.Discover(tree.Root);
+
+        Assert.True(found.IsOk, found.Failure?.Message);
+        Assert.Equal(["x", "hebdenbridge", "kept", "extra"], found.Value.Tasks[0].Command);
+    }
+
+    /// <summary>
+    /// Both spellings survive, and both are needed. <c>Command</c> is
+    /// what would actually be launched; <c>Display</c> is the line as
+    /// declared, braces and all. A listing that cannot be compared with
+    /// the file is a listing nobody can check, and one that hides the
+    /// value is a listing that lies about what runs.
+    /// </summary>
+    [Fact]
+    public void TheDeclaredLineKeepsItsPlaceholdersWhileTheCommandIsFilled()
+    {
+        using var tree = new Tree();
+        tree.Config("", """
+            {
+              "replacements": { "feature-branch": "hebdenbridge" },
+              "trees": { "work": { "path": "." } },
+              "tasks": { "feature": { "run": "pwsh -File new.ps1 {feature-branch}" } }
+            }
+            """);
+
+        Result<RootsFile.Found> found = RootsFile.Discover(tree.Root);
+
+        Assert.True(found.IsOk, found.Failure?.Message);
+        Assert.Contains("{feature-branch}", found.Value.Tasks[0].Display);
+        Assert.Contains("hebdenbridge", found.Value.Tasks[0].Command);
+    }
+
+    /// <summary>
+    /// The regression this feature has to be judged against. Before it
+    /// existed a brace was ordinary text and reached the child verbatim,
+    /// so <c>shoddy-feature.ps1 new {feature-branch}</c> did not fail -
+    /// it created a branch called <c>{feature-branch}</c>. Of the three
+    /// things this could do, passing a placeholder through is the only
+    /// one that SUCCEEDS at the wrong thing.
+    /// </summary>
+    [Fact]
+    public void ADeclaredPlaceholderNeverReachesTheArgumentList()
+    {
+        using var tree = new Tree();
+        tree.Config("", """
+            {
+              "replacements": { "feature-branch": "hebdenbridge" },
+              "trees": { "work": { "path": "." } },
+              "tasks": { "feature": { "run": "pwsh -File new.ps1 {feature-branch}" } }
+            }
+            """);
+
+        Result<RootsFile.Found> found = RootsFile.Discover(tree.Root);
+
+        Assert.True(found.IsOk, found.Failure?.Message);
+        foreach (string word in found.Value.Tasks[0].Command)
+            Assert.False(word.Contains("{feature-branch}", StringComparison.Ordinal),
+                $"a placeholder reached the argument list as '{word}'");
+    }
+
+    /// <summary>A replacement that is not shaped like one is refused with
+    /// the file named, never skipped - the same rule a malformed task
+    /// gets, and for the same reason.</summary>
+    [Theory]
+    [InlineData("""{"trees":{"w":{"path":"."}},"replacements":[]}""")]
+    [InlineData("""{"trees":{"w":{"path":"."}},"replacements":{"a":7}}""")]
+    [InlineData("""{"trees":{"w":{"path":"."}},"replacements":{"a":null}}""")]
+    [InlineData("""{"trees":{"w":{"path":"."}},"replacements":{"a b":"x"}}""")]
+    [InlineData("""{"trees":{"w":{"path":"."}},"replacements":{"":"x"}}""")]
+    [InlineData("""{"trees":{"w":{"path":"."}},"replacements":{"0":"x"}}""")]
+    public void AMalformedReplacementIsRefused(string json)
+    {
+        using var tree = new Tree();
+        tree.Config("", json);
+
+        Result<RootsFile.Found> found = RootsFile.Discover(tree.Root);
+
+        Assert.False(found.IsOk, "a malformed replacement must be refused, not skipped");
+        Assert.Equal(Outcome.Invalid, found.Failure!.Outcome);
+    }
 }

@@ -748,4 +748,68 @@ public sealed class ClientTests
         Assert.False(done.IsOk);
         Assert.Contains("claude-code", done.Failure!.Message);
     }
+
+    // ---- 2.16: a declared value handed to a shell to parse ----
+
+    /// <summary>A boundary with tasks on it, the way a configuration
+    /// produces one: the line as declared, and the command already
+    /// filled.</summary>
+    static Core.Roots WithTasks(Fixture box, params TaskDecl[] tasks)
+    {
+        Result<Core.Roots> opened = Core.Roots.Open(
+            [new TreeDecl("work", box.Dir("tree"), Permissions.Full)], null, tasks);
+        Assert.True(opened.IsOk, opened.Failure?.Message);
+        return opened.Value;
+    }
+
+    /// <summary>
+    /// Filling a value into a WORD makes it one argument whatever is in
+    /// it, and that guarantee stops at the process boundary. A task that
+    /// hands a shell a STRING is on the far side: the argument is itself
+    /// a script the shell parses, so a quote or a semicolon in the value
+    /// changes what runs.
+    /// </summary>
+    [Fact]
+    public void AValueFilledIntoAStringAShellWillParseIsReported()
+    {
+        using var box = new Fixture();
+
+        Core.Roots roots = WithTasks(box, new TaskDecl("commit",
+            ["pwsh", "-Command", "git add -A; git commit -m 'a note'"], null,
+            "pwsh -Command \"git add -A; git commit -m '{commit-note}'\""));
+
+        Finding f = Doctor.Examine(box.Machine, roots, "test")
+            .Findings.First(x => x.Check == "2.16");
+
+        Assert.False(f.Serious);
+        Assert.Contains("commit", f.Message);
+        Assert.Contains("-Command", f.Message);
+        Assert.Contains("separate tasks", f.Message);
+    }
+
+    /// <summary>
+    /// The shapes that must NOT warn, because a check that fires on
+    /// correct configurations is one people learn to scroll past.
+    /// </summary>
+    [Fact]
+    public void AValueThatStaysAnArgumentIsNotReported()
+    {
+        using var box = new Fixture();
+
+        Core.Roots roots = WithTasks(box,
+            // An argument list the whole way down: the value never meets a
+            // parser, which is the rewrite 2.16 asks for.
+            new TaskDecl("commit", ["git", "commit", "-m", "a note"], null,
+                "git commit -m {commit-note}"),
+            // A shell string, but nothing filled into it.
+            new TaskDecl("clean", ["pwsh", "-Command", "rm -rf obj; rm -rf bin"], null,
+                "pwsh -Command \"rm -rf obj; rm -rf bin\""),
+            // A value, and a shell - but handed a FILE to run, not a
+            // string to interpret.
+            new TaskDecl("feature", ["pwsh", "-File", "new.ps1", "hebdenbridge"], null,
+                "pwsh -File new.ps1 {feature-branch}"));
+
+        Assert.DoesNotContain(Doctor.Examine(box.Machine, roots, "test").Findings,
+            f => f.Check == "2.16");
+    }
 }

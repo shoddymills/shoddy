@@ -72,6 +72,7 @@ public static class Doctor
                 clients.Add(Look(machine, client, level, install));
 
         Overrides(machine, roots, findings);
+        Declarations(roots, findings);
 
         return new Diagnosis(install, clients, findings);
     }
@@ -471,6 +472,77 @@ public static class Doctor
     {
         foreach (string name in roots.Names)
             if (Roots.IsWithin(directory, roots.PathOf(name))) return true;
+        return false;
+    }
+
+    /// <summary>The shells whose command line can carry a script for them
+    /// to parse, by the name the program is launched under.</summary>
+    static readonly string[] Shells = ["pwsh", "powershell", "bash", "sh", "zsh", "cmd"];
+
+    /// <summary>The flags that hand one of them a string to interpret,
+    /// rather than a file to run or arguments to pass along.</summary>
+    static readonly string[] Interprets = ["-command", "-c", "-e", "-encodedcommand", "/c", "/k"];
+
+    /// <summary>
+    /// 2.16: a declared value filled into a string that a shell will parse.
+    ///
+    /// <para>Filling a replacement into a WORD makes it one argument
+    /// whatever is in it - and that guarantee reaches the process
+    /// boundary and stops there. A task that hands a shell a STRING is on
+    /// the far side of it: the value lands safely in one argument, and
+    /// that argument is a script the shell then parses, so a quote or a
+    /// semicolon in the value changes what runs.</para>
+    ///
+    /// <para><b>Named rather than refused.</b> Refusing would need an
+    /// opinion about which flags of which programs mean "interpret this"
+    /// - an allowlist of shells this tool has deliberately avoided
+    /// knowing about, which would be both incomplete and wrong about some
+    /// legitimate command. The configuration is trusted input by explicit
+    /// decision; whoever writes it gets told, and decides.</para>
+    /// </summary>
+    static void Declarations(Roots? roots, List<Finding> findings)
+    {
+        if (roots is null) return;
+
+        foreach (TaskDecl task in roots.Tasks)
+        {
+            if (task.Command.Count == 0) continue;
+            if (task.Line is not { } line || !FillsAValue(line)) continue;
+
+            string program = Path.GetFileNameWithoutExtension(task.Command[0]);
+            if (!Shells.Contains(program, StringComparer.OrdinalIgnoreCase)) continue;
+
+            foreach (string word in task.Command)
+            {
+                if (!Interprets.Contains(word, StringComparer.OrdinalIgnoreCase)) continue;
+
+                findings.Add(new Finding("2.16", false,
+                    $"task '{task.Name}' fills a declared value into a string it hands to "
+                    + $"{program} to interpret ('{word}'). The value arrives as one argument, but "
+                    + "that argument is a script the shell parses, so a quote or a semicolon in "
+                    + "the value changes what runs. Declare the steps as separate tasks, or call "
+                    + "a script with the value as a parameter, so it stays an argument all the "
+                    + "way down",
+                    RootsFile.FileName));
+                break;
+            }
+        }
+    }
+
+    /// <summary>Whether a declared command line refers to a replacement -
+    /// the same reading <see cref="Tasks.Fill"/> does, so this warns about
+    /// exactly what that fills and nothing else.</summary>
+    static bool FillsAValue(string line)
+    {
+        for (int i = 0; i < line.Length; i++)
+        {
+            if (line[i] != '{') continue;
+            if (i + 1 < line.Length && line[i + 1] == '{') { i++; continue; }
+
+            int close = line.IndexOf('}', i + 1);
+            if (close > 0 && Tasks.IsName(line, i + 1, close)) return true;
+        }
+
         return false;
     }
 

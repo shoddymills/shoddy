@@ -1,3 +1,5 @@
+using System.Text;
+
 namespace Fettler.Core;
 
 public sealed record FindRequest(
@@ -106,10 +108,21 @@ public sealed class Bench : IDisposable
     readonly SemaphoreSlim mutation;
     readonly bool sharedGate;
 
-    public Bench(Roots roots)
+    /// <summary>The second tier of the disclosure screen, or null when no
+    /// models directory was declared. Null is an ordinary state and not a
+    /// broken one - see <see cref="Sidecar.For"/>.</summary>
+    readonly IScreener? screener;
+    readonly bool sharedScreener;
+
+    public Bench(Roots roots, IScreener? screener = null)
     {
         Roots = roots;
         mutation = new SemaphoreSlim(1, 1);
+
+        // Injected by a test that wants to drive the gate without a
+        // model; built from the configuration otherwise.
+        this.screener = screener ?? Sidecar.For(roots);
+        sharedScreener = screener is not null;
     }
 
     /// <summary>
@@ -125,6 +138,24 @@ public sealed class Bench : IDisposable
         Roots = roots;
         mutation = gate.mutation;
         sharedGate = true;
+
+        // The screener is shared like the gate is: one child process for
+        // the server rather than one per request, since the whole point
+        // of holding it warm is not paying a model load per disclosure.
+        //
+        // But serve re-reads the configuration before every call
+        // precisely so a person's edit takes effect without a restart,
+        // and moving the models directory is such an edit. A warm child
+        // loaded from somewhere the file no longer names is not reused.
+        if (gate.screener is Sidecar warm && warm.Models == roots.Models)
+        {
+            screener = warm;
+            sharedScreener = true;
+        }
+        else
+        {
+            screener = Sidecar.For(roots);
+        }
     }
 
     public Roots Roots { get; }
@@ -132,6 +163,7 @@ public sealed class Bench : IDisposable
     public void Dispose()
     {
         if (!sharedGate) mutation.Dispose();
+        if (!sharedScreener && screener is IDisposable owned) owned.Dispose();
     }
 
     // ---- read-only: no lock, freely concurrent ----
@@ -184,9 +216,64 @@ public sealed class Bench : IDisposable
         Bounded<FoundFile> files = Tree.Find(Roots, root.Value, glob,
             ExcludesFor(request.IncludeGenerated, request.Exclude), null, 0, byModified: false);
 
-        return Searcher.Search(files.Items, request.Patterns, request.Kind,
+        Result<SearchAnswer> answer = Searcher.Search(files.Items, request.Patterns, request.Kind,
             request.CaseSensitive, request.Context, request.Limit, files.Excluded,
             request.Documents);
+
+        if (!answer.IsOk) return answer;
+
+        return JudgeHits(answer.Value) is { } refused
+            ? Result<SearchAnswer>.Fail(refused)
+            : answer;
+    }
+
+    /// <summary>
+    /// R1.6: a search is screened as the batch of hit records being
+    /// returned PER FILE - the disclosed lines and their context, exactly
+    /// as they would be emitted.
+    ///
+    /// <para><b>Per file because a screen is a property of where the text
+    /// came from.</b> One answer can carry hits from two scopes screening
+    /// different categories, and judging the whole answer as one blob
+    /// would apply the wrong scope's rules to half of it.</para>
+    ///
+    /// <para><b>The model sees exactly what the caller would see</b>, and
+    /// no more. Enriching its view with the surrounding undisclosed text -
+    /// so that an entity straddling the edge of a context window could be
+    /// recognised and only then denied - would sharpen the same semantics
+    /// without changing them, and is a permitted later improvement rather
+    /// than something to do quietly now.</para>
+    ///
+    /// <para><b>One detection refuses the whole answer, not the file.</b>
+    /// Returning the other files' hits and silently dropping one would
+    /// hand back a result that reads as complete and is not, which is the
+    /// same fault a truncated read reporting itself as whole would
+    /// be.</para>
+    /// </summary>
+    Failure? JudgeHits(SearchAnswer answer)
+    {
+        var perFile = new Dictionary<string, (ContainedPath Path, StringBuilder Text)>(
+            StringComparer.Ordinal);
+
+        foreach (Hit hit in answer.Hits)
+        {
+            if (hit.Path.Screen == Screened.None) continue;
+
+            if (!perFile.TryGetValue(hit.Path.Full, out (ContainedPath Path, StringBuilder Text) got))
+            {
+                got = (hit.Path, new StringBuilder());
+                perFile[hit.Path.Full] = got;
+            }
+
+            got.Text.AppendLine(hit.Text);
+            foreach (ContextLine line in hit.Context) got.Text.AppendLine(line.Text);
+        }
+
+        foreach ((ContainedPath path, StringBuilder text) in perFile.Values)
+            if (Disclosure.Check(text.ToString(), path.Screen, screener, path.Display) is { } refused)
+                return refused;
+
+        return null;
     }
 
     /// <summary>
@@ -225,10 +312,44 @@ public sealed class Bench : IDisposable
 
             Result<ReadSlice> one = ReadOne(path.Value, request);
             if (!one.IsOk) return one.Carry<IReadOnlyList<ReadSlice>>();
+
+            if (Judge(one.Value, path.Value) is { } refused)
+                return Result<IReadOnlyList<ReadSlice>>.Fail(refused);
+
             slices.Add(one.Value);
         }
 
         return Result<IReadOnlyList<ReadSlice>>.Ok(slices);
+    }
+
+    /// <summary>
+    /// One slice, judged on its way out.
+    ///
+    /// <para><b>The slice and not the file</b>, which is the whole of
+    /// R1.1: a document may hold PHI on page 40, and a read of page 2
+    /// that discloses none is served. This is the same choice
+    /// <see cref="Secrets"/> makes in judging the diff rather than the
+    /// file, and for the same reason - the alternative locks the very
+    /// trees people most need help in, and the way round it is to turn
+    /// the screen off.</para>
+    /// </summary>
+    Failure? Judge(ReadSlice slice, ContainedPath path)
+    {
+        if (path.Screen == Screened.None) return null;
+
+        // An image is bytes nothing here reads, and a photographed
+        // discharge summary is precisely the disclosure this exists to
+        // stop. Handing it over because the screen cannot see into it
+        // would be the fail-open answer to the one question the design
+        // says must never fail open, so a screened scope does not serve
+        // images at all - and says so, rather than implying it checked.
+        if (slice.Kind == FileKind.Image)
+            return new Failure(Outcome.Screened,
+                "this scope is screened, and this is an image - which the screen cannot read. "
+                + "It is refused rather than served unchecked: a screen that passed everything "
+                + "it could not see into would not be one.", path.Display);
+
+        return Disclosure.Check(slice.Text, path.Screen, screener, path.Display);
     }
 
     /// <summary>

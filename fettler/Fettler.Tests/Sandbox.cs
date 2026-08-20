@@ -71,6 +71,30 @@ public sealed class Sandbox : IDisposable
         Bench = new Bench(Roots);
     }
 
+    /// <summary>
+    /// Re-open the boundary with a screen on the main tree, the way a
+    /// <c>.fettler.json</c> with a "screen" in it does.
+    ///
+    /// <para><paramref name="screener"/> stands in for the model host.
+    /// Passing one is how R7.1's fail-closed cases are reached without a
+    /// model: leaving it null and naming <paramref name="models"/> gets
+    /// the real sidecar instead, which is how "burler is not installed"
+    /// is tested as the thing it actually is.</para>
+    /// </summary>
+    public void Screen(Screened screen, IScreener? screener = null,
+                       IReadOnlyList<ScopeDecl>? scopes = null, string? models = null)
+    {
+        var decls = new List<TreeDecl>(declared);
+        decls[0] = decls[0] with { Screen = screen, Scopes = scopes ?? decls[0].Scopes };
+
+        Result<Core.Roots> opened = Core.Roots.Open(decls, null, null, models);
+        Assert.True(opened.IsOk, opened.Failure?.Message);
+
+        Bench.Dispose();
+        Roots = opened.Value;
+        Bench = new Bench(Roots, screener);
+    }
+
     public string Full(string relative) => Path.Combine(Root, relative.Replace('/', Path.DirectorySeparatorChar));
 
     public ContainedPath Path_(string relative)

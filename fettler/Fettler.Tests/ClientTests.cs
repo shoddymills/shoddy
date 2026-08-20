@@ -237,15 +237,55 @@ public sealed class ClientTests
         Assert.Contains("PowerShell", f.Message);
     }
 
+    /// <summary>Built FROM <see cref="Doctor.Denied"/> rather than from a
+    /// list typed out again here, so a route added to that list cannot be
+    /// left untested by a fixture nobody remembered to update.</summary>
     [Fact]
     public void DenyingThemAllLeavesNothingToReport()
+    {
+        using var box = new Fixture();
+        box.Put(Places.ClaudeCode, Level.Repo, Purpose.Policy,
+            "{\"permissions\":{\"deny\":" + JsonSerializer.Serialize(Doctor.Denied) + "}}");
+
+        Assert.DoesNotContain(Examine(box).Findings, f => f.Check is "2.7" or "2.8" or "2.18");
+    }
+
+    /// <summary>
+    /// Monitor runs the command it is handed "in the same shell
+    /// environment as Bash" by its own description, so denying Bash and
+    /// leaving Monitor open denies the word and not the thing. It was
+    /// found wide open on a machine where every other route was shut.
+    /// </summary>
+    [Fact]
+    public void AShellRegisteredUnderAnotherNameIsReportedToo()
     {
         using var box = new Fixture();
         box.Put(Places.ClaudeCode, Level.Repo, Purpose.Policy, """
             {"permissions":{"deny":["Read","Write","Edit","NotebookEdit","Grep","Glob","Bash","PowerShell"]}}
             """);
 
-        Assert.DoesNotContain(Examine(box).Findings, f => f.Check is "2.7" or "2.8");
+        Assert.Contains("Monitor", Examine(box).Findings.First(x => x.Check == "2.8").Message);
+    }
+
+    /// <summary>
+    /// A tool that hands back work already done reaches the model without
+    /// passing the tree boundary, the secret scan or the disclosure
+    /// screen. Neither an editor nor a shell, which is why they were
+    /// missed - and TaskOutput settles it by naming Read as its own
+    /// alternative, a tool that is already denied.
+    /// </summary>
+    [Fact]
+    public void ToolsCarryingAnotherToolsOutputBackAreReportedToo()
+    {
+        using var box = new Fixture();
+        box.Put(Places.ClaudeCode, Level.Repo, Purpose.Policy, """
+            {"permissions":{"deny":["Read","Write","Edit","NotebookEdit","Grep","Glob","Bash","PowerShell"]}}
+            """);
+
+        Finding f = Examine(box).Findings.First(x => x.Check == "2.8");
+
+        Assert.Contains("BashOutput", f.Message);
+        Assert.Contains("TaskOutput", f.Message);
     }
 
     /// <summary>B.17 must not fire on the configuration this tool now
@@ -370,6 +410,100 @@ public sealed class ClientTests
         box.Put(Places.VsCodeCopilot, Level.Global, Purpose.Policy, """{"chat.tools.autoApprove":true}""");
 
         Assert.Contains(Examine(box).Findings, f => f.Check == "2.14" && f.Serious);
+    }
+
+    // ---- what a closed list of tool names cannot see ----
+
+    /// <summary>
+    /// 2.18. Check 2.8 can only report on the tools this fettle has heard
+    /// of, and the client keeps growing new ones. Silence about an
+    /// unknown tool reads exactly like a clean bill of health, so the
+    /// gap in the inventory is reported instead of being kept in the
+    /// source.
+    /// </summary>
+    [Fact]
+    public void AToolTheInventoryDoesNotKnowIsReportedRatherThanPassedOver()
+    {
+        using var box = new Fixture();
+        box.Put(Places.ClaudeCode, Level.Repo, Purpose.Policy, """
+            {"permissions":{"allow":["Telepathy(read:*)"]}}
+            """);
+
+        Finding f = Examine(box).Findings.First(x => x.Check == "2.18");
+
+        Assert.False(f.Serious);
+        Assert.Contains("Telepathy", f.Message);
+        Assert.Contains(Doctor.InventoryOf, f.Message);
+    }
+
+    /// <summary>A rule naming another server's tools is that server's
+    /// business and 2.17's, not this list's. Reporting them here would
+    /// make 2.18 fire on every machine with a second MCP server on
+    /// it.</summary>
+    [Fact]
+    public void RulesOnAnotherServersToolsAreNotReportedAsUnknown()
+    {
+        using var box = new Fixture();
+        box.Put(Places.ClaudeCode, Level.Repo, Purpose.Policy, """
+            {"permissions":{"deny":["mcp__something__write"]}}
+            """);
+
+        Assert.DoesNotContain(Examine(box).Findings, f => f.Check == "2.18");
+    }
+
+    /// <summary>Every name the scaffolder writes must be one the
+    /// inventory knows, or setup would produce a configuration its own
+    /// doctor then reports as unrecognised.</summary>
+    [Fact]
+    public void EverythingSetupDeniesIsInTheInventory()
+    {
+        foreach (string tool in Doctor.Denied) Assert.Contains(tool, Doctor.Known);
+    }
+
+    /// <summary>
+    /// 2.17. The deny list closes NAMES. Another MCP server arrives with
+    /// tools that are not on it and never will be, reaching whatever its
+    /// own process reaches - so the fact is reported, the servers are not
+    /// judged, and unlike 2.8 this reads the machine in front of it and
+    /// so cannot fall behind.
+    /// </summary>
+    [Fact]
+    public void OtherServersRegisteredBesideFettlerAreNamedAsOutsideTheBoundary()
+    {
+        using var box = new Fixture();
+        box.Put(Places.ClaudeCode, Level.Global, Purpose.Servers, """
+            {"mcpServers":{"fettler":{"command":"fettle"},"sparky":{"command":"sparky"}}}
+            """);
+
+        Finding f = Examine(box).Findings.First(x => x.Check == "2.17");
+
+        Assert.False(f.Serious);
+        Assert.Contains("sparky", f.Message);
+        Assert.DoesNotContain(Places.ServerName, f.Message);
+    }
+
+    /// <summary>A server declared only in the per-project copy is still a
+    /// route, and Registration already reads that shape.</summary>
+    [Fact]
+    public void AServerDeclaredOnlyUnderAProjectIsFoundToo()
+    {
+        using var box = new Fixture();
+        box.Put(Places.ClaudeCode, Level.Global, Purpose.Servers, """
+            {"projects":{"c:/x":{"mcpServers":{"elsewhere":{"command":"e"}}}}}
+            """);
+
+        Assert.Contains("elsewhere", Examine(box).Findings.First(x => x.Check == "2.17").Message);
+    }
+
+    [Fact]
+    public void FettlerIsNotReportedAsASiblingOfItself()
+    {
+        using var box = new Fixture();
+        box.Put(Places.ClaudeCode, Level.Global, Purpose.Servers, """
+            {"mcpServers":{"fettler":{"command":"fettle"}}}
+            """);
+
+        Assert.DoesNotContain(Examine(box).Findings, f => f.Check == "2.17");
     }
 
     // ---- 6.7: no secret is ever printed ----

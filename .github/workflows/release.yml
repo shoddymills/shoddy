@@ -109,7 +109,11 @@ jobs:
         working-directory: fettler
         run: ./build.sh test
 
-      - name: Publish fettle binaries
+      # BOTH programs. `publish` builds a fettle archive and a burler
+      # archive per OS, and the upload below has to name both: an archive
+      # that is built and not attached is indistinguishable from one that
+      # was never built, except that nothing fails.
+      - name: Publish fettle and burler binaries
         working-directory: fettler
         run: ./build.sh publish ${{ steps.ver.outputs.version }}
 
@@ -118,6 +122,16 @@ jobs:
           tar -tvzf artifacts/publish/fettle-${{ steps.ver.outputs.version }}-linux-x64.tar.gz \
             | grep -q '^-rwx' || {
               echo 'the linux archive carries fettle without its execute bit (R6.9)'; exit 1; }
+
+      # The same clause, for the same reason, on the other program. burler
+      # is launched by fettle as a child process; one that arrives without
+      # its execute bit turns every screened read into a refusal that
+      # blames the sidecar for not starting.
+      - name: The published burler must be executable
+        run: |
+          tar -tvzf artifacts/publish/burler-${{ steps.ver.outputs.version }}-linux-x64.tar.gz \
+            | grep -q '^-rwx' || {
+              echo 'the linux archive carries burler without its execute bit (R6.9)'; exit 1; }
 
       # Hand-written notes win. They must be committed *before* the tag is pushed,
       # because this job checks out the tag and sees only what it contains.
@@ -162,6 +176,7 @@ jobs:
             "vscode-shoddy/vscode-shoddy-${{ steps.ver.outputs.version }}.vsix" \
             artifacts/publish/sparky-* \
             artifacts/publish/fettle-* \
+            artifacts/publish/burler-* \
             --title "${{ steps.ver.outputs.tag }}" \
             --notes-file NOTES.md
 

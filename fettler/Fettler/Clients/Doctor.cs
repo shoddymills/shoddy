@@ -311,19 +311,96 @@ public static class Doctor
     /// shell is a complete route round the boundary, and <c>node x.js</c>
     /// reaches it while being none of <see cref="Mutating"/>.
     ///
-    /// <para>Denying these two NAMES is as short, closed and
+    /// <para><b>A shell under another name is still a shell.</b>
+    /// <c>Monitor</c> is here because its own description says it runs
+    /// the <c>command</c> it is given "in the same shell environment as
+    /// Bash". Denying Bash and leaving that open denies the word and not
+    /// the thing, and it was found wide open on a machine where every
+    /// other route was shut - which is the argument for 2.18 as much as
+    /// for this line.</para>
+    ///
+    /// <para>Denying these NAMES is as short, closed and
     /// platform-identical as denying the six. What cannot be finished is
     /// enumerating the commands behind them, and that is the ALLOW list's
     /// job, not this one's: deny the shell, then allow back the few
     /// commands a project actually needs. Leaving the deny out because
     /// the allow cannot be generated left every project reporting healthy
     /// with the shell wide open.</para></summary>
-    public static readonly string[] Shell = ["Bash", "PowerShell"];
+    public static readonly string[] Shell = ["Bash", "PowerShell", "Monitor"];
+
+    /// <summary>
+    /// Tools that hand back bytes produced somewhere else: the output of
+    /// a command already run, a task already finished.
+    ///
+    /// <para>They start nothing and write nothing, which is exactly why
+    /// they were missed - neither an editor nor a shell. But content
+    /// arriving this way reached the model without passing a single check
+    /// this tool makes: not the tree boundary, not the secret scan, not
+    /// the disclosure screen. <c>TaskOutput</c> settles it by naming its
+    /// own alternative: it recommends <c>Read</c> on the task's output
+    /// file, so it is a stand-in for a tool that is already denied.</para>
+    /// </summary>
+    public static readonly string[] Indirect = ["BashOutput", "TaskOutput"];
 
     /// <summary>Everything <c>setup</c> denies and 2.8 expects to find
-    /// denied: the tools Fettler replaces, and the shells it does
-    /// not.</summary>
-    public static readonly string[] Denied = [.. Replaced, .. Shell];
+    /// denied: the tools Fettler replaces, the shells it does not, and
+    /// the ones that carry another tool's output back.</summary>
+    public static readonly string[] Denied = [.. Replaced, .. Shell, .. Indirect];
+
+    /// <summary>
+    /// Tools that start work of their own, which then runs tools of its
+    /// own.
+    ///
+    /// <para>Whether this boundary reaches that work is the client's to
+    /// decide and cannot be observed from here - the same limit B.17
+    /// runs into - so these are CLASSIFIED and not denied. Denying them
+    /// would remove a capability people legitimately use, on a guess
+    /// about another program's rule resolution.</para>
+    ///
+    /// <para>They are on this list so 2.18 knows them. A tool this file
+    /// has never heard of is the finding; a tool it has heard of and
+    /// reached a decision about is not.</para>
+    /// </summary>
+    public static readonly string[] Delegating =
+        ["Task", "Agent", "Workflow", "SendMessage", "RemoteTrigger", "Skill", "SlashCommand"];
+
+    /// <summary>
+    /// The rest of the inventory: tools that reach no file and carry no
+    /// file's content back, so nothing here asks for them to be denied.
+    ///
+    /// <para><c>Artifact</c> is the awkward one and is named here on
+    /// purpose. It publishes a local file outward rather than fetching
+    /// anything in, so it is egress and not a route round the READ
+    /// boundary. Egress is a boundary this tool has never claimed to
+    /// govern; saying so in the list is better than leaving it off and
+    /// having 2.18 report it as a surprise every run.</para>
+    /// </summary>
+    public static readonly string[] Outside =
+    [
+        "Artifact", "AskUserQuestion", "TodoWrite", "ToolSearch", "WebFetch", "WebSearch",
+        "EnterPlanMode", "ExitPlanMode", "EnterWorktree", "ExitWorktree",
+        "CronCreate", "CronDelete", "CronList", "ScheduleWakeup", "PushNotification",
+        "KillShell", "TaskStop", "DesignSync", "ReportFindings",
+        "ListMcpResourcesTool", "ReadMcpResourceTool", "ReadMcpResourceDirTool",
+    ];
+
+    /// <summary>Every tool name this fettle has an opinion about, whether
+    /// that opinion is deny, classify or leave alone. What is NOT on it
+    /// is what 2.18 reports.</summary>
+    public static readonly string[] Known = [.. Denied, .. Delegating, .. Outside];
+
+    /// <summary>
+    /// The day the inventory above was last drawn against a real client.
+    ///
+    /// <para><b>A closed list against a client that keeps growing goes
+    /// stale, and the staleness is the dangerous part, because a list
+    /// that has fallen behind reports exactly as clean as one that has
+    /// not.</b> So the date is printed with every report: a reader can
+    /// see how old the list is instead of assuming it is current, and
+    /// 2.18 turns "the client has a tool this does not know about" from
+    /// silence into a finding.</para>
+    /// </summary>
+    public const string InventoryOf = "2026-08-20";
 
     static void Policy(Machine machine, Place place, Roots? roots, List<Finding> findings)
     {
@@ -397,6 +474,30 @@ public static class Doctor
             findings.Add(new Finding("2.8", false,
                 $"nothing denies the built-in {string.Join(", ", missing)}, so Fettler is an option "
                 + "rather than the route; `fettle setup claude-code --local` writes the denies",
+                place.Path));
+
+        // 2.18: 2.8 can only check the tools this fettle has heard of,
+        // and the client keeps growing new ones. Where the configuration
+        // names a tool the inventory does not know, say so - because the
+        // alternative is 2.8 reporting clean about a list it never looked
+        // at. Rules on another server's tools are that server's business
+        // and 2.17's, not this list's.
+        var named = new List<string>();
+        if (permissions.ValueKind == JsonValueKind.Object) Collect(permissions, "ask", named);
+
+        var unknown = allowed.Concat(denied).Concat(named)
+            .Select(Tool)
+            .Where(t => t.Length > 0 && !t.StartsWith("mcp__", StringComparison.Ordinal))
+            .Where(t => !Known.Contains(t, StringComparer.Ordinal))
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+
+        if (unknown.Count > 0)
+            findings.Add(new Finding("2.18", false,
+                $"this names {string.Join(", ", unknown)}, which is not in the tool inventory this "
+                + $"fettle was built with (drawn {InventoryOf}). Check 2.8 therefore said nothing "
+                + "about it either way - not that it is safe. A newer fettle may know it; until "
+                + "then, decide by hand whether it reads files, writes them, or runs a shell",
                 place.Path));
 
         // B.17. The question that decides whether any of this works is
@@ -561,6 +662,67 @@ public static class Doctor
                 + "over the tools it already reaches for by habit", place.Path));
     }
 
+    /// <summary>
+    /// 2.17: every OTHER server registered beside this one.
+    ///
+    /// <para><see cref="Denied"/> is a closed list of names, and a closed
+    /// list can only close the names on it. Another MCP server arrives
+    /// with tools this file has never heard of, granted whatever its own
+    /// configuration grants and reaching whatever its own process can
+    /// reach - and nothing the scaffolder writes narrows any of it,
+    /// because those tools are not called Read.</para>
+    ///
+    /// <para><b>Named, never judged.</b> Most of them are wanted, and a
+    /// check that amounted to "you have other servers, remove them"
+    /// would be scrolled past by the second week. What is reported is
+    /// the fact - these sit outside this boundary - so that somebody
+    /// working out where their files can be reached from gets the whole
+    /// list rather than the half this tool implements. Denying
+    /// <c>mcp__name__*</c> is the lever, for any that turn out not to be
+    /// wanted.</para>
+    ///
+    /// <para>Unlike 2.8 this never goes stale: it reads the servers that
+    /// are actually registered on the machine in front of it, so a
+    /// server installed tomorrow is reported tomorrow.</para>
+    /// </summary>
+    static void Siblings(JsonElement root, Place place, List<Finding> findings)
+    {
+        var others = new List<string>();
+
+        void Take(JsonElement holder)
+        {
+            if (holder.ValueKind != JsonValueKind.Object) return;
+            foreach (JsonProperty one in holder.EnumerateObject())
+                if (!one.Name.Equals(Places.ServerName, StringComparison.Ordinal)
+                    && !others.Contains(one.Name, StringComparer.Ordinal))
+                    others.Add(one.Name);
+        }
+
+        foreach (string holder in new[] { "mcpServers", "servers" })
+            if (root.TryGetProperty(holder, out JsonElement servers)) Take(servers);
+
+        // The per-project copy, read the same way Registration reads it,
+        // so a server declared only there is not reported absent.
+        if (root.TryGetProperty("projects", out JsonElement projects)
+            && projects.ValueKind == JsonValueKind.Object)
+            foreach (JsonProperty project in projects.EnumerateObject())
+                if (project.Value.ValueKind == JsonValueKind.Object
+                    && project.Value.TryGetProperty("mcpServers", out JsonElement inProject))
+                    Take(inProject);
+
+        if (others.Count == 0) return;
+
+        bool one = others.Count == 1;
+        findings.Add(new Finding("2.17", false,
+            $"{others.Count} other MCP server{(one ? " is" : "s are")} registered here and the deny "
+            + $"list cannot narrow {(one ? "it" : "them")}: {(one ? "its" : "their")} tools are not "
+            + "called Read, so nothing setup writes says anything about what they may reach. "
+            + $"{(one ? "It is" : "They are")}: {string.Join(", ", others.Take(8))}"
+            + (others.Count > 8 ? $", and {others.Count - 8} more" : "")
+            + ". Deny mcp__<name>__* for any that should not be a route",
+            place.Path));
+    }
+
     /// <summary>2.11: approvals attach to one spelling of a project key
     /// and silently do not apply to the other. Live on this machine, with
     /// two entries differing only in a drive letter's case.</summary>
@@ -570,8 +732,11 @@ public static class Doctor
         if (!read.IsOk) return;
 
         using JsonDocument doc = read.Value;
-        if (doc.RootElement.ValueKind != JsonValueKind.Object
-            || !doc.RootElement.TryGetProperty("projects", out JsonElement projects)
+        if (doc.RootElement.ValueKind != JsonValueKind.Object) return;
+
+        Siblings(doc.RootElement, place, findings);
+
+        if (!doc.RootElement.TryGetProperty("projects", out JsonElement projects)
             || projects.ValueKind != JsonValueKind.Object) return;
 
         var seen = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);

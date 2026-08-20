@@ -113,7 +113,7 @@ the MCP host and the MAUI host:
 |---|---|
 | the harness | its own self-test, first, before anything trusts a receipt |
 | core | the mill, every mill.manifest, the C# conformance suite, every `tst/` and machine suite, all thirteen mills |
-| fettler | its 288 tests, its Release build, its archives, and the shipped binary driven from one |
+| fettler | both its test projects — `Fettler.Tests` and `burler.Tests` — its Release build, its archives, and the shipped binary driven from one |
 | MCP host | sparky's suite, its Release closure, its archives, and the shipped server driven over stdio |
 | MAUI host | reckoner's suite and the assertion that its release carries no debug transport |
 | headless | the container mill weaves, and `run` refuses by name rather than crashing |
@@ -242,8 +242,10 @@ merge is in progress, and neither branch nor tag already exists.
 
 Actions → **Release**. It verifies the tag matches `package.json`, rebuilds
 from scratch, composes the body from `release-notes/vX.Y.Z.md`, and publishes
-the GitHub Release with the `.vsix`, one sparky archive per OS and one
-fettle archive per OS attached. It also records a deployment for each of
+the GitHub Release with the `.vsix`, one sparky archive per OS, one
+fettle archive per OS and one burler archive per OS attached. burler is
+the disclosure screen's model host: optional, in its own archive, and
+unpacked beside `fettle` by whoever wants it. It also records a deployment for each of
 `sparky` and `fettler`, which is what puts them in the repo home's
 Deployments sidebar beside Pages.
 

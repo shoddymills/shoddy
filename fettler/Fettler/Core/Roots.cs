@@ -3,8 +3,11 @@ using System.Text;
 namespace Fettler.Core;
 
 /// <summary>One scope inside a tree, as declared: a path relative to the
-/// tree, and what may be done at or below it.</summary>
-public sealed record ScopeDecl(string Relative, Permission Can);
+/// tree, what may be done at or below it, and what is screened out of
+/// it. A null <see cref="Screen"/> is a scope that said nothing and
+/// inherits the tree's - see <see cref="Scope"/> for why silence cannot
+/// mean "screen nothing here".</summary>
+public sealed record ScopeDecl(string Relative, Permission Can, Screened? Screen = null);
 
 /// <summary>
 /// One tree as the caller declared it, before it is opened.
@@ -18,7 +21,8 @@ public sealed record TreeDecl(
     string Name,
     string Path,
     Permission Can,
-    IReadOnlyList<ScopeDecl>? Scopes = null);
+    IReadOnlyList<ScopeDecl>? Scopes = null,
+    Screened Screen = Screened.None);
 
 /// <summary>
 /// A path that has been proved to lie inside a declared tree, and that
@@ -32,7 +36,8 @@ public sealed record ContainedPath(
     string Full,
     string Relative,
     Permission Can,
-    string Governing)
+    string Governing,
+    Screened Screen = Screened.None)
 {
     /// <summary>How the path is written back to a caller. R9.2 requires
     /// one separator form on output whatever arrived on input, and
@@ -86,12 +91,30 @@ public sealed class Roots
 
     readonly List<OpenTree> trees;
 
-    Roots(List<OpenTree> trees, string? origin, IReadOnlyList<TaskDecl> tasks)
+    Roots(List<OpenTree> trees, string? origin, IReadOnlyList<TaskDecl> tasks, string? models)
     {
         this.trees = trees;
         Origin = origin ?? "the command line";
         Tasks = tasks;
+        Models = models;
     }
+
+    /// <summary>
+    /// Where the screening models live, or null when the configuration
+    /// named no directory.
+    ///
+    /// <para><b>Null is the load-bearing state, not an unset field.</b>
+    /// The models are never shipped - four quantised ones run about
+    /// 400 MB against a download measured in single-digit MB - so a
+    /// person names a directory they populated themselves. Until they
+    /// have, <see cref="Screen"/>'s first tier is the whole screen, and a
+    /// screened tree still refuses what that tier finds. Once a directory
+    /// IS named, a screened category whose model is not in it refuses the
+    /// disclosure rather than quietly falling back to tier one, because
+    /// at that point somebody has said they expect the model to be
+    /// there.</para>
+    /// </summary>
+    public string? Models { get; }
 
     /// <summary>The tasks the configuration declared, in the order it
     /// declared them.
@@ -141,7 +164,8 @@ public sealed class Roots
     /// reported instead of materialised.</para>
     /// </summary>
     public static Result<Roots> Open(
-        IReadOnlyList<TreeDecl> declared, string? origin = null, IReadOnlyList<TaskDecl>? tasks = null)
+        IReadOnlyList<TreeDecl> declared, string? origin = null, IReadOnlyList<TaskDecl>? tasks = null,
+        string? models = null)
     {
         if (declared.Count == 0)
             return Result<Roots>.Fail(Outcome.Invalid, NothingDeclared);
@@ -195,13 +219,13 @@ public sealed class Roots
                     return Result<Roots>.Fail(Outcome.Invalid,
                         $"scope '{s.Relative}' is not inside tree '{d.Name}'", at);
 
-                scopes.Add(new Scope(TrimTrailingSeparator(at), s.Can));
+                scopes.Add(new Scope(TrimTrailingSeparator(at), s.Can, s.Screen));
             }
 
-            opened.Add(new OpenTree(d.Name, resolved, new Grant(d.Can, scopes)));
+            opened.Add(new OpenTree(d.Name, resolved, new Grant(d.Can, scopes, d.Screen)));
         }
 
-        return Result<Roots>.Ok(new Roots(opened, origin, tasks ?? []));
+        return Result<Roots>.Ok(new Roots(opened, origin, tasks ?? [], models));
     }
 
     /// <summary>The refusal when nothing at all was declared. Its own
@@ -410,7 +434,7 @@ public sealed class Roots
             }
         }
 
-        (Permission can, string governing) = tree.Grant.At(tree.Full, current);
+        (Permission can, Screened screen, string governing) = tree.Grant.At(tree.Full, current);
 
         // B.6: no list is not "you may not enumerate it", it is "it is
         // not there". Answered by the same constant as a path outside
@@ -419,7 +443,7 @@ public sealed class Roots
 
         return Result<ContainedPath>.Ok(new ContainedPath(
             tree.Name, current, Relativize(tree.Full, current), can,
-            governing.Equals(tree.Full, PathComparison) ? string.Empty : governing));
+            governing.Equals(tree.Full, PathComparison) ? string.Empty : governing, screen));
     }
 
     /// <summary>
@@ -430,9 +454,9 @@ public sealed class Roots
     public ContainedPath Describe(string treeName, string full, string relative)
     {
         OpenTree tree = TreeNamed(treeName);
-        (Permission can, string governing) = tree.Grant.At(tree.Full, full);
+        (Permission can, Screened screen, string governing) = tree.Grant.At(tree.Full, full);
         return new ContainedPath(tree.Name, full, relative, can,
-            governing.Equals(tree.Full, PathComparison) ? string.Empty : governing);
+            governing.Equals(tree.Full, PathComparison) ? string.Empty : governing, screen);
     }
 
     static Result<ContainedPath> Outside() =>

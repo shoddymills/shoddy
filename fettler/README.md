@@ -16,15 +16,17 @@ does not. Both spellings are correct and neither is a typo.
 | `Fettler/Cli` | the command-line front end — verbs, exit codes, and both output modes |
 | `Fettler/Mcp` | the MCP front end — stdio JSON-RPC, hand-rolled over `System.Text.Json` |
 | `fettle` | the executable, and the whole of it is wiring |
+| `burler` | the disclosure screen's model host — a **second** executable, for the reason below |
 | `Fettler.Tests` | the proof; every item in R10 of the requirements is an assertion here |
+| `burler.Tests` | burler's own proof — its own project, so each side of the pipe asserts the wire independently |
 
 ## Building
 
 ```powershell
 ./build.ps1              # restore + build (Debug)
-./build.ps1 test         # build + run Fettler.Tests
+./build.ps1 test         # build + run Fettler.Tests AND burler.Tests
 ./build.ps1 release      # Release build
-./build.ps1 publish 1.0.0 # self-contained single-file per OS
+./build.ps1 publish 1.0.0 # self-contained single-file per OS, per program
 ```
 
 `build.sh` is the twin and takes the same arguments. **Unlike every
@@ -211,6 +213,69 @@ declared by /work/shoddy/.fettler.json
 Every path must resolve inside one of them. A move between two trees works
 and says that it crossed, because moving a file between two trust domains
 is something the caller is entitled to see.
+
+## The disclosure screen, and why there are two executables
+
+**Off unless a tree asks for it.** Most trees never switch it on.
+
+Fettler reads PDF, Excel and Word — exactly the formats regulated
+personal data lives in — and everything it returns lands in a
+transcript. A tree may declare a `screen`, and then **any detection in a
+screened category refuses the whole response**:
+
+```json
+{
+  "trees": {
+    "records": { "path": "../records", "can": ["list", "read"], "screen": ["phi", "pii"] }
+  },
+  "models": "../screening-models"
+}
+```
+
+`true` screens all four categories — `phi`, `pii`, `legal`, `sci`. A
+bare list includes; a list of `-` words excludes from the full set;
+mixing the two in one list is refused when the file is read, because
+`["phi", "-sci"]` has two readings that differ by two whole categories. A
+scope's `screen` replaces the tree's, and a scope that says nothing
+inherits it.
+
+It is the credential net pointed the other way — that one judges a write
+going in and refuses an introduced secret; this judges a payload coming
+out and refuses a detected entity. **It judges the payload, not the
+file**, so a document holding a record number on one page stays readable
+everywhere else, and the refusal carries a category and a count and
+never what it found.
+
+**Two tiers.** The first is structural and runs in process with no model
+and no new dependency: a social security number, a card that passes
+Luhn, a phone number, an email address, and — under their own labels — a
+medical record number and a date of birth.
+
+The second is **`burler`**, a separate program, and the separation is
+the interesting part. BERT inference needs ONNX Runtime, which ships
+native per-RID binaries; `Fettler.csproj` admits only pure managed
+packages so that `fettle` can publish self-contained and single-file,
+and `FrontEndTests` asserts that reference set from outside. So the
+inference went behind a pipe instead, and **the allowlist did not
+change**. Neither project references the other in either direction: the
+wire is the whole contract, and a protocol test on each side asserts it
+independently.
+
+**No model weights ship, ever.** Four quantised models run about 400 MB
+against a `fettle` download measured in single-digit MB. A person
+downloads what they want and names the directory. **Until that name
+exists the first tier is the whole screen** and a clean payload is
+served; once it exists, a screened category with no model refuses,
+because somebody has now said they expect it to be there. Everything
+else that can go wrong — a sidecar that will not start, a malformed
+answer, an inference that outran its clock — refuses too. There is no
+path through it that serves unscreened content.
+
+> **It is a safety net and not a boundary.** Models miss entities, and
+> the patterns miss anything written a way they do not expect — a number
+> split across a line break defeats every one of them. A clean verdict is
+> evidence of absence and never a certificate of it. **FCRA and FERPA are
+> not covered categories**, only the structured identifiers in them.
 
 ## Is it wired up?
 

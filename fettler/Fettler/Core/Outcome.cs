@@ -75,6 +75,27 @@ public enum Outcome
     /// ever allow it - and something can.</para>
     /// </summary>
     Credential = 11,
+
+    /// <summary>
+    /// The response would have DISCLOSED regulated personal data out of
+    /// a screened scope (see <see cref="Screen"/>).
+    ///
+    /// <para>Its own member because it is the mirror of
+    /// <see cref="Credential"/> and has to be told apart from it: that
+    /// one is a write going in, this one is a payload coming out, and a
+    /// script branching on "a secret was involved" would take entirely
+    /// the wrong action for each. A caller told <see cref="Refused"/>
+    /// would go hunting for a permission, and there is none to find -
+    /// what changes the answer is reading a narrower range, or a person
+    /// editing the screen on that scope.</para>
+    ///
+    /// <para>It is also the outcome a screen that could not RUN
+    /// produces. A sidecar that will not start, a model that will not
+    /// load and an inference that outran its timeout all refuse the
+    /// disclosure rather than serving it unscreened, so the one thing
+    /// this can never mean is that nothing was checked.</para>
+    /// </summary>
+    Screened = 12,
 }
 
 /// <summary>

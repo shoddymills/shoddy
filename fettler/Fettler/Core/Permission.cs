@@ -133,8 +133,21 @@ public static class Permissions
     }
 }
 
-/// <summary>One scope: a path, and what may be done at or below it.</summary>
-public sealed record Scope(string Path, Permission Can);
+/// <summary>
+/// One scope: a path, what may be done at or below it, and what is
+/// screened on the way out of it.
+///
+/// <para><b><see cref="Screen"/> is nullable and <see cref="Can"/> is
+/// not, and the difference is deliberate.</b> A scope must state its
+/// permissions, because saying nothing about them would be the one
+/// ambiguity the permission model refuses to have. A scope that says
+/// nothing about SCREENING inherits the tree's, because screening was
+/// added to a configuration format that already had scopes in it - every
+/// scope written before it exists says nothing, and reading that silence
+/// as "screen nothing here" would punch a hole in the first tree anybody
+/// switched the screen on for.</para>
+/// </summary>
+public sealed record Scope(string Path, Permission Can, Screened? Screen = null);
 
 /// <summary>
 /// The permissions of one tree, and the scopes that narrow or widen them
@@ -156,14 +169,21 @@ public sealed class Grant
     /// <param name="can">What the tree grants where no scope applies.</param>
     /// <param name="scopes">Scopes, with ABSOLUTE paths. Order does not
     /// matter; the longest containing path wins.</param>
-    public Grant(Permission can, IReadOnlyList<Scope>? scopes = null)
+    public Grant(Permission can, IReadOnlyList<Scope>? scopes = null,
+                 Screened screen = Screened.None)
     {
         Can = can;
+        Screen = screen;
         this.scopes = scopes is null ? [] : [.. scopes];
     }
 
     /// <summary>What the tree grants outside every scope.</summary>
     public Permission Can { get; }
+
+    /// <summary>What is screened out of the tree where no scope says
+    /// otherwise. <see cref="Screened.None"/> - nothing screened - is
+    /// what a tree that does not mention it gets.</summary>
+    public Screened Screen { get; }
 
     public IReadOnlyList<Scope> Scopes => scopes;
 
@@ -175,18 +195,25 @@ public sealed class Grant
     /// the permission: going out of a scope needs <c>delete</c> even when
     /// the destination is inside the same tree.</para>
     /// </summary>
-    public (Permission Can, string Governing) At(string treePath, string fullPath)
+    public (Permission Can, Screened Screen, string Governing) At(string treePath, string fullPath)
     {
         Permission can = Can;
+        Screened screen = Screen;
         string governing = treePath;
 
         foreach (Scope scope in scopes)
             if (Roots.IsWithin(scope.Path, fullPath) && scope.Path.Length > governing.Length)
             {
                 can = scope.Can;
+
+                // Falls back to the TREE's screen rather than to whatever
+                // the last scope considered said. Only the longest match
+                // survives the loop, so the answer is the winning scope's
+                // own statement, or the tree's where it made none.
+                screen = scope.Screen ?? Screen;
                 governing = scope.Path;
             }
 
-        return (can, governing);
+        return (can, screen, governing);
     }
 }

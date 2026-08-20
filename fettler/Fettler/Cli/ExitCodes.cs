@@ -41,6 +41,12 @@ public static class ExitCodes
     /// secret out, or by a person saying it is not one.</summary>
     public const int Credential = 12;
 
+    /// <summary>A response would have disclosed regulated data out of a
+    /// screened scope, or the screen that would have judged it could not
+    /// run. Distinct from Credential because that one is a write going
+    /// in and this one is a payload coming out.</summary>
+    public const int Screened = 13;
+
     public static int Of(Outcome outcome) => outcome switch
     {
         Outcome.Ok => Ok,
@@ -55,6 +61,7 @@ public static class ExitCodes
         Outcome.TimedOut => TimedOut,
         Outcome.Governed => Governed,
         Outcome.Credential => Credential,
+        Outcome.Screened => Screened,
         _ => Fault,
     };
 
@@ -74,6 +81,7 @@ public static class ExitCodes
         Outcome.TimedOut => "timed-out",
         Outcome.Governed => "governed",
         Outcome.Credential => "credential",
+        Outcome.Screened => "screened",
         _ => "fault",
     };
 }

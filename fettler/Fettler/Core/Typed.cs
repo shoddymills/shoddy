@@ -54,16 +54,29 @@ public sealed record ImageFacts(string MimeType, int Width, int Height, long Byt
 /// is refused, which is a much better answer than "this is binary" to
 /// somebody holding a perfectly ordinary PNG.</para>
 ///
-/// <para><b>What is deliberately not here.</b> Word and Excel: the
-/// developer exports Word as PDF and Excel as CSV, both of which this
-/// then reads, against an office-format parser that would be a permanent
-/// maintenance liability for a tool that edits source trees. And
-/// plugins, which were rejected on this design's own terms - running a
-/// DECLARED, NAMED command needs an explicit <c>execute</c> grant, so a
-/// plugin loader would be arbitrary code execution, in process, at full
-/// trust, with no such gate. If extensibility is genuinely wanted the
-/// honest form already exists: a declared converter task, gated by
-/// <c>execute</c>.</para>
+/// <para><b>Documents are rendered by <see cref="Documents"/>, not
+/// here.</b> A PDF, and the office formats that sit beside it, are turned
+/// into text by a reader from that table. This class keeps the types
+/// whose handling is not a rendering at all: text, notebooks, images and
+/// archives.</para>
+///
+/// <para><b>The old refusal of Word and Excel is withdrawn.</b> It argued
+/// that a developer exports Word as PDF and Excel as CSV, and that an
+/// office-format parser would be a permanent maintenance liability. The
+/// first turned out to describe a chore rather than a workflow: it makes
+/// a person convert a file before the assistant may read it, which is the
+/// hindrance and not the remedy. The second is answered by what the
+/// formats actually are - a zip full of XML, reachable with the archive
+/// support already here and the XML reader already in the framework, and
+/// so with no new dependency at all.</para>
+///
+/// <para><b>Plugins are still refused, on exactly the terms they were
+/// refused on before.</b> Running a DECLARED, NAMED command needs an
+/// explicit <c>execute</c> grant, so a loader running unnamed code in
+/// process at full trust would be a hole straight through the boundary. A
+/// reader is added by adding a class, in this tree, with tests. For a
+/// format Fettler does not ship, the honest form is the one that already
+/// exists: a declared converter task, gated by <c>execute</c>.</para>
 /// </summary>
 public static class Typed
 {
@@ -79,11 +92,16 @@ public static class Typed
     /// </summary>
     public static FileKind KindOf(string path)
     {
+        // The reader table is asked FIRST, and that ordering is
+        // load-bearing rather than tidy: an office document is a zip, so
+        // asking Archives first would answer "archive" for a file the
+        // caller means to read as a document.
+        if (Documents.For(path) is { } reader) return reader.Kind;
+
         string extension = Path.GetExtension(path).ToLowerInvariant();
         return extension switch
         {
             ".ipynb" => FileKind.Notebook,
-            ".pdf" => FileKind.Pdf,
             ".png" or ".jpg" or ".jpeg" or ".gif" or ".webp" => FileKind.Image,
             _ => Archives.KindOf(path) is not null ? FileKind.Archive
                : Archives.IsLoneGzip(path) ? FileKind.Gzip
@@ -332,54 +350,5 @@ public static class Typed
 
         if (lines.Length > OutputLineCap)
             text.Append("... ").Append(lines.Length - OutputLineCap).AppendLine(" more lines of output not shown");
-    }
-
-    // ---- PDF ----
-
-    /// <summary>
-    /// A PDF as text, page by page, with each page announced so a
-    /// citation can name one.
-    ///
-    /// <para>Text extraction only. A PDF that carries no text layer -
-    /// a scan - yields nothing, and the answer says so rather than
-    /// returning an empty file that reads as an empty document.</para>
-    /// </summary>
-    public static Result<string> ReadPdf(ContainedPath path)
-    {
-        Result<byte[]> raw = TextIo.ReadBytes(path);
-        if (!raw.IsOk) return raw.Carry<string>();
-
-        var text = new StringBuilder();
-        int pages = 0, withText = 0;
-
-        try
-        {
-            using UglyToad.PdfPig.PdfDocument document = UglyToad.PdfPig.PdfDocument.Open(raw.Value);
-            pages = document.NumberOfPages;
-
-            foreach (UglyToad.PdfPig.Content.Page page in document.GetPages())
-            {
-                text.Append("=== page ").Append(page.Number).Append(" of ").Append(pages).AppendLine(" ===");
-                string body = page.Text;
-                if (body.Trim().Length > 0) withText++;
-                text.AppendLine(body);
-            }
-        }
-        catch (Exception e) when (e is not OutOfMemoryException and not StackOverflowException)
-        {
-            // PdfPig throws several exception types for a malformed file
-            // and does not document a closed set, so this is deliberately
-            // broad - a PDF Fettler cannot read must be a refusal, never
-            // a crash that takes the MCP server down with it.
-            return Result<string>.Fail(Outcome.Refused,
-                "this PDF could not be read: " + e.Message, path.Display);
-        }
-
-        if (pages > 0 && withText == 0)
-            return Result<string>.Fail(Outcome.Refused,
-                $"this PDF has {pages} page(s) and no text layer at all, so it is probably a scan; "
-                + "nothing here does character recognition", path.Display);
-
-        return Result<string>.Ok(text.ToString());
     }
 }

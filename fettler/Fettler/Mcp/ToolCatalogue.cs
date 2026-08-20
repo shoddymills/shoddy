@@ -37,7 +37,7 @@ public static class ToolCatalogue
             }}
             """),
 
-        new("search", "Matching lines as records: path, line, column, text, optional context. Takes several patterns at once. Searches only inside declared trees; there is nothing outside them to search.", """
+        new("search", "Matching lines as records: path, line, column, text, optional context. Takes several patterns at once. Searches only inside declared trees; there is nothing outside them to search. A document that has to be rendered before it can be read - a PDF - is rendered and searched with everything else, and a hit inside one carries the page it sits on.", """
             {"type":"object","required":["patterns"],"properties":{
               "patterns":{"type":"array","items":{"type":"string"},"description":".NET regular expressions unless literal is true"},
               "glob":{"type":"string","description":"restrict to a subset of files"},
@@ -48,7 +48,8 @@ public static class ToolCatalogue
               "limit":{"type":"integer"},
               "count":{"type":"boolean","description":"how many, without the hits"},
               "files_only":{"type":"boolean"},
-              "include_generated":{"type":"boolean"}
+              "include_generated":{"type":"boolean"},
+              "no_documents":{"type":"boolean","description":"leave documents shut instead of rendering them to search inside. They ARE searched by default. Either way the answer says how many were not looked inside, because a file that was never opened is not a file with nothing in it."}
             }}
             """),
 
@@ -250,6 +251,7 @@ public static class ToolCatalogue
                 Flag("case-sensitive", "case_sensitive"); Flag("context", "context"); Flag("limit", "limit");
                 Flag("count", "count"); Flag("files-only", "files_only");
                 Flag("include-generated", "include_generated");
+                Flag("no-documents", "no_documents");
                 break;
 
             case "read":

@@ -30,7 +30,7 @@ public sealed class Arguments
     {
         "json", "overwrite", "recursive", "force", "dry-run", "stdin", "literal",
         "case-sensitive", "include-generated", "count", "files-only", "sort-modified",
-        "preserve-times", "all", "on", "off", "help", "version",
+        "preserve-times", "all", "on", "off", "help", "version", "no-documents",
 
         // the credential override
         "allow-credential",
@@ -80,7 +80,7 @@ public sealed class Arguments
 
         // search
         "pattern", "pattern-file", "pattern-stdin", "glob", "in", "literal",
-        "case-sensitive", "context", "count", "files-only",
+        "case-sensitive", "context", "count", "files-only", "no-documents",
 
         // read
         "from", "to", "tail", "member",

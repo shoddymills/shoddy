@@ -292,7 +292,8 @@ public static class Command
             Context: args.Int("context", 0),
             Limit: args.Int("limit", 200),
             IncludeGenerated: args.Has("include-generated"),
-            Exclude: args.Values("exclude")));
+            Exclude: args.Values("exclude"),
+            Documents: !args.Has("no-documents")));
 
         if (!result.IsOk) return Failed(result.Failure!, json);
         SearchAnswer answer = result.Value;
@@ -317,6 +318,7 @@ public static class Command
                         w.WriteString("path", Show(bench, h.Path));
                         w.WriteNumber("line", h.Line);
                         w.WriteNumber("column", h.Column);
+                        if (h.Cite is { } cite) w.WriteString("cite", cite);
                         if (!filesOnly) w.WriteString("text", h.Text);
                         if (h.Context.Count > 0 && !filesOnly)
                         {
@@ -340,6 +342,8 @@ public static class Command
                 w.WriteNumber("files_searched", answer.FilesSearched);
                 w.WriteBoolean("truncated", answer.Truncated);
                 w.WriteNumber("excluded", answer.Excluded);
+                if (answer.DocumentsSkipped > 0)
+                    w.WriteNumber("documents_skipped", answer.DocumentsSkipped);
             }));
 
         var text = new StringBuilder();
@@ -360,7 +364,9 @@ public static class Command
         {
             foreach (Hit h in answer.Hits)
             {
-                text.Append(Show(bench, h.Path)).Append(':').Append(h.Line).Append(':').AppendLine(h.Column.ToString());
+                text.Append(Show(bench, h.Path)).Append(':').Append(h.Line).Append(':').Append(h.Column);
+                if (h.Cite is { } cite) text.Append("  (").Append(cite).Append(')');
+                text.AppendLine();
                 if (h.Context.Count > 0)
                     foreach (ContextLine c in h.Context)
                         text.Append(c.Number.ToString().PadLeft(5)).Append(" | ").AppendLine(c.Text);
@@ -371,6 +377,16 @@ public static class Command
             text.Append(answer.Hits.Count).Append(answer.Hits.Count == 1 ? " hit in " : " hits in ")
                 .Append(answer.Files).Append(answer.Files == 1 ? " file" : " files");
             if (answer.Truncated) text.Append(" (limit reached; more matches exist)");
+
+            // Said out loud rather than left to be inferred from a count
+            // that looks complete. A search that skipped a document found
+            // nothing in it, which is not the same as there being nothing
+            // in it.
+            if (answer.DocumentsSkipped > 0)
+                text.Append("; ").Append(answer.DocumentsSkipped)
+                    .Append(answer.DocumentsSkipped == 1 ? " document was" : " documents were")
+                    .Append(" not looked inside");
+
             text.AppendLine();
         }
 
@@ -1359,9 +1375,16 @@ public static class Command
           find PATTERN [--sort mtime] [--limit N] [--since TIME]
           search PATTERN [-e PATTERN]... [--glob G] [--literal] [--case-sensitive]
                          [--context N] [--limit N] [--count] [--files-only]
+                         [--no-documents]
                  A pattern may instead arrive as --pattern-file PATH or
                  --pattern-stdin, one per line, so a shell never gets to
                  eat a quote out of it.
+                 A document in the sweep - a PDF - is rendered to text and
+                 searched like anything else, and a hit in one cites its page.
+                 --no-documents leaves them shut. Either way the answer says
+                 how many were not looked inside, because a search that never
+                 opened a file found nothing in it, which is not the same as
+                 there being nothing in it.
           read PATH... [--from N] [--to N] [--tail N] [--member NAME]
                  Text, notebooks, PDFs, images and archives. Stops at 2000 lines
                  and says how many are left; --to asks for more. --tail N is the

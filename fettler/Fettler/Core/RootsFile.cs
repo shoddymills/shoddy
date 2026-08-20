@@ -77,6 +77,12 @@ public static class RootsFile
         /// place.</summary>
         public IReadOnlyDictionary<string, string> Replacements { get; init; } =
             new Dictionary<string, string>(StringComparer.Ordinal);
+
+        /// <summary>The absolute path of the screening models directory,
+        /// or null when the configuration named none. See
+        /// <see cref="Roots.Models"/> for why null is a state that means
+        /// something rather than a field nobody filled in.</summary>
+        public string? Models { get; init; }
     }
 
     /// <summary>
@@ -130,6 +136,12 @@ public static class RootsFile
             Overlay = local.Value.File,
             Tasks = MergeTasks(found.Value.Tasks, local.Value.Tasks),
             Replacements = MergeReplacements(found.Value.Replacements, local.Value.Replacements),
+
+            // The overlay's if it named one, otherwise the checked-in
+            // file's. This is the one setting most likely to differ per
+            // machine - the models are 400 MB nobody checks in, so where
+            // they sit is a fact about a disk rather than about a project.
+            Models = local.Value.Models ?? found.Value.Models,
         });
     }
 
@@ -150,7 +162,7 @@ public static class RootsFile
     {
         Result<Found> found = ReadWithOverlay(file);
         return found.IsOk
-            ? Roots.Open(found.Value.Trees, found.Value.Origin, found.Value.Tasks)
+            ? Roots.Open(found.Value.Trees, found.Value.Origin, found.Value.Tasks, found.Value.Models)
             : found.Carry<Roots>();
     }
 
@@ -269,6 +281,36 @@ public static class RootsFile
                 ReadReplacements(doc.RootElement, full);
             if (!replacements.IsOk) return replacements.Carry<Found>();
 
+            // Where the screening models are. Resolved against the FILE
+            // like every other declared path (R8.9), and not checked for
+            // existence here: a configuration that is read on a machine
+            // without the models is not malformed, and refusing to open
+            // the whole boundary over it would take the tree away rather
+            // than the screen. The refusal belongs at the disclosure,
+            // where it can name the category that wanted the model.
+            string? models = null;
+            if (doc.RootElement.TryGetProperty("models", out JsonElement named))
+            {
+                if (named.ValueKind != JsonValueKind.String
+                    || named.GetString() is not { Length: > 0 } rawModels)
+                    return Result<Found>.Fail(Outcome.Invalid,
+                        "has a \"models\" that is not a non-empty string; it names the directory "
+                        + "the screening models were put in", full);
+
+                if (Separator(rawModels, "the \"models\" path", full) is { } badModels)
+                    return Result<Found>.Fail(badModels);
+
+                try
+                {
+                    models = Path.GetFullPath(Path.Combine(here, rawModels));
+                }
+                catch (Exception e) when (e is ArgumentException or NotSupportedException or PathTooLongException)
+                {
+                    return Result<Found>.Fail(Outcome.Invalid,
+                        $"has a \"models\" that is not a usable path: {e.Message}", full);
+                }
+            }
+
             // The tasks are returned with their placeholders INTACT. What
             // fills them is Fill, after the overlay has been merged in -
             // see ReadWithOverlay for why it cannot happen here.
@@ -276,6 +318,7 @@ public static class RootsFile
             {
                 Tasks = tasks.Value,
                 Replacements = replacements.Value,
+                Models = models,
             });
         }
     }
@@ -338,6 +381,19 @@ public static class RootsFile
             can = parsed.Value;
         }
 
+        // Off unless the file says otherwise, which is the only safe
+        // default in the direction that matters here: switching a screen
+        // ON by default would deny half the reads in a source tree and
+        // teach everybody to turn it off, and a check people switch off
+        // protects nothing.
+        Screened screen = Screened.None;
+        if (entry.Value.TryGetProperty("screen", out JsonElement screenValue))
+        {
+            Result<Screened> parsed = ReadScreen(screenValue, $"tree '{entry.Name}'", file);
+            if (!parsed.IsOk) return parsed.Carry<TreeDecl>();
+            screen = parsed.Value;
+        }
+
         var scopes = new List<ScopeDecl>();
         if (entry.Value.TryGetProperty("scopes", out JsonElement scopeValue))
         {
@@ -359,11 +415,24 @@ public static class RootsFile
                 if (Separator(scope.Name, $"scope '{scope.Name}' in tree '{entry.Name}'", file) is { } badScope)
                     return Result<TreeDecl>.Fail(badScope);
 
-                scopes.Add(new ScopeDecl(scope.Name, parsed.Value));
+                // Null where the scope said nothing, so it inherits the
+                // tree's rather than silently screening nothing. Writing
+                // "screen": false is how a scope takes screening away,
+                // and it has to be written to mean it.
+                Screened? screened = null;
+                if (scope.Value.TryGetProperty("screen", out JsonElement scopeScreen))
+                {
+                    Result<Screened> read = ReadScreen(
+                        scopeScreen, $"scope '{scope.Name}' in tree '{entry.Name}'", file);
+                    if (!read.IsOk) return read.Carry<TreeDecl>();
+                    screened = read.Value;
+                }
+
+                scopes.Add(new ScopeDecl(scope.Name, parsed.Value, screened));
             }
         }
 
-        return Result<TreeDecl>.Ok(new TreeDecl(entry.Name, path, can, scopes));
+        return Result<TreeDecl>.Ok(new TreeDecl(entry.Name, path, can, scopes, screen));
     }
 
     /// <summary>
@@ -609,6 +678,50 @@ public static class RootsFile
         }
 
         return merged;
+    }
+
+    /// <summary>
+    /// The three forms of R1.4: <c>true</c> for every category,
+    /// a bare list to include, and a list of <c>-</c> words to exclude.
+    ///
+    /// <para><b><c>true</c> means all of them</b>, so the failure mode of
+    /// switching the screen on and forgetting to name a category does not
+    /// exist. Excluding one takes a single word.</para>
+    ///
+    /// <para><b>An object form was rejected.</b>
+    /// <c>{"include":[...],"exclude":[...]}</c> is two keys carrying one
+    /// fact, and it needs a rule for what happens when both are set. The
+    /// list forms cannot express that conflict at all, which is the
+    /// better kind of answer: the ambiguity is unwritable rather than
+    /// resolved by a paragraph nobody reads.</para>
+    /// </summary>
+    static Result<Screened> ReadScreen(JsonElement value, string what, string file)
+    {
+        if (value.ValueKind == JsonValueKind.True)
+            return Result<Screened>.Ok(Screens.Everything);
+
+        if (value.ValueKind == JsonValueKind.False)
+            return Result<Screened>.Ok(Screened.None);
+
+        if (value.ValueKind != JsonValueKind.Array)
+            return Result<Screened>.Fail(Outcome.Invalid,
+                $"{what} has a \"screen\" that is not true, false, or an array of category "
+                + $"words; they are: {string.Join(", ", Screens.All.Select(Screens.NameOf))}", file);
+
+        var words = new List<string>();
+        foreach (JsonElement word in value.EnumerateArray())
+        {
+            if (word.ValueKind != JsonValueKind.String)
+                return Result<Screened>.Fail(Outcome.Invalid,
+                    $"{what} lists a screening category that is not a word", file);
+            words.Add(word.GetString()!);
+        }
+
+        Result<Screened> parsed = Screens.Parse(words);
+        if (!parsed.IsOk)
+            return Result<Screened>.Fail(Outcome.Invalid, $"{what} {parsed.Failure!.Message}", file);
+
+        return parsed;
     }
 
     static Result<Permission> ReadCan(JsonElement value, string what, string file)

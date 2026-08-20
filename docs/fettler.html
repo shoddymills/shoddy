@@ -993,6 +993,21 @@ shape their issuer fixed, and a secret-shaped name assigned a long,
 random-looking, whitespace-free value that is not a
 <code>${REFERENCE}</code>.</div>
 
+<h3>A read that would disclose regulated data</h3>
+
+<div class="promptbox"><button class="copy">Copy</button><pre><code>$ fettle read ward-round.docx
+refused: this response would disclose regulated data: 2 in phi. What was found is
+deliberately not quoted back, because a refusal that named it would put it in the
+log and the transcript, which is the disclosure being refused. Read a narrower
+range, or take the screen off this scope if the content is not what it looks like.
+$ echo $LASTEXITCODE
+13</code></pre></div>
+
+<p>The mirror of the credential refusal above &mdash; that one is a
+write going in, this one a payload coming out. It only happens in a
+scope whose configuration asks for it. <a href="#screen">Section 14</a>
+is the whole of it.</p>
+
 <h3>Running a task in a tree that does not grant <code>execute</code></h3>
 
 <div class="promptbox"><button class="copy">Copy</button><pre><code>$ fettle run hello
@@ -1026,7 +1041,216 @@ refused: no such flag: --gob - try: fettle help</code></pre></div>
 swallow the next word as its value and write the word <code>true</code>
 into the file.</p>
 
-<h2 id="metadata">14. What it touches besides content</h2>
+<h2 id="screen">14. The disclosure screen</h2>
+
+<p><b>Off unless a tree asks for it.</b> Most trees never switch this
+on, and nothing below happens in one that has not. This section is what
+it does and why; <a href="fettler-screening.html">Screening</a> is how
+you turn it on, step by step.</p>
+
+<p>Fettler reads PDF, Excel and Word &mdash; exactly the formats
+regulated personal data lives in. Everything it returns lands in an
+assistant's context, and from there in a transcript, a log, and whatever
+ships those onward. The screen inspects the text a call is about to hand
+back, and <b>any detection in a screened category refuses the whole
+response</b>.</p>
+
+<h3>It judges the disclosure, not the file</h3>
+
+<p>A document may hold a patient's details on page 40. A read of page 2
+that discloses none is <em>served</em>. This is the same choice the
+credential net makes in judging what a write ADDS rather than what the
+file contains, and for the same reason: judging the whole file would
+lock the very trees people most need help in, and the way round that is
+to turn the screen off.</p>
+
+<p>A <code>search</code> is judged as the hit records it is about to
+return, per file &mdash; the matched lines and whatever
+<code>--context</code> brings with them. The screen sees exactly what
+the caller would see, and no more.</p>
+
+<h3>Four categories</h3>
+
+<table>
+<tr><th>Word</th><th>Concern</th><th>Carried by</th></tr>
+<tr><td><code>phi</code></td><td>protected health information &mdash; the HIPAA concern</td><td>record numbers and dates of birth under their own label; a clinical model where one is installed</td></tr>
+<tr><td><code>pii</code></td><td>personal identifiers generally</td><td>mostly the structural detectors below</td></tr>
+<tr><td><code>legal</code></td><td>contract and consumer-report content</td><td>a model</td></tr>
+<tr><td><code>sci</code></td><td>research and scientific data</td><td>a model</td></tr>
+</table>
+
+<div class="takeaway"><b>FCRA and FERPA are not covered categories, and
+saying so is part of the feature.</b> A clinical model knows clinical
+text; a scientific one knows scientific text; neither knows a student
+transcript or a credit report. The structured identifiers in those
+regimes are caught by the first tier under <code>pii</code>, and that is
+all. Anyone who reads <code>screen</code> as "FERPA compliance" has been
+misled, which is why it is written here rather than left to be
+assumed.</div>
+
+<h3>Two tiers</h3>
+
+<p><b>The first needs nothing installed.</b> Structural detectors run
+in process, with no model and no new dependency: a social security
+number, a card that passes Luhn, a phone number, an email address, and
+&mdash; under their own labels, because no issuer agrees on a shape
+&mdash; a medical record number and a date of birth. They are narrow on
+purpose. Nine bare digits are an order number far more often than an
+identifier, and a check that cries wolf is a check somebody switches
+off.</p>
+
+<p><b>The second is a separate program called <code>burler</code></b>
+&mdash; the trade's word for whoever picks the faults out of finished
+cloth before it leaves the mill. It hosts BERT-family named-entity
+models. It is a separate executable because those need ONNX Runtime,
+which ships native binaries, and <code>fettle</code> publishes
+self-contained and single-file from a package allowlist that admits
+neither. The two talk over a pipe and share no code.</p>
+
+<h3>Configuring it</h3>
+
+<div class="promptbox"><button class="copy">Copy</button><pre><code>{
+  "trees": {
+    "records": {
+      "path": "../records",
+      "can": ["list", "read"],
+      "screen": true,
+      "scopes": {
+        "public": { "can": ["list", "read"], "screen": false }
+      }
+    }
+  },
+  "models": "../screening-models"
+}</code></pre></div>
+
+<ul>
+<li><b><code>"screen": true</code> means every category.</b> Switching
+the screen on without naming categories screens all four, so the failure
+mode of forgetting to name one does not exist. Excluding one takes a
+single word.</li>
+<li><b>A bare list includes; a <code>-</code> list excludes.</b>
+<code>["phi", "legal"]</code> screens those two.
+<code>["-sci"]</code> screens everything except that. <b>Mixing the two
+in one list is refused</b> when the file is read, naming the ambiguity:
+<code>["phi", "-sci"]</code> reads either as "phi only" or as
+"everything but sci", and those differ by two whole categories. A
+misspelt category is refused too, rather than quietly subtracting a
+screen.</li>
+<li><b>A scope's <code>screen</code> replaces the tree's</b>, exactly as
+its <code>can</code> does &mdash; which is what lets a scope take
+screening away. A scope that says nothing about it <em>inherits</em>,
+because every scope written before this existed says nothing, and
+reading that as "screen nothing here" would punch a hole in the first
+tree anybody switched it on for.</li>
+<li><b><code>screen</code> is not a permission.</b> The seven are a
+closed set named after what happens to the file; a screen is a property
+of content crossing the boundary, and it is not a verb.</li>
+</ul>
+
+<h3>The models are never shipped</h3>
+
+<p>Four quantised models run about 400 MB against a
+<code>fettle</code> download measured in single-digit MB, so nothing
+bundles them. A person puts them in a directory and names it as
+<code>"models"</code> &mdash; usually in
+<code>.fettler.local.json</code>, since where they sit is a fact about a
+disk rather than about a project. Each holds <code>model.onnx</code>,
+<code>vocab.txt</code>, <code>labels.json</code> and a
+<code>manifest.json</code> recording the checkpoint, its revision, its
+licence and where it came from.</p>
+
+<p><b>Naming that directory is the act that makes the second tier
+load-bearing.</b> Before it is named, the first tier is the whole screen
+and a clean payload is served &mdash; nobody has claimed a model is
+installed, so there is no second tier to have failed. Once it is named,
+a screened category whose model is missing <em>refuses</em>, because
+somebody has now said they expect it to be there.</p>
+
+<h3>Fail closed</h3>
+
+<p>A sidecar that will not start, a model that will not load, a
+malformed answer and an inference that outran its clock all <b>refuse
+the disclosure</b> and say which. Serving content because the check
+broke is the one outcome this must never produce, so there is no path
+through it that does. An image in a screened scope is refused for the
+same reason: nothing here can read one, and a photographed discharge
+summary is precisely what the screen exists to stop.</p>
+
+<h3>The refusal never repeats what it found</h3>
+
+<p>A category and a count. A refusal naming the patient it found would
+write that name into the log and the transcript &mdash; the exact harm
+the screen exists to prevent, delivered by the screen itself. Where the
+model found each entity crosses the pipe and stops there; no message
+path can reach it.</p>
+
+<h3>What it can say</h3>
+
+<p>Every refusal the screen produces, because it is the one part of
+Fettler a person meets <em>only</em> as a refusal &mdash; there is no
+successful output that shows what it did. All of them answer
+<code>13</code>. <a href="#refusals">Section 13</a> has a worked
+transcript.</p>
+
+<table>
+<tr><th>It says</th><th>Which means</th></tr>
+
+<tr><td><code>this response would disclose regulated data:</code> and a count per category</td>
+<td><b>Something was found.</b> The ordinary case, and the only one that is not a fault. Read a narrower range, or take the screen off this scope.</td></tr>
+
+<tr><td><code>this response could not be screened, so it is not being served:</code> and a reason</td>
+<td><b>The screen could not run.</b> Whatever follows is one of the rows below. Nothing was checked, so nothing is served.</td></tr>
+
+<tr><td><code>a screening pattern ran out of time on this payload</code></td>
+<td><b>A structural detector hit its one-second ceiling.</b> Nothing was checked, so nothing is served. The detectors are written without the nested quantifiers that make a pattern blow up, so this is not reachable with the ones that ship &mdash; it is here for the one added later that is not so careful.</td></tr>
+
+<tr><td><code>this scope is screened, and this is an image - which the screen cannot read.</code></td>
+<td>Nothing here reads pixels, and a photographed record is exactly what the screen is for. Refused rather than served unchecked.</td></tr>
+
+<tr><td><code>this scope is screened and the screening sidecar is not installed -</code> and where it looked</td>
+<td><b>burler is not beside <code>fettle</code>.</b> Unpack its archive into the same directory, or take <code>"screen"</code> off the scope.</td></tr>
+
+<tr><td><code>the screening sidecar would not start:</code> and the reason the operating system gave</td>
+<td>The file is there and would not launch &mdash; wrong architecture, or no permission to execute it.</td></tr>
+
+<tr><td><code>the screening sidecar failed:</code> then <code>it could not be written to:</code>, <code>it could not be read from:</code>, or <code>it closed the pipe without answering</code></td>
+<td>It started and then died. Anything it printed on its way out is quoted after <code>it said:</code>, which is usually a missing model or a manifest it would not read.</td></tr>
+
+<tr><td><code>the screening sidecar did not answer within</code> a number of seconds</td>
+<td>It is alive and stuck. The child is killed, so the next disclosure pays a cold start rather than reusing a process nobody can account for.</td></tr>
+
+<tr><td><code>the screening sidecar has been shut down</code></td>
+<td>A disclosure arrived after the tool began closing. Only reachable at shutdown.</td></tr>
+
+<tr><td><code>the screening sidecar refused:</code> and its own words</td>
+<td>burler declined and said why &mdash; a model or a manifest missing from the models directory, or one it could not load.</td></tr>
+
+<tr><td><code>the screening sidecar answered something that is not JSON:</code></td>
+<td rowspan="5"><b>The wire was broken.</b> Something is writing to burler's stdout that is not the protocol, or the two sides have drifted apart. Note the fourth: an <em>empty</em> findings array means it checked and found nothing, and a <em>missing</em> one is a fault &mdash; the two must never be spelled the same way.</td></tr>
+<tr><td><code>the screening sidecar answered JSON that is not an object</code></td></tr>
+<tr><td><code>the screening sidecar answered without saying whether it succeeded</code></td></tr>
+<tr><td><code>the screening sidecar answered success with no findings array; an empty array is how it says it found nothing, and a missing one is a fault</code></td></tr>
+<tr><td><code>the screening sidecar answered a finding without a category and a count</code></td></tr>
+
+<tr><td><code>the screening sidecar answered a category this does not know:</code></td>
+<td>burler named a category this build has never heard of. The two were built from different revisions.</td></tr>
+</table>
+
+<p><b>None of them repeats what was found</b>, and the sidecar rows carry
+no payload of any kind &mdash; a message that quoted the text it was
+refusing to disclose would be the disclosure.</p>
+
+<div class="takeaway"><b>This is a safety net, not a boundary, and the
+difference is not a quibble.</b> Named-entity models miss entities.
+Structural patterns miss anything written a way they do not expect
+&mdash; a number split across a line break defeats every one of them.
+<b>A clean verdict is evidence of absence and never a certificate of
+it.</b> Anyone who believes a screened tree cannot leak has been misled,
+and that belief is the actual hazard. What this stops is the ordinary
+accident: a regulated document read into a transcript by something that
+was only trying to help.</div>
+
+<h2 id="metadata">15. What it touches besides content</h2>
 
 <table>
 <tr><th>Thing</th><th>What Fettler does</th></tr>
@@ -1038,7 +1262,7 @@ into the file.</p>
 <tr><td><b>Everything else about permissions</b></td><td>nothing. POSIX modes and Windows ACLs do not map onto one another, and an abstraction over them would be a falsehood told in a table.</td></tr>
 </table>
 
-<h2 id="threat">15. What this defends against, and what it does not</h2>
+<h2 id="threat">16. What this defends against, and what it does not</h2>
 
 <div class="takeaway"><b>The threat is inadvertent assistant action. It
 is not a determined person.</b> Whoever runs Fettler can open a terminal

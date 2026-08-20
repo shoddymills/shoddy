@@ -901,4 +901,56 @@ public sealed class ConfigTests
         Assert.False(found.IsOk, "a malformed replacement must be refused, not skipped");
         Assert.Equal(Outcome.Invalid, found.Failure!.Outcome);
     }
+
+    // ---- the screening models directory reaches the opened boundary ----
+
+    /// <summary>
+    /// The defect this exists to stop coming back: reading "models" out
+    /// of the file and then not passing it on when the boundary is
+    /// opened.
+    ///
+    /// <para><b>It fails silently and in the unsafe direction.</b> A null
+    /// Models is how a boundary says "nobody named a models directory",
+    /// so the sidecar is never started, the first tier becomes the whole
+    /// screen, and a clean payload is SERVED. Drop the argument and a
+    /// tree screening <c>legal</c> - a category with no first-tier
+    /// detector at all - serves everything, while the file and
+    /// <c>roots</c> both still say it is screened.</para>
+    ///
+    /// <para>Every other screening test builds the boundary directly and
+    /// so never crosses this seam, which is exactly why it survived.</para>
+    /// </summary>
+    [Fact]
+    public void TheModelsDirectoryReachesTheBoundaryTheCommandLineOpens()
+    {
+        using var tree = new Tree();
+        string file = tree.Config("", """
+            {
+              "trees": { "work": { "path": ".", "screen": ["legal"] } },
+              "models": "screening-models"
+            }
+            """);
+
+        Result<Boundary> opened = Arguments.Parse(["read", "--config", file]).DeclaredBoundary();
+
+        Assert.True(opened.IsOk, opened.Failure?.Message);
+        Assert.Equal(Path.Combine(tree.Root, "screening-models"), opened.Value.Roots.Models);
+    }
+
+    /// <summary>And it is resolved against the FILE, like every other
+    /// declared path, so the same configuration names the same directory
+    /// from wherever it is read.</summary>
+    [Fact]
+    public void TheModelsDirectoryIsResolvedAgainstTheFile()
+    {
+        using var tree = new Tree();
+        tree.Config("nested", """
+            { "trees": { "work": { "path": "." } }, "models": "../shared-models" }
+            """);
+
+        Result<RootsFile.Found> found = RootsFile.Discover(tree.Dir("nested/deeper"));
+
+        Assert.True(found.IsOk, found.Failure?.Message);
+        Assert.Equal(Path.Combine(tree.Root, "shared-models"), found.Value.Models);
+    }
 }

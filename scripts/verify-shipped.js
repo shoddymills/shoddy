@@ -2,6 +2,7 @@
 // IT - no repository, no installed runtime, no project reference.
 //
 //   node scripts/verify-shipped.js fettle
+//   node scripts/verify-shipped.js burler
 //   node scripts/verify-shipped.js sparky
 //
 // Run after that lane's `build.ps1 publish`.
@@ -134,6 +135,78 @@ if (lane === "fettle") {
         } else ok("the MCP front end answers on stdio, and stdout carries the protocol alone");
     }
 
+} else if (lane === "burler") {
+    const archive = findArchive("burler");
+    if (!archive) { console.log("1 problem(s)"); process.exit(1); }
+    const dir = scratch("burler");
+    if (!unpack(archive, dir)) { console.log("1 problem(s)"); process.exit(1); }
+
+    const exe = path.join(dir, isWin ? "burler.exe" : "burler");
+    if (!fs.existsSync(exe)) fail(`no executable in ${path.basename(archive)}`);
+    // Both packages burler bundles are MIT, which wants its notice in
+    // every copy, and an archive is a copy.
+    for (const f of ["NOTICE", "LICENSE"]) {
+        if (fs.existsSync(path.join(dir, f))) ok(`${f} travelled with the binary`);
+        else fail(`${f} is not in ${path.basename(archive)}`);
+    }
+
+    if (fs.existsSync(exe)) {
+        if (!isWin) fs.chmodSync(exe, 0o755);
+
+        // A model directory with everything present and a model.onnx that
+        // is deliberately not a model.
+        //
+        // THAT IS THE POINT OF IT. Reaching the ONNX parser at all means
+        // the native runtime was found, extracted and loaded out of the
+        // single file - which is the whole thing this lane exists to
+        // prove, and the one failure a build cannot show. A publish that
+        // left the natives behind does not get as far as complaining
+        // about the file's contents; it fails to load the library.
+        const models = scratch("burler-models");
+        const phi = path.join(models, "phi");
+        fs.mkdirSync(phi);
+        fs.writeFileSync(path.join(phi, "model.onnx"), "this is not a model\n");
+        fs.writeFileSync(path.join(phi, "vocab.txt"), "[PAD]\n[UNK]\n[CLS]\n[SEP]\nthe\n");
+        fs.writeFileSync(path.join(phi, "labels.json"), '["O","B-PER"]');
+        fs.writeFileSync(path.join(phi, "manifest.json"), JSON.stringify({
+            checkpoint: "synthetic/not-a-real-checkpoint",
+            revision: "0",
+            licence: "none - this is a fixture",
+            provenance: "scripts/verify-shipped.js",
+        }));
+
+        const asked = '{"op":"screen","categories":["phi"],"payload":"nothing in here"}\n';
+        const r = drive(exe, ["--models", models], { input: asked });
+        const answer = r.out.trim().split(/\r?\n/)[0] ?? "";
+
+        let said = null;
+        try { said = JSON.parse(answer); } catch { /* reported below */ }
+
+        if (said === null) {
+            fail(`the shipped burler did not answer with JSON: '${r.out.slice(0, 400)}'`
+                + `${r.err ? ` (stderr: ${r.err.slice(0, 200)})` : ""}`);
+        } else if (said.ok !== false) {
+            fail(`a model that is not a model was not refused: '${answer.slice(0, 400)}'`);
+        } else if (!/would not load/.test(said.error ?? "")) {
+            // Anything else here means it never reached the parser. A
+            // missing native shows up as a type initializer or a
+            // DllNotFound, and that is a broken archive rather than a
+            // broken fixture.
+            fail(`the ONNX runtime did not load out of the archive: '${said.error}'`);
+        } else {
+            ok("the ONNX runtime loaded out of the single file and rejected a bad model");
+        }
+
+        // It ALWAYS answers. Silence on this pipe reads to fettle as a
+        // hung sidecar, which it would kill and report as a timeout -
+        // sending somebody to look at the wrong thing entirely.
+        const junk = drive(exe, ["--models", models], { input: "not json at all\n" });
+        const complaint = junk.out.trim().split(/\r?\n/)[0] ?? "";
+        if (!complaint.includes('"ok":false')) {
+            fail(`a malformed request was met with silence rather than a refusal: '${junk.out.slice(0, 200)}'`);
+        } else ok("a malformed request is answered rather than ignored");
+    }
+
 } else if (lane === "sparky") {
     const archive = findArchive("sparky");
     if (!archive) { console.log("1 problem(s)"); process.exit(1); }
@@ -164,7 +237,7 @@ if (lane === "fettle") {
     }
 
 } else {
-    console.log("usage: node scripts/verify-shipped.js <fettle|sparky>");
+    console.log("usage: node scripts/verify-shipped.js <fettle|burler|sparky>");
     process.exit(2);
 }
 

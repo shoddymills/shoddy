@@ -374,7 +374,7 @@ export function gateSteps({ splitDotnetTest }) {
     // THE TAG, so without this the discovery happens after the tag is
     // public and the fix has to go forward.
     steps.push({
-        id: 'fettler-publish', title: 'cut the fettle release archives', timeoutSec: 1800,
+        id: 'fettler-publish', title: 'cut the fettle and burler release archives', timeoutSec: 1800,
         cmd: win ? ps('fettler/build.ps1', 'publish') : ['./fettler/build.sh', 'publish'],
         remedy: 'Run it directly: fettler/build.ps1 publish.',
     });
@@ -384,6 +384,21 @@ export function gateSteps({ splitDotnetTest }) {
         cmd: ['node', 'scripts/verify-shipped.js', 'fettle'],
         remedy: 'The archive for this platform was unpacked outside the repository and '
             + 'driven. A failure here is in what ships, not in what builds.',
+    });
+    // burler is the ONE archive here carrying a NATIVE dependency, so it is
+    // the one where a self-contained single-file publish has something new
+    // to get wrong: ONNX Runtime's library has to be bundled, extracted and
+    // loaded at run time. A build proves none of that. This drives the
+    // shipped binary against a model directory whose model.onnx is
+    // deliberately not a model - reaching the point of complaining about
+    // its CONTENTS is the proof that the native loaded at all.
+    steps.push({
+        id: 'burler-shipped', title: 'the shipped burler loads its native runtime',
+        timeoutSec: 600,
+        cmd: ['node', 'scripts/verify-shipped.js', 'burler'],
+        remedy: 'The burler archive was unpacked outside the repository and driven. '
+            + 'A failure naming a type initializer or a missing DLL means the ONNX '
+            + 'native did not travel in the single file.',
     });
 
     // Both host lanes need bin/mill.exe, which build-mill has already

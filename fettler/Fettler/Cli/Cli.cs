@@ -573,6 +573,15 @@ public static class Command
                     w.WriteString("name", name);
                     w.WriteString("path", full);
                     w.WriteString("can", Permissions.Write(grant.Can));
+
+                    // Reported only where it is on. A "screen": "nothing"
+                    // against every tree would be noise on the answer
+                    // almost every caller gets, and would read as a
+                    // feature that had failed rather than one nobody
+                    // asked for.
+                    if (grant.Screen != Screened.None)
+                        w.WriteString("screen", Screens.Write(grant.Screen));
+
                     w.WriteBoolean("default", name.Equals(names[0], Core.Roots.PathComparison));
 
                     if (grant.Scopes.Count > 0)
@@ -583,6 +592,14 @@ public static class Command
                             w.WriteStartObject();
                             w.WriteString("path", Path.GetRelativePath(full, scope.Path).Replace('\\', '/'));
                             w.WriteString("can", Permissions.Write(scope.Can));
+
+                            // A scope that said nothing inherits, so what
+                            // is reported here is what the scope ITSELF
+                            // states - and its absence means "whatever the
+                            // tree says" rather than "nothing".
+                            if (scope.Screen is { } screened)
+                                w.WriteString("screen", Screens.Write(screened));
+
                             w.WriteEndObject();
                         }
                         w.WriteEndArray();
@@ -609,10 +626,20 @@ public static class Command
                 .AppendLine(name.Equals(names[0], Core.Roots.PathComparison) ? "  (default)" : "");
             text.Append(' ', column).Append("can: ").AppendLine(Permissions.Write(grant.Can));
 
+            if (grant.Screen != Screened.None)
+                text.Append(' ', column).Append("screen: ").AppendLine(Screens.Write(grant.Screen));
+
             foreach (Scope scope in grant.Scopes)
+            {
                 text.Append(' ', column)
                     .Append(Path.GetRelativePath(full, scope.Path).Replace('\\', '/'))
-                    .Append("  can: ").AppendLine(Permissions.Write(scope.Can));
+                    .Append("  can: ").Append(Permissions.Write(scope.Can));
+
+                if (scope.Screen is { } screened)
+                    text.Append("  screen: ").Append(Screens.Write(screened));
+
+                text.AppendLine();
+            }
         }
 
         // Where the boundary came from, not only what it is: a caller
@@ -677,6 +704,7 @@ public static class Command
                 w.WriteString("version", diagnosis.Install.Version);
                 w.WriteBoolean("on_path", diagnosis.Install.OnPath);
                 if (diagnosis.Install.PathBinary is { } p) w.WriteString("path_binary", p);
+                w.WriteString("inventory_of", Doctor.InventoryOf);
                 w.WriteEndObject();
 
                 w.WriteStartArray("clients");
@@ -710,6 +738,12 @@ public static class Command
         text.Append("on PATH: ").AppendLine(diagnosis.Install.OnPath
             ? diagnosis.Install.PathBinary
             : "no - every registration naming a bare 'fettle' will fail to launch");
+
+        // A closed list that has fallen behind reports exactly as clean
+        // as one that has not, so the date it was drawn is part of the
+        // answer rather than a footnote in the source.
+        text.Append("tool inventory drawn ").Append(Doctor.InventoryOf)
+            .AppendLine("; check 2.8 says nothing about a tool added to the client since");
         text.AppendLine();
 
         foreach (ClientReport c in shown)

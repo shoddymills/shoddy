@@ -227,15 +227,46 @@ project</a>.</p>
 <p>Denying the built-in file tools <em>routes</em> an assistant rather
 than disarming it, because <b>the Fettler tools have different names</b>
 &mdash; <code>mcp__fettler__edit</code> and so on, per
-<a href="#mcp">section 8</a>. Eight entries, no arguments, no platform
-variants, and <code>setup --local</code> writes all eight:</p>
+<a href="#mcp">section 8</a>. Eleven entries, no arguments, no platform
+variants, and <code>setup --local</code> writes all eleven:</p>
 
 <div class="promptbox"><button class="copy">Copy</button><pre><code>{
   "permissions": {
     "deny": ["Read", "Write", "Edit", "NotebookEdit", "Grep", "Glob",
-             "Bash", "PowerShell"]
+             "Bash", "PowerShell", "Monitor",
+             "BashOutput", "TaskOutput"]
   }
 }</code></pre></div>
+
+<p><b>Three of those eleven are not obvious, and each was found open on
+a machine where every other route was shut.</b></p>
+
+<ul>
+<li><b><code>Monitor</code> is a shell.</b> Its own description says it
+runs the command it is handed in the same shell environment
+<code>Bash</code> does. Denying <code>Bash</code> and leaving it open
+denies the word and not the thing.</li>
+<li><b><code>BashOutput</code> and <code>TaskOutput</code> are
+readers.</b> They start nothing and write nothing, which is exactly why
+they were missed &mdash; neither an editor nor a shell. But they hand
+back the output of work already done, and those bytes reached the model
+without passing the tree boundary, the secret scan or the
+<a href="fettler-screening.html">disclosure screen</a>.
+<code>TaskOutput</code> settles the question itself: it recommends
+<code>Read</code> on the task's output file as the alternative, which is
+a tool already on this list.</li>
+</ul>
+
+<p class="note"><span class="lab">Note</span> <b>A closed list of names
+can only close the names on it, and the client keeps growing new
+ones.</b> So <code>fettle doctor</code> prints the date its inventory
+was drawn, and reports any tool your configuration names that the
+inventory does not know
+(<a href="fettler-setup.html#findings">2.18</a>) &mdash; because silence
+about an unknown tool otherwise reads exactly like a clean bill of
+health. Other MCP servers are the same problem in a different shape and
+are reported separately
+(<a href="fettler-setup.html#findings">2.17</a>).</p>
 
 <p><b><code>Read</code> is on the list, with no path-scoped
 exception.</b> A blanket <code>Read</code> defeats three protections at
@@ -277,9 +308,9 @@ defeats the lot, because <code>&gt;</code> turns <b>any</b> command into
 a writer.</p>
 
 <div class="takeaway"><b>So the deny is the tool name, and the allow
-list is the exception.</b> <code>"Bash"</code> and
-<code>"PowerShell"</code> are as short, closed and platform-identical as
-the other six entries. It is the commands behind them that never close.
+list is the exception.</b> <code>"Bash"</code>,
+<code>"PowerShell"</code> and <code>"Monitor"</code> are as short,
+closed and platform-identical as the other six entries. It is the commands behind them that never close.
 Those are yours to name, because only you know which ones your project
 needs.</div>
 
@@ -299,11 +330,13 @@ better:</p>
 against. A bare <code>"Bash"</code> in <code>allow</code> grants the
 whole shell back and undoes the deny entirely.</p>
 
-<p><b>Windows has two shell tools</b>, so both names are always
-written. A <code>Bash</code>-only deny leaves <code>PowerShell</code>
-wide open &mdash; and the machine this was built on used PowerShell for
-nearly every command. Denying a tool that is not installed costs
-nothing.</p>
+<p><b>There is more than one shell, so every name is always
+written.</b> A <code>Bash</code>-only deny leaves
+<code>PowerShell</code> wide open &mdash; and the machine this was built
+on used PowerShell for nearly every command. It leaves
+<code>Monitor</code> open too, which is a shell wearing a different
+word. Denying a tool that is not installed, or not present in your
+client, costs nothing.</p>
 
 <h3 id="precedence">On <code>deny</code> versus <code>allow</code></h3>
 
@@ -457,6 +490,7 @@ word as an <code>outcome</code> field.</p>
 <tr><td>10</td><td><code>timed-out</code></td><td>a task outran its timeout and was killed</td></tr>
 <tr><td>11</td><td><code>governed</code></td><td>the path names a file that says what this tool may do</td></tr>
 <tr><td>12</td><td><code>credential</code></td><td>the write would have <b>added</b> a secret the file did not already carry</td></tr>
+<tr><td>13</td><td><code>screened</code></td><td>the response would have <b>disclosed</b> regulated data out of a screened scope &mdash; or the screen that would have judged it could not run. See <a href="fettler.html#screen">the disclosure screen</a></td></tr>
 </table>
 
 <div class="takeaway"><b>8 and 9 are deliberately different.</b>

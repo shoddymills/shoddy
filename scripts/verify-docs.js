@@ -21,6 +21,9 @@
 //                every fact an assistant gets wrong without being told
 //   runtime    - the .NET version quoted in the docs matches what the mill
 //                actually targets
+//   screen     - the disclosure screen's section on the Fettler page still names
+//                every category the code has, both caveats the design insists on
+//                stating out loud, and the exit code it actually raises
 //   encoding   - no tracked text file carries UTF-8 that has been round-tripped
 //                through CP1252. v1.7.0 shipped ~400 mangled characters past
 //                this gate because it had no such check (issue #36). A file
@@ -405,6 +408,78 @@ if (!tfm) { console.log("cannot read TargetFramework from the mill's csproj"); b
 else for (const f of [...pages.map(p => path.relative(root, p).replace(/\\/g, "/")), "README.md"])
   for (const m of read(f).matchAll(/\.NET(?:&nbsp;|\s)([0-9]+)\b/g))
     if (m[1] !== tfm[1]) { console.log(f + ': says ".NET ' + m[1] + '", the mill targets net' + tfm[1] + ".0"); bad++; }
+
+// ---- the disclosure screen: docs/fettler.html against the sources ----
+// The screen is configuration a person writes and a refusal they meet, so
+// its documentation is part of the feature rather than a description of one.
+// Each of these is checked against the SOURCE rather than against a second
+// copy of the same prose.
+//
+// The two caveats are checked for a reason that is not tidiness. Both exist
+// because believing otherwise is the actual hazard, so a page that quietly
+// lost either would not merely be incomplete - it would read as a guarantee
+// the screen has never been able to give.
+{
+  const read = f => fs.readFileSync(path.join(root, f), "utf8");
+  const page = read("docs/fettler.html");
+
+  // The SECTION, not the page: a category word turning up in some unrelated
+  // paragraph is not documentation of it.
+  const at = page.indexOf('id="screen"');
+  const end = at < 0 ? -1 : page.indexOf("<h2", at + 1);
+  const screen = at < 0 ? null : page.slice(at, end < 0 ? page.length : end);
+
+  if (screen === null) {
+    console.log('docs/fettler.html: MISSING the screen section (id="screen")');
+    bad++;
+  } else {
+    // Every category the code knows has to be named. One added to Screened
+    // and documented nowhere is a category nobody can discover; one removed
+    // leaves a page promising a screen that no longer exists.
+    const words = [...read("fettler/Fettler/Core/Screen.cs")
+      .matchAll(/Screened\.\w+ => "([a-z]+)"/g)].map(m => m[1]);
+
+    if (words.length === 0) {
+      console.log("verify-docs: no categories found in Screen.cs - has NameOf changed shape?");
+      bad++;
+    }
+
+    for (const word of words)
+      if (!screen.includes("<code>" + word + "</code>")) {
+        console.log("docs/fettler.html #screen: the '" + word + "' category is undocumented");
+        bad++;
+      }
+
+    const required = [
+      ["the honesty clause - a safety net, not a boundary", /safety net[\s\S]{0,40}not a boundary/i],
+      ["the FCRA/FERPA caveat", /FCRA[\s\S]{0,300}FERPA/],
+      ['how "screen" is written', /"screen"/],
+      ["where the models directory is named", /"models"/],
+      ["what it judges - the payload rather than the file", /judges the disclosure, not the file/i],
+    ];
+
+    for (const [what, re] of required)
+      if (!re.test(screen)) {
+        console.log("docs/fettler.html #screen: " + what + " is missing");
+        bad++;
+      }
+  }
+
+  // The exit code, read rather than trusted. A number in a table is exactly
+  // the kind of fact that stops being true without anybody noticing.
+  const declared = /public const int Screened = (\d+);/
+    .exec(read("fettler/Fettler/Cli/ExitCodes.cs"));
+
+  if (!declared) {
+    console.log("verify-docs: no Screened exit code in ExitCodes.cs");
+    bad++;
+  } else if (!read("docs/fettler-install.html")
+      .includes("<td>" + declared[1] + "</td><td><code>screened</code></td>")) {
+    console.log("docs/fettler-install.html: the exit-code table does not give screened as "
+                + declared[1]);
+    bad++;
+  }
+}
 
 // ---- encoding: no file may carry UTF-8 that was mangled through CP1252 ----
 // v1.7.0 shipped ~400 mangled characters across eighteen files - the README's

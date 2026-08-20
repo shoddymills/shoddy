@@ -304,7 +304,7 @@ public sealed class Arguments
         {
             Result<RootsFile.Found> told = RootsFile.ReadWithOverlay(named);
             return told.IsOk
-                ? From(Roots.Open(told.Value.Trees, told.Value.Origin, told.Value.Tasks), told.Value.File)
+                ? From(Roots.Open(told.Value.Trees, told.Value.Origin, told.Value.Tasks, told.Value.Models), told.Value.File)
                 : told.Carry<Boundary>();
         }
 
@@ -312,7 +312,7 @@ public sealed class Arguments
         {
             Result<RootsFile.Found> found = RootsFile.Discover(Directory.GetCurrentDirectory());
             if (found.IsOk)
-                return From(Roots.Open(found.Value.Trees, found.Value.Origin, found.Value.Tasks), found.Value.File);
+                return From(Roots.Open(found.Value.Trees, found.Value.Origin, found.Value.Tasks, found.Value.Models), found.Value.File);
 
             // Anything but NotFound means a configuration WAS there and
             // was wrong, and its own message says what.

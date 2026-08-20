@@ -124,8 +124,23 @@ function Invoke-Stage {
     }
     # Satellite resource assemblies are Roslyn's localized diagnostics —
     # ~5 MB of the package for messages the mill never surfaces.
+    #
+    # THE QUOTES ROUND THE -p: ARGUMENTS ARE LOAD-BEARING. PowerShell reads
+    # a bare -name:value as a named parameter with a colon-bound argument,
+    # and Native takes everything through $args with no param() block, so
+    # the name is discarded and only the value survives. MSBuild then sees
+    # SatelliteResourceLanguages=en as a second project to build and stops
+    # with MSB1008, "Only one project can be specified" - which names
+    # neither the property nor the shell, and reads like a broken solution.
+    #
+    # Windows PowerShell 5.1 passed the bare form through and PowerShell 7
+    # does not, so this sat unnoticed until the gate's steps moved to pwsh,
+    # and then took the v2.4.0 release down at its first package step.
+    # Quoting is correct in both shells. The sibling publishes in
+    # fettler/build.ps1 and hosts/mcp/build.ps1 already quote theirs, which
+    # is exactly why those two went on working.
     Native dotnet publish src/Shoddy.Mill -c Release -o $StageMill `
-        -p:SatelliteResourceLanguages=en -p:DebugType=none
+        '-p:SatelliteResourceLanguages=en' '-p:DebugType=none'
     New-Item -ItemType Directory -Path (Join-Path $StageLib 'bin') -Force | Out-Null
     New-Item -ItemType Directory -Path (Join-Path $StageLib 'seeds/bin') -Force | Out-Null
     Copy-Item machines/*.shoddy $StageLib

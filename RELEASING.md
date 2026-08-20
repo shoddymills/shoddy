@@ -27,7 +27,7 @@ scripts/shoddy.ps1 preflight            # read-only: would a release pass right 
                                         # write release-notes/v1.0.0.md FIRST — see below
 scripts/shoddy.ps1 gate --resume        # the expensive proof: build + every test
 scripts/shoddy-feature.ps1 ship         # merge your feature into main
-scripts/shoddy-release.ps1 1.0.0        # build, test, tag, push — CI publishes
+scripts/shoddy.ps1 release 1.0.0        # preflight, gate, package, then tag and push — CI publishes
 ```
 
 Every script has a `.sh` twin taking the same arguments, for Linux and macOS.
@@ -47,7 +47,7 @@ is Node.
 | `preflight` | ~3 s | nothing | environment, git state, version coherence, all five `verify-*` |
 | `gate` | ~15 min | build output | build, machines, C# suite, every `tst/` and machine suite, all 13 mills |
 | `package` | ~3 min | build output | version bump, stage, `.vsix` |
-| `publish` | — | **history** | still owned by `shoddy-release.*` |
+| `publish` | — | **history** | still owned by `shoddy-release.*`, behind a green-gate receipt for this commit |
 
 ```powershell
 scripts/shoddy.ps1 doctor               # is this machine fit to release?
@@ -289,8 +289,12 @@ the undo: `git checkout main; git branch -D release/VX.Y.Z`.
 ## 2 — Cut the release
 
 ```powershell
-scripts/shoddy-release.ps1 1.0.0
+scripts/shoddy.ps1 release 1.0.0
 ```
+
+**Not `shoddy-release.ps1` directly.** That one skips `preflight`, the gate
+and the receipt check, and goes straight to building and tagging. It is the
+primitive the line above wraps.
 
 That single command does all of the following, and refuses to start unless the
 version is an exact `X.Y.Z`, you are at the repo root, the tree is clean, no merge

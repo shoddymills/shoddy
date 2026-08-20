@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # MAINTAINER TOOL - pushes to origin/main and creates tags. Assumes write access.
 #
-# scripts/shoddy-release.sh X.Y.Z [-y]   (run from the repo root)
+# scripts/shoddy-release.sh X.Y.Z [-y|-Yes]   (run from the repo root)
 #
 # The whole release, from a clean repo, in one shot:
 #   main fast-forwarded to origin/main -> release/VX.Y.Z cut -> ./build.sh all X.Y.Z
@@ -16,7 +16,10 @@
 #
 # Refuses to start unless every precondition holds: exact X.Y.Z version, repo root,
 # clean tree, no merge in progress, branch/tag not already taken (local or origin).
-# -y skips the confirmation prompt.
+# -y skips the confirmation prompt, and -Yes is accepted for it because that
+# is what the .ps1 twin calls the same flag. The two spellings drifted apart
+# and the documentation went on calling them equivalent, which is exactly the
+# failure a pair of twins is prone to.
 set -u
 
 fail() { echo "RELEASE STOPPED: $*" >&2; exit 1; }
@@ -24,7 +27,14 @@ run()  { echo "> $*"; "$@" || fail "'$*' failed."; }
 
 # --- argument ---
 VER="${1:-}"
-[ -n "$VER" ] || fail "usage: scripts/shoddy-release.sh X.Y.Z [-y]   (e.g. scripts/shoddy-release.sh 1.0.0)"
+[ -n "$VER" ] || fail "usage: scripts/shoddy-release.sh X.Y.Z [-y|-Yes]   (e.g. scripts/shoddy-release.sh 1.0.0)"
+
+# Scanned across every argument rather than tested at $2, so the flag works
+# wherever it is written - which is how the .ps1 twin has always behaved.
+YES=
+for a in "$@"; do
+    case "$a" in -y|-Y|-yes|-Yes|-YES|--yes) YES=1 ;; esac
+done
 echo "$VER" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' || fail "version must be exactly X.Y.Z, digits only (got '$VER')."
 BR="release/V$VER"
 TAG="v$VER"
@@ -66,7 +76,7 @@ else
     echo "                   Notes must be committed BEFORE the tag: answer n,"
     echo "                   write them, commit, then re-run. See release-notes/README.md."
 fi
-if [ "${2:-}" != "-y" ]; then
+if [ -z "$YES" ]; then
     printf 'Proceed? (y/N) '
     read -r a
     case "$a" in y|Y|yes) ;; *) echo "aborted, nothing done."; exit 0 ;; esac
@@ -87,7 +97,12 @@ if ! ./build.sh all "$VER"; then
     exit 1
 fi
 [ -f "$VSIX" ] || fail "expected package $VSIX was not produced."
-grep -q "\"version\": \"$VER\"" vscode-shoddy/package.json || fail "package.json was not bumped to $VER."
+# Parsed, not grepped. A substring search matches "version": "X" ANYWHERE in
+# the file, a dependency block included, so it could pass on a package.json
+# that was never bumped at all. node is already a hard dependency of every
+# gate in this repository. The .ps1 twin has always parsed this properly.
+node -e 'process.exit(require("./vscode-shoddy/package.json").version === process.argv[1] ? 0 : 1)' "$VER" \
+    || fail "package.json version is not $VER."
 
 # The compiled binaries carry their version from Directory.Build.props, not
 # from package.json, so it is bumped here too. Without this the mill, sparky
@@ -96,7 +111,16 @@ grep -q "\"version\": \"$VER\"" vscode-shoddy/package.json || fail "package.json
 # survive unnoticed all the way through 2.2.0.
 grep -qE '<Version>[0-9]+\.[0-9]+\.[0-9]+</Version>' Directory.Build.props \
     || fail "could not find a <Version> element to bump in Directory.Build.props."
-sed -i -E "s#<Version>[0-9]+\.[0-9]+\.[0-9]+</Version>#<Version>$VER</Version>#" Directory.Build.props
+# NOT `sed -i`. GNU sed takes it bare; BSD sed, which is what macOS ships,
+# requires an argument straight after it. The in-place form therefore works
+# on Linux and fails on a Mac, in the middle of a release, after the branch
+# has been cut. Through a temp file and copied back over the original, which
+# keeps the file's permissions and works on both.
+tmp="$(mktemp)"
+sed -E "s#<Version>[0-9]+\.[0-9]+\.[0-9]+</Version>#<Version>$VER</Version>#" \
+    Directory.Build.props > "$tmp" || fail "could not rewrite Directory.Build.props."
+cat "$tmp" > Directory.Build.props
+rm -f "$tmp"
 
 # --- publish: the version bump is the only artifact that belongs in the commit ---
 run git add vscode-shoddy/package.json Directory.Build.props

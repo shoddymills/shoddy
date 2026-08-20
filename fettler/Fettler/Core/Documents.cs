@@ -94,7 +94,7 @@ public static class Documents
     /// <summary>
     /// Every reader, in one list. <b>This is the extension point.</b>
     /// </summary>
-    static readonly IDocumentReader[] Readers = [new PdfReader()];
+    static readonly IDocumentReader[] Readers = [new PdfReader(), new XlsxReader(), new DocxReader()];
 
     /// <summary>
     /// How large a document may be before <c>search</c> declines to

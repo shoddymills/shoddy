@@ -62,8 +62,14 @@ $Vsix   = "vscode-shoddy/vscode-shoddy-$Version.vsix"
 # --- preconditions: right place, clean state ---
 Gq rev-parse --is-inside-work-tree > $null
 if ($LASTEXITCODE -ne 0) { Fail "not inside a git repository." }
-$top = (Gq rev-parse --show-toplevel) -replace '/', '\'
-if ((Get-Location).Path -ne $top) { Fail "run from the repo root: $top" }
+# --show-prefix is empty exactly at the repo root, and it is the only form of
+# this check that cannot be defeated by spelling. --show-toplevel answers
+# C:/github/shoddy while Get-Location answers C:\github\shoddy, and swapping
+# the slashes still leaves a case difference, a trailing separator, a
+# substituted drive or a path reached through a link to disagree with a
+# directory that is perfectly correct. The .sh twin learned this and wrote
+# down why; this one never got the fix.
+if ((Gq rev-parse --show-prefix)) { Fail "run from the repo root: $(Gq rev-parse --show-toplevel)" }
 if (-not (Test-Path build.ps1) -or -not (Test-Path vscode-shoddy/package.json)) {
     Fail "this doesn't look like the shoddy repo root."
 }
@@ -137,7 +143,15 @@ $bumped = $props -replace '<Version>[0-9]+\.[0-9]+\.[0-9]+</Version>', "<Version
 if ($bumped -eq $props -and $props -notmatch "<Version>$([regex]::Escape($Version))</Version>") {
     Fail "could not find a <Version> element to bump in Directory.Build.props."
 }
-Set-Content Directory.Build.props -Value $bumped -NoNewline -Encoding utf8
+# NOT Set-Content -Encoding utf8. That means UTF-8 WITH a byte-order mark
+# under Windows PowerShell 5.1 and WITHOUT one under PowerShell 7, so the
+# same script wrote two different files depending on which host happened to
+# launch it - and the gate driver launched it with the one that adds the
+# mark. Written explicitly so the answer does not depend on the shell.
+[System.IO.File]::WriteAllText(
+    (Join-Path (Get-Location).Path 'Directory.Build.props'),
+    $bumped,
+    (New-Object System.Text.UTF8Encoding($false)))
 
 # --- publish: the version bump is the only artifact that belongs in the commit ---
 G add vscode-shoddy/package.json Directory.Build.props

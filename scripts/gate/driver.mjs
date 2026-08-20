@@ -49,8 +49,9 @@ import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import {
     REPO, STATE, bad, branchName, git, head, headSha, info, keyIsClean,
-    killStaleToolchain, mb, ok, printFailure, readReceipts, recordStep,
-    removeLitter, runStep, secs, stageIsGreen, stepIsGreen, treeKey, warn,
+    killStaleToolchain, mb, ok, printFailure, psEval, psScript, readReceipts,
+    recordStep, removeLitter, runStep, secs, stageIsGreen, stepIsGreen,
+    treeKey, warn,
 } from './lib.mjs';
 import { gateSteps, packageSteps, preflightSteps } from './steps.mjs';
 
@@ -229,8 +230,8 @@ function freeSpaceBytes(p) {
     try {
         if (process.platform === 'win32') {
             const drive = p.slice(0, 2);
-            const r = spawnSync('powershell', ['-NoProfile', '-NonInteractive', '-Command',
-                `(Get-PSDrive ${drive[0]}).Free`], { encoding: 'utf8' });
+            const evaluate = psEval(`(Get-PSDrive ${drive[0]}).Free`);
+            const r = spawnSync(evaluate[0], evaluate.slice(1), { encoding: 'utf8' });
             const n = Number((r.stdout ?? '').trim());
             return Number.isFinite(n) ? n : null;
         }
@@ -416,9 +417,8 @@ async function doPublish(version) {
     }
 
     const script = process.platform === 'win32'
-        ? ['powershell', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
-            '-File', 'scripts/shoddy-release.ps1', version, '-Yes']
-        : ['./scripts/shoddy-release.sh', version, '-y'];
+        ? psScript('scripts/shoddy-release.ps1', version, '-Yes')
+        : ['./scripts/shoddy-release.sh', version, '-Yes'];
 
     const r = await runStep({
         id: 'publish', title: `release v${version}`, timeoutSec: 3600, cmd: script,

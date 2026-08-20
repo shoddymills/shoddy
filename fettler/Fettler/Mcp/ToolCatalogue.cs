@@ -53,7 +53,7 @@ public static class ToolCatalogue
             }}
             """),
 
-        new("read", "Content, encoding, line ending, trailing-newline state and a content hash. Takes several paths in one call. Reads notebooks as cells, PDFs as text per page, and images as facts plus a native image part - so this is the reader for every file type, not only for source. Stops at 2000 lines unless `to` says otherwise, and says how many were left. For a log or a build transcript ask for `tail` instead - the end of the file, without needing to know its length.", """
+        new("read", "Content, encoding, line ending, trailing-newline state and a content hash. Takes several paths in one call. Reads notebooks as cells, PDFs as text per page, spreadsheets as rows of cells with their formulas, Word documents as paragraphs and tables under their headings, and images as facts plus a native image part - so this is the reader for every file type, not only for source. Those are rendered, never written back: a document is refused by write, edit and replace, because the text is a fraction of the file. Stops at 2000 lines unless `to` says otherwise, and says how many were left. For a log or a build transcript ask for `tail` instead - the end of the file, without needing to know its length.", """
             {"type":"object","required":["paths"],"properties":{
               "paths":{"type":"array","items":{"type":"string"}},
               "from":{"type":"integer"},

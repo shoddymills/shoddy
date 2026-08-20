@@ -10,6 +10,7 @@
 // slow machine.
 
 import { join } from 'node:path';
+import { psScript } from './lib.mjs';
 
 const MILL = process.platform === 'win32' ? 'bin\\mill.exe' : 'bin/mill';
 
@@ -111,6 +112,13 @@ export function preflightSteps() {
             remedy: 'A tst/*.shoddy or a mills/* fell out of the roster. Add it to '
                 + 'MACHINE_SUITES or MILLS in scripts/gate/steps.mjs, or to '
                 + 'TST_EXCLUSIONS with the reason.',
+        },
+        {
+            id: 'twins', title: 'every script has its twin, offering the same verbs', timeoutSec: 60,
+            cmd: ['node', 'scripts/verify-twins.js'],
+            remedy: 'A .ps1 is missing its .sh (or the reverse), or the two usage blocks '
+                + 'no longer list the same commands. Write the missing twin, or add it to '
+                + 'SINGLETONS in the script with the reason.',
         },
         {
             id: 'lanes', title: 'the lane boundaries hold', timeoutSec: 60,
@@ -255,8 +263,7 @@ export function gateSteps({ splitDotnetTest }) {
     steps.push({
         id: 'machines', title: 'build every machine DLL', timeoutSec: 1200,
         cmd: process.platform === 'win32'
-            ? ['powershell', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
-                '-File', 'build.ps1', 'machines']
+            ? psScript('build.ps1', 'machines')
             : ['./build.sh', 'machines'],
         remedy: 'Machines build in dependency order; an out-of-order build splices source '
             + 'and collides downstream. See the failing machine above.',
@@ -316,8 +323,7 @@ export function gateSteps({ splitDotnetTest }) {
         steps.push({
             id: `mill-${m}`, title: `mill suite: ${m}`, timeoutSec: 900,
             cmd: process.platform === 'win32'
-                ? ['powershell', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
-                    '-File', join('mills', m, millScript), 'test']
+                ? psScript(join('mills', m, millScript), 'test')
                 : [join('.', 'mills', m, millScript), 'test'],
             remedy: `mills/${m}'s own suite failed. Run it directly: `
                 + `mills/${m}/${millScript} test`,
@@ -340,8 +346,7 @@ export function gateSteps({ splitDotnetTest }) {
     //
     // These run last because they are independent: nothing above depends on
     // them, so a failure here is read without unpicking anything else.
-    const ps = (script, ...args) => ['powershell', '-NoProfile', '-NonInteractive',
-        '-ExecutionPolicy', 'Bypass', '-File', script, ...args];
+    const ps = psScript;
     const win = process.platform === 'win32';
 
     // Fettler needs NOTHING built first - R1.2 forbids it to reference any
@@ -503,8 +508,7 @@ export function packageSteps(version) {
         {
             id: 'vsix', title: `package the extension at ${version}`, timeoutSec: 1200,
             cmd: process.platform === 'win32'
-                ? ['powershell', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
-                    '-File', 'build.ps1', 'vsix', version]
+                ? psScript('build.ps1', 'vsix', version)
                 : ['./build.sh', 'vsix', version],
             remedy: 'vsce is the one dependency outside this repo. `npm i -g @vscode/vsce` if missing.',
         },

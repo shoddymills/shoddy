@@ -22,6 +22,15 @@ public enum FileKind
     /// <summary>A PDF, read as text page by page.</summary>
     Pdf,
 
+    /// <summary>A workbook, read sheet by sheet as rows of cells - with
+    /// the formulas, not only what they last worked out to.</summary>
+    Spreadsheet,
+
+    /// <summary>A word-processor document, read as its paragraphs and
+    /// tables, with its headings kept as headings so a hit can be cited
+    /// under one.</summary>
+    Document,
+
     /// <summary>A zip or a tar, read as its manifest - the members, their
     /// sizes and whether each carries the executable bit. Never unpacked
     /// by reading it; <c>extract</c> is the verb that writes.</summary>
@@ -114,6 +123,8 @@ public static class Typed
         FileKind.Notebook => "notebook",
         FileKind.Image => "image",
         FileKind.Pdf => "pdf",
+        FileKind.Spreadsheet => "spreadsheet",
+        FileKind.Document => "document",
         FileKind.Archive => "archive",
         FileKind.Gzip => "gzip",
         FileKind.Binary => "binary",

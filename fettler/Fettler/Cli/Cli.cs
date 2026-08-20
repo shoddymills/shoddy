@@ -1386,7 +1386,8 @@ public static class Command
                  opened a file found nothing in it, which is not the same as
                  there being nothing in it.
           read PATH... [--from N] [--to N] [--tail N] [--member NAME]
-                 Text, notebooks, PDFs, images and archives. Stops at 2000 lines
+                 Text, notebooks, PDFs, .xlsx/.xlsm workbooks, .docx/.docm
+                 documents, images and archives. Stops at 2000 lines
                  and says how many are left; --to asks for more. --tail N is the
                  LAST n lines - for a log or a build transcript, so reaching the
                  end of one costs no arithmetic and no second call.

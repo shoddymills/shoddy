@@ -52,7 +52,11 @@ workflows can change underneath a stale summary.
   sequence.** The page to follow; the others are reference behind it.
 - [RELEASING.md](RELEASING.md) — the maintainer procedure, start to finish
 - `scripts/shoddy.ps1` / `scripts/shoddy.sh` — the gate driver: `doctor`,
-  `preflight`, `gate`, `package`, `status`, `clean`, `selftest`. Thin
+  `preflight`, `gate`, `package`, `publish`, `release`, `status`, `clean`,
+  `selftest`. **`release VERSION` is the front door for shipping** - it runs
+  strict `preflight`, the whole `gate` and `package`, and refuses to tag a
+  commit with no green gate receipt against it. `shoddy-release.*` is the
+  primitive it wraps and skips all three of those checks. Thin
   launchers over `scripts/gate/driver.mjs`, which holds the logic once so
   the twins cannot drift. **`preflight` is cheap (~3s) and read-only — run it
   before proposing anything release-shaped rather than reasoning about
@@ -62,8 +66,9 @@ workflows can change underneath a stale summary.
 - [release-notes/README.md](release-notes/README.md) — release-notes format and timing
 - [SECURITY.md](SECURITY.md) — vulnerability reporting (not via public issues)
 - `scripts/shoddy-feature.*` / `scripts/shoddy-release.*` — the actual
-  automation; `.sh`/`.ps1` are equivalent, read whichever matches the
-  shell in use
+  automation. The twins offer the same verbs and `verify-twins.js` proves
+  it, but they are not line-for-line identical and have drifted before, so
+  read the one that matches the shell in use rather than the other
 - `scripts/verify-docs.js` / `scripts/verify-errors.js` — pre-release gates
 - `.github/workflows/ci.yml`, `release.yml`, `pages.yml` — what CI actually runs
 

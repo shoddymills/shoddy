@@ -40,6 +40,26 @@ public static class SafeWrite
     public static Result<Saved> Text(ContainedPath path, string text, string encodingName,
         LineEnding ending, bool overwrite, bool allowCredential = false)
     {
+        // A DOCUMENT IS NOT ITS RENDERING, and this is where that stops
+        // being a remark and starts being enforced. What `read` and
+        // `search` hand back for a workbook or a Word document is text
+        // pulled out of it, with the sheets, the formulas, the tables and
+        // every piece of structure left behind. Writing that text back
+        // would not edit the file, it would replace it with a fraction of
+        // itself, still wearing the name that says it is a document.
+        //
+        // Here rather than in each of write, edit and replace, for the
+        // same reason the credential screen is here: every verb that puts
+        // TEXT anywhere arrives at this one function, so there is no verb
+        // to forget. `extract` is deliberately not caught by it - that
+        // writes a document's own bytes, which is a perfectly good way to
+        // get one onto the disk.
+        if (Documents.For(path.Full) is { } reader)
+            return Result<Saved>.Fail(Outcome.Refused,
+                $"this is read as a {Typed.NameOf(reader.Kind)}, and what read and search give back "
+                + "for one is a rendering rather than the file; writing that text here would leave "
+                + "the name and destroy the document", path.Display);
+
         byte[] bytes = TextIo.Encode(text, encodingName);
         // The text goes down with the bytes: a UTF-16 file re-encodes to
         // something the credential screen could not decode, and a screen

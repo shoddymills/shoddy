@@ -18,7 +18,14 @@ public sealed record SearchRequest(
     int Context = 0,
     int Limit = 200,
     bool IncludeGenerated = false,
-    IReadOnlyList<string>? Exclude = null);
+    IReadOnlyList<string>? Exclude = null,
+
+    /// <summary>Whether a document that has to be rendered before it can
+    /// be searched is rendered. On by default: a PDF that silently
+    /// matched nothing was the defect this replaced, and leaving the fix
+    /// behind a flag would leave that defect in place for everybody who
+    /// does not know to ask.</summary>
+    bool Documents = true);
 
 /// <summary>
 /// What to read, and which part of it.
@@ -178,7 +185,8 @@ public sealed class Bench : IDisposable
             ExcludesFor(request.IncludeGenerated, request.Exclude), null, 0, byModified: false);
 
         return Searcher.Search(files.Items, request.Patterns, request.Kind,
-            request.CaseSensitive, request.Context, request.Limit, files.Excluded);
+            request.CaseSensitive, request.Context, request.Limit, files.Excluded,
+            request.Documents);
     }
 
     /// <summary>
@@ -221,6 +229,25 @@ public sealed class Bench : IDisposable
         }
 
         return Result<IReadOnlyList<ReadSlice>>.Ok(slices);
+    }
+
+    /// <summary>
+    /// A rendering dressed as a text file, so <c>--from</c>, <c>--to</c>
+    /// and <c>--tail</c> mean the same thing for every kind and a caller
+    /// has one rule to learn.
+    /// </summary>
+    static Result<TextFile> Rendered(ContainedPath path, string rendered)
+    {
+        Result<byte[]> raw = TextIo.ReadBytes(path);
+        if (!raw.IsOk) return raw.Carry<TextFile>();
+
+        IReadOnlyList<Line> lines = TextIo.SplitLines(rendered);
+
+        return Result<TextFile>.Ok(new TextFile(path, rendered, lines, "utf-8", LineEnding.Lf, false,
+            lines.Count > 0 && lines[^1].Ending.Length > 0,
+            // The hash is of the FILE, not of the rendering, because its
+            // job is to prove the file on disk has not moved.
+            TextIo.HashOf(raw.Value), raw.Value.Length));
     }
 
     Result<ReadSlice> ReadOne(ContainedPath path, ReadRequest request)
@@ -271,29 +298,25 @@ public sealed class Bench : IDisposable
             if (!decoded.IsOk) return decoded.Carry<ReadSlice>();
             file = decoded.Value;
         }
-        else if (kind is FileKind.Notebook or FileKind.Pdf or FileKind.Archive)
+        else if (Documents.For(path.Full) is { } reader)
         {
-            // Rendered to text and then sliced like any other text, so
-            // --from, --to and --tail mean the same thing for every kind
-            // and a caller has one rule to learn.
-            Result<string> rendered = kind switch
-            {
-                FileKind.Notebook => Typed.ReadNotebook(path),
-                FileKind.Pdf => Typed.ReadPdf(path),
-                _ => Manifest(path),
-            };
+            Result<Rendering> made = Documents.Render(path, reader);
+            if (!made.IsOk) return made.Carry<ReadSlice>();
 
+            Result<TextFile> dressed = Rendered(path, made.Value.Text);
+            if (!dressed.IsOk) return dressed.Carry<ReadSlice>();
+
+            file = dressed.Value;
+        }
+        else if (kind is FileKind.Notebook or FileKind.Archive)
+        {
+            Result<string> rendered = kind == FileKind.Notebook ? Typed.ReadNotebook(path) : Manifest(path);
             if (!rendered.IsOk) return rendered.Carry<ReadSlice>();
 
-            Result<byte[]> raw = TextIo.ReadBytes(path);
-            if (!raw.IsOk) return raw.Carry<ReadSlice>();
+            Result<TextFile> dressed = Rendered(path, rendered.Value);
+            if (!dressed.IsOk) return dressed.Carry<ReadSlice>();
 
-            IReadOnlyList<Line> lines = TextIo.SplitLines(rendered.Value);
-            file = new TextFile(path, rendered.Value, lines, "utf-8", LineEnding.Lf, false,
-                lines.Count > 0 && lines[^1].Ending.Length > 0,
-                // The hash is of the FILE, not of the rendering, because
-                // its job is to prove the file on disk has not moved.
-                TextIo.HashOf(raw.Value), raw.Value.Length);
+            file = dressed.Value;
         }
         else
         {

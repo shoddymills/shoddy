@@ -37,7 +37,7 @@ public static class ToolCatalogue
             }}
             """),
 
-        new("search", "Matching lines as records: path, line, column, text, optional context. Takes several patterns at once. Searches only inside declared trees; there is nothing outside them to search.", """
+        new("search", "Matching lines as records: path, line, column, text, optional context. Takes several patterns at once. Searches only inside declared trees; there is nothing outside them to search. A document that has to be rendered before it can be read - a PDF - is rendered and searched with everything else, and a hit inside one carries the page it sits on.", """
             {"type":"object","required":["patterns"],"properties":{
               "patterns":{"type":"array","items":{"type":"string"},"description":".NET regular expressions unless literal is true"},
               "glob":{"type":"string","description":"restrict to a subset of files"},
@@ -48,11 +48,12 @@ public static class ToolCatalogue
               "limit":{"type":"integer"},
               "count":{"type":"boolean","description":"how many, without the hits"},
               "files_only":{"type":"boolean"},
-              "include_generated":{"type":"boolean"}
+              "include_generated":{"type":"boolean"},
+              "no_documents":{"type":"boolean","description":"leave documents shut instead of rendering them to search inside. They ARE searched by default. Either way the answer says how many were not looked inside, because a file that was never opened is not a file with nothing in it."}
             }}
             """),
 
-        new("read", "Content, encoding, line ending, trailing-newline state and a content hash. Takes several paths in one call. Reads notebooks as cells, PDFs as text per page, and images as facts plus a native image part - so this is the reader for every file type, not only for source. Stops at 2000 lines unless `to` says otherwise, and says how many were left. For a log or a build transcript ask for `tail` instead - the end of the file, without needing to know its length.", """
+        new("read", "Content, encoding, line ending, trailing-newline state and a content hash. Takes several paths in one call. Reads notebooks as cells, PDFs as text per page, spreadsheets as rows of cells with their formulas, Word documents as paragraphs and tables under their headings, and images as facts plus a native image part - so this is the reader for every file type, not only for source. Those are rendered, never written back: a document is refused by write, edit and replace, because the text is a fraction of the file. Stops at 2000 lines unless `to` says otherwise, and says how many were left. For a log or a build transcript ask for `tail` instead - the end of the file, without needing to know its length.", """
             {"type":"object","required":["paths"],"properties":{
               "paths":{"type":"array","items":{"type":"string"}},
               "from":{"type":"integer"},
@@ -250,6 +251,7 @@ public static class ToolCatalogue
                 Flag("case-sensitive", "case_sensitive"); Flag("context", "context"); Flag("limit", "limit");
                 Flag("count", "count"); Flag("files-only", "files_only");
                 Flag("include-generated", "include_generated");
+                Flag("no-documents", "no_documents");
                 break;
 
             case "read":

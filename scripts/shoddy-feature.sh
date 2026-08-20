@@ -3,8 +3,8 @@
 # Run from the repo root.
 #
 # scripts/shoddy-feature.sh new NAME    create feature/NAME off up-to-date main and switch to it
-# scripts/shoddy-feature.sh ship [-y]   push the current feature branch, merge --no-ff into main,
-#                                       push main, then delete the branch (local + origin)
+# scripts/shoddy-feature.sh ship [-y|-Yes]  push the current feature/bug branch, merge --no-ff into
+#                                       main, push main, then delete the branch (local + origin)
 #
 # Guards: clean tree required; 'new' refuses names already taken (local or origin);
 # 'ship' only runs from a feature/* or bug/* branch, refuses when there is nothing to merge,
@@ -54,7 +54,15 @@ ship)
     echo
     echo "Will merge these $N commit(s) from $BR into main, then delete the branch:"
     git log --oneline origin/main..HEAD
-    if [ "${2:-}" != "-y" ]; then
+    # Scanned across every argument, and -Yes accepted, because that is what
+    # the .ps1 twin calls this flag. The two spellings drifted apart while
+    # WORKFLOW.md and CLAUDE.md both went on saying the twins take the same
+    # arguments. They did not.
+    YES=
+    for a in "$@"; do
+        case "$a" in -y|-Y|-yes|-Yes|-YES|--yes) YES=1 ;; esac
+    done
+    if [ -z "$YES" ]; then
         printf 'Proceed? (y/N) '
         read -r a
         case "$a" in y|Y|yes) ;; *) echo "aborted, nothing done."; exit 0 ;; esac
@@ -78,7 +86,7 @@ ship)
 
 *)
     echo "usage: scripts/shoddy-feature.sh new NAME   create feature/NAME off up-to-date main"
-    echo "       scripts/shoddy-feature.sh ship [-y]  push current feature/bug branch, merge --no-ff into main, delete it"
+    echo "       scripts/shoddy-feature.sh ship [-y|-Yes]  push current feature/bug branch, merge --no-ff into main, delete it"
     exit 2
     ;;
 esac

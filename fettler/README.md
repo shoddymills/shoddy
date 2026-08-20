@@ -288,6 +288,34 @@ not combinable with `--from`/`--to`: those are a different question, and
 answering one of them by precedence is a wrong answer rather than an
 error.
 
+**Documents are rendered and never written.** A `.pdf` reads as text page
+by page; a `.xlsx`/`.xlsm` as one line per row, sheet by sheet; a
+`.docx`/`.docm` as its paragraphs and tables, with its headings kept as
+headings. **`search` looks inside all of them by default**, and a hit
+carries the page, sheet or heading it was found under, so a result is
+somewhere a person can actually turn to rather than a line number into a
+rendering nobody can see. `--no-documents` leaves them shut, and either
+way the answer says how many were not looked inside: a file that was
+never opened is not a file with nothing in it.
+
+The office formats add no dependency at all. Both are a zip full of XML,
+reachable with `System.IO.Compression` and `System.Xml`, which are in the
+shared framework - so the R1.2 allowlist is still the one package it was.
+Only PDF needs PdfPig. What they get is real: **formulas as well as the
+values they last worked out to**, because a search for `VLOOKUP` is a
+question about how a sheet works and would find nothing in the results,
+and **dates rendered as dates**, because Excel stores one as a day count
+and a workbook full of them is otherwise a workbook nobody can search.
+
+**And they are refused by `write`, `edit` and `replace`, by name.** What
+comes back for one is a rendering, not the file - the sheets, the
+formulas, the tables and every piece of structure are left behind in the
+making of it. Writing that text back would not edit the document, it
+would replace it with a fraction of itself still wearing a name that says
+it is a document. The refusal sits in the one function every verb that
+writes text arrives at, so there is no verb to forget. `extract` is
+deliberately not caught by it: that writes a document's own bytes.
+
 **Archives are read and never written.** A `.zip`, `.tar`, `.tar.gz` or
 `.tgz` reads as its manifest — every member, its size, and whether it
 carries the execute bit — and `--member NAME` reads one entry out of it,

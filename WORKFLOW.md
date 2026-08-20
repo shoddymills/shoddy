@@ -15,7 +15,7 @@ to find out what to type next.
 | 3 | **Prove** | `scripts/shoddy.ps1 preflight` then `gate --resume` |
 | 4 | **Notes** | `release-notes/vX.Y.Z.md`, on the branch, before shipping |
 | 5 | **Merge** | `scripts/shoddy-feature.ps1 ship` |
-| 6 | **Release** | `scripts/shoddy-release.ps1 X.Y.Z` |
+| 6 | **Release** | `scripts/shoddy.ps1 release X.Y.Z` |
 | 7 | **Watch** | Actions → Release |
 
 ---
@@ -102,7 +102,7 @@ scripts/shoddy.ps1 preflight        # ~3s, read-only, tolerates a dirty tree
 scripts/shoddy.ps1 gate --resume    # the expensive proof
 ```
 
-`preflight` checks the environment, the git state and all six `verify-*`
+`preflight` checks the environment, the git state and all seven `verify-*`
 gates. It is read-only and mutates nothing, so there is no reason not to run
 it mid-work.
 
@@ -130,6 +130,20 @@ of it — so a retry does not repeat the hour that already passed.
 Edit anything and there is nothing to resume: the tree is different, so the
 gate runs in full. To re-run only what you touched, say so yourself with
 `--only` or `--from` rather than asking `--resume` to guess.
+
+**Three suites the gate is not allowed to run, and one command for them:**
+
+```powershell
+scripts/shoddy-display.ps1          # seedscribbler, seedturtle, seedplotter
+```
+
+They open a real window. `--no-window` hides it, but GLFW still needs a
+platform to create one on, and a hosted runner has none, not even under
+Xvfb. So they are excluded from the gate by name in `TST_EXCLUSIONS`, and
+this script is where they live instead. It reads that same list, so a fourth
+windowed suite cannot be added there and forgotten here; it refuses on a
+machine with no display rather than failing somewhere inside GLFW; and it
+**cannot pass in CI**, which is why nothing wires it into a workflow.
 
 Every step carries a timeout, its own log, and a remedy on failure. A step
 that hangs is killed with its whole process tree and named; nothing is judged
@@ -190,10 +204,28 @@ With a version named, `preflight` turns strict: the tree must be clean, the
 notes file must exist, and the tag must be free both locally and on origin.
 
 ```powershell
-scripts/shoddy-release.ps1 2.0.3         # add -Yes to skip the prompt
+scripts/shoddy.ps1 release 2.0.3         # preflight, gate, package, publish
 ```
 
-That one command fast-forwards `main`, cuts `release/V2.0.3`, runs
+**Use this, and not `shoddy-release.ps1` directly.** They are not the same
+thing, and the difference is the whole point of the wrapper:
+
+| | `shoddy.ps1 release` | `shoddy-release.ps1` |
+|---|---|---|
+| strict `preflight` | yes | no |
+| the full `gate` | yes | no |
+| green-gate receipt for **this exact commit** | yes | no |
+| tags and pushes | yes | yes |
+
+`shoddy.ps1 release` runs strict `preflight`, then the whole `gate`, then
+`package`, and only then hands over to `shoddy-release.*` for the tagging.
+Before it hands over it checks there is a green gate receipt recorded against
+the commit about to be tagged, and refuses if there is not. Call
+`shoddy-release.ps1` yourself and none of that happens: it builds, tests,
+tags and pushes, while the doc gates, three of the four lanes and the receipt
+check are all skipped. It is the primitive underneath, not the front door.
+
+The handover fast-forwards `main`, cuts `release/V2.0.3`, runs
 `./build.ps1 all 2.0.3` (clean, test, package — a red test stops everything
 with nothing pushed), commits the version bump, pushes the branch, **tags
 `v2.0.3` and pushes the tag**, then merges `--no-ff` back into `main`.

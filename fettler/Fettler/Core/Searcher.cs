@@ -24,7 +24,12 @@ public sealed record Hit(
     int Line,
     int Column,
     string Text,
-    IReadOnlyList<ContextLine> Context);
+    IReadOnlyList<ContextLine> Context,
+
+    /// <summary>Where the hit sits in a rendered document's own terms -
+    /// "page 7", "Sheet2" - or null for an ordinary text file, whose
+    /// line number already IS the citation.</summary>
+    string? Cite = null);
 
 /// <summary>What a search found, and what it did not get to.</summary>
 public sealed record SearchAnswer(
@@ -34,7 +39,14 @@ public sealed record SearchAnswer(
     bool Truncated,
     PatternKind Kind,
     IReadOnlyList<string> Patterns,
-    int Excluded);
+    int Excluded,
+
+    /// <summary>Documents in the sweep that were NOT looked inside, because
+    /// rendering was turned off, because the file was over the cap, or
+    /// because it could not be rendered at all. Reported rather than
+    /// dropped: a clean-looking zero is the wrong answer to give somebody
+    /// whose document was never opened.</summary>
+    int DocumentsSkipped = 0);
 
 /// <summary>
 /// The search of R4.8, bounded by R4.10 and matched under R4.13.
@@ -109,7 +121,8 @@ public static class Searcher
         bool caseSensitive,
         int context,
         int limit,
-        int excluded)
+        int excluded,
+        bool documents = true)
     {
         if (patterns.Count == 0)
             return Result<SearchAnswer>.Fail(Outcome.Invalid, "no pattern was given");
@@ -124,23 +137,48 @@ public static class Searcher
 
         var hits = new List<Hit>();
         var filesWithHits = new HashSet<string>(StringComparer.Ordinal);
-        int searched = 0;
+        int searched = 0, skipped = 0;
         bool truncated = false;
 
         foreach (FoundFile file in files)
         {
-            Result<TextFile> read = TextIo.Read(file.Path);
+            IReadOnlyList<Line> lines;
+            Rendering? rendering = null;
 
-            // A binary file in the path of a search is not an error: it
-            // is a file with nothing to find in it. R4.5 refuses to read
-            // it as text and the search moves on.
-            if (!read.IsOk) continue;
+            if (Documents.For(file.Path.Full) is { } reader)
+            {
+                // A document has to be rendered before there is anything
+                // to match against. Without this, `read` could open a PDF
+                // and `search` could not find one - the same file both
+                // readable and, as far as any search could tell, empty.
+                if (!documents || file.Bytes > Documents.SearchByteCap) { skipped++; continue; }
+
+                Result<Rendering> made = Documents.Render(file.Path, reader);
+
+                // One unreadable document does not fail the sweep. It is
+                // counted, so the answer can say the search was not as
+                // complete as it looks.
+                if (!made.IsOk) { skipped++; continue; }
+
+                rendering = made.Value;
+                lines = TextIo.SplitLines(rendering.Text);
+            }
+            else
+            {
+                Result<TextFile> read = TextIo.Read(file.Path);
+
+                // A binary file in the path of a search is not an error: it
+                // is a file with nothing to find in it. R4.5 refuses to read
+                // it as text and the search moves on.
+                if (!read.IsOk) continue;
+                lines = read.Value.Lines;
+            }
+
             searched++;
 
-            TextFile text = read.Value;
-            for (int i = 0; i < text.Lines.Count; i++)
+            for (int i = 0; i < lines.Count; i++)
             {
-                int column = EarliestMatch(compiled, text.Lines[i].Text);
+                int column = EarliestMatch(compiled, lines[i].Text);
                 if (column < 0) continue;
 
                 if (limit > 0 && hits.Count >= limit) { truncated = true; break; }
@@ -149,8 +187,9 @@ public static class Searcher
                     file.Path,
                     i + 1,                                  // sequences are 1-based here as they are in Shoddy
                     column + 1,
-                    text.Lines[i].Text,
-                    ContextAround(text.Lines, i, context)));
+                    lines[i].Text,
+                    ContextAround(lines, i, context),
+                    rendering?.Cite(i + 1)));
 
                 filesWithHits.Add(file.Path.Full);
             }
@@ -159,7 +198,7 @@ public static class Searcher
         }
 
         return Result<SearchAnswer>.Ok(new SearchAnswer(
-            hits, filesWithHits.Count, searched, truncated, kind, patterns, excluded));
+            hits, filesWithHits.Count, searched, truncated, kind, patterns, excluded, skipped));
     }
 
     static int EarliestMatch(List<Regex> patterns, string line)

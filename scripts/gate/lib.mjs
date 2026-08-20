@@ -155,6 +155,46 @@ export function printFailure(result, step) {
     console.log('');
 }
 
+// ---- PowerShell --------------------------------------------------------
+//
+// WINDOWS POWERSHELL 5.1 AND POWERSHELL 7 ARE DIFFERENT PROGRAMS, and every
+// .ps1 in this tree is shebanged `#!/usr/bin/env pwsh`. They were all being
+// launched with `powershell`, which on an ordinary Windows box IS 5.1 - so
+// the shebang said one thing and the harness did another, in seven places.
+//
+// It is not cosmetic. `Set-Content -Encoding utf8` writes a byte-order mark
+// under 5.1 and writes none under 7, so a release cut through this driver
+// put a BOM into Directory.Build.props that a release cut by hand did not.
+// The whole reason those scripts carry NativeCommandError hardening is that
+// they were being run in the shell they were hardened against.
+//
+// Resolved ONCE and cached: the probe costs a process start, and the answer
+// cannot change inside a run. Falls back to 5.1 rather than failing, because
+// a machine with only Windows PowerShell can still build - it just needs the
+// scripts to keep avoiding what differs.
+let powershellExe = null;
+
+export function psExe() {
+    if (powershellExe) return powershellExe;
+    const probe = spawnSync('pwsh', ['-NoProfile', '-Command', '$PSVersionTable.PSVersion.Major'],
+        { encoding: 'utf8' });
+    powershellExe = probe.status === 0 ? 'pwsh' : 'powershell';
+    return powershellExe;
+}
+
+// A .ps1 launched the same way everywhere, so a change to how they are
+// launched is one edit rather than seven.
+export function psScript(script, ...args) {
+    return [psExe(), '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+        '-File', script, ...args];
+}
+
+// PowerShell evaluating an expression, for the two places that read a value
+// out of Windows rather than running a script of ours.
+export function psEval(expression) {
+    return [psExe(), '-NoProfile', '-NonInteractive', '-Command', expression];
+}
+
 // ---- git ---------------------------------------------------------------
 
 export function git(...args) {
@@ -334,7 +374,8 @@ export function killStaleToolchain({ quiet = false } = {}) {
         const ps = `Get-CimInstance Win32_Process -Filter "Name='testhost.exe' OR Name='mill.exe'"`
             + ` | Where-Object { $_.CommandLine -notlike '*vscode*' -and $_.CommandLine -notlike '*devenv*' }`
             + ` | ForEach-Object { $_.ProcessId }`;
-        const r = spawnSync('powershell', ['-NoProfile', '-NonInteractive', '-Command', ps], { encoding: 'utf8' });
+        const evaluate = psEval(ps);
+        const r = spawnSync(evaluate[0], evaluate.slice(1), { encoding: 'utf8' });
         for (const pid of (r.stdout ?? '').split(/\r?\n/).map((s) => s.trim()).filter(Boolean)) {
             spawnSync('taskkill', ['/pid', pid, '/T', '/F'], { stdio: 'ignore' });
             killed.push(pid);

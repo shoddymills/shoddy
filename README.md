@@ -9,6 +9,11 @@
 
 *Useless Things Made Useful Through Skill*
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/media/brand/shoddy-icon-black.svg">
+  <img src="docs/media/brand/shoddy-icon-white.svg" alt="The Shoddy mark: three threads enter loose and run out woven" width="96" align="right">
+</picture>
+
 Three threads enter loose and run woven: rag stock in, cloth out. The mark,
 the colours, and why they are these colours and no others, are in
 [the heritage of the name](https://shoddymills.github.io/shoddy/heritage.html#the-mark).

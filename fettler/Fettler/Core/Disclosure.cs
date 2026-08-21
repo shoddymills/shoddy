@@ -95,6 +95,12 @@ public static class Disclosure
         if (structural.Count > 0)
             return new Failure(Outcome.Screened, Screen.Describe(structural), path);
 
+        // Only the model tiers need the sidecar. A tree screening
+        // identifiers alone was fully judged by the scan above, so it is
+        // done - and never starts a process or pays a model load for a
+        // tier that has none.
+        if ((screened & Screens.ModelBacked) == Screened.None) return null;
+
         // No sidecar means no models directory was ever declared, which
         // is a person who has not set the second tier up rather than a
         // second tier that failed. Tier one was the whole screen and it

@@ -4,20 +4,22 @@ using System.Text.RegularExpressions;
 namespace Fettler.Core;
 
 /// <summary>
-/// The regulated concerns a disclosure may be screened for, as a closed
-/// set.
+/// The concerns a disclosure may be screened for, as a closed set.
 ///
 /// <para><b>Closed for the same reason <see cref="Permission"/> is.</b> A
 /// set that grows a member per detector is one nobody can hold in mind,
 /// and one where a configuration written today means something different
-/// tomorrow. These four are named after the CONCERN rather than after
-/// the model or the regulation, because a model is replaceable and a
-/// regulation covers more than any one model knows.</para>
+/// tomorrow. These four are named after WHAT ACTUALLY RUNS - the
+/// pattern tier by what it matches, the model tiers by the model that
+/// judges them. The words that stood here first, 'phi' and 'pii', named
+/// the regulation instead, and so promised coverage that only arrives
+/// once a model is installed while reading as if it were there from the
+/// start.</para>
 ///
 /// <para><b>FCRA and FERPA are deliberately not members.</b> Consumer
 /// report and education record data is largely structured identifiers,
 /// which <see cref="Screen"/>'s first tier catches under
-/// <see cref="Pii"/>. Giving them a category of their own would promise
+/// <see cref="Identifiers"/>. Giving them a category of their own would promise
 /// a coverage nothing here delivers - see the honesty clause on
 /// <see cref="Screen"/>.</para>
 /// </summary>
@@ -28,18 +30,27 @@ public enum Screened
     /// nothing gets.</summary>
     None = 0,
 
-    /// <summary>Protected health information: the HIPAA concern.</summary>
-    Phi = 1 << 0,
+    /// <summary>Structured identifiers the first tier matches with no
+    /// model installed: an SSN, a Luhn-valid card number, a phone
+    /// number, an email address, and a labelled record number or date
+    /// of birth. This is the whole tier-one surface, and the only
+    /// category that works with nothing installed.</summary>
+    Identifiers = 1 << 0,
 
-    /// <summary>Personal identifiers generally. The first tier carries
-    /// most of this one.</summary>
-    Pii = 1 << 1,
+    /// <summary>Clinical text, judged by a clinical de-identification
+    /// model you install - and by nothing until you do. The manifest
+    /// beside the model names the exact checkpoint doing the judging,
+    /// and <c>roots</c> reports it.</summary>
+    Clinical = 1 << 1,
 
-    /// <summary>Contract and consumer-report content.</summary>
+    /// <summary>Contract and consumer-report content, judged by a
+    /// contract-clause model you install - and by nothing until you
+    /// do.</summary>
     Legal = 1 << 2,
 
-    /// <summary>Research and scientific data.</summary>
-    Sci = 1 << 3,
+    /// <summary>Scientific text, judged by a scientific named-entity
+    /// model you install - and by nothing until you do.</summary>
+    Scientific = 1 << 3,
 }
 
 /// <summary>One regulated entity a disclosure would have carried.</summary>
@@ -47,9 +58,9 @@ public sealed record ScreenFinding(Screened Category, string Detector)
 {
     /// <summary>
     /// The text that matched. INTERNAL, and for a sharper reason than
-    /// <see cref="SecretFinding.Match"/>: a refusal naming the patient it
-    /// found would write PHI into a log, a transcript and whatever ships
-    /// those onward, which is the exact harm the screen exists to
+    /// <see cref="SecretFinding.Match"/>: a refusal naming what it found
+    /// would write that identifier into a log, a transcript and whatever
+    /// ships those onward, which is the exact harm the screen exists to
     /// prevent, delivered by the screen itself.
     /// <see cref="Screen.Describe"/> is the only thing that turns
     /// findings into a message, and it emits a category and a count.
@@ -72,7 +83,7 @@ public static class Screens
     /// so a listing never depends on enum ordering by accident.</summary>
     public static readonly Screened[] All =
     [
-        Screened.Phi, Screened.Pii, Screened.Legal, Screened.Sci,
+        Screened.Identifiers, Screened.Clinical, Screened.Legal, Screened.Scientific,
     ];
 
     /// <summary>What <c>"screen": true</c> means. Switching the screen on
@@ -80,14 +91,36 @@ public static class Screens
     /// a single word, so the failure mode of forgetting to name a
     /// category simply does not exist.</summary>
     public const Screened Everything =
-        Screened.Phi | Screened.Pii | Screened.Legal | Screened.Sci;
+        Screened.Identifiers | Screened.Clinical | Screened.Legal | Screened.Scientific;
+
+    /// <summary>The categories a model judges.
+    /// <see cref="Screened.Identifiers"/> is deliberately absent: it is
+    /// the tier that runs in process with no model, so it never crosses
+    /// the sidecar's pipe and never asks burler for a model it could
+    /// not have.</summary>
+    public const Screened ModelBacked =
+        Screened.Clinical | Screened.Legal | Screened.Scientific;
+
+    /// <summary>The words v2.5.0 shipped and this version renamed, each
+    /// mapped to what to write instead. Refused with directions rather
+    /// than silently translated: a translation would keep the old words
+    /// alive in configurations indefinitely, still promising what they
+    /// always over-promised.</summary>
+    static readonly IReadOnlyDictionary<string, string> Renamed =
+        new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["phi"] = "the labelled identifier patterns are 'identifiers', and "
+                + "clinical-model screening is 'clinical'",
+            ["pii"] = "the identifier patterns are 'identifiers'",
+            ["sci"] = "it is 'scientific'",
+        };
 
     public static string NameOf(Screened one) => one switch
     {
-        Screened.Phi => "phi",
-        Screened.Pii => "pii",
+        Screened.Identifiers => "identifiers",
+        Screened.Clinical => "clinical",
         Screened.Legal => "legal",
-        Screened.Sci => "sci",
+        Screened.Scientific => "scientific",
         _ => "nothing",
     };
 
@@ -107,10 +140,11 @@ public static class Screens
     /// <c>-</c> words EXCLUDES from the full set.
     ///
     /// <para><b>Mixing the two is refused rather than resolved.</b>
-    /// <c>["phi", "-sci"]</c> can be read as "phi only" or as "everything
-    /// but sci, and phi is redundant", and those differ by two whole
-    /// categories. A rule picking one would silently withhold a screen
-    /// from somebody who believed they had asked for it.</para>
+    /// <c>["identifiers", "-scientific"]</c> can be read as "identifiers
+    /// only" or as "everything but scientific, and identifiers is
+    /// redundant", and those differ by two whole categories. A rule
+    /// picking one would silently withhold a screen from somebody who
+    /// believed they had asked for it.</para>
     ///
     /// <para><b>An unknown word is refused rather than ignored</b>, on
     /// the <see cref="Permissions.Parse"/> precedent and for the sharper
@@ -131,8 +165,8 @@ public static class Screens
         if (anyBare && anyMinus)
             return Result<Screened>.Fail(Outcome.Invalid,
                 "mixes included and excluded categories in one list, and the two cannot be "
-                + "combined: write [\"phi\", \"pii\"] to screen only those, or [\"-sci\"] to "
-                + "screen everything except that");
+                + "combined: write [\"identifiers\", \"clinical\"] to screen only those, or "
+                + "[\"-scientific\"] to screen everything except that");
 
         Screened chosen = anyMinus ? Everything : Screened.None;
 
@@ -144,6 +178,10 @@ public static class Screens
             Screened? known = null;
             foreach (Screened one in All)
                 if (word.Equals(NameOf(one), StringComparison.OrdinalIgnoreCase)) known = one;
+
+            if (known is null && Renamed.TryGetValue(word, out string? became))
+                return Result<Screened>.Fail(Outcome.Invalid,
+                    $"'{word}' is no longer a screening category; {became}");
 
             if (known is null)
                 return Result<Screened>.Fail(Outcome.Invalid,
@@ -168,8 +206,9 @@ public static class Screens
 /// The shapes are deliberately the same, down to the two tiers and the
 /// rule that a refusal never repeats what it found.</para>
 ///
-/// <para><b>It judges the PAYLOAD, not the file.</b> A file may hold PHI
-/// on page 40; a read of page 2 that discloses none is served. Judging
+/// <para><b>It judges the PAYLOAD, not the file.</b> A file may carry a
+/// record number on page 40; a read of page 2 that discloses none is
+/// served. Judging
 /// the whole file would lock the very trees people most need help in,
 /// and the way round it would be to turn the screen off - which is the
 /// same argument that makes <see cref="Secrets"/> judge the diff.</para>
@@ -220,34 +259,34 @@ public static class Screen
         // excluded: no area 000, 666 or 900-999, no group 00, no serial
         // 0000. That is what separates a real number from a nine-digit
         // string with hyphens in it, and it costs nothing to check.
-        new("ssn", Screened.Pii,
+        new("ssn", Screened.Identifiers,
             New(@"\b(?!000|666|9\d\d)\d{3}-(?!00)\d{2}-(?!0000)\d{4}\b")),
 
         // 13 to 19 digits in the groupings cards are actually written in,
         // then Luhn. Bare runs of digits are NOT matched: a spreadsheet
         // column of order numbers would otherwise deny every read of the
         // sheet, and roughly one in ten random digit strings passes Luhn.
-        new("credit-card", Screened.Pii,
+        new("credit-card", Screened.Identifiers,
             New(@"\b(?:\d{4}[ -]){3}\d{1,4}\b|\b\d{4}[ -]\d{6}[ -]\d{4,5}\b"), Luhn: true),
 
         // A leading + or a separated grouping. Ten bare digits are not a
         // phone number as far as this is concerned, for the same reason
         // the card pattern refuses them.
-        new("phone", Screened.Pii,
+        new("phone", Screened.Identifiers,
             New(@"\+\d{1,3}[ .-]?\(?\d{1,4}\)?[ .-]?\d{2,4}[ .-]?\d{2,4}(?:[ .-]?\d{2,4})?"
                 + @"|\(\d{3}\)\s?\d{3}[ .-]\d{4}\b|\b\d{3}[.-]\d{3}[.-]\d{4}\b")),
 
-        new("email", Screened.Pii,
+        new("email", Screened.Identifiers,
             New(@"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?"
                 + @"(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)*\.[A-Za-z]{2,}\b")),
 
         // Labelled, as argued above. The identifier itself may be
         // anything an issuer chose, so the label is what is trusted.
-        new("medical-record-number", Screened.Phi,
+        new("medical-record-number", Screened.Identifiers,
             New(@"(?i)\b(?:mrn|m\.r\.n\.|medical\s+record\s+(?:number|no\.?|#)"
                 + @"|patient\s+(?:id|identifier|number|no\.?|#))\b\s*[:=#-]?\s*[A-Za-z0-9][A-Za-z0-9-]{3,}")),
 
-        new("date-of-birth", Screened.Phi,
+        new("date-of-birth", Screened.Identifiers,
             New(@"(?i)\b(?:dob|d\.o\.b\.?|date\s+of\s+birth|birth\s?date|born(?:\s+on)?)\b"
                 + @"\s*[:=-]?\s*(?:\d{1,4}[/-]\d{1,2}[/-]\d{1,4}"
                 + @"|(?:\d{1,2}\s+)?(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*"
@@ -330,8 +369,8 @@ public static class Screen
     /// never a fragment of one.
     ///
     /// <para><see cref="Secrets.Describe"/> is the precedent, and here
-    /// the reason is stronger. A refusal that quoted the patient name it
-    /// found would put PHI in the log and the transcript - the exact
+    /// the reason is stronger. A refusal that quoted the identifier it
+    /// found would put it in the log and the transcript - the exact
     /// disclosure being refused, made by the refusal.</para>
     /// </summary>
     public static string Describe(IReadOnlyList<ScreenFinding> findings)

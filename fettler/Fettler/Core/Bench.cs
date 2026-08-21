@@ -326,8 +326,8 @@ public sealed class Bench : IDisposable
     /// One slice, judged on its way out.
     ///
     /// <para><b>The slice and not the file</b>, which is the whole of
-    /// R1.1: a document may hold PHI on page 40, and a read of page 2
-    /// that discloses none is served. This is the same choice
+    /// R1.1: a document may carry a record number on page 40, and a read
+    /// of page 2 that discloses none is served. This is the same choice
     /// <see cref="Secrets"/> makes in judging the diff rather than the
     /// file, and for the same reason - the alternative locks the very
     /// trees people most need help in, and the way round it is to turn

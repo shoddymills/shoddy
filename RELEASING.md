@@ -26,7 +26,7 @@ only copy that ships.
 scripts/shoddy.ps1 preflight            # read-only: would a release pass right now?
                                         # write release-notes/v1.0.0.md FIRST — see below
 scripts/shoddy.ps1 gate --resume        # the expensive proof: build + every test
-scripts/shoddy-feature.ps1 ship         # merge your feature into main
+scripts/shoddy-branch.ps1 ship          # merge your feature into main
 scripts/shoddy.ps1 release 1.0.0        # preflight, gate, package, then tag and push — CI publishes
 ```
 
@@ -238,15 +238,15 @@ by the ordinary sweep, because that is the only way they are ever compiled.
 ## 1 — Merge the feature into main
 
 ```powershell
-scripts/shoddy-feature.ps1 ship
+scripts/shoddy-branch.ps1 ship
 ```
 
 Pushes the current `feature/*` or `bug/*` branch, merges it `--no-ff` into `main`,
 pushes `main`, and deletes the branch locally and on origin. It refuses to run with a
 dirty tree, from any other branch, or when there is nothing to merge, and on a merge
-conflict it aborts cleanly and puts you back on your branch. (Bug branches are cut by
-hand off `main`, named `bug/<origin-feature>NN` — the curated feature-name list is
-not consumed for fixes.)
+conflict it aborts cleanly and puts you back on your branch. (Bug branches are cut the
+same way — `scripts/shoddy-branch.ps1 bug <origin-feature>NN` — and the curated
+feature-name list is not consumed for fixes.)
 
 It prints the commits it is about to merge and asks `Proceed? (y/N)`. **Pass
 `-Yes` (PowerShell) or `-y` (sh/cmd) to skip that prompt** — required from any
@@ -312,7 +312,7 @@ origin:
 
 It prints the whole plan — including whether it found `release-notes/v1.0.0.md`
 — and asks `Proceed? (y/N)` before step 1. **`-Yes` / `-y` skips it**, as for
-`shoddy-feature`. Read the plan the first time; skip it when scripting.
+`shoddy-branch`. Read the plan the first time; skip it when scripting.
 
 The local build in step 2 is a gate, not a source of artifacts. The package that
 reaches users is the one the Release workflow builds from the tag.
@@ -372,7 +372,7 @@ sitemap and publishes `docs/`. No docs changes, no deploy. Verify in the Actions
 
 ## 6 — Clean up
 
-`shoddy-feature.ps1 ship` already deleted the feature branch. The release branch is
+`shoddy-branch.ps1 ship` already deleted the feature branch. The release branch is
 kept as a hotfix base; the tag alone preserves the release point, so delete it
 whenever you like:
 

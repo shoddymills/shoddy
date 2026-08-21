@@ -24,17 +24,17 @@ public sealed record Manifest(
 /// <summary>
 /// The models on this machine, loaded when first wanted and held.
 ///
-/// <para><b>Nothing here ships with burler.</b> Four quantised models
-/// run about 400 MB against a download measured in single-digit MB, so a
+/// <para><b>Nothing here ships with burler.</b> The quantised models
+/// run hundreds of MB against a download measured in single-digit MB, so a
 /// person puts them somewhere and names that directory in the
 /// configuration. A category whose model is not there is a REFUSAL and
 /// never a quiet pass: by the time a directory has been named, somebody
 /// has said they expect the model to be in it.</para>
 ///
 /// <para><b>Lazily, one category at a time.</b> A tree screening only
-/// <c>phi</c> loads one model rather than four, which is the difference
-/// between a hundred megabytes and four hundred for the commonest
-/// arrangement there is.</para>
+/// <c>clinical</c> loads one model rather than all of them, which is
+/// the difference between a hundred megabytes and several hundred for
+/// the commonest arrangement there is.</para>
 /// </summary>
 public sealed class Models : IDisposable
 {

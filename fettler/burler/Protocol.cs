@@ -5,7 +5,7 @@ namespace Burler;
 
 /// <summary>One thing found, as it crosses the wire: a category, how many
 /// of them, and where they sat.</summary>
-/// <param name="Category">One of the four category words.</param>
+/// <param name="Category">One of the model-backed category words.</param>
 /// <param name="Spans">Half-open character ranges into the payload, in the
 /// order they were found.</param>
 public sealed record Finding(string Category, IReadOnlyList<(int Start, int End)> Spans)
@@ -42,8 +42,11 @@ public static class Protocol
 {
     /// <summary>The categories this speaks about. Duplicated from
     /// Fettler's own list deliberately - see the class summary - and
-    /// asserted equal by a test on each side.</summary>
-    public static readonly string[] Categories = ["phi", "pii", "legal", "sci"];
+    /// asserted equal by a test on each side. 'identifiers' is not here
+    /// and never will be: it is Fettler's in-process pattern tier, and a
+    /// request naming it is a caller confused about which side of the
+    /// pipe that tier runs on.</summary>
+    public static readonly string[] Categories = ["clinical", "legal", "scientific"];
 
     /// <summary>
     /// Read one request line, or say what was wrong with it.

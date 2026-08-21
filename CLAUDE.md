@@ -43,7 +43,7 @@ else, including the rest of `shoddy-planning`.
 
 This project has a full maintainer release procedure — branch discipline,
 pre-release doc/error verification, release-notes timing, the
-`shoddy-feature.sh` / `shoddy-release.sh` scripts, and the GitHub Actions that
+`shoddy-branch.sh` / `shoddy-release.sh` scripts, and the GitHub Actions that
 publish a release. Don't re-derive or restate it from memory or by guessing at
 script behavior: read it fresh each time from source, since scripts and
 workflows can change underneath a stale summary.
@@ -65,7 +65,7 @@ workflows can change underneath a stale summary.
 - [CONTRIBUTING.md](CONTRIBUTING.md) — day-to-day contribution process
 - [release-notes/README.md](release-notes/README.md) — release-notes format and timing
 - [SECURITY.md](SECURITY.md) — vulnerability reporting (not via public issues)
-- `scripts/shoddy-feature.*` / `scripts/shoddy-release.*` — the actual
+- `scripts/shoddy-branch.*` / `scripts/shoddy-release.*` — the actual
   automation. The twins offer the same verbs and `verify-twins.js` proves
   it, but they are not line-for-line identical and have drifted before, so
   read the one that matches the shell in use rather than the other

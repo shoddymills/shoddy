@@ -582,6 +582,8 @@ public static class Command
                     if (grant.Screen != Screened.None)
                         w.WriteString("screen", Screens.Write(grant.Screen));
 
+                    WriteScreening(w, grant.Screen, bench.Roots.Models);
+
                     w.WriteBoolean("default", name.Equals(names[0], Core.Roots.PathComparison));
 
                     if (grant.Scopes.Count > 0)
@@ -598,7 +600,10 @@ public static class Command
                             // states - and its absence means "whatever the
                             // tree says" rather than "nothing".
                             if (scope.Screen is { } screened)
+                            {
                                 w.WriteString("screen", Screens.Write(screened));
+                                WriteScreening(w, screened, bench.Roots.Models);
+                            }
 
                             w.WriteEndObject();
                         }
@@ -609,6 +614,13 @@ public static class Command
                 }
                 w.WriteEndArray();
                 w.WriteNumber("count", names.Count);
+
+                // Named even when nothing is installed under it. "Where
+                // would a model go" and "is one there" are different
+                // questions, and somebody fixing the second needs the
+                // first.
+                if (bench.Roots.Models is { } where) w.WriteString("models", where);
+
                 w.WriteString("source", bench.Roots.Origin);
             }));
 
@@ -627,7 +639,14 @@ public static class Command
             text.Append(' ', column).Append("can: ").AppendLine(Permissions.Write(grant.Can));
 
             if (grant.Screen != Screened.None)
+            {
                 text.Append(' ', column).Append("screen: ").AppendLine(Screens.Write(grant.Screen));
+
+                foreach ((Screened category, string said)
+                         in Screening(grant.Screen, bench.Roots.Models))
+                    text.Append(' ', column).Append("  ").Append(Screens.NameOf(category))
+                        .Append(": ").AppendLine(said);
+            }
 
             foreach (Scope scope in grant.Scopes)
             {
@@ -639,14 +658,109 @@ public static class Command
                     text.Append("  screen: ").Append(Screens.Write(screened));
 
                 text.AppendLine();
+
+                // Only where the scope states a screen of its own. One
+                // that says nothing inherits the tree's, and repeating
+                // the tree's models under every scope would bury the
+                // scopes that actually differ.
+                if (scope.Screen is { } stated)
+                    foreach ((Screened category, string said)
+                             in Screening(stated, bench.Roots.Models))
+                        text.Append(' ', column).Append("    ").Append(Screens.NameOf(category))
+                            .Append(": ").AppendLine(said);
             }
         }
+
+        // R4.7: the model tiers are inert until somebody names a
+        // directory, and a screen listing them without one reads as a
+        // protection that is running. Said once, about the whole
+        // configuration, and only where a category needing a model was
+        // actually asked for.
+        if (bench.Roots.Models is null && AnythingNeedsAModel(bench))
+            text.AppendLine().Append("no \"models\" directory is declared, so ")
+                .Append(ModelBackedWords())
+                .AppendLine(" screen nothing here - only the identifier patterns run");
 
         // Where the boundary came from, not only what it is: a caller
         // who disagrees with it has to know which file to open.
         text.AppendLine().Append("declared by ").AppendLine(bench.Roots.Origin);
 
         return Ok(text.ToString());
+    }
+
+    /// <summary>
+    /// What is installed for each model-backed category a screen asks
+    /// for, as the phrase <c>roots</c> prints against it.
+    ///
+    /// <para><b>Per category, because they fail independently.</b> A
+    /// machine can easily hold the clinical model and not the legal one,
+    /// and <c>screen: clinical legal</c> says nothing whatever about
+    /// which - so a caller reading it cannot tell a category judged by a
+    /// checkpoint from one judged by nothing at all.</para>
+    ///
+    /// <para>Empty when no models directory was declared. That is one
+    /// fact about the whole configuration rather than a fact about this
+    /// tree, so it is said once at the end instead of against every
+    /// grant.</para>
+    /// </summary>
+    static IReadOnlyList<(Screened Category, string Said)> Screening(Screened screen, string? models)
+    {
+        var lines = new List<(Screened, string)>();
+        if (models is null) return lines;
+
+        foreach (Screened one in Screens.All)
+        {
+            if (one == Screened.Identifiers || !screen.HasFlag(one)) continue;
+
+            IReadOnlyList<Installed.Model> installed = Installed.For(models, Screens.NameOf(one));
+
+            lines.Add((one, installed.Count == 0
+                ? "no model installed - reads here will refuse"
+                : string.Join(", ", installed)));
+        }
+
+        return lines;
+    }
+
+    static void WriteScreening(Utf8JsonWriter w, Screened screen, string? models)
+    {
+        IReadOnlyList<(Screened Category, string Said)> lines = Screening(screen, models);
+        if (lines.Count == 0) return;
+
+        w.WriteStartObject("screening");
+        foreach ((Screened category, string said) in lines)
+            w.WriteString(Screens.NameOf(category), said);
+        w.WriteEndObject();
+    }
+
+    /// <summary>Whether anything in the configuration asked for a
+    /// category a model has to judge. Somebody who never asked for one
+    /// is not told about a directory they do not need.</summary>
+    static bool AnythingNeedsAModel(Bench bench)
+    {
+        foreach (string name in bench.Roots.Names)
+        {
+            Grant grant = bench.Roots.GrantOf(name);
+            if ((grant.Screen & Screens.ModelBacked) != Screened.None) return true;
+
+            foreach (Scope scope in grant.Scopes)
+                if (scope.Screen is { } screened
+                    && (screened & Screens.ModelBacked) != Screened.None) return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>The model-backed category words, derived rather than
+    /// spelled out, so adding a category cannot leave this sentence
+    /// quietly naming three of four.</summary>
+    static string ModelBackedWords()
+    {
+        var words = new List<string>();
+        foreach (Screened one in Screens.All)
+            if (Screens.ModelBacked.HasFlag(one)) words.Add(Screens.NameOf(one));
+
+        return string.Join(", ", words);
     }
 
     // ---- the machine, rather than the tree ----

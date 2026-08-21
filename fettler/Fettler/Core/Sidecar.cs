@@ -150,8 +150,13 @@ public sealed class Sidecar : IScreener, IDisposable
             writer.WriteString("op", "screen");
 
             writer.WriteStartArray("categories");
+            // Only the model tiers cross the wire. Identifiers is judged
+            // in process by Screen.Scan, and burler has no such model to
+            // ask about - naming it there would only earn a refusal for
+            // a model that is not supposed to exist.
             foreach (Screened one in Screens.All)
-                if (categories.HasFlag(one)) writer.WriteStringValue(Screens.NameOf(one));
+                if (categories.HasFlag(one) && Screens.ModelBacked.HasFlag(one))
+                    writer.WriteStringValue(Screens.NameOf(one));
             writer.WriteEndArray();
 
             writer.WriteString("payload", payload);

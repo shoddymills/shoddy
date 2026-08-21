@@ -66,7 +66,7 @@ that chain.</p>
 <table>
 <tr><th>Your tree holds</th><th>Switch it on?</th></tr>
 <tr><td>Patient notes, discharge summaries, lab results</td><td><b>Yes.</b> This is the case the screen was built for.</td></tr>
-<tr><td>Customer records with names, addresses, card or account numbers</td><td><b>Yes</b>, with <code>pii</code> at least.</td></tr>
+<tr><td>Customer records with names, addresses, card or account numbers</td><td><b>Yes</b>, with <code>identifiers</code> at least &mdash; which catches the card and account numbers. The <em>names and addresses</em> need a model; see <a href="#categories">the categories</a>.</td></tr>
 <tr><td>Signed contracts, credit files, student records</td><td><b>Probably.</b> Read the caveat in <a href="#limits">step 11</a> first &mdash; two of those three regimes are not covered categories.</td></tr>
 <tr><td>Source code, build scripts, documentation</td><td><b>No.</b> The email-address detector alone will refuse a great deal of it. See the warning below.</td></tr>
 <tr><td>Anonymised or synthetic data</td><td><b>No</b> &mdash; but if it sits inside a screened tree, give it a scope that turns the screen off. <a href="#carve">Step 2 shows how.</a></td></tr>
@@ -109,7 +109,7 @@ records, in <code>.fettler.json</code>:</p>
     "records": {
       "path": "../records",
       "can": ["list", "read"],
-      "screen": ["phi", "pii"]
+      "screen": ["identifiers", "clinical"]
     }
   }
 }</code></pre></div>
@@ -119,32 +119,56 @@ records, in <code>.fettler.json</code>:</p>
 <table>
 <tr><th>You write</th><th>It screens</th></tr>
 <tr><td><code>"screen": true</code></td><td>All four categories. Forgetting to name one cannot go wrong this way.</td></tr>
-<tr><td><code>"screen": ["phi", "pii"]</code></td><td>Only those two. A bare list includes.</td></tr>
-<tr><td><code>"screen": ["-sci"]</code></td><td>Everything except <code>sci</code>. A list of <code>-</code> words excludes.</td></tr>
+<tr><td><code>"screen": ["identifiers", "clinical"]</code></td><td>Only those two. A bare list includes.</td></tr>
+<tr><td><code>"screen": ["-scientific"]</code></td><td>Everything except <code>scientific</code>. A list of <code>-</code> words excludes.</td></tr>
 <tr><td><code>"screen": false</code></td><td>Nothing. This is also what a tree that says nothing gets.</td></tr>
-<tr><td><code>"screen": ["phi", "-sci"]</code></td><td><b>Refused when the file is read.</b> It reads either as "phi only" or as "everything but sci", and those differ by two whole categories. Nothing here guesses which you meant.</td></tr>
+<tr><td><code>"screen": ["identifiers", "-scientific"]</code></td><td><b>Refused when the file is read.</b> It reads either as "identifiers only" or as "everything but scientific", and those differ by two whole categories. Nothing here guesses which you meant.</td></tr>
 </table>
 
 <p>A misspelt category is refused too. <code>"lgal"</code> would quietly
 <em>subtract</em> a screen, and you would not find out until data left a
 tree you believed was covered.</p>
 
+<p class="note"><span class="lab">Note</span> <b>The words changed in
+v2.5.1.</b> <code>phi</code>, <code>pii</code> and <code>sci</code> are
+refused rather than translated, and the refusal says what to write
+instead. They were renamed because they promised more than they
+delivered: <code>phi</code> named a category whose pattern tier only
+ever found labelled record numbers and dates of birth.</p>
+
+<table>
+<tr><th>Was</th><th>Write</th></tr>
+<tr><td><code>phi</code></td><td><code>identifiers</code> for the labelled patterns, <code>clinical</code> for model screening of clinical text &mdash; it was doing duty for both</td></tr>
+<tr><td><code>pii</code></td><td><code>identifiers</code></td></tr>
+<tr><td><code>sci</code></td><td><code>scientific</code></td></tr>
+</table>
+
 <h3 id="categories">The four categories</h3>
 
 <table>
-<tr><th>Word</th><th>Concern</th><th>What carries it</th></tr>
-<tr><td><code>phi</code></td><td>Protected health information &mdash; the HIPAA concern</td><td>Two labelled patterns, plus a clinical model if you install one</td></tr>
-<tr><td><code>pii</code></td><td>Personal identifiers generally</td><td>Mostly patterns. This is the category that works best with no models at all.</td></tr>
-<tr><td><code>legal</code></td><td>Contract and consumer-report content</td><td>A model only</td></tr>
-<tr><td><code>sci</code></td><td>Research and scientific data</td><td>A model only</td></tr>
+<tr><th>Word</th><th>Concern</th><th>What carries it</th><th>Which model</th></tr>
+<tr><td><code>identifiers</code></td><td>Structured identifiers, whoever they belong to</td><td><b>Six patterns, running inside <code>fettle</code>.</b> The only category that works with nothing installed.</td><td>None, ever. It never crosses the sidecar's pipe and never asks for a model.</td></tr>
+<tr><td><code>clinical</code></td><td>Clinical text &mdash; the HIPAA concern</td><td><b>A model you install, and nothing until you do.</b></td><td>A de-identification fine-tune from the BioBERT or ClinicalBERT family. <b>The manifest names the exact checkpoint and revision, and <code>fettle roots</code> reports it back to you.</b></td></tr>
+<tr><td><code>legal</code></td><td>Contract and consumer-report content</td><td><b>A model you install, and nothing until you do.</b></td><td>A contract-clause model trained on CUAD, or LegalBERT. Named in the manifest, reported by <code>roots</code>.</td></tr>
+<tr><td><code>scientific</code></td><td>Research and scientific data</td><td><b>A model you install, and nothing until you do.</b></td><td>A SciBERT entity-recognition fine-tune. Named in the manifest, reported by <code>roots</code>.</td></tr>
 </table>
 
-<div class="takeaway"><b><code>legal</code> and <code>sci</code> screen
-nothing until you install a model.</b> Neither has a pattern behind it.
-A tree that names one of them and has no models directory is screened in
-name only, and you will get no warning &mdash; because nobody has yet
-said a model should be there. <a href="#name">Step 6</a> is the act that
-changes that.</div>
+<div class="takeaway"><b><code>clinical</code>, <code>legal</code> and
+<code>scientific</code> screen nothing until you install a model.</b>
+None of the three has a pattern behind it. A tree that names one of them
+and has no models directory is screened in name only. <code>fettle
+roots</code> says so in as many words, and <a href="#name">step 6</a> is
+the act that changes it.</div>
+
+<div class="takeaway"><b>The mirror of that, and the more important
+half: out of the box the screen catches structured
+<em>identifiers</em>.</b> A social security number, a Luhn-valid card, a
+formatted phone number, an email address, a labelled record number and a
+labelled date of birth. <b>Names, addresses, conditions and free text
+are caught only by a model you install</b> &mdash; and the manifest plus
+<code>roots</code> name exactly which model that is. A tree screening
+<code>identifiers</code> alone is protected against the first list and
+nothing beyond it.</div>
 
 <h3 id="patterns">What the patterns catch</h3>
 
@@ -153,13 +177,19 @@ second program, and no new download.</p>
 
 <table>
 <tr><th>Detector</th><th>Category</th><th>It matches</th></tr>
-<tr><td><code>ssn</code></td><td><code>pii</code></td><td>A US social security number, written with hyphens, in a range the Social Security Administration actually issues.</td></tr>
-<tr><td><code>credit-card</code></td><td><code>pii</code></td><td>13 to 19 digits, written in groups the way cards are printed, that pass the Luhn check digit.</td></tr>
-<tr><td><code>phone</code></td><td><code>pii</code></td><td>A number with a leading <code>+</code>, or one written in separated groups.</td></tr>
-<tr><td><code>email</code></td><td><code>pii</code></td><td>An email address.</td></tr>
-<tr><td><code>medical-record-number</code></td><td><code>phi</code></td><td>An identifier introduced by its own label &mdash; <code>MRN</code>, <code>patient id</code>, <code>medical record no.</code></td></tr>
-<tr><td><code>date-of-birth</code></td><td><code>phi</code></td><td>A date introduced by its own label &mdash; <code>DOB</code>, <code>date of birth</code>, <code>born on</code>.</td></tr>
+<tr><td><code>ssn</code></td><td><code>identifiers</code></td><td>A US social security number, written with hyphens, in a range the Social Security Administration actually issues.</td></tr>
+<tr><td><code>credit-card</code></td><td><code>identifiers</code></td><td>13 to 19 digits, written in groups the way cards are printed, that pass the Luhn check digit.</td></tr>
+<tr><td><code>phone</code></td><td><code>identifiers</code></td><td>A number with a leading <code>+</code>, or one written in separated groups.</td></tr>
+<tr><td><code>email</code></td><td><code>identifiers</code></td><td>An email address.</td></tr>
+<tr><td><code>medical-record-number</code></td><td><code>identifiers</code></td><td>An identifier introduced by its own label &mdash; <code>MRN</code>, <code>patient id</code>, <code>medical record no.</code></td></tr>
+<tr><td><code>date-of-birth</code></td><td><code>identifiers</code></td><td>A date introduced by its own label &mdash; <code>DOB</code>, <code>date of birth</code>, <code>born on</code>.</td></tr>
 </table>
+
+<p><b>All six are one category, and that is the point of the name.</b>
+They are all identifiers with a shape somebody fixed or a label
+announcing them. None of them reads clinical language, and a refusal
+from any of them reports as <code>identifiers</code> &mdash; never as a
+judgement about what kind of document it came from.</p>
 
 <p><b>They are narrow on purpose, and two of them are deliberately
 label-driven.</b> No two hospitals agree on the shape of a record
@@ -186,7 +216,7 @@ away:</p>
       "screen": true,
       "scopes": {
         "anonymised": { "can": ["list", "read"], "screen": false },
-        "exports":    { "can": ["list", "read"], "screen": ["pii"] }
+        "exports":    { "can": ["list", "read"], "screen": ["identifiers"] }
       }
     }
   }
@@ -213,8 +243,10 @@ work          /work/shoddy  (default)
               can: list read create update rename delete
 records       /work/records
               can: list read
-              screen: phi pii
+              screen: identifiers clinical
               anonymised  can: list read  screen: nothing
+
+no "models" directory is declared, so clinical, legal, scientific screen nothing here - only the identifier patterns run
 
 declared by /work/shoddy/.fettler.json</code></pre></div>
 
@@ -222,10 +254,17 @@ declared by /work/shoddy/.fettler.json</code></pre></div>
 shows one only where the scope itself states one. A scope with no screen
 line is inheriting.</p>
 
+<div class="takeaway"><b>Read that last line before you believe the one
+above it.</b> The tree says it screens <code>clinical</code>, and
+<code>clinical</code> is judged by a model that is not installed yet, so
+right now it screens nothing at all. <code>roots</code> says so rather
+than letting the word imply otherwise &mdash; and once you install one
+it names the checkpoint instead. That is <a href="#name">step 6</a>.</div>
+
 <p>Now read a file you know holds an identifier:</p>
 
 <div class="promptbox"><button class="copy">Copy</button><pre><code>$ fettle read ward-round.docx
-refused: this response would disclose regulated data: 2 in phi. What was found is
+refused: this response would disclose regulated data: 2 in identifiers. What was found is
 deliberately not quoted back, because a refusal that named it would put it in the
 log and the transcript, which is the disclosure being refused. Read a narrower
 range, or take the screen off this scope if the content is not what it looks like.
@@ -233,17 +272,22 @@ $ echo $LASTEXITCODE
 13</code></pre></div>
 
 <p><b>A category and a count, and never the text itself.</b> A refusal
-that named the patient it found would write that name into the log and
-the transcript &mdash; the exact harm the screen exists to prevent,
-delivered by the screen. Every screening refusal answers
-<code>13</code>.</p>
+that named what it found would write it into the log and the transcript
+&mdash; the exact harm the screen exists to prevent, delivered by the
+screen. Every screening refusal answers <code>13</code>.</p>
+
+<p>The two findings here are the labelled <code>MRN:</code> line and the
+labelled <code>DOB:</code> line, which is why the count is two and the
+category is <code>identifiers</code>. The clinical prose around them was
+not read by anything &mdash; no model is installed.</p>
 
 <div class="takeaway"><b>If steps 1 and 2 are all you need, stop
 here.</b> Tier one is real protection with no new dependency, no
-download and no second process. The rest of this page is about adding
-named-entity models, which is worth doing for <code>phi</code>,
-<code>legal</code> and <code>sci</code>, and adds least to
-<code>pii</code>.</div>
+download and no second process. It is also the whole of what the screen
+catches: structured identifiers, and nothing else. The rest of this page
+adds the named-entity models, which are the only way
+<code>clinical</code>, <code>legal</code> and <code>scientific</code>
+ever screen anything.</div>
 
 <h2 id="install">3. Install burler, the model host</h2>
 
@@ -296,9 +340,10 @@ named in <a href="#name">step 6</a>. Installing it early is harmless.</p>
 <h2 id="models">4. Choose the models</h2>
 
 <div class="takeaway"><b>Nothing here ships a model, and nothing here
-downloads one for you.</b> Four quantised models come to roughly 400 MB
-against a <code>fettle</code> download measured in single-digit
-megabytes. More to the point, several of the useful checkpoints carry
+downloads one for you.</b> Quantised, they come to a few hundred
+megabytes against a <code>fettle</code> download measured in
+single-digit ones &mdash; and there are three of them at most, because
+<code>identifiers</code> never takes a model. More to the point, several of the useful checkpoints carry
 terms that would forbid this project redistributing them. So you fetch
 them, you read their licence, and you decide.</div>
 
@@ -325,11 +370,15 @@ checkpoint.</p>
 
 <table>
 <tr><th>Category</th><th>Family</th><th>What to look for</th></tr>
-<tr><td><code>phi</code></td><td>BioBERT, ClinicalBERT</td><td>A de-identification fine-tune. The i2b2 and n2c2 shared tasks are the usual training data, and models trained on them are the ones that label patient names, dates and record numbers.</td></tr>
-<tr><td><code>sci</code></td><td>SciBERT</td><td>Again a fine-tune, not the base. Entity-recognition models over scientific text.</td></tr>
+<tr><td><code>clinical</code></td><td>BioBERT, ClinicalBERT</td><td>A de-identification fine-tune. The i2b2 and n2c2 shared tasks are the usual training data, and models trained on them are the ones that label patient names, dates and record numbers &mdash; <b>none of which any pattern here finds</b>.</td></tr>
+<tr><td><code>scientific</code></td><td>SciBERT</td><td>Again a fine-tune, not the base. Entity-recognition models over scientific text.</td></tr>
 <tr><td><code>legal</code></td><td>A permissively licensed general model, or LegalBERT</td><td>Contract-clause models trained on CUAD are the readiest. LegalBERT is stronger and has a licence condition &mdash; see the table below.</td></tr>
-<tr><td><code>pii</code></td><td>A general NER model</td><td><b>Optional, and the least valuable of the four.</b> The patterns in tier one already carry most of this category. A CoNLL-style model adds person and place names.</td></tr>
 </table>
+
+<p><b>There is no row for <code>identifiers</code>, and there cannot
+be.</b> It is the pattern tier; it takes no model and no directory. If
+you want person and place names caught, that is a model under one of the
+three categories above &mdash; not an addition to this one.</p>
 
 <h3 id="licences">Read the licence at the source, every time</h3>
 
@@ -382,9 +431,9 @@ optimum-cli export onnx --model ORG/CHECKPOINT --task token-classification out/<
 stores the model's numbers less precisely &mdash; typically 8 bits
 instead of 32. It cuts the file to roughly a quarter of its size and
 makes it several times faster, at a small cost in accuracy.
-<code>optimum</code> can do this too. The 400 MB figure quoted on this
-page is four <em>quantised</em> models; unquantised, expect four times
-that.</p>
+<code>optimum</code> can do this too. The figures quoted on this page
+are for <em>quantised</em> models; unquantised, expect roughly four
+times that.</p>
 
 <h3 id="layout">Lay the files out</h3>
 
@@ -392,7 +441,7 @@ that.</p>
 parent:</p>
 
 <div class="promptbox"><button class="copy">Copy</button><pre><code>screening-models/
-  phi/
+  clinical/
     model.onnx
     vocab.txt
     labels.json
@@ -405,8 +454,9 @@ parent:</p>
 
 <p><b>Only the categories you screen need a directory.</b> A category you
 never name in any tree is never looked for. Models load one at a time,
-when first wanted, so a tree screening only <code>phi</code> loads one
-model rather than four.</p>
+when first wanted, so a tree screening only <code>clinical</code> loads
+one model rather than three. <code>identifiers</code> never needs a
+directory at all.</p>
 
 <table>
 <tr><th>File</th><th>What it is</th></tr>
@@ -449,7 +499,8 @@ that did the judging has changed.</li>
 <h2 id="name">6. Name the directory</h2>
 
 <p><b>Put it in the personal overlay, not the checked-in file.</b> Where
-400 MB of models sit is a fact about a disk, not about a project, and
+several hundred megabytes of models sit is a fact about a disk, not
+about a project, and
 <code>.fettler.local.json</code> is gitignored:</p>
 
 <div class="promptbox"><button class="copy">Copy</button><pre><code>// .fettler.local.json  - beside .fettler.json, gitignored
@@ -460,6 +511,24 @@ that did the judging has changed.</li>
 <p>It is spelled like every other declared path: forward slashes, and
 relative paths resolve against the file they are written in. If the
 check-in file also names one, the overlay wins.</p>
+
+<p>With the directory named and a model in it, <code>roots</code> stops
+reporting the tier as inactive and names what is doing the judging
+instead:</p>
+
+<div class="promptbox"><button class="copy">Copy</button><pre><code>$ fettle roots
+records       /work/records
+              can: list read
+              screen: identifiers clinical
+                clinical: obi/deid_roberta_i2b2 @ a1b2c3d
+
+declared by /work/shoddy/.fettler.json</code></pre></div>
+
+<p><b>The checkpoint and the revision, read from the manifest.</b> A
+category whose directory holds no model says <code>no model installed -
+reads here will refuse</code> instead, which is the state worth catching
+before a read does. The model is never hidden behind the category word:
+wherever the tiers are listed, the thing doing the judging is named.</p>
 
 <div class="takeaway"><b>Naming this directory is the act that makes the
 models load-bearing, and it changes what a failure means.</b>
@@ -503,7 +572,7 @@ model. Not found, every subdirectory holding one is loaded.</p>
 <h3 id="shared">A shared models directory</h3>
 
 <p>Nothing stops <code>"models"</code> naming a network share, and for a
-team it saves everyone a 400 MB download. Know what you are trusting
+team it saves everyone the download. Know what you are trusting
 when you do:</p>
 
 <ul>
@@ -528,8 +597,8 @@ each of these, and watch what comes back.</p>
 <table>
 <tr><th>Ask the assistant to&hellip;</th><th>What a working screen does</th></tr>
 <tr><td>ask for the roots</td><td>the screened tree carries a <code>screen</code> line naming the categories, and your carve-out scope shows <code>screen: nothing</code></td></tr>
-<tr><td>read a file holding a social security number or a card number</td><td>refused, exit&nbsp;13, naming a count in <code>pii</code> and never the number</td></tr>
-<tr><td>read a file with <code>DOB: 1/2/1970</code> in it</td><td>refused, a count in <code>phi</code></td></tr>
+<tr><td>read a file holding a social security number or a card number</td><td>refused, exit&nbsp;13, naming a count in <code>identifiers</code> and never the number</td></tr>
+<tr><td>read a file carrying a date of birth under its own label &mdash; the literal word <code>DOB</code>, a colon, and a date</td><td>refused, a count in <code>identifiers</code></td></tr>
 <tr><td>read the same file from the unscreened scope</td><td>served &mdash; a scope's screen replaces the tree's</td></tr>
 <tr><td>search the tree for a common word that appears near an identifier</td><td>refused, because the matched lines and their context are what would have been sent</td></tr>
 <tr><td>read an image in a screened scope</td><td>refused &mdash; nothing here reads pixels, and a photographed record is exactly what this is for</td></tr>
@@ -542,7 +611,7 @@ each of these, and watch what comes back.</p>
 reads one request per line and answers one line:</p>
 
 <div class="promptbox"><button class="copy">Copy</button><pre><code>$ burler --models C:/models/screening
-{"op":"screen","categories":["phi"],"payload":"the weather was fine"}
+{"op":"screen","categories":["clinical"],"payload":"the weather was fine"}
 {"ok":true,"findings":[]}</code></pre></div>
 
 <p>Type the request line, press return, and read the answer.</p>
@@ -550,8 +619,8 @@ reads one request per line and answers one line:</p>
 <table>
 <tr><th>What comes back</th><th>What it tells you</th></tr>
 <tr><td><code>{"ok":true,"findings":[]}</code></td><td>Everything works. It loaded the model, ran it, and found nothing in that sentence.</td></tr>
-<tr><td><code>{"ok":true,"findings":[{"category":"phi","count":1,&hellip;</code></td><td>It found something. Try a payload with a name or a date in it to see this.</td></tr>
-<tr><td><code>{"ok":false,"error":"'phi' is screened and there is no model for it&hellip;"}</code></td><td>The models directory has no <code>phi</code> folder. The message names the path it looked at.</td></tr>
+<tr><td><code>{"ok":true,"findings":[{"category":"clinical","count":1,&hellip;</code></td><td>It found something. Try a payload with a name or a date in it to see this.</td></tr>
+<tr><td><code>{"ok":false,"error":"'clinical' is screened and there is no model for it&hellip;"}</code></td><td>The models directory has no <code>clinical</code> folder. The message names the path it looked at.</td></tr>
 <tr><td><code>{"ok":false,"error":"the model at &hellip; would not load&hellip;"}</code></td><td>The file is there and is not a model burler can run. Usually a bad export, or a file that did not finish downloading.</td></tr>
 <tr><td>Nothing at all, and it exits</td><td>Check the message on the error stream. Started with no <code>--models</code>, it says <code>burler needs --models DIRECTORY, naming where the screening models are.</code> and exits <code>2</code>.</td></tr>
 </table>
@@ -620,14 +689,16 @@ matters.</p>
 <tr><td>Every screened read, always</td><td>The patterns run in <code>fettle</code> itself. Each has a one-second ceiling, and in practice they are not measurable.</td></tr>
 <tr><td>The first screened read after a quiet spell</td><td>burler starts and loads a model. <b>Seconds</b>, and the wait is allowed up to 90 of them, because a timeout here would deny a disclosure that was going to be served.</td></tr>
 <tr><td>Every read after that</td><td><b>Tens of milliseconds.</b> The child is held warm. Thirty seconds is the point at which something is wrong rather than slow.</td></tr>
-<tr><td>Five minutes with nothing to screen</td><td>The child is killed and its memory released. A tool sitting in an editor all day should not hold 400 MB for a document somebody read at breakfast.</td></tr>
+<tr><td>Five minutes with nothing to screen</td><td>The child is killed and its memory released. A tool sitting in an editor all day should not hold hundreds of megabytes for a document somebody read at breakfast.</td></tr>
 <tr><td>The same content twice</td><td>Answered from memory. The last 256 verdicts are kept, keyed on the content and on the manifests of the models that judged it.</td></tr>
 </table>
 
 <ul>
 <li><b>Only the categories you screen cost anything.</b> Models load one
 at a time, when a category is first wanted. A tree screening only
-<code>phi</code> loads one model, not four.</li>
+<code>clinical</code> loads one model, not three &mdash; and a tree
+screening only <code>identifiers</code> loads none and never starts
+burler at all.</li>
 <li><b>Long documents are split into overlapping windows.</b> These
 models read a few hundred words at a time, so a long page is cut into
 pieces that overlap &mdash; which is what stops an entity sitting on a
@@ -653,7 +724,7 @@ to withstand anybody trying.</p>
 
 <table>
 <tr><th>It does not</th><th>Because</th></tr>
-<tr><td>Cover FCRA or FERPA</td><td>Consumer-report and education-record data is largely structured identifiers, and those are caught under <code>pii</code> by the patterns. That is all. <b>Nothing here is "FERPA compliance"</b>, and reading it that way is the misunderstanding this sentence exists to prevent.</td></tr>
+<tr><td>Cover FCRA or FERPA</td><td>Consumer-report and education-record data is largely structured identifiers, and those are caught under <code>identifiers</code> by the patterns. That is all. <b>Nothing here is "FERPA compliance"</b>, and reading it that way is the misunderstanding this sentence exists to prevent.</td></tr>
 <tr><td>Offer a confidence setting</td><td>Any detection refuses. A dial gets turned until the check is off.</td></tr>
 <tr><td>Read images</td><td>Nothing here reads pixels, so an image in a screened scope is refused rather than served unchecked.</td></tr>
 <tr><td>Redact, mask or edit</td><td>It refuses the whole response. Handing back a document with holes in it would look like a safe copy of the original, and would not be one.</td></tr>

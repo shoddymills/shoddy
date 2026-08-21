@@ -226,18 +226,25 @@ screened category refuses the whole response**:
 ```json
 {
   "trees": {
-    "records": { "path": "../records", "can": ["list", "read"], "screen": ["phi", "pii"] }
+    "records": { "path": "../records", "can": ["list", "read"], "screen": ["identifiers", "clinical"] }
   },
   "models": "../screening-models"
 }
 ```
 
-`true` screens all four categories — `phi`, `pii`, `legal`, `sci`. A
-bare list includes; a list of `-` words excludes from the full set;
-mixing the two in one list is refused when the file is read, because
-`["phi", "-sci"]` has two readings that differ by two whole categories. A
-scope's `screen` replaces the tree's, and a scope that says nothing
-inherits it.
+`true` screens all four categories — `identifiers`, `clinical`, `legal`,
+`scientific`. A bare list includes; a list of `-` words excludes from the
+full set; mixing the two in one list is refused when the file is read,
+because `["identifiers", "-scientific"]` has two readings that differ by
+two whole categories. A scope's `screen` replaces the tree's, and a scope
+that says nothing inherits it.
+
+The words changed in v2.5.1. `phi` and `pii` became `identifiers` for the
+pattern tier and `clinical` for model screening of clinical text; `sci`
+became `scientific`. The old words are **refused rather than
+translated**, with a message naming the replacement — translating them
+would keep them alive in configurations indefinitely, still promising
+what they always over-promised.
 
 It is the credential net pointed the other way — that one judges a write
 going in and refuses an introduced secret; this judges a payload coming
@@ -249,7 +256,12 @@ never what it found.
 **Two tiers.** The first is structural and runs in process with no model
 and no new dependency: a social security number, a card that passes
 Luhn, a phone number, an email address, and — under their own labels — a
-medical record number and a date of birth.
+medical record number and a date of birth. **That list is the whole of
+`identifiers`, and the whole of what the screen catches out of the
+box.** Names, addresses, conditions and free text are the model tier, or
+nothing. The one honest sentence: out of the box the screen catches
+structured identifiers; everything else is caught only by a model you
+install, and the manifest plus `roots` name exactly which model that is.
 
 The second is **`burler`**, a separate program, and the separation is
 the interesting part. BERT inference needs ONNX Runtime, which ships
@@ -261,12 +273,15 @@ change**. Neither project references the other in either direction: the
 wire is the whole contract, and a protocol test on each side asserts it
 independently.
 
-**No model weights ship, ever.** Four quantised models run about 400 MB
-against a `fettle` download measured in single-digit MB. A person
-downloads what they want and names the directory. **Until that name
-exists the first tier is the whole screen** and a clean payload is
-served; once it exists, a screened category with no model refuses,
-because somebody has now said they expect it to be there. Everything
+**No model weights ship, ever.** Quantised, they run to hundreds of MB
+against a `fettle` download measured in single-digit MB. Three
+categories can take one; `identifiers` never does. A person downloads
+what they want and names the directory. **Until that name exists the
+first tier is the whole screen** and a clean payload is served; once it
+exists, a screened category with no model refuses, because somebody has
+now said they expect it to be there. `fettle roots` reports which state
+each category is in, naming the checkpoint and revision from the
+manifest where a model is installed. Everything
 else that can go wrong — a sidecar that will not start, a malformed
 answer, an inference that outran its clock — refuses too. There is no
 path through it that serves unscreened content.

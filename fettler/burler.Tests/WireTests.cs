@@ -15,13 +15,15 @@ namespace Burler.Tests;
 /// </summary>
 public sealed class WireTests
 {
-    /// <summary>The four category words, spelled out here as well as in
-    /// the protocol, so changing the set means changing a test on purpose
-    /// rather than watching one stop failing.</summary>
-    static readonly string[] Expected = ["phi", "pii", "legal", "sci"];
+    /// <summary>The model-backed category words, spelled out here as
+    /// well as in the protocol, so changing the set means changing a
+    /// test on purpose rather than watching one stop failing.
+    /// 'identifiers' is deliberately not here: that tier runs inside
+    /// Fettler and never crosses the pipe.</summary>
+    static readonly string[] Expected = ["clinical", "legal", "scientific"];
 
     [Fact]
-    public void TheCategoriesAreTheFourAndOnlyThose() =>
+    public void TheCategoriesAreTheModelTiersAndOnlyThose() =>
         Assert.Equal(Expected, Protocol.Categories);
 
     // ---- requests ----
@@ -30,12 +32,12 @@ public sealed class WireTests
     public void AnOrdinaryRequestIsRead()
     {
         Request? request = Protocol.Parse(
-            """{"op":"screen","categories":["phi","sci"],"payload":"a note"}""", out string error);
+            """{"op":"screen","categories":["clinical","scientific"],"payload":"a note"}""", out string error);
 
         Assert.NotNull(request);
         Assert.Equal("", error);
         Assert.Equal("screen", request.Op);
-        Assert.Equal(["phi", "sci"], request.Categories);
+        Assert.Equal(["clinical", "scientific"], request.Categories);
         Assert.Equal("a note", request.Payload);
     }
 
@@ -52,7 +54,7 @@ public sealed class WireTests
     {
         const string payload = "line one\nline two\r\nname: Renée — seen 3/4/1980\n";
 
-        string request = $$"""{"op":"screen","categories":["phi"],"payload":{{JsonSerializer.Serialize(payload)}}}""";
+        string request = $$"""{"op":"screen","categories":["clinical"],"payload":{{JsonSerializer.Serialize(payload)}}}""";
 
         Assert.DoesNotContain('\n', request);
 
@@ -94,14 +96,14 @@ public sealed class WireTests
     [Fact]
     public void FindingsCarryACategoryACountAndSpans()
     {
-        string answer = Protocol.Found([new Finding("phi", [(3, 9), (20, 28)])]);
+        string answer = Protocol.Found([new Finding("clinical", [(3, 9), (20, 28)])]);
 
         using JsonDocument doc = JsonDocument.Parse(answer);
 
         Assert.True(doc.RootElement.GetProperty("ok").GetBoolean());
 
         JsonElement one = doc.RootElement.GetProperty("findings")[0];
-        Assert.Equal("phi", one.GetProperty("category").GetString());
+        Assert.Equal("clinical", one.GetProperty("category").GetString());
         Assert.Equal(2, one.GetProperty("count").GetInt32());
         Assert.Equal(3, one.GetProperty("spans")[0][0].GetInt32());
         Assert.Equal(28, one.GetProperty("spans")[1][1].GetInt32());
@@ -124,10 +126,10 @@ public sealed class WireTests
     [Fact]
     public void ARefusalSaysWhy()
     {
-        using JsonDocument doc = JsonDocument.Parse(Protocol.Failed("no model for phi"));
+        using JsonDocument doc = JsonDocument.Parse(Protocol.Failed("no model for clinical"));
 
         Assert.False(doc.RootElement.GetProperty("ok").GetBoolean());
-        Assert.Equal("no model for phi", doc.RootElement.GetProperty("error").GetString());
+        Assert.Equal("no model for clinical", doc.RootElement.GetProperty("error").GetString());
     }
 
     /// <summary>Every answer is one line, for the same reason every
@@ -135,11 +137,11 @@ public sealed class WireTests
     [Fact]
     public void EveryAnswerIsOneLine()
     {
-        Assert.DoesNotContain('\n', Protocol.Found([new Finding("phi", [(0, 1)])]));
+        Assert.DoesNotContain('\n', Protocol.Found([new Finding("clinical", [(0, 1)])]));
         Assert.DoesNotContain('\n', Protocol.Failed("something\nwith a newline in it"));
     }
 
     [Fact]
     public void ACountIsHowManySpansThereAre() =>
-        Assert.Equal(3, new Finding("pii", [(0, 1), (2, 3), (4, 5)]).Count);
+        Assert.Equal(3, new Finding("legal", [(0, 1), (2, 3), (4, 5)]).Count);
 }

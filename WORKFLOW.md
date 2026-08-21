@@ -10,11 +10,11 @@ to find out what to type next.
 
 | | | |
 |---|---|---|
-| 1 | **Branch** | `scripts/shoddy-feature.ps1 new NAME` — or a hand-cut `bug/NAME NN` for a fix |
+| 1 | **Branch** | `scripts/shoddy-branch.ps1 feature NAME` — or `scripts/shoddy-branch.ps1 bug NAMENN` for a fix |
 | 2 | **Work** | edit, `./build.ps1 run FILE.shoddy`, repeat |
 | 3 | **Prove** | `scripts/shoddy.ps1 preflight` then `gate --resume` |
 | 4 | **Notes** | `release-notes/vX.Y.Z.md`, on the branch, before shipping |
-| 5 | **Merge** | `scripts/shoddy-feature.ps1 ship` |
+| 5 | **Merge** | `scripts/shoddy-branch.ps1 ship` |
 | 6 | **Release** | `scripts/shoddy.ps1 release X.Y.Z` |
 | 7 | **Watch** | Actions → Release |
 
@@ -27,7 +27,7 @@ Names come from the curated list in `shoddy-planning/list-of-branch-names.md`
 used. Take the next unstruck one and strike it in the same edit.
 
 ```powershell
-scripts/shoddy-feature.ps1 new denholme        # -> feature/denholme
+scripts/shoddy-branch.ps1 feature denholme     # -> feature/denholme
 ```
 
 It fetches, refuses a name already taken locally or on origin, cuts from an
@@ -43,17 +43,15 @@ curated list. It is `bug/<origin-feature>NN`, numbered per origin feature:
 `bug/cleckheaton03` is the third fix to work that shipped from
 `feature/cleckheaton`.
 
-**Cut it by hand.** `shoddy-feature.ps1 new` always builds `feature/$NAME`,
-so `new bug/cleckheaton06` would quietly give you `feature/bug/cleckheaton06`.
+**The script cuts it.** `bug` refuses a name with no two-digit suffix, so
+`bug cleckheaton` stops where `bug cleckheaton06` is meant.
 
 ```powershell
-git log --oneline main --grep="Merge branch 'bug/"   # which numbers are taken
-git checkout main
-git pull --ff-only origin main
-git checkout -b bug/cleckheaton06
+git --no-pager log --oneline main --grep="Merge branch 'bug/"   # which numbers are taken
+scripts/shoddy-branch.ps1 bug cleckheaton06
 ```
 
-From there it is identical: work, prove, `ship`. `shoddy-feature.ps1 ship`
+From there it is identical: work, prove, `ship`. `shoddy-branch.ps1 ship`
 runs from `feature/*` **and** `bug/*` and merges both the same way.
 
 ### Fixes accumulate; a patch release bundles them
@@ -181,7 +179,7 @@ builtins, language surface changes, breaking changes first and unmissable.
 ## 5 — Merge
 
 ```powershell
-scripts/shoddy-feature.ps1 ship          # add -Yes from a non-interactive shell
+scripts/shoddy-branch.ps1 ship           # add -Yes from a non-interactive shell
 ```
 
 Pushes the branch, merges it `--no-ff` into `main`, pushes `main`, and

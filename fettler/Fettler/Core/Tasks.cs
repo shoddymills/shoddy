@@ -161,7 +161,7 @@ public static class Tasks
     /// <para><b>An unresolved name is refused, never passed through.</b>
     /// Of the three things this could do - fill, refuse, pass through -
     /// passing through is the only one that SUCCEEDS at the wrong thing:
-    /// <c>shoddy-feature.ps1 new {feature-branch}</c> does not fail, it
+    /// <c>shoddy-branch.ps1 feature {feature-branch}</c> does not fail, it
     /// creates a branch called <c>{feature-branch}</c>.</para>
     /// </summary>
     public static Result<IReadOnlyList<string>> Fill(

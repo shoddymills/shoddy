@@ -2,14 +2,17 @@
 # MAINTAINER TOOL - pushes to origin/main and deletes remote branches. Assumes write access.
 # Run from the repo root.
 #
-# scripts/shoddy-feature.ps1 new NAME     create feature/NAME off up-to-date main and switch to it
-# scripts/shoddy-feature.ps1 ship [-Yes]  push the current feature/bug branch, merge --no-ff into
-#                                         main, push main, then delete the branch (local + origin)
+# scripts/shoddy-branch.ps1 feature NAME   create feature/NAME off up-to-date main and switch to it
+# scripts/shoddy-branch.ps1 bug NAMENN     create bug/NAMENN off up-to-date main and switch to it
+# scripts/shoddy-branch.ps1 ship [-Yes]    push the current feature/bug branch, merge --no-ff into
+#                                          main, push main, then delete the branch (local + origin)
 #
-# Guards: clean tree required; 'new' refuses names already taken (local or origin);
-# 'ship' only runs from a feature/* or bug/* branch, refuses when there is nothing to merge,
-# and on merge conflict aborts cleanly and puts you back on your branch.
-# A leading 'feature/' on NAME is stripped, so both spellings work.
+# Guards: clean tree required; 'feature' and 'bug' refuse names already taken (local or origin);
+# a bug name must end in two digits, numbered per origin feature (bug/pudsey01 is the first fix
+# to work that shipped from feature/pudsey); 'ship' only runs from a feature/* or bug/* branch,
+# refuses when there is nothing to merge, and on merge conflict aborts cleanly and puts you back
+# on your branch.
+# A leading 'feature/' or 'bug/' on NAME is stripped, so both spellings work.
 [CmdletBinding()]
 param(
     [Parameter(Position = 0)][string]$Command,
@@ -24,7 +27,7 @@ function G {
     # Hardening, not a fix for anything this script does wrong on its own.
     # git says perfectly ordinary things on stderr - "Already on 'main'",
     # "Switched to branch", the push summary. Run plainly that is harmless,
-    # but the moment a CALLER redirects (.\shoddy-feature.ps1 ship 2>&1 | tee
+    # but the moment a CALLER redirects (.\shoddy-branch.ps1 ship 2>&1 | tee
     # log.txt, or a CI step that captures both streams) Windows PowerShell
     # wraps each stderr line in a NativeCommandError, and with
     # $ErrorActionPreference = 'Stop' that terminates the run halfway
@@ -48,6 +51,23 @@ function Gq {
     try { git @args } finally { $ErrorActionPreference = $prev }
 }
 
+# The one cut, shared by 'feature' and 'bug': refuse a taken name, then
+# branch off an up-to-date main. The prefix is the only thing the two
+# verbs disagree about.
+function Cut([string]$Branch) {
+    G fetch origin --prune
+    Gq show-ref --verify --quiet "refs/heads/$Branch"
+    if ($LASTEXITCODE -eq 0) { Fail "$Branch already exists locally." }
+    Gq show-ref --verify --quiet "refs/remotes/origin/$Branch"
+    if ($LASTEXITCODE -eq 0) { Fail "$Branch already exists on origin." }
+    G checkout main
+    G pull --ff-only origin main
+    G checkout -b $Branch
+    Write-Host ""
+    Write-Host "On $Branch (cut from up-to-date main)." -ForegroundColor Green
+    Write-Host "Work, commit, then: scripts/shoddy-branch.ps1 ship"
+}
+
 Gq rev-parse --is-inside-work-tree > $null
 if ($LASTEXITCODE -ne 0) { Fail "not inside a git repository." }
 Gq diff --quiet
@@ -59,31 +79,35 @@ if ($LASTEXITCODE -eq 0) { Fail "a merge is in progress - finish or abort it fir
 
 switch ($Command) {
 
-    'new' {
-        if (-not $Name) { Fail "usage: scripts/shoddy-feature.ps1 new NAME" }
+    'feature' {
+        if (-not $Name) { Fail "usage: scripts/shoddy-branch.ps1 feature NAME" }
         $Name = $Name -replace '^feature/', ''
         if ($Name -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]*$') {
             Fail "branch name may use letters, digits, . _ - only (got '$Name')."
         }
-        $Branch = "feature/$Name"
-        G fetch origin --prune
-        Gq show-ref --verify --quiet "refs/heads/$Branch"
-        if ($LASTEXITCODE -eq 0) { Fail "$Branch already exists locally." }
-        Gq show-ref --verify --quiet "refs/remotes/origin/$Branch"
-        if ($LASTEXITCODE -eq 0) { Fail "$Branch already exists on origin." }
-        G checkout main
-        G pull --ff-only origin main
-        G checkout -b $Branch
-        Write-Host ""
-        Write-Host "On $Branch (cut from up-to-date main)." -ForegroundColor Green
-        Write-Host "Work, commit, then: scripts/shoddy-feature.ps1 ship"
+        Cut "feature/$Name"
+    }
+
+    'bug' {
+        if (-not $Name) { Fail "usage: scripts/shoddy-branch.ps1 bug NAMENN   (bug/<origin-feature>NN, e.g. bug pudsey01)" }
+        $Name = $Name -replace '^bug/', ''
+        if ($Name -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]*$') {
+            Fail "branch name may use letters, digits, . _ - only (got '$Name')."
+        }
+        # Numbered per origin feature, and the number is not optional: the
+        # name says which shipped feature the fix belongs to and which fix
+        # it is, so bug/pudsey refuses where bug/pudsey01 is meant.
+        if ($Name -notmatch '\d\d$') {
+            Fail "a bug branch is bug/<origin-feature>NN, numbered per origin feature (got '$Name'). Taken numbers: git --no-pager log --oneline main --grep=`"Merge branch 'bug/`""
+        }
+        Cut "bug/$Name"
     }
 
     'ship' {
         $Branch = Gq rev-parse --abbrev-ref HEAD
-        # bug/* ships the same way: a fix branch cut off main by hand
-        # (bug/<origin-feature>NN) merges and deletes exactly as a
-        # feature does. Everything else still refuses.
+        # bug/* ships the same way: a fix branch (bug/<origin-feature>NN)
+        # merges and deletes exactly as a feature does. Everything else
+        # still refuses.
         if ($Branch -notlike 'feature/*' -and $Branch -notlike 'bug/*') {
             Fail "current branch is '$Branch' - ship only runs from a feature/* or bug/* branch."
         }
@@ -119,8 +143,9 @@ switch ($Command) {
     }
 
     default {
-        Write-Host "usage: scripts/shoddy-feature.ps1 new NAME   create feature/NAME off up-to-date main"
-        Write-Host "       scripts/shoddy-feature.ps1 ship [-Yes] push current feature/bug branch, merge --no-ff into main, delete it"
+        Write-Host "usage: scripts/shoddy-branch.ps1 feature NAME   create feature/NAME off up-to-date main"
+        Write-Host "       scripts/shoddy-branch.ps1 bug NAMENN     create bug/NAMENN off up-to-date main"
+        Write-Host "       scripts/shoddy-branch.ps1 ship [-Yes]    push current feature/bug branch, merge --no-ff into main, delete it"
         exit 2
     }
 }

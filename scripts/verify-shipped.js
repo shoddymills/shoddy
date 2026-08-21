@@ -162,20 +162,27 @@ if (lane === "fettle") {
         // prove, and the one failure a build cannot show. A publish that
         // left the natives behind does not get as far as complaining
         // about the file's contents; it fails to load the library.
+        //
+        // The category has to be one burler ACTUALLY knows - Protocol.cs
+        // holds that list. A word it does not know is refused before any
+        // model is opened, and that refusal arrives here as "the ONNX
+        // runtime did not load", sending the reader to the packaging when
+        // the fixture is what is wrong. Not hypothetical: this lane kept
+        // 'phi' after 2.5.1 renamed the categories, and failed that way.
         const models = scratch("burler-models");
-        const phi = path.join(models, "phi");
-        fs.mkdirSync(phi);
-        fs.writeFileSync(path.join(phi, "model.onnx"), "this is not a model\n");
-        fs.writeFileSync(path.join(phi, "vocab.txt"), "[PAD]\n[UNK]\n[CLS]\n[SEP]\nthe\n");
-        fs.writeFileSync(path.join(phi, "labels.json"), '["O","B-PER"]');
-        fs.writeFileSync(path.join(phi, "manifest.json"), JSON.stringify({
+        const clinical = path.join(models, "clinical");
+        fs.mkdirSync(clinical);
+        fs.writeFileSync(path.join(clinical, "model.onnx"), "this is not a model\n");
+        fs.writeFileSync(path.join(clinical, "vocab.txt"), "[PAD]\n[UNK]\n[CLS]\n[SEP]\nthe\n");
+        fs.writeFileSync(path.join(clinical, "labels.json"), '["O","B-PER"]');
+        fs.writeFileSync(path.join(clinical, "manifest.json"), JSON.stringify({
             checkpoint: "synthetic/not-a-real-checkpoint",
             revision: "0",
             licence: "none - this is a fixture",
             provenance: "scripts/verify-shipped.js",
         }));
 
-        const asked = '{"op":"screen","categories":["phi"],"payload":"nothing in here"}\n';
+        const asked = '{"op":"screen","categories":["clinical"],"payload":"nothing in here"}\n';
         const r = drive(exe, ["--models", models], { input: asked });
         const answer = r.out.trim().split(/\r?\n/)[0] ?? "";
 

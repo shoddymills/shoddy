@@ -134,8 +134,8 @@ $pkg = (Get-Content vscode-shoddy/package.json -Raw | ConvertFrom-Json).version
 if ($pkg -ne $Version) { Fail "package.json version is '$pkg', expected '$Version'." }
 
 # The compiled binaries carry their version from Directory.Build.props, not
-# from package.json, so it is bumped here too. Without this the mill, sparky
-# and fettle would keep reporting the PREVIOUS release while their archives
+# from package.json, so it is bumped here too. Without this the mill and
+# sparky would keep reporting the PREVIOUS release while their archives
 # were named for this one - which is the state that made a hardcoded 1.0.0
 # survive unnoticed through 2.2.0.
 $props = Get-Content Directory.Build.props -Raw

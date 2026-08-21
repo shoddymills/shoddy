@@ -9,10 +9,10 @@
 // "native stderr fatal in every PowerShell script" - a fault that had sat
 // there through several releases for exactly this reason.
 //
-// What was here before was a grep in .github/workflows/fettler.yml:
+// What was here before was a grep in one lane's workflow:
 //
 //     for verb in build test release publish; do
-//       grep -q "$verb" fettler/build.ps1 || exit 1
+//       grep -q "$verb" build.ps1 || exit 1
 //
 // That passes on the word appearing ANYWHERE, a comment included. It covered
 // one lane out of six, and it could not have caught either of the two real

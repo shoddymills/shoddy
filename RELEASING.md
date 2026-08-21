@@ -67,10 +67,10 @@ a step that fails prints its last 25 lines and a sentence saying what to do
 next. Nothing is judged on anything but its exit code, so a native program
 writing to stderr can never fail a run that succeeded.
 
-**The gate covers all four lanes.** Core, fettler, the MCP host and the MAUI
-host, plus the harness's own self-test and both shipped archives, driven from
-outside the repository. It did not always: three of the four test projects
-were proved only by a path-filtered workflow, so a change outside their paths
+**The gate covers all three lanes.** Core, the MCP host and the MAUI host,
+plus the harness's own self-test and the shipped archive, driven from
+outside the repository. It did not always: the host test projects
+were proved only by path-filtered workflows, so a change outside their paths
 — `Directory.Build.props`, which sets the version every one of these binaries
 reports, matched none of them — ran no suite at all. The workflows remain as
 the backstop; the gate is no longer a claim about one quarter of the repo.
@@ -346,22 +346,17 @@ For a local, untagged build the same step is `./build.ps1 install` (or the
 `.sh` twin): it installs the `.vsix` for whatever version `package.json`
 names, and refuses if that exact package hasn't been built yet.
 
-### The two binaries attached beside it
+### The binary attached beside it
 
-The release also carries **sparky** and **fettle**, one self-contained
-executable per OS. Smoke-test whichever you changed:
-
-```sh
-tar -xzf fettle-X.Y.Z-linux-x64.tar.gz
-./fettle --version
-./fettle --root repo=/some/checkout roots     # the boundary it will enforce
-```
+The release also carries **sparky**, one self-contained executable per
+OS. Smoke-test it the way the gate does — unpack the archive for your
+platform and drive it over stdio; `scripts/verify-shipped.js sparky` is
+exactly that drive, against the locally published archive.
 
 **Check the unix archives came from the Linux runner.** The execute bit
 only survives a tar made on a filesystem that has one, so an archive cut
-on Windows carries a `fettle` that will not run. `release.yml` asserts
-this on every release, and the check is there because Fettler's own R6.9
-is the clause about that bit — shipping it wrong would be a poor joke.
+on Windows carries a binary that will not run; `release.yml` cuts the
+archives on the Linux runner for exactly this reason.
 
 ## 5 — Website
 

@@ -105,8 +105,8 @@ node -e 'process.exit(require("./vscode-shoddy/package.json").version === proces
     || fail "package.json version is not $VER."
 
 # The compiled binaries carry their version from Directory.Build.props, not
-# from package.json, so it is bumped here too. Without this the mill, sparky
-# and fettle would keep reporting the PREVIOUS release while their archives
+# from package.json, so it is bumped here too. Without this the mill and
+# sparky would keep reporting the PREVIOUS release while their archives
 # were named for this one - which is the state that let a hardcoded 1.0.0
 # survive unnoticed all the way through 2.2.0.
 grep -qE '<Version>[0-9]+\.[0-9]+\.[0-9]+</Version>' Directory.Build.props \

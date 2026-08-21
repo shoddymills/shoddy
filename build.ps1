@@ -136,9 +136,9 @@ function Invoke-Stage {
     # Windows PowerShell 5.1 passed the bare form through and PowerShell 7
     # does not, so this sat unnoticed until the gate's steps moved to pwsh,
     # and then took the v2.4.0 release down at its first package step.
-    # Quoting is correct in both shells. The sibling publishes in
-    # fettler/build.ps1 and hosts/mcp/build.ps1 already quote theirs, which
-    # is exactly why those two went on working.
+    # Quoting is correct in both shells. The sibling publish in
+    # hosts/mcp/build.ps1 already quotes theirs, which is exactly why it
+    # went on working.
     Native dotnet publish src/Shoddy.Mill -c Release -o $StageMill `
         '-p:SatelliteResourceLanguages=en' '-p:DebugType=none'
     New-Item -ItemType Directory -Path (Join-Path $StageLib 'bin') -Force | Out-Null

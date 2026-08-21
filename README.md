@@ -107,7 +107,7 @@ a tuning console that goes to eleven.*
   <tr>
     <td width="55%" valign="middle">
       <b>And a third, for the tree itself.</b>
-      <a href="https://shoddymills.github.io/shoddy/fettler.html">Fettler</a>
+      <a href="https://shoddymills.github.io/shoddy-fettler/">Fettler</a>
       is the file, search and edit tools an assistant actually needs — find,
       search, read, write, edit, replace, move, copy, delete and run a declared
       task, as one program with an MCP front end and a command line.
@@ -116,10 +116,6 @@ a tuning console that goes to eleven.*
       getting in your way: your shell, file explorer, IDE and git are untouched.
       <code>fettle doctor</code> says what is wired up and what still goes
       round it.
-    </td>
-    <td width="45%" align="center" valign="middle">
-      <a href="https://shoddymills.github.io/shoddy/fettler.html"><img src="docs/media/fettler.svg" alt="A terminal showing two declared trees with their permissions, and a path from outside the boundary refused" width="100%"></a><br>
-      <b>fettle, for your files</b><br><sub>bounded file tools · no shell in between</sub>
     </td>
   </tr>
 </table>
@@ -470,9 +466,10 @@ it. [The sparky page](https://shoddymills.github.io/shoddy/mills/sparky.html)
 carries the registration shapes for Claude Desktop, Claude Code and VS Code,
 and the grounding prompt the server also serves itself.
 
-**The third download is `fettle`** — [Fettler](https://shoddymills.github.io/shoddy/fettler.html),
-the file, search and edit tools an assistant actually needs, and the one
-that changes how it touches your tree rather than what it knows. Find,
+**The third is `fettle`** — [Fettler](https://shoddymills.github.io/shoddy-fettler/),
+now grown into its own repository and released from there: the file,
+search and edit tools an assistant actually needs, and the one that
+changes how it touches your tree rather than what it knows. Find,
 search, read, write, edit, replace, move, copy, delete and run a declared
 task, as one program with an MCP front end and a command line, **bounded
 to trees you declare with no shell anywhere between it and the file**.
@@ -598,15 +595,6 @@ Adventure port ([mills/mungo-caverns/](mills/mungo-caverns/)) derives from
 Crowther & Woods via Eric Raymond's Open Adventure and is **BSD-2-Clause**; see
 its [LICENSE](mills/mungo-caverns/LICENSE) and
 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
-
-**`fettle` is the one exception to what ships where.** Fettler bundles
-**PdfPig** (Apache-2.0) so that it can read PDFs; nothing else here does.
-The mill, the machines, the VS Code extension and sparky have no PDF
-component and no dependency on one, direct or transitive. `fettle` is also
-distributed separately — its own archive per operating system, beside the
-`.vsix` and sparky rather than inside either — and each archive carries
-copies of [NOTICE](NOTICE) and [LICENSE](LICENSE), because an obligation
-that stays in the repository has not reached whoever downloaded a release.
 
 Contributions are welcome under the MIT License; see
 [CONTRIBUTING.md](CONTRIBUTING.md) and the [Code of Conduct](CODE_OF_CONDUCT.md).

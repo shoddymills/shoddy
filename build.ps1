@@ -278,7 +278,7 @@ function Invoke-MillSuites {
             exit 1
         }
         # In-process, as before: each mill's build.ps1 protects its own
-        # native calls through the Native helper in mill-common.ps1, so it
+        # native calls through the Native helper in shoddy-mill-common.ps1, so it
         # behaves the same run from here or run on its own.
         Write-Host "==> mills/$($m.Name)/build.ps1 test"
         & $script test

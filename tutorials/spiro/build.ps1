@@ -14,7 +14,7 @@
 # when this folder sits inside a checkout, then whatever `mill` is on the
 # PATH - the VS Code extension carries one. Copy this file beside your own
 # program and it keeps working wherever the folder lives. That is why this
-# one does NOT source scripts/mill-common.ps1 the way a mill's build.ps1
+# one does NOT source scripts/shoddy-mill-common.ps1 the way a mill's build.ps1
 # does: mill-common assumes the repository layout, and a tutorial meant to
 # be copied out of the tree cannot.
 #

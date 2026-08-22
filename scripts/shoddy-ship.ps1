@@ -1,8 +1,8 @@
 #!/usr/bin/env pwsh
 # Cut a release: tag main and push the tag. CI does the rest.
 #
-#   ./scripts/ship.ps1 X.Y.Z         tag vX.Y.Z on main and push it
-#   ./scripts/ship.ps1 X.Y.Z -Yes    the same, without the confirmation prompt
+#   ./scripts/shoddy-ship.ps1 X.Y.Z         tag vX.Y.Z on main and push it
+#   ./scripts/shoddy-ship.ps1 X.Y.Z -Yes    the same, without the confirmation prompt
 #
 # THIS SCRIPT DOES EXACTLY TWO MUTATING THINGS: it creates a tag and it
 # pushes that tag. Everything else it does is refuse. There is no version
@@ -140,7 +140,7 @@ if ($gh) {
 # ---- 8. say what is about to happen, then ask ----
 # The display suites cannot run in CI (they open a real window), so the one
 # thing worth remembering here is said here: if anything windowed changed
-# since the last release, run scripts/display.ps1 before answering yes.
+# since the last release, run scripts/shoddy-display.ps1 before answering yes.
 $previous = (RunGit @('describe', '--tags', '--abbrev=0')).Text
 Write-Host ''
 Write-Host "  tag        $tag" -ForegroundColor White
@@ -148,7 +148,7 @@ Write-Host "  commit     $($commit.Substring(0,8))  $((RunGit @('log','-1','--fo
 Write-Host "  notes      $notes"
 if ($previous) { Write-Host "  since      $previous" }
 Write-Host "  publishes  the .vsix and one sparky archive per OS"
-Write-Host "  displays   scripts/display.ps1 does not run in CI - run it if windowed code changed"
+Write-Host "  displays   scripts/shoddy-display.ps1 does not run in CI - run it if windowed code changed"
 Write-Host ''
 Write-Host "  Pushing the tag is the moment it ships, and a tag is never moved." -ForegroundColor Yellow
 Write-Host ''

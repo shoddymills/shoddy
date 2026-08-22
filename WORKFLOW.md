@@ -11,15 +11,20 @@ scripts stop either side of it.
 This page is the sequence. The reference behind each step — and the reasoning
 that made it this short — is [RELEASING.md](RELEASING.md).
 
+**Lost part-way through it?** `./scripts/shoddy-status.ps1 X.Y.Z` reports where the
+work actually is — branch, commits, pushed, pull request, CI's verdict, notes,
+tag — and names the one command that comes next. It is the only script here
+that reports rather than acts, so it is always safe to run.
+
 | | | |
 |---|---|---|
-| 1 | **Branch** | `./scripts/branch.ps1 feature NAME` — or `bug NAMENN` for a fix |
-| 2 | **Work** | edit, `./build.ps1 run FILE.shoddy`, `./scripts/commit.ps1 -Message "..."` |
+| 1 | **Branch** | `./scripts/shoddy-branch.ps1 feature NAME` — or `bug NAMENN` for a fix |
+| 2 | **Work** | edit, `./build.ps1 run FILE.shoddy`, `./scripts/shoddy-commit.ps1 -Message "..."` |
 | 3 | **Prove** | `./build.ps1 test` then `./build.ps1 check` |
 | 4 | **Notes** | `release-notes/vX.Y.Z.md`, on the branch, committed |
-| 5 | **Review** | `./scripts/pr.ps1` — **then a person merges it on GitHub** |
-| 6 | **Land** | `./scripts/branch.ps1 land` |
-| 7 | **Ship** | `./scripts/ship.ps1 X.Y.Z` |
+| 5 | **Review** | `./scripts/shoddy-pr.ps1` — **then a person merges it on GitHub** |
+| 6 | **Land** | `./scripts/shoddy-branch.ps1 land` |
+| 7 | **Ship** | `./scripts/shoddy-ship.ps1 X.Y.Z` |
 | 8 | **Watch** | Actions → Release |
 
 ---
@@ -32,7 +37,7 @@ towns, one per branch, struck through once used. Take the next unstruck one
 and strike it in the same edit.
 
 ```powershell
-./scripts/branch.ps1 feature denholme     # -> feature/denholme
+./scripts/shoddy-branch.ps1 feature denholme     # -> feature/denholme
 ```
 
 It fetches, refuses a name already taken locally or on origin, cuts from an
@@ -40,7 +45,7 @@ up-to-date `main`, and switches you to it. A leading `feature/` is stripped,
 so both spellings work.
 
 **No work happens on `main`.** It receives merges and nothing else — and
-`scripts/commit.ps1` refuses there rather than trusting anyone to remember.
+`scripts/shoddy-commit.ps1` refuses there rather than trusting anyone to remember.
 
 ### Fixing something already released
 
@@ -51,7 +56,7 @@ curated list. It is `bug/<origin-feature>NN`, numbered per origin feature:
 
 ```powershell
 git --no-pager log --oneline main --grep="Merge"   # which numbers are taken
-./scripts/branch.ps1 bug cleckheaton06
+./scripts/shoddy-branch.ps1 bug cleckheaton06
 ```
 
 From there it is identical: work, prove, `pr`, merge, `land`.
@@ -74,10 +79,10 @@ Nothing here is ceremonial — it is just the fast loop.
                                                # invented word in a second
 mills/halifax/build.ps1 test                   # one mill's own suite
 ./bin/mill.exe run tst/alg.shoddy              # one machine's suite
-./scripts/commit.ps1 -Message "what changed"   # stage everything and commit
+./scripts/shoddy-commit.ps1 -Message "what changed"   # stage everything and commit
 ```
 
-`scripts/commit.ps1` **pushes nothing.** Committing and publishing are
+`scripts/shoddy-commit.ps1` **pushes nothing.** Committing and publishing are
 separate decisions and it only makes the first. It also refuses on an empty
 message, on a clean tree, and mid-merge — and it adds any new `.sh` with
 `--chmod=+x`, because `verify-permissions` walks *tracked* files and cannot
@@ -93,7 +98,7 @@ full of `Assert(cond, "MESSAGE")`; a run that reaches the end passed.
 If `main` moves while you work:
 
 ```powershell
-./scripts/branch.ps1 sync     # merge main into your branch, deliberately, tree clean
+./scripts/shoddy-branch.ps1 sync     # merge main into your branch, deliberately, tree clean
 ```
 
 ## 3 — Prove
@@ -112,7 +117,7 @@ so the pull request carries the full verdict either way.
 **Three suites CI cannot run, and one command for them:**
 
 ```powershell
-scripts/display.ps1          # seedscribbler, seedturtle, seedplotter
+scripts/shoddy-display.ps1          # seedscribbler, seedturtle, seedplotter
 ```
 
 They open a real window; a hosted runner has no platform to open one on,
@@ -138,7 +143,7 @@ builtins, language surface changes, breaking changes first and unmissable.
 ## 5 — Review
 
 ```powershell
-./scripts/pr.ps1              # push the branch and open the pull request
+./scripts/shoddy-pr.ps1              # push the branch and open the pull request
 ```
 
 It pushes, opens (or updates) the pull request, and stops. **The merge is a
@@ -149,7 +154,7 @@ branch whose pull request is not merged, so there is no back way round it.
 ## 6 — Land
 
 ```powershell
-./scripts/branch.ps1 land     # after the merge: back to main, branch deleted
+./scripts/shoddy-branch.ps1 land     # after the merge: back to main, branch deleted
 ```
 
 Returns to an up-to-date `main` and deletes the branch locally and on
@@ -159,7 +164,7 @@ deleting anything.
 ## 7 — Ship
 
 ```powershell
-./scripts/ship.ps1 2.6.0      # tag v2.6.0 on main and push it - CI publishes
+./scripts/shoddy-ship.ps1 2.6.0      # tag v2.6.0 on main and push it - CI publishes
 ```
 
 **The tag is the version.** No file records it: `release.yml` reads the
@@ -199,9 +204,9 @@ workflow. Nothing to do.
 | A verify gate is red | `./build.ps1 check` locally; each gate prints the file and the fix |
 | CI red on the pull request | the failing job's log names the suite; run the same command locally |
 | "Test host process crashed", count well short of the total | Not a failing test — something took the process down. Two known causes, both fixed and both easy to reintroduce: a pipe deadlock from reading one child stream to the end before the other (ProcessRun.cs), and parallel tests sharing process-global state (AssemblyInfo.cs) |
-| A new `.sh` fails CI with "Permission denied", exit 126 | it was committed without its execute bit; `scripts/commit.ps1` stages new `.sh` files with `--chmod=+x`, and by hand it is `git add --chmod=+x <file>` |
+| A new `.sh` fails CI with "Permission denied", exit 126 | it was committed without its execute bit; `scripts/shoddy-commit.ps1` stages new `.sh` files with `--chmod=+x`, and by hand it is `git add --chmod=+x <file>` |
 | A release died mid-flight | the tag is already public: fix forward with a new patch version |
-| Unsure what is proven | `gh run list --commit $(git rev-parse HEAD)` |
+| Unsure what is proven, or where you are | `./scripts/shoddy-status.ps1 X.Y.Z` |
 
 ## What is where
 
@@ -211,5 +216,5 @@ workflow. Nothing to do.
 | [RELEASING.md](RELEASING.md) | the reasoning behind every release step |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | outside contributors: fork, PR, licence |
 | [CLAUDE.md](CLAUDE.md) | repo rules for an assistant working here |
-| `scripts/` | branch, commit, pr, ship, display, make-sitemap — and the verify-*.js gates |
+| `scripts/` | status, branch, commit, pr, ship, display, make-sitemap — and the verify-*.js gates |
 | `./build.ps1 help` | every build verb |

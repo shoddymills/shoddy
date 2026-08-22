@@ -1,8 +1,8 @@
 #!/usr/bin/env pwsh
 # MAINTAINER TOOL - the suites CI cannot run.
 #
-#   scripts/display.ps1           run them
-#   scripts/display.ps1 -List     name them and stop
+#   scripts/shoddy-display.ps1           run them
+#   scripts/shoddy-display.ps1 -List     name them and stop
 #
 # THREE SUITES ARE EXCLUDED FROM CI ON PURPOSE. seedscribblertest,
 # seedturtletest and seedplottertest open a real window. --no-window hides

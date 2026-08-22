@@ -2,10 +2,10 @@
 # MAINTAINER TOOL - stages everything and commits it. Writes history; pushes
 # nothing. Run from anywhere inside the repo.
 #
-#   ./scripts/commit.sh -Message "what changed"
-#   ./scripts/commit.sh -Message "..." -Force      allow it on main
+#   ./scripts/shoddy-commit.sh -Message "what changed"
+#   ./scripts/shoddy-commit.sh -Message "..." -Force      allow it on main
 #
-# The twin of commit.ps1 and equivalent to it, down to the spelling of the
+# The twin of shoddy-commit.ps1 and equivalent to it, down to the spelling of the
 # flags: -Message and -Force on both sides, deliberately. A pair that took
 # -Force in PowerShell and -f in the shell, while the docs called them
 # identical, is one of the two drifts verify-twins.js was written for.
@@ -21,7 +21,7 @@
 # -Force is the deliberate exception that has to be typed out.
 #
 # IT PUSHES NOTHING. Committing and publishing are separate decisions, and
-# this script only makes the first. `./scripts/pr.sh` is what puts the work where
+# this script only makes the first. `./scripts/shoddy-pr.sh` is what puts the work where
 # anyone else can see it.
 set -euo pipefail
 
@@ -60,7 +60,7 @@ branch=$(git rev-parse --abbrev-ref HEAD) || fail "could not read the current br
 
 if { [ "$branch" = "main" ] || [ "$branch" = "master" ]; } && [ "$force" = "0" ]; then
     fail "on $branch, which takes merges and not commits." \
-         "Cut a branch with ./scripts/branch.sh feature NAME, or pass -Force if you mean it."
+         "Cut a branch with ./scripts/shoddy-branch.sh feature NAME, or pass -Force if you mean it."
 fi
 
 git rev-parse -q --verify MERGE_HEAD >/dev/null 2>&1 \
@@ -71,23 +71,34 @@ git rev-parse -q --verify MERGE_HEAD >/dev/null 2>&1 \
 # come to believe work is saved when it is not.
 [ -n "$(git status --porcelain)" ] || fail "nothing to commit - the tree is clean."
 
-# A .sh git has never seen is staged 100644 unless it is added with the bit
-# set, and verify-permissions.js cannot cover it: that check walks TRACKED
-# files, so the window between writing a script and adding it is invisible to
-# it. v1.8.0 shipped four scripts through that window and one of them took
-# the Release workflow down with "Permission denied", exit 126
+# A script git has never seen is staged 100644 unless it is added with the
+# bit set, and verify-permissions.js cannot cover it: that check walks
+# TRACKED files, so the window between writing a script and adding it is
+# invisible to it. v1.8.0 shipped four scripts through that window and one of
+# them took the Release workflow down with "Permission denied", exit 126
 # (mills/devils-dust/build.sh).
+#
+# THE TEST IS THE SHEBANG, NOT THE EXTENSION, because the shebang is the rule
+# verify-permissions.js applies: every tracked file that opens "#!" and is
+# not already 100755. This matched '\.sh$' instead until v2.6.0, which is
+# narrower than the gate it exists to run ahead of - so six .ps1 files, each
+# opening "#!/usr/bin/env pwsh", were committed at 100644 and would have
+# failed CI's --check run. Matching the extension was matching the example in
+# the story rather than the rule in the gate.
 #
 # `git update-index --chmod=+x` is the wrong tool here - it refuses a path git
 # does not yet have, with a message about a missing --add option that reads
 # like an unrelated fault. `git add --chmod=+x` does both at once.
 while IFS= read -r f; do
-    [ -n "$f" ] && g add --chmod=+x -- "$f"
-done < <(git ls-files --others --exclude-standard | grep '\.sh$' || true)
+    [ -n "$f" ] || continue
+    [ -f "$f" ] || continue
+    [ "$(head -c 2 -- "$f" 2>/dev/null)" = '#!' ] || continue
+    g add --chmod=+x -- "$f"
+done < <(git ls-files --others --exclude-standard)
 
 g add -A
 g commit -m "$message"
 
 echo
 echo "Committed on $branch. Nothing has been pushed."
-echo "When the work is ready: ./scripts/pr.sh"
+echo "When the work is ready: ./scripts/shoddy-pr.sh"

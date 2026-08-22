@@ -2,19 +2,19 @@
 # MAINTAINER TOOL - pushes the current branch and opens a pull request.
 # Assumes write access and the GitHub CLI. Run from anywhere inside the repo.
 #
-#   ./scripts/pr.sh                     push the branch and open a pull request
-#   ./scripts/pr.sh -Draft              open it as a draft
-#   ./scripts/pr.sh -Title "..."        set the title (default: the first commit's subject)
-#   ./scripts/pr.sh -Web                open the finished pull request in a browser
+#   ./scripts/shoddy-pr.sh                     push the branch and open a pull request
+#   ./scripts/shoddy-pr.sh -Draft              open it as a draft
+#   ./scripts/shoddy-pr.sh -Title "..."        set the title (default: the first commit's subject)
+#   ./scripts/shoddy-pr.sh -Web                open the finished pull request in a browser
 #
-# The twin of pr.ps1 and equivalent to it, down to the spelling of the flags:
+# The twin of shoddy-pr.ps1 and equivalent to it, down to the spelling of the flags:
 # -Draft, -Title and -Web on both sides, deliberately.
 #
 # THIS IS WHERE THE AUTOMATION STOPS, deliberately. Everything either side of
-# the pull request is a script - ./scripts/branch.sh cuts, ./scripts/commit.sh commits,
-# ./scripts/branch.sh land tidies up, ./scripts/ship.sh tags - but the merge itself is a
+# the pull request is a script - ./scripts/shoddy-branch.sh cuts, ./scripts/shoddy-commit.sh commits,
+# ./scripts/shoddy-branch.sh land tidies up, ./scripts/shoddy-ship.sh tags - but the merge itself is a
 # person reading a diff and a green CI run and deciding. Nothing here merges,
-# and ./scripts/branch.sh land refuses on a branch whose pull request is not merged,
+# and ./scripts/shoddy-branch.sh land refuses on a branch whose pull request is not merged,
 # so there is no back way round that decision.
 #
 # It is re-runnable. If a pull request for this branch already exists it
@@ -64,13 +64,13 @@ git rev-parse -q --verify MERGE_HEAD >/dev/null 2>&1 \
 # what you meant: the reviewer sees the commits, not your working copy.
 [ -z "$(git status --porcelain)" ] || fail \
     "the working tree is dirty." \
-    "Commit with ./scripts/commit.sh - a pull request reviews commits, not your working copy."
+    "Commit with ./scripts/shoddy-commit.sh - a pull request reviews commits, not your working copy."
 
 branch=$(git rev-parse --abbrev-ref HEAD)
 case "$branch" in
     feature/*|bug/*) ;;
     *) fail "current branch is '$branch' - a pull request is opened from a feature/* or bug/* branch." \
-            "Cut one with ./scripts/branch.sh feature NAME." ;;
+            "Cut one with ./scripts/shoddy-branch.sh feature NAME." ;;
 esac
 
 g fetch origin --prune
@@ -85,7 +85,7 @@ behind=$(git rev-list --count "HEAD..origin/main")
 if [ "$behind" != "0" ]; then
     echo
     echo "NOTE: main has $behind commit(s) this branch does not have."
-    echo "      ./scripts/branch.sh sync brings them in, and is worth doing first."
+    echo "      ./scripts/shoddy-branch.sh sync brings them in, and is worth doing first."
 fi
 
 echo
@@ -145,7 +145,7 @@ echo "Pull request opened. Nothing is merged."
 echo "  $created"
 echo
 echo "Next: review it, wait for CI, and merge it on GitHub."
-echo "Then: ./scripts/branch.sh land"
+echo "Then: ./scripts/shoddy-branch.sh land"
 
 [ "$web" = "1" ] && gh pr view "$branch" --web >/dev/null
 exit 0

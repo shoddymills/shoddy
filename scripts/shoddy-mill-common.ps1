@@ -1,4 +1,4 @@
-# scripts/mill-common.ps1 - shared plumbing for every mill's build.ps1.
+# scripts/shoddy-mill-common.ps1 - shared plumbing for every mill's build.ps1.
 #
 # Dot-source this after Push-Location $PSScriptRoot, with $MillDir set to
 # $PSScriptRoot of the CALLING script. Provides:

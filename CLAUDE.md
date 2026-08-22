@@ -6,8 +6,8 @@ The user's standing git rules (no work on `main`, only the user names branches,
 never commit/push/tag without an explicit instruction in the current message)
 are not project-specific — they apply here exactly as elsewhere, with no
 exceptions carved out by anything below. Release work touching this repo is
-the highest-stakes case, not a special case: `scripts/ship.ps1` pushes a
-public release tag, and `scripts/pr.ps1` / `scripts/branch.ps1 land` push
+the highest-stakes case, not a special case: `scripts/shoddy-ship.ps1` pushes a
+public release tag, and `scripts/shoddy-pr.ps1` / `scripts/shoddy-branch.ps1 land` push
 and delete branches, so treat running any of them as requiring the same
 explicit per-message authorization as any other commit/push/tag, never as
 implied by being asked to "do the release" in general terms or by a task
@@ -57,8 +57,8 @@ workflows can change underneath a stale summary.
   (docs, errors, permissions, host-blind, suites, twins, lanes).
   **`check` is cheap and read-only — run it before proposing anything
   release-shaped rather than reasoning about whether the tree is ready.**
-- `scripts/branch.*` (`feature`, `bug`, `sync`, `land`), `scripts/commit.*`,
-  `scripts/pr.*`, `scripts/ship.*`, `scripts/display.*` — the whole
+- `scripts/shoddy-branch.*` (`feature`, `bug`, `sync`, `land`), `scripts/shoddy-commit.*`,
+  `scripts/shoddy-pr.*`, `scripts/shoddy-ship.*`, `scripts/shoddy-display.*` — the whole
   procedure as scripts. **The pull request is the one unautomated step**: a
   person merges it on GitHub, `land` tidies up afterwards, and
   `ship X.Y.Z` tags `main` and pushes the tag — the tag is the version,

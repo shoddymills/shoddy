@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # MAINTAINER TOOL - the suites CI cannot run.
 #
-#   scripts/display.sh           run them
-#   scripts/display.sh --list    name them and stop
+#   scripts/shoddy-display.sh           run them
+#   scripts/shoddy-display.sh --list    name them and stop
 #
-# The twin of display.ps1 and equivalent to it. See that file for why
+# The twin of shoddy-display.ps1 and equivalent to it. See that file for why
 # these three are excluded from CI: they open a real window, GLFW needs
 # a platform to create one on, and a hosted runner has none - not even under
 # Xvfb, which v1.10.1 shipped a gate for and which failed the same way.

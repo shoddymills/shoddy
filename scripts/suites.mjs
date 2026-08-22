@@ -80,12 +80,12 @@ export const DEDICATED = ['net-demo', 'sinq-demo', 'isamtest', 'isamdump'];
 // tst/ files deliberately run by nothing, each with the reason. A name
 // here is a decision on the record; a name in neither place fails
 // verify-suites.js. The "needs a real display" entries are what
-// scripts/display.ps1 runs - by that exact wording, so a fourth windowed
+// scripts/shoddy-display.ps1 runs - by that exact wording, so a fourth windowed
 // suite added here is picked up there automatically.
 export const TST_EXCLUSIONS = {
-    'seedscribblertest': 'needs a real display: GLFW has no platform on hosted runners; run scripts/display.ps1',
-    'seedturtletest': 'needs a real display: GLFW has no platform on hosted runners; run scripts/display.ps1',
-    'seedplottertest': 'needs a real display: GLFW has no platform on hosted runners; run scripts/display.ps1',
+    'seedscribblertest': 'needs a real display: GLFW has no platform on hosted runners; run scripts/shoddy-display.ps1',
+    'seedturtletest': 'needs a real display: GLFW has no platform on hosted runners; run scripts/shoddy-display.ps1',
+    'seedplottertest': 'needs a real display: GLFW has no platform on hosted runners; run scripts/shoddy-display.ps1',
     'buzzer-demo': 'interactive demo, not a suite',
     'html-demo': 'interactive demo, not a suite',
     'https-demo': 'interactive demo, not a suite',

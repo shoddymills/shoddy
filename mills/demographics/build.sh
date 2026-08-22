@@ -25,7 +25,7 @@
 # first; the predictor aborts (politely) without dat/people-model.bin.
 set -euo pipefail
 cd "$(dirname "$0")"
-. ../../scripts/mill-common.sh
+. ../../scripts/shoddy-mill-common.sh
 
 TRAIN_OUT=bin/demographics-train.dll
 RUN_OUT=bin/demographics.dll

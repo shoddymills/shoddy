@@ -2,8 +2,8 @@
 # MAINTAINER TOOL - stages everything and commits it. Writes history; pushes
 # nothing. Run from anywhere inside the repo.
 #
-#   ./scripts/commit.ps1 -Message "what changed"
-#   ./scripts/commit.ps1 -Message "..." -Force      allow it on main
+#   ./scripts/shoddy-commit.ps1 -Message "what changed"
+#   ./scripts/shoddy-commit.ps1 -Message "..." -Force      allow it on main
 #
 # This exists so the procedure is reachable as a script rather than as a raw
 # `git add -A; git commit -m ...` composed inside a shell and buried in a
@@ -16,7 +16,7 @@
 # -Force is the deliberate exception that has to be typed out.
 #
 # IT PUSHES NOTHING. Committing and publishing are separate decisions, and
-# this script only makes the first. `./scripts/pr.ps1` is what puts the work where
+# this script only makes the first. `./scripts/shoddy-pr.ps1` is what puts the work where
 # anyone else can see it.
 [CmdletBinding()]
 param(
@@ -62,7 +62,7 @@ $branch = "$branch".Trim()
 
 if (($branch -eq 'main' -or $branch -eq 'master') -and -not $Force) {
     Fail "on $branch, which takes merges and not commits." `
-         'Cut a branch with ./scripts/branch.ps1 feature NAME, or pass -Force if you mean it.'
+         'Cut a branch with ./scripts/shoddy-branch.ps1 feature NAME, or pass -Force if you mean it.'
 }
 
 Gq rev-parse -q --verify MERGE_HEAD > $null
@@ -74,19 +74,38 @@ if ($LASTEXITCODE -eq 0) { Fail 'a merge is in progress - finish or abort it fir
 $dirty = Gq status --porcelain
 if (-not $dirty) { Fail 'nothing to commit - the tree is clean.' }
 
-# A .sh git has never seen is staged 100644 unless it is added with the bit
-# set, and verify-permissions.js cannot cover it: that check walks TRACKED
-# files, so the window between writing a script and adding it is invisible
-# to it. v1.8.0 shipped four scripts through that window and one of them
-# took the Release workflow down with "Permission denied", exit 126
+# A script git has never seen is staged 100644 unless it is added with the
+# bit set, and verify-permissions.js cannot cover it: that check walks
+# TRACKED files, so the window between writing a script and adding it is
+# invisible to it. v1.8.0 shipped four scripts through that window and one
+# of them took the Release workflow down with "Permission denied", exit 126
 # (mills/devils-dust/build.sh).
+#
+# THE TEST IS THE SHEBANG, NOT THE EXTENSION, because the shebang is the
+# rule verify-permissions.js applies: every tracked file that opens "#!" and
+# is not already 100755. This matched '*.sh' instead until v2.6.0, which is
+# narrower than the gate it exists to run ahead of - so six .ps1 files, each
+# opening "#!/usr/bin/env pwsh", were committed at 100644 and would have
+# failed CI's --check run. Matching the extension was matching the example
+# in the story rather than the rule in the gate.
 #
 # `git update-index --chmod=+x` is the wrong tool here - it refuses a path
 # git does not yet have, with a message about a missing --add option that
 # reads like an unrelated fault. `git add --chmod=+x` does both at once.
+function Test-Shebang([string]$Path) {
+    try {
+        $stream = [System.IO.File]::OpenRead($Path)
+        try {
+            $head = New-Object byte[] 2
+            if ($stream.Read($head, 0, 2) -ne 2) { return $false }
+            return ($head[0] -eq 0x23 -and $head[1] -eq 0x21)
+        } finally { $stream.Dispose() }
+    } catch { return $false }   # unreadable is not this check's problem
+}
+
 $fresh = @(Gq ls-files --others --exclude-standard |
     ForEach-Object { $_.Trim() } |
-    Where-Object { $_ -like '*.sh' })
+    Where-Object { $_ -and (Test-Path -LiteralPath $_ -PathType Leaf) -and (Test-Shebang $_) })
 foreach ($f in $fresh) { G add --chmod=+x -- $f }
 
 G add -A
@@ -94,4 +113,4 @@ G commit -m $Message
 
 Write-Host ''
 Write-Host "Committed on $branch. Nothing has been pushed." -ForegroundColor Green
-Write-Host "When the work is ready: ./scripts/pr.ps1"
+Write-Host "When the work is ready: ./scripts/shoddy-pr.ps1"

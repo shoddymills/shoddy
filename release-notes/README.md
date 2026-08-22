@@ -10,7 +10,7 @@ repeat the version as a heading — the release is already titled with it.
 what that commit contains, so notes committed afterwards are invisible to it. The
 sequence is: run the doc gates (`./build.ps1 check` — the docs must match the sources
 before the notes describe them), write the file, commit it on your feature branch,
-merge the pull request, then ship with `scripts/ship.ps1 X.Y.Z` — which refuses to
+merge the pull request, then ship with `scripts/shoddy-ship.ps1 X.Y.Z` — which refuses to
 tag without the file, so a forgotten one is a re-run rather than a bad release.
 
 If a tag is pushed by hand without the file, the release still publishes, with a

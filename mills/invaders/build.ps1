@@ -26,7 +26,7 @@ $ErrorActionPreference = 'Stop'
 Push-Location $PSScriptRoot
 try {
     $MillDir = $PSScriptRoot
-    . (Join-Path $MillDir '../../scripts/mill-common.ps1')
+    . (Join-Path $MillDir '../../scripts/shoddy-mill-common.ps1')
 
     switch ($Command) {
         'run' {

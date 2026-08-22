@@ -11,9 +11,9 @@ How a version gets cut, in full, and why the procedure is as short as it is.
 ```powershell
 ./build.ps1 test          # the C# suite, every core and machine suite, every mill
 ./build.ps1 check         # docs, errors, permissions, host-blind, suites, twins, lanes
-scripts/display.ps1       # the three windowed suites, if windowed code changed
+scripts/shoddy-display.ps1       # the three windowed suites, if windowed code changed
 # write release-notes/vX.Y.Z.md, commit it, merge the PR with CI green
-./scripts/ship.ps1 2.6.0  # tag and push - CI publishes
+./scripts/shoddy-ship.ps1 2.6.0  # tag and push - CI publishes
 ```
 
 Every script has a `.sh` twin taking the same arguments, for Linux and macOS.
@@ -58,7 +58,7 @@ second, describing work that no longer exists.
 **What replaces it is CI's own verdict.** `ci.yml` carries no path filters
 and proves everything on every push — the checks, the core suite, the MCP
 lane, the MAUI lane on a Windows runner, and the headless container.
-`scripts/ship.ps1` asks GitHub whether the commit it is about to tag
+`scripts/shoddy-ship.ps1` asks GitHub whether the commit it is about to tag
 passed, and refuses if it did not. That is a better answer than a local
 receipt for the same reason a build artefact is better than a build log: it
 is the machine that actually does the work, reporting on the actual work.
@@ -74,13 +74,13 @@ unproven.
 
 ## There is one way to ship
 
-`scripts/ship.ps1` has no primitive underneath it that skips the checks.
+`scripts/shoddy-ship.ps1` has no primitive underneath it that skips the checks.
 The previous arrangement had two entry points that both tagged and pushed,
 one of which quietly skipped the proof, and the documentation needed a
 comparison table warning you off the wrong one. A second door into a
 release is a door somebody uses at 2am.
 
-**Pushing the tag is the moment it ships.** `scripts/ship.ps1` prints what
+**Pushing the tag is the moment it ships.** `scripts/shoddy-ship.ps1` prints what
 is about to happen and asks before doing it. Add `-Yes` from a
 non-interactive shell — spelled the same way in both twins, deliberately,
 because a pair that took `-Yes` in PowerShell and `-y` in the shell while
@@ -123,7 +123,7 @@ than incidental.
 
 ## The suites CI cannot run
 
-`scripts/display.ps1` runs seedscribblertest, seedturtletest and
+`scripts/shoddy-display.ps1` runs seedscribblertest, seedturtletest and
 seedplottertest — the three suites that open a real window. A hosted runner
 has no platform for GLFW to open one on, not even under Xvfb (v1.10.1
 shipped a gate for it and it failed the same way). The list lives in
@@ -150,7 +150,7 @@ fixes nothing and fails instead: a runner's index is thrown away at the end
 of the job, so a fixing run there would repair the bit, print a cheerful
 line, exit 0, and let the fault sail through. **A gate that repairs the
 evidence is not a gate.** The window between writing a `.sh` and adding it
-is covered separately: `scripts/commit.ps1` stages any new `.sh` with
+is covered separately: `scripts/shoddy-commit.ps1` stages any new `.sh` with
 `--chmod=+x`, because a check that walks tracked files cannot see a script
 that has never been added.
 
@@ -161,7 +161,7 @@ named for its tag — `v2.6.0` → `release-notes/v2.6.0.md`. The whole file
 becomes the body of the GitHub Release.
 
 **When: before you tag, and committed.** The workflow checks out the tag
-and reads only what that commit contains. `scripts/ship.ps1` refuses to tag
+and reads only what that commit contains. `scripts/shoddy-ship.ps1` refuses to tag
 without the file, so this is a re-run rather than a bad release — but if a
 tag is pushed by hand without one, the workflow falls back to a list of
 commit subjects. Never empty, and never worth linking to.
@@ -174,7 +174,7 @@ file, run it. Unpack the sparky archive for your platform and point an MCP
 client at it.
 
 **Docs deploy themselves.** A merge touching `docs/**` triggers the Pages
-workflow, which regenerates the sitemap (`scripts/make-sitemap.sh`) and
+workflow, which regenerates the sitemap (`scripts/shoddy-make-sitemap.sh`) and
 publishes `docs/`. Verify in the Actions tab.
 
 ## If a release fails
@@ -184,6 +184,6 @@ move a tag someone may have fetched, and never delete one — a consumer who
 fetched it has it, and a moved tag means two different builds answer to the
 same number.
 
-If `scripts/ship.ps1` created the tag but the push failed, nothing has
+If `scripts/shoddy-ship.ps1` created the tag but the push failed, nothing has
 shipped: the tag is local only, and `git tag -d vX.Y.Z` puts you back where
 you started. The script says so when it happens.

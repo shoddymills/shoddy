@@ -12,7 +12,7 @@
 # word (BANG, BLAM, POW, WHAM), type it fast and press Enter.
 set -euo pipefail
 cd "$(dirname "$0")"
-. ../../scripts/mill-common.sh
+. ../../scripts/shoddy-mill-common.sh
 
 case "${1:-run}" in
     run)

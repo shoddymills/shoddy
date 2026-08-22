@@ -1,4 +1,4 @@
-# scripts/mill-common.sh - shared plumbing for every mill's build.sh.
+# scripts/shoddy-mill-common.sh - shared plumbing for every mill's build.sh.
 #
 # Source this AFTER `cd`-ing into the mill's own directory, and after
 # setting ORIG_DIR to the directory the caller actually invoked build.sh

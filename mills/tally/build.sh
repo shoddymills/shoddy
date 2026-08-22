@@ -31,7 +31,7 @@
 # reason tally-core.shoddy and tally.shoddy are separate files.
 set -euo pipefail
 cd "$(dirname "$0")"
-. ../../scripts/mill-common.sh
+. ../../scripts/shoddy-mill-common.sh
 
 SPEC=${2:-files/grades.spec}
 

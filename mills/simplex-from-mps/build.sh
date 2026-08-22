@@ -22,7 +22,7 @@
 set -euo pipefail
 ORIG_DIR=$(pwd)
 cd "$(dirname "$0")"
-. ../../scripts/mill-common.sh
+. ../../scripts/shoddy-mill-common.sh
 
 SRC=simplex-mps.shoddy
 OUT=bin/simplex-mps.dll

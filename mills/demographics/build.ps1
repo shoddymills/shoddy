@@ -38,7 +38,7 @@ $ErrorActionPreference = 'Stop'
 Push-Location $PSScriptRoot
 try {
     $MillDir = $PSScriptRoot
-    . (Join-Path $MillDir '../../scripts/mill-common.ps1')
+    . (Join-Path $MillDir '../../scripts/shoddy-mill-common.ps1')
 
     $TrainOut = 'bin/demographics-train.dll'
     $RunOut = 'bin/demographics.dll'

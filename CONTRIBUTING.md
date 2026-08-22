@@ -22,6 +22,10 @@ that license (see the [Developer Certificate of Origin](https://developercertifi
    dotnet test src/Shoddy.Tests        # golden conformance suite
    bin/mill run tst/libtest.shoddy      # ends: ALL ASSERTIONS PASSED
    ```
+   `./build.sh test` runs the whole suite (conformance, every machine,
+   every mill) and `./build.sh check` runs the same fast verify gates CI
+   runs on your pull request — both optional locally, since CI is the
+   arbiter either way.
 4. Keep the golden fixtures (`tst/golden/`) authoritative — if your change
    alters output intentionally, update the fixtures in the same PR and
    explain why.

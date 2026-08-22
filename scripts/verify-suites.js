@@ -2,20 +2,22 @@
 //
 //   node scripts/verify-suites.js
 //
-// Every tst/*.shoddy must be run by something in scripts/gate/steps.mjs —
-// the MACHINE_SUITES or CORE_SUITES lists, or a dedicated step naming
-// tst/<name>.shoddy — or sit in TST_EXCLUSIONS with its reason written
-// down. Both directions are checked: a listed suite whose file is gone is
-// as much a lie as a file no list runs. This check exists because suites
-// keep falling out of hand-kept lists silently — nine at once historically,
-// then seedterminaltest again in 2026 — and a suite that stops being run
-// proves nothing while looking like it does.
+// Every tst/*.shoddy must be named by scripts/suites.mjs - CORE_SUITES,
+// MACHINE_SUITES or DEDICATED, all of which build.ps1/build.sh run - or
+// sit in TST_EXCLUSIONS with its reason written down. Both directions are
+// checked: a listed suite whose file is gone is as much a lie as a file no
+// list runs. This check exists because suites keep falling out of
+// hand-kept lists silently - nine at once historically, then
+// seedterminaltest again in 2026 - and a suite that stops being run proves
+// nothing while looking like it does.
 //
-// MILLS is checked the same way, and for the same reason. It was the one
-// hand-kept list in that file with nothing holding it in step: a new mill
-// under mills/ would simply never be run, and the gate would go on saying
-// PASS with a whole program unproved. The two lists had the identical
-// failure mode and only one of them had a guard.
+// The mills need no roster: build.ps1/build.sh walk every directory under
+// mills/ and run its own build script's `test` verb, so a new mill cannot
+// fall out of a list that does not exist. What CAN still go wrong is a
+// mill shipping only one of its build-script twins - the walk runs
+// build.ps1 on Windows and build.sh everywhere else, so a mill with one
+// twin is a mill that fails for half the maintainers. That is checked
+// here.
 
 const fs = require("fs");
 const path = require("path");
@@ -23,22 +25,18 @@ const { pathToFileURL } = require("url");
 const root = path.resolve(__dirname, "..");
 
 (async () => {
-  const stepsPath = path.join(root, "scripts", "gate", "steps.mjs");
-  const steps = await import(pathToFileURL(stepsPath).href);
-
-  // Dedicated steps run suites by literal path; harvest those spellings.
-  const src = fs.readFileSync(stepsPath, "utf8");
-  const dedicated = new Set(
-    [...src.matchAll(/tst\/([a-z0-9-]+)\.shoddy/g)].map(m => m[1]));
+  const rosterPath = path.join(root, "scripts", "suites.mjs");
+  const roster = await import(pathToFileURL(rosterPath).href);
 
   const files = fs.readdirSync(path.join(root, "tst"))
     .filter(f => f.endsWith(".shoddy"))
     .map(f => f.slice(0, -".shoddy".length));
   const present = new Set(files);
 
-  const machine = new Set(steps.MACHINE_SUITES);
-  const core = new Set(steps.CORE_SUITES.map(row => row[0]));
-  const excl = steps.TST_EXCLUSIONS;
+  const core = new Set(roster.CORE_SUITES);
+  const machine = new Set(roster.MACHINE_SUITES);
+  const dedicated = new Set(roster.DEDICATED);
+  const excl = roster.TST_EXCLUSIONS;
 
   let bad = 0;
   for (const f of files) {
@@ -49,49 +47,29 @@ const root = path.resolve(__dirname, "..");
       bad++;
     } else if (!runs && !excluded) {
       console.log("tst/" + f + ".shoddy: nothing runs it and no exclusion names it — "
-        + "add it to MACHINE_SUITES in scripts/gate/steps.mjs, or to "
+        + "add it to MACHINE_SUITES in scripts/suites.mjs, or to "
         + "TST_EXCLUSIONS with the reason");
       bad++;
     }
   }
-  for (const name of [...machine, ...core, ...Object.keys(excl)])
+  for (const name of [...core, ...machine, ...dedicated, ...Object.keys(excl)])
     if (!present.has(name)) {
       console.log(name + ": listed but tst/" + name + ".shoddy does not exist");
       bad++;
     }
 
-  // ---- the mills, both directions -------------------------------------
-  //
-  // A directory under mills/ is a mill when it has a build script, which is
-  // what the gate step actually invokes. Anything else there (notes, shared
-  // fixtures) is not a program and is not expected on the list.
+  // Both twins, or the suite passes on one platform and not the other.
   const millsDir = path.join(root, "mills");
   const onDisk = fs.readdirSync(millsDir, { withFileTypes: true })
     .filter(e => e.isDirectory())
     .map(e => e.name)
     .filter(n => fs.existsSync(path.join(millsDir, n, "build.ps1"))
               || fs.existsSync(path.join(millsDir, n, "build.sh")));
-  const listed = new Set(steps.MILLS);
 
-  for (const m of onDisk)
-    if (!listed.has(m)) {
-      console.log("mills/" + m + ": has a build script but MILLS does not list it — "
-        + "the gate never runs its suite; add it to MILLS in scripts/gate/steps.mjs");
-      bad++;
-    }
-  for (const m of listed)
-    if (!onDisk.includes(m)) {
-      console.log(m + ": listed in MILLS but mills/" + m + " has no build script");
-      bad++;
-    }
-
-  // Both twins, or the gate passes on one platform and not the other. The
-  // gate picks build.ps1 on Windows and build.sh everywhere else, so a mill
-  // shipping only one is a mill that fails for half the maintainers.
   for (const m of onDisk)
     for (const twin of ["build.ps1", "build.sh"])
       if (!fs.existsSync(path.join(millsDir, m, twin))) {
-        console.log("mills/" + m + "/" + twin + " is missing — the gate runs "
+        console.log("mills/" + m + "/" + twin + " is missing — the suite walk runs "
           + "build.ps1 on Windows and build.sh elsewhere, so this mill is "
           + "unprovable on one of them");
         bad++;

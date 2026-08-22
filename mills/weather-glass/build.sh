@@ -17,7 +17,7 @@
 # files/expected.out. That is the whole reason for the core/shell split.
 set -euo pipefail
 cd "$(dirname "$0")"
-. ../../scripts/mill-common.sh
+. ../../scripts/shoddy-mill-common.sh
 
 case "${1:-run}" in
     run)

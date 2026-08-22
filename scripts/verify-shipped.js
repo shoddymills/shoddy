@@ -1,8 +1,6 @@
 // MAINTAINER TOOL. Unpacks a release archive and DRIVES THE BINARY INSIDE
 // IT - no repository, no installed runtime, no project reference.
 //
-//   node scripts/verify-shipped.js fettle
-//   node scripts/verify-shipped.js burler
 //   node scripts/verify-shipped.js sparky
 //
 // Run after that lane's `build.ps1 publish`.
@@ -82,139 +80,7 @@ function drive(exe, args, { input } = {}) {
     return { code: r.status ?? 1, out: r.stdout ?? "", err: r.stderr ?? "" };
 }
 
-if (lane === "fettle") {
-    const archive = findArchive("fettle");
-    if (!archive) { console.log("1 problem(s)"); process.exit(1); }
-    const dir = scratch("fettle");
-    if (!unpack(archive, dir)) { console.log("1 problem(s)"); process.exit(1); }
-
-    const exe = path.join(dir, isWin ? "fettle.exe" : "fettle");
-    if (!fs.existsSync(exe)) fail(`no executable in ${path.basename(archive)}`);
-    // MIT wants its notice in every copy, and an archive is a copy.
-    for (const f of ["NOTICE", "LICENSE"]) {
-        if (fs.existsSync(path.join(dir, f))) ok(`${f} travelled with the binary`);
-        else fail(`${f} is not in ${path.basename(archive)}`);
-    }
-
-    if (fs.existsSync(exe)) {
-        if (!isWin) fs.chmodSync(exe, 0o755);
-        const tree = scratch("fettle-tree");
-        fs.mkdirSync(path.join(tree, "src"));
-        fs.writeFileSync(path.join(tree, "src", "A.cs"), "public sealed class A\n");
-
-        const v = drive(exe, ["--version"]);
-        if (v.code === 0 && /^fettle \d+\.\d+\.\d+/.test(v.out.trim())) {
-            ok(`it reports itself: ${v.out.trim()}`);
-        } else {
-            fail(`--version answered '${v.out.trim()}' (exit ${v.code})`);
-        }
-
-        const found = drive(exe, ["--root", tree, "find", "**/*.cs", "--json"]);
-        if (found.code === 0 && found.out.includes("A.cs")) ok("it finds a file in a tree it was given");
-        else fail(`find failed (exit ${found.code}): ${found.out}${found.err}`);
-
-        // R3.7: a failure arrives COMPLETE ON STDOUT. Reading it must not
-        // need a stderr redirection anywhere - which is the clause that
-        // exists because Windows PowerShell makes a redirected native
-        // stderr fatal on its own.
-        const missing = drive(exe, ["--root", tree, "read", "absent.cs", "--json"]);
-        if (missing.code !== 3) fail(`expected exit 3 for a missing file, got ${missing.code}`);
-        else if (!missing.out.includes('"outcome":"not-found"')) {
-            fail(`the failure did not arrive on stdout: '${missing.out}'`);
-        } else ok("a failure arrives complete on stdout, exit 3");
-
-        // R3.2: the MCP front end speaks on stdio and stdout carries the
-        // protocol and nothing else.
-        const rpc = '{"jsonrpc":"2.0","id":1,"method":"initialize",'
-            + '"params":{"protocolVersion":"2025-06-18"}}\n';
-        const served = drive(exe, ["serve", "--root", tree], { input: rpc });
-        if (!served.out.includes('"serverInfo"')) {
-            fail(`the MCP front end did not answer initialize: '${served.out}'`);
-        } else if (served.out.trimStart()[0] !== "{") {
-            fail("stdout did not start with the message - something else is on the protocol stream");
-        } else ok("the MCP front end answers on stdio, and stdout carries the protocol alone");
-    }
-
-} else if (lane === "burler") {
-    const archive = findArchive("burler");
-    if (!archive) { console.log("1 problem(s)"); process.exit(1); }
-    const dir = scratch("burler");
-    if (!unpack(archive, dir)) { console.log("1 problem(s)"); process.exit(1); }
-
-    const exe = path.join(dir, isWin ? "burler.exe" : "burler");
-    if (!fs.existsSync(exe)) fail(`no executable in ${path.basename(archive)}`);
-    // Both packages burler bundles are MIT, which wants its notice in
-    // every copy, and an archive is a copy.
-    for (const f of ["NOTICE", "LICENSE"]) {
-        if (fs.existsSync(path.join(dir, f))) ok(`${f} travelled with the binary`);
-        else fail(`${f} is not in ${path.basename(archive)}`);
-    }
-
-    if (fs.existsSync(exe)) {
-        if (!isWin) fs.chmodSync(exe, 0o755);
-
-        // A model directory with everything present and a model.onnx that
-        // is deliberately not a model.
-        //
-        // THAT IS THE POINT OF IT. Reaching the ONNX parser at all means
-        // the native runtime was found, extracted and loaded out of the
-        // single file - which is the whole thing this lane exists to
-        // prove, and the one failure a build cannot show. A publish that
-        // left the natives behind does not get as far as complaining
-        // about the file's contents; it fails to load the library.
-        //
-        // The category has to be one burler ACTUALLY knows - Protocol.cs
-        // holds that list. A word it does not know is refused before any
-        // model is opened, and that refusal arrives here as "the ONNX
-        // runtime did not load", sending the reader to the packaging when
-        // the fixture is what is wrong. Not hypothetical: this lane kept
-        // 'phi' after 2.5.1 renamed the categories, and failed that way.
-        const models = scratch("burler-models");
-        const clinical = path.join(models, "clinical");
-        fs.mkdirSync(clinical);
-        fs.writeFileSync(path.join(clinical, "model.onnx"), "this is not a model\n");
-        fs.writeFileSync(path.join(clinical, "vocab.txt"), "[PAD]\n[UNK]\n[CLS]\n[SEP]\nthe\n");
-        fs.writeFileSync(path.join(clinical, "labels.json"), '["O","B-PER"]');
-        fs.writeFileSync(path.join(clinical, "manifest.json"), JSON.stringify({
-            checkpoint: "synthetic/not-a-real-checkpoint",
-            revision: "0",
-            licence: "none - this is a fixture",
-            provenance: "scripts/verify-shipped.js",
-        }));
-
-        const asked = '{"op":"screen","categories":["clinical"],"payload":"nothing in here"}\n';
-        const r = drive(exe, ["--models", models], { input: asked });
-        const answer = r.out.trim().split(/\r?\n/)[0] ?? "";
-
-        let said = null;
-        try { said = JSON.parse(answer); } catch { /* reported below */ }
-
-        if (said === null) {
-            fail(`the shipped burler did not answer with JSON: '${r.out.slice(0, 400)}'`
-                + `${r.err ? ` (stderr: ${r.err.slice(0, 200)})` : ""}`);
-        } else if (said.ok !== false) {
-            fail(`a model that is not a model was not refused: '${answer.slice(0, 400)}'`);
-        } else if (!/would not load/.test(said.error ?? "")) {
-            // Anything else here means it never reached the parser. A
-            // missing native shows up as a type initializer or a
-            // DllNotFound, and that is a broken archive rather than a
-            // broken fixture.
-            fail(`the ONNX runtime did not load out of the archive: '${said.error}'`);
-        } else {
-            ok("the ONNX runtime loaded out of the single file and rejected a bad model");
-        }
-
-        // It ALWAYS answers. Silence on this pipe reads to fettle as a
-        // hung sidecar, which it would kill and report as a timeout -
-        // sending somebody to look at the wrong thing entirely.
-        const junk = drive(exe, ["--models", models], { input: "not json at all\n" });
-        const complaint = junk.out.trim().split(/\r?\n/)[0] ?? "";
-        if (!complaint.includes('"ok":false')) {
-            fail(`a malformed request was met with silence rather than a refusal: '${junk.out.slice(0, 200)}'`);
-        } else ok("a malformed request is answered rather than ignored");
-    }
-
-} else if (lane === "sparky") {
+if (lane === "sparky") {
     const archive = findArchive("sparky");
     if (!archive) { console.log("1 problem(s)"); process.exit(1); }
     const dir = scratch("sparky");
@@ -244,7 +110,7 @@ if (lane === "fettle") {
     }
 
 } else {
-    console.log("usage: node scripts/verify-shipped.js <fettle|burler|sparky>");
+    console.log("usage: node scripts/verify-shipped.js <sparky>");
     process.exit(2);
 }
 

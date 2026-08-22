@@ -13,8 +13,8 @@
 // a path-filtered workflow, so the local gate could be green while the
 // shipped artifact carried a debug transport or a window toolkit.
 //
-// The lists are the workflows' lists, deliberately: mcp.yml and maui.yml
-// keep theirs as the CI backstop, and if the two ever disagree, one of them
+// The lists are the workflows' lists, deliberately: ci.yml's mcp and maui
+// jobs keep theirs as the CI backstop, and if the two ever disagree, one
 // has been edited without the other and that is worth finding out.
 
 const fs = require("fs");

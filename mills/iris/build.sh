@@ -33,7 +33,7 @@
 # works.
 set -euo pipefail
 cd "$(dirname "$0")"
-. ../../scripts/mill-common.sh
+. ../../scripts/shoddy-mill-common.sh
 
 TRAIN_OUT=bin/iris-train.dll
 RUN_OUT=bin/iris.dll

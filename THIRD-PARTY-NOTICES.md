@@ -14,27 +14,11 @@ remain under their own licenses and the copyrights of their respective owners.
 | `Silk.NET.OpenAL.Soft.Native` | see **OpenAL Soft** below | mill — bundled native audio library |
 | `xunit`, `xunit.runner.visualstudio` | Apache-2.0 / MIT | tests only (not distributed) |
 | `Microsoft.NET.Test.Sdk`, `coverlet.collector` | MIT | tests only (not distributed) |
-| `PdfPig` (UglyToad.PdfPig) | Apache-2.0 | **`fettle` only** — reading PDFs as text; see [PdfPig](#pdfpig-fettle-only) below |
-| `Microsoft.ML.OnnxRuntime` | MIT | **`burler` only** — running the screening models; see [burler](#burler-the-disclosure-screens-model-host) below |
-| `Microsoft.ML.Tokenizers` | MIT | **`burler` only** — WordPiece tokenizing for those models |
 
-Everything above **except the test-only rows, PdfPig and the two `burler`
-rows** is redistributed in
+Everything above **except the test-only rows** is redistributed in
 binary form inside the packaged VS Code extension (`vscode-shoddy-*.vsix`),
 which carries a copy of the mill under `extension/mill/`. This notices file
 ships in that package for the same reason.
-
-**PdfPig is the exception, and the only one in `fettle`.** It is bundled
-into `fettle` and into nothing else — not the mill, not the machines, not
-the extension, not sparky, not `burler`. Shoddy itself has no PDF component
-and no dependency on one, direct or transitive. `fettle` is distributed
-separately, as its own archive per operating system, carrying its own
-copies of [`NOTICE`](NOTICE) and [`LICENSE`](LICENSE).
-
-**`burler` is distributed separately again, and is optional.** It carries
-the two MIT packages above and nothing else from this table. `fettle` runs
-without it; only somebody who has switched the disclosure screen on wants
-it at all.
 
 ### OpenAL Soft (LGPL)
 
@@ -50,72 +34,12 @@ https://github.com/kcat/openal-soft.
 The Silk.NET windowing native dependency (GLFW) is licensed under the
 **zlib/libpng license**. See https://www.glfw.org/license.html.
 
-### PdfPig (`fettle` only)
+### Fettler (now its own repository)
 
-`fettle`, the Fettler executable, bundles **PdfPig** (`UglyToad.PdfPig`,
-Apache-2.0, https://github.com/UglyToad/PdfPig) so that it can read PDF
-documents as text. It is there because Fettler is meant to be the only file
-reader an assistant has: with the built-in reader denied, a developer holding
-a PDF of the requirements would otherwise be unable to open it at all.
-
-- **Nothing else here uses it.** The mill, the machines, the VS Code
-  extension and sparky have no PDF component and no dependency on one,
-  direct or transitive. `fettler/` has no `ProjectReference` in either
-  direction, so the dependency cannot leak into them.
-- **It is distributed separately.** A release attaches `fettle-*.zip` and
-  `fettle-*.tar.gz` as their own downloads, beside the `.vsix` and sparky
-  and independent of both. Installing Shoddy does not install `fettle`, and
-  `fettle` needs none of Shoddy to run.
-- **The obligation travels with the binary.** Apache-2.0 asks the licence
-  and any notice to reach whoever receives the software, so every `fettle`
-  archive carries [`NOTICE`](NOTICE) — which reproduces the Apache-2.0 terms
-  and attributes PdfPig — and [`LICENSE`](LICENSE), Shoddy's own MIT terms.
-  A notice that stays in the repository has not reached somebody who
-  downloaded a release.
-- **The allowlist is enforced, not remembered.** `fettler/Fettler/Fettler.csproj`
-  names PdfPig as the only permitted package, `FrontEndTests` reads the built
-  assemblies and lists all seven PdfPig assemblies by name, and
-  `.github/workflows/fettler.yml` fails the build on any other package
-  reference.
-
-### `burler` (the disclosure screen's model host)
-
-`burler` is the second executable in the Fettler lane. It hosts the
-named-entity models the [disclosure screen](docs/fettler.html#screen) uses,
-and it exists as a separate program for one reason: **ONNX Runtime ships
-native per-RID binaries**, and `fettler/Fettler/Fettler.csproj` admits only
-pure managed packages so that `fettle` can publish self-contained and
-single-file. Putting the inference behind a pipe keeps that allowlist — and
-the test that enforces it — exactly as it was.
-
-- **`Microsoft.ML.OnnxRuntime`** (MIT,
-  https://github.com/microsoft/onnxruntime) — runs the quantised models.
-- **`Microsoft.ML.Tokenizers`** (MIT,
-  https://github.com/dotnet/machinelearning) — the WordPiece tokenizer a
-  BERT-family checkpoint needs. Pure managed; it is here only because
-  nothing else has a use for it.
-
-Both are MIT, so their copyright and permission notice must reach whoever
-receives a copy. Every `burler` archive therefore carries [`NOTICE`](NOTICE)
-and [`LICENSE`](LICENSE), the same obligation `fettle` meets the same way.
-
-**No model weights are distributed by this project, in any archive, ever.**
-Four quantised models run about 400 MB against a download measured in
-single-digit MB, so nothing bundles them: a person fetches the checkpoints
-they want and names the directory in their own configuration. Their
-licences, revisions and provenance are recorded in a `manifest.json` in that
-directory, which `burler` requires and refuses to start a category without.
-
-That is a licensing position and not only an engineering one. Several
-clinical de-identification checkpoints derive from data-use agreements whose
-terms restrict redistribution, and some capable legal-domain checkpoints are
-ShareAlike. **Because this repository redistributes none of them, no
-obligation attaching to their redistribution is incurred** — the licence
-travels between the model's publisher and whoever downloads it, as it
-should. Two rules follow and are written down where the code can be checked
-against them: a ShareAlike checkpoint is never bundled and never used as a
-fine-tuning base, and a checkpoint with no licence at all at its source is
-never adopted, because wide use is not a grant.
+The Fettler executables — `fettle` and `burler` — and the third-party
+software they bundle (PdfPig, ONNX Runtime, Microsoft.ML.Tokenizers) are
+no longer distributed from this repository. Fettler ships from its own
+repository with its own notices: https://shoddymills.github.io/shoddy-fettler/
 
 ## Included and adapted works
 

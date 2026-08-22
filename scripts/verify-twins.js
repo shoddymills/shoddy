@@ -9,10 +9,10 @@
 // "native stderr fatal in every PowerShell script" - a fault that had sat
 // there through several releases for exactly this reason.
 //
-// What was here before was a grep in .github/workflows/fettler.yml:
+// What was here before was a grep in one lane's workflow:
 //
 //     for verb in build test release publish; do
-//       grep -q "$verb" fettler/build.ps1 || exit 1
+//       grep -q "$verb" build.ps1 || exit 1
 //
 // That passes on the word appearing ANYWHERE, a comment included. It covered
 // one lane out of six, and it could not have caught either of the two real
@@ -37,10 +37,10 @@
 // deleted and left advertised. Run against this tree it produced twenty-two
 // findings and not one of them was a defect:
 //
-//   * scripts/shoddy.ps1 documents doctor, preflight, package, publish,
-//     status and clean and mentions none of them below the header, because
-//     it is a thin launcher that forwards @args to driver.mjs. That is the
-//     design the whole file exists to explain.
+//   * the gate launcher (since retired) documented six commands and
+//     mentioned none of them below its header, because it was a thin
+//     launcher that forwarded @args to a driver. That was the design the
+//     whole file existed to explain.
 //   * "./build.sh  restore + build" and "./build.ps1  draw the spiral" put
 //     an ordinary English word where a verb sits, and no parser distinguishes
 //     those without understanding the sentence.
@@ -67,8 +67,8 @@ const root = path.resolve(__dirname, "..");
 
 // A script with no twin, and why. A name here is a decision on the record.
 const SINGLETONS = {
-  ".github/scripts/make-sitemap.sh":
-    "runs only on the Pages runner, which is always Linux; there is no Windows caller",
+  // (none right now. A script with no twin gets an entry here, with the
+  // reason written down.)
 };
 
 const SKIP = new Set([

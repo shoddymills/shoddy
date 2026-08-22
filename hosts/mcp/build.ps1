@@ -30,7 +30,8 @@ if (-not (Test-Path $mill)) {
 function Run([string[]]$DotnetArgs) {
     Write-Host ("> dotnet " + ($DotnetArgs -join ' ')) -ForegroundColor Cyan
     # dotnet writes restore progress to stderr under some hosts; judge
-    # the call on its exit code alone (see shoddy-release.ps1's note).
+    # the call on its exit code alone - the only honest signal a native
+    # program gives.
     $prev = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
     try { dotnet @DotnetArgs } finally { $ErrorActionPreference = $prev }

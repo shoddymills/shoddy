@@ -24,7 +24,7 @@
 set -euo pipefail
 ORIG_DIR=$(pwd)
 cd "$(dirname "$0")"
-. ../../scripts/mill-common.sh
+. ../../scripts/shoddy-mill-common.sh
 
 case "${1:-run}" in
     run)

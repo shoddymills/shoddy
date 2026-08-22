@@ -20,7 +20,7 @@
 # split is the point of the mill; the tests are what it buys.
 set -euo pipefail
 cd "$(dirname "$0")"
-. ../../scripts/mill-common.sh
+. ../../scripts/shoddy-mill-common.sh
 
 case "${1:-run}" in
     run)

@@ -5,6 +5,8 @@
 #   ./build.ps1 build                 build the mill into bin/
 #   ./build.ps1 test                  everything: dotnet tests, the machine
 #                                     suites and every mill's own suite
+#   ./build.ps1 check                 the fast gates: docs, errors, permissions,
+#                                     host-blind, suites, twins, lanes
 #   ./build.ps1 run FILE.shoddy       compile in memory and run a program
 #   ./build.ps1 weave FILE.shoddy     compile a program to an assembly
 #   ./build.ps1 machines              compile every machine to a machine DLL
@@ -76,6 +78,19 @@ function Assert-Mill {
     }
 }
 
+# Read a list out of scripts/suites.mjs - THE ONLY COPY of the suite
+# roster, shared with build.sh and proved complete by verify-suites.js.
+function Read-Roster([string]$Name) {
+    $code = "const m = await import('./scripts/suites.mjs'); console.log(m.$Name.join(' '))"
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try { $names = (& node --input-type=module -e $code) } finally { $ErrorActionPreference = $prev }
+    if ($LASTEXITCODE -ne 0) { [Console]::Error.WriteLine("could not read $Name from scripts/suites.mjs"); exit 1 }
+    $out = @(($names | Out-String).Trim() -split '\s+' | Where-Object { $_ })
+    if ($out.Count -lt 1) { [Console]::Error.WriteLine("$Name in scripts/suites.mjs is empty"); exit 1 }
+    return $out
+}
+
 function Invoke-Machines {
     Assert-Mill
     # Dependency order: an Include "x.shoddy" resolves to the machine DLL
@@ -136,9 +151,9 @@ function Invoke-Stage {
     # Windows PowerShell 5.1 passed the bare form through and PowerShell 7
     # does not, so this sat unnoticed until the gate's steps moved to pwsh,
     # and then took the v2.4.0 release down at its first package step.
-    # Quoting is correct in both shells. The sibling publishes in
-    # fettler/build.ps1 and hosts/mcp/build.ps1 already quote theirs, which
-    # is exactly why those two went on working.
+    # Quoting is correct in both shells. The sibling publish in
+    # hosts/mcp/build.ps1 already quotes theirs, which is exactly why it
+    # went on working.
     Native dotnet publish src/Shoddy.Mill -c Release -o $StageMill `
         '-p:SatelliteResourceLanguages=en' '-p:DebugType=none'
     New-Item -ItemType Directory -Path (Join-Path $StageLib 'bin') -Force | Out-Null
@@ -175,60 +190,15 @@ function Invoke-Test {
     # (v2.0.0). Building it here makes the fallback a no-op.
     Assert-Mill
     Native dotnet test src/Shoddy.Tests
-    Native $Mill run tst/libtest.shoddy
-    # Not a machine suite: it compares the RUNTIME's builtin dispatch against
-    # the seeded dictionary, and fails if a builtin is reachable that a stated
-    # rule says must not be, or if a future seed quietly claims a name the
-    # builtin seed's work list expects to be free. Runs here, before the
-    # machine suites, because a collision it catches is one they would report
-    # somewhere else.
-    Native $Mill run tst/builtinsurfacetest.shoddy
-    # fin's arithmetic is the kind that produces a plausible wrong answer
-    # rather than an error, so its known-answer suite runs in CI beside the
-    # golden files rather than by hand.
-    Native $Mill run tst/fin.shoddy
-    # eng and lin are the same case: a numerics library that is subtly wrong
-    # still returns numbers. eng's suite is known answers, lin's is those plus
-    # residuals against the defining identities — P A - L U, A v - lambda v —
-    # which is the only way to test a factorisation whose parts are not unique.
-    Native $Mill run tst/eng.shoddy
-    Native $Mill run tst/lin.shoddy
-    # alg is the same case again and then some: a symbolic answer that is
-    # subtly wrong is still a well-formed expression. Its suite tests by
-    # property rather than by value -- integrals differentiated back,
-    # factorisations expanded, partial fractions recombined -- and it is
-    # also the only place the alg/eng bridge can be exercised, since
-    # neither machine includes the other.
-    Native $Mill run tst/alg.shoddy
-    # bool is the same case once more: it is arithmetic standing in for bits,
-    # so a wrong fold or a formula that overflows 2^53 before its Mod runs
-    # returns a plausible number rather than failing. Its suite is known
-    # answers worked by hand plus the identities -- De Morgan both ways, Gray
-    # codes one bit apart, a minimised cover rebuilt and compared -- which is
-    # the only way to test a minimal form whose spelling is not unique.
-    Native $Mill run tst/bool.shoddy
-    # sparse and mip are the same case a third time, and the sparse one
-    # has a witness the others do not: every kernel is checked against
-    # matrix.shoddy computing the same thing densely, so a wrong index
-    # shows up as a disagreement rather than as a plausible number.
-    # mip's knapsack is chosen so that the integer answer is neither the
-    # relaxation's nor the relaxation rounded.
-    Native $Mill run tst/sparse.shoddy
-    Native $Mill run tst/mip.shoddy
-    # geo is the same argument once more, and its fixtures are worked by
-    # the spherical law of cosines where the machine uses haversine -- a
-    # different formula reaching the same number, so a mistyped one
-    # disagrees instead of agreeing with itself.
-    Native $Mill run tst/geo.shoddy
-    # sinq is graded two ways, because a query machine can be wrong in two
-    # unrelated places. Its ordering fixtures are built so a wrong-but-
-    # plausible sort DISAGREES -- ties are listed in the opposite order to
-    # the answer, so one that merely inherited the input order fails --
-    # and its last section runs fifty thousand elements, which is the only
-    # suite in the tree big enough to catch a word that walks a list with
-    # Rest or recurses without being in tail position. Both are invisible
-    # at the sizes every other fixture uses.
-    Native $Mill run tst/sinq.shoddy
+    # The core suites: the golden library suite, the builtin surface check,
+    # and the numerics/property suites. The roster is CORE_SUITES in
+    # scripts/suites.mjs - THE ONLY COPY, shared with build.sh and proved
+    # complete by scripts/verify-suites.js - and the reasoning for each
+    # suite is written beside its name there.
+    foreach ($suite in (Read-Roster 'CORE_SUITES')) {
+        Write-Host "==> tst/$suite.shoddy"
+        Native $Mill run "tst/$suite.shoddy"
+    }
     # The net demo is the only end-to-end exercise of the socket words: it
     # stands up a server, connects a client to it and trades lines, both
     # ends in one process on loopback. --allow-net is required because the
@@ -258,17 +228,16 @@ function Invoke-Test {
 # The machine suites. Every machines/<name>.shoddy that has one is graded
 # here, by name rather than by glob: a suite that stops being listed is a
 # suite that stops running, and that is how nine of them once stopped
-# running unnoticed. The list itself lives in scripts/gate/steps.mjs —
+# running unnoticed. The list itself lives in scripts/suites.mjs —
 # THE ONLY COPY. This script and build.sh both read it through node, after
 # three hand-kept copies drifted apart and dropped seedterminaltest
-# between them; scripts/verify-suites.js (preflight) proves the roster
-# complete. isamdump runs after isamtest and takes DELETE, because it
-# reopens the file isamtest leaves behind - the round trip across two
+# between them; scripts/verify-suites.js (build check, and CI) proves the
+# roster complete. isamdump runs after isamtest and takes DELETE, because
+# it reopens the file isamtest leaves behind - the round trip across two
 # processes is the thing being proved, and DELETE clears up after it.
 function Invoke-MachineSuites {
     Assert-Mill
-    $suites = (& node --input-type=module -e "const m = await import('./scripts/gate/steps.mjs'); console.log(m.MACHINE_SUITES.join(' '))").Trim() -split ' '
-    if ($LASTEXITCODE -ne 0 -or $suites.Count -lt 1) { throw 'could not read MACHINE_SUITES from scripts/gate/steps.mjs' }
+    $suites = Read-Roster 'MACHINE_SUITES'
     foreach ($suite in $suites) {
         Write-Host "==> tst/$suite.shoddy"
         Native $Mill run "tst/$suite.shoddy"
@@ -309,11 +278,23 @@ function Invoke-MillSuites {
             exit 1
         }
         # In-process, as before: each mill's build.ps1 protects its own
-        # native calls through the Native helper in mill-common.ps1, so it
+        # native calls through the Native helper in shoddy-mill-common.ps1, so it
         # behaves the same run from here or run on its own.
         Write-Host "==> mills/$($m.Name)/build.ps1 test"
         & $script test
         if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    }
+}
+
+# The fast gates - the doc and boundary verifiers, all Node and all quick.
+# The same list CI's checks job runs; verify-permissions STAGES its fix
+# locally (CI runs it with --check, which fails instead - a gate that
+# repairs the evidence is not a gate).
+function Invoke-Check {
+    foreach ($gate in 'verify-docs', 'verify-errors', 'verify-permissions',
+                      'verify-host-blind', 'verify-suites', 'verify-twins', 'verify-lanes') {
+        Write-Host "==> scripts/$gate.js"
+        Native node "scripts/$gate.js"
     }
 }
 
@@ -398,6 +379,7 @@ switch ($Command) {
     }
     'build' { Invoke-Build }
     'test' { Invoke-Test }
+    'check' { Invoke-Check }
     'run' {
         # Native, so a program that fails is reported as a failure: this
         # used to leave $LASTEXITCODE unpropagated and answer 0 for a
@@ -418,7 +400,7 @@ switch ($Command) {
     'install' { Invoke-Install }
     'clean' { Invoke-Clean }
     { $_ -in 'help', '-h', '--help' } {
-        Get-Content $PSCommandPath | Select-Object -Skip 1 -First 25 |
+        Get-Content $PSCommandPath | Select-Object -Skip 1 -First 27 |
             ForEach-Object { $_ -replace '^#\s?', '' }
     }
     default {

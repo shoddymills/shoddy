@@ -117,6 +117,10 @@ a tuning console that goes to eleven.*
       <code>fettle doctor</code> says what is wired up and what still goes
       round it.
     </td>
+    <td width="45%" align="center" valign="middle">
+      <a href="https://shoddymills.github.io/shoddy-fettler/"><img src="docs/media/fettler.svg" alt="A terminal showing two declared trees with their permissions, and a path from outside the boundary refused" width="100%"></a><br>
+      <b>Fettler</b><br><sub>bounded file tools · no shell in between</sub>
+    </td>
   </tr>
 </table>
 

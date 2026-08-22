@@ -8,17 +8,12 @@
 //
 //   B2.2  nothing in src/ references hosts/            ci.yml
 //   B2.4  nothing in hosts/ references Shoddy.Mill
-//         or Shoddy.Compiler                           mcp.yml, maui.yml
+//         or Shoddy.Compiler                           ci.yml (mcp, maui jobs)
 //
-// Each of those workflows is PATH-FILTERED, which is the problem. mcp.yml
-// runs when hosts/mcp/** changes; maui.yml when hosts/maui/** changes. A
-// commit that breaks a boundary from the OTHER side - or a maintainer
-// running the full local gate before pushing - met none of them. The gate
-// could be entirely green on a tree that CI would reject, which makes the
-// gate's greenness worth less than it looks.
-//
-// So the rules live here, run locally in preflight, and the workflows stay
-// as they are: CI is the backstop, not the only copy.
+// ci.yml runs those jobs on every push now - it carries no path filters -
+// but a maintainer working locally should not need a push to find out a
+// boundary broke. So the rules live here too, run by `build check`, and
+// CI is the backstop rather than the only copy.
 //
 // Pure text over the project files, deliberately. Reading the csproj
 // catches a reference in the same commit that adds it, before anything

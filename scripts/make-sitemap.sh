@@ -1,11 +1,11 @@
 #!/bin/sh
 # Regenerate the docs sitemap.
 #
-# Usage: sh .github/scripts/make-sitemap.sh [DOCSDIR] [BASEURL]
+#   sh scripts/make-sitemap.sh [DOCSDIR] [BASEURL]
 #
 # Every *.html under DOCSDIR except 404.html gets a <url> entry; index.html
 # becomes the directory URL. <lastmod> is the file's last git commit date, so
-# it tracks real changes — run with fetch-depth: 0 in CI. A file that is
+# it tracks real changes - run with fetch-depth: 0 in CI. A file that is
 # dirty or untracked falls back to its mtime, so a local run before a commit
 # still stamps today.
 set -eu

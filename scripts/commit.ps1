@@ -1,19 +1,23 @@
 #!/usr/bin/env pwsh
-# MAINTAINER TOOL - stage everything and commit it. Writes history; pushes nothing.
-# Run from anywhere inside the repo.
+# MAINTAINER TOOL - stages everything and commits it. Writes history; pushes
+# nothing. Run from anywhere inside the repo.
 #
-#   scripts/shoddy-commit.ps1 -Message "what changed"
-#   scripts/shoddy-commit.ps1 -Message "..." -Force     allow it on main
+#   ./scripts/commit.ps1 -Message "what changed"
+#   ./scripts/commit.ps1 -Message "..." -Force      allow it on main
 #
-# This exists because the alternative was a raw `git add -A; git commit -m ...`
-# composed inside a shell and buried in .fettler.json, where nobody working at
-# a terminal would ever find it and no ordinary review would ever see it. The
-# whole of this repository's procedure is meant to be reachable as scripts.
+# This exists so the procedure is reachable as a script rather than as a raw
+# `git add -A; git commit -m ...` composed inside a shell and buried in a
+# configuration file, where nobody working at a terminal would find it and no
+# ordinary review would see it.
 #
 # IT REFUSES ON main, and that is the point of it rather than a courtesy.
-# main receives merges and nothing else; work happens on a branch. A rule
-# only a person can remember gets broken, so it is checked here instead, and
+# main receives merges and nothing else; work happens on a branch. A rule only
+# a person can remember gets broken, so it is checked here instead, and
 # -Force is the deliberate exception that has to be typed out.
+#
+# IT PUSHES NOTHING. Committing and publishing are separate decisions, and
+# this script only makes the first. `./scripts/pr.ps1` is what puts the work where
+# anyone else can see it.
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)][string]$Message,
@@ -21,7 +25,11 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 
-function Fail([string]$Msg) { Write-Host "STOPPED: $Msg" -ForegroundColor Red; exit 1 }
+function Fail([string]$Msg, [string]$Remedy = '') {
+    Write-Host "STOPPED: $Msg" -ForegroundColor Red
+    if ($Remedy) { Write-Host "         $Remedy" -ForegroundColor Yellow }
+    exit 1
+}
 
 # git says perfectly ordinary things on stderr, and Windows PowerShell turns
 # each of those into a NativeCommandError the moment a caller captures both
@@ -41,13 +49,20 @@ function G {
 Gq rev-parse --is-inside-work-tree > $null
 if ($LASTEXITCODE -ne 0) { Fail 'not inside a git repository.' }
 
+# Work from the repository root. `git ls-files` below reports paths relative
+# to the current directory, and `git add` is handed those paths - so running
+# this from a subdirectory would stage the wrong thing, or nothing.
+Set-Location "$(Gq rev-parse --show-toplevel)".Trim()
+
 if (-not $Message.Trim()) { Fail 'the message is empty; say what changed.' }
 
 $branch = Gq rev-parse --abbrev-ref HEAD
 if ($LASTEXITCODE -ne 0) { Fail 'could not read the current branch.' }
+$branch = "$branch".Trim()
 
 if (($branch -eq 'main' -or $branch -eq 'master') -and -not $Force) {
-    Fail "on $branch, which takes merges and not commits. Cut a branch, or pass -Force if you mean it."
+    Fail "on $branch, which takes merges and not commits." `
+         'Cut a branch with ./scripts/branch.ps1 feature NAME, or pass -Force if you mean it.'
 }
 
 Gq rev-parse -q --verify MERGE_HEAD > $null
@@ -63,7 +78,8 @@ if (-not $dirty) { Fail 'nothing to commit - the tree is clean.' }
 # set, and verify-permissions.js cannot cover it: that check walks TRACKED
 # files, so the window between writing a script and adding it is invisible
 # to it. v1.8.0 shipped four scripts through that window and one of them
-# took the Release workflow down with "Permission denied", exit 126.
+# took the Release workflow down with "Permission denied", exit 126
+# (mills/devils-dust/build.sh).
 #
 # `git update-index --chmod=+x` is the wrong tool here - it refuses a path
 # git does not yet have, with a message about a missing --add option that
@@ -78,3 +94,4 @@ G commit -m $Message
 
 Write-Host ''
 Write-Host "Committed on $branch. Nothing has been pushed." -ForegroundColor Green
+Write-Host "When the work is ready: ./scripts/pr.ps1"

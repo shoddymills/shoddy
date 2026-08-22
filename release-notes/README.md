@@ -5,19 +5,20 @@ One file per release, named for its tag: `v1.2.0` → `release-notes/v1.2.0.md`.
 The whole file becomes the body of the GitHub Release, rendered as markdown. Don't
 repeat the version as a heading — the release is already titled with it.
 
-**Write it before you cut the release.** The
+**Write it before you tag.** The
 [Release workflow](../.github/workflows/release.yml) checks out the tag and reads only
 what that commit contains, so notes committed afterwards are invisible to it. The
-sequence is: run the doc review (`node scripts/verify-docs.js` — the docs must match
-the sources before the notes describe them), write the file, commit it on your feature
-branch, ship the feature, then run `scripts/shoddy-release.sh X.Y.Z`. The release script prints whether it found the
-file before it asks you to confirm — if it says MISSING, answer `n` and go write it.
+sequence is: run the doc gates (`./build.ps1 check` — the docs must match the sources
+before the notes describe them), write the file, commit it on your feature branch,
+merge the pull request, then ship with `scripts/ship.ps1 X.Y.Z` — which refuses to
+tag without the file, so a forgotten one is a re-run rather than a bad release.
 
-If the file is absent the release still publishes, with a body generated from the
-`--no-ff` merge subjects since the previous tag. That's a safety net, not a plan: it
-reads like a list of branch names.
+If a tag is pushed by hand without the file, the release still publishes, with a
+body generated from the commit subjects since the previous tag. That's a safety
+net, not a plan: it reads like a changelog nobody wrote.
 
-Full procedure: [RELEASING.md](../RELEASING.md).
+Full procedure: [WORKFLOW.md](../WORKFLOW.md); the reasoning is in
+[RELEASING.md](../RELEASING.md).
 
 ## What to write
 

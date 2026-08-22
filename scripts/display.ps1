@@ -1,10 +1,10 @@
 #!/usr/bin/env pwsh
-# MAINTAINER TOOL - the suites the gate is not allowed to run.
+# MAINTAINER TOOL - the suites CI cannot run.
 #
-#   scripts/shoddy-display.ps1           run them
-#   scripts/shoddy-display.ps1 -List     name them and stop
+#   scripts/display.ps1           run them
+#   scripts/display.ps1 -List     name them and stop
 #
-# THREE SUITES ARE EXCLUDED FROM THE GATE ON PURPOSE. seedscribblertest,
+# THREE SUITES ARE EXCLUDED FROM CI ON PURPOSE. seedscribblertest,
 # seedturtletest and seedplottertest open a real window. --no-window hides
 # it, but GLFW still needs a platform to create one on, and a hosted runner
 # has none - not even under Xvfb, which v1.10.1 shipped a gate for and which
@@ -12,14 +12,13 @@
 #
 # Before this script, the only trace of that hole was a comment in build.ps1
 # telling you to type `bin/mill --no-window run tst/seedscribblertest.shoddy`
-# by hand, plus three raw commands in .fettler.json that nobody at a terminal
-# would ever see. A deliberate gap in the proof should be a thing you can
-# RUN, named in WORKFLOW.md, not a sentence in a comment.
+# by hand. A deliberate gap in the proof should be a thing you can RUN,
+# named in WORKFLOW.md, not a sentence in a comment.
 #
 # THE LIST IS NOT WRITTEN HERE. It is read out of TST_EXCLUSIONS in
-# scripts/gate/steps.mjs - the same list verify-suites.js grades every
+# scripts/suites.mjs - the same list verify-suites.js grades every
 # tst/*.shoddy against - so a fourth windowed suite cannot be added there and
-# quietly forgotten here. build.ps1 reads MACHINE_SUITES the same way and for
+# quietly forgotten here. build.ps1 reads its rosters the same way and for
 # the same reason.
 [CmdletBinding()]
 param(
@@ -32,7 +31,7 @@ try {
     $mill = Join-Path 'bin' 'mill.exe'
 
     $reason = 'needs a real display'
-    $read = 'const m = await import("./scripts/gate/steps.mjs");' +
+    $read = 'const m = await import("./scripts/suites.mjs");' +
             'console.log(Object.entries(m.TST_EXCLUSIONS)' +
             ".filter(([, why]) => why.startsWith(`"$reason`"))" +
             '.map(([name]) => name).join(" "))'
@@ -41,7 +40,7 @@ try {
     $ErrorActionPreference = 'Continue'
     try { $names = (& node --input-type=module -e $read) } finally { $ErrorActionPreference = $prev }
     if ($LASTEXITCODE -ne 0) {
-        Write-Host 'STOPPED: could not read TST_EXCLUSIONS from scripts/gate/steps.mjs.' -ForegroundColor Red
+        Write-Host 'STOPPED: could not read TST_EXCLUSIONS from scripts/suites.mjs.' -ForegroundColor Red
         exit 1
     }
 
@@ -65,7 +64,7 @@ try {
     if (-not [Environment]::UserInteractive) {
         Write-Host 'STOPPED: this session has no desktop, and every suite here opens a window.' -ForegroundColor Red
         Write-Host '         Run it on a machine with a real display. It cannot pass in CI,'
-        Write-Host '         which is why the gate excludes these three by name.'
+        Write-Host '         which is why CI excludes these three by name.'
         exit 1
     }
 

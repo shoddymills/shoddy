@@ -37,10 +37,10 @@
 // deleted and left advertised. Run against this tree it produced twenty-two
 // findings and not one of them was a defect:
 //
-//   * scripts/shoddy.ps1 documents doctor, preflight, package, publish,
-//     status and clean and mentions none of them below the header, because
-//     it is a thin launcher that forwards @args to driver.mjs. That is the
-//     design the whole file exists to explain.
+//   * the gate launcher (since retired) documented six commands and
+//     mentioned none of them below its header, because it was a thin
+//     launcher that forwarded @args to a driver. That was the design the
+//     whole file existed to explain.
 //   * "./build.sh  restore + build" and "./build.ps1  draw the spiral" put
 //     an ordinary English word where a verb sits, and no parser distinguishes
 //     those without understanding the sentence.
@@ -67,8 +67,8 @@ const root = path.resolve(__dirname, "..");
 
 // A script with no twin, and why. A name here is a decision on the record.
 const SINGLETONS = {
-  ".github/scripts/make-sitemap.sh":
-    "runs only on the Pages runner, which is always Linux; there is no Windows caller",
+  // (none right now. A script with no twin gets an entry here, with the
+  // reason written down.)
 };
 
 const SKIP = new Set([

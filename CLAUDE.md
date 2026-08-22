@@ -6,11 +6,12 @@ The user's standing git rules (no work on `main`, only the user names branches,
 never commit/push/tag without an explicit instruction in the current message)
 are not project-specific — they apply here exactly as elsewhere, with no
 exceptions carved out by anything below. Release work touching this repo is
-the highest-stakes case, not a special case: `shoddy-release.sh` pushes
-branches, tags, and merges to `main` in one run, so treat running it as
-requiring the same explicit per-message authorization as any other
-commit/push/tag, never as implied by being asked to "do the release" in
-general terms or by a task reaching a point that feels ready to ship.
+the highest-stakes case, not a special case: `scripts/ship.ps1` pushes a
+public release tag, and `scripts/pr.ps1` / `scripts/branch.ps1 land` push
+and delete branches, so treat running any of them as requiring the same
+explicit per-message authorization as any other commit/push/tag, never as
+implied by being asked to "do the release" in general terms or by a task
+reaching a point that feels ready to ship.
 
 ## Branch names
 
@@ -42,33 +43,35 @@ else, including the rest of `shoddy-planning`.
 ## Release process is documented, not duplicated here
 
 This project has a full maintainer release procedure — branch discipline,
-pre-release doc/error verification, release-notes timing, the
-`shoddy-branch.sh` / `shoddy-release.sh` scripts, and the GitHub Actions that
-publish a release. Don't re-derive or restate it from memory or by guessing at
+pre-release doc/error verification, release-notes timing, the scripts under
+`scripts/`, and the GitHub Actions that publish a release. Don't re-derive or restate it from memory or by guessing at
 script behavior: read it fresh each time from source, since scripts and
 workflows can change underneath a stale summary.
 
-- [WORKFLOW.md](WORKFLOW.md) — **branch → work → prove → ship, as one
-  sequence.** The page to follow; the others are reference behind it.
-- [RELEASING.md](RELEASING.md) — the maintainer procedure, start to finish
-- `scripts/shoddy.ps1` / `scripts/shoddy.sh` — the gate driver: `doctor`,
-  `preflight`, `gate`, `package`, `publish`, `release`, `status`, `clean`,
-  `selftest`. **`release VERSION` is the front door for shipping** - it runs
-  strict `preflight`, the whole `gate` and `package`, and refuses to tag a
-  commit with no green gate receipt against it. `shoddy-release.*` is the
-  primitive it wraps and skips all three of those checks. Thin
-  launchers over `scripts/gate/driver.mjs`, which holds the logic once so
-  the twins cannot drift. **`preflight` is cheap (~3s) and read-only — run it
-  before proposing anything release-shaped rather than reasoning about
-  whether the tree is ready.** `gate --resume` is the expensive proof and
-  skips what is already green for the current commit.
+- [WORKFLOW.md](WORKFLOW.md) — **branch → work → prove → review → ship, as
+  one sequence.** The page to follow; the others are reference behind it.
+- [RELEASING.md](RELEASING.md) — the reasoning behind every release step
+- `./build.ps1` / `./build.sh` — the build and the proof: `test` runs the
+  whole suite (the C# conformance suite, every core and machine suite,
+  every mill; ~20 minutes) and `check` runs the seven fast verify gates
+  (docs, errors, permissions, host-blind, suites, twins, lanes).
+  **`check` is cheap and read-only — run it before proposing anything
+  release-shaped rather than reasoning about whether the tree is ready.**
+- `scripts/branch.*` (`feature`, `bug`, `sync`, `land`), `scripts/commit.*`,
+  `scripts/pr.*`, `scripts/ship.*`, `scripts/display.*` — the whole
+  procedure as scripts. **The pull request is the one unautomated step**: a
+  person merges it on GitHub, `land` tidies up afterwards, and
+  `ship X.Y.Z` tags `main` and pushes the tag — the tag is the version,
+  and pushing it is the moment it ships. CI is the proof: `ship` asks
+  GitHub for its verdict and refuses a commit CI has not passed. There is
+  no primitive underneath `ship` that skips the checks.
 - [CONTRIBUTING.md](CONTRIBUTING.md) — day-to-day contribution process
 - [release-notes/README.md](release-notes/README.md) — release-notes format and timing
 - [SECURITY.md](SECURITY.md) — vulnerability reporting (not via public issues)
-- `scripts/shoddy-branch.*` / `scripts/shoddy-release.*` — the actual
-  automation. The twins offer the same verbs and `verify-twins.js` proves
-  it, but they are not line-for-line identical and have drifted before, so
-  read the one that matches the shell in use rather than the other
+- Every script ships as a `.ps1`/`.sh` twin pair offering the same verbs
+  and flags, and `verify-twins.js` proves it — but they are not
+  line-for-line identical and have drifted before, so read the one that
+  matches the shell in use rather than the other
 - `scripts/verify-docs.js` / `scripts/verify-errors.js` — pre-release gates
 - `.github/workflows/ci.yml`, `release.yml`, `pages.yml` — what CI actually runs
 

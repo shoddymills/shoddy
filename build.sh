@@ -6,6 +6,8 @@
 #   ./build.sh build                 build the mill into bin/
 #   ./build.sh test                  everything: dotnet tests, the machine
 #                                    suites and every mill's own suite
+#   ./build.sh check                 the fast gates: docs, errors, permissions,
+#                                    host-blind, suites, twins, lanes
 #   ./build.sh run FILE.shoddy       compile in memory and run a program
 #   ./build.sh weave FILE.shoddy     compile a program to an assembly
 #   ./build.sh machines              compile every machine to a machine DLL
@@ -89,17 +91,18 @@ machines() {
 # graded here, by name rather than by glob: a suite that stops being
 # listed is a suite that stops running, and that is how nine of them
 # once stopped running unnoticed. The list itself lives in
-# scripts/gate/steps.mjs — THE ONLY COPY. This script and build.ps1
+# scripts/suites.mjs — THE ONLY COPY. This script and build.ps1
 # both read it through node, after three hand-kept copies drifted
 # apart and dropped seedterminaltest between them;
-# scripts/verify-suites.js (preflight) proves the roster complete.
+# scripts/verify-suites.js (build check, and CI) proves the roster
+# complete.
 # isamdump runs after isamtest and takes DELETE, because it reopens
 # the file isamtest leaves behind — the round trip across two
 # processes is the thing being proved, and DELETE clears up after it.
 machine_suites() {
     ensure_mill
-    suites=$(node --input-type=module -e "const m = await import('./scripts/gate/steps.mjs'); console.log(m.MACHINE_SUITES.join(' '))") \
-        || { echo "could not read MACHINE_SUITES from scripts/gate/steps.mjs" >&2; exit 1; }
+    suites=$(node --input-type=module -e "const m = await import('./scripts/suites.mjs'); console.log(m.MACHINE_SUITES.join(' '))") \
+        || { echo "could not read MACHINE_SUITES from scripts/suites.mjs" >&2; exit 1; }
     for suite in $suites; do
         echo "==> tst/$suite.shoddy"
         "$MILL" run "tst/$suite.shoddy" </dev/null
@@ -185,63 +188,17 @@ case "${1:-help}" in
         # (v2.0.0). Building it here makes the fallback a no-op.
         ensure_mill
         dotnet test src/Shoddy.Tests
-        "$MILL" run tst/libtest.shoddy
-        # Not a machine suite: it compares the RUNTIME's builtin dispatch
-        # against the seeded dictionary, and fails if a builtin is
-        # reachable that a stated rule says must not be, or if a future
-        # seed quietly claims a name the builtin seed's work list expects
-        # to be free. Runs here, before the machine suites, because a
-        # collision it catches is one they would report somewhere else.
-        "$MILL" run tst/builtinsurfacetest.shoddy
-        # fin's arithmetic is the kind that produces a plausible wrong
-        # answer rather than an error, so its known-answer suite runs in
-        # CI beside the golden files rather than by hand.
-        "$MILL" run tst/fin.shoddy
-        # eng and lin are the same case: a numerics library that is subtly
-        # wrong still returns numbers. eng's suite is known answers, lin's
-        # is those plus residuals against the defining identities — P A - L
-        # U, A v - lambda v — which is the only way to test a factorisation
-        # whose parts are not unique.
-        "$MILL" run tst/eng.shoddy
-        "$MILL" run tst/lin.shoddy
-        # alg is the same case again and then some: a symbolic answer
-        # that is subtly wrong is still a well-formed expression. Its
-        # suite tests by property rather than by value — integrals
-        # differentiated back, factorisations expanded, partial fractions
-        # recombined — and it is also the only place the alg/eng bridge
-        # can be exercised, since neither machine includes the other.
-        "$MILL" run tst/alg.shoddy
-        # bool is the same case once more: it is arithmetic standing in for
-        # bits, so a wrong fold or a formula that overflows 2^53 before its
-        # Mod runs returns a plausible number rather than failing. Its suite
-        # is known answers worked by hand plus the identities - De Morgan
-        # both ways, Gray codes one bit apart, a minimised cover rebuilt and
-        # compared - which is the only way to test a minimal form whose
-        # spelling is not unique.
-        "$MILL" run tst/bool.shoddy
-        # sparse and mip are the same case a third time, and the sparse
-        # one has a witness the others do not: every kernel is checked
-        # against matrix.shoddy computing the same thing densely, so a
-        # wrong index shows up as a disagreement rather than as a
-        # plausible number. mip's knapsack is chosen so that the integer
-        # answer is neither the relaxation's nor the relaxation rounded.
-        "$MILL" run tst/sparse.shoddy
-        "$MILL" run tst/mip.shoddy
-        # geo is the same argument once more, and its fixtures are worked
-        # by the spherical law of cosines where the machine uses
-        # haversine — a different formula reaching the same number, so a
-        # mistyped one disagrees instead of agreeing with itself.
-        "$MILL" run tst/geo.shoddy
-        # sinq is graded two ways, because a query machine can be wrong in
-        # two unrelated places. Its ordering fixtures are built so a
-        # wrong-but-plausible sort DISAGREES — ties are listed in the
-        # opposite order to the answer, so one that merely inherited the
-        # input order fails — and its last section runs fifty thousand
-        # elements, which is the only suite in the tree big enough to
-        # catch a word that walks a list with Rest or recurses without
-        # being in tail position. Both are invisible at the sizes every
-        # other fixture uses.
-        "$MILL" run tst/sinq.shoddy
+        # The core suites: the golden library suite, the builtin surface
+        # check, and the numerics/property suites. The roster is
+        # CORE_SUITES in scripts/suites.mjs - THE ONLY COPY, shared with
+        # build.ps1 and proved complete by scripts/verify-suites.js - and
+        # the reasoning for each suite is written beside its name there.
+        core=$(node --input-type=module -e "const m = await import('./scripts/suites.mjs'); console.log(m.CORE_SUITES.join(' '))") \
+            || { echo "could not read CORE_SUITES from scripts/suites.mjs" >&2; exit 1; }
+        for suite in $core; do
+            echo "==> tst/$suite.shoddy"
+            "$MILL" run "tst/$suite.shoddy" </dev/null
+        done
         # The net demo is the only end-to-end exercise of the socket words:
         # it stands up a server, connects a client to it and trades lines,
         # both ends in one process on loopback. --allow-net is required
@@ -267,6 +224,15 @@ case "${1:-help}" in
         # gate. Nothing is released that has not been through this.
         machine_suites
         mill_suites
+        ;;
+    check)
+        # The fast gates - the doc and boundary verifiers. All Node, all
+        # quick, and the same list CI's checks job runs.
+        for gate in verify-docs verify-errors verify-permissions \
+                    verify-host-blind verify-suites verify-twins verify-lanes; do
+            echo "==> scripts/$gate.js"
+            node "scripts/$gate.js"
+        done
         ;;
     run)
         [ $# -ge 2 ] || { echo "usage: ./build.sh run FILE.shoddy" >&2; exit 2; }
@@ -346,7 +312,7 @@ case "${1:-help}" in
         echo "cleaned."
         ;;
     help|-h|--help)
-        sed -n '2,27p' "$SELF" | sed 's/^# \{0,1\}//'
+        sed -n '2,29p' "$SELF" | sed 's/^# \{0,1\}//'
         ;;
     *)
         echo "unknown command: $1" >&2

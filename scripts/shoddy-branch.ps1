@@ -79,6 +79,9 @@ function Cut([string]$Branch) {
     G checkout main
     G pull --ff-only origin main
     G checkout -b $Branch
+    # Pushed and tracked at once, so a plain `git push` works from the first
+    # commit - and a login that cannot write fails here, not later.
+    G push -u origin $Branch
 
     Write-Host ''
     Write-Host "On $Branch, cut from an up-to-date main." -ForegroundColor Green

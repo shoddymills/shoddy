@@ -75,6 +75,9 @@ cut_branch() {
     g checkout main
     g pull --ff-only origin main
     g checkout -b "$branch"
+    # Pushed and tracked at once, so a plain `git push` works from the first
+    # commit - and a login that cannot write fails here, not later.
+    g push -u origin "$branch"
 
     echo
     echo "On $branch, cut from an up-to-date main."

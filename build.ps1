@@ -7,7 +7,8 @@
 #                                     suites and every mill's own suite
 #   ./build.ps1 check                 the fast gates: docs, errors, permissions,
 #                                     host-blind, suites, twins, lanes
-#   ./build.ps1 run FILE.shoddy       compile in memory and run a program
+#   ./build.ps1 run [SWITCHES] FILE.shoddy [ARGS...]
+#                                     compile in memory and run a program
 #   ./build.ps1 weave FILE.shoddy     compile a program to an assembly
 #   ./build.ps1 machines              compile every machine to a machine DLL
 #   ./build.ps1 stage                 stage the mill + machines into the extension
@@ -26,10 +27,19 @@
 # vsix [bump]: optional patch|minor|major or an exact X.Y.Z to bump the
 # extension version before packaging (e.g. ./build.ps1 vsix patch).
 # vsix stages first, so the package carries its own mill and machines.
+#
+# run [SWITCHES] FILE.shoddy [ARGS...]: SWITCHES go before the file and
+# are the mill's own - --allow-net (arm the network), --no-window (hide
+# scribbler windows), --no-lint, --lint-verbose. ARGS after the file reach
+# the program through Args, e.g.
+#   ./build.ps1 run --allow-net mills/weather-glass/weather-glass.shoddy 63011
 [CmdletBinding()]
 param(
     [Parameter(Position = 0)][string]$Command = 'help',
-    [Parameter(Position = 1)][string]$File
+    [Parameter(Position = 1)][string]$File,
+    # Everything after $File - only `run` reads it, as the rest of its
+    # switches, file and program arguments.
+    [Parameter(Position = 2, ValueFromRemainingArguments = $true)][string[]]$Rest
 )
 
 $ErrorActionPreference = 'Stop'
@@ -385,9 +395,32 @@ switch ($Command) {
         # used to leave $LASTEXITCODE unpropagated and answer 0 for a
         # program mill had just exited 1 on, which every mill's own
         # build.ps1 got right and this one did not.
-        if (-not $File) { [Console]::Error.WriteLine('usage: ./build.ps1 run FILE.shoddy'); exit 2 }
+        #
+        # Switches before the file are the mill's own and pass through
+        # as-is; everything after the file is the program's, reaching it
+        # through Args (weather-glass takes its ZIP there). $File is only
+        # the first word after `run`, which may be a switch, so the words
+        # are rejoined and read in order exactly as build.sh reads them.
+        # An unknown switch is refused here rather than handed on, where
+        # the mill would take it for the file name.
+        $usage = 'usage: ./build.ps1 run [--allow-net] [--no-window] [--no-lint] [--lint-verbose] FILE.shoddy [ARGS...]'
+        $words = @()
+        if ($File) { $words += $File }
+        if ($Rest) { $words += $Rest }
+        $switches = @()
+        $i = 0
+        while ($i -lt $words.Count -and $words[$i] -like '--*') {
+            if ($words[$i] -notin '--allow-net', '--no-window', '--no-lint', '--lint-verbose') {
+                [Console]::Error.WriteLine("unknown run switch: $($words[$i])`n$usage")
+                exit 2
+            }
+            $switches += $words[$i]
+            $i++
+        }
+        if ($i -ge $words.Count) { [Console]::Error.WriteLine($usage); exit 2 }
+        $tail = @($words[$i..($words.Count - 1)])
         Assert-Mill
-        Native $Mill run $File
+        Native $Mill run @switches @tail
     }
     'weave' {
         if (-not $File) { [Console]::Error.WriteLine('usage: ./build.ps1 weave FILE.shoddy'); exit 2 }
@@ -400,7 +433,7 @@ switch ($Command) {
     'install' { Invoke-Install }
     'clean' { Invoke-Clean }
     { $_ -in 'help', '-h', '--help' } {
-        Get-Content $PSCommandPath | Select-Object -Skip 1 -First 27 |
+        Get-Content $PSCommandPath | Select-Object -Skip 1 -First 34 |
             ForEach-Object { $_ -replace '^#\s?', '' }
     }
     default {

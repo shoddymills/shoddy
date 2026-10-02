@@ -37,47 +37,63 @@ public class MachineTests
     [Fact]
     public void LibTestWovenAgainstMachines()
     {
-        string ws = Path.Combine(Path.GetTempPath(), "shoddy-machines", Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(Path.Combine(ws, "machines"));
-        Directory.CreateDirectory(Path.Combine(ws, "tst"));
-        foreach (string f in Directory.GetFiles(Path.Combine(Root, "machines"), "*.shoddy"))
-            File.Copy(f, Path.Combine(ws, "machines", Path.GetFileName(f)));
-        File.Copy(Path.Combine(Root, "tst", "libtest.shoddy"), Path.Combine(ws, "tst", "libtest.shoddy"));
-
-        foreach (string name in BuildOrder)
-        {
-            string sb = Path.Combine(ws, "machines", name + ".shoddy");
-            var (prog, machines) = ParseWithMachines(sb);
-            Weaver.WeaveMachine(prog, sb, machines.Machines);
-        }
-
-        var (main, set) = ParseWithMachines(Path.Combine(ws, "tst", "libtest.shoddy"));
-        Assert.Equal(12, set.Machines.Count);       // all twelve resolved, incl. transitive seq
-        Assert.True(main.ExternalDefs.ContainsKey("SUM"));   // stats arrived via references
-        Assert.True(main.ExternalDefs.ContainsKey("ANY"));   // seq, included by name
-        Assert.True(main.ExternalDefs.ContainsKey("JSONTEXT"));   // json arrived too
-        Assert.True(main.ExternalDefs.ContainsKey("XMLTEXT"));    // and xml
-        Assert.True(main.ExternalDefs.ContainsKey("HTMLTEXT"));   // and html on top of it
-
-        string dll = Path.Combine(ws, "out", "libtest.dll");
-        Directory.CreateDirectory(Path.Combine(ws, "out"));
-        Weaver.Weave(main, dll, set.Machines);
-
-        var asm = Assembly.Load(File.ReadAllBytes(dll));
-        MethodInfo run = asm.GetType("Woven")!.GetMethod("Run")!;
-        var output = new StringWriter();
-        string cwd = Environment.CurrentDirectory;
-        Environment.CurrentDirectory = ws;          // libtest's file I/O stays in the workspace
+        // The dependency walk searches the machine library before the
+        // needing machine's own bin/, and the library is whatever SHODDYLIB
+        // names. A SHODDYLIB in the shell (the VS Code extension sets one in
+        // its terminal) supplies a second Shoddy.Machines.Str from a different
+        // path, and one simple name cannot load from two paths in one process.
+        // Clear it for the length of this test: every machine here is built in
+        // the workspace, and nothing outside it may answer.
+        string? saved = Environment.GetEnvironmentVariable("SHODDYLIB");
+        Environment.SetEnvironmentVariable("SHODDYLIB", null);
         try
         {
-            Assert.Equal(0, (int)run.Invoke(null, new object?[] { output, TextReader.Null, Array.Empty<string>() })!);
+            string ws = Path.Combine(Path.GetTempPath(), "shoddy-machines", Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(Path.Combine(ws, "machines"));
+            Directory.CreateDirectory(Path.Combine(ws, "tst"));
+            foreach (string f in Directory.GetFiles(Path.Combine(Root, "machines"), "*.shoddy"))
+                File.Copy(f, Path.Combine(ws, "machines", Path.GetFileName(f)));
+            File.Copy(Path.Combine(Root, "tst", "libtest.shoddy"), Path.Combine(ws, "tst", "libtest.shoddy"));
+
+            foreach (string name in BuildOrder)
+            {
+                string sb = Path.Combine(ws, "machines", name + ".shoddy");
+                var (prog, machines) = ParseWithMachines(sb);
+                Weaver.WeaveMachine(prog, sb, machines.Machines);
+            }
+
+            var (main, set) = ParseWithMachines(Path.Combine(ws, "tst", "libtest.shoddy"));
+            Assert.Equal(12, set.Machines.Count);       // all twelve resolved, incl. transitive seq
+            Assert.True(main.ExternalDefs.ContainsKey("SUM"));   // stats arrived via references
+            Assert.True(main.ExternalDefs.ContainsKey("ANY"));   // seq, included by name
+            Assert.True(main.ExternalDefs.ContainsKey("JSONTEXT"));   // json arrived too
+            Assert.True(main.ExternalDefs.ContainsKey("XMLTEXT"));    // and xml
+            Assert.True(main.ExternalDefs.ContainsKey("HTMLTEXT"));   // and html on top of it
+
+            string dll = Path.Combine(ws, "out", "libtest.dll");
+            Directory.CreateDirectory(Path.Combine(ws, "out"));
+            Weaver.Weave(main, dll, set.Machines);
+
+            var asm = Assembly.Load(File.ReadAllBytes(dll));
+            MethodInfo run = asm.GetType("Woven")!.GetMethod("Run")!;
+            var output = new StringWriter();
+            string cwd = Environment.CurrentDirectory;
+            Environment.CurrentDirectory = ws;          // libtest's file I/O stays in the workspace
+            try
+            {
+                Assert.Equal(0, (int)run.Invoke(null, new object?[] { output, TextReader.Null, Array.Empty<string>() })!);
+            }
+            finally
+            {
+                Environment.CurrentDirectory = cwd;
+            }
+            Assert.Equal(File.ReadAllText(Path.Combine(Root, "tst", "golden", "libtest.out")),
+                         output.ToString());
         }
         finally
         {
-            Environment.CurrentDirectory = cwd;
+            Environment.SetEnvironmentVariable("SHODDYLIB", saved);
         }
-        Assert.Equal(File.ReadAllText(Path.Combine(Root, "tst", "golden", "libtest.out")),
-                     output.ToString());
     }
 
     static (ShoddyProgram, MachineSet) ParseWithMachines(string file)

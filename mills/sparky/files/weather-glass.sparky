@@ -1,0 +1,152 @@
+: WG-PADL DUP LEN "w" RCL SWAP - 0 MAX [ " " SWAP STRCAT ] SWAP TIMES ;
+
+: WG-PADR DUP LEN "w" RCL SWAP - 0 MAX [ " " STRCAT ] SWAP TIMES ;
+
+: WG-PADZ DUP LEN "w" RCL SWAP - 0 MAX [ "0" SWAP STRCAT ] SWAP TIMES ;
+
+: WG-VALUE DUP "value" DHAS [ "value" DGET ] [ DROP 0 ] IFTE DUP { } = [ DROP 0 ] IFT ;
+
+: WG-MPH " " SPLIT [ ISNUMERIC ] FILTER DUP ISEMPTY [ DROP 0 ] [ DUP LENGTH NTH VAL ] IFTE ;
+
+: WG-ABBREV " then " SPLIT 1 NTH
+    "Slight Chance" "Slgt" RXREPLACE "Chance" "Chc" RXREPLACE
+    "Showers And Thunderstorms" "T-Storm" RXREPLACE
+    "Rain Showers" "Rain" RXREPLACE "Snow Showers" "Snow" RXREPLACE
+    "Thunderstorms" "T-Storms" RXREPLACE
+    "Mostly" "Mstly" RXREPLACE "Partly" "Ptly" RXREPLACE
+    "Likely" "Lkly" RXREPLACE "Isolated" "Iso" RXREPLACE
+    "Scattered" "Sct" RXREPLACE "Patchy" "Ptchy" RXREPLACE
+    "Freezing" "Frz" RXREPLACE 13 LEFT ;
+
+: WG-CLOUD "raw" STO 0 "raw" RCL "Rain|Storm|Snow|Showers|Drizzle" RXTEST
+    [ DROP 75 ]
+    [ DROP { { "Mostly Sunny" 25 } { "Mostly Clear" 25 } { "Partly Sunny" 50 } { "Partly Cloudy" 50 } { "Mostly Cloudy" 75 } { "Sunny" 5 } { "Clear" 5 } { "Cloudy" 95 } { "Overcast" 95 } { "Fog" 95 } }
+      [ 1 NTH "raw" RCL SWAP INSTR 0 > ] FILTER
+      DUP ISEMPTY [ DROP -1 ] [ 1 NTH 2 NTH ] IFTE ]
+    IFTE ;
+
+: WG-CLDTEXT DUP 0 < [ DROP "" ] [ STR "%" STRCAT ] IFTE ;
+
+: WG-ROTH DROP -42.379
+    2.04901523 "t" RCL * +
+    10.14333127 "r" RCL * +
+    0.22475541 "t" RCL * "r" RCL * -
+    0.00683783 "t" RCL DUP * * -
+    0.05481717 "r" RCL DUP * * -
+    0.00122874 "t" RCL DUP * * "r" RCL * +
+    0.00085282 "t" RCL * "r" RCL DUP * * +
+    0.00000199 "t" RCL DUP * * "r" RCL DUP * * - ;
+
+: WG-DRY DROP 0 "r" RCL 13 < "t" RCL 80 >= AND "t" RCL 112 <= AND
+    [ DROP 13 "r" RCL - 4 / 17 "t" RCL 95 - ABS - 17 / SQRT * ] IFT ;
+
+: WG-WET DROP 0 "r" RCL 85 > "t" RCL 80 >= AND "t" RCL 87 <= AND
+    [ DROP "r" RCL 85 - 10 / 87 "t" RCL - 5 / * ] IFT ;
+
+: WG-HEAT WG-ROTH 0 WG-DRY - 0 WG-WET + ROUND ;
+
+: WG-CHILL DROP 35.74 0.6215 "t" RCL * + 35.75 "v" RCL 0.16 ^ * - 0.4275 "t" RCL * "v" RCL 0.16 ^ * + ROUND ;
+
+: WG-FEELS DROP 0 "t" RCL 50 <= "v" RCL 3 >= AND
+    [ WG-CHILL ]
+    [ "t" RCL 80 >= [ WG-HEAT ] [ DROP "t" RCL ROUND ] IFTE ]
+    IFTE ;
+
+: WG-DAYTEXT DUP 1 10 MID JULDATEOF JULWEEKDAY { "Mo" "Tu" "We" "Th" "Fr" "Sa" "Su" } SWAP NTH " " STRCAT SWAP 9 2 MID VAL STR STRCAT ;
+
+: WG-HOUR "hours" RCL SWAP NTH ;
+
+: WG-ISDAY WG-HOUR "isDaytime" DGET ;
+
+: WG-CROSSED DUP "n" RCL < [ DUP WG-ISDAY SWAP 1 + WG-ISDAY <> ] [ DROP FALSE ] IFTE ;
+
+: WG-CROSSINGS 1 SWAP RANGE [ WG-CROSSED ] FILTER LENGTH ;
+
+: WG-ROW WG-HOUR "p" STO
+    "p" RCL "startTime" DGET "ts" STO
+    "p" RCL "temperature" DGET "t" STO
+    "p" RCL "relativeHumidity" DGET WG-VALUE "r" STO
+    "p" RCL "windSpeed" DGET WG-MPH "v" STO
+    "p" RCL "shortForecast" DGET "raw" STO
+    "p" RCL "probabilityOfPrecipitation" DGET WG-VALUE "pop" STO
+    5 "w" STO "ts" RCL WG-DAYTEXT WG-PADR " " STRCAT
+    "ts" RCL 12 2 MID STRCAT "  " STRCAT
+    9 "w" STO "t" RCL STR " (" STRCAT 0 WG-FEELS STR STRCAT ")" STRCAT WG-PADL STRCAT "  " STRCAT
+    13 "w" STO "raw" RCL WG-ABBREV WG-PADR STRCAT " " STRCAT
+    4 "w" STO "pop" RCL STR "%" STRCAT WG-PADL STRCAT " " STRCAT
+    "raw" RCL WG-CLOUD WG-CLDTEXT WG-PADL STRCAT " " STRCAT
+    "r" RCL STR "%" STRCAT WG-PADL STRCAT "  " STRCAT
+    3 "w" STO "p" RCL "windDirection" DGET WG-PADL STRCAT " " STRCAT
+    "v" RCL STR WG-PADL STRCAT ;
+
+: WG-OFFMIN 6 RIGHT DUP 2 2 MID VAL 60 * OVER 5 2 MID VAL + SWAP 1 LEFT "-" = [ NEGATE ] IFT ;
+
+: WG-CLOCK 60 * ROUND 1440 WRAP DUP 60 / FLOOR "h24" STO 60 MOD "mm" STO
+    "h24" RCL 12 MOD DUP 0 = [ DROP 12 ] IFT STR ":" STRCAT
+    2 "w" STO "mm" RCL STR WG-PADZ STRCAT
+    "h24" RCL 12 < [ " AM" STRCAT ] [ " PM" STRCAT ] IFTE ;
+
+: WG-SUN DUP 1 + WG-HOUR "startTime" DGET "nts" STO
+    "nts" RCL 1 4 MID VAL "nts" RCL 6 2 MID VAL "nts" RCL 9 2 MID VAL GEOJULIAN "jd" STO
+    DUP WG-ISDAY
+    [ DROP { "lat" RCL "lon" RCL } "jd" RCL GEOSUNSET ]
+    [ DROP { "lat" RCL "lon" RCL } "jd" RCL GEOSUNRISE ]
+    IFTE
+    DUP ISEMPTY [ DROP "--:--" ] [ 1 NTH "nts" RCL WG-OFFMIN 60 / + WG-CLOCK ] IFTE ;
+
+: WG-DAYINFO DUP "days" RCL LENGTH <= OVER 1 >= AND
+    [ "days" RCL SWAP NTH ]
+    [ DROP { } "temperature" 0 DPUT "shortForecast" "" DPUT "windSpeed" "0 mph" DPUT ]
+    IFTE ;
+
+: WG-MARKER DUP WG-CROSSINGS "k1" RCL + 1 - WG-DAYINFO "info" STO
+    DUP WG-SUN "clock" STO
+    WG-ISDAY 0 SWAP
+    [ DROP "v Sunset " "clock" RCL STRCAT " -- Lo " STRCAT ]
+    [ DROP "^ Sunrise " "clock" RCL STRCAT " -- Hi " STRCAT ]
+    IFTE
+    "info" RCL "temperature" DGET STR STRCAT ", " STRCAT
+    "info" RCL "shortForecast" DGET WG-ABBREV STRCAT ", winds to " STRCAT
+    "info" RCL "windSpeed" DGET WG-MPH STR STRCAT " mph" STRCAT ;
+
+: WG-LINES DUP WG-ROW 1 GATHER SWAP DUP WG-CROSSED [ WG-MARKER 1 GATHER ] [ DROP { } ] IFTE CONCAT ;
+
+: WG-TITLE DROP 1 WG-HOUR "startTime" DGET "ts" STO
+    "zip" RCL " " STRCAT "city" RCL STRCAT ", " STRCAT "state" RCL STRCAT
+    "ts" RCL 1 10 MID JULDATEOF JULWEEKDAY { "Mon" "Tue" "Wed" "Thu" "Fri" "Sat" "Sun" } SWAP NTH " " STRCAT
+    "ts" RCL 6 2 MID VAL { "Jan" "Feb" "Mar" "Apr" "May" "Jun" "Jul" "Aug" "Sep" "Oct" "Nov" "Dec" } SWAP NTH STRCAT " " STRCAT
+    "ts" RCL 9 2 MID VAL STR STRCAT ", " STRCAT "ts" RCL 1 4 MID STRCAT " - NWS (api.weather.gov)" STRCAT
+    ""
+    "Date  Hr  Temp (FL)  Conditions    Prcp  Cld  Hmd  Dir Spd"
+    4 GATHER ;
+
+: WG-GET "host" RCL SWAP
+    { } "user-agent" "shoddy-weather-glass/1.0 (https://github.com/shoddymills/shoddy)" DPUT "accept" "application/geo+json" DPUT
+    HTTPSGET
+    DUP HTTPSTATUS DUP 200 = SWAP STR "weather-glass: " "host" RCL STRCAT " answered " STRCAT SWAP STRCAT ASSERT
+    HTTPBODY ;
+
+: WG-PLACE "zip" STO "api.zippopotam.us" "host" STO
+    "/us/" "zip" RCL STRCAT WG-GET JSONPARSE "places" DGET 1 NTH "pl" STO
+    "pl" RCL "place name" DGET "city" STO
+    "pl" RCL "state" DGET "state" STO
+    "pl" RCL "latitude" DGET VAL "lat" STO
+    "pl" RCL "longitude" DGET VAL "lon" STO ;
+
+: WG-POINTS DROP "api.weather.gov" "host" STO
+    "/points/" "lat" RCL 4 TOFIXED STRCAT "," STRCAT "lon" RCL 4 TOFIXED STRCAT WG-GET JSONPARSE "properties" DGET "props" STO
+    "props" RCL "forecast" DGET "^https://[^/]+" "" RXREPLACE "daily-path" STO
+    "props" RCL "forecastHourly" DGET "^https://[^/]+" "" RXREPLACE "hourly-path" STO ;
+
+: WG-FORECASTS DROP
+    "daily-path" RCL WG-GET JSONPARSE "properties" DGET "periods" DGET "days" STO
+    "hourly-path" RCL WG-GET JSONPARSE "properties" DGET "periods" DGET "all" STO
+    "all" RCL LENGTH 72 MIN "n" STO
+    "n" RCL 0 > "weather-glass: no forecast periods" ASSERT
+    1 "n" RCL RANGE [ "all" RCL SWAP NTH ] MAP "hours" STO
+    0 "days" RCL 1 NTH "isDaytime" DGET 1 WG-ISDAY <> [ DROP 1 ] [ DROP 2 ] IFTE "k1" STO ;
+
+: WG-REPORT DROP 0 WG-TITLE 1 "n" RCL RANGE [ WG-LINES ] MAP { } [ CONCAT ] FOLD CONCAT ;
+
+: WEATHER DUP LEN 5 = OVER ISNUMERIC AND "weather-glass: a five-digit US ZIP, e.g. 63011" ASSERT
+    WG-PLACE 0 WG-POINTS 0 WG-FORECASTS 0 WG-REPORT 0 [ PRINT ] FOLD DROP ;

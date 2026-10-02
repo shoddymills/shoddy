@@ -10,13 +10,15 @@
 //                            record fields excluded so shared names don't lie)
 //   "The Machines It Uses" - the machine's own direct Includes
 //
-// Then five structural checks, so the docs can't quietly fall behind the tree
+// Then six structural checks, so the docs can't quietly fall behind the tree
 // as Shoddy grows:
 //
 //   catalogs   - every machine and mill has a page, is listed in its catalog,
 //                the docs home and the README; and no page is an orphan
 //   navigation - every docs page carries the same nav bar (adding a page means
 //                adding it everywhere, and this is what says you missed one)
+//   footer     - every docs page ends in the same colophon: the copyright, the
+//                licence, and the way back to the repository
 //   grounding  - the copyable instruction blocks on the AI pages still carry
 //                every fact an assistant gets wrong without being told
 //   runtime    - the .NET version quoted in the docs matches what the mill
@@ -216,11 +218,12 @@ for (const [dir, names] of [["machines", machineNames], ["mills", mills]])
       { console.log("docs/" + dir + "/" + f + ": page with no " + dir.replace(/s$/, "") + " behind it"); bad++; }
 
 // ---- navigation: one nav bar, copied into every page ----
-// The bar is two <nav class="docnav"> rows — "meta" (Fettler,
+// The bar is two <nav class="docnav"> rows — "meta" (GitHub, Fettler,
 // Heritage, Authorship) beside the wordmark, "main" beneath — so every row is collected and the
 // items compared as one sequence. Checking only the first would leave the
 // thirteen items in the second row unguarded.
-// Items may carry a class of their own (Fettler wears "tool" in the meta row),
+// Items may carry a class of their own (GitHub and Fettler wear "tool" in the
+// meta row),
 // so the item pattern allows attributes after the href and after "here".
 // Requiring a bare > silently dropped any classed item from the key, and an
 // item that never matches on any page can never be reported as differing.
@@ -247,6 +250,37 @@ if (Object.keys(navs).length > 1) {
   for (const [key, where] of Object.entries(navs))
     if (key !== majority)
       { console.log("nav differs on " + where.join(", ") + ":\n  has  " + key + "\n  want " + majority); bad++; }
+}
+
+// ---- footer: one colophon, copied into every page ----
+// The footer's prose varies by page (the heritage pages say it their own
+// way), but what follows the copyright is one line everywhere: the
+// copyright, the licence, and the way back to the repository. The nav
+// check above cannot see it, and a footer missed on one page in a hundred
+// and twenty stays missed - so it is held the same way: every page against
+// the majority, and the majority has to carry both links.
+{
+  const colophons = {};
+  for (const p of pages) {
+    const rel = path.relative(root, p).replace(/\\/g, "/");
+    const m = read(rel).match(/<footer>[\s\S]*?(&copy;[\s\S]*?)<\/footer>/);
+    if (!m) { console.log(rel + ": no footer colophon"); bad++; continue; }
+    const key = m[1].replace(/\s+/g, " ").trim();
+    (colophons[key] = colophons[key] || []).push(rel);
+  }
+  const entries = Object.entries(colophons).sort((a, b) => b[1].length - a[1].length);
+  if (entries.length) {
+    const majority = entries[0][0];
+    for (const [key, where] of entries)
+      if (key !== majority)
+        { console.log("footer differs on " + where.join(", ") + ":\n  has  " + key + "\n  want " + majority); bad++; }
+    const links = [
+      ["the repository", /href="https:\/\/github\.com\/shoddymills\/shoddy"/],
+      ["the licence", /href="https:\/\/github\.com\/shoddymills\/shoddy\/blob\/main\/LICENSE"/],
+    ];
+    for (const [name, re] of links)
+      if (!re.test(majority)) { console.log("footer colophon has lost its link to " + name); bad++; }
+  }
 }
 
 // ---- sitemap: every published page has an entry, every entry a page ----

@@ -8,7 +8,8 @@
 #                                    suites and every mill's own suite
 #   ./build.sh check                 the fast gates: docs, errors, permissions,
 #                                    host-blind, suites, twins, lanes
-#   ./build.sh run FILE.shoddy       compile in memory and run a program
+#   ./build.sh run [SWITCHES] FILE.shoddy [ARGS...]
+#                                    compile in memory and run a program
 #   ./build.sh weave FILE.shoddy     compile a program to an assembly
 #   ./build.sh machines              compile every machine to a machine DLL
 #   ./build.sh stage                 stage the mill + machines into the extension
@@ -27,6 +28,12 @@
 # vsix [bump]: optional patch|minor|major or an exact X.Y.Z to bump the
 # extension version before packaging (e.g. ./build.sh vsix patch).
 # vsix stages first, so the package carries its own mill and machines.
+#
+# run [SWITCHES] FILE.shoddy [ARGS...]: SWITCHES go before the file and
+# are the mill's own - --allow-net (arm the network), --no-window (hide
+# scribbler windows), --no-lint, --lint-verbose. ARGS after the file reach
+# the program through Args, e.g.
+#   ./build.sh run --allow-net mills/weather-glass/weather-glass.shoddy 63011
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -235,9 +242,26 @@ case "${1:-help}" in
         done
         ;;
     run)
-        [ $# -ge 2 ] || { echo "usage: ./build.sh run FILE.shoddy" >&2; exit 2; }
+        # Switches before the file are the mill's own and pass through
+        # as-is; everything after the file is the program's, reaching it
+        # through Args (weather-glass takes its ZIP there). An unknown
+        # switch is refused here rather than handed on, where the mill
+        # would take it for the file name.
+        usage="usage: ./build.sh run [--allow-net] [--no-window] [--no-lint] [--lint-verbose] FILE.shoddy [ARGS...]"
+        shift
+        switches=()
+        while [ $# -gt 0 ]; do
+            case "$1" in
+                --allow-net|--no-window|--no-lint|--lint-verbose) switches+=("$1"); shift ;;
+                --*) echo "unknown run switch: $1" >&2; echo "$usage" >&2; exit 2 ;;
+                *) break ;;
+            esac
+        done
+        [ $# -ge 1 ] || { echo "$usage" >&2; exit 2; }
         ensure_mill
-        "$MILL" run "$2"
+        # The ${a[@]+...} form, because macOS still ships bash 3.2, where
+        # an empty array under set -u is an unbound variable.
+        "$MILL" run ${switches[@]+"${switches[@]}"} "$@"
         ;;
     weave)
         [ $# -ge 2 ] || { echo "usage: ./build.sh weave FILE.shoddy" >&2; exit 2; }
@@ -312,7 +336,7 @@ case "${1:-help}" in
         echo "cleaned."
         ;;
     help|-h|--help)
-        sed -n '2,29p' "$SELF" | sed 's/^# \{0,1\}//'
+        sed -n '2,36p' "$SELF" | sed 's/^# \{0,1\}//'
         ;;
     *)
         echo "unknown command: $1" >&2

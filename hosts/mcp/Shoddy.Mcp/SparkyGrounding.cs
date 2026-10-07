@@ -64,11 +64,14 @@ VB.NET, VBA, QBasic, Python or F#.
 - **There are no exceptions.** `Error(msg)` aborts. Anything a caller
   should handle comes back as a value: `Option` (`Some`/`None`) and
   `Result` (`Ok`/`Err`).
-- **Records compare structurally with `=`. Lists compare by identity**,
-  so two separately built lists of the same items are not equal.
+- **Records and arrays compare item by item with `=`. Lists compare by
+  identity**, so two separately built lists of the same items are not
+  equal, and nor are two records that hold them.
 - **Self-tail-recursion compiles to a loop.** Mutual recursion does not.
-- **Arrays are fixed-length with O(1) `Nth`. Lists are cons cells.**
-  Index into arrays, recurse over lists.
+- **Arrays are fixed-length with O(1) `Nth`. Lists are not cons cells.**
+  `Rest` and `Prepend` each copy the whole list, so a walk built on them
+  is quadratic. Index into arrays, and visit every item of a long list
+  with `Fold` or `Map`.
 - **Operators are infix**: `a Mod b`, never `Mod(a, b)`.
 - **A bare name in argument position is passed as a function**, not
   called: `Map(xs, Double)`.
@@ -109,7 +112,9 @@ and `t` beneath it.
 - **A user word takes exactly one cell.** Not "as many as it pops": one.
   If a word needs a second argument, store it in a register first with
   `STO` and read it inside with `RCL`. A two-argument definition is the
-  most common mistake here, and it will be refused.
+  most common mistake here. The definition is accepted, and every call
+  to it is refused. The refusal names the word inside it, such as
+  `+ needs 2, the stack holds 1`, not the word you defined.
 - **A word cannot call itself.** A definition is checked against the
   dictionary as it stands, so its body may name only words that already
   exist, never the name being defined. Loop with `TIMES`, `MAP`,
@@ -139,11 +144,11 @@ This is why trying costs nothing and why this briefing can be short. The
 engine knows far more about its own words than any prompt can carry, and
 it says so. Real refusals, verbatim:
 
-    12500 13100 11900 MEAN     ?: MEAN needs a LIST, got NUMBER
-    { 1 2 3 4 } 2 2 MAT        ?: MAT needs a NUMBER, got LIST
-    640 480 PLOTOPEN           ?: PLOTOPEN needs a width, a height and a name
-    { 1 2 2 3 } PLOTHISTOGRAM  ?: PLOTHISTOGRAM needs 3, the stack holds 2
-    "3" 4 +                    ?: + is not defined for STRING and NUMBER
+    12500 13100 11900 MEAN       ?: MEAN needs a LIST, got NUMBER
+    { 1 2 3 4 } 2 2 MAT          ?: MAT needs a NUMBER, got LIST
+    640 480 PLOTOPEN             ?: PLOTOPEN needs 3, the stack holds 2
+    { 1 2 2 3 } 4 PLOTHISTOGRAM  ?: PLOTHISTOGRAM needs 3, the stack holds 2
+    "3" 4 +                      ?: + is not defined for STRING and NUMBER
 
 Each one names what was wrong. Send the corrected line. The stack is
 exactly as it was. Do not apologise to the user for a refused line, and
@@ -220,7 +225,9 @@ the reckoner's standard library at an RPN prompt. It also gives you the
 grounding to use it correctly. It covers statistics, matrices, linear
 algebra, linear and integer programming, finance, symbolic algebra,
 neural nets, regular expressions, sparse matrices, CSV/JSON/XML/HTML,
-indexed files, number bases and bit work, charts and turtle graphics.
+indexed files, number bases and bit work, charts and turtle graphics,
+geography, calendar dates, the sun, moon and planets, and sorting and
+grouping lists by a key.
 
 **Compute the answer. Do not estimate it.** That is the purpose of this
 server: you have a calculator that shows its working, and a student is
@@ -228,7 +235,7 @@ better served by `{ 12500 13100 11900 } MEAN` than by your arithmetic.
 
 ## What is in the dictionary
 
-Seven hundred words, grouped by the seed each came from. This is the
+Over eight hundred words, grouped by the seed each came from. This is the
 index. `words` gives the full list, and `help` gives any one word exactly.
 
     core          arithmetic, comparison, stack shuffling, registers, UNDO
@@ -273,6 +280,11 @@ index. `words` gives the full list, and `help` gives any one word exactly.
     seed-sparse   sparse matrices, stored by column
     seed-mip      mixed-integer programs
     seed-terminal PRINT
+    seed-geo      distance, bearing and area on the globe, sunrise and sunset
+    seed-julian   calendar dates, Julian day numbers, weekdays, date arithmetic
+    seed-ephemeris the sun, moon and planets: positions, phases, rising and setting
+    seed-sinq     sorting and grouping by a key, distinct items, set operations,
+                  batches
     shell         SAVE, LOAD, TAPESAVE and RESET, called as tools
 
 Ask `subject` for any of those to get a teaching card: what the machine
@@ -334,7 +346,10 @@ you a refusal saying so.
 Files live under one root the server owns. A plain name like
 `"mine.sparky"` lands in it, and so does `"saved/mine.sparky"`. A path
 that tries to leave it, such as `"../elsewhere"` or an absolute path
-somewhere else, is refused before anything is touched. Use plain names.
+somewhere else, touches nothing outside the root. A read of such a path
+is refused with `CANNOT READ ... (OUTSIDE THE FILE ROOT)`. A write, a
+delete or `FILEEXISTS` answers `False` instead, with no refusal, so check
+what a write answers. Use plain names.
 """;
 
     // ---- subject cards ----

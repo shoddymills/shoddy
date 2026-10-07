@@ -205,6 +205,46 @@ public class ManifestTests
         Assert.DoesNotContain(w, x => x.Contains("terminal"));
     }
 
+    /// <summary>A parameter or local that shares a builtin's name is not a
+    /// call to the builtin. mungo-caverns was told it used `random` because
+    /// NewGame takes a `seed`; it never calls Seed. A real call beside the
+    /// shadowed names must still warn.</summary>
+    [Fact]
+    public void LocalsNamedLikeBuiltinsReachNoCapability()
+    {
+        string mill = Mill("mane");
+        File.WriteAllText(Path.Combine(mill, "widget.shoddy"),
+            "Def Roll(seed As Number) As Number\n" +
+            "    Let clock = seed + 1\n" +
+            "    clock * 2\n" +
+            "\n" +
+            "Def Main()\n" +
+            "    Print(Roll(3))\n" +
+            "    Print(TryReadFile(\"in.txt\"))\n");
+        File.WriteAllText(Path.Combine(mill, Manifest.FileName),
+            """
+            {
+              "name": "widget",
+              "shell": "widget.shoddy",
+              "modes": ["T"],
+              "machines": [],
+              "capabilities": { "terminal": true }
+            }
+            """);
+
+        var machines = new MachineSet();
+        List<Line> lines = Lexer.ReadProgram(Path.Combine(mill, "widget.shoddy"),
+                                             (p, q) => MachineResolve.Resolve(machines, p, q));
+        var prog = new ShoddyProgram();
+        machines.SeedInto(prog);
+        ShoddyProgram parsed = Parser.Parse(lines, prog);
+
+        List<string> w = CapabilityLint.Run(parsed, machines, Path.Combine(mill, "widget.shoddy"));
+        Assert.DoesNotContain(w, x => x.Contains("random"));
+        Assert.DoesNotContain(w, x => x.Contains("clock"));
+        Assert.Contains(w, x => x.Contains("file is used") && x.Contains("not declared"));
+    }
+
     /// <summary>A core woven alone must not be told the mill's terminal
     /// declaration is unused — only the shell sees the whole surface.</summary>
     [Fact]

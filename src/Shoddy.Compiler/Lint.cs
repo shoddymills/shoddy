@@ -136,6 +136,49 @@ public static class Lint
         return used;
     }
 
+    /// <summary>The words the program calls: every Word node that is not a
+    /// parameter, a local or a top-level Let, plus the constructors named in
+    /// Case patterns. UsedWords counts every Word node, so a parameter named
+    /// `seed` reads there as the SEED builtin. The capability lint judges
+    /// what the program reaches, so it needs this narrower set: mungo-caverns
+    /// was told it used `random` because NewGame takes a `seed`.</summary>
+    internal static HashSet<string> CalledWords(ShoddyProgram prog)
+    {
+        var called = new HashSet<string>();
+        var globals = new HashSet<string>(GlobalNames(prog));
+        void walkPat(Pat? p)
+        {
+            if (p == null) return;
+            if (p.Type != null) called.Add(p.Type);
+            foreach (Pat s in p.Subs) walkPat(s);
+        }
+        // A Def body sees every top-level Let. The top level itself binds
+        // them in order, so there they are ordinary locals.
+        void walk(Quot q, HashSet<string> locals, bool inDef)
+        {
+            foreach (Node n in q.Items)
+            {
+                if (n.T is NType.Take or NType.Bind)
+                    foreach (string nm in n.Names) locals.Add(nm);
+                if (n.T == NType.Pat && n.P != null) PatBinders(n.P, locals);
+                walkPat(n.P);
+                if (n.T == NType.Word && n.Str != null)
+                {
+                    string name = prog.ResolveName(n.Str, n.File);
+                    bool bound = locals.Contains(n.Str) || locals.Contains(name) ||
+                                 (inDef && globals.Contains(name));
+                    if (!bound) called.Add(n.Str);
+                }
+                if (n.Q != null) walk(n.Q, new HashSet<string>(locals), inDef);
+                if (n.ElseQ != null) walk(n.ElseQ, new HashSet<string>(locals), inDef);
+            }
+        }
+        foreach (Quot body in prog.Defs.Values) walk(body, new HashSet<string>(), true);
+        if (prog.InitQuot != null) walk(prog.InitQuot, new HashSet<string>(), false);
+        return called;
+    }
+
+
     public static Result Run(ShoddyProgram prog, IReadOnlyList<Line>? lines)
     {
         var r = new Result();

@@ -34,8 +34,8 @@ is recursion and `Map`/`Filter`/`Fold`. And the whole surface desugars to
 stack code you can also write directly: the same `Square` is
 `Def Square(n As Number) As Number` / `n * n`, or
 `Def Square ( Number -- Number )` / `Dup *`, and both are Shoddy. The
-standard library is written in that same language: one folder of Shoddy
-source per **machine**, from `seq` and `str` out to neural nets and
+standard library is written in that same language: one Shoddy
+source file per **machine**, from `seq` and `str` out to neural nets and
 TCP/IP.
 
 ---
@@ -86,10 +86,17 @@ a tuning console that goes to eleven.*
   </tr>
 </table>
 
+### Optional downloads: tools for an AI assistant
+
+Nothing in this section is needed to write or run Shoddy; the extension
+above is the whole install. These are separate downloads for an assistant
+working beside you: one gives it the calculator, and two bound what it may
+touch.
+
 <table width="100%">
   <tr>
     <td width="55%" valign="middle">
-      <b>The second download is for your AI.</b> The same release page carries
+      <b>sparky, for your AI.</b> The same release page carries
       <a href="https://shoddymills.github.io/shoddy/mills/sparky.html">sparky</a>,
       the reckoner as an MCP server: one self-contained executable per OS,
       with no repository and no .NET install at the far end. Point Claude
@@ -106,7 +113,7 @@ a tuning console that goes to eleven.*
 <table width="100%">
   <tr>
     <td width="55%" valign="middle">
-      <b>And a third, for the tree itself.</b>
+      <b>Fettler, for the tree itself.</b>
       <a href="https://shoddymills.github.io/shoddy-fettler/">Fettler</a>
       is the file, search and edit tools an assistant needs (find,
       search, read, write, edit, replace, move, copy, delete and run a declared
@@ -120,6 +127,26 @@ a tuning console that goes to eleven.*
     <td width="45%" align="center" valign="middle">
       <a href="https://shoddymills.github.io/shoddy-fettler/"><img src="docs/media/fettler.svg" alt="A terminal showing two declared trees with their permissions, and a path from outside the boundary refused" width="100%"></a><br>
       <b>Fettler</b><br><sub>bounded file tools &middot; no shell in between</sub>
+    </td>
+  </tr>
+</table>
+
+<table width="100%">
+  <tr>
+    <td width="55%" valign="middle">
+      <b>Picker, for the data.</b>
+      <a href="https://shoddymills.github.io/shoddy-fettler/pick.html">Picker</a>
+      is Fettler's boundary applied to a SQL Server catalog: <code>SELECT</code>
+      and <code>DESCRIBE</code> inside databases you declare, and nothing else.
+      No default database, no <code>USE</code>, no system catalog; tables,
+      views and columns scoped one by one; one statement through a parser
+      gate that fails closed; and the same disclosure screen over the rows
+      coming out. Its own program, <code>pick</code>, with an MCP server and
+      a command line, released from the Fettler repository.
+    </td>
+    <td width="45%" align="center" valign="middle">
+      <a href="https://shoddymills.github.io/shoddy-fettler/pick.html"><img src="docs/media/picker.svg" alt="A terminal showing one declared database with its grants and scoped objects, and a query naming an undeclared database refused" width="100%"></a><br>
+      <b>Picker</b><br><sub>bounded SQL &middot; no shell in between</sub>
     </td>
   </tr>
 </table>
@@ -281,7 +308,7 @@ write-up on each one, or start at
 
 ### The machines: the whole shed
 
-The standard library, one folder of Shoddy source per machine: graphics,
+The standard library, one Shoddy source file per machine: graphics,
 sound, statistics, neural nets, an LP solver, keyed files, and TCP/IP,
 batteries included. Full word references in
 [the machines catalog](https://shoddymills.github.io/shoddy/machines/index.html).
@@ -462,16 +489,21 @@ The only prerequisite is the [.NET 10 runtime](https://dotnet.microsoft.com/down
 set: a bare `Include "seq.shoddy"` resolves in any folder you open. See
 [the setup guide](https://shoddymills.github.io/shoddy/setup.html).
 
-The other download on that release page is **sparky**, the reckoner as an
-MCP server, for a caller that is an AI agent rather than a person. One
+### Optional: tools for an AI assistant
+
+None of the following is needed to write or run Shoddy. Each is a separate
+download for an assistant working beside you.
+
+**sparky** is on the same release page: the reckoner as an MCP server, for a
+caller that is an AI agent rather than a person. One
 self-contained executable per OS, needing no repository, no .NET install and
 no editor: unpack the archive for your platform and point any MCP client at
 it. [The sparky page](https://shoddymills.github.io/shoddy/mills/sparky.html)
 carries the registration shapes for Claude Desktop, Claude Code and VS Code,
 and the grounding prompt the server also serves itself.
 
-**The third is `fettle`**, [Fettler](https://shoddymills.github.io/shoddy-fettler/),
-now grown into its own repository and released from there: the file,
+**`fettle`**, [Fettler](https://shoddymills.github.io/shoddy-fettler/),
+lives in its own repository and is released from there: the file,
 search and edit tools an assistant needs, and the one that
 changes how it touches your tree rather than what it knows. Find,
 search, read, write, edit, replace, move, copy, delete and run a declared
@@ -491,6 +523,14 @@ Windows and how to get it onto `PATH`), the registration for VS Code,
 GitHub Copilot, Claude Code and Claude Desktop, `fettle doctor` to say
 whether any of it took, and the settings that make it the *only* route to
 the tree rather than merely an available one.
+
+**`pick`**, [Picker](https://shoddymills.github.io/shoddy-fettler/pick.html),
+is the same boundary applied to SQL Server, released from the same
+repository: `SELECT` and `DESCRIBE` inside databases you declare, and
+nothing else. No default database, no `USE`, no system catalog; tables,
+views and columns scoped one by one; one statement through a parser gate
+that fails closed; and the same disclosure screen over the rows coming out.
+Its page carries the install, the registration and `pick doctor`.
 
 
 ---

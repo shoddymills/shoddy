@@ -2,7 +2,7 @@
 
 Thanks for your interest in improving the Shoddy language, its machines
 (standard library), and the VS Code extension. Contributions of all
-sizes — bug reports, docs, tests, machines, and compiler work — are
+sizes (bug reports, docs, tests, machines, and compiler work) are
 welcome.
 
 ## License of contributions
@@ -24,9 +24,9 @@ that license (see the [Developer Certificate of Origin](https://developercertifi
    ```
    `./build.sh test` runs the whole suite (conformance, every machine,
    every mill) and `./build.sh check` runs the same fast verify gates CI
-   runs on your pull request — both optional locally, since CI is the
+   runs on your pull request; both are optional locally, since CI is the
    arbiter either way.
-4. Keep the golden fixtures (`tst/golden/`) authoritative — if your change
+4. Keep the golden fixtures (`tst/golden/`) authoritative; if your change
    alters output intentionally, update the fixtures in the same PR and
    explain why.
 5. Open a pull request describing the change and the motivation.

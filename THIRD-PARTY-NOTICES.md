@@ -8,10 +8,10 @@ remain under their own licenses and the copyrights of their respective owners.
 
 | Package | License | Used by |
 |---------|---------|---------|
-| `Microsoft.CodeAnalysis.CSharp` (Roslyn) | MIT | compiler — weaving generated C# |
-| `Silk.NET.Windowing`, `Silk.NET.Input`, `Silk.NET.OpenGL` | MIT | mill — the scribbler window |
-| `Silk.NET.OpenAL` | MIT | mill — the buzzer audio bindings |
-| `Silk.NET.OpenAL.Soft.Native` | see **OpenAL Soft** below | mill — bundled native audio library |
+| `Microsoft.CodeAnalysis.CSharp` (Roslyn) | MIT | compiler: weaving generated C# |
+| `Silk.NET.Windowing`, `Silk.NET.Input`, `Silk.NET.OpenGL` | MIT | mill: the scribbler window |
+| `Silk.NET.OpenAL` | MIT | mill: the buzzer audio bindings |
+| `Silk.NET.OpenAL.Soft.Native` | see **OpenAL Soft** below | mill: bundled native audio library |
 | `xunit`, `xunit.runner.visualstudio` | Apache-2.0 / MIT | tests only (not distributed) |
 | `Microsoft.NET.Test.Sdk`, `coverlet.collector` | MIT | tests only (not distributed) |
 
@@ -36,7 +36,7 @@ The Silk.NET windowing native dependency (GLFW) is licensed under the
 
 ### Fettler (now its own repository)
 
-The Fettler executables — `fettle` and `burler` — and the third-party
+The Fettler executables (`fettle` and `burler`) and the third-party
 software they bundle (PdfPig, ONNX Runtime, Microsoft.ML.Tokenizers) are
 no longer distributed from this repository. Fettler ships from its own
 repository with its own notices: https://shoddymills.github.io/shoddy-fettler/
@@ -56,20 +56,20 @@ sponsored by the trademark owner.
 
 The mungo-caverns mill is a Shoddy forward-port of **Open Adventure** by Eric S.
 Raymond (https://gitlab.com/esr/open-adventure), itself a forward-port of
-*Adventure* 2.5 (1995) by Will Crowther and Don Woods — the last version of
+*Adventure* 2.5 (1995) by Will Crowther and Don Woods, the last version of
 Colossal Cave Adventure in the main line of development by the game's original
 authors, released under the **BSD 2-Clause License** with their permission and
 encouragement. Adventure was originally written by Will Crowther; most of the
 features of the game as it stands were added by Don Woods.
 
 Because it derives from that work, the entire mill is licensed **BSD-2-Clause**
-rather than MIT. The full terms and copyright lines — Crowther & Woods
+rather than MIT. The full terms and copyright lines, for Crowther & Woods
 (1977, 2005), Eric S. Raymond (Open Adventure), and Stephen Vincent Foster
-(the Shoddy port, 2026) — are in `mills/mungo-caverns/LICENSE` in the source
+(the Shoddy port, 2026), are in `mills/mungo-caverns/LICENSE` in the source
 repository.
 
-The port's data tables — the rooms, objects, messages, vocabulary and travel
-rules — derive from Open Adventure's dungeon database. They were generated from
+The port's data tables (the rooms, objects, messages, vocabulary and travel
+rules) derive from Open Adventure's dungeon database. They were generated from
 it once and are now hand-edited Shoddy, maintained against the upstream C,
 which remains the reference for every rule. The text they carry is Crowther and
 Woods' and Eric Raymond's, which is why the whole mill is BSD-2-Clause.
@@ -106,11 +106,11 @@ The flocking simulation in the `devils-dust*.shoddy` files implements
 **boids**, the distributed behavioral model created by **Craig W. Reynolds**
 and published as *Flocks, Herds, and Schools: A Distributed Behavioral
 Model*, Computer Graphics 21(4) (SIGGRAPH '87 Conference Proceedings),
-pp. 25–34, ACM, 1987 (https://doi.org/10.1145/37402.37406). The three
-steering rules — separation, alignment, cohesion — and the additional
+pp. 25-34, ACM, 1987 (https://doi.org/10.1145/37402.37406). The three
+steering rules (separation, alignment, cohesion) and the additional
 steering-force composition the mill uses are Reynolds's; the term "boids"
 is his coinage. His reference page is https://www.red3d.com/cwr/boids/.
-**No third-party code is included** — the Shoddy implementation is original,
+**No third-party code is included**; the Shoddy implementation is original,
 and the algorithm and model are credited to Reynolds.
 
 The mill's "eleven" lever position is a nod to a scene in *This Is Spinal
@@ -131,9 +131,9 @@ here. The algorithm and architecture are credited to McCaffrey.
 
 The measurements in `iris-train.dat` and `iris-test.dat` are R. A. Fisher's,
 from *The Use of Multiple Measurements in Taxonomic Problems*, Annals of
-Eugenics 7(2):179–188 (1936), as distributed by the UCI Machine Learning
+Eugenics 7(2):179-188 (1936), as distributed by the UCI Machine Learning
 Repository (https://archive.ics.uci.edu/dataset/53/iris). The data is in the
-public domain and is reproduced here **as data only** — no third-party code is
+public domain and is reproduced here **as data only**; no third-party code is
 included, and the `iris*.shoddy` programs are original. Two rows (35 and 38)
 are known to differ between Fisher's paper and the raw UCI file; they are
 carried here in their corrected form, which is what R's `datasets::iris` and
@@ -146,7 +146,7 @@ The documentation site sets its page titles in **Besley SemiBold**, a Clarendon
 revival by Owen Earl / Indestructible Type. It is licensed under the **SIL Open
 Font License 1.1**; the full licence travels with the font at
 [`docs/media/font/OFL.txt`](docs/media/font/OFL.txt). Only a latin subset ships
-(`besley-semibold-latin.woff2`, ~17 KB), which the OFL permits — subsetted and
+(`besley-semibold-latin.woff2`, ~17 KB), which the OFL permits; subsetted and
 converted copies remain covered by the same licence and are not sold on their
 own. The wordmark and lockup SVGs under `docs/media/brand/` were set in the
 same face and **converted to outlines**, so they carry no font dependency and

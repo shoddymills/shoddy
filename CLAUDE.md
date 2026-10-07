@@ -4,7 +4,7 @@
 
 The user's standing git rules (no work on `main`, only the user names branches,
 never commit/push/tag without an explicit instruction in the current message)
-are not project-specific — they apply here exactly as elsewhere, with no
+are not project-specific; they apply here exactly as elsewhere, with no
 exceptions carved out by anything below. Release work touching this repo is
 the highest-stakes case, not a special case: `scripts/shoddy-ship.ps1` pushes a
 public release tag, and `scripts/shoddy-pr.ps1` / `scripts/shoddy-branch.ps1 land` push
@@ -16,68 +16,68 @@ reaching a point that feels ready to ship.
 ## Branch names
 
 Branch names are drawn from the curated list in
-`shoddy-planning\list-of-branch-names.md` (a sibling repo) — Heavy Woollen
+`shoddy-planning\list-of-branch-names.md` (a sibling repo): Heavy Woollen
 District mill towns and villages, one per branch, struck through once used.
 Picking the next unstruck name from that list is selecting from options the
 user has already authored and approved, not inventing one; it satisfies
 "only the user names branches" rather than being an exception to it.
 
 When a name is chosen for a branch, you are authorized to mark it used in
-that file, following the existing pattern — strike it through and note the
+that file, following the existing pattern: strike it through and note the
 branch and reason, e.g.:
 
 ```
-~~**Mirfield**~~ - Heavy woolen district participant. — **USED** (feature/mirfield, ...)
+~~**Mirfield**~~ - Heavy woolen district participant. - **USED** (feature/mirfield, ...)
 ```
 
 That authorization covers only this one edit (maintaining the list) and
 does not extend to committing or pushing it, or to any other change in
-`shoddy-planning` — those still need their own explicit go-ahead.
+`shoddy-planning`; those still need their own explicit go-ahead.
 
 Exception to the no-work-on-`main` rule, scoped narrowly: `shoddy-planning`
-is always on `main` and stays there — editing `list-of-branch-names.md`
+is always on `main` and stays there; editing `list-of-branch-names.md`
 directly on it is explicitly authorized and safe. This carve-out is for
 that one file in that one repo only; it does not loosen the rule anywhere
 else, including the rest of `shoddy-planning`.
 
 ## Release process is documented, not duplicated here
 
-This project has a full maintainer release procedure — branch discipline,
+This project has a full maintainer release procedure: branch discipline,
 pre-release doc/error verification, release-notes timing, the scripts under
-`scripts/`, and the GitHub Actions that publish a release. Don't re-derive or restate it from memory or by guessing at
+`scripts/`, and the GitHub Actions that publish a release. Do not re-derive or restate it from memory or by guessing at
 script behavior: read it fresh each time from source, since scripts and
 workflows can change underneath a stale summary.
 
-- [WORKFLOW.md](WORKFLOW.md) — **branch → work → prove → review → ship, as
-  one sequence.** The page to follow; the others are reference behind it.
-- [RELEASING.md](RELEASING.md) — the reasoning behind every release step
-- `./build.ps1` / `./build.sh` — the build and the proof: `test` runs the
+- [WORKFLOW.md](WORKFLOW.md): **branch, work, prove, review, ship, in that
+  order, as one sequence.** The page to follow; the others are reference behind it.
+- [RELEASING.md](RELEASING.md): the reasoning behind every release step
+- `./build.ps1` / `./build.sh`, the build and the proof: `test` runs the
   whole suite (the C# conformance suite, every core and machine suite,
   every mill; ~20 minutes) and `check` runs the seven fast verify gates
   (docs, errors, permissions, host-blind, suites, twins, lanes).
-  **`check` is cheap and read-only — run it before proposing anything
+  **`check` is cheap and read-only; run it before proposing anything
   release-shaped rather than reasoning about whether the tree is ready.**
 - `scripts/shoddy-branch.*` (`feature`, `bug`, `sync`, `land`), `scripts/shoddy-commit.*`,
-  `scripts/shoddy-pr.*`, `scripts/shoddy-ship.*`, `scripts/shoddy-display.*` — the whole
+  `scripts/shoddy-pr.*`, `scripts/shoddy-ship.*`, `scripts/shoddy-display.*`: the whole
   procedure as scripts. **The pull request is the one unautomated step**: a
   person merges it on GitHub, `land` tidies up afterwards, and
-  `ship X.Y.Z` tags `main` and pushes the tag — the tag is the version,
+  `ship X.Y.Z` tags `main` and pushes the tag; the tag is the version,
   and pushing it is the moment it ships. CI is the proof: `ship` asks
   GitHub for its verdict and refuses a commit CI has not passed. There is
   no primitive underneath `ship` that skips the checks.
-- [CONTRIBUTING.md](CONTRIBUTING.md) — day-to-day contribution process
-- [release-notes/README.md](release-notes/README.md) — release-notes format and timing
-- [SECURITY.md](SECURITY.md) — vulnerability reporting (not via public issues)
+- [CONTRIBUTING.md](CONTRIBUTING.md): day-to-day contribution process
+- [release-notes/README.md](release-notes/README.md): release-notes format and timing
+- [SECURITY.md](SECURITY.md): vulnerability reporting (not via public issues)
 - Every script ships as a `.ps1`/`.sh` twin pair offering the same verbs
-  and flags, and `verify-twins.js` proves it — but they are not
+  and flags, and `verify-twins.js` proves it; but they are not
   line-for-line identical and have drifted before, so read the one that
   matches the shell in use rather than the other
-- `scripts/verify-docs.js` / `scripts/verify-errors.js` — pre-release gates
-- `.github/workflows/ci.yml`, `release.yml`, `pages.yml` — what CI actually runs
+- `scripts/verify-docs.js` / `scripts/verify-errors.js`: pre-release gates
+- `.github/workflows/ci.yml`, `release.yml`, `pages.yml`: what CI runs
 
-Before doing anything release-shaped — cutting a branch, running the doc
+Before doing anything release-shaped (cutting a branch, running the doc
 gates, writing release notes, invoking either script, or explaining the
-process to the user — open the relevant file(s) above rather than relying on
+process to the user) open the relevant file(s) above rather than relying on
 what a past session summarized.
 
 <!-- fettler:begin -->

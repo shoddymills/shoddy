@@ -39,7 +39,7 @@ static int Refuse(string verb)
 {
     Console.Error.WriteLine(
         $"mill: `mill {verb}` needs windows and audio, and this is the headless " +
-        "build (Shoddy.Mill.Headless — pure verbs only).");
+        "build (Shoddy.Mill.Headless), which has only the verbs that need neither.");
     Console.Error.WriteLine(
         "Install the full mill (the Shoddy.Mill package, or the VS Code " +
         "extension's bundled copy) to run or debug programs.");

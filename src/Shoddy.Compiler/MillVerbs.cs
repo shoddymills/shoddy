@@ -148,7 +148,10 @@ public static class MillVerbs
     public static int Usage()
     {
         Console.Error.WriteLine(
-            "usage: mill [run|weave|machine|manifest|lex] FILE.shoddy [program args...]");
+            "usage: mill [run] FILE.shoddy [program args...]\n" +
+            "       mill weave|lex|gen FILE.shoddy\n" +
+            "       mill machine [--debug] LIB.shoddy\n" +
+            "       mill manifest [--write | --inputs | --gate MODE] [--mode MODE] TARGET");
         return 2;
     }
 

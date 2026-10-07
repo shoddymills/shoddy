@@ -74,7 +74,7 @@ public static class BuzzerEngine
     /// factory-failure degradation is deliberately quiet at the seam —
     /// this is the one place a host can look it up and say so.</summary>
     public static string? Trouble =>
-        failed ? "the audio device could not start — silent for this run"
+        failed ? "the audio device could not start, so there is no sound for this run"
         : factory == null ? "no audio backend is installed"
         : null;
 
@@ -82,9 +82,9 @@ public static class BuzzerEngine
     /// diagnostics surface: installed or not, sink up or not yet
     /// asked, failed and latched silent.</summary>
     public static string State =>
-        failed ? "failed — the audio device could not start; silent for this run"
-        : sink != null ? "live — the sink is up and rendering"
-        : factory != null ? "armed — no sound requested yet"
+        failed ? "failed: the audio device could not start, so there is no sound for this run"
+        : sink != null ? "live: the audio output is running"
+        : factory != null ? "ready: no sound requested yet"
         : "no audio backend installed";
 
     /// <summary>Install the seven delegates over a sink the factory will

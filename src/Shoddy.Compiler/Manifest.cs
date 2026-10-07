@@ -51,7 +51,7 @@ public static class Manifest
         if (!write && !File.Exists(path))
         {
             Console.Error.WriteLine(
-                $"mill: no {FileName} in {folder} — generate one with: mill manifest --write {target}");
+                $"mill: no {FileName} in {folder}. Generate one with: mill manifest --write {target}");
             return 1;
         }
 
@@ -66,7 +66,7 @@ public static class Manifest
             }
             catch (JsonException e)
             {
-                Console.Error.WriteLine($"mill: {path}: not valid JSON — {e.Message}");
+                Console.Error.WriteLine($"mill: {path}: not valid JSON: {e.Message}");
                 return 1;
             }
             if (parsed is not JsonObject o)
@@ -234,8 +234,8 @@ public static class Manifest
             if (!modes.Contains(mode))
             {
                 Console.Error.WriteLine(
-                    $"error SHODDY1001: mill '{name}' does not support mode {mode} — " +
-                    $"its manifest declares [{string.Join(", ", modes)}]. " +
+                    $"error SHODDY1001: mill '{name}' does not support mode {mode}. " +
+                    $"Its manifest declares [{string.Join(", ", modes)}]. " +
                     $"Declared at {path}.");
                 return 1;
             }
@@ -249,8 +249,8 @@ public static class Manifest
             if (!Capabilities.Contains(g))
             {
                 Console.Error.WriteLine(
-                    $"error SHODDY1004: Grant=\"{g}\" on mill '{name}' is not a capability — " +
-                    $"the vocabulary is: {string.Join(", ", Capabilities)}.");
+                    $"error SHODDY1004: Grant=\"{g}\" on mill '{name}' is not a capability. " +
+                    $"The capabilities are: {string.Join(", ", Capabilities)}.");
                 return 1;
             }
 
@@ -281,14 +281,14 @@ public static class Manifest
                 if (caps[g] is null)
                     Console.Error.WriteLine(
                         $"warning SHODDY1005: mill '{name}' does not declare capability " +
-                        $"'{g}' — the grant grants nothing.");
+                        $"'{g}', so the grant has no effect.");
         }
         else
         {
             foreach (string g in granted)
                 Console.Error.WriteLine(
                     $"warning SHODDY1005: mill '{name}' does not declare capability " +
-                    $"'{g}' — the grant grants nothing.");
+                    $"'{g}', so the grant has no effect.");
         }
         return refused ? 1 : 0;
     }
@@ -422,7 +422,7 @@ public static class Manifest
                 {
                     if (!Capabilities.Contains(kv.Key))
                     {
-                        errors.Add($"unknown capability '{kv.Key}' — the vocabulary is: " +
+                        errors.Add($"unknown capability '{kv.Key}'. The capabilities are: " +
                                    string.Join(", ", Capabilities));
                         continue;
                     }
@@ -430,7 +430,7 @@ public static class Manifest
                     {
                         case JsonValue v when v.TryGetValue(out bool b):
                             if (!b) errors.Add(
-                                $"capability '{kv.Key}': false is not a declaration — omit it instead");
+                                $"capability '{kv.Key}': false is not a declaration. Leave the capability out instead");
                             break;
                         case JsonObject detail:
                             CheckCapabilityDetail(kv.Key, detail, errors);

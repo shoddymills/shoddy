@@ -179,7 +179,7 @@ public sealed class PerchServer : IDebugSink
                 if (Launcher == null)
                 {
                     Respond(req, success: false,
-                        message: "this perch serves attach only — the host started the program");
+                        message: "this debugger only attaches, because the host started the program");
                     Event("terminated");
                     break;
                 }
@@ -226,7 +226,7 @@ public sealed class PerchServer : IDebugSink
                         if (Precompiled != null && Precompiled(path))
                         {
                             verified.Add(new { verified = false, line = ln,
-                                message = "machines are precompiled — no line to stop on" });
+                                message = "machines are precompiled, so there is no line to stop on" });
                             continue;
                         }
                         lines.Add(ln);

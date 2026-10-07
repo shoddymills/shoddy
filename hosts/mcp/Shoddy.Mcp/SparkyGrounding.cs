@@ -40,101 +40,102 @@ public static class SparkyGrounding
     public const string SubjectPrefix = "sparky://machines/";
 
     public const string Shape = """
-# The shape of Shoddy — what does not change
+# The shape of Shoddy: what does not change
 
 Shoddy is a small, purely functional BASIC that compiles to .NET. It
-LOOKS like BASIC and does not behave like it. Do not pattern-match to
+looks like BASIC and does not behave like it. Do not pattern-match to
 VB.NET, VBA, QBasic, Python or F#.
 
 - **Nothing mutates.** `Let` binds a name once. There is no assignment,
   no `x = x + 1`, no `goto`. Updating a record returns a new one.
 - **There is no `For`, `While`, `Do`, `Next` or `Wend`.** Iteration is
   recursion, or `Map` / `Filter` / `Fold` / `Each` / `Times`. `Fold` is
-  the workhorse: it threads a value through a sequence.
+  the one used most: it threads a value through a sequence.
 - **Indentation is the structure.** No `End If`, no `End Function`, no
   braces, no semicolons.
 - **A Def's last expression is its result.** There is no `Return`.
 - **Names are case-insensitive.** `total`, `Total` and `TOTAL` are one
   word.
-- **Booleans are not numbers.** `If n Then` is an error; write
+- **Booleans are not numbers.** `If n Then` is an error. Write
   `If n <> 0 Then`.
 - **`Number` is an IEEE double and the only numeric type.** There are no
-  integers and NO BITWISE OPERATORS — bit work is a machine's words.
-- **Sequences are 1-based** and ranges include both ends.
+  integers and no bitwise operators. Bit work is done by a machine's words.
+- **Sequences are 1-based**, and ranges include both ends.
 - **There are no exceptions.** `Error(msg)` aborts. Anything a caller
-  should handle comes back as a VALUE: `Option` (`Some`/`None`) and
+  should handle comes back as a value: `Option` (`Some`/`None`) and
   `Result` (`Ok`/`Err`).
 - **Records compare structurally with `=`. Lists compare by identity**,
   so two separately built lists of the same items are not equal.
-- **Self-tail-recursion compiles to a loop**; mutual recursion does not.
-- **Arrays are fixed-length with O(1) `Nth`; lists are cons cells.**
+- **Self-tail-recursion compiles to a loop.** Mutual recursion does not.
+- **Arrays are fixed-length with O(1) `Nth`. Lists are cons cells.**
   Index into arrays, recurse over lists.
 - **Operators are infix**: `a Mod b`, never `Mod(a, b)`.
 - **A bare name in argument position is passed as a function**, not
   called: `Map(xs, Double)`.
 
-You are not writing Shoddy here — you are typing at a reckoner prompt,
+You are not writing Shoddy here. You are typing at a reckoner prompt,
 which is RPN. But the dictionary is built out of this language, and the
 answers you get back have its shape: no mutation, values not exceptions,
 1-based everything.
 """;
 
     public const string Reckoner = """
-# The reckoner — how a line works
+# The reckoner: how a line works
 
-Lines are RPN. Numbers and strings go on the stack; words work on what
-is there. `3 4 +` leaves 7. The stack is shown after every line, top
-value labelled `x`, then `y`, `z`, `t` beneath it.
+Lines are RPN (reverse Polish notation). Numbers and strings go on the
+stack, and words work on what is there. `3 4 +` leaves 7. The stack is
+shown after every line, with the top value labelled `x`, then `y`, `z`
+and `t` beneath it.
 
 - **A list is `{ 1 2 3 }`.** A program (a quotation) is `[ DUP * ]`.
   `{ 1 2 3 } [ 2 * ] MAP` answers `{ 2 4 6 }`.
-- **A string is double-quoted**, and prints with its quotes on the stack
+- **A string is double-quoted.** It shows with its quotes on the stack
   and without them under `PRINT`.
-- **You define a word with `: NAME ... ;`** — for example
-  `: VAT DUP 0.2 * + ;`. It may span several lines; the definition is
+- **You define a word with `: NAME ... ;`**, for example
+  `: VAT DUP 0.2 * + ;`. It may span several lines. The definition is
   not run until it closes.
-- **THE LINE IS THE TRANSACTION.** A line either takes effect whole or
+- **The line is the transaction.** A line either takes effect whole or
   is refused whole, and a refusal leaves the stack exactly as it was.
   Refusals start with `?:`.
-- **NOTHING KEYABLE ABORTS.** There is no line you can type that ends
-  the session. If something is wrong you get a refusal and another
-  chance, so trying a thing is cheap — try it rather than asking.
+- **Nothing you can type ends the session.** If something is wrong, you
+  get a refusal and another chance. Trying a line costs nothing, so try
+  it rather than asking.
 - **`UNDO` restores a stack, not the world.** A file already written is
-  still written; a line already drawn is still drawn; a `PRINT` already
+  still written. A line already drawn is still drawn. A `PRINT` already
   printed cannot be unprinted.
 
-## Two facts that surprise everything that has seen a Forth
+## Two rules that differ from other stack languages
 
-- **A USER WORD TAKES EXACTLY ONE CELL.** Not "as many as it pops" — one.
-  If a word needs a second argument, bank it in a register first with
-  `STO` and read it inside with `RCL`. Writing a two-argument definition
-  is the single most common mistake here and it will be refused.
-- **RECURSION IS IMPOSSIBLE, ON PURPOSE.** A definition is validated
-  against the dictionary as it stands, so its body may name only words
-  that ALREADY EXIST — never the name being defined. Loop with `TIMES`,
-  `MAP`, `FILTER` or `FOLD` instead.
+- **A user word takes exactly one cell.** Not "as many as it pops": one.
+  If a word needs a second argument, store it in a register first with
+  `STO` and read it inside with `RCL`. A two-argument definition is the
+  most common mistake here, and it will be refused.
+- **A word cannot call itself.** A definition is checked against the
+  dictionary as it stands, so its body may name only words that already
+  exist, never the name being defined. Loop with `TIMES`, `MAP`,
+  `FILTER` or `FOLD` instead.
 
 ## Reading a stack effect
 
 `HELP` answers one. `STO  ( x name -- )` means the word takes two cells
-and leaves none, and the ORDER is the order you push them: the value
-first, then the name. `RCL  ( name -- x )` takes one and leaves one.
+and leaves none. The order is the order you push them: the value first,
+then the name. `RCL  ( name -- x )` takes one and leaves one.
 `PLOTHISTOGRAM  ( plot xs bins -- )` takes three, in that order.
 
-Argument order is the mistake you will make most often, and reading the
-effect line is the whole cure.
+Argument order is the mistake you will make most often. Reading the
+effect line prevents it.
 
 ## Never invent a word
 
 `WORDS` lists everything, grouped by the seed it came from. `HELP NAME`
 gives a word's exact stack effect and description. `VIEW NAME` shows a
 definition you made. Use the `help` and `words` tools rather than
-guessing a word exists — every word carries its own effect and
+guessing that a word exists. Every word carries its own effect and
 description, so there is never a reason to invent one.
 
-## When a line is refused, the refusal tells you the fix
+## A refused line tells you the fix
 
-This is why trying is cheap and why this briefing can be short: the
+This is why trying costs nothing and why this briefing can be short. The
 engine knows far more about its own words than any prompt can carry, and
 it says so. Real refusals, verbatim:
 
@@ -144,68 +145,67 @@ it says so. Real refusals, verbatim:
     { 1 2 2 3 } PLOTHISTOGRAM  ?: PLOTHISTOGRAM needs 3, the stack holds 2
     "3" 4 +                    ?: + is not defined for STRING and NUMBER
 
-Every one of those names what was wrong. Send the corrected line; the
-stack is exactly as it was. Do NOT apologise to the user for a refused
-line and do not narrate it as a failure — it is how you find the right
-line, and it costs nothing.
+Each one names what was wrong. Send the corrected line. The stack is
+exactly as it was. Do not apologise to the user for a refused line, and
+do not describe it as a failure. It is how you find the right line.
 
-## Where the calculator CANNOT catch you
+## Where the calculator cannot catch you
 
-Everything above is caught. These are not: the line is accepted, an
-answer appears, and it is the wrong answer. There are four of them, and
-they are the reason to read this section rather than skim it.
+Everything above is caught. These four are not: the line is accepted, an
+answer appears, and it is the wrong answer. Read this section closely.
 
-**Trig is in RADIANS unless you say otherwise.**
+**Trig is in radians unless you say otherwise.**
 
     90 SIN            x: 0.8939966636      radians, and almost certainly not the question
     DEG   90 SIN      x: 1                 degrees
 
 Set `DEG` before any trigonometry a person asked for in degrees, and say
-in your answer which mode you used. `RAD` puts it back.
+in your answer which mode you used. `RAD` switches back.
 
 **Sample and population statistics are different words.**
 
     { 2 4 4 4 5 5 7 9 } STDDEV     x: 2.138089935    sample, divides by n-1
     { 2 4 4 4 5 5 7 9 } STDDEVP    x: 2              population, divides by n
 
-Same for `VAR` and `VARP`. Both are right answers to different
-questions; nothing will tell you that you chose the wrong one. Decide
-which the student meant, and say which you used.
+The same goes for `VAR` and `VARP`. Both are right answers to different
+questions, and nothing will tell you that you chose the wrong one.
+Decide which the student meant, and say which you used.
 
-**`FIX` changes what is SHOWN, not what is held.**
+**`FIX` changes what is shown, not what is held.**
 
     2 FIX   3.14159265      x: 3.14
 
-The stack still holds every digit; `STD` shows them again. Never read a
-`FIX`ed display back as the value.
+The stack still holds every digit, and `STD` shows them again. Never
+read a `FIX`ed display back as the value.
 
-**Numbers are IEEE doubles, so money is its own kind.**
+**Numbers are binary floating point (IEEE doubles), so money needs its
+own words.**
 
     0.1 0.2 +               x: 0.3
     0.1 0.2 + 0.3 =         x: False
 
-The display rounds; the comparison does not. For currency use `MONEY`
-and its words, which are exact and which refuse a bare number so you
-cannot mix the two by accident.
+The display rounds, but the comparison does not. For currency, use
+`MONEY` and its words. They are exact, and they refuse a bare number so
+you cannot mix the two by accident.
 
 ## A worked line or two
 
     { 12500 13100 11900 } MEAN
     x: 12500
 
-A word needing two arguments, banking one first:
+A word that needs two arguments, with one stored first:
 
     0.2 "rate" STO
     : WITHVAT DUP "rate" RCL * + ;
     250 WITHVAT
     x: 300
 
-A matrix, built rows-and-columns first:
+A matrix, built from its row and column counts first:
 
     2 2 { 1 2 3 4 } MAT LINDET
     x: -2
 
-A chart, which arrives as a picture with the third line:
+A chart. The third line sends back the picture:
 
     640 480 "p" PLOTOPEN
     "p" { 1 2 2 3 3 3 } 4 PLOTHISTOGRAM
@@ -215,21 +215,21 @@ A chart, which arrives as a picture with the third line:
     public const string Surface = """
 # What this server is, and what it is not
 
-Sparky hands you the Halifax dictionary — the whole of the reckoner's
-standard library at an RPN prompt — as callable tools, plus the
-grounding to use it correctly. Statistics, matrices, linear algebra,
-linear and integer programming, finance, symbolic algebra, neural nets,
-regular expressions, sparse matrices, CSV/JSON/XML/HTML, indexed files,
-number bases and bit work, charts and turtle graphics.
+Sparky gives you the Halifax dictionary as callable tools: the whole of
+the reckoner's standard library at an RPN prompt. It also gives you the
+grounding to use it correctly. It covers statistics, matrices, linear
+algebra, linear and integer programming, finance, symbolic algebra,
+neural nets, regular expressions, sparse matrices, CSV/JSON/XML/HTML,
+indexed files, number bases and bit work, charts and turtle graphics.
 
-**Compute the answer. Do not estimate it.** That is the whole point of
-this server: you have a calculator that shows its working, and a student
-is better served by `{ 12500 13100 11900 } MEAN` than by your arithmetic.
+**Compute the answer. Do not estimate it.** That is the purpose of this
+server: you have a calculator that shows its working, and a student is
+better served by `{ 12500 13100 11900 } MEAN` than by your arithmetic.
 
 ## What is in the dictionary
 
 Seven hundred words, grouped by the seed each came from. This is the
-index; `words` gives the full list and `help` gives any one word exactly.
+index. `words` gives the full list, and `help` gives any one word exactly.
 
     core          arithmetic, comparison, stack shuffling, registers, UNDO
                   and REDO, TRACE, the tape, angle and display modes, and
@@ -275,11 +275,10 @@ index; `words` gives the full list and `help` gives any one word exactly.
     seed-terminal PRINT
     shell         SAVE, LOAD, TAPESAVE and RESET, called as tools
 
-Ask `subject` for any of those and you get a teaching card: what the
-machine is for, worked examples that run at this prompt, and its live
-word list.
+Ask `subject` for any of those to get a teaching card: what the machine
+is for, worked examples that run at this prompt, and its live word list.
 
-## Resources are opened under a NAME, not held on the stack
+## Resources are opened under a name, not held on the stack
 
 A canvas, a plotter, a turtle, a record file and an indexed file are all
 opened under a name you choose, and every later word takes that name:
@@ -289,8 +288,9 @@ opened under a name you choose, and every later word takes that name:
     "p" PLOTBLIT
 
 Nothing is pushed by the open. `BOUND` lists what is open, `CLOSE` shuts
-one by name, `CLOSEALL` shuts them all. This is why `UNDO` cannot leave a
-resource stranded: what is open is not on the stack in the first place.
+one by name, and `CLOSEALL` shuts them all. This is why `UNDO` cannot
+leave a resource open with nothing referring to it: what is open is not
+on the stack in the first place.
 
 ## What is deliberately absent
 
@@ -298,11 +298,11 @@ resource stranded: what is open is not on the stack in the first place.
 |---|---|
 | sound | the server does not control the host's audio and cannot know if anything is listening |
 | key handling | there is no keystroke source, so the words that classify keys classify nothing |
-| terminal escape sequences | there is no screen; a client receiving them in JSON is worse off than one told the word is absent |
+| terminal escape sequences | there is no screen, and a client receiving them in JSON is worse off than one told the word is absent |
 | any way to read input | no seed registers `INPUT`, `INPUTLINE` or `INKEY` |
-| any listening socket | `NETGET` and `NETREQUEST` are the whole of the network surface — there is no listen, accept or blocking-wait word |
+| any listening socket | `NETGET` and `NETREQUEST` are the whole of the network surface. There is no listen, accept or blocking-wait word |
 
-These are absent from the DICTIONARY, not merely withheld: ask `HELP`
+These are absent from the dictionary, not merely withheld. Ask `HELP`
 about one of their words and you are told it is not a word here.
 
 ## Four things that catch a text-only caller harder than a person
@@ -312,12 +312,11 @@ about one of their words and you are told it is not a word here.
 - **`UNDO` does not un-write, either.** A word that has already written
   a file has still written it.
 - **`abandon` costs a turtle more than a chart.** A turtle's position,
-  heading, pen and colour live in the session; a plotter has no state of
-  its own at all, so a chart is one word to redraw and a turtle drawing
-  is not.
-- **`CLOSE` ends the drawing.** After it the dictionary cannot reach the
-  surface — though this server keeps the last captured frame, so you can
-  still be shown what was made.
+  heading, pen and colour live in the session. A plotter has no state of
+  its own, so a chart is one word to redraw and a turtle drawing is not.
+- **`CLOSE` ends the drawing.** After it, the dictionary cannot reach
+  the surface. This server keeps the last captured frame, though, so you
+  can still be shown what was made.
 
 ## Pictures
 
@@ -329,14 +328,13 @@ the `canvas` tool, which reads the buffer as it stands.
 ## Persistence
 
 `SAVE`, `LOAD`, `TAPESAVE` and `RESET` are the server's words, not the
-dictionary's — call the tools of those names. Typing them in a line gets
+dictionary's. Call the tools of those names. Typing them in a line gets
 you a refusal saying so.
 
 Files live under one root the server owns. A plain name like
 `"mine.sparky"` lands in it, and so does `"saved/mine.sparky"`. A path
-that tries to climb out of it — `"../elsewhere"`, or an absolute path
-somewhere else — is refused before anything is touched, so use plain
-names.
+that tries to leave it, such as `"../elsewhere"` or an absolute path
+somewhere else, is refused before anything is touched. Use plain names.
 """;
 
     // ---- subject cards ----

@@ -320,7 +320,7 @@ public sealed class MachineSet
                 string name = ShoddyProgram.Qualify(q, bare);
                 if (prog.ExternalDefs.ContainsKey(name))
                     throw new ShoddyError(0, $"duplicate definition of {name} across machines" +
-                        (q == null ? " — include one of them under a namespace (AS)" : ""));
+                        (q == null ? ". Include one of them under a namespace (AS)" : ""));
                 prog.ExternalDefs[name] = $"{m.ClassName}.{method}";
                 if (m.DefEffects.TryGetValue(bare, out (int, int) fx))
                     prog.ExternalEffects[name] = fx;
@@ -331,7 +331,7 @@ public sealed class MachineSet
                 string name = ShoddyProgram.Qualify(q, bare);
                 if (prog.ExternalTypes.ContainsKey(name))
                     throw new ShoddyError(0, $"duplicate definition of {name} across machines" +
-                        (q == null ? " — include one of them under a namespace (AS)" : ""));
+                        (q == null ? ". Include one of them under a namespace (AS)" : ""));
                 prog.ExternalTypes[name] = new ExternalType(shape, $"{m.ClassName}.{field}");
                 prog.NoteBare(bare, name);
                 foreach (string f in shape.Fields) prog.NoteAccessor(q, f);

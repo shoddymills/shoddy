@@ -163,7 +163,7 @@ public class GamePage : ContentPage
         }
         catch (Exception e)
         {
-            Log($"{woven}: could not start — {e.Message}");
+            Log($"{woven}: could not start: {e.Message}");
             hint.Text = "the game could not start: " + e.Message;
             return;
         }
@@ -192,13 +192,13 @@ public class GamePage : ContentPage
             // An ending is always said out loud — a run that died the
             // moment it started must never masquerade as a frozen one.
             Log($"{woven}: run ended, exit {exit}");
-            grid.Feed("\r\n— the game ended (exit " + exit + ") —\r\n");
+            grid.Feed("\r\n[the game ended (exit " + exit + ")]\r\n");
         }
         catch (Exception e)
         {
             // A woven program's own abort (Error(msg)) surfaces here;
             // the terminal shows it where the game stood.
-            Log($"{woven}: run stopped — {e.Message}");
+            Log($"{woven}: run stopped: {e.Message}");
             grid.Feed("\r\nthe game stopped: " + e.Message + "\r\n");
         }
         again.IsVisible = true;

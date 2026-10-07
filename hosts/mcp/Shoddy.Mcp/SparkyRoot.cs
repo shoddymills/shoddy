@@ -36,8 +36,8 @@ public static class SparkyRoot
             if (!Directory.Exists(named))
                 throw new DirectoryNotFoundException(
                     $"--root '{named}' does not exist. A granted `file` capability needs a " +
-                    "real directory behind it, and a root you named is one you meant — so " +
-                    "this is reported rather than created.");
+                    "real directory. A root you named is one you meant, so this is " +
+                    "reported rather than created.");
             return Path.GetFullPath(named);
         }
 

@@ -80,7 +80,7 @@ public sealed class Parser
             if (!prog.Unseeded.TryGetValue(c.Toks[k].Text,
                                            out (string Declares, string? Via) a)) continue;
             string via = a.Via == null ? "" : $", which {a.Via} includes but does not export";
-            return $"malformed CASE — {c.Toks[k].Orig} is declared in {a.Declares}{via}. " +
+            return $"malformed CASE: {c.Toks[k].Orig} is declared in {a.Declares}{via}. " +
                    $"Add: Include \"{a.Declares}\"";
         }
         return "malformed CASE";
@@ -117,13 +117,13 @@ public sealed class Parser
         {
             if (prog.HasDef(full) || prog.FindType(full) != null ||
                 globalScope.Contains(full))
-                throw Die(l, $"duplicate definition of {full} — " +
+                throw Die(l, $"duplicate definition of {full}. It is " +
                              $"already declared as {prog.DescribeSite(full)}");
             // A namespace does not license shadowing a builtin: the fused
             // name is what the program says, and QLENGTH is not LENGTH.
             if (Engine.BuiltinWords.Contains(full))
-                throw Die(l, $"{full} is a builtin — a Def of that name would " +
-                             "shadow it everywhere; rename it, or write " +
+                throw Die(l, $"{full} is a builtin. A Def of that name would " +
+                             "hide it everywhere. Rename the Def, or write " +
                              $"'Redef {full}' if that is deliberate");
         }
         prog.RecordSite(full, kind, l.File, l.LineNo);
@@ -164,7 +164,7 @@ public sealed class Parser
                 continue;
             }
             if (Is(tok, "IF") || Is(tok, "THEN") || Is(tok, "ELSE") || Is(tok, "TAKE"))
-                throw Die(l.LineNo, $"{tok.Text} is not allowed inside [ ] — use IFTE for inline conditionals");
+                throw Die(l.LineNo, $"{tok.Text} is not allowed inside [ ]. Use IFTE for a condition inside a quotation");
             q.Add(LiteralOrWord(tok, l.LineNo, l.File));
             pos++;
         }
@@ -948,16 +948,16 @@ public sealed class Parser
             if (Is(l.Toks[0], "LET"))            // top-level constant
             {
                 if (l.Toks.Count < 4 || !Is(l.Toks[2], "="))
-                    throw Die(l.LineNo, "expected Let NAME = expression");
+                    throw Die(l.LineNo, "expected LET NAME = expression");
                 Token gtok = l.Toks[1];
                 if (gtok.IsStr || IsNum(gtok, out _) || IsPunct(gtok))
-                    throw Die(l.LineNo, $"Let expects a name, got '{gtok.Text}'");
+                    throw Die(l.LineNo, $"LET expects a name, got '{gtok.Text}'");
                 string gname = ClaimName(l, gtok.Text, "Let");
                 prog.InitQuot ??= new Quot();
                 int pos = 3;
                 CompileExpr(l, ref pos, 1, prog.InitQuot, globalScope);
                 if (pos != l.Toks.Count)
-                    throw Die(l.LineNo, "unexpected tokens after Let expression");
+                    throw Die(l.LineNo, "unexpected tokens after LET expression");
                 var t = new Node(NType.Take, l.LineNo) { File = l.File };
                 t.Names.Add(gname);
                 prog.InitQuot.Add(t);

@@ -250,7 +250,7 @@ public sealed class CodeGen
         if (machine && prog.InitQuot != null)
             constants = MachineConstants.Fold(prog, TypeRefOf);
 
-        W("// woven by mill — generated C#; do not edit");
+        W("// woven by mill: generated C#. Do not edit.");
         W("#pragma warning disable CS0162, CS0164, CS0219, CS8321");
         W("using System;");
         W("using System.Collections.Generic;");
@@ -528,9 +528,9 @@ public sealed class CodeGen
         List<string>? amb = prog.Ambiguity(n.Str!, n.File);
         if (amb == null) return;
         throw new ShoddyError(n.Line, n.File,
-            $"'{n.Str}' is ambiguous — it names " + string.Join(" and ",
+            $"'{n.Str}' is ambiguous. It names " + string.Join(" and ",
                 amb.Select(c => $"{c} ({prog.DescribeSite(c)})")) +
-            $"; write '{n.Str} In <namespace>' to choose");
+            $". Write '{n.Str} In <namespace>' to choose one");
     }
 
     void EmitWord(Node n, Scope sc, string? tailDef)
@@ -548,7 +548,7 @@ public sealed class CodeGen
         if (GlobalVisible(name)) { W($"rt.Push({globalIds[name]});"); return; }
         if (defIds.TryGetValue(name, out string? d))
         {
-            if (name == tailDef) W("continue;  // self tail call — the loop is the TCO");
+            if (name == tailDef) W("continue;  // self tail call: the loop replaces the call");
             else W($"{d}(rt);");
             return;
         }
@@ -568,7 +568,7 @@ public sealed class CodeGen
         {
             string via = a.Via == null ? "" : $", which {a.Via} includes but does not export";
             throw new ShoddyError(n.Line, n.File,
-                $"unknown word: {name} — declared in {a.Declares}{via}. " +
+                $"unknown word: {name}. It is declared in {a.Declares}{via}. " +
                 $"Add: Include \"{a.Declares}\"");
         }
         W($"rt.UnknownWord({StrLit(name)}, {n.Line});");

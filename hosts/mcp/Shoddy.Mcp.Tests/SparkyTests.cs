@@ -67,9 +67,9 @@ public class FoldTests
     /// system prompt, a project instruction file, a model briefed before
     /// it connects — and a reproduction that drifts is worse than none:
     /// it would ground a model in rules the engine no longer keeps. So
-    /// the two are compared, and the prompt text is deliberately written
-    /// without any character HTML would escape, which is what lets the
-    /// comparison be exact rather than approximate.
+    /// the two are compared exactly, against the page as a reader sees
+    /// it and the Copy button copies it: entities decoded, so `&amp;mdash;`
+    /// in the source matches the served `—`.
     /// </summary>
     [Fact]
     public void TheDocsPageCarriesTheServedGroundingWordForWord()
@@ -77,15 +77,8 @@ public class FoldTests
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
         while (dir != null && !Directory.Exists(Path.Combine(dir.FullName, "docs")))
             dir = dir.Parent;
-        string page = File.ReadAllText(
-            Path.Combine(dir!.FullName, "docs", "mills", "sparky.html")).Replace("\r\n", "\n");
-
-        foreach (char c in "<>&")
-            foreach ((string name, string text) in new[]
-                     { ("reckoner", SparkyGrounding.Reckoner), ("surface", SparkyGrounding.Surface) })
-                Assert.False(text.Contains(c),
-                    $"the {name} grounding contains '{c}', which the page must escape — "
-                  + "so this comparison could no longer be exact. Reword it.");
+        string page = System.Net.WebUtility.HtmlDecode(File.ReadAllText(
+            Path.Combine(dir!.FullName, "docs", "mills", "sparky.html"))).Replace("\r\n", "\n");
 
         Assert.Contains(SparkyGrounding.Reckoner.Replace("\r\n", "\n"), page);
         Assert.Contains(SparkyGrounding.Surface.Replace("\r\n", "\n"), page);
@@ -97,13 +90,13 @@ public class FoldTests
     /// return a plausible number instead, and the prompt is the only
     /// thing standing between a model and a confident wrong answer.</summary>
     [Theory]
-    [InlineData("RADIANS")]        // 90 SIN is 0.894, not 1
+    [InlineData("radians")]        // 90 SIN is 0.894, not 1
     [InlineData("STDDEVP")]        // sample and population are different words
     [InlineData("FIX")]            // changes what is shown, not what is held
     [InlineData("MONEY")]          // doubles do not do currency
     public void TheGroundingWarnsAboutWhatCannotBeRefused(string fragment)
     {
-        Assert.Contains("CANNOT catch you", SparkyGrounding.Reckoner);
+        Assert.Contains("cannot catch you", SparkyGrounding.Reckoner);
         Assert.Contains(fragment, SparkyGrounding.Reckoner);
     }
 
@@ -307,8 +300,8 @@ public class ServerTests : IDisposable
             {"jsonrpc":"2.0","id":1,"method":"resources/read","params":{"uri":"sparky://grounding/reckoner"}}
             """);
         string reckoner = rk.GetProperty("result").GetProperty("contents")[0].GetProperty("text").GetString()!;
-        Assert.Contains("EXACTLY ONE CELL", reckoner);
-        Assert.Contains("RECURSION IS IMPOSSIBLE", reckoner);
+        Assert.Contains("takes exactly one cell", reckoner);
+        Assert.Contains("A word cannot call itself", reckoner);
     }
 
     // ---- isolation ----

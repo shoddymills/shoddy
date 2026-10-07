@@ -290,7 +290,7 @@ public class LintTests
             "",
             "Def Main()",
             "    Print(F(1))"));
-        Assert.Contains(r.Warnings, w => w.Contains("section"));
+        Assert.Contains(r.Warnings, w => w.Contains("makes a quotation"));
     }
 
     // ---- defect 9: literal against sum constructors ---------------------
@@ -310,7 +310,7 @@ public class LintTests
             "",
             "Def Main()",
             "    Print(Rail(7))"));
-        Assert.Contains(r.Warnings, w => w.Contains("falls to Case Else"));
+        Assert.Contains(r.Warnings, w => w.Contains("reaches Case Else"));
     }
 
     [Fact]
@@ -328,7 +328,7 @@ public class LintTests
             "",
             "Def Main()",
             "    Print(Rail(AKnob()))"));
-        Assert.DoesNotContain(r.Warnings, w => w.Contains("falls to Case Else"));
+        Assert.DoesNotContain(r.Warnings, w => w.Contains("reaches Case Else"));
     }
 
     // A Def that turns a Number INTO a sum type is not a Def that matches
@@ -357,7 +357,7 @@ public class LintTests
             "    Print(Classify(5))",
             "    Print(Classify(15))",
             "    Print(Classify(30))"));
-        Assert.DoesNotContain(r.Warnings, w => w.Contains("falls to Case Else"));
+        Assert.DoesNotContain(r.Warnings, w => w.Contains("reaches Case Else"));
     }
 
     [Fact]
@@ -375,7 +375,7 @@ public class LintTests
             "",
             "Def Main()",
             "    Print(Pick(5))"));
-        Assert.DoesNotContain(r.Warnings, w => w.Contains("falls to Case Else"));
+        Assert.DoesNotContain(r.Warnings, w => w.Contains("reaches Case Else"));
     }
 
     [Fact]
@@ -393,7 +393,7 @@ public class LintTests
             "",
             "Def Main()",
             "    Print(Classify(5))"));
-        Assert.DoesNotContain(r.Warnings, w => w.Contains("falls to Case Else"));
+        Assert.DoesNotContain(r.Warnings, w => w.Contains("reaches Case Else"));
     }
 
     // The other side of the fix: a constructor in a CASE PATTERN is still
@@ -414,7 +414,7 @@ public class LintTests
             "",
             "Def Main()",
             "    Print(Rail(\"seven\"))"));
-        Assert.Contains(r.Warnings, w => w.Contains("falls to Case Else"));
+        Assert.Contains(r.Warnings, w => w.Contains("reaches Case Else"));
     }
 
     // ---- defect 10: top-level Let in a namespaced include ---------------

@@ -43,14 +43,14 @@ public static class MachineResolve
             // whether a program is legal would depend on what happened to
             // be built. Build it instead; the mill already knows how.
             Console.Error.WriteLine(
-                $"mill: machine {Path.GetFileName(sbPath)} is not built — building");
+                $"mill: machine {Path.GetFileName(sbPath)} is not built. Building it now");
             Build(sbPath);
         }
         else if (IsStale(sbPath, dll))
         {
             // The stale-DLL trap cost two debugging rounds in one week.
             Console.Error.WriteLine(
-                $"mill: machine {Path.GetFileName(sbPath)} is newer than its DLL — rebuilding");
+                $"mill: machine {Path.GetFileName(sbPath)} is newer than its DLL. Rebuilding it now");
             Build(sbPath);
         }
 

@@ -95,7 +95,7 @@ public class MathTests
         Assert.Contains("ASIN outside [-1, 1]", RunSrcError("Def Main()\n    Print(Asin(2))\n"));
         Assert.Contains("ACOS outside [-1, 1]", RunSrcError("Def Main()\n    Print(Acos(-2))\n"));
         Assert.Contains("LOG10 of non-positive", RunSrcError("Def Main()\n    Print(Log10(0))\n"));
-        Assert.Contains("WRAP by zero", RunSrcError("Def Main()\n    Print(Wrap(5, 0))\n"));
+        Assert.Contains("WRAP: division by zero", RunSrcError("Def Main()\n    Print(Wrap(5, 0))\n"));
     }
 
     // ---- the derived machine -------------------------------------------

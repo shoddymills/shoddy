@@ -107,7 +107,7 @@ async function showGenerated() {
         async (err, stdout, stderr) => {
             if (err || !stdout) {
                 vscode.window.showErrorMessage(
-                    'Shoddy: mill gen failed — ' + (stderr || (err && err.message) || 'no output'));
+                    'Shoddy: mill gen failed: ' + (stderr || (err && err.message) || 'no output'));
                 return;
             }
             const doc = await vscode.workspace.openTextDocument(
@@ -181,7 +181,7 @@ exports.activate = (ctx) => {
                     const doc = shoddyDoc();
                     if (!doc) {
                         vscode.window.showErrorMessage(
-                            'Shoddy perch: open (or click into) a .shoddy file, then press F5.');
+                            'Shoddy debugger: open a .shoddy file, or click into one, then press F5.');
                         return undefined;
                     }
                     config.program = doc.fileName;

@@ -99,7 +99,7 @@ public sealed partial class Engine
 
     public Value Pop(int line)
     {
-        if (Stk.Count == 0) throw Die(line, "stack underflow");
+        if (Stk.Count == 0) throw Die(line, "stack underflow: a word needed more values than the stack holds");
         Value v = Stk[^1];
         Stk.RemoveAt(Stk.Count - 1);
         return v;
@@ -343,7 +343,7 @@ public sealed partial class Engine
     {
         int k = (int)h;
         if (k < 1 || k > files.Length || files[k - 1] == null)
-            throw Die(line, $"{w}: bad file handle");
+            throw Die(line, $"{w}: {k} is not an open file handle");
         return files[k - 1]!;
     }
 
@@ -357,7 +357,7 @@ public sealed partial class Engine
     {
         int k = (int)h;
         if (k < 1 || k > socks.Length || socks[k - 1] == null)
-            throw Die(line, $"{w}: bad socket handle");
+            throw Die(line, $"{w}: {k} is not an open socket handle");
         return socks[k - 1]!;
     }
 
@@ -371,7 +371,7 @@ public sealed partial class Engine
     void RequireNet(int line, string w)
     {
         if (!netOK)
-            throw Die(line, $"{w}: network is disabled — run the mill with --allow-net");
+            throw Die(line, $"{w}: the network is off. Start the mill with --allow-net");
     }
 
     /// <summary>TRYTCPCONNECT's Err, in the shape TRYREADFILE and TRYBOPEN
@@ -389,7 +389,7 @@ public sealed partial class Engine
     {
         int k = (int)n;
         if (k < 1 || k > scribs.Length || scribs[k - 1] == null)
-            throw Die(line, $"{w}: bad scribbler slot");
+            throw Die(line, $"{w}: {k} is not an open scribbler");
         return k - 1;
     }
 
@@ -457,7 +457,7 @@ public sealed partial class Engine
             case "MOD":
             {
                 double b = PopNum(line, w), a = PopNum(line, w);
-                if (b == 0) throw Die(line, "MOD by zero");
+                if (b == 0) throw Die(line, "MOD: division by zero");
                 PushNum(a % b); return true;    // C fmod semantics
             }
             case "WRAP":
@@ -465,7 +465,7 @@ public sealed partial class Engine
                 // Floored modulo: result carries the divisor's sign, so
                 // Wrap(-10, 360) is 350, not -10 — angle and index wrapping.
                 double b = PopNum(line, w), a = PopNum(line, w);
-                if (b == 0) throw Die(line, "WRAP by zero");
+                if (b == 0) throw Die(line, "WRAP: division by zero");
                 PushNum(a - b * Math.Floor(a / b)); return true;
             }
             case "NEGATE": PushNum(-PopNum(line, w)); return true;
@@ -570,7 +570,7 @@ public sealed partial class Engine
                 double from = PopNum(line, w);
                 string subs = PopStr(line, w), s = PopStr(line, w);
                 if (from < 1 || from != Math.Floor(from))
-                    throw Die(line, "INSTRFROM: start must be a whole number from 1");
+                    throw Die(line, "INSTRFROM: start must be a whole number, at least 1");
                 // A start past the end is an ordinary answer — nothing occurs
                 // there — but IndexOf throws on it, so the guard is the answer
                 // and not tidiness. Ordinal to match INSTR above, without which
@@ -687,7 +687,7 @@ public sealed partial class Engine
                 // the caller can see the off-by-one. MID clamps here instead,
                 // which is what puts the abort a word away from the mistake.
                 if (k < 1 || k != Math.Floor(k))
-                    throw Die(line, "CODEAT: position must be a whole number from 1");
+                    throw Die(line, "CODEAT: position must be a whole number, at least 1");
                 if (k > s.Length)
                     throw Die(line, $"CODEAT: position {Format.Num(k)} is past the end of a {s.Length}-character string");
                 PushNum(s[(int)k - 1]); return true;
@@ -976,7 +976,7 @@ public sealed partial class Engine
             {
                 double pos = PopNum(line, w);
                 FileStream f = BinHandle(PopNum(line, w), line, w);
-                if (pos < 1) throw Die(line, "SEEK: position must be >= 1");
+                if (pos < 1) throw Die(line, "SEEK: position must be at least 1");
                 f.Position = (long)pos - 1;
                 return true;
             }
@@ -1022,7 +1022,7 @@ public sealed partial class Engine
                 int len = (int)PopNum(line, w);
                 string s = PopStr(line, w);
                 FileStream f = BinHandle(PopNum(line, w), line, w);
-                if (len < 1) throw Die(line, "PUTSTR: field length must be >= 1");
+                if (len < 1) throw Die(line, "PUTSTR: field length must be at least 1");
                 byte[] sb = Bytes.GetBytes(s);
                 if (sb.Length > len)
                     throw Die(line, $"PUTSTR: string of {sb.Length} bytes exceeds the {len}-byte field");
@@ -1034,7 +1034,7 @@ public sealed partial class Engine
             {
                 int len = (int)PopNum(line, w);
                 FileStream f = BinHandle(PopNum(line, w), line, w);
-                if (len < 1) throw Die(line, "GETSTR: field length must be >= 1");
+                if (len < 1) throw Die(line, "GETSTR: field length must be at least 1");
                 var buf = new byte[len];
                 if (f.ReadAtLeast(buf, len, false) != len)
                     throw Die(line, "GETSTR: read past end of file");
@@ -1305,7 +1305,7 @@ public sealed partial class Engine
                     tls[k - 1] = null;
                     tlsEof[k - 1] = false;
                     Exception inner = e is AggregateException ag ? ag.GetBaseException() : e;
-                    throw Die(line, $"TCPSECURE: handshake with '{host}' failed — {inner.Message}");
+                    throw Die(line, $"TCPSECURE: handshake with '{host}' failed: {inner.Message}");
                 }
                 tls[k - 1] = ss;
                 tlsEof[k - 1] = false;
@@ -1360,7 +1360,7 @@ public sealed partial class Engine
                 int max = (int)PopNum(line, w);
                 int rh = (int)PopNum(line, w);
                 Socket sk = SockHandle(rh, line, w);
-                if (max < 1) throw Die(line, "TCPRECV: byte count must be >= 1");
+                if (max < 1) throw Die(line, "TCPRECV: byte count must be at least 1");
                 if (tls[rh - 1] is SslStream sec)
                 {
                     // Blocks until data, EOF or the read timeout. "" means
@@ -1468,7 +1468,7 @@ public sealed partial class Engine
                 if (ReferenceEquals(In, Console.In) && !Console.IsInputRedirected
                     && Volatile.Read(ref ScribblerRegistry.OpenCount) > 0)
                     throw Die(line, "Input: cannot read the console while a scribbler window is open" +
-                                    " — read keystrokes with ScribblerWait or ScribblerPoll.");
+                                    ". Read keystrokes with ScribblerWait or ScribblerPoll.");
                 O.Write(PopStr(line, w));
                 O.Flush();
                 PushStr(In.ReadLine() ?? "");
@@ -1485,7 +1485,7 @@ public sealed partial class Engine
                 if (ReferenceEquals(In, Console.In) && !Console.IsInputRedirected
                     && Volatile.Read(ref ScribblerRegistry.OpenCount) > 0)
                     throw Die(line, "InputLine: cannot read the console while a scribbler window is open" +
-                                    " — read keystrokes with ScribblerWait or ScribblerPoll.");
+                                    ". Read keystrokes with ScribblerWait or ScribblerPoll.");
                 O.Write(PopStr(line, w));
                 O.Flush();
                 string? got = In.ReadLine();
@@ -1506,7 +1506,7 @@ public sealed partial class Engine
                 if (ReferenceEquals(In, Console.In) && !Console.IsInputRedirected
                     && Volatile.Read(ref ScribblerRegistry.OpenCount) > 0)
                     throw Die(line, "InKey: cannot read the console while a scribbler window is open" +
-                                    " — read keystrokes with ScribblerWait or ScribblerPoll.");
+                                    ". Read keystrokes with ScribblerWait or ScribblerPoll.");
                 if (!ReferenceEquals(In, Console.In) || Console.IsInputRedirected)
                 {
                     // Redirected or test-supplied input: consume one pending
@@ -1830,7 +1830,7 @@ public sealed partial class Engine
                 int hgt = (int)PopNum(line, w), wid = (int)PopNum(line, w);
                 Func<int, int, ScribblerHandle>? create = ScribblerRegistry.CreateScribbler;
                 if (create == null)
-                    throw Die(line, "ScribblerOpen: no window backend — scribbler programs require `mill run`");
+                    throw Die(line, "ScribblerOpen: this host has no window. Run scribbler programs with `mill run`");
                 if (wid < 1 || hgt < 1)
                     throw Die(line, $"ScribblerOpen: size must be at least 1x1, got {wid}x{hgt}");
                 ScribblerHandle h = create(wid, hgt);    // blocks until the window exists
@@ -1862,7 +1862,7 @@ public sealed partial class Engine
                 Func<int, int, ScribblerHandle>? make = ScribblerRegistry.CreateScribbler;
                 if (make == null)
                 {
-                    PushErrAt("CANNOT OPEN A WINDOW (THERE IS NO WINDOW BACKEND — THIS NEEDS `mill run`)");
+                    PushErrAt("CANNOT OPEN A WINDOW. THIS HOST HAS NO WINDOW, SO RUN THE PROGRAM WITH `mill run`");
                     return true;
                 }
                 if (swid < 1 || shgt < 1)
@@ -2054,7 +2054,7 @@ public sealed partial class Engine
                         return true;
                     }
                     if (h.OnBlit == null)       // headless: nothing will ever wake it
-                        throw Die(line, "ScribblerWait: no window backs this scribbler — the wait would never wake");
+                        throw Die(line, "ScribblerWait: this scribbler has no window, so nothing could end the wait");
                     h.Signal.Wait();
                 }
             }
@@ -2079,7 +2079,7 @@ public sealed partial class Engine
                 if (freq <= 0)
                     throw Die(line, $"Sound: frequency must be positive, got {Format.Num(freq)}");
                 if (ms < 0)
-                    throw Die(line, $"Sound: duration must be >= 0 ms, got {Format.Num(ms)}");
+                    throw Die(line, $"Sound: duration must be at least 0 ms, got {Format.Num(ms)}");
                 if (ms > 0) BuzzerRegistry.Sound?.Invoke(freq, ms);    // 0 ms: legal no-op
                 return true;
             }
@@ -2109,7 +2109,7 @@ public sealed partial class Engine
                 if (freq < 0)
                     throw Die(line, $"SoundQueue: frequency must be positive (or 0 for a rest), got {Format.Num(freq)}");
                 if (ms < 0)
-                    throw Die(line, $"SoundQueue: duration must be >= 0 ms, got {Format.Num(ms)}");
+                    throw Die(line, $"SoundQueue: duration must be at least 0 ms, got {Format.Num(ms)}");
                 // The cap is queued-ahead TIME, tracked here so it raises
                 // headless too: the seam has no drain feedback, so pending
                 // notes cannot be counted — but the drain instant is exact,
@@ -2119,7 +2119,7 @@ public sealed partial class Engine
                 double now = Ticker.Now;
                 double end = Math.Max(buzzQueueEnd[ch], now) + ms;
                 if (end - now > BuzzerQueueCapMs)
-                    throw Die(line, $"SoundQueue: more than {BuzzerQueueCapMs / 60_000} minutes queued ahead on channel {ch} — feed long scores incrementally from Tick events");
+                    throw Die(line, $"SoundQueue: more than {BuzzerQueueCapMs / 60_000} minutes queued ahead on channel {ch}. Queue a long score a part at a time from Tick events");
                 buzzQueueEnd[ch] = end;
                 BuzzerRegistry.Queue?.Invoke(ch, freq, ms);
                 return true;

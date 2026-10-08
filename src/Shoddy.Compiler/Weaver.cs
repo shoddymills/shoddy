@@ -61,19 +61,29 @@ public static class Weaver
         return (int)run.Invoke(null, new object?[] { output, input, args ?? Array.Empty<string>() })!;
     }
 
+    /// <summary>Weave a program to a runnable assembly beside it.
+    ///
+    /// Every file lands through <see cref="Publish"/>, never by truncating
+    /// in place. Two projects in one solution weave the same mill under
+    /// parallel MSBuild; the gate in RunPure serializes the two mill
+    /// processes, but not the FIRST project's reference resolution, which
+    /// is reading this DLL while the second project's weave rewrites it.
+    /// Truncating under that reader is an MSB3246 "bad image" in its
+    /// build.</summary>
     public static void Weave(ShoddyProgram prog, string outDll,
                              IReadOnlyList<MachineInfo>? machines = null)
     {
-        using (var pe = File.Create(outDll))
+        using (var pe = new MemoryStream())
         {
             Compile(GenerateSource(prog), pe, OutputKind.ConsoleApplication, machines,
                     Path.GetFileNameWithoutExtension(outDll));
+            Publish(outDll, pe.ToArray());
         }
 
-        File.WriteAllText(Path.ChangeExtension(outDll, ".runtimeconfig.json"),
+        Publish(Path.ChangeExtension(outDll, ".runtimeconfig.json"), System.Text.Encoding.UTF8.GetBytes(
             "{\"runtimeOptions\":{\"tfm\":\"net10.0\",\"framework\":" +
             "{\"name\":\"Microsoft.NETCore.App\",\"version\":\"10.0.0\"}," +
-            "\"rollForward\":\"LatestMinor\"}}\n");
+            "\"rollForward\":\"LatestMinor\"}}\n"));
 
         string outDir = Path.GetDirectoryName(Path.GetFullPath(outDll))!;
         CopyBeside(typeof(Engine).Assembly.Location, outDir);
@@ -158,6 +168,33 @@ public static class Weaver
     {
         string dest = Path.Combine(outDir, Path.GetFileName(dll));
         if (!string.Equals(Path.GetFullPath(dll), dest, StringComparison.Ordinal))
-            File.Copy(dll, dest, true);
+            Publish(dest, File.ReadAllBytes(dll));
+    }
+
+    /// <summary>Put <paramref name="bytes"/> at <paramref name="dest"/>
+    /// without a reader ever seeing a partial file.
+    ///
+    /// Identical content is left alone and only its timestamp moves on:
+    /// the weave is deterministic, so the second of two parallel projects
+    /// weaving one mill produces exactly the first one's bytes, and not
+    /// rewriting them is what keeps it off the file the first project is
+    /// reading. The timestamp still moves so MSBuild's Inputs/Outputs check
+    /// sees the output as current; setting it needs no data access, so an
+    /// open reader does not block it.
+    ///
+    /// Different content is written beside and renamed over, as
+    /// WeaveMachine does: a reader sees the old file whole or the new one
+    /// whole.</summary>
+    static void Publish(string dest, byte[] bytes)
+    {
+        if (File.Exists(dest) && new FileInfo(dest).Length == bytes.Length &&
+            File.ReadAllBytes(dest).AsSpan().SequenceEqual(bytes))
+        {
+            File.SetLastWriteTimeUtc(dest, DateTime.UtcNow);
+            return;
+        }
+        string tmp = dest + ".weaving";
+        File.WriteAllBytes(tmp, bytes);
+        File.Move(tmp, dest, overwrite: true);
     }
 }

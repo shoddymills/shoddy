@@ -101,7 +101,7 @@ public class ScribblerTests
             "    Let sc = ScribblerOpen(4, 4)",
             "    Print(sc)",
             ""), backend: false);
-        Assert.Contains("no window backend", err);
+        Assert.Contains("this host has no window", err);
     }
 
     [Fact]

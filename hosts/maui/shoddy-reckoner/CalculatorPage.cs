@@ -174,7 +174,7 @@ public sealed class CalculatorPage : ContentPage
     {
         if (session is null) return;
         IReadOnlyList<string> reopened = session.Abandon();
-        Show(new[] { "cancelled — the session restarted; unsaved words are gone (SAVE writes them to a file)" });
+        Show(new[] { "cancelled: the session restarted, and unsaved words are gone. SAVE writes words to a file" });
         Show(reopened);
         entry.Placeholder = session.Prompt;
         Busy = false;

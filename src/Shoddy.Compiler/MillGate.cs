@@ -3,6 +3,7 @@
 
 using System.Security.Cryptography;
 using System.Text;
+using Shoddy.Runtime;
 
 namespace Shoddy.Compiler;
 
@@ -21,9 +22,16 @@ namespace Shoddy.Compiler;
 /// lock from a crashed holder proceeds (the weave is deterministic, so
 /// re-writing is always safe), and named mutexes are cross-process on
 /// every OS .NET runs on.
+///
+/// The wait is bounded. A holder that crashes releases the lock, but one
+/// that is alive and stuck never does, and an unbounded wait turned that
+/// one process into every later build hanging with no message. Ten
+/// minutes is far beyond the longest legitimate weave.
 /// </summary>
 static class MillGate
 {
+    static readonly TimeSpan Patience = TimeSpan.FromMinutes(10);
+
     /// <summary>Hold the gate for <paramref name="path"/> until the
     /// returned handle is disposed.</summary>
     public static IDisposable Hold(string path)
@@ -32,7 +40,16 @@ static class MillGate
         try { full = Path.GetFullPath(path); } catch { full = path; }
         byte[] hash = SHA256.HashData(Encoding.UTF8.GetBytes(full.ToLowerInvariant()));
         var gate = new Mutex(false, "ShoddyMill-" + Convert.ToHexString(hash, 0, 16));
-        try { gate.WaitOne(); }
+        try
+        {
+            if (!gate.WaitOne(Patience))
+            {
+                gate.Dispose();
+                throw new ShoddyError(0,
+                    $"mill: waited {Patience.TotalMinutes:0} minutes for another mill process working on " +
+                    $"{full}; it has not finished. Look for a stuck mill process and end it, then build again.");
+            }
+        }
         catch (AbandonedMutexException) { /* prior holder died; the lock is ours */ }
         return new Held(gate);
     }

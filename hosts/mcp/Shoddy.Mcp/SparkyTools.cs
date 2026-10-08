@@ -78,18 +78,18 @@ public sealed class SparkyTools : IDisposable
             "Evaluate one or more RPN lines in order and answer what each printed, what it "
           + "said, and what the stack became. This is the main tool: compute answers here "
           + "rather than working them out yourself. A line that is refused comes back as a "
-          + "refusal, not an error, and leaves the stack as it was — so trying something is "
-          + "cheap. A drawing blitted during the line comes back as a picture in the same "
-          + "answer.",
+          + "refusal, not an error, and leaves the stack as it was, so trying something "
+          + "costs nothing. A drawing blitted (shown) during the line comes back as a picture "
+          + "in the same answer.",
             "{\"type\":\"object\",\"properties\":{"
           + "\"lines\":{\"type\":\"array\",\"items\":{\"type\":\"string\"},"
           + "\"description\":\"RPN lines, submitted in order. A ': NAME ... ;' definition may span several.\"},"
           + SessionArg + "},\"required\":[\"lines\"]}"),
 
         new ToolSpec("define",
-            "Define a word: the whole ': NAME ... ;' at once. Remember that a user word takes "
-          + "exactly ONE cell, and that its body may only name words that already exist — a "
-          + "word cannot call itself.",
+            "Define a word: the whole ': NAME ... ;' at once. A user word takes exactly one "
+          + "cell, and its body may only name words that already exist, so a word cannot "
+          + "call itself.",
             "{\"type\":\"object\",\"properties\":{"
           + "\"definition\":{\"type\":\"string\",\"description\":\"The whole definition, e.g. ': VAT DUP 0.2 * + ;'\"},"
           + SessionArg + "},\"required\":[\"definition\"]}"),
@@ -99,7 +99,7 @@ public sealed class SparkyTools : IDisposable
             "{\"type\":\"object\",\"properties\":{" + SessionArg + "}}"),
 
         new ToolSpec("help",
-            "A word's exact stack effect, description, and whether it touches the world — read "
+            "A word's exact stack effect, description, and whether it touches the world, read "
           + "from the running dictionary. Ask this rather than guessing whether a word exists "
           + "or what it takes.",
             "{\"type\":\"object\",\"properties\":{"
@@ -111,14 +111,15 @@ public sealed class SparkyTools : IDisposable
           + "\"word\":{\"type\":\"string\"}," + SessionArg + "},\"required\":[\"word\"]}"),
 
         new ToolSpec("words",
-            "Every word in the dictionary, grouped by the seed it came from — or, with "
-          + "by='effect', split into what touches nothing and what touches the world.",
+            "Every word in the dictionary, grouped by the seed it came from. With "
+          + "by='effect', the words are split into those that touch nothing and those that "
+          + "touch the world.",
             "{\"type\":\"object\",\"properties\":{"
           + "\"by\":{\"type\":\"string\",\"enum\":[\"seed\",\"effect\"]}," + SessionArg + "}}"),
 
         new ToolSpec("canvas",
-            "The current drawing as a PNG, blitted or not. Use this when a chart or turtle "
-          + "drawing was made and you did not see it — forgetting to blit costs nothing here.",
+            "The current drawing as a PNG, whether it was blitted (shown) or not. Use this "
+          + "when a chart or turtle drawing was made and you did not see it.",
             "{\"type\":\"object\",\"properties\":{"
           + "\"surface\":{\"type\":\"integer\",\"description\":\"1-based, in the order surfaces were opened. Omit for the most recently drawn.\"},"
           + SessionArg + "}}"),
@@ -148,18 +149,18 @@ public sealed class SparkyTools : IDisposable
             "A teaching card for one machine: what it is for, worked examples that run at this "
           + "prompt, and the live list of the words it contributes.",
             "{\"type\":\"object\",\"properties\":{"
-          + "\"machine\":{\"type\":\"string\",\"description\":\"A machine, seed or WORDS heading — 'alg', 'seedalg' and 'seed-alg' all work.\"},"
+          + "\"machine\":{\"type\":\"string\",\"description\":\"A machine, seed or WORDS heading. 'alg', 'seedalg' and 'seed-alg' all work.\"},"
           + SessionArg + "},\"required\":[\"machine\"]}"),
 
         new ToolSpec("reset",
             "Start the session again: empty stack, no history, no tape, and only the words it "
-          + "started with. Words loaded from sparkyrc are NOT restored — reset builds a fresh "
-          + "dictionary and reloads nothing.",
+          + "started with. Words loaded from sparkyrc are not restored, because reset builds "
+          + "a new dictionary and reloads nothing.",
             "{\"type\":\"object\",\"properties\":{" + SessionArg + "}}"),
 
         new ToolSpec("abandon",
-            "Give up on a session that is stuck — a network fetch against a peer that will "
-          + "never reply blocks its engine by design. This starts a NEW engine: sparkyrc is "
+            "Give up on a session that is stuck. A network fetch from a server that never "
+          + "replies blocks the session's engine. This starts a new engine: sparkyrc is "
           + "reloaded and unsaved words are gone. A turtle drawing is lost with it; a chart is "
           + "one word to redraw.",
             "{\"type\":\"object\",\"properties\":{" + SessionArg + "}}"),
@@ -228,7 +229,7 @@ public sealed class SparkyTools : IDisposable
             case "reset":
                 return ToolResult.Say("reset\n" + Join(await Session(args).ResetAsync()));
             case "abandon":
-                return ToolResult.Say("abandoned — a new engine, and sparkyrc read again\n"
+                return ToolResult.Say("abandoned: a new engine is running, and sparkyrc was read again\n"
                                     + Join(Session(args).Abandon()));
             default:
                 return Bad("there is no tool called " + name);
@@ -250,7 +251,7 @@ public sealed class SparkyTools : IDisposable
             sb.Append("> ").Append(t.Line).Append('\n');
             if (t.Unfinished)
             {
-                sb.Append("[unfinished] the line is still open — send the rest of it\n");
+                sb.Append("[unfinished] the line is still open. Send the rest of it\n");
                 continue;
             }
             foreach (string p in t.Printed) sb.Append("[printed] ").Append(p).Append('\n');
@@ -276,7 +277,7 @@ public sealed class SparkyTools : IDisposable
         SparkyFrame? frame = session.Canvas(surface);
         if (frame is null)
             return ToolResult.Say(session.CanvasCount == 0
-                ? "nothing has been drawn in this session — open a surface with PLOTOPEN, "
+                ? "nothing has been drawn in this session. Open a surface with PLOTOPEN, "
                 + "TURTLEOPEN or SCRIBOPEN first"
                 : $"there is no surface {surface}; this session has opened {session.CanvasCount}");
         return new ToolResult(new[]
@@ -310,8 +311,8 @@ public sealed class SparkyTools : IDisposable
         sb.Append(card ?? "# " + machine + "\n");
         sb.Append("\n## The words it contributes, read from the running dictionary\n\n");
         sb.Append(live.Count == 0
-            ? "(this page's machine contributes no words at this prompt directly — its words "
-            + "reach you through a seed, so ask `subject` for the seed instead)\n"
+            ? "(this page's machine adds no words at this prompt directly. Its words "
+            + "come through a seed, so ask `subject` for the seed instead)\n"
             : string.Join("\n", live) + "\n");
         sb.Append("\nEvery one of those carries its own stack effect and description: ask "
                 + "`help` rather than assuming.\n");

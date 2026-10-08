@@ -122,7 +122,7 @@ public sealed class SparkyServer
             w.WriteEndObject();
             w.WriteStartObject("serverInfo");
             w.WriteString("name", "sparky");
-            w.WriteString("title", "Sparky — the Shoddy reckoner");
+            w.WriteString("title", "Sparky: the Shoddy reckoner");
             w.WriteString("version", Version);
             w.WriteEndObject();
             // Named after Karen Spärck Jones, whose subject was
@@ -132,12 +132,11 @@ public sealed class SparkyServer
                 "A programmable RPN calculator with the whole Shoddy standard library at it: "
               + "statistics, matrices, linear algebra, LP and MIP, finance, symbolic algebra, "
               + "neural nets, regular expressions, indexed files, number bases, charts and "
-              + "turtle graphics. COMPUTE answers with `eval` rather than working them out "
+              + "turtle graphics. Compute answers with `eval` rather than working them out "
               + "yourself, and show the working. Read sparky://grounding/reckoner before your "
-              + "first line — two of its rules (a user word takes exactly one cell, and a word "
-              + "cannot call itself) are not what a concatenative language usually does. Ask "
-              + "`help` rather than assuming a word exists; every word carries its own stack "
-              + "effect and description.");
+              + "first line. Two of its rules differ from other stack languages: a user word "
+              + "takes exactly one cell, and a word cannot call itself. Ask `help` rather than "
+              + "assuming a word exists. Every word carries its own stack effect and description.");
             w.WriteEndObject();
         };
     }
@@ -202,8 +201,8 @@ public sealed class SparkyServer
             "What does not change about the language: no mutation, no For, values not "
           + "exceptions, 1-based, booleans are not numbers.");
         Resource(w, SparkyGrounding.ReckonerUri, "How a reckoner line works",
-            "RPN lines, lists and programs, ': NAME ... ;', the line-is-a-transaction rule, "
-          + "and the two facts every concatenative language gets wrong here.");
+            "RPN lines, lists and programs, ': NAME ... ;', the rule that a line takes effect "
+          + "whole or not at all, and the two rules that differ from other stack languages.");
         Resource(w, SparkyGrounding.SurfaceUri, "What this server is, and is not",
             "What Sparky exposes, what it deliberately does not, and the four things that "
           + "catch a text-only caller.");
@@ -278,7 +277,7 @@ public sealed class SparkyServer
     {
         ToolResult words = tools.CallAsync("words", default).GetAwaiter().GetResult();
         return "# The dictionary\n\nEvery word, grouped by the seed it came from. Ask `help` "
-             + "for any of them — the effect line and the description come from the same "
+             + "for any of them. The effect line and the description come from the same "
              + "place this list does.\n\n```\n"
              + string.Join("\n", words.Content.Select(b => b.Text)) + "\n```\n";
     }
@@ -304,7 +303,7 @@ public sealed class SparkyServer
             "A lesson in one machine's subject area, grounded in its own words and in worked "
           + "examples that run at this prompt.");
         w.WriteStartArray("arguments");
-        Argument(w, "machine", "Which subject — ask the `machines` tool for the list.", true);
+        Argument(w, "machine", "Which subject. The `machines` tool lists them.", true);
         w.WriteEndArray();
         w.WriteEndObject();
 
@@ -349,14 +348,14 @@ public sealed class SparkyServer
                 "Teach me " + of + ", using this server to do it.\n\n"
               + "Read sparky://grounding/reckoner first if you have not this session, then call "
               + "the `subject` tool for " + of + ". Build the lesson from what it answers: use "
-              + "the machine's own words, and RUN every example with `eval` rather than "
+              + "the machine's own words, and run every example with `eval` rather than "
               + "asserting what it would print. Show me the lines and the answers. If a chart "
               + "would make a point better than a number, draw one and blit it. Ask `help` for "
-              + "any word before you use it — never invent one."),
+              + "any word before you use it. Never invent one."),
             "check-my-working" => ($"Checking working in {of}",
                 "I have a problem in " + of + " and an answer I am not sure of. Ask me for "
-              + "both.\n\nThen RECOMPUTE it in this server with `eval` — do not check it in "
-              + "your head — and show me the lines you used. If we disagree, find where: work "
+              + "both.\n\nThen recompute it in this server with `eval`, not in "
+              + "your head, and show me the lines you used. If we disagree, find where: work "
               + "through it a step at a time on the stack so I can see which step I got wrong. "
               + "If we agree, say so and show the line that proves it."),
             _ => throw new ArgumentException("there is no prompt called " + name),

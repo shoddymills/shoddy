@@ -44,7 +44,7 @@ public static class Lint
         if (!prog.Unseeded.TryGetValue(name, out (string Declares, string? Via) a))
             return $"unknown word: {written}";
         string via = a.Via == null ? "" : $", which {a.Via} includes but does not export";
-        return $"unknown word: {written} — declared in {a.Declares}{via}. " +
+        return $"unknown word: {written}. It is declared in {a.Declares}{via}. " +
                $"Add: Include \"{a.Declares}\"";
     }
 
@@ -89,7 +89,7 @@ public static class Lint
         {
             if (names.Any(used.Contains)) continue;
             string src = cls[(cls.LastIndexOf('.') + 1)..].ToLowerInvariant() + ".shoddy";
-            r.Warnings.Add($"warning: Include \"{src}\" — no word or type from it is used");
+            r.Warnings.Add($"warning: Include \"{src}\": no word or type from it is used");
         }
     }
 
@@ -135,6 +135,49 @@ public static class Lint
         foreach (Quot b in prog.Defs.Values) walk(b);
         return used;
     }
+
+    /// <summary>The words the program calls: every Word node that is not a
+    /// parameter, a local or a top-level Let, plus the constructors named in
+    /// Case patterns. UsedWords counts every Word node, so a parameter named
+    /// `seed` reads there as the SEED builtin. The capability lint judges
+    /// what the program reaches, so it needs this narrower set: mungo-caverns
+    /// was told it used `random` because NewGame takes a `seed`.</summary>
+    internal static HashSet<string> CalledWords(ShoddyProgram prog)
+    {
+        var called = new HashSet<string>();
+        var globals = new HashSet<string>(GlobalNames(prog));
+        void walkPat(Pat? p)
+        {
+            if (p == null) return;
+            if (p.Type != null) called.Add(p.Type);
+            foreach (Pat s in p.Subs) walkPat(s);
+        }
+        // A Def body sees every top-level Let. The top level itself binds
+        // them in order, so there they are ordinary locals.
+        void walk(Quot q, HashSet<string> locals, bool inDef)
+        {
+            foreach (Node n in q.Items)
+            {
+                if (n.T is NType.Take or NType.Bind)
+                    foreach (string nm in n.Names) locals.Add(nm);
+                if (n.T == NType.Pat && n.P != null) PatBinders(n.P, locals);
+                walkPat(n.P);
+                if (n.T == NType.Word && n.Str != null)
+                {
+                    string name = prog.ResolveName(n.Str, n.File);
+                    bool bound = locals.Contains(n.Str) || locals.Contains(name) ||
+                                 (inDef && globals.Contains(name));
+                    if (!bound) called.Add(n.Str);
+                }
+                if (n.Q != null) walk(n.Q, new HashSet<string>(locals), inDef);
+                if (n.ElseQ != null) walk(n.ElseQ, new HashSet<string>(locals), inDef);
+            }
+        }
+        foreach (Quot body in prog.Defs.Values) walk(body, new HashSet<string>(), true);
+        if (prog.InitQuot != null) walk(prog.InitQuot, new HashSet<string>(), false);
+        return called;
+    }
+
 
     public static Result Run(ShoddyProgram prog, IReadOnlyList<Line>? lines)
     {
@@ -257,7 +300,7 @@ public static class Lint
         {
             if (owner.TryGetValue(defName, out Owner d))
                 hits.Add($"warning: Def '{defName}' shadows field accessor " +
-                         $"'{d.Field}' of type '{d.Type}' — the accessor is unreachable");
+                         $"'{d.Field}' of type '{d.Type}', so the accessor cannot be reached");
             WalkBinds(body, owner, hits, seen);
         }
         hits.Sort(StringComparer.Ordinal);
@@ -284,8 +327,8 @@ public static class Lint
                     if (!owner.TryGetValue(name, out Owner d)) continue;
                     if (!seen.Add($"{n.File}:{n.Line}:{name}")) continue;
                     hits.Add($"{n.File ?? "?"}:{n.Line}: warning: '{name}' shadows " +
-                             $"field accessor '{d.Field}' of type '{d.Type}' — " +
-                             "the accessor is unreachable in this scope");
+                             $"field accessor '{d.Field}' of type '{d.Type}', so " +
+                             "the accessor cannot be reached in this scope");
                 }
             }
             if (n.Q != null) WalkBinds(n.Q, owner, hits, seen);
@@ -337,8 +380,8 @@ public static class Lint
             if (kind == "") return;
             if (!seen.Add($"{n.File}:{n.Line}:{name}:bind")) return;
             r.Verbose.Add($"{n.File ?? "?"}:{n.Line}: note: {what} '{name}' " +
-                          $"shadows the {kind} '{name}' — the local wins every " +
-                          "naming contest in this scope; rename it");
+                          $"shadows the {kind} '{name}'. In this scope the name " +
+                          "always means the local. Rename it");
         }
 
         void Walk(Quot q, HashSet<string> locals, bool defTop)
@@ -378,8 +421,8 @@ public static class Lint
                         seen.Add($"{n.File}:{n.Line}:{w}:call"))
                         r.Warnings.Add($"{n.File ?? "?"}:{n.Line}: warning: '{w}' is " +
                             $"written as a call, but here '{w}' is a local shadowing " +
-                            $"the {kind} — a local cannot be called, so its value " +
-                            "passes through unchanged; rename the local");
+                            $"the {kind}. A local cannot be called, so its value " +
+                            "passes through unchanged. Rename the local");
                 }
                 if (n.Q != null) Walk(n.Q, new HashSet<string>(locals), false);
                 if (n.ElseQ != null) Walk(n.ElseQ, new HashSet<string>(locals), false);
@@ -432,8 +475,8 @@ public static class Lint
             if (kind == "") continue;
             string site = prog.DescribeSite(name);
             r.Warnings.Add($"warning: {kind} '{name}' ({site}) collides with field " +
-                           $"accessor '{d.Field}' of type '{d.Type}' — the word wins " +
-                           "and the accessor is unreachable; rename one of them");
+                           $"accessor '{d.Field}' of type '{d.Type}'. The word takes " +
+                           "the name and the accessor cannot be reached. Rename one of them");
         }
     }
 
@@ -460,8 +503,8 @@ public static class Lint
                     cands.Count <= 1) continue;
                 r.Warnings.Add($"{n.File ?? "?"}:{n.Line}: warning: top-level Let " +
                                $"'{bare}' in a namespaced include shares its name " +
-                               "with another namespace — resolution here is known " +
-                               "to misfire; move the value into a Def");
+                               "with another namespace, and the name can resolve to " +
+                               "the wrong one. Move the value into a Def");
             }
         }
     }
@@ -480,7 +523,7 @@ public static class Lint
             string t = l.Toks[0].Text.ToUpperInvariant();
             if (t is "AND" or "OR")
                 r.Warnings.Add($"{Path.GetFileName(l.File)}:{l.LineNo}: warning: this " +
-                               $"line begins with '{t}' — a wrapped condition must be " +
+                               $"line begins with '{t}'. A wrapped condition must be " +
                                "parenthesized to continue the previous line");
         }
     }
@@ -608,12 +651,12 @@ public static class Lint
             Node at = body.Items.Count > 0 ? body.Items[0] : new Node(NType.Take, 0);
             if (pushes >= 2)
                 r.Warnings.Add($"{at.File ?? "?"}:{at.Line}: warning: Def '{name}' " +
-                               $"leaves {pushes} values on the stack — a Def yields " +
+                               $"leaves {pushes} values on the stack. A Def yields " +
                                "one value, or none");
             else if (arity > 0 && -fr.Min > arity)
                 r.Warnings.Add($"{at.File ?? "?"}:{at.Line}: warning: Def '{name}' " +
                                $"reaches {-fr.Min - arity} value(s) below its own " +
-                               "parameters — something consumed more than it was given");
+                               "parameters, so something takes more values than it was given");
         }
 
         // Unknown words in InitQuot too (top-level Lets call words).
@@ -780,13 +823,13 @@ public static class Lint
                     bool boolean = BoolConsumers.Contains(word);
                     if ((numeric || boolean) && popped.Contains(Kind.Quot))
                         r.Warnings.Add($"{n.File ?? "?"}:{n.Line}: warning: a quotation " +
-                            $"reaches '{word}', which needs a {(numeric ? "number" : "boolean")} " +
-                            "— an operator called function-style is a section; write " +
-                            "`a Op b` (infix) or parenthesize the operand");
+                            $"reaches '{word}', which needs a {(numeric ? "number" : "boolean")}" +
+                            ". An operator called like a function, as in Op(a), makes a quotation. Write " +
+                            "`a Op b` (infix) or put the operand in parentheses");
                     if (word == "IFTE" && popped.Count == 3 && popped[2] == Kind.Quot)
                         r.Warnings.Add($"{n.File ?? "?"}:{n.Line}: warning: IFTE's " +
-                            "condition is a quotation — an operator called " +
-                            "function-style is a section; write `a Op b` (infix)");
+                            "condition is a quotation. An operator called like " +
+                            "a function, as in Op(a), makes a quotation. Write `a Op b` (infix)");
                 }
                 for (int i = 0; i < pushes; i++) kinds.Add(Kind.Unknown);
                 net += pushes;
@@ -830,8 +873,8 @@ public static class Lint
                         Kind c = Pop();
                         if (r != null && exact && c == Kind.Quot)
                             r.Warnings.Add($"{n.File ?? "?"}:{n.Line}: warning: IF's " +
-                                "condition is a quotation — an operator called " +
-                                "function-style is a section; write `a Op b` (infix)");
+                                "condition is a quotation. An operator called like " +
+                                "a function, as in Op(a), makes a quotation. Write `a Op b` (infix)");
                         Frame? a = Body(n.Q!, new HashSet<string>(locals));
                         Frame? b = n.ElseQ != null
                             ? Body(n.ElseQ, new HashSet<string>(locals))
@@ -851,8 +894,8 @@ public static class Lint
                         if (fa.Net != fb.Net)
                         {
                             r?.Warnings.Add($"{n.File ?? "?"}:{n.Line}: warning: the " +
-                                $"branches of this IF disagree — one nets {fa.Net} " +
-                                $"value(s), the other {fb.Net}; every branch must " +
+                                $"branches of this IF disagree. One leaves {fa.Net} " +
+                                $"value(s) and the other {fb.Net}. Every branch must " +
                                 "leave the same number of values");
                             return null;
                         }
@@ -973,7 +1016,7 @@ public static class Lint
                 else
                     r.Warnings.Add($"{it.File ?? "?"}:{it.Line}: warning: bare name " +
                         $"'{w}' was passed as a function value, but nothing defines " +
-                        "it — a typo is auto-quoted silently in argument position");
+                        "it. A misspelled name in argument position becomes a function value without any error");
             }
         }
 
@@ -994,8 +1037,8 @@ public static class Lint
         {
             if (r == null || n.CallArgs is not int wa || wa <= pops) return;
             r.Warnings.Add($"{n.File ?? "?"}:{n.Line}: warning: '{written}' takes " +
-                $"{pops} value(s), but this call writes {wa} argument(s) — the " +
-                "extra value(s) land beneath the call and surface somewhere else");
+                $"{pops} value(s), but this call writes {wa} argument(s). The " +
+                "extra value(s) stay on the stack and turn up somewhere else");
         }
 
         void CheckRecArgs(string callee, int pops, List<Kind> kinds, Node n)
@@ -1012,8 +1055,8 @@ public static class Lint
                 if (k is Kind.Num or Kind.Str or Kind.Bool)
                     r.Warnings.Add($"{n.File ?? "?"}:{n.Line}: warning: '{callee}' " +
                         $"matches this parameter against sum constructors, but a " +
-                        $"{k.ToString().ToLowerInvariant()} can never match one — " +
-                        "this call always falls to Case Else");
+                        $"{k.ToString().ToLowerInvariant()} can never match one, so " +
+                        "this call always reaches Case Else");
             }
         }
 

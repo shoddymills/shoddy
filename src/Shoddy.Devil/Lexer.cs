@@ -147,8 +147,8 @@ public static class Lexer
                 string? sub = qualified ? toks[3].Text : null;
                 if (qualified && !IsPlainWord(toks[3].Text))
                     throw new ShoddyError(start, path,
-                        $"'{toks[3].Orig}' is not usable as a namespace — "
-                        + "a namespace is a plain word");
+                        $"'{toks[3].Orig}' is not usable as a namespace. "
+                        + "A namespace is a plain word");
                 string cand = ResolveInclude(path, name);
                 if (!File.Exists(cand))
                     foreach (string dir in LibDirs())

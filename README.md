@@ -18,11 +18,11 @@ Three threads enter loose and run woven: rag stock in, cloth out. The mark,
 the colours, and why they are these colours and no others, are in
 [the heritage of the name](https://shoddymills.github.io/shoddy/heritage.html#the-mark).
 
-A purely functional BASIC. Friendly typed syntax on the surface —
-parenthesized calls, infix operators, `Let`, records, `Select Case`
-pattern matching — compiled by the **mill** onto .NET through a
+A purely functional BASIC. Friendly typed syntax on the surface
+(parenthesized calls, infix operators, `Let`, records, `Select Case`
+pattern matching) compiled by the **mill** onto .NET through a
 concatenative (Forth/Joy-style) stack core that remains a legal dialect.
-Python's layout, BASIC's keywords, Joy's soul.
+Python's layout, BASIC's keywords, Joy's core.
 
 <p align="center">
   <a href="https://shoddymills.github.io/shoddy/index.html"><img src="docs/media/shoddy-tour.gif" width="100%"
@@ -31,11 +31,11 @@ Python's layout, BASIC's keywords, Joy's soul.
 
 Nothing mutates: `Let` binds once, updates return new values, iteration
 is recursion and `Map`/`Filter`/`Fold`. And the whole surface desugars to
-stack code you can also write directly — the same `Square` is
+stack code you can also write directly: the same `Square` is
 `Def Square(n As Number) As Number` / `n * n`, or
 `Def Square ( Number -- Number )` / `Dup *`, and both are Shoddy. The
-standard library is written in that same language: one folder of Shoddy
-source per **machine**, from `seq` and `str` out to neural nets and
+standard library is written in that same language: one Shoddy
+source file per **machine**, from `seq` and `str` out to neural nets and
 TCP/IP.
 
 ---
@@ -43,20 +43,20 @@ TCP/IP.
 ### The showpieces
 
 *Mungo Caverns, a purely functional reimagining of our favourite text
-adventure — and Devil's Dust, the language's own name-story animated, with
+adventure, and Devil's Dust, the language's own name-story animated, with
 a tuning console that goes to eleven.*
 
 <table width="100%">
   <tr>
     <td align="center">
       <a href="https://shoddymills.github.io/shoddy/mills/mungo-caverns.html"><img src="docs/media/mungo-caverns.gif" alt="Mungo Caverns played in a terminal: into the well house, take the lamp, xyzzy to the debris room" width="100%"></a><br>
-      <b>Mungo Caverns</b><br><sub>the cave crawl, purely functional · graded against the original's transcripts</sub>
+      <b>Mungo Caverns</b><br><sub>the cave crawl, purely functional &middot; graded against the original's transcripts</sub>
     </td>
   </tr>
   <tr>
     <td align="center">
       <a href="https://shoddymills.github.io/shoddy/mills/devils-dust.html"><img src="docs/media/devils-dust.gif" alt="Devil's Dust running: the lever pulled to eleven, wool erupting, then the full stop raining the sky out" width="100%"></a><br>
-      <b>Devil's Dust</b><br><sub>boids over the devil's drum · live console, machine-room drone</sub>
+      <b>Devil's Dust</b><br><sub>boids over the devil's drum &middot; live console, machine-room drone</sub>
     </td>
   </tr>
 </table>
@@ -69,7 +69,7 @@ a tuning console that goes to eleven.*
   <tr>
     <td width="55%" valign="middle">
       <b>One download is the whole toolchain.</b> The VS Code extension
-      carries the mill and every machine inside it — install the
+      carries the mill and every machine inside it: install the
       <a href="https://dotnet.microsoft.com/download/dotnet/10.0">.NET 10 runtime</a>
       (the runtime, not the SDK), install the
       <a href="https://github.com/shoddymills/shoddy/releases/latest">latest <code>.vsix</code></a>,
@@ -86,12 +86,19 @@ a tuning console that goes to eleven.*
   </tr>
 </table>
 
+### Optional downloads: tools for an AI assistant
+
+Nothing in this section is needed to write or run Shoddy; the extension
+above is the whole install. These are separate downloads for an assistant
+working beside you: one gives it the calculator, and two bound what it may
+touch.
+
 <table width="100%">
   <tr>
     <td width="55%" valign="middle">
-      <b>The second download is for your AI.</b> The same release page carries
-      <a href="https://shoddymills.github.io/shoddy/mills/sparky.html">sparky</a>
-      — the reckoner as an MCP server: one self-contained executable per OS,
+      <b>sparky, for your AI.</b> The same release page carries
+      <a href="https://shoddymills.github.io/shoddy/mills/sparky.html">sparky</a>,
+      the reckoner as an MCP server: one self-contained executable per OS,
       with no repository and no .NET install at the far end. Point Claude
       Desktop, Claude Code, or any stdio MCP client at it, and the model
       computes with the whole standard library instead of guessing.
@@ -106,11 +113,11 @@ a tuning console that goes to eleven.*
 <table width="100%">
   <tr>
     <td width="55%" valign="middle">
-      <b>And a third, for the tree itself.</b>
+      <b>Fettler, for the tree itself.</b>
       <a href="https://shoddymills.github.io/shoddy-fettler/">Fettler</a>
-      is the file, search and edit tools an assistant actually needs — find,
+      is the file, search and edit tools an assistant needs (find,
       search, read, write, edit, replace, move, copy, delete and run a declared
-      task, as one program with an MCP front end and a command line.
+      task) as one program with an MCP front end and a command line.
       <b>No shell anywhere between it and the file</b>, and every path bounded
       to trees you declare. It protects the tree from the assistant without
       getting in your way: your shell, file explorer, IDE and git are untouched.
@@ -119,7 +126,27 @@ a tuning console that goes to eleven.*
     </td>
     <td width="45%" align="center" valign="middle">
       <a href="https://shoddymills.github.io/shoddy-fettler/"><img src="docs/media/fettler.svg" alt="A terminal showing two declared trees with their permissions, and a path from outside the boundary refused" width="100%"></a><br>
-      <b>Fettler</b><br><sub>bounded file tools · no shell in between</sub>
+      <b>Fettler</b><br><sub>bounded file tools &middot; no shell in between</sub>
+    </td>
+  </tr>
+</table>
+
+<table width="100%">
+  <tr>
+    <td width="55%" valign="middle">
+      <b>Picker, for the data.</b>
+      <a href="https://shoddymills.github.io/shoddy-fettler/pick.html">Picker</a>
+      is Fettler's boundary applied to a SQL Server catalog: <code>SELECT</code>
+      and <code>DESCRIBE</code> inside databases you declare, and nothing else.
+      No default database, no <code>USE</code>, no system catalog; tables,
+      views and columns scoped one by one; one statement through a parser
+      gate that fails closed; and the same disclosure screen over the rows
+      coming out. Its own program, <code>pick</code>, with an MCP server and
+      a command line, released from the Fettler repository.
+    </td>
+    <td width="45%" align="center" valign="middle">
+      <a href="https://shoddymills.github.io/shoddy-fettler/pick.html"><img src="docs/media/picker.svg" alt="A terminal showing one declared database with its grants and scoped objects, and a query naming an undeclared database refused" width="100%"></a><br>
+      <b>Picker</b><br><sub>bounded SQL &middot; no shell in between</sub>
     </td>
   </tr>
 </table>
@@ -129,7 +156,7 @@ a tuning console that goes to eleven.*
 ### Runs anywhere .NET runs
 
 *A mill is not only a console program. The same woven assembly runs at a
-terminal, inside an app, and from any .NET language — whole and unmodified,
+terminal, inside an app, and from any .NET language, whole and unmodified,
 with [one page of hosting](https://shoddymills.github.io/shoddy/hosting.html)
 behind all of it.*
 
@@ -137,22 +164,22 @@ behind all of it.*
   <tr>
     <td width="33%" align="center" valign="top">
       <a href="https://shoddymills.github.io/shoddy/hosting.html#mode-t"><img src="docs/media/runs-terminal.svg" alt="A woven mill running at a terminal: maze walls, dots, and Pac mid-game under the window's title bar" width="100%"></a><br>
-      <b>A terminal, anywhere</b><br><sub>Mode T — <code>mill weave</code>, then <code>dotnet x.dll</code>: a woven program is an ordinary .NET assembly</sub>
+      <b>A terminal, anywhere</b><br><sub>Mode T: <code>mill weave</code>, then <code>dotnet x.dll</code>; a woven program is an ordinary .NET assembly</sub>
     </td>
     <td width="33%" align="center" valign="top">
       <a href="https://shoddymills.github.io/shoddy/hosting.html#reckoner"><img src="docs/media/runs-reckoner.svg" alt="The Shoddy Reckoner app window: the calculator's stack rows above a shelf of three game cards" width="100%"></a><br>
-      <b>An app — the Reckoner</b><br><sub>Mode N in .NET MAUI — halifax's words called natively, and five catalog games running whole through pipes</sub>
+      <b>An app: the Reckoner</b><br><sub>Mode N in .NET MAUI: halifax's words called natively, and five catalog games running whole through pipes</sub>
     </td>
     <td width="33%" align="center" valign="top">
       <a href="https://shoddymills.github.io/shoddy/hosting.html#mode-n"><img src="docs/media/runs-dotnet.svg" alt="One woven assembly feeding three hosts: a terminal, an app window, and the cloud" width="100%"></a><br>
-      <b>Everywhere .NET goes</b><br><sub>Mode N from C# or F# — Load, Word, Call; a web endpoint or an Azure Function is the same three lines</sub>
+      <b>Everywhere .NET goes</b><br><sub>Mode N from C# or F#: Load, Word, Call; a web endpoint or an Azure Function is the same three lines</sub>
     </td>
   </tr>
 </table>
 
 ---
 
-### Start here — the tutorials
+### Start here: the tutorials
 
 *Build a real program from an empty folder, learn the method for driving the
 same craft with an AI assistant, then watch that method run at full size.*
@@ -161,31 +188,31 @@ same craft with an AI assistant, then watch that method run at full size.*
   <tr>
     <td width="33%" align="center" valign="top">
       <a href="https://shoddymills.github.io/shoddy/tutorials/first-mill.html"><img src="docs/media/icons/tutorials.gif" alt="a turtle drawing a colour spirograph, line by line" width="100%"></a><br>
-      <b>Your First Mill</b><br><sub>an empty folder to a spirograph · tests, build files, and the debugger from the first run</sub>
+      <b>Your First Mill</b><br><sub>an empty folder to a spirograph &middot; tests, build files, and the debugger from the first run</sub>
     </td>
     <td width="33%" align="center" valign="top">
       <a href="https://shoddymills.github.io/shoddy/tutorials/with-ai.html"><img src="docs/media/icons/with-ai.gif" alt="a question typed to an assistant, answered in Shoddy, and run" width="100%"></a><br>
-      <b>Building with an AI</b><br><sub>requirements to shippable code · briefs, plans, verification, and blank templates</sub>
+      <b>Building with an AI</b><br><sub>requirements to shippable code &middot; briefs, plans, verification, and blank templates</sub>
     </td>
     <td width="33%" align="center" valign="top">
       <a href="https://shoddymills.github.io/shoddy/tutorials/backgammon.html"><img src="docs/media/icons/backgammon.gif" alt="a backgammon board drawing itself, point by point" width="100%"></a><br>
-      <b>Backgammon, by Specification</b><br><sub>the method at full size · every prompt for an engine and a game, written by a model</sub>
+      <b>Backgammon, by Specification</b><br><sub>the method at full size &middot; every prompt for an engine and a game, written by a model</sub>
     </td>
   </tr>
 </table>
 
-Using Copilot or Claude on Shoddy? Ground it first —
+Using Copilot or Claude on Shoddy? Ground it first.
 [**Grounding an Assistant**](https://shoddymills.github.io/shoddy/assistants.html)
 is a standing instructions file to drop in your project, plus worked
-examples — a small program, the prompt you would type, and the Shoddy that
+examples: a small program, the prompt you would type, and the Shoddy that
 comes back. Every answer on the page was compiled and run before it went
 there.
 
 ---
 
-### See it run — every mill
+### See it run: every mill
 
-Complete programs woven from the machines — each split into a headless,
+Complete programs woven from the machines, each split into a headless,
 unit-tested pure core and a thin I/O shell. Click through for the full
 write-up on each one, or start at
 [the mills catalog](https://shoddymills.github.io/shoddy/mills/index.html).
@@ -196,7 +223,7 @@ write-up on each one, or start at
   <tr>
     <td align="left" valign="top">
       <a href="https://shoddymills.github.io/shoddy/mills/invaders.html"><img src="docs/media/invaders.svg" alt="Space Invaders in a scribbler window" width="150"></a><br>
-      <b>invaders</b><br><sub>graphical window · colour + sound</sub>
+      <b>invaders</b><br><sub>graphical window &middot; colour + sound</sub>
     </td>
     <td align="left" valign="top">
       <a href="https://shoddymills.github.io/shoddy/mills/mungo-caverns.html"><img src="docs/media/mungo-caverns.svg" alt="Mungo Caverns in a terminal" width="150"></a><br>
@@ -219,7 +246,7 @@ write-up on each one, or start at
   <tr>
     <td align="left" valign="top">
       <a href="https://shoddymills.github.io/shoddy/mills/devils-dust.html"><img src="docs/media/devils-dust.svg" alt="Devil's Dust: flocking wool and the tuning panel" width="150"></a><br>
-      <b>devils-dust</b><br><sub>boids with a console · goes to eleven</sub>
+      <b>devils-dust</b><br><sub>boids with a console &middot; goes to eleven</sub>
     </td>
     <td align="left" valign="top">
       <a href="https://shoddymills.github.io/shoddy/mills/emley-moor.html"><img src="docs/media/emley-moor.svg" alt="emley-moor: a transmitting mast on the moor, broadcasting" width="150"></a><br>
@@ -257,11 +284,11 @@ write-up on each one, or start at
   <tr>
     <td align="left" valign="top">
       <a href="https://shoddymills.github.io/shoddy/mills/demographics.html"><img src="docs/media/demographics.svg" alt="Neural income model chart" width="150"></a><br>
-      <b>demographics</b><br><sub>neural regression · the other head</sub>
+      <b>demographics</b><br><sub>neural regression &middot; the other head</sub>
     </td>
     <td align="left" valign="top">
       <a href="https://shoddymills.github.io/shoddy/mills/iris.html"><img src="docs/media/iris.svg" alt="Scatter plot of iris petal measurements, three species in three colours" width="150"></a><br>
-      <b>iris</b><br><sub>neural classifier · trains in 4s</sub>
+      <b>iris</b><br><sub>neural classifier &middot; trains in 4s</sub>
     </td>
   </tr>
 </table>
@@ -279,9 +306,9 @@ write-up on each one, or start at
 
 ---
 
-### The machines — the whole shed
+### The machines: the whole shed
 
-The standard library, one folder of Shoddy source per machine — graphics,
+The standard library, one Shoddy source file per machine: graphics,
 sound, statistics, neural nets, an LP solver, keyed files, and TCP/IP,
 batteries included. Full word references in
 [the machines catalog](https://shoddymills.github.io/shoddy/machines/index.html).
@@ -410,7 +437,7 @@ batteries included. Full word references in
 </table>
 
 *Reckoner seeds* bridge the rest of the standard library into that
-engine; they have no bearing outside it, so they aren't tiled here — see
+engine; they have no bearing outside it, so they are not tiled here; see
 [the seed list on reckoner's own page](https://shoddymills.github.io/shoddy/machines/reckoner.html#seeds).
 
 ---
@@ -421,12 +448,12 @@ Shoddy takes its name from the shoddy trade of the West Riding of
 Yorkshire. From 1813, the mills of Ossett, Morley, and Wakefield did what
 the wool trade thought impossible: they took worn-out rags, tore them back to
 fiber in a grinding machine called the devil, blended the reclaimed
-stock with new wool, and spun and wove it into cloth again — blankets,
+stock with new wool, and spun and wove it into cloth again: blankets,
 working clothes, and the uniforms of half the world's armies. The
 American Civil War made the word a slur; the mills went on making honest
 cloth for a century regardless, until synthetic fibers ended the trade.
-This language is built the same way: old ideas — BASIC, Forth, Joy,
-ISAM — reclaimed, blended with new wool, and woven into something
+This language is built the same way: old ideas (BASIC, Forth, Joy,
+ISAM) reclaimed, blended with new wool, and woven into something
 useful. Hence the **mill** (the executable) and its **machines** (the
 libraries). And the tagline is Ossett's own: *Useless Things Made Useful
 Through Skill* renders that town's civic motto, *Inutile Utile Ex Arte*
@@ -439,12 +466,12 @@ is in [the heritage of the name](https://shoddymills.github.io/shoddy/heritage.h
 
 | Path  | Contents                                                    |
 |-------|-------------------------------------------------------------|
-| `src/`| The .NET solution: `Shoddy.Runtime` · `Shoddy.Devil` (front-end) · `Shoddy.Mill` · `Shoddy.Compiler` · `Shoddy.Tests` |
-| `bin/`| Build output — the published `mill` toolchain lands here after `dotnet publish` (not committed; build it, then run `bin/mill`) |
-| `machines/`| Standard library (the machines): `seq` `str` `regex` `bool` `math` `matrix` `stats` `random` `neural` `money` `file` `recio` `dict` `isam` `net` `simplex` `mps` `clock` `vt100` `keys` `scribbler` `turtle` `plotter` `buzzer` |
-| `mills/`| Complete example programs (the mills), each with its own build wrapper: `mungo-caverns` (Colossal Cave Adventure) · `oregon` (overland-trail game, after MECC's 1971 original) · `pac-vt100` · `invaders` · `demographics` (neural income model, regression) · `iris` (neural species classifier, ~4s to train) · `simplex-from-mps` (LP solver) |
-| `docs/`| `index.html` (start here) · `guide.html` · `tutorials/` (three build-alongs) · `setup.html` (one-time machine setup) · `vscode.html` (editor) · `build.html` (the toolchain) · `stack.html` (the stack, traced) · `spec.html` · `quickref.html` · `errors.html` (every message and its cause) · `assistants.html` (grounding an AI) · `heritage.html` (the name) · `machines/` and `mills/` (one page each) |
-| `tst/`| `libtest.shoddy` (assertion suite) · `examples.shoddy` · `gradebook.shoddy` · `simplex.shoddy` · demos (`scribbler-` `turtle-` `plotter-` `buzzer-` `net-demo.shoddy`) · `golden/` (the constitution) |
+| `src/`| The .NET solution: `Shoddy.Runtime`, `Shoddy.Devil` (the front end), `Shoddy.Compiler`, `Shoddy.Mill`, `Shoddy.Mill.Headless`, `Shoddy.Perch` (the debugger), `Shoddy.Build` (ShoddyWeave, the csproj integration), `Shoddy.Hosting`, `Shoddy.Tests` |
+| `bin/`| Build output: the published `mill` toolchain lands here after `dotnet publish` (not committed; build it, then run `bin/mill`) |
+| `machines/`| The standard library, one `.shoddy` file per machine, with the reckoner seeds under `machines/seeds/`. Every machine is tiled under "The machines" above and has a page in [the machines catalog](https://shoddymills.github.io/shoddy/machines/index.html). |
+| `mills/`| Complete example programs, one folder per mill, each with its own `build.sh` / `build.ps1` wrapper. Every mill is tiled under "See it run" above and has a page in [the mills catalog](https://shoddymills.github.io/shoddy/mills/index.html). |
+| `docs/`| The documentation site, published to GitHub Pages as it stands. `index.html` is the front door; the "Documentation" section below maps the rest; `machines/` and `mills/` hold one page each. |
+| `tst/`| The suites: `libtest.shoddy` (the assertion suite), the per-machine and per-seed suites, the `*-demo.shoddy` demos, and `golden/` (the conformance fixtures every run is graded against) |
 | `vscode-shoddy/`| VS Code extension: highlighting, snippets, debugging, mill commands |
 
 ---
@@ -452,33 +479,38 @@ is in [the heritage of the name](https://shoddymills.github.io/shoddy/heritage.h
 ### Install
 
 Most people want the VS Code extension. It carries its own mill and the whole
-machine library, so it is the entire install — download the latest `.vsix` from
+machine library, so it is the entire install: download the latest `.vsix` from
 [the latest release](https://github.com/shoddymills/shoddy/releases/latest),
 then in VS Code press **Ctrl+Shift+P** (**Cmd+Shift+P** on macOS), run
-**Extensions: Install from VSIX…**, and choose the file you downloaded.
+**Extensions: Install from VSIX...**, and choose the file you downloaded.
 
 The only prerequisite is the [.NET 10 runtime](https://dotnet.microsoft.com/download/dotnet/10.0)
 (the runtime, not the SDK). Nothing to clone, nothing to build, no environment to
 set: a bare `Include "seq.shoddy"` resolves in any folder you open. See
 [the setup guide](https://shoddymills.github.io/shoddy/setup.html).
 
-The other download on that release page is **sparky** — the reckoner as an
-MCP server, for a caller that is an AI agent rather than a person. One
+### Optional: tools for an AI assistant
+
+None of the following is needed to write or run Shoddy. Each is a separate
+download for an assistant working beside you.
+
+**sparky** is on the same release page: the reckoner as an MCP server, for a
+caller that is an AI agent rather than a person. One
 self-contained executable per OS, needing no repository, no .NET install and
 no editor: unpack the archive for your platform and point any MCP client at
 it. [The sparky page](https://shoddymills.github.io/shoddy/mills/sparky.html)
 carries the registration shapes for Claude Desktop, Claude Code and VS Code,
 and the grounding prompt the server also serves itself.
 
-**The third is `fettle`** — [Fettler](https://shoddymills.github.io/shoddy-fettler/),
-now grown into its own repository and released from there: the file,
-search and edit tools an assistant actually needs, and the one that
+**`fettle`**, [Fettler](https://shoddymills.github.io/shoddy-fettler/),
+lives in its own repository and is released from there: the file,
+search and edit tools an assistant needs, and the one that
 changes how it touches your tree rather than what it knows. Find,
 search, read, write, edit, replace, move, copy, delete and run a declared
 task, as one program with an MCP front end and a command line, **bounded
 to trees you declare with no shell anywhere between it and the file**.
 That is what stops an assistant reaching your source through quoting
-rules that differ on every machine — and what makes a path outside the
+rules that differ on every machine, and what makes a path outside the
 boundary a refusal rather than a surprise.
 
 ```
@@ -492,13 +524,21 @@ GitHub Copilot, Claude Code and Claude Desktop, `fettle doctor` to say
 whether any of it took, and the settings that make it the *only* route to
 the tree rather than merely an available one.
 
+**`pick`**, [Picker](https://shoddymills.github.io/shoddy-fettler/pick.html),
+is the same boundary applied to SQL Server, released from the same
+repository: `SELECT` and `DESCRIBE` inside databases you declare, and
+nothing else. No default database, no `USE`, no system catalog; tables,
+views and columns scoped one by one; one statement through a parser gate
+that fails closed; and the same disclosure screen over the rows coming out.
+Its page carries the install, the registration and `pick doctor`.
+
 
 ---
 
 ### Build from source
 
 For working on the language itself, or to get `mill` on your command line.
-Requires the .NET 10 SDK. Build the mill (it isn't committed), then run a
+Requires the .NET 10 SDK. Build the mill (it is not committed), then run a
 program and the tests:
 
 ```
@@ -507,18 +547,18 @@ bin/mill run tst/examples.shoddy                   # compile in memory and run
 dotnet test src/Shoddy.Tests                       # golden conformance suite
 ```
 
-Or use the build wrapper — `./build.sh <cmd>` on Linux/macOS/WSL,
-`./build.ps1 <cmd>` on Windows — which bundles the common tasks: `build`,
+Or use the build wrapper (`./build.sh <cmd>` on Linux/macOS/WSL,
+`./build.ps1 <cmd>` on Windows), which bundles the common tasks: `build`,
 `test` (the whole suite: conformance, every machine, every mill), `check`
 (the fast verify gates), `run FILE`, `weave FILE`, `machines`, `stage`,
 `vsix`, `install`, `all`, `clean`.
 
 `vsix` packages a self-contained VS Code extension: it stages the mill and
 every machine into the package, so installing the `.vsix` needs only the
-.NET 10 *runtime* — no SDK, no checkout, no `SHODDYLIB`.
+.NET 10 *runtime*: no SDK, no checkout, no `SHODDYLIB`.
 
-The full toolchain — weaving to an assembly, building library machines, and
-the Windows PowerShell notes — is in [the toolchain guide](https://shoddymills.github.io/shoddy/build.html).
+The full toolchain (weaving to an assembly, building library machines, and
+the Windows PowerShell notes) is in [the toolchain guide](https://shoddymills.github.io/shoddy/build.html).
 
 ---
 
@@ -526,44 +566,44 @@ the Windows PowerShell notes — is in [the toolchain guide](https://shoddymills
 
 The whole site is at **[shoddymills.github.io/shoddy](https://shoddymills.github.io/shoddy/)**.
 
-**Learn** — [the front door](https://shoddymills.github.io/shoddy/index.html), every guide and
-reference organized by what you came for ·
+**Learn**: [the front door](https://shoddymills.github.io/shoddy/index.html), every guide and
+reference organized by what you came for &middot;
 [the beginner's guide](https://shoddymills.github.io/shoddy/guide.html), which assumes no prior
-knowledge · [the tutorials](https://shoddymills.github.io/shoddy/tutorials/index.html), three
-build-alongs starting from an empty folder ·
+knowledge &middot; [the tutorials](https://shoddymills.github.io/shoddy/tutorials/index.html), three
+build-alongs starting from an empty folder &middot;
 [grounding an assistant](https://shoddymills.github.io/shoddy/assistants.html), a standing
 instructions file for Copilot or Claude.
 
-**Reference** — [the specification](https://shoddymills.github.io/shoddy/spec.html), including the
-concatenative core (Appendix A) and design rationale (Appendix B) ·
+**Reference**: [the specification](https://shoddymills.github.io/shoddy/spec.html), including the
+concatenative core (Appendix A) and design rationale (Appendix B) &middot;
 [the quick reference](https://shoddymills.github.io/shoddy/quickref.html), every builtin word, type
-and syntax form on one page, plus a map of the machines ·
+and syntax form on one page, plus a map of the machines &middot;
 [errors and warnings](https://shoddymills.github.io/shoddy/errors.html), every message the toolchain
-can raise, its cause, and broken and fixed code side by side ·
+can raise, its cause, and broken and fixed code side by side &middot;
 [the stack](https://shoddymills.github.io/shoddy/stack.html), the machine under the costume, watched
 one word at a time.
 
-**Set up and build** — [setup](https://shoddymills.github.io/shoddy/setup.html), two steps once per
-machine · [VS Code](https://shoddymills.github.io/shoddy/vscode.html), debugging, snippets and the
-Run button · [the toolchain](https://shoddymills.github.io/shoddy/build.html), every mill command,
-wrapper and convention · [hosting](https://shoddymills.github.io/shoddy/hosting.html), a mill inside
-your own .NET app — ShoddyWeave in the csproj, ShoddyHost at runtime, the Reckoner as the worked
+**Set up and build**: [setup](https://shoddymills.github.io/shoddy/setup.html), two steps once per
+machine &middot; [VS Code](https://shoddymills.github.io/shoddy/vscode.html), debugging, snippets and the
+Run button &middot; [the toolchain](https://shoddymills.github.io/shoddy/build.html), every mill command,
+wrapper and convention &middot; [hosting](https://shoddymills.github.io/shoddy/hosting.html), a mill inside
+your own .NET app: ShoddyWeave in the csproj, ShoddyHost at runtime, the Reckoner as the worked
 example.
 
-**Also** — [the machines](https://shoddymills.github.io/shoddy/machines/index.html) and
-[the mills](https://shoddymills.github.io/shoddy/mills/index.html), one page each ·
-[the heritage of the name](https://shoddymills.github.io/shoddy/heritage.html) ·
+**Also**: [the machines](https://shoddymills.github.io/shoddy/machines/index.html) and
+[the mills](https://shoddymills.github.io/shoddy/mills/index.html), one page each &middot;
+[the heritage of the name](https://shoddymills.github.io/shoddy/heritage.html) &middot;
 [authorship](https://shoddymills.github.io/shoddy/authorship.html), who made
 Shoddy and with what tools.
 
 ---
 
-### Getting help, and what's new
+### Getting help, and what is new
 
-- **[Discussions](https://github.com/shoddymills/shoddy/discussions)** — questions, ideas, and
-  anything that doesn't fit an issue.
-- **[Issues](https://github.com/shoddymills/shoddy/issues)** — bugs and feature requests.
-- **[Releases](https://github.com/shoddymills/shoddy/releases)** — what changed in each version,
+- **[Discussions](https://github.com/shoddymills/shoddy/discussions)**: questions, ideas, and
+  anything that does not fit an issue.
+- **[Issues](https://github.com/shoddymills/shoddy/issues)**: bugs and feature requests.
+- **[Releases](https://github.com/shoddymills/shoddy/releases)**: what changed in each version,
   with the `.vsix` to download. The notes are written per tag in
   [release-notes/](release-notes/); there is no separate changelog.
 
@@ -572,7 +612,7 @@ Shoddy and with what tools.
 ### Language at a glance
 
 - Types: Number, String, Boolean, Quotation (closures), List, Array, and
-  user records via `Type` — every field name becomes an accessor function
+  user records via `Type`; every field name becomes an accessor function
   (`Score(s)`), composable like any other (`Map(class, Score)`). No NULL:
   variant types (`Type Option = Some(v) | None`) make "maybe nothing" a
   value you pattern-match, not a check you can forget. Booleans are not
@@ -582,7 +622,7 @@ Shoddy and with what tools.
 - `Select Case` matches values, ranges (`4 To 10`), comparisons
   (`Is >= 90`), and destructures records and variants (`Case Some(v)`,
   `Case None`) with `Where` guards.
-- `Include "FILE.SHODDY"` splices files (include-once) — resolved beside the
+- `Include "FILE.SHODDY"` splices files (include-once), resolved beside the
   including file, then `SHODDYLIB`, then the machine library beside the running
   mill, so a bare `Include "seq.shoddy"` works from any folder.
 - Errors carry source line numbers; `Assert` and `Error` are built in.
@@ -591,7 +631,7 @@ Shoddy and with what tools.
 
 ### License
 
-Shoddy is free and open source under the **[MIT License](LICENSE)** — use it
+Shoddy is free and open source under the **[MIT License](LICENSE)**: use it
 for anything, including commercially, with attribution.
 
 Third-party dependencies and the historical/homage example programs (OREGON,
@@ -609,7 +649,7 @@ Maintainers: the branch-to-tag sequence is **[WORKFLOW.md](WORKFLOW.md)**, with
 This project intends to join the [.NET Foundation](https://dotnetfoundation.org/).
 
 Authorship, and the disclosure of which tools were used in the making of Shoddy
-and how, is in **[AUTHORSHIP.md](AUTHORSHIP.md)** — stated at length, with the
+and how, is in **[AUTHORSHIP.md](AUTHORSHIP.md)**, stated at length, with the
 development record and the legal position, on
 [the Authorship page](https://shoddymills.github.io/shoddy/authorship.html).
 
@@ -617,9 +657,9 @@ development record and the legal position, on
 
 ### Status
 
-Version 1.0, and the toolchain is real: a 100%-compiled .NET language —
-every program weaves to C# and compiles with Roslyn, either in memory
-(`mill run`) or to an assembly on disk (`mill weave`) — with tail-call
+The toolchain is real: a 100%-compiled .NET language.
+Every program weaves to C# and compiles with Roslyn, either in memory
+(`mill run`) or to an assembly on disk (`mill weave`), with tail-call
 optimization, separately-compiled library machines, a self-hosted
 standard library, and a golden conformance suite graded byte-for-byte.
 The programs in `mills/` are not syntax demonstrations; they are

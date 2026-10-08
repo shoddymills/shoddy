@@ -10,9 +10,17 @@
 const fs = require("fs");
 const path = require("path");
 const root = path.resolve(__dirname, "..");
+// The docs are ASCII (verify-docs holds them to it), so a message that
+// carries an em dash is written on the page as &mdash;. Decode the handful
+// of entities a message can contain before comparing, built from code
+// points so this file stays ASCII too.
+const ENT = { mdash: 0x2014, ndash: 0x2013, hellip: 0x2026, rsquo: 0x2019,
+              lsquo: 0x2018, ldquo: 0x201c, rdquo: 0x201d, middot: 0xb7,
+              rarr: 0x2192, larr: 0x2190, nbsp: 0xa0 };
 const unescaped = f => fs.readFileSync(root + f, "utf8")
   .replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">")
-  .replace(/&quot;/g, '"');
+  .replace(/&quot;/g, '"')
+  .replace(/&([a-z]+);/g, (m, n) => (n in ENT ? String.fromCharCode(ENT[n]) : m));
 
 const page = unescaped("/docs/errors.html");
 

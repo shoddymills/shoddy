@@ -98,7 +98,7 @@ public static class CapabilityLint
     public static Dictionary<string, string> Used(ShoddyProgram prog, MachineSet machines)
     {
         var used = new Dictionary<string, string>(StringComparer.Ordinal);
-        HashSet<string> words = Lint.UsedWords(prog);
+        HashSet<string> words = Lint.CalledWords(prog);
 
         foreach (string w in words)
             if (BuiltinCaps.TryGetValue(w, out string? cap))

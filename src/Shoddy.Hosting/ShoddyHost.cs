@@ -90,16 +90,16 @@ public sealed class ShoddyHost
             throw new ArgumentException("at least one machine assembly is required", nameof(machines));
         if (options.FileRoot != null && !Directory.Exists(options.FileRoot))
             throw new DirectoryNotFoundException(
-                $"the file root '{options.FileRoot}' does not exist — a granted `file` " +
-                "capability needs a real directory behind it");
+                $"the file root '{options.FileRoot}' does not exist. A granted `file` " +
+                "capability needs a real directory");
         if (options.FileRoot is null)
         {
             lock (FileRootNeeds)
                 if (FileRootNeeds.Count > 0)
                     throw new InvalidOperationException(
                         $"this project granted `file` to mill '{FileRootNeeds[0]}', so every " +
-                        "ShoddyHost.Load must supply a FileRoot — the grant is build-time " +
-                        "permission, the root is this run-time argument (C2.4a). Set " +
+                        "ShoddyHost.Load must supply a FileRoot. The grant is permission given at build time, " +
+                        "and the root is this argument given at run time (C2.4a). Set " +
                         "ShoddyHostOptions.FileRoot to the directory the mill's declared " +
                         "paths live under.");
         }
@@ -264,7 +264,7 @@ public sealed class ShoddyWord
         int before = rt.Depth;
         foreach (ShoddyValue a in args)
             rt.Push(a.V ?? throw new ArgumentException(
-                "an argument is empty — it was default-constructed, not built or returned"));
+                "an argument is empty. It was default-constructed, not built or returned"));
         try
         {
             method.Invoke(null, new object[] { rt });
@@ -284,6 +284,6 @@ public sealed class ShoddyWord
         // poison the next.
         while (rt.Depth > before) rt.Pop(0);
         throw new InvalidOperationException(
-            $"{name} left {produced} values on the stack — Call answers exactly one");
+            $"{name} left {produced} values on the stack. Call needs exactly one");
     }
 }

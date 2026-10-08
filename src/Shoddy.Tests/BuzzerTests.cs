@@ -85,14 +85,14 @@ public class BuzzerTests
 
     [Theory]
     [InlineData("Sound(0, 100)", "Sound: frequency must be positive")]
-    [InlineData("Sound(440, -1)", "Sound: duration must be >= 0")]
+    [InlineData("Sound(440, -1)", "Sound: duration must be at least 0 ms")]
     [InlineData("NoteOn(0, 440)", "NoteOn: channel must be 1..8, got 0")]
     [InlineData("NoteOn(9, 440)", "NoteOn: channel must be 1..8, got 9")]
     [InlineData("NoteOn(1.5, 440)", "NoteOn: channel must be 1..8, got 1.5")]
     [InlineData("NoteOn(3, 0)", "NoteOn: frequency must be positive")]
     [InlineData("NoteOff(0)", "NoteOff: channel must be 1..8")]
     [InlineData("SoundQueue(1, -1, 100)", "SoundQueue: frequency must be positive (or 0 for a rest)")]
-    [InlineData("SoundQueue(1, 440, -5)", "SoundQueue: duration must be >= 0")]
+    [InlineData("SoundQueue(1, 440, -5)", "SoundQueue: duration must be at least 0 ms")]
     [InlineData("SoundStop(42)", "SoundStop: channel must be 1..8, got 42")]
     [InlineData("SoundGain(0, 0.5)", "SoundGain: channel must be 1..8")]
     [InlineData("SoundGain(1, 1.5)", "SoundGain: volume must be 0..1, got 1.5")]
@@ -124,7 +124,7 @@ public class BuzzerTests
             "    SoundQueue(1, 440, 100000)",   // 400 s: over it
             ""), fakes: null);
         Assert.Contains("queued ahead on channel 1", err);
-        Assert.Contains("feed long scores incrementally", err);
+        Assert.Contains("Queue a long score a part at a time", err);
     }
 
     [Fact]

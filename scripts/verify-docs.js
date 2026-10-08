@@ -27,7 +27,10 @@
 //                through CP1252. v1.7.0 shipped ~400 mangled characters past
 //                this gate because it had no such check (issue #36). A file
 //                that is legitimately about the fault opts out with a marker;
-//                see the check itself for the exact string.
+//                see the check itself for the exact string. And the docs
+//                pages and SVGs carry no character above 0x7F at all: every
+//                special character is an entity, so no code page can mangle
+//                one on its way through a console.
 //
 // Exit 0 and "ALL PAGES MATCH GROUND TRUTH" is the pass. Any mismatch prints
 // page vs truth and exits 1. Run it before cutting a release, and whenever
@@ -488,6 +491,40 @@ for (const file of textFiles(root)) {
     if (MOJI.test(line)) {
       console.log(rel + ":" + (i + 1) + ": UTF-8 mangled through CP1252 - "
                   + line.trim().slice(0, 72));
+      bad++;
+    }
+  });
+}
+
+// ---- encoding, second half: no character above 0x7F at all ----
+// The CP1252 signature above catches one round trip and no other. A CP437
+// round trip (the Windows console's OEM page) put U+0393 U+00FB U+2562
+// where U+25B6, the Run button's triangle, belonged in two tutorials, and
+// this gate reported green over it; the next incident will be a third code
+// page with a third signature. So the rule is simpler than any signature:
+// a docs page, a docs SVG and a root Markdown file (README.md and its
+// siblings, which GitHub renders the same way) carry no character above
+// 0x7F. Every special character is written as an entity (&mdash; &rsquo;
+// &#9654;), which is plain ASCII and survives any console, editor or
+// pipeline. The same opt-out marker applies. Shoddy and C# sources stay out
+// of scope: a string or a test may need a real character. Markdown below the
+// root (release notes, mill folders) stays out too.
+const ASCII_SCOPE = (rel, ext) =>
+  ((ext === ".html" || ext === ".svg") && rel.startsWith("docs/"))
+  || (ext === ".md" && !rel.includes("/"));
+
+for (const file of textFiles(root)) {
+  const rel = path.relative(root, file).replace(/\\/g, "/");
+  if (!ASCII_SCOPE(rel, path.extname(file).toLowerCase())) continue;
+  let text;
+  try { text = fs.readFileSync(file, "utf8"); } catch { continue; }
+  if (text.includes(MOJI_OPT_OUT)) continue;
+  text.split("\n").forEach((line, i) => {
+    const m = line.match(/[^\x00-\x7f]/u);
+    if (m) {
+      const cp = m[0].codePointAt(0).toString(16).toUpperCase().padStart(4, "0");
+      console.log(rel + ":" + (i + 1) + ": character U+" + cp +
+                  " - write it as an entity; the docs are ASCII");
       bad++;
     }
   });

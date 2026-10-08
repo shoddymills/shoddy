@@ -24,7 +24,7 @@ public readonly struct ShoddyValue
     internal ShoddyValue(Value v) => V = v;
 
     Value Val => V ?? throw new InvalidOperationException(
-        "this ShoddyValue is empty — it was default-constructed, not returned by a word");
+        "this ShoddyValue is empty. It was default-constructed, not returned by a word");
 
     // ---- construction ----
 
@@ -94,7 +94,7 @@ public readonly struct ShoddyValue
                     Value? lit = v.CItems[i].Lit;
                     if (lit is null)
                         throw new InvalidOperationException(
-                            "this quotation holds code, not data — AsList reads value lists only");
+                            "this quotation holds code, not data. AsList reads only lists of values");
                     result[i] = new ShoddyValue(lit);
                 }
                 return result;

@@ -46,17 +46,17 @@ public class StringCodeTests
 
     [Fact]
     public void CodeAtAtZeroIsACountingErrorAndSaysSo()
-        => Assert.Contains("CODEAT: position must be a whole number from 1",
+        => Assert.Contains("CODEAT: position must be a whole number, at least 1",
                            Fails("Print(CodeAt(\"HELLO\", 0))"));
 
     [Fact]
     public void CodeAtBelowZeroIsTheSameCountingError()
-        => Assert.Contains("CODEAT: position must be a whole number from 1",
+        => Assert.Contains("CODEAT: position must be a whole number, at least 1",
                            Fails("Print(CodeAt(\"HELLO\", 0 - 1))"));
 
     [Fact]
     public void CodeAtOnAFractionRefusesRatherThanTruncating()
-        => Assert.Contains("CODEAT: position must be a whole number from 1",
+        => Assert.Contains("CODEAT: position must be a whole number, at least 1",
                            Fails("Print(CodeAt(\"HELLO\", 2.5))"));
 
     [Fact]
@@ -90,17 +90,17 @@ public class StringCodeTests
 
     [Fact]
     public void InstrFromAtZeroIsRefused()
-        => Assert.Contains("INSTRFROM: start must be a whole number from 1",
+        => Assert.Contains("INSTRFROM: start must be a whole number, at least 1",
                            Fails("Print(InstrFrom(\"HELLO\", \"L\", 0))"));
 
     [Fact]
     public void InstrFromBelowZeroIsRefused()
-        => Assert.Contains("INSTRFROM: start must be a whole number from 1",
+        => Assert.Contains("INSTRFROM: start must be a whole number, at least 1",
                            Fails("Print(InstrFrom(\"HELLO\", \"L\", 0 - 1))"));
 
     [Fact]
     public void InstrFromOnAFractionIsRefused()
-        => Assert.Contains("INSTRFROM: start must be a whole number from 1",
+        => Assert.Contains("INSTRFROM: start must be a whole number, at least 1",
                            Fails("Print(InstrFrom(\"HELLO\", \"L\", 1.5))"));
 
     // ---- the boundaries that must NOT refuse ----------------------------

@@ -23,4 +23,4 @@ we will coordinate disclosure and credit reporters who wish to be named.
 
 ## Supported versions
 
-This is pre-1.0 software; only the latest `main` is supported.
+Only the latest `main` is supported.

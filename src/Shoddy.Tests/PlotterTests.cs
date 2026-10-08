@@ -116,7 +116,7 @@ public class PlotterTests
             RunPlotterError("    Let h = PieChart(NewPlot(100, 100), { \"A\", \"B\" }, { 1, 0 })"));
         Assert.Contains("BARCHART: VALUES MUST BE NON-NEGATIVE",
             RunPlotterError("    Let h = BarChart(NewPlot(100, 100), { \"A\" }, { -1 })"));
-        Assert.Contains("HISTOGRAM: NEED AT LEAST ONE BIN",
+        Assert.Contains("HISTOGRAM: THE NUMBER OF BINS MUST BE AT LEAST 1, GOT 0",
             RunPlotterError("    Let h = Histogram(NewPlot(100, 100), { 1, 2 }, 0)"));
     }
 

@@ -55,10 +55,9 @@ Let price = 3.99            &#39; also a Number (there&#39;s only one kind)
 Let name  = &quot;ADA&quot;           &#39; a String
 Let open  = True            &#39; a Boolean - True or False, its own type</code></pre>
 <p>(<code>'</code> starts a comment, as does <code>Rem</code>.)</p>
-<p><code>Let</code> gives a value a name. Here is the big rule: <strong>a name is given its value once, and that is final.</strong> This is not legal:</p>
-<pre class="basic"><code>Let x = 5
-Let x = x + 1        &#39; Error: duplicate binding</code></pre>
+<p><code>Let</code> gives a value a name. Here is the big rule: <strong>a name is given its value once, and that is final.</strong> Nothing can change that value later.</p>
 <p>Think of names as labels on values, not boxes you put things in. If you want &ldquo;X, but one bigger,&rdquo; that is a <em>new value</em>, and it deserves its own name. More often, you will pass it to a function and name it there. Every language makes you think about <em>something</em>. Shoddy makes you think about where new values come from. In exchange, whole categories of bugs (&ldquo;who changed my variable?&rdquo;) cannot happen.</p>
+<p>A second <code>Let</code> with the same name inside a function changes nothing either. It makes a new label that hides the earlier one. Anything that already used the earlier value keeps it.</p>
 <p>One more place <code>Let</code> works: at the very left margin, outside any <code>Def</code>. That makes a <em>constant</em> the whole program can see, set up once, before anything runs:</p>
 <pre class="basic"><code class="basic">Let taxRate = 0.08
 Let menu    = { "TEA", "SCONE", "JAM" }
@@ -107,7 +106,7 @@ Print(InstrFrom(&quot;HELLO&quot;, &quot;L&quot;, 4))      &#39; 4 (Instr, but s
         a
     Else
         b</code></pre>
-<p>Read the header out loud: &ldquo;define Bigger, which takes A as a number and B as a number, and results in a number.&rdquo; The <code>As</code> types document what goes in and out (and the mill checks them while your program runs). The body has no <code>return</code> because the body <em>is</em> the result.</p>
+<p>Read the header out loud: &ldquo;define Bigger, which takes A as a number and B as a number, and results in a number.&rdquo; The <code>As</code> types document what goes in and out. The mill does not check them, so keep them accurate yourself. The body has no <code>return</code> because the body <em>is</em> the result.</p>
 <pre class="basic"><code>Print(Bigger(3, 7))      &#39; 7</code></pre>
 <p>When one value is checked against several possibilities, chained <code>If</code>s get hard to read. <code>Select Case</code> is the tidy version. It comes from classic BASIC, and it is also an expression:</p>
 <pre class="basic"><code>Def Describe(n As Number) As String
@@ -189,12 +188,13 @@ Let zeros = Dim(5, 0)            &#39; Array(0, 0, 0, 0, 0)</code></pre>
 <pre class="basic"><code>Let s1 = Student(&quot;ADA&quot;, 96)
 Let s2 = Student(Name = &quot;GRACE&quot;, Score = 91)     &#39; or spell fields out</code></pre>
 <p><strong>Accessors</strong>: each field name becomes a function:</p>
-<pre class="basic"><code>Print(Name(s1))                  &#39; ada
+<pre class="basic"><code>Print(Name(s1))                  &#39; ADA
 Print(Score(s1) + Score(s2))     &#39; 187</code></pre>
 <p>And <strong><code>With</code></strong> for &ldquo;the same, except&hellip;&rdquo;, because records do not change either:</p>
 <pre class="basic"><code>Let retested = With(s1, Score = 100)
 Print(s1)                        &#39; Student(Name = &quot;ADA&quot;, Score = 96) - untouched
 Print(retested)                  &#39; Student(Name = &quot;ADA&quot;, Score = 100)</code></pre>
+<p>Two records are equal (<code>=</code>) when every field is equal. Lists work differently: they compare by identity, not by contents. Two lists built separately are never equal, even with the same items, and a record that holds a list inherits that.</p>
 <p>Records and the chapter-4 words work well together, because accessors are functions you can pass by name:</p>
 <pre class="basic"><code>Let class = { s1, s2, Student(&quot;LIN&quot;, 78) }
 Print(Map(class, Name))                          &#39; [ &quot;ADA&quot; &quot;GRACE&quot; &quot;LIN&quot; ]
@@ -217,7 +217,7 @@ Def Area(s As Shape) As Number
             Pi() * r ^ 2
         Case Rect(w, h)
             w * h</code></pre>
-<p>A Shape is <em>either</em> a circle or a rectangle, and <code>Select Case</code> sorts out which: no flags, no &ldquo;type&rdquo; field you maintain by hand. And patterns nest: <code>Case Pair(Pair(a, b), c)</code> reaches two levels deep in one line, with <code>_</code> as the name for &ldquo;don't care.&rdquo;</p>
+<p>A Shape is <em>either</em> a circle or a rectangle, and <code>Select Case</code> sorts out which: no flags, no &ldquo;type&rdquo; field you maintain by hand. Each variant&rsquo;s fields are accessors too: <code>R(s)</code> reads a circle&rsquo;s radius. Use one only when you already know which variant you hold, because <code>R</code> on a <code>Rect</code> stops the program. And patterns nest: <code>Case Pair(Pair(a, b), c)</code> reaches two levels deep in one line, with <code>_</code> as the name for &ldquo;don't care.&rdquo;</p>
 <p>Alternatives also answer a question you will meet soon. Shoddy has no NULL, the &ldquo;no value here&rdquo; hole most languages leave open. So how does a function say &ldquo;I have nothing for you&rdquo;? By saying it in the type. The usual pair of names is <code>Some</code> and <code>None</code>, and you will meet them in many functional languages. Shoddy <strong>predeclares them</strong>, so there is nothing to write and nothing to include:</p>
 <pre class="basic"><code>' Type Option = Some(Value) | None   &mdash; already there, don't declare it
 
@@ -255,7 +255,7 @@ on a <code>None</code> would fail at run time, and you would be back to NULL by
 another name. <code>Select Case</code> is the way in.</p>
 <h2 id="under-the-hood-the-stack">7. Under the hood: the stack</h2>
 <p>Everything you have written so far is <em>sugar</em>: a friendly surface over a much simpler machine. Shoddy&rsquo;s real engine is a <strong>stack</strong>: a pile of values. Every operation takes its inputs off the top of the pile and puts its result back on.</p>
-<p>When you write <code>Hypot(3, 4)</code>, the machine runs <code>3 4 Hypot</code>: push 3, push 4, run Hypot (which takes both and leaves 5). Every piece of surface syntax translates this way:</p>
+<p>When you write <code>Hypot(3, 4)</code> (a word from the math machine, which chapter 8 introduces), the machine runs <code>3 4 Hypot</code>: push 3, push 4, run Hypot (which takes both and leaves 5). Every piece of surface syntax translates this way:</p>
 <table>
 <thead>
 <tr>
@@ -308,7 +308,10 @@ another name. <code>Select Case</code> is the way in.</p>
     Dup *</code></pre>
 <p><code>( Number -- Number )</code> documents &ldquo;takes a number, leaves a number.&rdquo; <code>Dup</code> copies the top of the pile. <code>*</code> multiplies the top two. So: copy the input, multiply the copies. That is squaring, in two words, with no variable at all. A handful of these <em>shuffle words</em> (<code>Dup</code>, <code>Swap</code>, <code>Drop</code>&hellip;) move values around the pile.</p>
 <p>Why would you? Because sometimes data flows left to right, and then the machine dialect is the <em>clearer</em> one:</p>
-<pre class="basic"><code>Def EvenSquareSum(n As Number) As Number
+<pre class="basic"><code>Def IsEven(n As Number) As Boolean
+    n Mod 2 = 0
+
+Def EvenSquareSum(n As Number) As Number
     Range(1, n)
         Filter(IsEven)
         Map(Square)
@@ -449,7 +452,8 @@ DeleteFile(&quot;motto.txt&quot;)</code></pre>
         Print(why)               &#39; CANNOT READ &#39;motto.txt&#39; (NO SUCH FILE)</code></pre>
 <p>That is chapter 6&rsquo;s <code>Result</code> doing what it exists for. The reason comes back as a value, the program carries on, and no <code>FileExists</code> guess stands between you and the answer. The reasons are Shoddy&rsquo;s own short phrases (<code>NO SUCH FILE</code>, <code>IS A DIRECTORY</code>, <code>ACCESS DENIED</code>, <code>UNREADABLE</code>), never the operating system&rsquo;s wording. That way a program can compare them, and a test can check them exactly.</p>
 <p><strong>Text, line by line.</strong> Most text files are lists of lines, and <code>file.shoddy</code> (chapter 8) turns them into exactly that: <code>ReadLines</code> gives a <code>List Of String</code>, <code>WriteLines</code> writes one back, <code>AppendLine</code> adds to the end. And once a file is a list, chapter 4 takes over. Here is the grade book&rsquo;s cure, in three short functions:</p>
-<pre class="basic"><code>Include &quot;file.shoddy&quot;                &#39; brings str.shoddy&#39;s Split along for free
+<pre class="basic"><code>Include &quot;file.shoddy&quot;                &#39; ReadLines, WriteLines
+Include &quot;str.shoddy&quot;                 &#39; Split
 
 Def SaveRoster(path As String, roster As List Of Student)
     WriteLines(path, Map(roster, Fn(s) =&gt; Name(s) &amp; &quot;,&quot; &amp; Str(Score(s))))
@@ -516,9 +520,9 @@ Def LoadNums(path As String) As List Of Number
 <p><strong>Reading errors.</strong> Every runtime error names its line.</p>
 <ul>
 <li><code>unknown word: x</code>: you used a name that is not defined. Either a typo, or a missing <code>Include</code>. (Order matters only for <code>Type</code> and <code>Include</code>; a <code>Def</code> can call a later <code>Def</code>.)</li>
-<li><code>If expects a Boolean, got Number (booleans are not numbers...)</code>: you wrote something like <code>If n Then</code>. Spell it out: <code>If n &lt;&gt; 0 Then</code>.</li>
+<li><code>IF expects a BOOLEAN, got NUMBER (booleans are not numbers in Shoddy)</code>: you wrote something like <code>If n Then</code>. Spell it out: <code>If n &lt;&gt; 0 Then</code>.</li>
 <li><code>stack underflow: a word needed more values than the stack holds</code>: mostly a machine-dialect problem: some word wanted more values than the pile held. In surface syntax, suspect a function called with too few arguments.</li>
-<li><code>duplicate binding</code> / <code>duplicate definition</code>: one <code>Let</code> per name, and two files cannot both define the same word.</li>
+<li><code>duplicate definition</code>: a name is declared twice at the left margin (two <code>Def</code>s, two <code>Type</code>s or two top-level <code>Let</code>s), or two files define the same word.</li>
 </ul>
 <p><strong>Things that surprise people.</strong></p>
 <ul>
@@ -540,7 +544,7 @@ Def LoadNums(path As String) As List Of Number
 word-by-word reference (every builtin, every form) is
 <a href="quickref.html">quickref.html</a>.</em></p>
 <p><strong>Structure</strong> <code>Def Name(p As t, ...) As t</code> &middot; body = indented lines &middot; last value = result &middot; <code>Def Main()</code> runs first &middot; <code>Type</code> for records &middot; <code>Include "F.SHODDY"</code> &middot; <code>Rem</code> or <code>'</code> for comments</p>
-<p><strong>Bindings</strong> <code>Let x = expr</code> (once per name, immutable)</p>
+<p><strong>Bindings</strong> <code>Let x = expr</code> (immutable; a later <code>Let</code> of the same name in a body hides the earlier one)</p>
 <p><strong>Operators</strong> (loose &rarr; tight): <code>Or</code> &middot; <code>And</code> &middot; <code>= &lt;&gt; &lt; &gt; &lt;= &gt;=</code> &middot; <code>+ - &amp;</code> &middot; <code>* / Mod</code> &middot; <code>^</code>. <code>Not</code> and <code>-</code> are prefix. <code>And</code>/<code>Or</code> stop early</p>
 <p><strong>Conditionals</strong> <code>If cond Then</code> / <code>Else</code> (indented branches; it is an expression) &middot; inline: <code>Ifte(c, t, f)</code> &middot; <code>Select Case expr</code> with <code>Case v</code> / <code>Case v1, v2</code> / <code>Case a To b</code> / <code>Case Is &gt;= v</code> / <code>Case Type(n1, n2) Where cond</code> (destructure a record) / <code>Case Else</code></p>
 <p><strong>Collections</strong> <code>{ 1, 2, 3 }</code> list &middot; <code>ToArray</code> / <code>ToList</code> / <code>Dim(n, v)</code> &middot; <code>First Rest Prepend IsEmpty</code> (lists) &middot; <code>Nth SetNth Length</code> (both, 1-based)</p>
@@ -548,7 +552,7 @@ word-by-word reference (every builtin, every form) is
 <p><strong>Records</strong> <code>Type</code> + fields &middot; <code>t(v1, v2)</code> or <code>t(f1 = v1, ...)</code> &middot; field name = accessor function &middot; <code>With(r, f = v)</code> copies-with-change</p>
 <p><strong>Variants</strong> <code>Type Shape = Circle(r) | Rect(w, h)</code> &middot; build with <code>Circle(2)</code> &middot; take apart with <code>Case Circle(r)</code></p>
 <p><strong>Predeclared</strong> <code>Some(Value)</code> / <code>None</code> for absence, <code>Ok(Value)</code> / <code>Err(Why, At)</code> for failure with a reason: no <code>Include</code>, no accessor words, <code>Select Case</code> is the way in</p>
-<p><strong>Strings</strong> <code>&amp; Len Str Val Left Right Mid Instr InstrFrom Chr Asc Codes FromCodes CodeAt Upper Lower</code> &middot; escapes <code>\n \t \" \\</code> &middot; more (Split, Join, Trim&hellip;) in <a href="machines/str.html">str.shoddy</a></p>
+<p><strong>Strings</strong> <code>&amp; Len Str Val Left Right Mid Instr InstrFrom Chr Asc Codes FromCodes CodeAt Upper Lower</code> &middot; escapes <code>\n \t \r \" \\</code> &middot; more (Split, Join, Trim&hellip;) in <a href="machines/str.html">str.shoddy</a></p>
 <p><strong>Math</strong> <code>Abs Min Max Sqr Floor Ceil Round Sin Cos Tan Atn Exp Log Pi Rnd</code></p>
 <p><strong>I/O &amp; checks</strong> <code>Print(v)</code> &middot; <code>Input(prompt)</code> &rarr; String &middot; <code>InputLine(prompt)</code> &rarr; [atEof, line] &middot; <code>InKey()</code> non-blocking key &middot; <code>Args()</code> &rarr; the command line &middot; text: <code>ReadFile TryReadFile WriteFile TryWriteFile AppendFile FileExists DeleteFile TryDeleteFile</code> (lines: <a href="machines/file.html">file.shoddy</a>) &middot; binary: <code>BOpen TryBOpen BClose Seek BPos BSize</code> &middot; <code>PutNum/GetNum PutBool/GetBool PutStr/GetStr</code> (records: <a href="machines/recio.html">recio.shoddy</a>) &middot; sockets: <code>TCPConnect &hellip; TCPClose</code> (gated behind <code>--allow-net</code>, with <code>NetAllowed</code> and <code>TryTcpConnect</code> the guarded pair that is not; friendly layer: <a href="machines/net.html">net.shoddy</a>) &middot; time: <code>Ticks Sleep Clock</code> &middot; <code>Error(MSG)</code> &middot; <code>Assert(COND, MSG)</code>. Chapter 10 walks through the files; the full table is in <a href="quickref.html">QUICKREF</a></p>
 <p><strong>The machines</strong> seq &middot; str &middot; regex &middot; sinq &middot; stats &middot; math &middot; eng &middot; alg &middot; bool &middot; random &middot; neural &middot; money &middot; fin &middot; dict &middot; json &middot; xml &middot; html &middot; csv &middot; shaker &middot; matrix &middot; lin &middot; sparse &middot; file &middot; recio &middot; isam &middot; simplex &middot; mip &middot; mps &middot; clock &middot; julian &middot; geo &middot; ephemeris &middot; net &middot; https &middot; vt100 &middot; keys &middot; terminal &middot; scribbler &middot; turtle &middot; plotter &middot; buzzer &middot; lineshaft &middot; cuttle &middot; reckoner. One <code>Include</code> each (terminal and lineshaft need none); every one has a page in <a href="machines/index.html">the machines catalog</a></p>

@@ -41,14 +41,15 @@ reference lives on <a href="machines/index.html">its own page</a>.</p>
 <tr><td>Def Name ( a b -- c )</td><td>Function, stack body. The signature is documentation: ( a b -- c ) reads &ldquo;takes a and b off the stack, leaves c&rdquo;, inputs before the dashes, outputs after.</td></tr>
 <tr><td>Def Main()</td><td>Entry point.</td></tr>
 <tr><td>Type Name &#8629; fields</td><td>Record declaration: indented <code>field As Type</code> lines. Declare before use.</td></tr>
-<tr><td>Type Name = v1(f, ...) | v2</td><td>Sum type: each variant is a constructor/pattern. Bare variant = zero fields (construct as <code>v2()</code>).</td></tr>
+<tr><td>Type Name = v1(f, ...) | v2</td><td>Sum type: each variant is a constructor/pattern. Bare variant = zero fields (construct as <code>v2()</code>). Each variant field is also an accessor word, except on the predeclared <code>Option</code> and <code>Result</code>.</td></tr>
 <tr><td>Include "FILE.SHODDY"</td><td>Include-once, left margin. Resolved relative to the including file, then <code>SHODDYLIB</code>, then the machine library beside the running mill. A file from a machine library is a <b>machine</b>: you get the words it declares, not the ones it includes in turn, and it is built if it has no DLL. One of your own files is spliced flat.</td></tr>
 <tr><td>Include "FILE.SHODDY" As Q</td><td>Everything <em>that file</em> declares gets the prefix <code>Q</code>, and nothing it includes in turn, so a name never depends on its dependencies' include lists.</td></tr>
 <tr><td>Name In Q</td><td>The namespaced name. It collapses to the single word <code>QName</code>. Only needed when a bare name is ambiguous between two namespaces.</td></tr>
 <tr><td>Redef Name(...)</td><td><code>Def</code> with the duplicate/builtin check waived. Without it, redeclaring a name or shadowing a builtin is an error.</td></tr>
 <tr><td>Rem ... &nbsp;or&nbsp; ' ...</td><td>Comment to end of line.</td></tr>
 <tr><td>F(a,&#8629; b)</td><td>Line continuation: unclosed <code>( { [</code> pulls the next line in. Continuation indent is free; parenthesize any long expression to wrap it.</td></tr>
-<tr><td>Let x = expr</td><td>Immutable binding; one per name. At the left margin: a program-wide constant, evaluated once before Main (the outermost scope).</td></tr>
+<tr><td>Let x = expr</td><td>Immutable binding: a name's value never changes. A later <code>Let</code> of the same name inside a body makes a new binding that hides the earlier one. Anything that already captured the earlier one keeps it. At the left margin: a program-wide constant, evaluated once before Main (the outermost scope). A repeated <code>Let</code> there is a duplicate-definition error.</td></tr>
+<tr><td>Self-call in last position</td><td>A Def that calls itself as its last step runs in constant stack: the call becomes a loop. Two Defs that call each other do not, and use stack on every call.</td></tr>
 </table>
 <p class="note">Indentation is structure. A line with an unclosed bracket
 continues onto the next physical line (continuation indent is free).
@@ -63,22 +64,23 @@ Operators need spaces around them: <code>count + 1</code>, not <code>count+1</co
 <tr><td>String</td><td>Immutable. Escapes: <code>\" \\ \n \t \r</code></td></tr>
 <tr><td>Boolean</td><td>True / False. Never a number.</td></tr>
 <tr><td>Quotation&nbsp;[ t -- u ]</td><td>Function value. It closes over its environment: it remembers the variables from where it was written.</td></tr>
-<tr><td>List Of t</td><td>The recursive sequence. Literal <code>{ 1, 2, 3 }</code>. Walk it front to back (recurse).</td></tr>
+<tr><td>List Of t</td><td>The sequence for recursion. Literal <code>{ 1, 2, 3 }</code>. <code>Rest</code> and <code>Prepend</code> copy the list, so a <code>First</code>/<code>Rest</code> walk slows down sharply on a long list. To visit every item, use <code>Fold</code> or <code>Map</code>, or <code>ToArray</code> once and index with <code>Nth</code>.</td></tr>
 <tr><td>Array Of t</td><td>Fixed length; Nth jumps straight to position k (O(1)). Index into these.</td></tr>
 <tr><td>records (Type)</td><td>Nominal: matched by type name, not by shape. Constructor, accessors, With and Case patterns.</td></tr>
 </table>
-<p class="note">Annotations are parsed, but checked only when the program runs. Type variables: single lowercase letters (t, u).</p>
+<p class="note">Annotations are documentation. The mill reads them and never checks them. Each operation checks its own operands when it runs, so a wrong type stops the program at the first word that cannot use it. Type variables: single lowercase letters (t, u).</p>
 
 <h2>Operators (loose &rarr; tight)</h2>
 <table>
 <tr><th>Level</th><th>Operators</th><th>Notes</th></tr>
 <tr><td>1</td><td>Or</td><td rowspan="2">Short-circuit in expression bodies: the right side runs only if the answer is still open. Strict words in stack bodies: both sides have already run.</td></tr>
 <tr><td>2</td><td>And</td></tr>
-<tr><td>3</td><td>= &lt;&gt; &lt; &gt; &lt;= &gt;=</td><td>Numbers or strings; = / &lt;&gt; also booleans, records (structural), arrays.</td></tr>
+<tr><td>prefix</td><td>Not</td><td>Looser than comparison: <code>Not x = 1</code> means <code>Not (x = 1)</code>. Tighter than And.</td></tr>
+<tr><td>3</td><td>= &lt;&gt; &lt; &gt; &lt;= &gt;=</td><td>Numbers or strings; = / &lt;&gt; also booleans, records (structural), arrays. Lists compare by identity: two lists built separately are never equal, even with the same items.</td></tr>
 <tr><td>4</td><td>+ - &amp;</td><td>&amp; is string concatenation.</td></tr>
-<tr><td>5</td><td>* / Mod</td><td>Division / Mod by zero abort.</td></tr>
+<tr><td>5</td><td>* / Mod</td><td>Division / Mod by zero abort. Mod keeps the sign of the left side: <code>-7 Mod 3</code> is -1.</td></tr>
 <tr><td>6</td><td>^</td><td>Groups from the right (right-associative). <code>-n ^ 2</code> = <code>-(n^2)</code> (classic BASIC).</td></tr>
-<tr><td>prefix</td><td>Not, unary -</td><td></td></tr>
+<tr><td>prefix</td><td>unary -</td><td></td></tr>
 </table>
 
 <h2>Conditionals &amp; matching</h2>
@@ -105,6 +107,7 @@ To test equality against a record instead: <code>Case = Type(...)</code> (or bar
 <tr><td>[ words ]</td><td>Raw quotation (stack code).</td></tr>
 <tr><td>Call(f, a, b)</td><td>Apply f to a, b (&equiv; <code>a b f Call</code>).</td></tr>
 <tr><td>(Name)</td><td>Parenthesize to force a bare name to evaluate instead of quote.</td></tr>
+<tr><td>Mod(a, b) &nbsp;or&nbsp; -(x * x)</td><td>Not a call. In an argument, an operator followed by <code>(</code> builds a section, so the program fails somewhere else. Write <code>a Mod b</code> and <code>0 - x * x</code>.</td></tr>
 </table></section>
 
 <section><h2>The big four (+ friends)</h2>
@@ -134,11 +137,12 @@ To test equality against a record instead: <code>Case = Type(...)</code> (or bar
 <section><h2>Records</h2>
 <table>
 <tr><th>Form</th><th>Meaning</th></tr>
+<tr><td>Type Person<br>&nbsp;&nbsp;&nbsp;&nbsp;Name As String<br>&nbsp;&nbsp;&nbsp;&nbsp;Age &nbsp;As Number</td><td>Declaration, at the left margin, before first use. One indented field per line. <code>As Type</code> on a field is optional.</td></tr>
 <tr><td>Person("ann", 34)</td><td>Constructor, positional (arity checked).</td></tr>
 <tr><td>Person(Name = "ann", Age = 34)</td><td>Constructor, named fields.</td></tr>
-<tr><td>Age(p)</td><td>Accessor: every field name is a function. Dispatches on the record's type.</td></tr>
+<tr><td>Age(p)</td><td>Accessor: every field name is a function, including the fields of a sum type's variants. Dispatches on the record's type.</td></tr>
 <tr><td>With(p, Age = 35, ...)</td><td>Copy with fields changed.</td></tr>
-<tr><td>P1 = P2</td><td>Structural equality: equal when all fields are equal.</td></tr>
+<tr><td>P1 = P2</td><td>Structural equality: equal when all fields are equal. A field that holds a list compares by identity.</td></tr>
 </table></section>
 
 <section><h2>Strings</h2>
@@ -192,9 +196,9 @@ is always the same and <code>Result</code> when it is not.</p></section>
 <section><h2>Math</h2>
 <table>
 <tr><th>Word</th><th>Meaning</th></tr>
-<tr><td>Abs Min Max</td><td></td></tr>
+<tr><td>Abs(n) / Min(a, b) / Max(a, b)</td><td>Absolute value / the smaller / the larger. Min and Max take exactly two.</td></tr>
 <tr><td>Sqr(n)</td><td>Square root (negative aborts).</td></tr>
-<tr><td>Floor Ceil Round</td><td></td></tr>
+<tr><td>Floor Ceil Round</td><td>Round rounds half up: <code>Round(2.5)</code> is 3, <code>Round(-2.5)</code> is -2.</td></tr>
 <tr><td>Sin Cos Tan Atn</td><td>Radians.</td></tr>
 <tr><td>Exp Log</td><td>Log is natural log.</td></tr>
 <tr><td>Pi()</td><td>3.14159..., a zero-argument function, not a bare constant.</td></tr>
@@ -347,7 +351,7 @@ Play(ch, mml)): <a href="machines/buzzer.html">buzzer.shoddy</a>.</p></section>
 
 <section id="machines"><h2>The machines: standard library map</h2>
 <p class="note">Bring a machine in with
-<code>Include "machines/NAME.shoddy"</code> (or compile it once with
+<code>Include "NAME.shoddy"</code> (or compile it once with
 <code>mill machine</code>). This is the map. Each page carries the machine&rsquo;s
 full word reference, a user&rsquo;s guide, and examples. Start at the
 <a href="machines/index.html">machines index</a>.</p>
@@ -378,7 +382,7 @@ full word reference, a user&rsquo;s guide, and examples. Start at the
 <table>
 <tr><th></th><th>Machine</th><th>What it gives you</th></tr>
 <tr><td class="uicon"><a href="machines/regex.html"><img src="media/icons/regex.svg" alt="" loading="lazy"></a></td><td><a href="machines/regex.html">regex</a></td><td>Regular expressions as a compiled value (a Pike VM). It never backtracks because backreferences and lookaround are left out, so no input can hang it and none can end the session.</td></tr>
-<tr><td class="uicon"><a href="machines/seq.html"><img src="media/icons/seq.svg" alt="" loading="lazy"></a></td><td><a href="machines/seq.html">seq</a></td><td>Sequences: Map/Filter/Fold and friends, over both List and Array.</td></tr>
+<tr><td class="uicon"><a href="machines/seq.html"><img src="media/icons/seq.svg" alt="" loading="lazy"></a></td><td><a href="machines/seq.html">seq</a></td><td>Sequences: the helpers around the Map/Filter/Fold builtins (Any, All, CountIf, Append, Zip and friends), over both List and Array.</td></tr>
 <tr><td class="uicon"><a href="machines/sinq.html"><img src="media/icons/sinq.svg" alt="" loading="lazy"></a></td><td><a href="machines/sinq.html">sinq</a></td><td>Querying a sequence: ordering by a key, grouping, joining, the set words, and a walker for a record graph that holds itself. The half of a query seq and stats could not express.</td></tr>
 <tr><td class="uicon"><a href="machines/str.html"><img src="media/icons/str.svg" alt="" loading="lazy"></a></td><td><a href="machines/str.html">str</a></td><td>String helpers built on Instr/Left/Right/Mid/Len: cutting and joining, boolean conversions, number formatting.</td></tr>
 </table>
@@ -463,7 +467,7 @@ full word reference, a user&rsquo;s guide, and examples. Start at the
 <tr><td>Tuck</td><td>( a b -- b a b )</td></tr>
 <tr><td>Depth</td><td>( -- n ) stack size</td></tr>
 <tr><td>Take A, b</td><td>Pop into immutable names (top &rarr; rightmost).</td></tr>
-<tr><td>[ code ]</td><td>Quote without running.</td></tr>
+<tr><td>[ code ]</td><td>Quote without running. Words and literals only: If, Then, Else and Take are refused inside. Use Ifte.</td></tr>
 <tr><td>cond If Then / Else</td><td>Postfix conditional (indented branches).</td></tr>
 </table>
 <p class="note">Bare <code>Def Name</code> bodies are pure postfix.

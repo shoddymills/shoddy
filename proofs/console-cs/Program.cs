@@ -37,12 +37,12 @@ var options = new ShoddyHostOptions { FileRoot = root };
 // ---- Mode N, hand-built values and a record round trip (spike steps
 // 1–2, closed here).
 ShoddyHost pure = ShoddyHost.Load(options, Assembly.Load("Shoddy.Machines.Pure-core"));
-ShoddyValue sample = pure.Word("SampleOf").Call(ShoddyValue.Str("ADA"), ShoddyValue.Num(70));
-Check(sample.TypeName() == "SAMPLE", "a hand-built call answers a record");
-Check(sample.Field("Score").AsNum() == 70, "a field reads back by name");
-Check(pure.Word("Grade").Call(sample).AsStr() == "PASS",
+ShoddyValue specimen = pure.Word("SpecimenOf").Call(ShoddyValue.Str("ADA"), ShoddyValue.Num(70));
+Check(specimen.TypeName() == "SPECIMEN", "a hand-built call answers a record");
+Check(specimen.Field("Score").AsNum() == 70, "a field reads back by name");
+Check(pure.Word("Grade").Call(specimen).AsStr() == "PASS",
       "the record round-trips into the next word");
-ShoddyValue scaled = pure.Word("Scale").Call(sample, ShoddyValue.Num(0.5));
+ShoddyValue scaled = pure.Word("Scale").Call(specimen, ShoddyValue.Num(0.5));
 Check(scaled.Field("Score").AsNum() == 35 && scaled.Field("Label").AsStr() == "ADA",
       "With-update returns a new record, label intact");
 

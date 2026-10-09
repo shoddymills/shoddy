@@ -8,6 +8,6 @@ using System.Reflection;
 using Shoddy.Hosting;
 
 ShoddyHost host = ShoddyHost.Load(Assembly.Load("Shoddy.Machines.Pure-core"));
-ShoddyValue s = host.Word("SampleOf").Call(ShoddyValue.Str("F"), ShoddyValue.Num(90));
+ShoddyValue s = host.Word("SpecimenOf").Call(ShoddyValue.Str("F"), ShoddyValue.Num(90));
 Console.WriteLine(host.Word("Grade").Call(s).AsStr());
 return 0;

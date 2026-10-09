@@ -59,7 +59,7 @@ public static class Printer
             case VType.Num: o.Write(Format.Num(v.Num)); break;
             case VType.Str: o.Write('"'); o.Write(v.Str); o.Write('"'); break;
             case VType.Bool: o.Write(v.B ? "True" : "False"); break;
-            case VType.Quot: CQuotRepr(o, v.CItems!); break;
+            case VType.Quot: CQuotRepr(o, v.List!); break;
             case VType.Rec:
                 o.Write(v.RType!.Disp ?? v.RType.Name);
                 o.Write('(');
@@ -89,10 +89,10 @@ public static class Printer
 
     /// <summary>Compiled-representation quotation: value items print as
     /// their repr, code items as their captured source spelling.</summary>
-    public static void CQuotRepr(TextWriter o, QItem[] items)
+    public static void CQuotRepr(TextWriter o, Cell items)
     {
         o.Write('[');
-        foreach (QItem it in items)
+        foreach (QItem it in items.Items())
         {
             o.Write(' ');
             if (it.Lit != null) Repr(o, it.Lit);
@@ -128,7 +128,9 @@ public static class Printer
             case NType.With: o.Write("WITH"); break;
             case NType.IsType: o.Write($"ISTYPE:{n.Str}"); break;
             case NType.Bind: o.Write($"BIND:{n.Str}"); break;
-            case NType.Pat: o.Write($"MATCH:{n.P!.Type ?? n.P.Name}"); break;
+            case NType.Pat:
+                o.Write($"MATCH:{n.P!.Type ?? (n.P.List ? (n.P.Subs.Count == 0 ? "EMPTY" : "PREPEND") : n.P.Name)}");
+                break;
         }
     }
 }

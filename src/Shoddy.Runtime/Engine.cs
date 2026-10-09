@@ -14,8 +14,8 @@ namespace Shoddy.Runtime;
 /// <summary>
 /// The execution engine woven programs run against: the value stack,
 /// every builtin word, record operations, and I/O. Quotation values are
-/// CLR closures — a body Action plus a QItem array for sequence ops and
-/// printing (Shoddy's lists ARE quotations).
+/// CLR closures — a body Action plus a chain of cells for sequence ops
+/// and printing (Shoddy's lists ARE quotations, and a list is cons cells).
 /// </summary>
 public sealed partial class Engine
 {
@@ -46,6 +46,16 @@ public sealed partial class Engine
     readonly string? fileRoot = FileRoot.Of(Environment.GetEnvironmentVariable(FileRoot.Variable));
     const int ConnectTimeoutMs = 10_000;          // TCPCONNECT: bounded handshake wait
     const int SendPollMicros = 5_000_000;         // TCPSEND: bounded wait for a full send buffer to drain
+
+    /// <summary>The stack every launcher gives a Shoddy program: `mill
+    /// run` and `mill dap`, a woven program's own Main, the hosting
+    /// surface's RunWovenAsync and the perch's launch all start the
+    /// program on a thread of this size. It is reserved address space,
+    /// committed only as recursion deepens, so an ordinary program pays
+    /// nothing for it; a non-tail recursion millions deep returns instead
+    /// of killing the process at the twenty thousand frames a 1 MB thread
+    /// allowed. Past it a CLR stack overflow is still a process kill.</summary>
+    public const int ProgramStackBytes = 1 << 30;
 
     // ---- TLS ---------------------------------------------------------
     // A secured handle keeps its Socket in socks and gains an SslStream
@@ -123,6 +133,15 @@ public sealed partial class Engine
         return v.Str!;
     }
 
+    /// <summary>Pop a string WITHOUT reading its text, for the words whose
+    /// answer needs no rope flattened: & and LEN.</summary>
+    Value PopStrVal(int line, string who)
+    {
+        Value v = Pop(line);
+        if (v.T != VType.Str) throw Die(line, $"{who} expects a STRING, got {Value.TypeName(v.T)}");
+        return v;
+    }
+
     /// <summary>Pop a path and contain it: THE one door every file word
     /// in this engine goes through, so a word added later cannot quietly
     /// skip the boundary by popping its path itself.
@@ -192,18 +211,18 @@ public sealed partial class Engine
     public void CallQuot(Value f)
     {
         if (f.Body != null) { f.Body(); return; }
-        foreach (QItem it in f.CItems!)
+        for (Cell c = f.List!; c.Length > 0; c = c.Tail!)
         {
+            QItem it = c.Head!;
             if (it.Lit != null) Push(it.Lit);
             else it.Act!();
         }
     }
 
-    /// <summary>Evaluate the k-th item of a quotation-kind sequence;
-    /// must yield exactly one value.</summary>
-    Value QuotItem(Value q, int k, int line, string who)
+    /// <summary>One item's value: a value item as it is; a code item run
+    /// on its own, which must leave exactly one value.</summary>
+    Value ItemValue(QItem it, int line, string who)
     {
-        QItem it = q.CItems![k];
         if (it.Lit != null) return it.Lit;
         int d0 = Stk.Count;
         it.Act!();
@@ -212,16 +231,56 @@ public sealed partial class Engine
         return Pop(line);
     }
 
-    /// <summary>Build a new list (quotation-kind sequence) of values.</summary>
-    static Value NewValueList(List<Value> vals, int line)
+    /// <summary>The k-th (0-based) item of a list, through the list's
+    /// index: O(1) after the first call on that list.</summary>
+    Value QuotItem(Value q, int k, int line, string who) =>
+        ItemValue(q.List!.At(k).Head!, line, who);
+
+    /// <summary>Every item of a sequence in order: an array's elements,
+    /// or a list's cells walked once, any code item evaluated.</summary>
+    IEnumerable<Value> SeqValues(Value s, int line, string who)
     {
-        var items = new QItem[vals.Count];
-        for (int k = 0; k < vals.Count; k++) items[k] = QItem.OfValue(vals[k]);
-        return Value.OfCQuot(items, items);
+        if (s.T == VType.Arr)
+        {
+            foreach (Value v in s.Elems!) yield return v;
+            yield break;
+        }
+        for (Cell c = s.List!; c.Length > 0; c = c.Tail!)
+            yield return ItemValue(c.Head!, line, who);
     }
 
+    /// <summary>Selection without replacement, drawing exactly as
+    /// random.shoddy's Shuffle and Sample did when they were Defs: k is
+    /// RandomInt(1, remaining) from Rnd and the k-th remaining item is
+    /// taken, so a seeded run answers the permutation it always did.</summary>
+    List<Value> Draw(Value l, int n, int line, string who)
+    {
+        var remaining = new List<Value>(SeqValues(l, line, who));
+        var picks = new List<Value>(Math.Min(n, remaining.Count));
+        while (n > 0 && remaining.Count > 0)
+        {
+            int k = (int)(1 + Math.Floor(rnd.NextDouble() * remaining.Count));
+            picks.Add(remaining[k - 1]);
+            remaining.RemoveAt(k - 1);
+            n--;
+        }
+        return picks;
+    }
+
+    /// <summary>A count argument as the Defs these builtins replaced read
+    /// it: a recursion that stopped at n &lt;= 0 and took one per step
+    /// took the ceiling of a fraction, and nothing at all below one.</summary>
+    static int CountOf(double d) =>
+        d <= 0 ? 0 : d >= int.MaxValue ? int.MaxValue : (int)Math.Ceiling(d);
+
+    /// <summary>Build a new list (quotation-kind sequence) of values.</summary>
+    static Value NewValueList(IReadOnlyList<Value> vals, int line) =>
+        Value.OfList(Cell.FromValues(vals));
+
+    /// <summary>A quotation literal: its items as the weave built them, the
+    /// site as its identity, the whole body as one closure.</summary>
     public void PushCQuot(object id, QItem[] items, Action? body) =>
-        Push(Value.OfCQuot(id, items, body));
+        Push(Value.OfCQuot(id, Cell.FromItems(items), body));
 
     /// <summary>Push a freshly-constructed list of values — the woven
     /// form of a <c>{ ... }</c> list literal (new identity per run).</summary>
@@ -235,9 +294,20 @@ public sealed partial class Engine
         switch (a.T)
         {
             case VType.Num: return a.Num == b.Num;
-            case VType.Str: return a.Str == b.Str;
+            case VType.Str: return a.StrLength == b.StrLength && a.Str == b.Str;
             case VType.Bool: return a.B == b.B;
-            case VType.Quot: return ReferenceEquals(a.CId, b.CId);
+            case VType.Quot:
+            {
+                // Identity is the fast path; data compares cell by cell.
+                // A quotation holding code keeps identity: two separately
+                // built functions are never equal, whatever they compute.
+                if (ReferenceEquals(a.CId, b.CId)) return true;
+                Cell x = a.List!, y = b.List!;
+                if (x.AnyCode || y.AnyCode || x.Length != y.Length) return false;
+                for (; x.Length > 0; x = x.Tail!, y = y.Tail!)
+                    if (!EqualValues(x.Head!.Lit!, y.Head!.Lit!)) return false;
+                return true;
+            }
             case VType.Rec:
                 if (!ReferenceEquals(a.RType, b.RType)) return false;
                 for (int k = 0; k < a.Elems!.Length; k++)
@@ -255,7 +325,7 @@ public sealed partial class Engine
     }
 
     static int SeqLen(Value s) =>
-        s.T == VType.Arr ? s.Elems!.Length : s.CItems!.Length;
+        s.T == VType.Arr ? s.Elems!.Length : s.List!.Length;
 
     Value PopSeq(int line, string who)
     {
@@ -615,10 +685,17 @@ public sealed partial class Engine
             /* ---- strings ---- */
             case "&":
             {
-                string b = PopStr(line, w), a = PopStr(line, w);
-                PushStr(a + b); return true;
+                // A short result is joined at once. Past the threshold the
+                // answer is one rope node over the two operands, copying
+                // nothing; the text is built once, when first read (see
+                // Value.Str). Both operands are flat when the total is
+                // short, because a rope is only ever made above it.
+                Value b = PopStrVal(line, w), a = PopStrVal(line, w);
+                if (a.StrLength + b.StrLength <= Value.RopeThreshold) PushStr(a.Str + b.Str);
+                else Push(Value.OfRope(a, b));
+                return true;
             }
-            case "LEN": PushNum(PopStr(line, w).Length); return true;
+            case "LEN": PushNum(PopStrVal(line, w).StrLength); return true;
             case "STR": PushStr(Format.Num(PopNum(line, w))); return true;
             case "VAL":
             {
@@ -695,11 +772,9 @@ public sealed partial class Engine
             case "FROMCODES":                   // ( seq -- s ), the inverse of CODES
             {
                 Value a = PopSeq(line, w);
-                int n = SeqLen(a);
-                var sb = new StringBuilder(n);
-                for (int i = 0; i < n; i++)
+                var sb = new StringBuilder(SeqLen(a));
+                foreach (Value v in SeqValues(a, line, w))
                 {
-                    Value v = SeqItem(a, i, line, w);
                     if (v.T != VType.Num)
                         throw Die(line, $"{w} expects a NUMBER, got {Value.TypeName(v.T)}");
                     // Checked before the cast, never after: (char) on a double
@@ -723,6 +798,41 @@ public sealed partial class Engine
                         ? ch is >= 'a' and <= 'z' ? (char)(ch - 32) : ch
                         : ch is >= 'A' and <= 'Z' ? (char)(ch + 32) : ch);
                 PushStr(sb.ToString()); return true;
+            }
+
+            case "SPLIT":                       // ( s sep -- parts ), every field, empties kept
+            {
+                // A builtin so a string of any length splits in one pass:
+                // str.shoddy's Def recursed once per field and built its
+                // answer with Prepend on the way out, a frame per field.
+                string sep = PopStr(line, w), s = PopStr(line, w);
+                if (sep.Length == 0) throw Die(line, "SPLIT: EMPTY SEPARATOR");
+                string[] parts = s.Split(sep, StringSplitOptions.None);
+                var vals = new Value[parts.Length];
+                for (int k = 0; k < parts.Length; k++) vals[k] = Value.OfStr(parts[k]);
+                Push(NewValueList(vals, line));
+                return true;
+            }
+            case "JOIN":                        // ( xs sep -- s ), one pass over the pieces
+            {
+                // A builtin so that joining n pieces costs their total
+                // length once, whether or not any of them is a rope. It
+                // was str.shoddy's Fold over &, which copied the growing
+                // answer at every step.
+                string sep = PopStr(line, w);
+                Value xs = PopSeq(line, w);
+                var sb = new StringBuilder();
+                bool first = true;
+                foreach (Value v in SeqValues(xs, line, w))
+                {
+                    if (v.T != VType.Str)
+                        throw Die(line, $"JOIN expects a LIST of STRINGs, got {Value.TypeName(v.T)}");
+                    if (!first) sb.Append(sep);
+                    sb.Append(v.Str);
+                    first = false;
+                }
+                PushStr(sb.ToString());
+                return true;
             }
 
             /* ---- I/O ---- */
@@ -781,6 +891,53 @@ public sealed partial class Engine
                     return true;
                 }
                 Push(Value.OfRec(Prelude.Ok, new[] { Value.OfStr(Bytes.GetString(buf)) }));
+                return true;
+            }
+            case "TRYREADLINES":                // ( path -- Result ) the file's lines, guarded
+            {
+                // The line-oriented read, native: the lines come off a
+                // StreamReader one at a time -- the read-a-line, add-to-the-
+                // list loop -- so a file's length costs nothing but the list
+                // that holds it, and the read sits beside TRYREADFILE with the
+                // same guard and the same Err phrases rather than being a
+                // whole-file read split afterwards. (file.shoddy's ReadLines
+                // was a Def over READFILE and str's Split until the autumn of
+                // 2026, and died of a stack overflow on a long file; that is
+                // no longer possible, and the native read stays for its
+                // shape.) Same decoding as READFILE (one byte, one
+                // character, no BOM sniffing), the same file-root guard, and
+                // the same Err phrases as TRYREADFILE. A line ends at \n, \r\n
+                // or a bare \r; a final newline closes the last line rather
+                // than opening an empty one; an empty file is Ok of an empty
+                // list. ReadLines in file.shoddy is the aborting form, defined
+                // over this one.
+                string? path = PopPathOr(line, w, out string linesAsked);
+                if (path is null)
+                {
+                    Push(Value.OfRec(Prelude.Err, new[]
+                    {
+                        Value.OfStr($"CANNOT READ '{linesAsked}' (OUTSIDE THE FILE ROOT)"),
+                        Value.OfNum(0),
+                    }));
+                    return true;
+                }
+                var lines = new List<Value>();
+                try
+                {
+                    using var reader = new StreamReader(path, Bytes, false);
+                    for (string? text = reader.ReadLine(); text is not null; text = reader.ReadLine())
+                        lines.Add(Value.OfStr(text));
+                }
+                catch (Exception e) when (e is not ShoddyError)
+                {
+                    Push(Value.OfRec(Prelude.Err, new[]
+                    {
+                        Value.OfStr($"CANNOT READ '{linesAsked}' ({ReadWhy(e, path)})"),
+                        Value.OfNum(0),
+                    }));
+                    return true;
+                }
+                Push(Value.OfRec(Prelude.Ok, new[] { NewValueList(lines, line) }));
                 return true;
             }
             case "WRITEFILE":
@@ -1569,31 +1726,26 @@ public sealed partial class Engine
             {
                 Value f = PopFunc(line, w);
                 Value l = PopSeq(line, w);
-                int n = SeqLen(l);
-                var resl = l.T == VType.Quot ? new List<Value>() : null;
-                var resa = l.T == VType.Arr ? new Value[n] : null;
-                for (int k = 0; k < n; k++)
+                var res = new List<Value>(SeqLen(l));
+                foreach (Value item in SeqValues(l, line, w))
                 {
-                    Push(SeqItem(l, k, line, w));
+                    Push(item);
                     int d0 = Stk.Count - 1;
                     CallQuot(f);
                     if (Stk.Count != d0 + 1)
                         throw Die(line, "MAP quotation must leave exactly one value");
-                    if (resa != null) resa[k] = Pop(line);
-                    else resl!.Add(Pop(line));
+                    res.Add(Pop(line));
                 }
-                if (resa != null) Push(Value.OfArr(resa)); else Push(NewValueList(resl!, line));
+                if (l.T == VType.Arr) Push(Value.OfArr(res.ToArray())); else Push(NewValueList(res, line));
                 return true;
             }
             case "FILTER":
             {
                 Value f = PopFunc(line, w);
                 Value l = PopSeq(line, w);
-                int n = SeqLen(l);
                 var res = new List<Value>();
-                for (int k = 0; k < n; k++)
+                foreach (Value item in SeqValues(l, line, w))
                 {
-                    Value item = SeqItem(l, k, line, w);
                     Push(item);
                     int d0 = Stk.Count - 1;
                     CallQuot(f);
@@ -1611,10 +1763,9 @@ public sealed partial class Engine
                 Value acc = Pop(line);
                 Value l = PopSeq(line, w);
                 Push(acc);
-                int n = SeqLen(l);
-                for (int k = 0; k < n; k++)
+                foreach (Value item in SeqValues(l, line, w))
                 {
-                    Push(SeqItem(l, k, line, w));
+                    Push(item);
                     CallQuot(f);
                 }
                 return true;
@@ -1623,10 +1774,9 @@ public sealed partial class Engine
             {
                 Value f = PopFunc(line, w);
                 Value l = PopSeq(line, w);
-                int n = SeqLen(l);
-                for (int k = 0; k < n; k++)
+                foreach (Value item in SeqValues(l, line, w))
                 {
-                    Push(SeqItem(l, k, line, w));
+                    Push(item);
                     CallQuot(f);
                 }
                 return true;
@@ -1659,32 +1809,27 @@ public sealed partial class Engine
                     for (int k = 0; k < n; k++) res[k] = l.Elems![n - 1 - k];
                     Push(Value.OfArr(res));
                 }
-                else                            // share items, reversed
-                {
-                    var res = new QItem[n];
-                    for (int k = 0; k < n; k++) res[k] = l.CItems![n - 1 - k];
-                    Push(Value.OfCQuot(res, res));
-                }
+                else Push(Value.OfList(l.List!.Reverse()));   // one walk, prepending
                 return true;
             }
             case "SORT":                        // ascending; result has the input's kind
             {
                 Value l = PopSeq(line, w);
-                int n = SeqLen(l);
-                var vals = new Value[n];
+                var vals = new Value[SeqLen(l)];
                 bool nums = true, strs = true;
-                for (int k = 0; k < n; k++)
+                int k = 0;
+                foreach (Value v in SeqValues(l, line, w))
                 {
-                    vals[k] = SeqItem(l, k, line, w);
-                    nums &= vals[k].T == VType.Num;
-                    strs &= vals[k].T == VType.Str;
+                    vals[k++] = v;
+                    nums &= v.T == VType.Num;
+                    strs &= v.T == VType.Str;
                 }
                 if (!nums && !strs)
                     throw Die(line, "SORT expects all NUMBERs or all STRINGs");
                 if (nums) Array.Sort(vals, (a, b) => a.Num.CompareTo(b.Num));
                 else Array.Sort(vals, (a, b) => string.CompareOrdinal(a.Str, b.Str));
                 if (l.T == VType.Arr) Push(Value.OfArr(vals));
-                else Push(NewValueList(new List<Value>(vals), line));
+                else Push(NewValueList(vals, line));
                 return true;
             }
             case "CONCAT":
@@ -1699,13 +1844,7 @@ public sealed partial class Engine
                     b.Elems.CopyTo(res, a.Elems.Length);
                     Push(Value.OfArr(res));
                 }
-                else                            // share items
-                {
-                    var res = new QItem[a.CItems!.Length + b.CItems!.Length];
-                    a.CItems.CopyTo(res, 0);
-                    b.CItems.CopyTo(res, a.CItems.Length);
-                    Push(Value.OfCQuot(res, res));
-                }
+                else Push(Value.OfList(Cell.Concat(a.List!, b.List!)));   // b's cells shared, a's rebuilt in front
                 return true;
             }
 
@@ -1715,7 +1854,7 @@ public sealed partial class Engine
             {
                 Value l = PopSeq(line, w);
                 if (SeqLen(l) == 0) throw Die(line, "FIRST of empty sequence");
-                Push(SeqItem(l, 0, line, w));
+                Push(l.T == VType.Arr ? l.Elems![0] : ItemValue(l.List!.Head!, line, w));
                 return true;
             }
             case "NTH":                         // ( seq k -- v ), 1-based
@@ -1741,12 +1880,7 @@ public sealed partial class Engine
                     res[k - 1] = nv;
                     Push(Value.OfArr(res));
                 }
-                else                            // share items
-                {
-                    var res = (QItem[])l.CItems!.Clone();
-                    res[k - 1] = QItem.OfValue(nv);
-                    Push(Value.OfCQuot(res, res));
-                }
+                else Push(Value.OfList(l.List!.SetAt(k - 1, QItem.OfValue(nv))));   // first k cells rebuilt, the rest shared
                 return true;
             }
             case "DIM":                         // ( n init -- arr )
@@ -1764,8 +1898,8 @@ public sealed partial class Engine
                 Value l = PopSeq(line, w);
                 if (l.T == VType.Arr) { Push(l); return true; }
                 var res = new Value[SeqLen(l)];
-                for (int k = 0; k < res.Length; k++)
-                    res[k] = QuotItem(l, k, line, w);
+                int k = 0;
+                foreach (Value v in SeqValues(l, line, w)) res[k++] = v;
                 Push(Value.OfArr(res));
                 return true;
             }
@@ -1773,25 +1907,85 @@ public sealed partial class Engine
             {
                 Value l = PopSeq(line, w);
                 if (l.T == VType.Quot) { Push(l); return true; }
-                Push(NewValueList(new List<Value>(l.Elems!), line));
+                Push(NewValueList(l.Elems!, line));
                 return true;
             }
             case "REST":
             {
                 Value l = PopListVal(line, w);
                 if (SeqLen(l) == 0) throw Die(line, "REST of empty list");
-                var res = l.CItems![1..];       // share items
-                Push(Value.OfCQuot(res, res));
+                Push(Value.OfList(l.List!.Tail!));             // the tail cell itself: nothing copied
                 return true;
             }
             case "PREPEND":                     // ( v [l] -- [v ...l] )
             {
                 Value l = PopListVal(line, w);
                 Value v = Pop(line);
-                var res = new QItem[l.CItems!.Length + 1];   // share items
-                res[0] = QItem.OfValue(v);
-                l.CItems.CopyTo(res, 1);
-                Push(Value.OfCQuot(res, res));
+                Push(Value.OfList(new Cell(QItem.OfValue(v), l.List!)));   // one cell, the rest shared
+                return true;
+            }
+
+            /* ---- list words that were library Defs ----
+               Each was a recursion in seq.shoddy or random.shoddy that
+               built its answer with Prepend on the way out, a frame per
+               element; as builtins they are one pass each. */
+            case "TAKEN":                       // ( xs n -- ys ), the first n; all of xs when n reaches its length
+            {
+                int n = CountOf(PopNum(line, w));
+                Value l = PopListVal(line, w);
+                Push(Value.OfList(l.List!.Take(n)));
+                return true;
+            }
+            case "DROPN":                       // ( xs n -- ys ), xs after its first n; empty past the end
+            {
+                int n = CountOf(PopNum(line, w));
+                Value l = PopListVal(line, w);
+                Push(Value.OfList(l.List!.Drop(n)));
+                return true;
+            }
+            case "DROPAT":                      // ( xs k -- ys ), xs without its k-th item, 1-based
+            {
+                int k = (int)PopNum(line, w);
+                Value l = PopListVal(line, w);
+                int n = l.List!.Length;
+                if (k < 1 || k > n) throw Die(line, $"DROPAT: index {k} out of range 1..{n}");
+                Push(Value.OfList(l.List.RemoveAt(k - 1)));
+                return true;
+            }
+            case "ZIPWITH":                     // ( xs ys f -- zs ), f over the pairs, to the shorter length
+            {
+                Value f = PopFunc(line, w);
+                Value ys = PopSeq(line, w), xs = PopSeq(line, w);
+                int n = Math.Min(SeqLen(xs), SeqLen(ys));
+                var res = new List<Value>(n);
+                using IEnumerator<Value> ex = SeqValues(xs, line, w).GetEnumerator();
+                using IEnumerator<Value> ey = SeqValues(ys, line, w).GetEnumerator();
+                for (int k = 0; k < n; k++)
+                {
+                    ex.MoveNext();
+                    ey.MoveNext();
+                    Push(ex.Current);
+                    Push(ey.Current);
+                    int d0 = Stk.Count - 2;
+                    CallQuot(f);
+                    if (Stk.Count != d0 + 1)
+                        throw Die(line, "ZIPWITH quotation must leave exactly one value");
+                    res.Add(Pop(line));
+                }
+                Push(NewValueList(res, line));
+                return true;
+            }
+            case "SHUFFLE":                     // ( xs -- ys ), a uniformly random permutation
+            {
+                Value l = PopListVal(line, w);
+                Push(NewValueList(Draw(l, l.List!.Length, line, w), line));
+                return true;
+            }
+            case "SAMPLE":                      // ( xs n -- ys ), n distinct draws without replacement
+            {
+                int n = CountOf(PopNum(line, w));
+                Value l = PopListVal(line, w);
+                Push(NewValueList(Draw(l, n, line, w), line));
                 return true;
             }
 
@@ -2223,8 +2417,8 @@ public sealed partial class Engine
         "AND", "OR", "NOT", "TRUE", "FALSE",
         "&", "LEN", "STR", "VAL", "ISNUMERIC", "VALOR", "LEFT", "RIGHT", "MID", "CHR", "ASC",
         "CODES", "FROMCODES", "CODEAT", "INSTRFROM",
-        "UPPER", "LOWER",
-        "PRINT", "READFILE", "TRYREADFILE", "WRITEFILE", "APPENDFILE",
+        "UPPER", "LOWER", "JOIN", "SPLIT",
+        "PRINT", "READFILE", "TRYREADFILE", "TRYREADLINES", "WRITEFILE", "APPENDFILE",
         "TRYWRITEFILE", "FILEEXISTS",
         "DELETEFILE", "TRYDELETEFILE",
         "BOPEN", "TRYBOPEN", "BCLOSE", "SEEK", "BPOS", "BSIZE",
@@ -2236,7 +2430,7 @@ public sealed partial class Engine
         "CALL", "IFTE", "MAP", "FILTER", "FOLD", "EACH", "TIMES", "RANGE",
         "LENGTH", "REVERSE", "CONCAT", "SORT",
         "ISEMPTY", "FIRST", "NTH", "SETNTH", "DIM", "TOARRAY", "TOLIST",
-        "REST", "PREPEND",
+        "REST", "PREPEND", "TAKEN", "DROPN", "DROPAT", "ZIPWITH", "SHUFFLE", "SAMPLE",
         "TICKS", "SLEEP", "CLOCK",
         "SCRIBBLEROPEN", "TRYSCRIBBLEROPEN", "SCRIBBLEROF", "SCRIBBLERSHUT",
         "SCRIBBLERPIXEL", "SCRIBBLERFILL", "SCRIBBLERTEXT",

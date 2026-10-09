@@ -17,10 +17,10 @@ let check ok what =
 let main _ =
     let host = ShoddyHost.Load(Assembly.Load "Shoddy.Machines.Pure-core")
 
-    let sample = host.Word("SampleOf").Call(ShoddyValue.Str "LIN", ShoddyValue.Num 78.0)
-    check (sample.TypeName() = "SAMPLE") "a word called from F# answers a record"
-    check (sample.Field("Score").AsNum() = 78.0) "a field reads back by name"
-    check (host.Word("Grade").Call(sample).AsStr() = "PASS") "the record round-trips"
+    let specimen = host.Word("SpecimenOf").Call(ShoddyValue.Str "LIN", ShoddyValue.Num 78.0)
+    check (specimen.TypeName() = "SPECIMEN") "a word called from F# answers a record"
+    check (specimen.Field("Score").AsNum() = 78.0) "a field reads back by name"
+    check (host.Word("Grade").Call(specimen).AsStr() = "PASS") "the record round-trips"
 
     let list = ShoddyValue.ListOf [ ShoddyValue.Num 1.0; ShoddyValue.Num 2.0 ]
     check (list.AsList().Count = 2) "a list builds from an F# list"

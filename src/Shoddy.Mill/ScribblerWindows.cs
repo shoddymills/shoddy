@@ -78,7 +78,10 @@ public static class ScribblerWindows
         Buzzer.Install();
 
         // The exit code and completion flag cross a thread boundary: the
-        // ManualResetEventSlim publishes both (and any exception).
+        // ManualResetEventSlim publishes both (and any exception). The
+        // thread carries the program stack (Engine.ProgramStackBytes):
+        // reserved, not committed, so a console program pays nothing and
+        // a deep recursion returns instead of killing the process.
         int exitCode = 0;
         Exception? failure = null;
         var done = new ManualResetEventSlim(false);
@@ -87,7 +90,7 @@ public static class ScribblerWindows
             try { exitCode = program(); }
             catch (Exception e) { failure = e; }
             finally { done.Set(); dispatcher.Wake(); }
-        })
+        }, Engine.ProgramStackBytes)
         { IsBackground = true, Name = "shoddy-program" };
         thread.Start();
 

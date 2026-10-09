@@ -8,11 +8,11 @@ Rem builtins rather than file.shoddy's own aborting words
 Rem
 Rem READLINES, WRITELINES, APPENDLINE and FILEEXISTS. Per R3.5(a), a
 Rem bridged word must not be able to abort the session, and file.shoddy's
-Rem ReadLines/WriteLines/AppendLine are built on the aborting ReadFile,
-Rem WriteFile and AppendFile — so this seed does NOT call them. It
-Rem reimplements their line-splitting and line-joining over
-Rem TRYREADFILE and TRYWRITEFILE instead, which is the guarded pair
-Rem R3.1 exists to provide.
+Rem ReadLines, WriteLines and AppendLine all abort on a path they cannot
+Rem use — so this seed does NOT call them. READLINES goes straight to
+Rem the TRYREADLINES builtin, which answers the lines or the reason;
+Rem WRITELINES and APPENDLINE reimplement file.shoddy's line-joining over
+Rem TRYWRITEFILE, which is the guarded pair R3.1 exists to provide.
 Rem
 Rem APPENDLINE HAS NO GUARDED BUILTIN TWIN. There is a TRYWRITEFILE but
 Rem no TryAppendFile, so APPENDLINE reads what is there (nothing, if the
@@ -54,20 +54,6 @@ Def FlStrsNext(word As String, xs As List Of Cell, acc As List Of String, c As C
         Case Else
             Err(RckKindWhy(word, "a LIST of STRINGs", c), 0)
 
-Rem file.shoddy's own line-splitting, lifted out from around ReadFile so
-Rem it can run on text TRYREADFILE already holds.
-Def FlLinesOf(c As String) As List Of String
-    FlLinesNorm(Replace(c, "\r", ""))
-
-Def FlLinesNorm(c As String) As List Of String
-    If c = "" Then
-        { }
-    Else
-        If EndsWith(c, "\n") Then
-            Split(Left(c, Len(c) - 1), "\n")
-        Else
-            Split(c, "\n")
-
 Rem ---- READLINES --------------------------------------------------------
 
 Def FlSeedReadlines(st As RckState) As RckState
@@ -76,7 +62,7 @@ Def FlSeedReadlines(st As RckState) As RckState
 Def FlReadlines(vs As List Of Cell) As RckWork
     Select Case RckTextArg("READLINES", First(vs))
         Case Ok(path)
-            FlReadlinesAt(TryReadFile(path))
+            FlReadlinesAt(TryReadLines(path))
         Case Err(w, at)
             RckWorkBad(w)
         Case Else
@@ -84,8 +70,8 @@ Def FlReadlines(vs As List Of Cell) As RckWork
 
 Def FlReadlinesAt(r As Result) As RckWork
     Select Case r
-        Case Ok(text)
-            RckVals({ CutList(Map(FlLinesOf(text), CutStr)) })
+        Case Ok(lines)
+            RckVals({ CutList(Map(lines, CutStr)) })
         Case Err(w, at)
             RckWorkBad(w)
         Case Else

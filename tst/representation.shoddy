@@ -1,0 +1,202 @@
+Rem Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
+Rem Licensed under the MIT License. See the LICENSE file in the project root.
+
+Rem ==================================================================
+Rem representation.shoddy — lists are cons cells, strings are ropes,
+Rem and recursion has no practical limit
+Rem
+Rem Assert-driven, in the libtest / builtinsurfacetest pattern: it
+Rem prints what it is doing and stops the run at the first assertion
+Rem that fails, ending with ALL ASSERTIONS PASSED when none does.
+Rem
+Rem WHAT THIS IS FOR. The runtime promises three things about shape
+Rem and cost that no golden file can see, because a golden sees output
+Rem and these are about how long it took to arrive and whether it
+Rem arrived at all:
+Rem
+Rem   1. A list is a chain of cells. First, Rest and Prepend are O(1),
+Rem      Nth is O(1) after the first call on a list, and two lists with
+Rem      the same items are equal.
+Rem   2. A string built with & is copied once, when first read, however
+Rem      many pieces went into it; Len never reads it at all.
+Rem   3. A recursion two hundred thousand deep returns, ten times the
+Rem      depth that used to kill the process. (Two million does too, and
+Rem      the C# launcher tests prove it, but each garbage collection
+Rem      walks the whole stack, so two million frames cost a minute and
+Rem      a half; this suite times the shallower figure.)
+Rem
+Rem THE TIMINGS. The requirement that made these true asks for a million
+Rem elements in under one second each. That figure is measured on the
+Rem maintainer's machine and recorded there; here, where CI runs on four
+Rem platforms of unknown speed, each timing is printed and asserted
+Rem under five seconds. A runtime that went back to copying would take
+Rem minutes, not seconds, so the ceiling is loose and the test is not.
+Rem
+Rem Run: bin\mill run tst\representation.shoddy   (from the repo root)
+Rem ==================================================================
+
+Include "../machines/seq.shoddy"
+Include "../machines/str.shoddy"
+
+Let million = 1000000
+Let ceilingMs = 5000
+
+Rem ---- the shapes under test ------------------------------------------
+
+Rem A First/Rest walk: the sum, carried in an accumulator so the call
+Rem is in tail position and the walk is a loop.
+Def WalkSum(xs As List Of Number, acc As Number) As Number
+    If IsEmpty(xs) Then
+        acc
+    Else
+        WalkSum(Rest(xs), acc + First(xs))
+
+Rem A Prepend build, one cell at a time: n down to 1, so the result
+Rem reads 1 .. n.
+Def Build(n As Number, acc As List Of Number) As List Of Number
+    If n = 0 Then
+        acc
+    Else
+        Build(n - 1, Prepend(n, acc))
+
+Rem Nth over every element of a list, with no ToArray anywhere.
+Def NthSum(xs As List Of Number) As Number
+    Fold(Range(1, Length(xs)), 0, Fn(a, k) => a + Nth(xs, k))
+
+Rem One ten-character piece appended per step, nothing read until the
+Rem end.
+Def Pieces(n As Number) As String
+    Fold(Range(1, n), "", Fn(s, k) => s & "0123456789")
+
+Rem A non-tail recursion: the call is not the last thing the body does,
+Rem so every level is a live frame until the innermost returns.
+Def Deep(n As Number) As Number
+    If n = 0 Then
+        0
+    Else
+        1 + Deep(n - 1)
+
+Rem ---- Select Case over a list ----------------------------------------
+
+Def Describe(xs As List Of Number) As String
+    Select Case xs
+        Case Empty
+            "EMPTY"
+        Case Prepend(x, Empty)
+            Str(x) & " ALONE"
+        Case Prepend(x, more) Where x > 100
+            "BIG " & Str(x) & " THEN " & Str(Length(more))
+        Case Prepend(x, more)
+            Str(x) & " THEN " & Str(Length(more))
+
+Rem The structural sum, written with the patterns. Not a tail call, so
+Rem it also leans on the stack a recursion is now allowed.
+Def SumOf(xs As List Of Number) As Number
+    Select Case xs
+        Case Empty
+            0
+        Case Prepend(x, more)
+            x + SumOf(more)
+
+Def FirstFst(ps As List Of Pair) As Number
+    Select Case ps
+        Case Prepend(Pair(a, b), more)
+            a
+        Case Else
+            0
+
+Rem ---- tail calls between Defs ------------------------------------------
+
+Rem Two Defs that hand back and forth: every call is in tail position,
+Rem so the pair runs as one loop whatever the depth.
+Def IsEven(n As Number) As Boolean
+    If n = 0 Then
+        True
+    Else
+        IsOdd(n - 1)
+
+Def IsOdd(n As Number) As Boolean
+    If n = 0 Then
+        False
+    Else
+        IsEven(n - 1)
+
+Rem ---- reporting --------------------------------------------------------
+
+Def Report(what As String, ms As Number)
+    Print("  " & what & ": " & Str(Round(ms)) & " ms")
+    Assert(ms < ceilingMs, Upper(what) & " TAKES UNDER FIVE SECONDS")
+
+Def Main()
+    Print("--- lists are cons cells ---")
+    Let t0 = Ticks()
+    Let built = Build(million, { })
+    Let t1 = Ticks()
+    Report("a million Prepends", t1 - t0)
+    Assert(Length(built) = million, "A MILLION PREPENDS MAKE A MILLION-LONG LIST")
+    Assert(First(built) = 1, "AND THE LAST ONE PREPENDED IS FIRST")
+    Let t2 = Ticks()
+    Let total = WalkSum(built, 0)
+    Let t3 = Ticks()
+    Report("a First/Rest walk of a million", t3 - t2)
+    Assert(total = million * (million + 1) / 2, "THE WALK VISITS EVERY ELEMENT ONCE")
+    Let t4 = Ticks()
+    Let total2 = NthSum(built)
+    Let t5 = Ticks()
+    Report("Nth over a million, no ToArray", t5 - t4)
+    Assert(total2 = total, "NTH REACHES EVERY ELEMENT")
+    Assert(Nth(built, million) = million, "AND THE LAST ELEMENT IS WHERE IT SHOULD BE")
+    Assert(Nth(Rest(built), 1) = 2, "A REST OF AN INDEXED LIST IS INDEXED TOO")
+    Assert(Nth(Prepend(0, built), 1) = 0, "AND A PREPEND ONTO ONE STILL ANSWERS")
+
+    Print("--- equality is structural for data ---")
+    Assert({ 1, 2 } = { 1, 2 }, "TWO LISTS WITH THE SAME ITEMS ARE EQUAL")
+    Assert({ 1, 2 } <> { 2, 1 }, "ORDER MATTERS")
+    Assert({ 1, 2 } <> { 1, 2, 3 }, "AND SO DOES LENGTH")
+    Assert({ } = { }, "TWO EMPTY LISTS ARE EQUAL")
+    Assert({ { 1 }, "A" } = { { 1 }, "A" }, "ALL THE WAY DOWN")
+    Assert(Rest({ 1, 2, 3 }) = { 2, 3 }, "A REST COMPARES BY ITS CONTENTS")
+    Assert(Range(1, 3) = { 1, 2, 3 }, "WHOEVER BUILT THEM")
+    Assert(Pair({ 1 }, 2) = Pair({ 1 }, 2), "A RECORD HOLDING A LIST COMPARES STRUCTURALLY")
+    Assert({ 1 } <> ToArray({ 1 }), "A LIST AND AN ARRAY ARE DIFFERENT KINDS")
+    Let f = Fn(x) => x
+    Let g = Fn(x) => x
+    Assert(f = f, "A FUNCTION IS EQUAL TO ITSELF")
+    Assert(f <> g, "AND TO NOTHING ELSE, EVEN A TWIN")
+
+    Print("--- strings are ropes ---")
+    Let t6 = Ticks()
+    Let s = Pieces(million)
+    Let t7 = Ticks()
+    Assert(Len(s) = million * 10, "LEN READS THE LENGTH WITHOUT FLATTENING")
+    Let t8 = Ticks()
+    Let head = Left(s, 20)
+    Let t9 = Ticks()
+    Report("a million appends", t7 - t6)
+    Report("then the first read", t9 - t8)
+    Assert(head = "01234567890123456789", "AND THE TEXT IS RIGHT")
+    Assert(Right(s, 3) = "789", "TO THE END")
+    Assert("ABC" & "DEF" = "ABCDEF", "SHORT STRINGS JOIN AT ONCE")
+    Assert(StrRep("X", 100) & StrRep("Y", 100) = StrRep("X", 100) & StrRep("Y", 100), "ROPES COMPARE BY THEIR TEXT")
+    Assert(StrRep("X", 100) & "A" <> StrRep("X", 100) & "B", "AND DIFFER BY IT")
+    Assert(Join({ "A", "B", "C" }, "-") = "A-B-C", "JOIN IS ONE PASS")
+    Assert(Join({ }, "-") = "", "AND AN EMPTY LIST JOINS TO NOTHING")
+    Assert(Join({ s, s }, "") = s & s, "AND IT TAKES ROPES")
+
+    Print("--- Select Case takes a list apart ---")
+    Assert(Describe({ }) = "EMPTY", "CASE EMPTY MATCHES THE EMPTY LIST")
+    Assert(Describe({ 7 }) = "7 ALONE", "A NESTED EMPTY MATCHES A ONE-ELEMENT TAIL")
+    Assert(Describe({ 7, 8, 9 }) = "7 THEN 2", "CASE PREPEND BINDS THE HEAD AND THE TAIL")
+    Assert(Describe({ 500, 8 }) = "BIG 500 THEN 1", "AND A WHERE GUARD WORKS ON IT")
+    Assert(SumOf(Range(1, 100)) = 5050, "THE STRUCTURAL SUM, WRITTEN WITH THE PATTERNS")
+    Assert(FirstFst({ Pair(4, "A"), Pair(5, "B") }) = 4, "A RECORD PATTERN NESTS IN THE HEAD")
+    Assert(FirstFst({ }) = 0, "AND CASE ELSE CATCHES WHAT NOTHING MATCHED")
+
+    Print("--- recursion has no practical limit ---")
+    Let t10 = Ticks()
+    Assert(Deep(200000) = 200000, "TWO HUNDRED THOUSAND NON-TAIL FRAMES RETURN")
+    Report("two hundred thousand frames deep and back", Ticks() - t10)
+    Assert(IsEven(1000000), "A MILLION TAIL CALLS BETWEEN TWO DEFS RUN FLAT")
+
+    Print("")
+    Print("ALL ASSERTIONS PASSED")

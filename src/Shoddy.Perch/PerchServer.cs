@@ -315,7 +315,11 @@ public sealed class PerchServer : IDebugSink
         mode = stopOnEntry ? Mode.Entry : Mode.Run;
         var stdout = new EventWriter(this, "stdout");
         var stderr = new EventWriter(this, "stderr");
-        Task.Run(() =>
+        // Its own thread with the program stack, as every launcher gives
+        // a program: a thread-pool thread's size cannot be set, and a deep
+        // recursion under the debugger must return exactly as it does
+        // under `mill run`.
+        new Thread(() =>
         {
             int rc;
             TextWriter savedErr = Console.Error;
@@ -340,7 +344,7 @@ public sealed class PerchServer : IDebugSink
             stderr.FlushBuf();
             Event("exited", new { exitCode = rc });
             Event("terminated");
-        });
+        }, Engine.ProgramStackBytes) { IsBackground = true, Name = "shoddy-program" }.Start();
     }
 
     void Resume(JsonElement req, Mode m)
@@ -452,13 +456,16 @@ public sealed class PerchServer : IDebugSink
                             vars.Add(Var($"[{k + 1}]", v.Elems[k]));
                         break;
                     case VType.Quot:
-                        for (int k = 0; k < v.CItems!.Length; k++)
+                    {
+                        int k = 0;
+                        foreach (QItem it in v.List!.Items())
                         {
-                            QItem it = v.CItems[k];
-                            if (it.Lit != null) vars.Add(Var($"[{k + 1}]", it.Lit));
-                            else vars.Add(new { name = $"[{k + 1}]", value = it.Disp ?? "?", variablesReference = 0 });
+                            k++;
+                            if (it.Lit != null) vars.Add(Var($"[{k}]", it.Lit));
+                            else vars.Add(new { name = $"[{k}]", value = it.Disp ?? "?", variablesReference = 0 });
                         }
                         break;
+                    }
                 }
                 break;
         }
@@ -472,7 +479,7 @@ public sealed class PerchServer : IDebugSink
         // Scribbler is deliberately a leaf: an opaque handle with no fields
         // reachable from Shoddy, shown as its repr, e.g. Scribbler(640, 480).
         bool composite = v.T is VType.Rec or VType.Arr ||
-                         (v.T == VType.Quot && v.CItems!.Length > 0);
+                         (v.T == VType.Quot && v.List!.Length > 0);
         return new
         {
             name,
@@ -504,7 +511,7 @@ public sealed class PerchServer : IDebugSink
         var sw = new StringWriter();
         Printer.Repr(sw, found);
         bool composite = found.T is VType.Rec or VType.Arr ||
-                         (found.T == VType.Quot && found.CItems!.Length > 0);
+                         (found.T == VType.Quot && found.List!.Length > 0);
         Respond(req, new { result = sw.ToString(), variablesReference = composite ? NewRef(found) : 0 });
     }
 

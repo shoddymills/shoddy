@@ -11,7 +11,7 @@ namespace Shoddy.Runtime;
 public enum NType { Num, Str, Bool, Word, Quot, If, Take, List, Val, With, IsType, Bind, Pat }
 
 /// <summary>A parsed quotation body: a list of nodes. Front-end only —
-/// at runtime quotations are CLR closures (see Value.CItems/Body).</summary>
+/// at runtime quotations are CLR closures (see Value.List/Body).</summary>
 public sealed class Quot
 {
     public readonly List<Node> Items = new();
@@ -62,25 +62,68 @@ public sealed class Value
 {
     public VType T;
     public double Num;
-    public string? Str;
     public bool B;
     public TypeDef? RType;      // Rec: which TYPE this record is
     public Value[]? Elems;      // Rec field values / Arr elements
     public ScribblerHandle? Scribbler;  // Scribbler: opaque mutable reference
 
+    // A string is flat text, or a rope: the two operands of an `&` that
+    // nobody has read yet, and their total length. Reading Str flattens
+    // the rope in one pass, keeps the text and drops the operands, so a
+    // string built by any number of `&` is copied once, when first read,
+    // and never again. Below RopeThreshold characters `&` concatenates at
+    // once, so short strings never carry a tree.
+    string? str;
+    Rope? rope;
+
+    public const int RopeThreshold = 64;
+
+    /// <summary>The text. On a rope the first read flattens it; every
+    /// later read is the stored string.</summary>
+    public string? Str
+    {
+        get
+        {
+            string? s = str;
+            if (s != null) return s;
+            Rope? r = rope;
+            if (r == null) return str;    // flattened by another thread between the two reads
+            s = r.Flatten();
+            str = s;                      // the text first, then the operands go, so a
+            rope = null;                  // reader that sees no rope sees the text
+            return s;
+        }
+    }
+
+    /// <summary>How long the text is, without flattening a rope.</summary>
+    public int StrLength => str?.Length ?? rope!.Length;
+
+    internal string? FlatText => str;
+    internal Rope? Pending => rope;
+
     // Quotations are CLR closures: a body Action (null = push each item),
-    // a QItem array for sequence ops and printing, and an identity object
-    // — the literal site or the items array — which plays the role the
-    // parse-time Quot pointer played in the C (`=` compares identities).
-    public QItem[]? CItems;
+    // a chain of cells for sequence ops and printing, and an identity
+    // object — the literal site, or the head cell — which plays the role
+    // the parse-time Quot pointer played in the C. `=` compares identities
+    // for code and cells, pairwise, for data (Engine.EqualValues).
+    public Cell? List;
     public Action? Body;
     public object? CId;
 
     public static Value OfNum(double d) => new() { T = VType.Num, Num = d };
-    public static Value OfStr(string s) => new() { T = VType.Str, Str = s };
+    public static Value OfStr(string s) => new() { T = VType.Str, str = s };
+    /// <summary>a &amp; b, unread: one node over the two operands, nothing copied.</summary>
+    public static Value OfRope(Value a, Value b) => new() { T = VType.Str, rope = new Rope(a, b) };
     public static Value OfBool(bool b) => new() { T = VType.Bool, B = b };
+    public static Value OfCQuot(object id, Cell list, Action? body = null) =>
+        new() { T = VType.Quot, CId = id, List = list, Body = body };
+    /// <summary>A quotation literal's items, as the weave hands them over.</summary>
     public static Value OfCQuot(object id, QItem[] items, Action? body = null) =>
-        new() { T = VType.Quot, CId = id, CItems = items, Body = body };
+        OfCQuot(id, Cell.FromItems(items), body);
+    /// <summary>A list of data. Its head cell is its identity, so a list
+    /// and its own Rest are different lists and two Rests of one list are
+    /// the same list.</summary>
+    public static Value OfList(Cell list) => new() { T = VType.Quot, CId = list, List = list };
     public static Value OfRec(TypeDef t, Value[] fields) => new() { T = VType.Rec, RType = t, Elems = fields };
     public static Value OfArr(Value[] elems) => new() { T = VType.Arr, Elems = elems };
     public static Value OfScribbler(ScribblerHandle h) => new() { T = VType.Scribbler, Scribbler = h };
@@ -114,12 +157,215 @@ public sealed class QItem
     public static QItem OfCode(Action act, string disp) => new(null, act, disp);
 }
 
-/// <summary>A match pattern: either a plain binder name, or a constructor
-/// pattern with sub-patterns for each field (which may nest).</summary>
+/// <summary>One cell of a list: a head, a tail, and the length from here.
+/// A Shoddy list is a chain of these, as in F#, so First, Rest, Prepend,
+/// Length and IsEmpty are O(1) and a tail is shared, never copied. The
+/// empty list is the one shared <see cref="Empty"/>.
+///
+/// Nth is served by an index built on the first call: every cell from the
+/// head that asked, in order, stored on each of those cells with its own
+/// place in it. Lists are immutable, so the index never goes stale, and a
+/// Rest of an indexed list already carries it. A list nobody indexes pays
+/// nothing. Prepend onto an indexed list makes a head with no index; the
+/// next Nth on it walks again, which is the one shape that stays O(n) per
+/// step, as it is in every immutable structure.</summary>
+public sealed class Cell
+{
+    public static readonly Cell Empty = new();
+
+    public readonly QItem? Head;        // null only on Empty
+    public readonly Cell? Tail;         // null only on Empty
+    public readonly int Length;
+    /// <summary>Does this head, or any after it, hold a code item? `=`
+    /// reads it once to decide identity-or-structure in O(1).</summary>
+    public readonly bool AnyCode;
+
+    // The index: one object holding the array and this cell's place in
+    // it, so a reader on another thread (a machine constant is shared)
+    // never sees an array from one build with an offset from another.
+    Spine? spine;
+    sealed class Spine
+    {
+        public readonly Cell[] Cells;
+        public readonly int At;
+        public Spine(Cell[] cells, int at) { Cells = cells; At = at; }
+    }
+
+    Cell() { }
+
+    public Cell(QItem head, Cell tail)
+    {
+        Head = head;
+        Tail = tail;
+        Length = tail.Length + 1;
+        AnyCode = head.Lit == null || tail.AnyCode;
+    }
+
+    public bool IsEmpty => Length == 0;
+
+    /// <summary>The cell k places along (0-based, k below Length).</summary>
+    public Cell At(int k)
+    {
+        Spine ix = spine ?? Index();
+        return ix.Cells[ix.At + k];
+    }
+
+    Spine Index()
+    {
+        var cells = new Cell[Length];
+        int i = 0;
+        for (Cell c = this; c.Length > 0; c = c.Tail!)
+        {
+            cells[i] = c;
+            c.spine = new Spine(cells, i);
+            i++;
+        }
+        return spine!;
+    }
+
+    /// <summary>The items from here, in order.</summary>
+    public IEnumerable<QItem> Items()
+    {
+        for (Cell c = this; c.Length > 0; c = c.Tail!) yield return c.Head!;
+    }
+
+    public static Cell FromValues(IReadOnlyList<Value> vals)
+    {
+        Cell c = Empty;
+        for (int k = vals.Count - 1; k >= 0; k--) c = new Cell(QItem.OfValue(vals[k]), c);
+        return c;
+    }
+
+    public static Cell FromItems(IReadOnlyList<QItem> items)
+    {
+        Cell c = Empty;
+        for (int k = items.Count - 1; k >= 0; k--) c = new Cell(items[k], c);
+        return c;
+    }
+
+    /// <summary>The same items, back to front: one walk, prepending.</summary>
+    public Cell Reverse()
+    {
+        Cell r = Empty;
+        for (Cell c = this; c.Length > 0; c = c.Tail!) r = new Cell(c.Head!, r);
+        return r;
+    }
+
+    /// <summary>a's items in front of b: a is rebuilt, b is shared.</summary>
+    public static Cell Concat(Cell a, Cell b)
+    {
+        if (a.Length == 0) return b;
+        if (b.Length == 0) return a;
+        var buf = new QItem[a.Length];
+        int i = 0;
+        for (Cell c = a; c.Length > 0; c = c.Tail!) buf[i++] = c.Head!;
+        Cell r = b;
+        for (int k = buf.Length - 1; k >= 0; k--) r = new Cell(buf[k], r);
+        return r;
+    }
+
+    /// <summary>This list with the k-th (0-based) item replaced: the first
+    /// k cells rebuilt, everything after shared.</summary>
+    public Cell SetAt(int k, QItem it)
+    {
+        var buf = new QItem[k];
+        Cell c = this;
+        for (int i = 0; i < k; i++) { buf[i] = c.Head!; c = c.Tail!; }
+        Cell r = new(it, c.Tail!);
+        for (int i = k - 1; i >= 0; i--) r = new Cell(buf[i], r);
+        return r;
+    }
+
+    /// <summary>This list without its k-th (0-based) item: the first k
+    /// cells rebuilt, everything after shared.</summary>
+    public Cell RemoveAt(int k)
+    {
+        var buf = new QItem[k];
+        Cell c = this;
+        for (int i = 0; i < k; i++) { buf[i] = c.Head!; c = c.Tail!; }
+        Cell r = c.Tail!;
+        for (int i = k - 1; i >= 0; i--) r = new Cell(buf[i], r);
+        return r;
+    }
+
+    /// <summary>The list after its first n items; Empty past the end.</summary>
+    public Cell Drop(int n)
+    {
+        Cell c = this;
+        while (n > 0 && c.Length > 0) { c = c.Tail!; n--; }
+        return c;
+    }
+
+    /// <summary>The first n items; the whole list, shared, when n reaches
+    /// its length.</summary>
+    public Cell Take(int n)
+    {
+        if (n <= 0) return Empty;
+        if (n >= Length) return this;
+        var buf = new QItem[n];
+        Cell c = this;
+        for (int i = 0; i < n; i++) { buf[i] = c.Head!; c = c.Tail!; }
+        return FromItems(buf);
+    }
+}
+
+/// <summary>An unread `&`: its two operands and their total length. The
+/// text is built once, by <see cref="Flatten"/>, when a Value first
+/// reads it.</summary>
+public sealed class Rope
+{
+    public readonly Value Left;
+    public readonly Value Right;
+    public readonly int Length;
+
+    public Rope(Value left, Value right)
+    {
+        Left = left;
+        Right = right;
+        Length = left.StrLength + right.StrLength;
+    }
+
+    /// <summary>One pass, left to right, into a string of the known
+    /// length. Iterative on purpose: a fold that appends a million pieces
+    /// leaves a tree a million deep down its left side, and a recursive
+    /// walk would die on it.</summary>
+    public string Flatten() => string.Create(Length, this, static (span, root) =>
+    {
+        var todo = new Stack<Value>();
+        todo.Push(root.Right);
+        todo.Push(root.Left);
+        int at = 0;
+        while (todo.Count > 0)
+        {
+            Value v = todo.Pop();
+            Rope? r = v.Pending;              // operands before text: see Value.Str
+            string? s = v.FlatText;
+            if (s != null)
+            {
+                s.AsSpan().CopyTo(span[at..]);
+                at += s.Length;
+            }
+            else
+            {
+                todo.Push(r!.Right);
+                todo.Push(r.Left);
+            }
+        }
+    });
+}
+
+/// <summary>A match pattern: a plain binder name; a constructor pattern
+/// with sub-patterns for each field (which may nest); or one of the two
+/// list patterns, <c>Empty</c> and <c>Prepend(head, tail)</c>, which read
+/// as the words that build a list exactly as a record pattern reads as
+/// its constructor.</summary>
 public sealed class Pat
 {
-    public string? Type;        // null for a plain binder
-    public string? Name;        // binder name when Type is null
+    public string? Type;        // null for a plain binder or a list pattern
+    public string? Name;        // binder name when Type is null and List is false
+    /// <summary>A list pattern: Empty when Subs is empty, Prepend(head,
+    /// tail) when it holds two.</summary>
+    public bool List;
     public readonly List<Pat> Subs = new();
 }
 

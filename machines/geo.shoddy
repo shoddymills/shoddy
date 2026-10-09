@@ -592,26 +592,25 @@ Rem usable: a GPS trace is tens of thousands of points, most of them
 Rem noise about a line the walker actually walked.
 Rem
 Rem BOTH ENDPOINTS ARE PRESERVED AND THE RESULT IS NEVER LONGER THAN THE
-Rem INPUT. It works on an ARRAY rather than the list, because the
-Rem recursion addresses sub-ranges by index and Nth on a list is O(n)
-Rem where on an array it is O(1).
+Rem INPUT. The recursion addresses sub-ranges of the list by index,
+Rem which Nth answers in O(1) after its first call on the list.
 Def GeoSimplify(pts As List Of GeoPt, m As Number) As List Of GeoPt
     If Length(pts) < 3 Then
         pts
     Else
-        GeoSimplifyAt(ToArray(pts), m, Length(pts))
+        GeoSimplifyAt(pts, m, Length(pts))
 
-Def GeoSimplifyAt(ar As Array Of GeoPt, m As Number, n As Number) As List Of GeoPt
+Def GeoSimplifyAt(ar As List Of GeoPt, m As Number, n As Number) As List Of GeoPt
     Concat(Prepend(Nth(ar, 1), GeoDpBetween(ar, m, 1, n)), { Nth(ar, n) })
 
 Rem The points to keep STRICTLY BETWEEN i and j, in order.
-Def GeoDpBetween(ar As Array Of GeoPt, m As Number, i As Number, j As Number) As List Of GeoPt
+Def GeoDpBetween(ar As List Of GeoPt, m As Number, i As Number, j As Number) As List Of GeoPt
     If j - i < 2 Then
         { }
     Else
         GeoDpSplit(ar, m, i, j, GeoDpFarthest(ar, i, j))
 
-Def GeoDpSplit(ar As Array Of GeoPt, m As Number, i As Number, j As Number, far As Pair) As List Of GeoPt
+Def GeoDpSplit(ar As List Of GeoPt, m As Number, i As Number, j As Number, far As Pair) As List Of GeoPt
     If Snd(far) <= m Then
         { }
     Else
@@ -621,7 +620,7 @@ Def GeoDpSplit(ar As Array Of GeoPt, m As Number, i As Number, j As Number, far 
 Rem The index between i and j lying furthest off the chord, and how far
 Rem off it lies, as a Pair. A Fold rather than a recursion so the walk
 Rem is a loop whatever the range length.
-Def GeoDpFarthest(ar As Array Of GeoPt, i As Number, j As Number) As Pair
+Def GeoDpFarthest(ar As List Of GeoPt, i As Number, j As Number) As Pair
     Fold(Range(i + 1, j - 1), Pair(i + 1, -1),
          Fn(best, k) => GeoDpBetter(best, k, Abs(GeoCrossTrack(Nth(ar, k), Nth(ar, i), Nth(ar, j)))))
 
@@ -744,11 +743,11 @@ Def GeoAreaAt(vs As List Of GeoPt) As Number
     If Length(vs) < 3 Then
         Error("GEOAREA: A POLYGON NEEDS AT LEAST THREE DISTINCT POINTS, GOT " & Str(Length(vs)))
     Else
-        GeoAreaWound(vs, GeoExcess(ToArray(vs), Length(vs)))
+        GeoAreaWound(vs, GeoExcess(vs, Length(vs)))
 
 Rem The spherical excess of a ring, in radians. This IS the area, in
 Rem units of R squared — that is what the excess theorem says.
-Def GeoExcess(vs As Array Of GeoPt, n As Number) As Number
+Def GeoExcess(vs As List Of GeoPt, n As Number) As Number
     Rad(GeoAngleSum(vs, n) - (n - 2) * 180)
 
 Rem A ring wound the other way measures the complement, and the
@@ -764,11 +763,11 @@ Rem IS that word inside this body. Nothing here wants it, but the next
 Rem edit might.
 Def GeoAreaWound(vs As List Of GeoPt, exc As Number) As Number
     If exc > 2 * Pi() Then
-        GeoExcess(ToArray(Reverse(vs)), Length(vs)) * GeoRadius() ^ 2
+        GeoExcess(Reverse(vs), Length(vs)) * GeoRadius() ^ 2
     Else
         exc * GeoRadius() ^ 2
 
-Def GeoAngleSum(vs As Array Of GeoPt, n As Number) As Number
+Def GeoAngleSum(vs As List Of GeoPt, n As Number) As Number
     Fold(Range(1, n), 0, Fn(a, k) => a + GeoVertexAngle(vs, n, k))
 
 Rem The interior angle at vertex k, as the turn from the edge back to
@@ -776,7 +775,7 @@ Rem the previous vertex round to the edge on to the next. Wrap does the
 Rem index arithmetic as well as the angle: Wrap(k, n) + 1 is the next
 Rem index and Wrap(k - 2, n) + 1 the previous, both 1-based and both
 Rem closing the ring without a special case at either end.
-Def GeoVertexAngle(vs As Array Of GeoPt, n As Number, k As Number) As Number
+Def GeoVertexAngle(vs As List Of GeoPt, n As Number, k As Number) As Number
     Let here = Nth(vs, k)
     Wrap(GeoBearing(here, Nth(vs, Wrap(k, n) + 1)) - GeoBearing(here, Nth(vs, Wrap(k - 2, n) + 1)), 360)
 
@@ -877,14 +876,14 @@ Def GeoRouteBounds(pts As List Of GeoPt) As GeoBox
     If IsEmpty(pts) Then
         Error("GEOROUTEBOUNDS: AN EMPTY ROUTE HAS NO BOUNDS")
     Else
-        GeoBoundsAt(Map(pts, GeoLat), ToArray(Sort(Map(pts, GeoLon))), Length(pts))
+        GeoBoundsAt(Map(pts, GeoLat), Sort(Map(pts, GeoLon)), Length(pts))
 
-Def GeoBoundsAt(lats As List Of Number, lons As Array Of Number, n As Number) As GeoBox
+Def GeoBoundsAt(lats As List Of Number, lons As List Of Number, n As Number) As GeoBox
     GeoBoundsLon(Fold(lats, First(lats), Fn(a, x) => Min(a, x)),
                  Fold(lats, First(lats), Fn(a, x) => Max(a, x)),
                  lons, n, GeoWidestGap(lons, n))
 
-Def GeoBoundsLon(south As Number, north As Number, lons As Array Of Number, n As Number, gap As Number) As GeoBox
+Def GeoBoundsLon(south As Number, north As Number, lons As List Of Number, n As Number, gap As Number) As GeoBox
     If gap = 0 Then
         GeoBoxOf(south, north, Nth(lons, 1), Nth(lons, n))
     Else
@@ -893,19 +892,19 @@ Def GeoBoundsLon(south As Number, north As Number, lons As Array Of Number, n As
 Rem The index after which the widest gap lies, or 0 when the widest gap
 Rem is the one across the antimeridian — in which case plain min-to-max
 Rem is already the tight answer.
-Def GeoWidestGap(lons As Array Of Number, n As Number) As Number
+Def GeoWidestGap(lons As List Of Number, n As Number) As Number
     If n < 2 Then
         0
     Else
         Fold(Range(1, n - 1), 0, Fn(best, i) => GeoGapBetter(lons, n, best, i))
 
-Def GeoGapBetter(lons As Array Of Number, n As Number, best As Number, i As Number) As Number
+Def GeoGapBetter(lons As List Of Number, n As Number, best As Number, i As Number) As Number
     If Nth(lons, i + 1) - Nth(lons, i) > GeoGapAt(lons, n, best) Then
         i
     Else
         best
 
-Def GeoGapAt(lons As Array Of Number, n As Number, i As Number) As Number
+Def GeoGapAt(lons As List Of Number, n As Number, i As Number) As Number
     If i = 0 Then
         Nth(lons, 1) + 360 - Nth(lons, n)
     Else

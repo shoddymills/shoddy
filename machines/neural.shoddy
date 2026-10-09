@@ -28,6 +28,11 @@ Rem Scale: like stats.shoddy this is classroom-sized — hundreds of rows
 Rem and a few thousand epochs through immutable arrays, not bulk
 Rem training.
 Rem
+Rem EVERY ToArray HERE BUILDS A VALUE THAT IS AN ARRAY BY DECLARATION: a
+Rem Net's weights and biases, a Scaler's columns, a one-hot, a slice of
+Rem weights — the shape matrix.shoddy's vector words take. None is for
+Rem speed; a list indexes in O(1) too.
+Rem
 Rem Impure edges (the only two, both via random.shoddy): NetNew draws
 Rem its initial weights from Rnd, and NetTrain shuffles each epoch. A
 Rem caller wanting reproducible runs calls the Seed builtin once, at
@@ -197,15 +202,15 @@ Def NetStep(n As Net, xs As List Of Array Of Number, ys As List Of Number, lr As
 
 Rem ---- training ------------------------------------------------------
 
-Def NetBatch(net As Net, xa As Array Of Array Of Number, ya As Array Of Number, perm As Array Of Number, b As Number, batSize As Number, lr As Number) As Net
+Def NetBatch(net As Net, xa As List Of Array Of Number, ya As List Of Number, perm As List Of Number, b As Number, batSize As Number, lr As Number) As Net
     Let idx = Map(Range((b - 1) * batSize + 1, b * batSize), Fn(k) => Nth(perm, k))
     NetStep(net, Map(idx, Fn(i) => Nth(xa, i)), Map(idx, Fn(i) => Nth(ya, i)), lr)
 
 Rem One epoch: shuffle the row indices (IMPURE: Rnd), then tile the
 Rem whole permutation with Floor(n / batSize) consecutive chunks —
 Rem the remainder rows are dropped, matching the C# int division.
-Def NetEpoch(net As Net, xa As Array Of Array Of Number, ya As Array Of Number, lr As Number, batSize As Number) As Net
-    Let perm = ToArray(Shuffle(Range(1, Length(ya))))
+Def NetEpoch(net As Net, xa As List Of Array Of Number, ya As List Of Number, lr As Number, batSize As Number) As Net
+    Let perm = Shuffle(Range(1, Length(ya)))
     Fold(Range(1, Floor(Length(ya) / batSize)), net, Fn(nn, b) => NetBatch(nn, xa, ya, perm, b, batSize, lr))
 
 Def NetReport(net As Net, epoch As Number, report As [ Number Net -- ]) As Net
@@ -216,9 +221,7 @@ Rem Fold over epochs. report is called with (epoch, net) after EVERY
 Rem epoch — the caller decides when to print and pay for metrics, so
 Rem both the effect and the cost stay at the mill's edge.
 Def NetTrain(n As Net, xs As List Of Array Of Number, ys As List Of Number, lr As Number, batSize As Number, epochs As Number, report As [ Number Net -- ]) As Net
-    Let xa = ToArray(xs)
-    Let ya = ToArray(ys)
-    Fold(Range(1, epochs), n, Fn(net, epoch) => NetReport(NetEpoch(net, xa, ya, lr, batSize), epoch, report))
+    Fold(Range(1, epochs), n, Fn(net, epoch) => NetReport(NetEpoch(net, xs, ys, lr, batSize), epoch, report))
 
 Rem ---- training, the general form ------------------------------------
 
@@ -252,7 +255,7 @@ Def NetStepAt(p As Pair, pl As Plan, xs As List Of Array Of Number, ys As List O
     Let v = NetAdd(NetScale(Snd(p), Moment(pl)), NetScale(avg, Negate(Rate(pl))))
     Pair(NetAdd(n, v), v)
 
-Def NetBatchAt(p As Pair, pl As Plan, xa As Array Of Array Of Number, ya As Array Of Array Of Number, perm As Array Of Number, b As Number) As Pair
+Def NetBatchAt(p As Pair, pl As Plan, xa As List Of Array Of Number, ya As List Of Array Of Number, perm As List Of Number, b As Number) As Pair
     Let idx = Map(Range((b - 1) * Batch(pl) + 1, b * Batch(pl)), Fn(k) => Nth(perm, k))
     NetStepAt(p, pl, Map(idx, Fn(i) => Nth(xa, i)), Map(idx, Fn(i) => Nth(ya, i)))
 
@@ -261,8 +264,8 @@ Rem permutation with Floor(n / batSize) consecutive chunks — the same
 Rem remainder-dropping NetEpoch does, and harmless for the same reason,
 Rem since the next epoch reshuffles and the dropped rows are not the
 Rem same ones twice.
-Def NetEpochAt(p As Pair, pl As Plan, xa As Array Of Array Of Number, ya As Array Of Array Of Number) As Pair
-    Let perm = ToArray(Shuffle(Range(1, Length(ya))))
+Def NetEpochAt(p As Pair, pl As Plan, xa As List Of Array Of Number, ya As List Of Array Of Number) As Pair
+    Let perm = Shuffle(Range(1, Length(ya)))
     Fold(Range(1, Floor(Length(ya) / Batch(pl))), p, Fn(q, b) => NetBatchAt(q, pl, xa, ya, perm, b))
 
 Def NetFitReport(p As Pair, epoch As Number, report As [ Number Net -- ]) As Pair
@@ -275,9 +278,7 @@ Rem pay for metrics, so both the effect and the cost stay at the mill's
 Rem edge. The velocity starts at zero and is discarded at the end: it is
 Rem scaffolding for the descent, not part of the model.
 Def NetFit(n As Net, pl As Plan, xs As List Of Array Of Number, ys As List Of Array Of Number, report As [ Number Net -- ]) As Net
-    Let xa = ToArray(xs)
-    Let ya = ToArray(ys)
-    Fst(Fold(Range(1, Epochs(pl)), Pair(n, NetZero(n)), Fn(p, epoch) => NetFitReport(NetEpochAt(p, pl, xa, ya), epoch, report)))
+    Fst(Fold(Range(1, Epochs(pl)), Pair(n, NetZero(n)), Fn(p, epoch) => NetFitReport(NetEpochAt(p, pl, xs, ys), epoch, report)))
 
 Rem ---- metrics -------------------------------------------------------
 

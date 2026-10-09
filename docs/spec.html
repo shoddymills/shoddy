@@ -233,13 +233,13 @@ then returns the same value every call:</p>
 
 Def Units() As List Of String
     unitNames                   &#39; Units() = Units() is True</code></pre>
-<p>That last line is the point, not a nicety. A <code>List</code>
-compares by identity: two lists are <code>=</code> only when they
-are the same list, not merely lists with the same items. So a zero-arg
-<code>Def</code> that builds <code>{ &quot;m&quot;, &quot;kg&quot;, &quot;s&quot; }</code>
-hands back a different value every call, and is never equal to itself.
-A program&rsquo;s own top-level <code>Let</code> is unrestricted, as
-above: it may call any <code>Def</code>.</p>
+<p>That last line holds whether or not the list is a constant: two lists
+with the same items are <code>=</code> (&sect;7). What the constant buys
+is cost, not meaning: one value built once, where a zero-arg
+<code>Def</code> that writes <code>{ &quot;m&quot;, &quot;kg&quot;, &quot;s&quot; }</code>
+builds a new list every call. A program&rsquo;s own top-level
+<code>Let</code> is unrestricted, as above: it may call any
+<code>Def</code>.</p>
 <h2 id="expressions-applicative-bodies">5. Expressions (applicative bodies)</h2>
 <ul>
 <li><p><strong>Calls</strong>: <code>f(a, b)</code> desugars to
@@ -291,6 +291,16 @@ operator.</li>
 destructuring. It matches records of that Type and binds every field, in
 declaration order, to the given names. The names are in scope for the
 guard and the body.</li>
+<li><code>Case Empty</code> and <code>Case Prepend(head, tail) [Where
+cond]</code>: list destructuring. <code>Empty</code> matches the empty
+list. <code>Prepend</code> matches a non-empty list and binds its first
+element and its tail, reading as the word that built the list exactly as
+a record pattern reads as its constructor. The head takes any pattern;
+the tail takes a name, <code>Empty</code> or another
+<code>Prepend</code>, so <code>Case Prepend(Pair(a, b), Prepend(c,
+_))</code> is allowed. Inside a pattern the two names mean the list
+patterns even when a binding of that name is in scope. A quotation that
+holds code matches neither.</li>
 <li><code>Case Else</code>: the default, last.</li>
 </ul>
 <p>With no <code>Case Else</code>, a non-match is a runtime error. The
@@ -311,7 +321,13 @@ test equality against a constructed record, write
         Case 80 To 89
             &quot;B&quot;
         Case Else
-            &quot;F&quot;</code></pre></li>
+            &quot;F&quot;</code></pre>
+<pre class="basic"><code>Def Total(xs As List Of Number) As Number
+    Select Case xs
+        Case Empty
+            0
+        Case Prepend(x, more)
+            x + Total(more)</code></pre></li>
 </ul>
 <h2 id="function-values-where-the-brackets-went">6. Function values: where the brackets went</h2>
 <p>A quotation is deferred code, code saved to run later, written
@@ -344,7 +360,41 @@ that capture costs one pointer.</p>
 <h2 id="lists">7. Lists</h2>
 <p><code>{ 1, 2, 3 }</code> builds a <code>List Of Number</code>.
 Elements are arbitrary expressions, evaluated at construction. Lists are
-immutable.</p>
+immutable, and a list is a chain of cells, as in F#: each cell holds an
+element, the rest of the list, and the length from there.
+<code>Rest</code> answers the tail cell itself and <code>Prepend</code>
+makes one new cell in front of a shared tail, so neither copies
+anything. The empty list is one shared cell.</p>
+<p>The cost of every list word. This table is the whole statement of
+list performance in this documentation; nothing else about it is
+documented anywhere, because nothing in a program has to work around
+it.</p>
+<table>
+<tr><th>Word</th><th>Cost</th></tr>
+<tr><td><code>First Rest Prepend Length IsEmpty</code></td><td>O(1)</td></tr>
+<tr><td><code>Nth</code></td><td>O(1) after the first call on a list. That first call is O(n), once: it builds the list&rsquo;s index, which a <code>Rest</code> of the list shares.</td></tr>
+<tr><td><code>SetNth</code></td><td>O(k): rebuilds the first k cells, shares the rest</td></tr>
+<tr><td><code>Append Concat Reverse Map Filter Fold Each Taken DropN ZipWith</code></td><td>O(n)</td></tr>
+<tr><td><code>Sort</code></td><td>O(n log n)</td></tr>
+<tr><td><code>=</code> on two lists</td><td>O(n) worst case; O(1) when they are the same list</td></tr>
+</table>
+<p>Two lists are <code>=</code> when they have the same length and their
+items are <code>=</code> pairwise, so <code>{ 1, 2 } = { 1, 2 }</code> is
+True and a record holding a list compares all the way down. A quotation
+holding code, a function, compares by identity: two separately built
+functions are never equal, whatever they compute. For data, identity is
+the fast path and not the rule.</p>
+<p>Strings are built the same way. <code>&amp;</code> is O(1): past a
+short threshold it makes one node over its two operands and copies
+nothing, and the text is laid down once, when the string is first read,
+then kept. <code>Len</code> reads the length without that read.</p>
+<table>
+<tr><th>Word</th><th>Cost</th></tr>
+<tr><td><code>&amp; Len</code></td><td>O(1)</td></tr>
+<tr><td>The first read of a built string (<code>Print</code>, <code>Mid</code>, <code>Instr</code>, <code>=</code>, &hellip;)</td><td>O(n), once</td></tr>
+<tr><td>Every later read</td><td>O(1) to reach the text</td></tr>
+<tr><td><code>Join Split</code></td><td>O(n) in the total length, one pass, however the pieces were built</td></tr>
+</table>
 <p>Primitives: <code>IsEmpty First Rest Prepend</code>. Library words
 (expressible in the language itself): <code>Map Filter Fold Each Times
 Range Length Reverse Concat Call Ifte</code>, provided as
@@ -446,11 +496,13 @@ an ordinary binder used by convention for ignored fields:</p>
 <h2 id="arrays">9. Arrays</h2>
 <p><code>List</code> is the inductive type:
 <code>First</code>/<code>Rest</code>/<code>Prepend</code>, made for
-walking front to back by recursion. <code>Array</code> is the indexed
-type: fixed length, immutable, <code>Nth</code> in O(1)
-(constant time, however long the array) and a functional
-<code>SetNth</code> that returns a new array. Use lists to recurse and
-arrays to index; matrices are arrays of arrays.</p>
+walking front to back by recursion, and indexed by <code>Nth</code> in
+O(1) after its first call. <code>Array</code> is the indexed type: fixed
+length, immutable, <code>Nth</code> in O(1) from the start, and a
+functional <code>SetNth</code> that returns a new array by copying the
+whole of it. Use lists for structural recursion, arrays for
+<code>Dim</code>-shaped data and for <code>SetNth</code> by copy;
+matrices are arrays of arrays.</p>
 <pre class="basic"><code>Let a = ToArray(Range(1, 5))    &#39; Array(1, 2, 3, 4, 5)
 Nth(a, 3)                       &#39; 3, in o(1)
 SetNth(a, 3, 99)                &#39; Array(1, 2, 99, 4, 5) &mdash; original untouched
@@ -462,12 +514,11 @@ array. <code>ToArray</code>/<code>ToList</code> convert.
 <code>Rest</code>/<code>Prepend</code> stay list-only by design: on an
 array they would hide an O(n) copy, a cost that grows with the whole
 array.</p>
-<p>The same rule decides which kind a constant should be (&sect;4). A
-table consulted by index is an <code>Array</code>; a table consumed by
-structural recursion is a <code>List</code>. Both may be held by a
-machine&rsquo;s top-level <code>Let</code>; an array constant is
-written <code>ToArray({ &hellip; })</code>, which is folded at compile
-time.</p>
+<p>Either kind may be held by a machine&rsquo;s top-level
+<code>Let</code> (&sect;4); an array constant is written
+<code>ToArray({ &hellip; })</code>, which is folded at compile time. A
+table consulted by index may be either, since <code>Nth</code> is O(1)
+on both.</p>
 <h2 id="word-reference">10. Word reference</h2>
 <dl class="doors">
 <dt>Arithmetic</dt>
@@ -477,15 +528,15 @@ time.</p>
 <dt>Special functions</dt>
 <dd><code>Erf GammaP BetaI</code>: the error function and the regularized incomplete gamma and beta functions. These are the native-precision primitives under stats.shoddy&rsquo;s probability curves. Owned and documented by <a href="machines/stats.html">stats</a>.</dd>
 <dt>Random</dt>
-<dd><code>Rnd</code>: uniform in [0, 1); impure, like <code>Print</code>. <code>Seed(n)</code> makes it reproducible. <code>Rnd</code> is owned and documented by <a href="machines/random.html">random</a>; <code>Seed</code> by <a href="machines/math.html">math</a>, since random is seedless by construction</dd>
+<dd><code>Rnd</code>: uniform in [0, 1); impure, like <code>Print</code>. <code>Seed(n)</code> makes it reproducible. <code>Shuffle(xs)</code> and <code>Sample(xs, n)</code> draw from it, a random permutation and <code>n</code> distinct draws without replacement, and <code>DropAt(xs, k)</code>, the list without its k-th element, sits beside them. <code>Rnd</code>, <code>Shuffle</code>, <code>Sample</code> and <code>DropAt</code> are owned and documented by <a href="machines/random.html">random</a>; <code>Seed</code> by <a href="machines/math.html">math</a>, since random is seedless by construction</dd>
 <dt>Comparison</dt>
 <dd><code>= &lt;&gt; &lt; &gt; &lt;= &gt;=</code> (numbers or strings) &rarr; Boolean</dd>
 <dt>Logic</dt>
 <dd><code>And Or Not True False</code> (strictly boolean)</dd>
 <dt>Strings</dt>
-<dd><code>&amp; Len Str Val Left Right Mid Chr Asc Upper Lower Instr InstrFrom Codes FromCodes CodeAt</code>. <code>Mid</code> is 1-based: <code>Mid(&quot;HELLO&quot;, 2, 3)</code> &rarr; <code>&quot;ELL&quot;</code>. <code>Instr(s, sub)</code> is the 1-based position of SUB in S, 0 if absent. <code>InstrFrom(s, sub, from)</code> is the same from a position, answering 0 for a <code>from</code> past the end. <code>Codes(s)</code> is an <code>Array Of Number</code> of every UTF-16 code unit (the 16-bit pieces a string is stored as) and <code>FromCodes</code> is its exact inverse, NUL included, which <code>Chr</code> cannot build. <code>CodeAt(s, k)</code> <em>refuses</em> a position past the end, where <code>Mid</code> trims. It is how a character is read, and <code>Asc(Mid(s, k, 1))</code> is the trap it replaces. Owned and documented by <a href="machines/str.html">str</a>.</dd>
+<dd><code>&amp; Len Str Val Left Right Mid Chr Asc Upper Lower Instr InstrFrom Codes FromCodes CodeAt Split Join</code>. <code>Split(s, sep)</code> cuts <code>s</code> at every <code>sep</code>, empties kept, and refuses an empty separator; <code>Join(xs, sep)</code> glues a list of strings with <code>sep</code> between each pair, one pass however the pieces were built. <code>Mid</code> is 1-based: <code>Mid(&quot;HELLO&quot;, 2, 3)</code> &rarr; <code>&quot;ELL&quot;</code>. <code>Instr(s, sub)</code> is the 1-based position of SUB in S, 0 if absent. <code>InstrFrom(s, sub, from)</code> is the same from a position, answering 0 for a <code>from</code> past the end. <code>Codes(s)</code> is an <code>Array Of Number</code> of every UTF-16 code unit (the 16-bit pieces a string is stored as) and <code>FromCodes</code> is its exact inverse, NUL included, which <code>Chr</code> cannot build. <code>CodeAt(s, k)</code> <em>refuses</em> a position past the end, where <code>Mid</code> trims. It is how a character is read, and <code>Asc(Mid(s, k, 1))</code> is the trap it replaces. Owned and documented by <a href="machines/str.html">str</a>.</dd>
 <dt>Lists &amp; arrays</dt>
-<dd><code>IsEmpty First Nth SetNth Map Filter Fold Each Times Range Length Reverse Concat Sort</code> (polymorphic; <code>Sort</code> ascending over all-numbers or all-strings); <code>Rest Prepend</code> (lists only); <code>Dim ToArray ToList</code> (arrays). Owned and documented by <a href="machines/seq.html">seq</a>.</dd>
+<dd><code>IsEmpty First Nth SetNth Map Filter Fold Each Times Range Length Reverse Concat Sort ZipWith</code> (polymorphic; <code>Sort</code> ascending over all-numbers or all-strings; <code>ZipWith(xs, ys, f)</code> applies <code>f</code> to the pairs up to the shorter length and answers a list); <code>Rest Prepend Taken DropN</code> (lists only; <code>Taken(xs, n)</code> the first n, <code>DropN(xs, n)</code> everything after them); <code>Dim ToArray ToList</code> (arrays). Owned and documented by <a href="machines/seq.html">seq</a>.</dd>
 <dt>Records</dt>
 <dd><code>Type</code> declarations; per-type constructor and accessor words; <code>With</code> for functional update</dd>
 <dt>Functions</dt>
@@ -493,7 +544,7 @@ time.</p>
 <dt>I/O</dt>
 <dd><code>Print</code>; <code>Input(prompt)</code> prints the prompt and reads a line as a String (numbers via <code>Val</code>). <code>InputLine(prompt)</code> does the same but also answers <em>whether the read hit the end of the input</em>, as a 2-element Array <code>[atEof, text]</code>: element 1 a Boolean, True only at genuine end-of-input; element 2 the line, empty at the end. <code>Input</code> collapses end-of-input and a blank line into <code>&quot;&quot;</code>. So a program reading a redirected script can either reprompt on a blank line or stop at the end (never both), and <code>InputLine</code> is how you get both. It is a flat Array rather than a record because a builtin cannot reach a <code>Type</code>; lifting it into a sum type is the Shoddy caller&rsquo;s job. <code>InKey()</code> reads one pending keystroke without blocking or echoing; <code>&quot;&quot;</code> when none is pending. Arrow keys and PF1&ndash;4 arrive as their VT100 application-mode escape sequences. Owned and documented by <a href="machines/terminal.html">terminal</a>.</dd>
 <dt>Files (text, whole-file)</dt>
-<dd>No handles: a text file is read or written whole, and paths resolve against the working directory. The words: <code>ReadFile(path)</code> &rarr; String (a missing file stops the program); <code>TryReadFile(path)</code> &rarr; <code>Result</code>, the same read with the failure <em>reported</em> rather than fatal; <code>WriteFile(path, s)</code> (overwrite); <code>TryWriteFile(path, s)</code> &rarr; Boolean, the same write with the failure <em>reported</em> rather than fatal; <code>AppendFile(path, s)</code>; <code>FileExists(path)</code> &rarr; Boolean; <code>DeleteFile(path)</code> (a missing file stops the program); <code>TryDeleteFile(path)</code> &rarr; Boolean, True if the file went, False if it was not there or could not be removed. Shoddy has no catchable errors, so the <code>Try</code> words are the only way to ask &quot;can this path be read?&quot;, &quot;can this path be written?&quot; or &quot;did this file go?&quot;. <code>FileExists</code> cannot answer any of them: a directory reports False, an existing file that cannot be opened reports True, and a file that exists can still be locked when a delete lands. Owned and documented by <a href="machines/file.html">file</a>.</dd>
+<dd>No handles: a text file is read or written whole, and paths resolve against the working directory. The words: <code>ReadFile(path)</code> &rarr; String (a missing file stops the program); <code>TryReadFile(path)</code> &rarr; <code>Result</code>, the same read with the failure <em>reported</em> rather than fatal; <code>TryReadLines(path)</code> &rarr; <code>Result</code>, the file as its lines, <code>Ok(lines)</code> with a <code>List Of String</code> or the same <code>Err</code>, read natively one line at a time so a file of any length loads; <code>WriteFile(path, s)</code> (overwrite); <code>TryWriteFile(path, s)</code> &rarr; Boolean, the same write with the failure <em>reported</em> rather than fatal; <code>AppendFile(path, s)</code>; <code>FileExists(path)</code> &rarr; Boolean; <code>DeleteFile(path)</code> (a missing file stops the program); <code>TryDeleteFile(path)</code> &rarr; Boolean, True if the file went, False if it was not there or could not be removed. Shoddy has no catchable errors, so the <code>Try</code> words are the only way to ask &quot;can this path be read?&quot;, &quot;can this path be written?&quot; or &quot;did this file go?&quot;. <code>FileExists</code> cannot answer any of them: a directory reports False, an existing file that cannot be opened reports True, and a file that exists can still be locked when a delete lands. Owned and documented by <a href="machines/file.html">file</a>.</dd>
 <dd><code>TryReadFile</code> answers the language&rsquo;s own <code>Result</code> (&sect;8.1) rather than a Boolean. Unlike <code>TryWriteFile</code>, it has a payload to carry on success, and reasons worth telling apart on failure: <code>Ok(text)</code>, or <code>Err(why, 0)</code> where <code>why</code> is <code>CANNOT READ &#39;path&#39; (&hellip;)</code> ending in one of <code>NO SUCH FILE</code>, <code>IS A DIRECTORY</code>, <code>ACCESS DENIED</code> or <code>UNREADABLE</code>. The phrase is a closed set of Shoddy&rsquo;s own, never the host platform&rsquo;s exception text, which varies by OS and language setting. <code>At</code> is <code>0</code>: a failure to open the file has no position <em>in</em> it.
 <pre class="basic"><code>Select Case TryReadFile(path)
     Case Ok(text)
@@ -583,12 +634,17 @@ time.</p>
 </tbody>
 </table>
 <h2 id="tail-calls-and-errors">12. Tail calls and errors</h2>
-<p>Tail recursion is the language&rsquo;s loop. When a function&rsquo;s
-last act is calling itself, the mill compiles that call into a jump, so
-the <code>Fact</code>-with-accumulator shape runs in constant stack
-space. Mutual recursion (two functions calling each other)
-still consumes stack. Runtime errors (stack underflow, type
-mismatch, unknown word, division by zero) stop the program with a
+<p>Tail calls are the language&rsquo;s loop. When a function&rsquo;s
+last act is a call, to itself or to any other <code>Def</code> in the
+program, the mill compiles that call into a jump, so the
+<code>Fact</code>-with-accumulator shape runs in constant stack space
+and so does mutual recursion (two functions calling each other). A call
+into a separately compiled machine stays a call. A recursion that is
+not in tail position costs a frame per level; every launcher gives a
+program a 1 GB stack, reserved rather than committed, which takes
+millions of frames, and past it a stack overflow is still a process
+kill rather than an <code>Error</code>. Runtime errors (stack underflow,
+type mismatch, unknown word, division by zero) stop the program with a
 message and a source line number.</p>
 <h2 id="include-and-the-standard-library">13. Include and the standard library</h2>
 <p><code>Include &quot;FILE.SHODDY&quot;</code> at the left margin
@@ -625,7 +681,7 @@ split itself across a dozen files without ceremony. Including a
 <em>machine</em> gives you the words that machine <em>declares</em>, and
 not the words it includes in turn.
 <code>Include &quot;stats.shoddy&quot;</code> does not hand you
-<code>seq</code>&rsquo;s <code>ZipWith</code> merely because stats uses
+<code>seq</code>&rsquo;s <code>CountIf</code> merely because stats uses
 it. Name what you use. The refusal says which Include to add, and the
 dependency is compiled and linked either way; only the naming is
 scoped.</p>
@@ -689,9 +745,11 @@ in place of <code>Def</code> when the override is deliberate.</p>
 <p>The standard library is written in Shoddy itself:</p>
 <ul>
 <li><strong>seq.shoddy</strong>: the Fold/Map companions,
-structure only: <code>Any All CountIf Contains IndexOf IndexOpt Taken
-DropN Append Last   Flatten Zip ZipWith</code>, plus
-<code>Type Pair</code> (<code>Fst</code>/<code>Snd</code>).
+structure only: <code>Any All CountIf Contains IndexOf IndexOpt Append
+Last Flatten Zip</code>, plus <code>Type Pair</code>
+(<code>Fst</code>/<code>Snd</code>); the <code>Taken</code>,
+<code>DropN</code> and <code>ZipWith</code> builtins are documented
+beside them.
 <code>IndexOpt</code> answers the not-found case with the
 language&rsquo;s <code>Option</code>; <code>IndexOf</code> keeps its 0
 sentinel (a special value standing for &ldquo;not found&rdquo;)
@@ -781,12 +839,11 @@ that holds itself; cycles are unconstructible, so none is checked
 for. <code>OptMap OptBind OptOr ThruOpt Choose</code> where a hop can
 fail, and <code>TakeWhile SkipWhile Chunk FirstOpt LastOpt SingleOpt
 FindOpt</code>. Re-declares nothing: aggregation stays in stats, the big
-four stay builtins. Written to index arrays rather than walk lists with
-<code>Rest</code>, and self-tail-recursively throughout, because
-<code>Rest</code> copies and only self-tail-recursion becomes a loop.
-Pure. Includes <code>seq</code>.shoddy.</li>
-<li><strong>str.shoddy</strong>: <code>Split Join Trim Replace
-StartsWith EndsWith StrRep</code>, built on the
+four stay builtins. Self-tail-recursive throughout, so every word is a
+loop. Pure. Includes <code>seq</code>.shoddy.</li>
+<li><strong>str.shoddy</strong>: <code>Trim Replace StartsWith EndsWith
+StrRep</code> (the <code>Split</code> and <code>Join</code> builtins are
+documented beside them), built on the
 <code>Instr</code>/<code>InstrFrom</code>/<code>Left</code>/<code>Right</code>/<code>Mid</code>
 builtins; the fixed-width formatters <code>PadLeft PadRight PadZero
 ToFixed CommaGroup Commas</code>; and the boolean conversion trio
@@ -873,9 +930,10 @@ $90 trillion in a double, so no DECIMAL type is needed:
 rounding) <code>MoneySum   MoneyLt MoneySplit</code> (penny-preserving
 allocation) <code>MoneyFmt</code>. Includes <code>str</code>.</li>
 <li><strong>file.shoddy</strong>: line-oriented text files over
-the whole-file builtins: <code>ReadLines</code> (normalizes
-<code>\r\n</code>, drops the trailing newline), <code>WriteLines</code>,
-<code>AppendLine</code>. Includes <code>str</code>.shoddy.</li>
+the whole-file builtins: <code>ReadLines</code> (the aborting form of the
+<code>TryReadLines</code> builtin: <code>\r\n</code> normalized, the
+trailing newline dropped, any length), <code>WriteLines</code>,
+<code>AppendLine</code>. Stands on the builtins alone.</li>
 <li><strong>fin.shoddy</strong>: finance: time value of money
 (<code>FinPv FinFv FinPmt FinNper</code> and the annuities), loans and
 amortisation (<code>FinBalance FinAmortAt FinSchedule
@@ -957,9 +1015,9 @@ JStrList IsFinite</code>. Known limits: <code>Str</code> gives ten
 significant digits, so arbitrary doubles do not round-trip bit-exactly;
 a string cannot carry NUL, since <code>Chr(0)</code> is the empty
 string, so <code> </code> is a <code>JErr</code>; duplicate keys
-collapse with the last value winning; and documents compare with
-<code>JEqual</code>, not <code>=</code>, because a List compares by
-identity. Includes <code>seq</code>, <code>dict</code>,
+collapse with the last value winning; and documents compare by their
+contents with <code>=</code>, or with <code>JEqual</code> when member
+order should not matter. Includes <code>seq</code>, <code>dict</code>,
 <code>sinq</code> and <code>str</code>.</li>
 <li><strong>xml.shoddy</strong>: XML 1.0, well-formed, both
 directions. <code>Type Xml = XDocument | XElem | XText | XComment | XPI
@@ -994,7 +1052,7 @@ stack to do it. About eighty named character references plus numeric
 ones; an unknown name is left standing as text rather than being an
 error. <strong>Not</strong> the HTML5 tree-construction algorithm: no
 adoption agency, no foster parenting, no invented <code>tbody</code>.
-Includes <code>seq</code>, <code>str</code>, <code>dict</code> and
+Includes <code>seq</code>, <code>dict</code> and
 <code>xml</code>.</li>
 <li><strong>csv.shoddy</strong>: CSV to RFC 4180 (the CSV
 standard), both directions. A document is the plain thing it looks like,
@@ -1015,8 +1073,9 @@ around UNQUOTED cells only) and <code>CsvCommented</code> stacking, and
 <code>CsvNumeric</code> the repo&rsquo;s own <code>.dat</code> spelling.
 Ragged rows are not an error, because files in the wild are ragged;
 <code>CsvWidth CsvIsRect CsvRect CsvDropBlanks CsvFlip</code>
-ask and repair. Compare with <code>CsvEqual</code>, never
-<code>=</code>: a List is a quotation and compares by identity. Above
+ask and repair. <code>=</code> compares two documents cell by cell, and
+<code>CsvEqual</code> is the same comparison in the machine&rsquo;s own
+terms. Above
 the rows sit two optional layers. A <strong>sheet</strong> reads the
 first record as a header, after which columns have names
 (<code>CsvSheetLoad CsvHeads CsvBody CsvGet/CsvGetOr CsvNum/CsvNumOr
@@ -1162,8 +1221,9 @@ for the one distance, dates as Julian day numbers, and no clock anywhere
 near it. Includes <code>geo</code> and <code>math</code>.</li>
 <li><strong>random.shoddy</strong>: random numbers over the
 <code>Rnd</code> builtin, seedless by construction: <code>Random
-RandomRange RandomInt Shuffle Sample</code> (without replacement, capped
-at the length). Impure, like <code>Rnd</code> itself.</li>
+RandomRange RandomInt</code>, with the <code>Shuffle</code> and
+<code>Sample</code> builtins (without replacement, capped at the length)
+documented beside them. Impure, like <code>Rnd</code> itself.</li>
 <li><strong>neural.shoddy</strong>: feed-forward neural networks:
 one hidden <code>Tanh</code> layer, trained by mini-batch gradient
 descent with momentum. <code>Type Net</code> (<code>W1 B1 W2 B2</code>;
@@ -1379,9 +1439,8 @@ Include it under a namespace
 (<code>Include &quot;net.shoddy&quot; As Sock</code>) only if the
 same program also includes <a href="machines/turtle.html">turtle</a>,
 the one machine that shares a word with it (<code>Close</code>). On its
-own it needs no <code>As</code>. Includes <code>str</code>, whose
-<code>Join</code> assembles a drained reply from its chunks instead of
-copying per chunk. <code>Secure(sock, host)</code> upgrades a connected
+own it needs no <code>As</code>. <code>Join</code> assembles a drained
+reply from its chunks. <code>Secure(sock, host)</code> upgrades a connected
 socket to TLS in place, and
 <code>ConnectTls</code>/<code>RequestTls</code>/<code>RecvAllTls</code>
 are the secured mirrors of the plain words; on a secured handle

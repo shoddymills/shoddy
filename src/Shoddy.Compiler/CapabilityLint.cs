@@ -42,7 +42,8 @@ public static class CapabilityLint
         ["TCPRECV"] = "net", ["TCPEOF"] = "net", ["TCPPOLL"] = "net",
         ["TCPPEER"] = "net", ["TCPCLOSE"] = "net", ["TCPSECURE"] = "net",
 
-        ["READFILE"] = "file", ["TRYREADFILE"] = "file", ["WRITEFILE"] = "file",
+        ["READFILE"] = "file", ["TRYREADFILE"] = "file", ["TRYREADLINES"] = "file",
+        ["WRITEFILE"] = "file",
         ["APPENDFILE"] = "file", ["TRYWRITEFILE"] = "file", ["FILEEXISTS"] = "file",
         ["DELETEFILE"] = "file", ["TRYDELETEFILE"] = "file",
         ["BOPEN"] = "file", ["TRYBOPEN"] = "file", ["BCLOSE"] = "file",
@@ -52,6 +53,7 @@ public static class CapabilityLint
 
         ["CLOCK"] = "clock", ["TICKS"] = "clock", ["SLEEP"] = "clock",
         ["RND"] = "random", ["SEED"] = "random",
+        ["SHUFFLE"] = "random", ["SAMPLE"] = "random",     // draw from RND: random.shoddy's words until lists became cells
 
         ["SCRIBBLEROPEN"] = "scribbler", ["TRYSCRIBBLEROPEN"] = "scribbler",
         ["SCRIBBLEROF"] = "scribbler", ["SCRIBBLERSHUT"] = "scribbler",

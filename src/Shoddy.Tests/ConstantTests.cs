@@ -116,8 +116,15 @@ public class ConstantTests
 
     // ---- the semantic hole, closed --------------------------------------
 
+    /// <summary>A constant is one value, so it was equal to itself when a
+    /// Def minting a fresh list per call was not: lists compared by
+    /// identity. Lists of data now compare by their items, so both read
+    /// True, and the constant's remaining difference is cost, not meaning.
+    /// Kept because it pins that the constant still builds, still reads
+    /// by Nth, and that the fresh-list idiom beside it is equal to itself
+    /// rather than refused.</summary>
     [Fact]
-    public void AConstantListIsEqualToItselfAndADefIsNot()
+    public void AConstantListAndAFreshListAreBothEqualToThemselves()
     {
         using var ws = new Workspace();
         BuildMachine(ws.Machine("held", J(
@@ -138,9 +145,9 @@ public class ConstantTests
             "    Print(BuiltXs() = BuiltXs())",
             "    Print(Nth(HeldXs(), 2))")));
 
-        // The constant is one value; the Def mints one per call, and a
-        // List compares by identity.
-        Assert.Equal("True\nFalse\nB\n", outp);
+        // The constant is one value; the Def mints one per call; and a
+        // list compares by its items, so neither can tell.
+        Assert.Equal("True\nTrue\nB\n", outp);
     }
 
     // ---- the folded builtins (R2.2) and operators (R2.6) ----------------

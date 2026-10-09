@@ -127,25 +127,22 @@ there and it is faster than the question.
   a caller should be able to handle comes back as a VALUE instead; the
   predeclared `Option` (`Some`/`None`) and `Result` (`Ok`/`Err`) are what
   that means, and neither needs an Include.
-- Records compare structurally with `=`, and so do arrays, item by item.
-  Lists compare by identity, so two separately built lists of the same
-  items are not equal. That carries into records: a record that holds a
-  list is not `=` to a copy built separately. Hold an array instead, or
-  write a comparison of your own.
-- Self-tail-recursion compiles to a loop, so a word that calls itself last
-  runs in constant stack. MUTUAL recursion does not; it consumes stack
-  like any other call.
+- Records compare structurally with `=`, and so do arrays and lists, item
+  by item: `{ 1, 2 } = { 1, 2 }` is True, and a record that holds a list
+  compares all the way down. Only a function compares by identity, so two
+  separately built functions are never equal.
+- Any call in tail position is a jump, so a word that calls itself last
+  runs in constant stack, and so does MUTUAL recursion between Defs in the
+  same program. A recursion that is NOT in tail position costs a frame per
+  level; the program stack takes millions of them.
 - Arrays are fixed-length with O(1) `Nth`. `SetNth` returns a copy.
-- LISTS ARE NOT CONS CELLS AND `Rest` IS NOT FREE; it copies the tail, so
-  a `First`/`Rest` walk is QUADRATIC (50,000 elements takes ~3.6s).
-  Recurse over lists for SHAPE, not for speed; to visit every element of a
-  long one, `Fold`, or `ToArray` once and index with `Nth`.
-- Building with `Prepend` on the way OUT of a recursion costs a stack frame
-  per element and dies past ~20,000, a hard process kill, not an `Error`.
-  An accumulator threaded in and `Reverse`d at the end fixes the stack but
-  not the time: `Prepend` copies the whole list too, so either way the
-  build is quadratic. Build a long list with the words that make one in a
-  single pass: `Map`, `Filter`, `Range`, `Concat`.
+- Lists are cons cells: `First`, `Rest` and `Prepend` are O(1) and share
+  the tail, and `Nth` on a list is O(1) after the first call on it.
+  Recurse over lists as freely as you fold them; nothing needs converting
+  to an array to be indexed, and `Prepend` on the way out of a recursion
+  costs one cell per element.
+- `&` is O(1): a string built by any number of `&` is laid down once, when
+  it is first read. `Join` is a builtin and one pass.
 - Operators are infix: `a Mod b`, never `Mod(a, b)`. An operator in call
   position silently builds a function value rather than a result, and the
   program fails somewhere else entirely. Same for a unary minus before
@@ -178,7 +175,8 @@ more than being clever.
   `SplitAt`, each doing one step.
 - `Select Case` for taking a sum type apart or matching a range of values;
   plain `If` for a two-way test. `Case Type(a, b)` destructures a record and
-  binds its fields, which is how you read one in a match.
+  binds its fields, which is how you read one in a match; `Case Empty` and
+  `Case Prepend(x, rest)` take a list apart the same way.
 - `Fn(x) =&gt; ...` for a lambda used once; a bare name or an operator section
   for anything already named.
 - Point-free pipelines are legal and the spec shows them, but the library

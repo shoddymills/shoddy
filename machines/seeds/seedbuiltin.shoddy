@@ -92,10 +92,17 @@ Rem "nope" ERROR refuses with "nope" and ASSERT refuses when its flag is
 Rem false. What a program used to end the run with, a session now
 Rem answers with.
 Rem
-Rem CALL IS THE ONE NEW CAPABILITY. Everything else here is a builtin
-Rem wrapped. CALL applies a PROGRAM to a cell — ( x prog -- y ) — which
-Rem was impossible before reckoner grew RckPureOver and RckProgOn, and
-Rem which the combinators only ever offered over a whole list.
+Rem CALL AND ZIPWITH ARE THE TWO WORDS HERE THAT RUN A PROGRAM.
+Rem Everything else is a builtin wrapped. CALL applies a program to a
+Rem cell — ( x prog -- y ) — which was impossible before reckoner grew
+Rem RckPureOver and RckProgOn, and which the combinators only ever
+Rem offered over a whole list; ZIPWITH applies one to each pair drawn
+Rem from two lists, the builtin's own shape.
+Rem
+Rem TAKEN, DROPN, DROPAT AND ZIPWITH ARRIVED WHEN LISTS BECAME CONS
+Rem CELLS: they were Defs in seq.shoddy and random.shoddy, became
+Rem builtins so that each is one pass, and so fell to this seed like any
+Rem other builtin no seed had carried to a prompt.
 Rem ==================================================================
 
 Include "cuttle.shoddy"
@@ -304,6 +311,7 @@ Def BiFromCodes(vs As List Of Cell) As RckWork
 
 Def BiFromCodesOn(xs As List Of Cell) As RckWork
     If All(xs, BiIsCode) Then
+        Rem An Array: the shape FromCodes is declared over, Codes' answer.
         RckVals({ CutStr(FromCodes(ToArray(Map(xs, BiCodeOf)))) })
     Else
         RckWorkBad(BiCodeWhy(First(Filter(xs, Fn(c) => Not BiIsCode(c)))))
@@ -463,7 +471,10 @@ Def BiSeedLists(st As RckState) As RckState
     Let s2 = RckReg(s1, "SETNTH", 3, RckPure(Fn(vs) => BiSetnth(vs)), "( list k v -- list2 )", "The list with its k-th element replaced. The original is unchanged. Refuses an index the list does not have.")
     Let s3 = RckReg(s2, "ISEMPTY", 1, RckPure(Fn(vs) => BiIsempty(vs)), "( list -- flag )", "Whether the list holds nothing.")
     Let s4 = RckReg(s3, "PREPEND", 2, RckPure(Fn(vs) => BiPrepend(vs)), "( v list -- list2 )", "The list with v put on the front. APPEND's opposite end.")
-    RckReg(s4, "DIM", 2, RckPure(Fn(vs) => BiDim(vs)), "( n init -- list )", "A list of n copies of init. Refuses a negative or fractional n.")
+    Let s5 = RckReg(s4, "DIM", 2, RckPure(Fn(vs) => BiDim(vs)), "( n init -- list )", "A list of n copies of init. Refuses a negative or fractional n.")
+    Let s6 = RckReg(s5, "TAKEN", 2, RckPure(Fn(vs) => BiTaken(vs)), "( list n -- list2 )", "The first n elements; the whole list when n reaches its length. Refuses a negative or fractional n.")
+    Let s7 = RckReg(s6, "DROPN", 2, RckPure(Fn(vs) => BiDropn(vs)), "( list n -- list2 )", "The list without its first n elements; empty past the end. Refuses a negative or fractional n.")
+    RckReg(s7, "DROPAT", 2, RckPure(Fn(vs) => BiDropat(vs)), "( list k -- list2 )", "The list without its k-th element, counting from 1. Refuses an index the list does not have.")
 
 Rem NTH and SETNTH both Error on an index outside 1..Length. Asked here
 Rem first, and the message names the range that WAS available, because
@@ -533,6 +544,46 @@ Def BiDim(vs As List Of Cell) As RckWork
             RckWorkBad(w)
         Case Else
             RckWorkBad("DIM did not answer")
+
+Rem TAKEN and DROPN read their count as RckWholeArg does: a whole number
+Rem from zero up, so the builtins' own rounding of a fraction is never
+Rem reached from a prompt. DROPAT is NTH's range check with a different
+Rem answer, so it is written over the same guard.
+Def BiTaken(vs As List Of Cell) As RckWork
+    Select Case RckListArg("TAKEN", Nth(vs, 1))
+        Case Ok(xs)
+            BiCountOf("TAKEN", xs, Nth(vs, 2), Fn(l, n) => CutList(Taken(l, n)))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("TAKEN did not answer")
+
+Def BiDropn(vs As List Of Cell) As RckWork
+    Select Case RckListArg("DROPN", Nth(vs, 1))
+        Case Ok(xs)
+            BiCountOf("DROPN", xs, Nth(vs, 2), Fn(l, n) => CutList(DropN(l, n)))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("DROPN did not answer")
+
+Def BiCountOf(word As String, xs As List Of Cell, nc As Cell, f As [ List Of Cell Number -- Cell ]) As RckWork
+    Select Case RckWholeArg(word, nc)
+        Case Ok(n)
+            RckVals({ Call(f, xs, n) })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad(word & " did not answer")
+
+Def BiDropat(vs As List Of Cell) As RckWork
+    Select Case RckListArg("DROPAT", Nth(vs, 1))
+        Case Ok(xs)
+            BiNthAt("DROPAT", xs, Nth(vs, 2), Fn(l, k) => CutList(DropAt(l, k)))
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("DROPAT did not answer")
 
 Rem ---- whole files ------------------------------------------------------
 
@@ -653,7 +704,8 @@ Def BiSleptFor(ms As Number) As RckWork
 Rem ---- CALL, and the two words that used to end the run -----------------
 
 Def BiSeedCall(st As RckState) As RckState
-    RckReg(st, "CALL", 2, RckPureOver(Fn(sst, vs) => BiCall(sst, vs)), "( x prog -- y )", "Run the program on x and answer what it left. MAP does this over a whole list; this is the one element.")
+    Let s1 = RckReg(st, "CALL", 2, RckPureOver(Fn(sst, vs) => BiCall(sst, vs)), "( x prog -- y )", "Run the program on x and answer what it left. MAP does this over a whole list; this is the one element.")
+    RckReg(s1, "ZIPWITH", 3, RckPureOver(Fn(sst, vs) => BiZipWith(sst, vs)), "( xs ys prog -- list )", "Run the program on each pair of elements, one from xs and one from ys, and collect the answers; stops at the shorter list.")
 
 Rem The only word here that is not a builtin wrapped. RckProgOn runs the
 Rem program against the WHOLE session — a program may name a word
@@ -676,6 +728,41 @@ Def BiCallOn(st As RckState, ts As List Of String, x As Cell) As RckWork
             RckWorkBad(w)
         Case Else
             RckWorkBad("CALL did not answer")
+
+Rem ZIPWITH runs the program once per pair, each run against the whole
+Rem session as CALL does, and the first run that fails is the answer.
+Rem The pairs stop at the shorter list, which is the builtin's rule too.
+Def BiZipWith(st As RckState, vs As List Of Cell) As RckWork
+    Select Case Pair(RckListArg("ZIPWITH", Nth(vs, 1)), RckListArg("ZIPWITH", Nth(vs, 2)))
+        Case Pair(Ok(xs), Ok(ys))
+            BiZipProg(st, xs, ys, Nth(vs, 3))
+        Case Pair(Err(w, at), _)
+            RckWorkBad(w)
+        Case Pair(_, Err(w, at))
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("ZIPWITH did not answer")
+
+Def BiZipProg(st As RckState, xs As List Of Cell, ys As List Of Cell, pc As Cell) As RckWork
+    Select Case RckProgArg("ZIPWITH", pc)
+        Case Ok(ts)
+            BiZipOn(st, Taken(xs, Min(Length(xs), Length(ys))), Taken(ys, Min(Length(xs), Length(ys))), ts, { })
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("ZIPWITH did not answer")
+
+Def BiZipOn(st As RckState, xs As List Of Cell, ys As List Of Cell, ts As List Of String, acc As List Of Cell) As RckWork
+    If IsEmpty(xs) Then
+        RckVals({ CutList(Reverse(acc)) })
+    Else
+        Select Case RckProgRan("ZIPWITH", RckSub(st, { First(xs), First(ys) }, ts, { }))
+            Case Ok(v)
+                BiZipOn(st, Rest(xs), Rest(ys), ts, Prepend(v, acc))
+            Case Err(w, at)
+                RckWorkBad(w)
+            Case Else
+                RckWorkBad("ZIPWITH did not answer")
 
 Rem Inverted rather than dropped. Both exist to end the run, and turning
 Rem that into a refusal is the whole of what this layer does — so a

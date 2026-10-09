@@ -91,10 +91,11 @@ final one, so the file ends cleanly. <code>ReadLines</code> knows this and
 quietly drops that trailing blank, so what you write is what you read back,
 with no phantom empty line at the end.</li>
 <li><strong>Windows line endings are handled for you.</strong>
-<code>ReadLines</code> strips out carriage returns (<code>\r</code>) before
-splitting, so a file saved with <code>\r\n</code> endings comes back as the
-same clean list as one saved with plain <code>\n</code>. You never have to
-think about which machine wrote the file.</li>
+<code>ReadLines</code> treats <code>\r\n</code> and a bare <code>\r</code> as
+line endings just like <code>\n</code>, so a file saved with <code>\r\n</code>
+endings comes back as the same clean list as one saved with plain
+<code>\n</code>. You never have to think about which machine wrote the
+file.</li>
 <li><strong>An empty file reads as an empty list.</strong> Reading a file
 whose contents are <code>""</code> gives you <code>{ }</code>, not a list
 containing one empty string, the sensible answer for "no lines here."</li>
@@ -111,7 +112,7 @@ the rest stay pure.</li>
 </ul>
 
 <h2 id="builtins">Builtins</h2>
-<p class="tag">The eight whole-file words the runtime dispatches: not
+<p class="tag">The nine whole-file words the runtime dispatches: not
 defined here, documented here</p>
 <p>These are not <code>file</code>'s <code>Def</code>s. The engine dispatches
 them (runs them itself) and a <code>Def</code> whose name is a
@@ -121,7 +122,7 @@ belong to. A reader who opens the files machine looking for
 <code>ReadFile</code> should find it here, rather than be expected to know that
 <a href="../spec.html#word-reference">the flat reference</a> exists. They need
 no <code>Include</code>: a builtin is callable from any program. The
-same eight are documented word for word in
+same nine are documented word for word in
 <code>machines/file.shoddy</code>'s own header block.</p>
 <p><strong>No handles: a text file is read or written whole.</strong> A handle
 is the open-file ticket other languages make you hold and give back; there is
@@ -152,6 +153,17 @@ platform's exception text, which varies by OS and locale. <code>At</code> is
 <code>0</code>: a failure to open a file has no position <em>in</em> it. It
 answers a <code>Result</code> rather than a Boolean because, unlike
 <code>TryWriteFile</code>, it has a payload to carry on success.</td></tr>
+<tr><td>TryReadLines(path)</td><td>The file as its lines, read natively one
+line at a time: <code>Ok(lines)</code>, a <code>List Of String</code>, or the
+same <code>Err(why, 0)</code> that <code>TryReadFile</code> answers. A line
+ends at <code>\n</code>, <code>\r\n</code> or a bare <code>\r</code>, so a
+file written on Windows reads back the same as one written anywhere else; a
+final newline closes the last line rather than opening an empty one; an empty
+file is <code>Ok({ })</code>. <code>ReadLines</code> below is the aborting
+form, defined over this one. It is a builtin and not a <code>Def</code>
+because a line-oriented read belongs beside <code>TryReadFile</code>: one
+pass over the file, the same root guard and the same <code>Err</code>
+phrases, rather than a whole-file read split afterwards.</td></tr>
 </table>
 
 <h3>Writing</h3>
@@ -185,11 +197,12 @@ file went and False if it was not there or could not be removed.</td></tr>
 <h3>Reading and writing lines</h3>
 <table>
 <tr><th>Word</th><th>Description</th></tr>
-<tr><td>ReadLines(path)</td><td>Reads the whole file at <code>path</code> and
-hands it back as a list of strings, one per line. Carriage returns
-(<code>\r</code>) are stripped first, so Windows-style files read back the
-same as any other, and a single trailing newline is dropped. An empty file
-gives you an empty list.</td></tr>
+<tr><td>ReadLines(path)</td><td>The lines of the file at <code>path</code>
+as a list of strings, one per line: <code>TryReadLines</code> with its failure
+made fatal, so a path that cannot be read stops the program with the reason
+<code>TryReadLines</code> would have reported. Windows-style files read back
+the same as any other, a single trailing newline is dropped, an empty file
+gives you an empty list, and a file of any length loads.</td></tr>
 <tr><td>WriteLines(path, xs)</td><td>Writes the list of strings <code>xs</code>
 to the file at <code>path</code>, one line each, with a newline after every
 line (including the last). Overwrites whatever was there before.</td></tr>
@@ -214,12 +227,10 @@ fixtures and the golden render with <code>ReadLines</code>.</td></tr>
 </table>
 
 <h2 id="uses">The Machines It Uses</h2>
-<table>
-<tr><th></th><th>Machine</th><th>Why</th></tr>
-<tr><td class="uicon"><a href="str.html"><img src="../media/icons/str.svg" alt=""></a></td><td><a href="str.html">str</a></td><td><code>Split</code>,
-<code>Join</code>, <code>Replace</code> and <code>EndsWith</code> for line
-and path chores.</td></tr>
-</table>
+<p>None. It stands on the file builtins, and on <code>Join</code>, which
+<code>WriteLines</code> lays the lines down with and which is a builtin
+too. The split in the other direction is the runtime's, in
+<code>TryReadLines</code>.</p>
 
 <nav class="pagenav pagenav-bottom" aria-label="Machines, in catalog order">
   <a href="dict.html" class="prev"><span class="pnwrap"><span class="dir">&larr; Previous machine</span><span class="ttl">dict</span></span></a>

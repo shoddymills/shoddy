@@ -18,12 +18,12 @@ Rem through every call, the way Isam threads its handle) but that's
 Rem the opposite of seedless, so it isn't what's below.
 Rem ==================================================================
 
-Rem ---- the builtin this machine is built on --------------------------
+Rem ---- the builtins this machine is built on -------------------------
 Rem
-Rem NOT a Def. The engine dispatches it, and a Def whose name is a
-Rem builtin is refused; it is written here because random.shoddy is
-Rem where a reader goes looking for it. The flat reference is section 10
-Rem of docs/spec.html, and the stack effect below is the one the
+Rem NOT Defs. The engine dispatches these, and a Def whose name is a
+Rem builtin is refused; they are written here because random.shoddy is
+Rem where a reader goes looking for them. The flat reference is section
+Rem 10 of docs/spec.html, and the stack effects below are the ones the
 Rem compiler's own Effects.cs table declares.
 
 Rem Rnd() As Number                                   ( -- x )
@@ -42,6 +42,25 @@ Rem lives in math.shoddy, among the other arithmetic primitives, and
 Rem calling it there makes Random, RandomRange, RandomInt, Shuffle and
 Rem Sample reproducible from that point on.
 
+Rem Shuffle(xs As List Of t) As List Of t             ( xs -- ys )
+Rem     A uniformly random permutation. IMPURE, like every word here.
+Rem     The draws are the ones the Def it replaced made: k chosen among
+Rem     the remaining elements as RandomInt(1, Length) would, the k-th
+Rem     taken, so a seeded run answers the permutation it always did.
+
+Rem Sample(xs As List Of t, n As Number) As List Of t ( xs n -- ys )
+Rem     n distinct draws without replacement, in the order drawn; all of
+Rem     xs, shuffled, when n meets or exceeds its length; empty when n is
+Rem     0 or below. The same draws as Shuffle, stopped at n.
+
+Rem DropAt(xs As List Of t, k As Number) As List Of t ( xs k -- ys )
+Rem     xs without its k-th element. Aborts outside 1..Length. Pure, and
+Rem     documented here because Shuffle and Sample were written over it.
+Rem
+Rem     All three were Defs in this file until lists became cons cells,
+Rem     each a recursion building its answer with Prepend on the way out,
+Rem     one frame per element. As builtins they are a single pass.
+
 Rem ---- this machine's own words --------------------------------------
 
 Def Random() As Number
@@ -58,32 +77,3 @@ Def RandomInt(lo As Number, hi As Number) As Number
         Error("RANDOMINT: HI (" & Str(hi) & ") IS BELOW LO (" & Str(lo) & ")")
     Else
         lo + Floor(Random() * (hi - lo + 1))
-
-Rem ---- shuffling and sampling ---------------------------------------
-Rem Impure like everything above — each call is a fresh draw. These
-Rem live here rather than in stats.shoddy because stats is pure and
-Rem random.shoddy owns the Rnd edge.
-
-Rem The list without its k-th element (local helper; no includes here).
-Def DropAt(xs As List Of t, k As Number) As List Of t
-    If k = 1 Then
-        Rest(xs)
-    Else
-        Prepend(First(xs), DropAt(Rest(xs), k - 1))
-
-Rem A uniformly random permutation: pick an element, shuffle the rest.
-Def Shuffle(xs As List Of t) As List Of t
-    If IsEmpty(xs) Then
-        { }
-    Else
-        Let k = RandomInt(1, Length(xs))
-        Prepend(Nth(xs, k), Shuffle(DropAt(xs, k)))
-
-Rem n distinct draws without replacement (all of xs, shuffled, if n
-Rem meets or exceeds the length).
-Def Sample(xs As List Of t, n As Number) As List Of t
-    If n <= 0 Or IsEmpty(xs) Then
-        { }
-    Else
-        Let k = RandomInt(1, Length(xs))
-        Prepend(Nth(xs, k), Sample(DropAt(xs, k), n - 1))

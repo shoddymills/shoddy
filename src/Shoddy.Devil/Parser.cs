@@ -570,9 +570,13 @@ public sealed class Parser
         }
     }
 
-    /* Parse a pattern: a binder name, or TYPE(sub, sub, ...) which may
-     * nest. '_' is an ordinary binder, used by convention for ignored
-     * fields. */
+    /* Parse a pattern: a binder name, TYPE(sub, sub, ...) which may
+     * nest, or one of the two list patterns: EMPTY, and PREPEND(head,
+     * tail) whose head is any pattern and whose tail is a binder, EMPTY
+     * or another PREPEND. They read as the words that build a list, as a
+     * record pattern reads as its constructor, and inside a pattern they
+     * mean the list pattern even when a binding of that name is in scope.
+     * '_' is an ordinary binder, used by convention for ignored fields. */
     Pat ParsePat(Line c, ref int cp, int line)
     {
         if (cp >= c.Toks.Count) throw Die(line, "incomplete pattern");
@@ -581,6 +585,27 @@ public sealed class Parser
             throw Die(line, $"pattern expects names or TYPE(...), got '{tok.Text}'");
         Token? next = cp + 1 < c.Toks.Count ? c.Toks[cp + 1] : null;
         var p = new Pat();
+        if (Is(tok, "EMPTY") && (next == null || !Is(next, "(")))
+        {
+            p.List = true;
+            cp++;
+            return p;
+        }
+        if (Is(tok, "PREPEND") && next != null && Is(next, "("))
+        {
+            p.List = true;
+            cp += 2;
+            while (cp < c.Toks.Count && !Is(c.Toks[cp], ")"))
+            {
+                if (Is(c.Toks[cp], ",")) { cp++; continue; }
+                p.Subs.Add(ParsePat(c, ref cp, line));
+            }
+            if (cp >= c.Toks.Count) throw Die(line, "missing ) in pattern");
+            cp++;
+            if (p.Subs.Count != 2)
+                throw Die(line, $"Prepend takes a head and a tail, but the pattern names {p.Subs.Count}");
+            return p;
+        }
         if (next != null && Is(next, "("))
         {
             // Key on the resolved *name*, not the shape's own: a machine's
@@ -611,11 +636,18 @@ public sealed class Parser
 
     static void CollectPatNames(Pat p, HashSet<string> sc)
     {
-        if (p.Type != null)
+        if (p.Type != null || p.List)
             foreach (Pat sub in p.Subs) CollectPatNames(sub, sc);
         else
             sc.Add(p.Name!);
     }
+
+    /* Does this CASE line open with a list pattern? EMPTY on its own (a
+     * guard may follow), or PREPEND( — judged by spelling, before any
+     * binding of that name, so the patterns cannot be shadowed. */
+    static bool IsListPatStart(Line c) =>
+        (Is(c.Toks[1], "EMPTY") && (c.Toks.Count == 2 || Is(c.Toks[2], "WHERE"))) ||
+        (c.Toks.Count > 2 && Is(c.Toks[1], "PREPEND") && Is(c.Toks[2], "("));
 
     /* SELECT CASE — classic BASIC value matching, as an expression.
      * Compiled to nested IFs over a hidden binding of the scrutinee, so
@@ -656,12 +688,14 @@ public sealed class Parser
             {
                 hasElse = true;
             }
-            else if (c.Toks.Count > 2 && !c.Toks[1].IsStr &&
-                     FindTypeIn(c, c.Toks[1].Text) != null && Is(c.Toks[2], "("))
+            else if ((c.Toks.Count > 2 && !c.Toks[1].IsStr &&
+                      FindTypeIn(c, c.Toks[1].Text) != null && Is(c.Toks[2], "(")) ||
+                     (!c.Toks[1].IsStr && IsListPatStart(c)))
             {
-                /* destructuring pattern: CASE TYPE(pat, ...) [WHERE expr]
-                 * Binders are in scope for the guard and the body; a
-                 * failing WHERE falls through to the next clause. */
+                /* destructuring pattern: CASE TYPE(pat, ...) [WHERE expr],
+                 * CASE EMPTY [WHERE expr] or CASE PREPEND(head, tail)
+                 * [WHERE expr]. Binders are in scope for the guard and the
+                 * body; a failing WHERE falls through to the next clause. */
                 int cp = 1;
                 Pat pat = ParsePat(c, ref cp, cline);
 

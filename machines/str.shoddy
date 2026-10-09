@@ -3,10 +3,10 @@ Rem Licensed under the MIT License. See the LICENSE file in the project root.
 
 Rem ==================================================================
 Rem str.shoddy — Shoddy standard library: strings
-Rem Built on the eighteen string builtins, each documented one by one
+Rem Built on the twenty string builtins, each documented one by one
 Rem immediately below: & Len Left Right Mid Instr InstrFrom Upper Lower
-Rem Chr Asc Codes FromCodes CodeAt Str Val ValOr IsNumeric. Pure.
-Rem Three families of its own: surgery (Split .. StrRep), boolean
+Rem Chr Asc Codes FromCodes CodeAt Str Val ValOr IsNumeric Join Split.
+Rem Pure. Three families of its own: surgery (Trim .. StrRep), boolean
 Rem conversions (IsBool / ToBool / ToBoolOr over the primitive
 Rem ToBoolOpt — the string-to-number side lives in the IsNumeric / Val /
 Rem ValOr builtins), and fixed-width formatting (PadLeft / PadRight /
@@ -51,8 +51,8 @@ Rem     answers 0.
 Rem InstrFrom(s As String, sub As String, from As Number) As Number
 Rem                                                   ( s sub from -- pos )
 Rem     The same search begun at position from, without copying the
-Rem     subject to get there. Split and Replace below are linear in their
-Rem     subject because of this word; a from past the end answers 0.
+Rem     subject to get there. Replace below is linear in its subject
+Rem     because of this word; a from past the end answers 0.
 
 Rem Upper(s As String) As String                      ( s -- s2 )
 Rem     The string case-folded up. The language folds word names the same
@@ -107,40 +107,26 @@ Rem     Whether Val would read this text as a number — the question Val
 Rem     itself does not ask. The whole string is the number or it is not
 Rem     one: "3kg" and "1.2.3" answer False.
 
+Rem Join(xs As List Of String, sep As String) As String
+Rem                                                   ( xs sep -- s )
+Rem     The strings joined, sep between each pair; an empty list answers
+Rem     "". One pass over the pieces however long they are, so joining n
+Rem     pieces costs their total length once. An item that is not a
+Rem     string aborts, naming its type. NOT a Def since strings became
+Rem     ropes: it was a Fold over & here, and a builtin keeps the single
+Rem     pass without the fold needing to know how & is built.
+
+Rem Split(s As String, sep As String) As List Of String
+Rem                                                   ( s sep -- parts )
+Rem     s cut at every sep, empties kept: a separator at the end leaves
+Rem     an empty last field, and "" splits to { "" }. An empty separator
+Rem     aborts with SPLIT: EMPTY SEPARATOR. One pass over s however many
+Rem     fields there are. NOT a Def since lists became cons cells: it was
+Rem     a recursion here that built its answer with Prepend on the way
+Rem     out, one frame per field, and a builtin has no depth to run out
+Rem     of.
+
 Rem ---- this machine's own words --------------------------------------
-
-Rem Split carries a position rather than a shrinking string. It used to
-Rem recurse on Mid(s, k + Len(sep), Len(s)) — a fresh copy of the whole
-Rem tail per field — because Instr can only search from the beginning, so
-Rem splitting into n fields copied the subject n times and Split was
-Rem quadratic. InstrFrom searches from a position without copying to it,
-Rem which leaves only the field itself to copy: the same answers, in
-Rem linear time, for the most-used word in the library.
-Rem
-Rem The refusal stays in Split and stays first, so Split(s, "") errors
-Rem before any scanning happens, exactly as it did.
-Def Split(s As String, sep As String) As List Of String
-    If Len(sep) = 0 Then
-        Error("SPLIT: EMPTY SEPARATOR")
-    Else
-        SplitFrom(s, sep, 1)
-
-Def SplitFrom(s As String, sep As String, i As Number) As List Of String
-    SplitAt(s, sep, i, InstrFrom(s, sep, i))
-
-Rem A position past the end is not a mistake here: the separator ending
-Rem the subject leaves an empty last field, and Mid answers "" for it.
-Def SplitAt(s As String, sep As String, i As Number, k As Number) As List Of String
-    If k = 0 Then
-        { Mid(s, i, Len(s) - i + 1) }
-    Else
-        Prepend(Mid(s, i, k - i), SplitFrom(s, sep, k + Len(sep)))
-
-Def Join(xs As List Of String, sep As String) As String
-    If IsEmpty(xs) Then
-        ""
-    Else
-        Fold(Rest(xs), First(xs), Fn(a, x) => a & sep & x)
 
 Def Trim(s As String) As String
     If Len(s) = 0 Then
@@ -154,18 +140,11 @@ Def Trim(s As String) As String
             Else
                 s
 
-Rem Replace gets the same treatment and for the same reason: it recursed
-Rem on a copy of the tail, so every substitution copied the rest of the
-Rem subject before searching it. Carrying the position removes that copy
-Rem entirely.
-Rem
-Rem It does NOT make Replace linear, and Split's comment above should not
-Rem be read as saying so. What remains is the & chain — each level joins
-Rem its piece onto the whole result of the levels below it, which is
-Rem quadratic in the number of substitutions and cannot be otherwise
-Rem while & is how strings are assembled. Removing the tail copy roughly
-Rem halves the work; making the assembly linear is a different change and
-Rem would need a word this library does not have.
+Rem Replace carries a position rather than a shrinking string: it once
+Rem recursed on a copy of the tail, so every substitution copied the rest
+Rem of the subject before searching it, and InstrFrom removes that copy.
+Rem The & chain that assembles the answer costs nothing per level now
+Rem that & builds a rope; the text is laid down once, when first read.
 Def Replace(s As String, old As String, new As String) As String
     If Len(old) = 0 Then
         Error("REPLACE: EMPTY PATTERN")

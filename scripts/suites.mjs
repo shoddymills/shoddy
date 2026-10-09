@@ -51,9 +51,14 @@
 //   sinq                ordering fixtures a wrong-but-plausible sort
 //                       disagrees with, and one section big enough to
 //                       catch a stack-bound word
+//   representation      lists are cons cells, strings are ropes and
+//                       recursion has no practical limit: the shapes the
+//                       runtime promises, with the timings of the
+//                       lists-and-recursion requirement under a ceiling
 export const CORE_SUITES = [
     'libtest', 'builtinsurfacetest', 'fin', 'eng', 'lin', 'alg', 'bool',
     'sparse', 'mip', 'geo', 'julian', 'ephemeris', 'clock', 'sinq',
+    'representation',
 ];
 
 // One suite per machine that has one, by name rather than by glob: a suite

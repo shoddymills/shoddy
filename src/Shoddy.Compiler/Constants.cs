@@ -239,7 +239,7 @@ static class MachineConstants
     /// <summary>Every factory here is static and Engine-free, which is
     /// what makes a static field initializer possible at all. A list
     /// reaches for CList (emitted beside MT), whose identity convention —
-    /// the items array is the id — is the runtime's own, so a constant
+    /// the head cell is the id — is the runtime's own, so a constant
     /// list is indistinguishable from one a program built.</summary>
     static string Render(Value v, Func<TypeDef, string?> typeRef, int line, string? file)
     {
@@ -274,5 +274,5 @@ static class MachineConstants
         string.Join(", ", v.Elems!.Select(e => Render(e, typeRef, line, file)));
 
     static string Items(Value v, Func<TypeDef, string?> typeRef, int line, string? file) =>
-        string.Join(", ", v.CItems!.Select(it => Render(it.Lit!, typeRef, line, file)));
+        string.Join(", ", v.List!.Items().Select(it => Render(it.Lit!, typeRef, line, file)));
 }

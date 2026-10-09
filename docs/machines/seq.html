@@ -145,24 +145,23 @@ search, filter, or slice, it tends to <code>Include</code> this one rather
 than roll its own.</p>
 
 <h2 id="builtins">Builtins</h2>
-<p class="tag">The nineteen sequence and higher-order words the runtime
+<p class="tag">The twenty-two sequence and higher-order words the runtime
 dispatches: not defined here, documented here</p>
 <p>These are not <code>seq</code>'s <code>Def</code>s. The engine dispatches
 them (runs them itself) and a <code>Def</code> whose name is a
 builtin is refused. They are listed on this page because <code>seq</code> is
 the sequences machine and everything it declares is written over them. They
-need no <code>Include</code>. The same nineteen are documented in
+need no <code>Include</code>. The same twenty-two are documented in
 <code>machines/seq.shoddy</code>'s own header block.</p>
-<p><strong>Two sequence kinds, and the difference is the whole design.</strong>
-A <strong>List</strong> is the recursive kind: <code>First</code> and
-<code>Rest</code> take it apart front to back. Underneath it is one
-block, so <code>Rest</code> copies the tail; <a href="sinq.html">sinq</a>
-measured what that costs on a long walk. An <strong>Array</strong> is
-the indexed kind: fixed length, <code>Nth</code> in O(1) (one step,
-however long the array), and <code>SetNth</code> answers a new array.
-Recurse over lists; index into
-arrays; <code>ToArray</code> and <code>ToList</code> convert. Everything
-here counts from 1, and all nineteen are pure, including
+<p><strong>Two sequence kinds.</strong> A <strong>List</strong> is the
+recursive kind: a chain of cells that <code>First</code> and
+<code>Rest</code> take apart front to back, O(1) each with nothing copied,
+and that <code>Nth</code> indexes in O(1) after its first call. An
+<strong>Array</strong> is the indexed kind: fixed length, <code>Nth</code> in
+O(1) from the start, and <code>SetNth</code> answers a new array by copying
+the whole of it, where <code>SetNth</code> on a list rebuilds only the cells
+before the change. <code>ToArray</code> and <code>ToList</code> convert.
+Everything here counts from 1, and all twenty-two are pure, including
 <code>SetNth</code>, which answers a <em>new</em> sequence and leaves the
 original alone.</p>
 
@@ -173,8 +172,8 @@ original alone.</p>
 array maps to an array.</td></tr>
 <tr><td>Filter(xs, p)</td><td>The elements <code>p</code> answers True for, in
 order.</td></tr>
-<tr><td>Fold(xs, init, f)</td><td>Left fold: the accumulator (the running
-result) starts at <code>init</code> and <code>f</code> sees it first. Almost
+<tr><td>Fold(xs, init, f)</td><td>A fold from the left: the accumulator (the
+running result) starts at <code>init</code> and <code>f</code> sees it first. Almost
 every word in the reference below is <code>Fold</code> underneath.</td></tr>
 <tr><td>Each(xs, f)</td><td><code>f</code> applied to every element for its
 <em>effect</em>, answering nothing. The one word in this group that exists
@@ -196,20 +195,21 @@ near miss for this one.</td></tr>
 <tr><td>IsEmpty(xs)</td><td>Whether it holds nothing.</td></tr>
 <tr><td>First(xs)</td><td>The first element. Aborts on an empty
 sequence.</td></tr>
-<tr><td>Rest(xs)</td><td>Everything after the first. <strong>Lists
-only</strong>: on an array it would have to copy, and the point of an array is
-that it does not.</td></tr>
+<tr><td>Rest(xs)</td><td>Everything after the first: the tail cell itself,
+shared, in O(1). <strong>Lists only</strong>: on an array it would have to
+copy.</td></tr>
 <tr><td>Nth(xs, k)</td><td>The <code>k</code>-th element, counting from 1.
-Aborts outside the range. O(1) on an array, a walk on a list.</td></tr>
+Aborts outside the range. O(1) on an array, and on a list after the first
+call, which builds the list's index.</td></tr>
 </table>
 
 <h3>Building a new one</h3>
 <table>
 <tr><th>Word</th><th>Description</th></tr>
 <tr><td>Prepend(v, xs)</td><td><code>xs</code> with <code>v</code> on the
-front. <strong>Lists only</strong>, and free: this is the pair to
-<code>First</code>/<code>Rest</code> that structural recursion is written
-with.</td></tr>
+front. <strong>Lists only</strong>, and O(1): one new cell, the rest shared.
+This is the pair to <code>First</code>/<code>Rest</code> that structural
+recursion is written with.</td></tr>
 <tr><td>SetNth(xs, k, v)</td><td>A sequence with its <code>k</code>-th element
 replaced. <strong>The original is unchanged.</strong> Aborts outside the
 range.</td></tr>
@@ -223,9 +223,20 @@ every median, quantile and rank goes through it.</td></tr>
 <tr><td>Dim(n, init)</td><td>An <strong>Array</strong> of <code>n</code> copies
 of <code>init</code>. The way an array is made, since there is no array
 literal.</td></tr>
-<tr><td>ToArray(xs) / ToList(arr)</td><td>Between the two kinds. The usual
-shape is: build with list recursion, <code>ToArray</code> once, then
-index.</td></tr>
+<tr><td>ToArray(xs) / ToList(arr)</td><td>Between the two kinds. An array is
+for <code>Dim</code>-shaped data and for <code>SetNth</code> by copy;
+indexing a list needs no conversion.</td></tr>
+<tr><td>Taken(xs, n)</td><td>The first <code>n</code> elements; the whole list
+when <code>n</code> reaches its length, an empty one when <code>n</code> is 0
+or below. <strong>Lists only.</strong></td></tr>
+<tr><td>DropN(xs, n)</td><td>Everything after the first <code>n</code>:
+<code>xs</code> itself when <code>n</code> is 0 or below, an empty list past
+the end. <strong>Lists only.</strong> Nothing is copied; the answer is a cell
+of <code>xs</code>.</td></tr>
+<tr><td>ZipWith(xs, ys, f)</td><td><code>f</code> over the pairs, stopping at
+the shorter. Poly in what it is handed, a list in what it answers;
+<code>Zip</code> below is this with <code>Pair</code>. These three were
+<code>Def</code>s here until lists became cons cells.</td></tr>
 </table>
 
 <h2 id="words">Word Reference</h2>
@@ -264,12 +275,6 @@ keeps its <code>0</code> because too much already reads it.</td></tr>
 <h3>Slicing and building <span class="tag">List only</span></h3>
 <table>
 <tr><th>Word</th><th>Description</th></tr>
-<tr><td>Taken(xs, n)</td><td>A new list of the first <code>n</code> items of
-<code>xs</code>. If <code>xs</code> is shorter, you get all of it; if
-<code>n</code> is zero or less, you get an empty list.</td></tr>
-<tr><td>DropN(xs, n)</td><td>A new list with the first <code>n</code> items of
-<code>xs</code> removed. Drop more than there are and you get an empty
-list.</td></tr>
 <tr><td>Append(xs, x)</td><td>A new list that is <code>xs</code> with
 <code>x</code> tacked on the end.</td></tr>
 <tr><td>Last(xs)</td><td>The final item of <code>xs</code>. Needs a
@@ -286,18 +291,15 @@ into one flat list.</td></tr>
 couple.</td></tr>
 <tr><td>Zip(xs, ys)</td><td>Pairs up <code>xs</code> and <code>ys</code>
 position by position into a list of <code>Pair</code>s, stopping when the
-shorter list runs out.</td></tr>
-<tr><td>ZipWith(xs, ys, f)</td><td>Like <code>Zip</code>, but instead of
-making pairs it calls <code>f</code> on each matched couple and collects the
-results. <code>Zip</code> is <code>ZipWith</code> with
-<code>Pair</code> as the combiner.</td></tr>
+shorter list runs out: the <code>ZipWith</code> builtin with <code>Pair</code>
+as the combiner.</td></tr>
 </table>
 
 
 <h2 id="usedby">Who Uses It</h2>
 <table>
 <tr><th></th><th>User</th><th>How</th></tr>
-<tr><td class="uicon"><a href="alg.html"><img src="../media/icons/alg.svg" alt=""></a></td><td><a href="alg.html">alg</a></td><td><code>Flatten</code> is the whole of expansion and variable collection, <code>All</code> and <code>Any</code> carry the invariants, <code>Append</code> and <code>Taken</code> build the coefficient lists, and <code>IndexOf</code> looks up a binding.</td></tr><tr><td class="uicon"><a href="bool.html"><img src="../media/icons/bool.svg" alt=""></a></td><td><a href="bool.html">bool</a></td><td><code>CountIf</code> is <code>BoolPopCount</code> and scores the greedy cover, <code>Contains</code> and <code>Append</code> dedupe the implicant sets by value, <code>Flatten</code> collects each combining round, and <code>All</code>/<code>Any</code> carry the tautology and coverage tests.</td></tr>
+<tr><td class="uicon"><a href="alg.html"><img src="../media/icons/alg.svg" alt=""></a></td><td><a href="alg.html">alg</a></td><td><code>Flatten</code> is the whole of expansion and variable collection, <code>All</code> and <code>Any</code> carry the invariants, <code>Append</code> builds the coefficient lists, and <code>IndexOf</code> looks up a binding.</td></tr><tr><td class="uicon"><a href="bool.html"><img src="../media/icons/bool.svg" alt=""></a></td><td><a href="bool.html">bool</a></td><td><code>CountIf</code> is <code>BoolPopCount</code> and scores the greedy cover, <code>Contains</code> and <code>Append</code> dedupe the implicant sets by value, <code>Flatten</code> collects each combining round, and <code>All</code>/<code>Any</code> carry the tautology and coverage tests.</td></tr>
 <tr><td class="uicon"><a href="csv.html"><img src="../media/icons/csv.svg" alt=""></a></td><td><a href="csv.html">csv</a></td><td><code>Zip</code> pairs a row with its header, <code>IndexOf</code> finds a
 named column, and <code>All</code> and <code>Append</code> carry the scanner.</td></tr>
 <tr><td class="uicon"><a href="cuttle.html"><img src="../media/icons/cuttle.svg" alt=""></a></td><td><a href="cuttle.html">cuttle</a></td><td><code>Pair</code> carries a stack cell's record case, and the list plumbing implements the stack and its shuffles.</td></tr>

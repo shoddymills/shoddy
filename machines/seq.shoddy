@@ -7,11 +7,12 @@ Rem The usual Fold/Map suspects. Pure, self-hosted. Structure only:
 Rem predicates, searching, slicing, zipping — aggregation (Sum, Mean,
 Rem and friends) lives in stats.shoddy.
 Rem
-Rem Built on the nineteen sequence and higher-order builtins, each
+Rem Built on the twenty-two sequence and higher-order builtins, each
 Rem documented one by one immediately below: Map Filter Fold Each Times
 Rem Range, and Length Reverse Concat Sort IsEmpty First Nth SetNth Dim
-Rem ToArray ToList Rest Prepend. Sorting is the Sort builtin and is
-Rem documented here too, though stats.shoddy is its heaviest caller.
+Rem ToArray ToList Rest Prepend Taken DropN ZipWith. Sorting is the Sort
+Rem builtin and is documented here too, though stats.shoddy is its
+Rem heaviest caller.
 Rem
 Rem Words marked (poly) work on LISTs and ARRAYs; others are List-only
 Rem because they lean on First/Rest/Prepend structural recursion.
@@ -25,36 +26,35 @@ Rem where a reader goes looking for them. The flat reference is section
 Rem 10 of docs/spec.html, and the stack effects below are the ones the
 Rem compiler's own Effects.cs table declares.
 Rem
-Rem TWO SEQUENCE KINDS. A LIST is what First, Rest and Prepend are for
-Rem and what structural recursion reads; an ARRAY is fixed-length and
-Rem what Nth is for. ToArray and ToList convert. Everything here counts
-Rem from 1.
+Rem TWO SEQUENCE KINDS. A LIST is a chain of cells: what First, Rest
+Rem and Prepend are for, what structural recursion reads, and indexed by
+Rem Nth in O(1) after its first call. An ARRAY is fixed-length, the shape
+Rem for Dim and for SetNth by copy. ToArray and ToList convert.
+Rem Everything here counts from 1.
 Rem
-Rem WHAT THIS HEADER USED TO SAY, AND WHY IT WAS CHANGED. It said "a
-Rem LIST is a linked list: First and Rest are free". That was wrong, and
-Rem being wrong in the first place a reader looks made it expensive: a
-Rem list is contiguous underneath, so REST HANDS BACK A COPY OF THE
-Rem TAIL. Walking n elements with First/Rest therefore copies about
-Rem n^2/2 of them — measured at 74 ms for 12500 elements and 3585 ms for
-Rem 50000, which is four to six times per doubling, not two.
+Rem WHAT THIS HEADER USED TO SAY, AND WHY IT CHANGED TWICE. The first
+Rem version said "a LIST is a linked list: First and Rest are free". For
+Rem a long while that was wrong: a list was contiguous underneath, so
+Rem Rest handed back a copy of the tail, a First/Rest walk over n
+Rem elements copied about n^2/2 of them (measured at 74 ms for 12500
+Rem and 3585 ms for 50000), a Prepend built on the way out of a
+Rem recursion cost a stack frame per element and died past about twenty
+Rem thousand, and this header spent twenty lines telling a reader to
+Rem recurse for shape and reach for Fold or ToArray for speed.
 Rem
-Rem So: RECURSE OVER LISTS FOR SHAPE, NOT FOR SPEED. A few dozen
-Rem elements, or a shape that is genuinely a head and a tail, is what
-Rem First/Rest is for. To visit every element of a long sequence, Fold
-Rem (a builtin loop), or ToArray once and index with Nth. sinq.shoddy is
-Rem written that way throughout and its header explains the rest.
+Rem THE RUNTIME NOW IMPLEMENTS WHAT THE LIBRARY ASSUMED. A list is a
+Rem chain of cells: First, Rest and Prepend are O(1) and share the tail,
+Rem Nth is O(1) after the first call on a list, any tail call is a jump,
+Rem and a recursion millions deep returns. Two lists with the same items
+Rem are equal. The hundred-odd Prepend and Rest sites across this library
+Rem were written to that model from the start and needed no change; the
+Rem warnings went, and so did every ToArray that existed for speed. The
+Rem one statement of list cost is the table in section 7 of
+Rem docs/spec.html.
 Rem
-Rem AND MIND WHERE THE RECURSIVE CALL SITS. Only SELF-tail-recursion
-Rem becomes a loop. Taken below builds its answer with Prepend on the
-Rem way OUT of the recursion, so it costs a stack frame per element and
-Rem overflows somewhere past twenty thousand — a hard process kill, not
-Rem an Error. Mutual recursion is not optimised either. An accumulator
-Rem threaded in and Reversed at the end is the shape that is safe at any
-Rem length; shaker.shoddy's ShakeTakeN is the worked example.
-Rem
-Rem ALL NINETEEN ARE PURE, including SetNth — it answers a NEW sequence
-Rem and leaves the original alone, which is what makes them safe to
-Rem share.
+Rem ALL TWENTY-TWO ARE PURE, including SetNth — it answers a NEW
+Rem sequence and leaves the original alone, which is what makes them
+Rem safe to share.
 
 Rem ---- higher-order ----
 
@@ -68,7 +68,8 @@ Rem     The elements p answers True for, in order.
 
 Rem Fold(xs As List Of t, init As u, f As [ u t -- u ]) As u
 Rem                                                   ( xs init f -- v )
-Rem     Left fold: the accumulator starts at init and f sees it first.
+Rem     A fold from the left: the accumulator starts at init and f sees
+Rem     it first.
 Rem     Almost every word below this header is Fold underneath.
 
 Rem Each(xs As List Of t, f As [ t -- ])              ( xs f -- )
@@ -98,22 +99,19 @@ Rem     The first element. Aborts on an empty sequence.
 
 Rem Rest(xs As List Of t) As List Of t                ( xs -- ys )
 Rem     Everything after the first. LISTS ONLY — an array refuses it.
-Rem     NOT FREE: it copies the tail, so a First/Rest walk over a long
-Rem     list is quadratic. Fine for a handful; Fold or ToArray+Nth for a
-Rem     thousand. See the header.
+Rem     O(1): the tail is shared, not copied.
 
 Rem Nth(xs As List Of t, k As Number) As t            ( xs k -- v )
 Rem     The k-th element, counting from 1. Aborts outside the range.
-Rem     O(1) on an array, a walk on a list.
+Rem     O(1) on an array, and on a list after the first call, which
+Rem     builds the list's index.
 
 Rem ---- building a new one ----
 
 Rem Prepend(v As t, xs As List Of t) As List Of t     ( v xs -- ys )
 Rem     xs with v on the front. LISTS ONLY — the pair to First/Rest
-Rem     that structural recursion is written with. Like Rest it copies,
-Rem     so building a long list one Prepend at a time is quadratic too;
-Rem     the way round it is to Fold onto an accumulator and Reverse once
-Rem     at the end.
+Rem     that structural recursion is written with. O(1): one new cell,
+Rem     the rest shared.
 
 Rem SetNth(xs As List Of t, k As Number, v As t) As List Of t
 Rem                                                   ( xs k v -- ys )
@@ -139,8 +137,26 @@ Rem     there is no array literal.
 
 Rem ToArray(xs As List Of t) As Array Of t            ( xs -- arr )
 Rem ToList(arr As Array Of t) As List Of t            ( arr -- xs )
-Rem     Between the two kinds. The usual shape is: build with list
-Rem     recursion, ToArray once, then index.
+Rem     Between the two kinds. An array is for Dim-shaped data and for
+Rem     SetNth by copy; indexing a list needs no conversion.
+
+Rem Taken(xs As List Of t, n As Number) As List Of t  ( xs n -- ys )
+Rem     The first n elements; the whole list when n reaches its length,
+Rem     an empty one when n is 0 or below. LISTS ONLY.
+
+Rem DropN(xs As List Of t, n As Number) As List Of t  ( xs n -- ys )
+Rem     Everything after the first n: xs itself when n is 0 or below, an
+Rem     empty list past the end. LISTS ONLY. Nothing is copied; the
+Rem     answer is a cell of xs.
+
+Rem ZipWith(xs As List Of t, ys As List Of u, f As [ t u -- v ]) As List Of v
+Rem                                                   ( xs ys f -- zs )
+Rem     f over the pairs, stopping at the shorter. Poly in what it is
+Rem     handed, a list in what it answers; Zip below is this with Pair.
+Rem
+Rem     These three were Defs here until lists became cons cells, each a
+Rem     recursion building its answer with Prepend on the way out, or Nth
+Rem     in a loop. As builtins they are one pass each.
 
 Rem ---- this machine's own words --------------------------------------
 
@@ -188,18 +204,6 @@ Def IndexOpt(xs As List Of t, v As t) As Option
 
 Rem ---- slicing and building (List) -----------------------------------
 
-Def Taken(xs As List Of t, n As Number) As List Of t
-    If n <= 0 Or IsEmpty(xs) Then
-        { }
-    Else
-        Prepend(First(xs), Taken(Rest(xs), n - 1))
-
-Def DropN(xs As List Of t, n As Number) As List Of t
-    If n <= 0 Or IsEmpty(xs) Then
-        xs
-    Else
-        DropN(Rest(xs), n - 1)
-
 Def Append(xs As List Of t, x As t) As List Of t
     Concat(xs, { x })
 
@@ -214,9 +218,6 @@ Rem ---- pairing --------------------------------------------------------
 Type Pair
     Fst As t
     Snd As u
-
-Def ZipWith(xs As List Of t, ys As List Of u, f As [ t u -- v ]) As List Of v
-    Map(Range(1, Min(Length(xs), Length(ys))), Fn(k) => Call(f, Nth(xs, k), Nth(ys, k)))
 
 Def Zip(xs As List Of t, ys As List Of u) As List Of Pair
     ZipWith(xs, ys, Pair)

@@ -303,16 +303,12 @@ Def SenseScale(s As String) As Number
     Else
         1
 
-Rem Where a name sits in a list of names, 0 for absent - by position
-Rem over an ARRAY, deliberately not by seq's IndexOf. That word
-Rem recurses on Rest, and Rest copies the tail it hands back, so a
-Rem lookup that should cost one walk costs a walk's worth of copying
-Rem per step. On a file's worth of entries that is the difference
-Rem between assembling in a moment and assembling noticeably. Here
-Rem every step is an o(1) Nth, and the word is self-tail-recursive, so
-Rem it runs as a loop.
+Rem Where a name sits in a list of names, 0 for absent - by position,
+Rem self-tail-recursive over Nth, so it runs as a loop. It is seq's
+Rem IndexOf written out, from the days a list indexed slowly; a list
+Rem indexes in O(1) now and either would serve.
 
-Def NameAt(names As Array Of String, want As String, k As Number) As Number
+Def NameAt(names As List Of String, want As String, k As Number) As Number
     If k > Length(names) Then
         0
     Else
@@ -321,7 +317,7 @@ Def NameAt(names As Array Of String, want As String, k As Number) As Number
         Else
             NameAt(names, want, k + 1)
 
-Def NameIx(names As Array Of String, want As String) As Number
+Def NameIx(names As List Of String, want As String) As Number
     NameAt(names, want, 1)
 
 Rem One COLUMNS entry with its names resolved: the SOURCE row index in
@@ -331,17 +327,17 @@ Rem answers row 0 and the caller drops it - the same silence the dense
 Rem assembly kept. Resolving happens once per entry here; the two
 Rem normalised triplets below are built from the result.
 
-Def NamedTrip(e As MpsEnt, cols As Array Of String, rids As Array Of String) As SpEnt
+Def NamedTrip(e As MpsEnt, cols As List Of String, rids As List Of String) As SpEnt
     Let k = NameIx(rids, Row(e))
     If k = 0 Then
         SpEnt(0, 0, 0)
     Else
         SpEnt(k, NameIx(cols, Col(e)), Amt(e))
 
-Def BaseTrip(t As SpEnt, bases As Array Of Number, scales As Array Of Number) As SpEnt
+Def BaseTrip(t As SpEnt, bases As List Of Number, scales As List Of Number) As SpEnt
     SpEnt(Nth(bases, EntRow(t)), EntCol(t), EntVal(t) * Nth(scales, EntRow(t)))
 
-Def PairTrip(t As SpEnt, bases As Array Of Number) As SpEnt
+Def PairTrip(t As SpEnt, bases As List Of Number) As SpEnt
     SpEnt(Nth(bases, EntRow(t)) + 1, EntCol(t), 0 - EntVal(t))
 
 Def SenseRhs(sens As List Of String, vals As List, i As Number, acc As List) As List
@@ -412,13 +408,9 @@ Def AssembleSp(st As MpsSt) As SpProblem
     Else
         Let cnames = Cols(st)
         Let sens = Senses(st)
-        Rem Arrays, not lists, for everything the per-entry passes index
-        Rem into: Nth is o(1) on an array and a walk on a list.
-        Let carr = ToArray(cnames)
-        Let rarr = ToArray(RowIds(st))
-        Let sarr = ToArray(sens)
-        Let bases = ToArray(RowBases(sens, 1, 1, { }))
-        Let scales = ToArray(Map(sens, SenseScale))
+        Let rids = RowIds(st)
+        Let bases = RowBases(sens, 1, 1, { })
+        Let scales = Map(sens, SenseScale)
         Let nrows = NormCount(sens)
         Let brows = Flatten(Map(Bnds(st), Fn(b) => BndRows(b, cnames)))
         Let es = Ents(st)
@@ -426,18 +418,21 @@ Def AssembleSp(st As MpsSt) As SpProblem
         Rem (Named cvec and bvec, not costs and rhs: words are
         Rem case-insensitive, so either of those would stand in front of
         Rem the accessor of the same name for the rest of the Def.)
+        Rem An Array: SpProblem declares its Costs so, as it does Rhs for
+        Rem bvec below.
         Let cvec = ToArray(Map(cnames, Fn(c) => SumCol(objEs, c)))
         Rem Names resolved once, then the normalised triplets read off.
         Rem The pair rows an E row needs follow the base rows rather
         Rem than interleaving with them, which changes no cell: two
         Rem entries only ever meet inside one normalised row, and no row
         Rem is in both passes.
-        Let named = Filter(Map(es, Fn(e) => NamedTrip(e, carr, rarr)), Fn(t) => EntRow(t) > 0)
+        Let named = Filter(Map(es, Fn(e) => NamedTrip(e, cnames, rids)), Fn(t) => EntRow(t) > 0)
         Let trips = Concat(Concat(Map(named, Fn(t) => BaseTrip(t, bases, scales)),
-                                  Map(Filter(named, Fn(t) => Nth(sarr, EntRow(t)) = "E"),
+                                  Map(Filter(named, Fn(t) => Nth(sens, EntRow(t)) = "E"),
                                       Fn(t) => PairTrip(t, bases))),
                            Map(Range(1, Length(brows)), Fn(i) => BndTrip(Nth(brows, i), nrows + i)))
-        Let rvals = Map(RowIds(st), Fn(rid) => RowSum(RhsEs(st), rid))
+        Let rvals = Map(rids, Fn(rid) => RowSum(RhsEs(st), rid))
+        Rem Arrays: SpProblem's Rhs.
         Let bvec = Concat(ToArray(SenseRhs(sens, rvals, 1, { })), ToArray(Map(brows, BRhs)))
         SpProblem(cvec, SpFromEnts(nrows + Length(brows), Length(cnames), trips), bvec)
 

@@ -9,18 +9,18 @@ namespace Shoddy.Tests;
 
 /// <summary>
 /// TRYREADLINES — the line-oriented read, native, answering the
-/// language's predeclared Result like TRYREADFILE does. It exists because
-/// file.shoddy's ReadLines was a Def over READFILE and str's Split, and
-/// Split recurses once per field: a file past about fourteen thousand
-/// lines died of a stack overflow, a process kill and not an Error. Four
+/// language's predeclared Result like TRYREADFILE does. It was added when
+/// file.shoddy's ReadLines, a Def over READFILE and str's Split, died of a
+/// stack overflow on a long file; a recursion no longer can, but a native
+/// line read is the right shape beside TRYREADFILE and it stays. Four
 /// things are worth pinning:
 ///
 ///   1. The rules for what a line is match what file.shoddy always
 ///      answered: \r\n and \n both end a line, a final newline closes the
 ///      last line rather than opening an empty one, and an empty file is
 ///      an empty list.
-///   2. A long file loads. This is the reason the builtin exists, so the
-///      test reads one well past where the Def died.
+///   2. A long file loads, so the test reads one well past where the Def
+///      once died.
 ///   3. The Err reasons are TRYREADFILE's closed set, not the platform's.
 ///   4. The record it pushes matches a Case Ok / Case Err in woven code,
 ///      with a List Of String inside the Ok.

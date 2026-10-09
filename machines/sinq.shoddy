@@ -45,32 +45,19 @@ Rem reader should not have to work out which machine SqLength came from.
 Rem A caller who has a clashing name of their own takes the machine
 Rem under a namespace instead: Include "sinq.shoddy" As Q, then QOrderBy.
 Rem
-Rem ---- how this machine is written, and why it is not obvious --------
+Rem ---- how this machine is written ------------------------------------
 Rem
-Rem TWO RUNTIME TRAPS shape nearly every word below. Both were measured,
-Rem not assumed, and a natural-looking implementation hits both.
+Rem Every recursive word below calls ITSELF in tail position, carrying an
+Rem accumulator that Reverse puts right at the end, so each one is a
+Rem loop. That was once a necessity rather than a style: a list copied
+Rem its tail on Rest, and only a self tail call became a loop, so these
+Rem shapes were chosen against two measured traps. Both are gone — a
+Rem list is a chain of cells, any tail call is a jump, and a recursion
+Rem millions deep returns — and the shapes stay because each is also the
+Rem plainest statement of its word.
 Rem
-Rem TRAP 1: REST COPIES. A Shoddy list is contiguous, so Rest hands back
-Rem a COPY of the tail — walking n elements with First/Rest copies about
-Rem n^2/2 of them. Measured: 12500 elements in 74 ms, 50000 in 3585 ms.
-Rem Nothing here walks a list that way. Words that must visit every
-Rem element either Fold (a builtin loop) or ToArray once and index with
-Rem Nth, which is O(1) on an array.
-Rem
-Rem TRAP 2: ONLY SELF-TAIL-RECURSION BECOMES A LOOP. A recursive call
-Rem that is not the last thing a word does costs a live stack frame per
-Rem element, and the ceiling is about 20000 frames — a hard process
-Rem kill, not an Error, with no line number. MUTUAL recursion is not
-Rem optimised either, so the obvious tidy shape (a chain of small Defs
-Rem that hands back to the first) is exactly as fatal as the untidy one.
-Rem Every recursive word below therefore calls ITSELF, in tail position,
-Rem carrying an accumulator that Reverse puts right at the end. Helper
-Rem Defs are used freely, but only where they do not close a cycle.
-Rem
-Rem The one deliberate exception is the sort's divide-and-conquer, which
-Rem is mutually recursive between SnqSortSpan and SnqSortHalves. That is
-Rem safe because its depth is log2(n) — seventeen frames for a hundred
-Rem thousand elements — not n. Depth, not shape, is what matters there.
+Rem The sort's divide-and-conquer is mutually recursive between
+Rem SnqSortSpan and SnqSortHalves; its depth is log2(n) either way.
 Rem
 Rem COST, SAID OUT LOUD. Ordering is O(n log n). GroupBy is O(n *
 Rem groups); JoinOn and GroupJoinOn are O(n * m); Distinct and the set
@@ -136,8 +123,11 @@ Def SnqTie(r As Number, tie As [ t t -- Number ], a As t, b As t) As Number
 
 Rem ---- ordering: the sort ------------------------------------------------
 Rem
-Rem Merge sort over an ARRAY, because Rest copies (trap 1) and because
-Rem Nth is O(1) on an array. A tie takes from the LEFT run, which is
+Rem Merge sort over an ARRAY. The rungs are declared over arrays and
+Rem slice a span by index; a list indexes in O(1) too now, so the arrays
+Rem are the declared shape rather than a speed measure, and every
+Rem ToArray in the sort is that type crossing. A tie takes from the LEFT
+Rem run, which is
 Rem what makes it stable, which is what makes ThenBy mean anything — so
 Rem the comparison below is deliberately strict (< 0, never <= 0).
 Rem
@@ -308,11 +298,11 @@ Def GroupJoinOn(xs As List Of t, ys As List Of u, xKeyOf As [ t -- k ], yKeyOf A
     Map(xs, Fn(x) => Call(pick, x, SnqMatching(ys, Call(xKeyOf, x), yKeyOf)))
 
 Rem ---- distinct and sets ---------------------------------------------------
-Rem Records compare STRUCTURALLY, so Distinct means what it should on a
-Rem record. LISTS compare by identity — two separately built lists of
-Rem the same items are not equal — so a sequence OF LISTS is the one
-Rem shape these words cannot speak about. Use DistinctBy with a key that
-Rem is a Number or a String when that comes up.
+Rem Records compare STRUCTURALLY, and so do lists, so Distinct means what
+Rem it should on a record or on a sequence of lists. A sequence OF
+Rem FUNCTIONS is the one shape these words cannot speak about, since a
+Rem function compares by identity; use DistinctBy with a Number or String
+Rem key when that comes up.
 
 Def SnqPushNew(acc As List Of t, x As t) As List Of t
     If Contains(acc, x) Then
@@ -352,11 +342,10 @@ Rem itself — there is no way to tie the knot after construction — and a
 Rem graph of records is therefore always a finite tree. That is why
 Rem there is no cycle check here and none is needed.
 Rem
-Rem THE ONE CEILING: Descendants recurses into the tree and cannot be
-Rem made tail-recursive by an accumulator, so it costs a frame per level
-Rem of DEPTH. Depth, not size — a million-node tree twelve deep is fine,
-Rem and only a tree deeper than about twenty thousand is not. Nothing
-Rem built from records reaches that by accident.
+Rem Descendants recurses into the tree and cannot be made tail-recursive
+Rem by an accumulator, so it costs a frame per level of DEPTH. Depth, not
+Rem size: a million-node tree twelve deep costs twelve frames, and the
+Rem program stack takes millions.
 
 Def SelectMany(xs As List Of t, f As [ t -- List Of u ]) As List Of u
     Flatten(Map(xs, f))
@@ -422,42 +411,41 @@ Def Choose(xs As List Of t, f As [ t -- Option ]) As List Of u
 
 Rem ---- slicing ----------------------------------------------------------------
 Rem seq.shoddy has Taken and DropN for a COUNT. These stop on a
-Rem CONDITION, which nothing had. All three index an array rather than
-Rem walking with Rest, and recurse into themselves rather than into a
-Rem helper: see the header's two traps.
+Rem CONDITION, which nothing had. All three index the list with Nth and
+Rem recurse into themselves, so each is a loop.
 
-Def SnqSpanOf(arr As Array Of t, lo As Number, hi As Number) As List Of t
-    Map(Range(lo, hi), Fn(i) => Nth(arr, i))
+Def SnqSpanOf(xs As List Of t, lo As Number, hi As Number) As List Of t
+    Map(Range(lo, hi), Fn(i) => Nth(xs, i))
 
-Def SnqTakeWhileAt(arr As Array Of t, k As Number, p As [ t -- Boolean ], acc As List Of t) As List Of t
-    If k > Length(arr) Then
+Def SnqTakeWhileAt(xs As List Of t, k As Number, p As [ t -- Boolean ], acc As List Of t) As List Of t
+    If k > Length(xs) Then
         Reverse(acc)
     Else
-        If Call(p, Nth(arr, k)) Then
-            SnqTakeWhileAt(arr, k + 1, p, Prepend(Nth(arr, k), acc))
+        If Call(p, Nth(xs, k)) Then
+            SnqTakeWhileAt(xs, k + 1, p, Prepend(Nth(xs, k), acc))
         Else
             Reverse(acc)
 
 Def TakeWhile(xs As List Of t, p As [ t -- Boolean ]) As List Of t
-    SnqTakeWhileAt(ToArray(xs), 1, p, { })
+    SnqTakeWhileAt(xs, 1, p, { })
 
-Def SnqSkipWhileAt(arr As Array Of t, k As Number, p As [ t -- Boolean ]) As List Of t
-    If k > Length(arr) Then
+Def SnqSkipWhileAt(xs As List Of t, k As Number, p As [ t -- Boolean ]) As List Of t
+    If k > Length(xs) Then
         { }
     Else
-        If Call(p, Nth(arr, k)) Then
-            SnqSkipWhileAt(arr, k + 1, p)
+        If Call(p, Nth(xs, k)) Then
+            SnqSkipWhileAt(xs, k + 1, p)
         Else
-            SnqSpanOf(arr, k, Length(arr))
+            DropN(xs, k - 1)
 
 Def SkipWhile(xs As List Of t, p As [ t -- Boolean ]) As List Of t
-    SnqSkipWhileAt(ToArray(xs), 1, p)
+    SnqSkipWhileAt(xs, 1, p)
 
-Def SnqChunkAt(arr As Array Of t, k As Number, n As Number, acc As List Of List Of t) As List Of List Of t
-    If k > Length(arr) Then
+Def SnqChunkAt(xs As List Of t, k As Number, n As Number, acc As List Of List Of t) As List Of List Of t
+    If k > Length(xs) Then
         Reverse(acc)
     Else
-        SnqChunkAt(arr, k + n, n, Prepend(SnqSpanOf(arr, k, Min(k + n - 1, Length(arr))), acc))
+        SnqChunkAt(xs, k + n, n, Prepend(SnqSpanOf(xs, k, Min(k + n - 1, Length(xs))), acc))
 
 Rem Fixed-size batches, the last one short. A size below one would never
 Rem consume the sequence, so it is refused rather than hung.
@@ -465,7 +453,7 @@ Def Chunk(xs As List Of t, n As Number) As List Of List Of t
     If n < 1 Then
         Error("CHUNK: SIZE MUST BE AT LEAST 1")
     Else
-        SnqChunkAt(ToArray(xs), 1, n, { })
+        SnqChunkAt(xs, 1, n, { })
 
 Rem ---- the total twins of First and Last ---------------------------------------
 Rem First is a builtin and aborts on an empty sequence; seq's Last does
@@ -492,16 +480,16 @@ Def SingleOpt(xs As List Of t) As Option
     Else
         None()
 
-Def SnqFindAt(arr As Array Of t, k As Number, p As [ t -- Boolean ]) As Option
-    If k > Length(arr) Then
+Def SnqFindAt(xs As List Of t, k As Number, p As [ t -- Boolean ]) As Option
+    If k > Length(xs) Then
         None()
     Else
-        If Call(p, Nth(arr, k)) Then
-            Some(Nth(arr, k))
+        If Call(p, Nth(xs, k)) Then
+            Some(Nth(xs, k))
         Else
-            SnqFindAt(arr, k + 1, p)
+            SnqFindAt(xs, k + 1, p)
 
 Rem The first element passing p, without visiting the rest. This is the
 Rem short-circuit a lazy pipeline would have bought, written out.
 Def FindOpt(xs As List Of t, p As [ t -- Boolean ]) As Option
-    SnqFindAt(ToArray(xs), 1, p)
+    SnqFindAt(xs, 1, p)

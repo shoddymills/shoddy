@@ -35,14 +35,13 @@ public readonly struct ShoddyValue
 
     public static ShoddyValue Bool(bool b) => new(Value.OfBool(b));
 
-    /// <summary>A list, built the way the runtime builds one: the items
-    /// array is its own identity, so the result is indistinguishable
-    /// from a list a program made.</summary>
+    /// <summary>A list, built the way the runtime builds one: a chain of
+    /// cells whose head is its identity, so the result is
+    /// indistinguishable from a list a program made.</summary>
     public static ShoddyValue ListOf(IEnumerable<ShoddyValue> xs)
     {
         if (xs is null) throw new ArgumentNullException(nameof(xs));
-        QItem[] items = xs.Select(x => QItem.OfValue(x.Val)).ToArray();
-        return new ShoddyValue(Value.OfCQuot(items, items));
+        return new ShoddyValue(Value.OfList(Cell.FromValues(xs.Select(x => x.Val).ToArray())));
     }
 
     // ---- destructuring ----
@@ -87,15 +86,16 @@ public readonly struct ShoddyValue
         {
             case VType.Arr:
                 return v.Elems!.Select(e => new ShoddyValue(e)).ToArray();
-            case VType.Quot when v.CItems != null:
-                var result = new ShoddyValue[v.CItems.Length];
-                for (int i = 0; i < v.CItems.Length; i++)
+            case VType.Quot when v.List != null:
+                var result = new ShoddyValue[v.List.Length];
+                int i = 0;
+                foreach (QItem it in v.List.Items())
                 {
-                    Value? lit = v.CItems[i].Lit;
+                    Value? lit = it.Lit;
                     if (lit is null)
                         throw new InvalidOperationException(
                             "this quotation holds code, not data. AsList reads only lists of values");
-                    result[i] = new ShoddyValue(lit);
+                    result[i++] = new ShoddyValue(lit);
                 }
                 return result;
             default:

@@ -178,8 +178,10 @@ public sealed class ShoddyHost
     // ---- Mode T ----
 
     /// <summary>Run a woven console mill through pipes: the assembly's
-    /// <c>Woven.Run(TextWriter, TextReader, string[])</c>, on a worker
-    /// task. The piped-reader contract is the host's half: a reader
+    /// <c>Woven.Run(TextWriter, TextReader, string[])</c>, on its own
+    /// thread with the program stack (Engine.ProgramStackBytes), so a
+    /// deep recursion returns here exactly as it does under `mill run`.
+    /// The piped-reader contract is the host's half: a reader
     /// whose Peek() answers -1 when nothing is pending (INKEY's
     /// redirected path then yields ""), and whose Read/ReadLine block
     /// until input arrives. Cancellation is cooperative — the mill
@@ -204,12 +206,28 @@ public sealed class ShoddyHost
                 new[] { typeof(TextWriter), typeof(TextReader), typeof(string[]) })
             ?? throw new ArgumentException(
                 $"'{woven.GetName().Name}': Woven has no Run(TextWriter, TextReader, string[])");
-        return Task.Run(() =>
+        var done = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+        if (cancellationToken.IsCancellationRequested)
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            return (int)run.Invoke(null,
-                new object[] { output, input, args ?? Array.Empty<string>() })!;
-        }, cancellationToken);
+            done.SetCanceled(cancellationToken);
+            return done.Task;
+        }
+        // A thread, not Task.Run: a thread-pool thread's stack cannot be
+        // sized, and the woven program needs the one every launcher gives.
+        var thread = new Thread(() =>
+        {
+            try
+            {
+                done.SetResult((int)run.Invoke(null,
+                    new object[] { output, input, args ?? Array.Empty<string>() })!);
+            }
+            catch (Exception e)
+            {
+                done.SetException(e);
+            }
+        }, Engine.ProgramStackBytes) { IsBackground = true, Name = "shoddy-program" };
+        thread.Start();
+        return done.Task;
     }
 
     /// <summary>The R2 resolution, explicit and documented: a woven Mode

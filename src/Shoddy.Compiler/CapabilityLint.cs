@@ -53,6 +53,7 @@ public static class CapabilityLint
 
         ["CLOCK"] = "clock", ["TICKS"] = "clock", ["SLEEP"] = "clock",
         ["RND"] = "random", ["SEED"] = "random",
+        ["SHUFFLE"] = "random", ["SAMPLE"] = "random",     // draw from RND: random.shoddy's words until lists became cells
 
         ["SCRIBBLEROPEN"] = "scribbler", ["TRYSCRIBBLEROPEN"] = "scribbler",
         ["SCRIBBLEROF"] = "scribbler", ["SCRIBBLERSHUT"] = "scribbler",

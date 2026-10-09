@@ -76,7 +76,7 @@ Operators need spaces around them: <code>count + 1</code>, not <code>count+1</co
 <tr><td>1</td><td>Or</td><td rowspan="2">Short-circuit in expression bodies: the right side runs only if the answer is still open. Strict words in stack bodies: both sides have already run.</td></tr>
 <tr><td>2</td><td>And</td></tr>
 <tr><td>prefix</td><td>Not</td><td>Looser than comparison: <code>Not x = 1</code> means <code>Not (x = 1)</code>. Tighter than And.</td></tr>
-<tr><td>3</td><td>= &lt;&gt; &lt; &gt; &lt;= &gt;=</td><td>Numbers or strings; = / &lt;&gt; also booleans, records (structural), arrays. Lists compare by identity: two lists built separately are never equal, even with the same items.</td></tr>
+<tr><td>3</td><td>= &lt;&gt; &lt; &gt; &lt;= &gt;=</td><td>Numbers or strings; = / &lt;&gt; also booleans, records (structural), arrays and lists, item by item: <code>{ 1, 2 } = { 1, 2 }</code>. Only functions compare by identity.</td></tr>
 <tr><td>4</td><td>+ - &amp;</td><td>&amp; is string concatenation.</td></tr>
 <tr><td>5</td><td>* / Mod</td><td>Division / Mod by zero abort. Mod keeps the sign of the left side: <code>-7 Mod 3</code> is -1.</td></tr>
 <tr><td>6</td><td>^</td><td>Groups from the right (right-associative). <code>-n ^ 2</code> = <code>-(n^2)</code> (classic BASIC).</td></tr>
@@ -91,6 +91,8 @@ Else                        Case 1, 2, 3            ' any-of
                             Case Is &gt; 10            ' comparison (Is optional)
 Ifte(c, t, f)  ' inline     Case Person(n, a) Where a &lt; 18   ' destructure + guard
                             Case Order(Person(n, _), it, t)  ' patterns nest; _ = ignore
+                            Case Empty              ' the empty list
+                            Case Prepend(x, more)   ' a list: its head and its tail
                             Case Else               ' default (else non-match aborts)</code></pre>
 <p class="note">Both are expressions: each branch/clause block yields the value.
 The tested value is evaluated once. Pattern names bind for guard and body.
@@ -115,7 +117,7 @@ To test equality against a record instead: <code>Case = Type(...)</code> (or bar
 <tr><th>Word</th><th>Meaning</th></tr>
 <tr><td>Map(xs, f)</td><td>New sequence, f applied to each. Keeps input's kind.</td></tr>
 <tr><td>Filter(xs, p)</td><td>Keep items where p is True.</td></tr>
-<tr><td>Fold(xs, z, f)</td><td>Combine items into one value, left to right, starting from z (a left fold): <code>Fold(xs, 0, +)</code> sums.</td></tr>
+<tr><td>Fold(xs, z, f)</td><td>Combine items into one value, left to right, starting from z: <code>Fold(xs, 0, +)</code> sums.</td></tr>
 <tr><td>Each(xs, f)</td><td>Run f per item (for effects).</td></tr>
 <tr><td>Times(n, f)</td><td>Run f n times.</td></tr>
 <tr><td>Range(a, b)</td><td>List of a..b inclusive.</td></tr>
@@ -125,11 +127,14 @@ To test equality against a record instead: <code>Case = Type(...)</code> (or bar
 <table>
 <tr><th>Word</th><th>Meaning</th></tr>
 <tr><td>{ a, b, c }</td><td>List literal (elements are expressions).</td></tr>
-<tr><td>First / Rest / Prepend(x, xs) / IsEmpty</td><td>List recursion kit (First/IsEmpty also arrays).</td></tr>
-<tr><td>Nth(xs, k)</td><td>k-th item; instant on arrays (O(1)).</td></tr>
+<tr><td>First / Rest / Prepend(x, xs) / IsEmpty</td><td>List recursion kit, O(1) each (First/IsEmpty also arrays).</td></tr>
+<tr><td>Nth(xs, k)</td><td>k-th item; O(1) on arrays, and on lists after the first call.</td></tr>
 <tr><td>SetNth(xs, k, v)</td><td>Copy with position k = v.</td></tr>
 <tr><td>Length / Reverse / Concat</td><td>Both kinds (Concat: same kind).</td></tr>
 <tr><td>Sort(xs)</td><td>Ascending; all numbers or all strings. Keeps input's kind.</td></tr>
+<tr><td>Taken(xs, n) / DropN(xs, n)</td><td>The first n / everything after them (lists).</td></tr>
+<tr><td>ZipWith(xs, ys, f)</td><td>f over the pairs, up to the shorter.</td></tr>
+<tr><td>Shuffle(xs) / Sample(xs, n) / DropAt(xs, k)</td><td>Random order / n distinct draws / without the k-th (random).</td></tr>
 <tr><td>ToArray / ToList</td><td>Convert.</td></tr>
 <tr><td>Dim(n, v)</td><td>Array of n copies of v.</td></tr>
 </table></section>
@@ -142,14 +147,15 @@ To test equality against a record instead: <code>Case = Type(...)</code> (or bar
 <tr><td>Person(Name = "ann", Age = 34)</td><td>Constructor, named fields.</td></tr>
 <tr><td>Age(p)</td><td>Accessor: every field name is a function, including the fields of a sum type's variants. Dispatches on the record's type.</td></tr>
 <tr><td>With(p, Age = 35, ...)</td><td>Copy with fields changed.</td></tr>
-<tr><td>P1 = P2</td><td>Structural equality: equal when all fields are equal. A field that holds a list compares by identity.</td></tr>
+<tr><td>P1 = P2</td><td>Structural equality: equal when all fields are equal, lists included.</td></tr>
 </table></section>
 
 <section><h2>Strings</h2>
 <table>
 <tr><th>Word</th><th>Meaning</th></tr>
-<tr><td>&amp;</td><td>Concatenate.</td></tr>
+<tr><td>&amp;</td><td>Concatenate; O(1), the text is laid down when first read.</td></tr>
 <tr><td>Len(s)</td><td>Length.</td></tr>
+<tr><td>Split(s, SEP) / Join(xs, SEP)</td><td>Cut at every SEP, empties kept / glue with SEP between.</td></tr>
 <tr><td>Left / Right(s, n)</td><td>First / last n chars.</td></tr>
 <tr><td>Mid(s, START, n)</td><td>n chars from START (1-based).</td></tr>
 <tr><td>Instr(s, SUB)</td><td>Position of SUB, 0 if absent.</td></tr>

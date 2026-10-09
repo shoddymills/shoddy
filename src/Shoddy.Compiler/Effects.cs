@@ -54,7 +54,8 @@ public static class Effects
         ["CHR"] = new(1, 1), ["ASC"] = new(1, 1),
         ["CODES"] = new(1, 1), ["FROMCODES"] = new(1, 1),
         ["CODEAT"] = new(2, 1), ["INSTRFROM"] = new(3, 1),
-        ["UPPER"] = new(1, 1), ["LOWER"] = new(1, 1),
+        ["UPPER"] = new(1, 1), ["LOWER"] = new(1, 1), ["JOIN"] = new(2, 1),
+        ["SPLIT"] = new(2, 1),
         // console and files
         ["PRINT"] = new(1, 0), ["READFILE"] = new(1, 1),
         ["TRYREADFILE"] = new(1, 1), ["TRYREADLINES"] = new(1, 1),
@@ -91,6 +92,8 @@ public static class Effects
         ["SETNTH"] = new(3, 1), ["DIM"] = new(2, 1),
         ["TOARRAY"] = new(1, 1), ["TOLIST"] = new(1, 1),
         ["REST"] = new(1, 1), ["PREPEND"] = new(2, 1),
+        ["TAKEN"] = new(2, 1), ["DROPN"] = new(2, 1), ["DROPAT"] = new(2, 1),
+        ["ZIPWITH"] = new(3, 1), ["SHUFFLE"] = new(1, 1), ["SAMPLE"] = new(2, 1),
         // time
         ["TICKS"] = new(0, 1), ["SLEEP"] = new(1, 0), ["CLOCK"] = new(0, 1),
         // scribbler

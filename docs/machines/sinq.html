@@ -461,48 +461,20 @@ lets a lambda sit in a pipeline stage without ceremony.</li>
 
 <h2 id="hood">Under the Hood</h2>
 
-<p>Two properties of the runtime shape nearly every word in this machine. Both
-were measured rather than assumed, and a natural-looking implementation hits
-both.</p>
+<p>Every recursive word here calls <em>itself</em>, as the very last step,
+carrying an accumulator (a running answer built as it goes) that
+<code>Reverse</code> puts right at the end, so each one is a loop. That was
+once a necessity rather than a style: a list copied its tail on
+<code>Rest</code>, and only a self tail call became a loop, so these shapes
+were chosen against two measured traps. Both are gone. A list is a chain of
+cells, any tail call is a jump, and a recursion millions deep returns; the
+shapes stay because each is also the plainest statement of its word.</p>
 
-<h3>Rest copies, so a First/Rest walk is quadratic</h3>
-<p>A Shoddy list is contiguous underneath (one solid block of memory),
-so <code>Rest</code> hands back a <em>copy</em> of the tail. Walking n
-elements that way copies about n&sup2;/2 of them, and the cost grows with the
-square of the length:</p>
-
-<table>
-<tr><th>Elements</th><th>A tail-recursive First/Rest walk</th></tr>
-<tr><td>6,250</td><td>40 ms</td></tr>
-<tr><td>12,500</td><td>74 ms</td></tr>
-<tr><td>25,000</td><td>636 ms</td></tr>
-<tr><td>50,000</td><td>3,585 ms</td></tr>
-</table>
-
-<p>Nothing here walks a list that way. Words that must visit every element
-either <code>Fold</code> (a builtin loop) or <code>ToArray</code>
-once and index with <code>Nth</code>, which is O(1) on an array: the
-same cost however long the array is. The sort is a merge sort over an array
-for the same reason.</p>
-
-<h3>Only self-tail-recursion becomes a loop</h3>
-<p>This is entirely separate, and nothing to do with lists. A recursive call
-that is not the last thing a word does costs a live stack frame per element,
-and the ceiling is around <strong>twenty thousand</strong> frames. A stack
-overflow is a hard process kill: not an <code>Error</code>, not
-catchable, and with no line number to point at.</p>
-
-<p><strong>Mutual recursion is not optimised either.</strong> So the
-tidy-looking shape (a chain of small Defs that hands back to the first)
-is exactly as fatal as the untidy one. Every recursive word here calls
-<em>itself</em>, as the very last step, carrying an accumulator (a
-running answer built as it goes) that <code>Reverse</code> puts right
-at the end.</p>
-
-<p>The one deliberate exception is the sort's divide-and-conquer, which is
-mutually recursive between two words. That is safe because its depth is
-log&#8322;(n), seventeen frames for a hundred thousand elements,
-not n. Depth, not shape, is what matters there.</p>
+<p>The sort is a merge sort over an array. Its rungs are declared over arrays
+and slice a span by index; a list indexes in O(1) too now, so the arrays are
+the declared shape rather than a speed measure. Its divide-and-conquer is
+mutually recursive between two words, and its depth is log&#8322;(n) either
+way.</p>
 
 <h3>What things cost</h3>
 <table>
@@ -575,11 +547,11 @@ sort.</p>
 </table>
 
 <h3>Distinct and sets</h3>
-<p>Records compare structurally, so these mean what they should on a record.
-<strong>Lists compare by identity</strong>: two separately built lists of the
-same items are not equal. So a sequence <em>of lists</em> is the one shape these
-words cannot speak about. Use <code>DistinctBy</code> with a Number or String
-key when that comes up.</p>
+<p>Records compare structurally, and so do lists, so these mean what they
+should on a record or on a sequence of lists. A sequence <em>of functions</em>
+is the one shape these words cannot speak about, since a function compares by
+identity; use <code>DistinctBy</code> with a Number or String key when that
+comes up.</p>
 <table>
 <tr><th>Word</th><th>What it does</th></tr>
 <tr><td><code>Distinct(xs)</code></td><td>Later repeats dropped; the first sighting stays in place.</td></tr>

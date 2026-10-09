@@ -17,7 +17,12 @@ namespace Shoddy.Compiler;
 /// value, exactly like the immutable env chain. Self-tail-recursion
 /// compiles to `continue` in a `while (true)` loop: arguments travel on
 /// the value stack, so the tail call is just a jump back to the def's
-/// own TAKE.
+/// own TAKE. A tail call to ANY OTHER def in the weave is a jump too:
+/// each def's body is a method answering which def runs next, and a
+/// trampoline runs bodies until one answers "none", so mutual recursion
+/// costs no stack either. A tail call into a separately compiled
+/// machine stays an ordinary call, since its body is not here to jump
+/// to.
 ///
 /// Two output shapes: a program (static class Woven with Run/Main) or a
 /// machine (a public static class under Shoddy.Machines with its manifest
@@ -31,11 +36,13 @@ public sealed class CodeGen
     readonly StringBuilder sb = new();
     int ind;
 
-    readonly Dictionary<string, string> defIds = new();     // internal defs
+    readonly Dictionary<string, string> defIds = new();     // internal defs: the entry methods
+    readonly Dictionary<string, string> bodyIds = new();    // internal defs: the body methods
+    readonly Dictionary<string, int> defIndex = new();      // internal def -> its trampoline id
     readonly Dictionary<string, string> typeExpr = new();   // any type -> C# expr
     readonly Dictionary<string, string> typeField = new();  // internal type -> member
     readonly Dictionary<string, string> globalIds = new();
-    readonly HashSet<string> usedIds = new() { "MT", "Run", "Main", "rt" };
+    readonly HashSet<string> usedIds = new() { "MT", "Run", "Main", "rt", "Trampoline" };
     readonly List<string> siteDecls = new();
 
     // during initQuot emission: which globals are assigned so far, so a
@@ -229,7 +236,11 @@ public sealed class CodeGen
         foreach ((string name, ExternalType et) in prog.ExternalTypes)
             typeExpr[name] = et.FieldRef;
         foreach (string name in prog.Defs.Keys)
+        {
             defIds[name] = machine ? Mangle("", name) : Mangle("D_", name);
+            bodyIds[name] = Mangle("B_", name);
+            defIndex[name] = defIndex.Count;
+        }
         if (prog.InitQuot != null)
             foreach (Node n in prog.InitQuot.Items)
                 if (n.T == NType.Take)
@@ -302,17 +313,12 @@ public sealed class CodeGen
         W("");
         if (constants.Count > 0)
         {
-            // A constant list, built the way the runtime builds one: the
-            // items array is its own identity, so `=` on two reads of the
-            // same constant is true and a constant list is indistinguishable
-            // from one a program made. No Engine is touched, which is what
-            // lets it run in a static field initializer.
-            W("static Value CList(params Value[] vs)");
-            Open();
-            W("var items = new QItem[vs.Length];");
-            W("for (int k = 0; k < vs.Length; k++) items[k] = QItem.OfValue(vs[k]);");
-            W("return Value.OfCQuot(items, items);");
-            Close();
+            // A constant list, built the way the runtime builds one: a
+            // chain of cells whose head is its identity, so a constant list
+            // is indistinguishable from one a program made. No Engine is
+            // touched, which is what lets it run in a static field
+            // initializer.
+            W("static Value CList(params Value[] vs) => Value.OfList(Cell.FromValues(vs));");
             W("");
         }
         // TYPES BEFORE CONSTANTS, AND THIS IS A CONTRACT. A constant built
@@ -362,9 +368,27 @@ public sealed class CodeGen
             W("");
         }
 
+        // Every Def is two methods. The ENTRY keeps the Def's name and
+        // signature, so manifests, hosting and the perch see what they
+        // always saw. The BODY answers which Def runs next: -1 when it
+        // has finished, or the trampoline id of the Def it called in
+        // tail position, with that call's arguments left on the value
+        // stack. The entry runs its body and then the trampoline until
+        // nothing is left, so a tail call between Defs is a return and a
+        // jump rather than a frame, and mutual recursion runs in constant
+        // stack exactly as self recursion does. In a debug weave the
+        // frame a tail call leaves is popped before the next is pushed,
+        // which is what a debugger of jumped-to code should show.
         foreach ((string name, Quot body) in prog.Defs)
         {
+            W("[System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]");
             W($"{(machine ? "public " : "")}static void {defIds[name]}(Engine rt)  // {name}");
+            Open();
+            W($"int next = {bodyIds[name]}(rt);");
+            W("if (next >= 0) Trampoline(rt, next);");
+            Close();
+            W("");
+            W($"static int {bodyIds[name]}(Engine rt)  // {name}: -1 done, else the Def to jump to");
             Open();
             if (debug)
             {
@@ -379,7 +403,7 @@ public sealed class CodeGen
             Open();
             if (debug) W("rt.Release(0);   // fresh bindings per (tail-call) iteration");
             EmitQuotBody(body, new Scope(), name);
-            W("return;");
+            W("return -1;");
             Close();
             if (debug)
             {
@@ -389,6 +413,20 @@ public sealed class CodeGen
             Close();
             W("");
         }
+
+        W("static void Trampoline(Engine rt, int id)");
+        Open();
+        W("while (id >= 0)");
+        Open();
+        W("id = id switch");
+        Open();
+        foreach ((string name, int k) in defIndex)
+            W($"{k} => {bodyIds[name]}(rt),");
+        W("_ => -1,");
+        Close(";");
+        Close();
+        Close();
+        W("");
 
         if (!machine)
         {
@@ -415,7 +453,18 @@ public sealed class CodeGen
             Close();
             Close();
             W("");
-            W("public static int Main() => Run(Console.Out, Console.In, System.Environment.GetCommandLineArgs()[1..]);");
+            // The program runs on a thread with the program stack
+            // (Engine.ProgramStackBytes), as every other launcher gives it.
+            // The process main thread's 1 MB is what made a recursion
+            // twenty thousand deep a process kill.
+            W("public static int Main()");
+            Open();
+            W("int rc = 0;");
+            W("var t = new System.Threading.Thread(() => rc = Run(Console.Out, Console.In, System.Environment.GetCommandLineArgs()[1..]), Engine.ProgramStackBytes);");
+            W("t.Start();");
+            W("t.Join();");
+            W("return rc;");
+            Close();
             W("");
         }
         foreach (string s in siteDecls) W(s);
@@ -548,7 +597,11 @@ public sealed class CodeGen
         if (GlobalVisible(name)) { W($"rt.Push({globalIds[name]});"); return; }
         if (defIds.TryGetValue(name, out string? d))
         {
-            if (name == tailDef) W("continue;  // self tail call: the loop replaces the call");
+            // tailDef is non-null exactly when this word is the last thing
+            // a Def body does (If branches included): a call there has
+            // nothing to come back to, so it is a jump.
+            if (tailDef != null && name == tailDef) W("continue;  // self tail call: the loop replaces the call");
+            else if (tailDef != null) W($"return {defIndex[name]};  // tail call to {name}: the trampoline jumps there");
             else W($"{d}(rt);");
             return;
         }
@@ -683,7 +736,7 @@ public sealed class CodeGen
 
     void CollectBinders(Pat p, List<(string, string)> binders)
     {
-        if (p.Type != null)
+        if (p.Type != null || p.List)
             foreach (Pat sub in p.Subs) CollectBinders(sub, binders);
         else
             binders.Add((p.Name!, $"v{localN++}_{Ident(p.Name!)}"));
@@ -691,6 +744,25 @@ public sealed class CodeGen
 
     void GenMatch(Pat p, string src, int t, List<(string Name, string Id)> binders, ref int bi)
     {
+        if (p.List)
+        {
+            // Empty: a list with no cells. Prepend(head, tail): a list with
+            // a value at its head — a quotation holding code matches
+            // neither — whose head and tail then match their own patterns.
+            if (p.Subs.Count == 0)
+            {
+                W($"if ({src}.T != VType.Quot || {src}.List.Length != 0) {{ m{t} = false; break; }}");
+                return;
+            }
+            W($"if ({src}.T != VType.Quot || {src}.List.Length == 0 || {src}.List.Head.Lit == null) {{ m{t} = false; break; }}");
+            string hv = $"s{t}_{tmpN++}";
+            W($"var {hv} = {src}.List.Head.Lit;");
+            GenMatch(p.Subs[0], hv, t, binders, ref bi);
+            string tv = $"s{t}_{tmpN++}";
+            W($"var {tv} = Value.OfList({src}.List.Tail);");
+            GenMatch(p.Subs[1], tv, t, binders, ref bi);
+            return;
+        }
         if (p.Type == null)
         {
             W($"{binders[bi++].Id} = {src};");

@@ -4,10 +4,10 @@ Rem Licensed under the MIT License. See the LICENSE file in the project root.
 Rem Capability: file
 Rem ==================================================================
 Rem file.shoddy — Shoddy standard library: text files, line-oriented
-Rem Built on the eight whole-file builtins, each documented one by one
-Rem immediately below: ReadFile TryReadFile WriteFile TryWriteFile
-Rem AppendFile FileExists DeleteFile TryDeleteFile — plus str.shoddy.
-Rem Normalizes \r\n on read.
+Rem Built on the nine whole-file builtins, each documented one by one
+Rem immediately below: ReadFile TryReadFile TryReadLines WriteFile
+Rem TryWriteFile AppendFile FileExists DeleteFile TryDeleteFile — plus
+Rem str.shoddy. Normalizes \r\n on read.
 Rem File words are effectful, like Print/Input: keep them at the edges.
 Rem ==================================================================
 
@@ -47,6 +47,22 @@ Rem     locale. At is 0 — a failure to open a file has no position IN
 Rem     it. It answers a Result rather than a Boolean because, unlike
 Rem     TryWriteFile, it has a payload to carry on success.
 
+Rem TryReadLines(path As String) As Result            ( path -- result )
+Rem     The file as its lines, read natively one line at a time:
+Rem     Ok(lines), a List Of String, or the same Err(why, 0) that
+Rem     TryReadFile answers. A line ends at \n, \r\n or a bare \r, so a
+Rem     file written on Windows reads back the same as one written
+Rem     anywhere else; a final newline closes the last line rather than
+Rem     opening an empty one; an empty file is Ok({ }). ReadLines below
+Rem     is the aborting form, defined over this one.
+Rem
+Rem     IT IS A BUILTIN AND NOT A DEF because the Def it replaced split
+Rem     the whole text with Split, and Split recurses once per field with
+Rem     no tail call to become a loop: past about fourteen thousand
+Rem     lines the process died of a stack overflow, a hard kill and not
+Rem     an Error. The native read has no depth to run out of, so a list
+Rem     of any length loads.
+
 Rem WriteFile(path As String, s As String)            ( path s -- )
 Rem     Write the string to path, replacing whatever was there. Aborts
 Rem     on failure.
@@ -74,15 +90,15 @@ Rem     was not there or could not be removed.
 
 Rem ---- this machine's own words --------------------------------------
 
+Rem The aborting form over the total one, so there is one set of rules
+Rem for what a line is and not two. What it stops with is TryReadLines'
+Rem own reason: CANNOT READ 'path' (NO SUCH FILE), and the rest.
 Def ReadLines(path As String) As List Of String
-    Let c = Replace(ReadFile(path), "\r", "")
-    If c = "" Then
-        { }
-    Else
-        If EndsWith(c, "\n") Then
-            Split(Left(c, Len(c) - 1), "\n")
-        Else
-            Split(c, "\n")
+    Select Case TryReadLines(path)
+        Case Ok(lines)
+            lines
+        Case Err(why, at)
+            Error(why)
 
 Def WriteLines(path As String, xs As List Of String)
     WriteFile(path, Join(xs, "\n") & "\n")

@@ -783,6 +783,51 @@ public sealed partial class Engine
                 Push(Value.OfRec(Prelude.Ok, new[] { Value.OfStr(Bytes.GetString(buf)) }));
                 return true;
             }
+            case "TRYREADLINES":                // ( path -- Result ) the file's lines, guarded
+            {
+                // The line-oriented read, native. file.shoddy's ReadLines was
+                // a Def over READFILE and str's Split, and Split recurses once
+                // per field with no tail call to become a loop, so a file past
+                // about fourteen thousand lines killed the process with a
+                // stack overflow rather than an Error. Here the lines come off
+                // a StreamReader one at a time -- the read-a-line, add-to-the-
+                // list loop -- so a file's length costs nothing but the list
+                // that holds it. Same decoding as READFILE (one byte, one
+                // character, no BOM sniffing), the same file-root guard, and
+                // the same Err phrases as TRYREADFILE. A line ends at \n, \r\n
+                // or a bare \r; a final newline closes the last line rather
+                // than opening an empty one; an empty file is Ok of an empty
+                // list. ReadLines in file.shoddy is the aborting form, defined
+                // over this one.
+                string? path = PopPathOr(line, w, out string linesAsked);
+                if (path is null)
+                {
+                    Push(Value.OfRec(Prelude.Err, new[]
+                    {
+                        Value.OfStr($"CANNOT READ '{linesAsked}' (OUTSIDE THE FILE ROOT)"),
+                        Value.OfNum(0),
+                    }));
+                    return true;
+                }
+                var lines = new List<Value>();
+                try
+                {
+                    using var reader = new StreamReader(path, Bytes, false);
+                    for (string? text = reader.ReadLine(); text is not null; text = reader.ReadLine())
+                        lines.Add(Value.OfStr(text));
+                }
+                catch (Exception e) when (e is not ShoddyError)
+                {
+                    Push(Value.OfRec(Prelude.Err, new[]
+                    {
+                        Value.OfStr($"CANNOT READ '{linesAsked}' ({ReadWhy(e, path)})"),
+                        Value.OfNum(0),
+                    }));
+                    return true;
+                }
+                Push(Value.OfRec(Prelude.Ok, new[] { NewValueList(lines, line) }));
+                return true;
+            }
             case "WRITEFILE":
             case "APPENDFILE":
             {
@@ -2224,7 +2269,7 @@ public sealed partial class Engine
         "&", "LEN", "STR", "VAL", "ISNUMERIC", "VALOR", "LEFT", "RIGHT", "MID", "CHR", "ASC",
         "CODES", "FROMCODES", "CODEAT", "INSTRFROM",
         "UPPER", "LOWER",
-        "PRINT", "READFILE", "TRYREADFILE", "WRITEFILE", "APPENDFILE",
+        "PRINT", "READFILE", "TRYREADFILE", "TRYREADLINES", "WRITEFILE", "APPENDFILE",
         "TRYWRITEFILE", "FILEEXISTS",
         "DELETEFILE", "TRYDELETEFILE",
         "BOPEN", "TRYBOPEN", "BCLOSE", "SEEK", "BPOS", "BSIZE",

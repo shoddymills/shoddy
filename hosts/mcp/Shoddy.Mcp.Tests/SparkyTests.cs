@@ -317,6 +317,81 @@ public class ServerTests : IDisposable
         Assert.True(File.Exists(Path.Combine(root, "kept.tape")), "a plain name did not land in the root");
     }
 
+    /// <summary>The save, load and tape tools name their file in the
+    /// host, not the engine, so the engine's boundary never saw the
+    /// path. They keep to the same root now, and a plain name still
+    /// lands in it.</summary>
+    [Fact]
+    public async Task TheFileToolsKeepToTheRootToo()
+    {
+        string parent = Path.GetDirectoryName(root)!;
+        await Eval(": DOZEN 12 * ;");
+
+        string outside = Path.Combine(parent, "escaped.sparky");
+        string saved = Text(await Call("save", JsonSerializer.Serialize(new { file = outside })));
+        Assert.Contains("outside the file root", saved);
+        Assert.False(File.Exists(outside), "save wrote outside the root");
+
+        string taped = Text(await Call("tape", """{"file":"../escaped.tape"}"""));
+        Assert.Contains("outside the file root", taped);
+        Assert.False(File.Exists(Path.Combine(parent, "escaped.tape")), "tape wrote outside the root");
+
+        string secret = Path.Combine(parent, "secret.txt");
+        File.WriteAllText(secret, "not a definition\n");
+        string loaded = Text(await Call("load", JsonSerializer.Serialize(new { file = secret })));
+        Assert.Contains("outside the file root", loaded);
+        Assert.DoesNotContain("not a definition", loaded);
+
+        Assert.Contains("saved", Text(await Call("save", """{"file":"kept.sparky"}""")));
+        Assert.True(File.Exists(Path.Combine(root, "kept.sparky")), "a plain name did not land in the root");
+    }
+
+    [Fact]
+    public async Task AnArgumentTheToolDoesNotUnderstandIsRefusedNotReinterpreted()
+    {
+        Assert.True(IsError(await Call("words", """{"by":"name"}""")));
+        Assert.True(IsError(await Call("canvas", """{"surface":"first"}""")));
+        Assert.True(IsError(await Call("tape", """{"from":"two"}""")));
+        Assert.False(IsError(await Call("words", """{"by":"effect"}""")));
+        Assert.False(IsError(await Call("words", """{"by":"seed"}""")));
+    }
+
+    [Fact]
+    public async Task TheTapeAnswersASliceByRowNumber()
+    {
+        await Eval("1");
+        await Eval("2");
+        await Eval("3");
+        string[] all = Text(await Call("tape", "{}")).Split('\n');
+        Assert.True(all.Length >= 3, "the tape is shorter than the three lines typed: " + all.Length);
+
+        string[] slice = Text(await Call("tape", """{"from":2,"to":2}""")).Split('\n');
+        Assert.Equal(2, slice.Length);
+        Assert.Equal(all[1], slice[0]);
+        Assert.Equal($"rows 2-2 of {all.Length}", slice[1]);
+
+        string tail = Text(await Call("tape", """{"from":2}"""));
+        Assert.EndsWith($"rows 2-{all.Length} of {all.Length}", tail);
+
+        Assert.Contains($"the tape holds {all.Length} rows", Text(await Call("tape", """{"from":999}""")));
+        Assert.True(IsError(await Call("tape", """{"from":3,"to":2}""")));
+        Assert.True(IsError(await Call("tape", """{"from":1,"file":"t.tape"}""")));
+    }
+
+    [Fact]
+    public async Task TheRootIsNamedWhereACallerCanReadIt()
+    {
+        JsonElement init = await Ask("""
+            {"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}
+            """);
+        Assert.Contains(root, init.GetProperty("result").GetProperty("instructions").GetString());
+
+        JsonElement list = await Ask("""{"jsonrpc":"2.0","id":1,"method":"tools/list"}""");
+        foreach (JsonElement t in list.GetProperty("result").GetProperty("tools").EnumerateArray())
+            if (t.GetProperty("name").GetString() is "save" or "load" or "tape")
+                Assert.Contains(root, t.GetProperty("description").GetString());
+    }
+
     [Fact]
     public async Task NetIsRefusedWhenItWasNotGranted()
     {
@@ -413,6 +488,9 @@ public class ServerTests : IDisposable
 
     async Task<string> Eval(string line) =>
         Text(await Call("eval", JsonSerializer.Serialize(new { lines = new[] { line } })));
+
+    static bool IsError(JsonElement reply) =>
+        reply.GetProperty("result").GetProperty("isError").GetBoolean();
 
     async Task<JsonElement> Call(string tool, string args) => await Ask(
         "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\""

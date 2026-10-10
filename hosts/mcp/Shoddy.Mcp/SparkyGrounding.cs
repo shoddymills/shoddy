@@ -64,14 +64,18 @@ VB.NET, VBA, QBasic, Python or F#.
 - **There are no exceptions.** `Error(msg)` aborts. Anything a caller
   should handle comes back as a value: `Option` (`Some`/`None`) and
   `Result` (`Ok`/`Err`).
-- **Records and arrays compare item by item with `=`. Lists compare by
-  identity**, so two separately built lists of the same items are not
-  equal, and nor are two records that hold them.
-- **Self-tail-recursion compiles to a loop.** Mutual recursion does not.
-- **Arrays are fixed-length with O(1) `Nth`. Lists are not cons cells.**
-  `Rest` and `Prepend` each copy the whole list, so a walk built on them
-  is quadratic. Index into arrays, and visit every item of a long list
-  with `Fold` or `Map`.
+- **Records compare structurally with `=`, and so do arrays and lists**,
+  item by item: `{ 1, 2 } = { 1, 2 }` is True, and a record that holds
+  a list compares all the way down. Only a function compares by
+  identity, so two separately built functions are never equal.
+- **Any call in tail position is a jump**, so a word that calls itself
+  last runs in constant stack, and so does mutual recursion between
+  Defs in the same program. A recursion that is not in tail position
+  costs a frame per level.
+- **Arrays are fixed-length with O(1) `Nth`. Lists are cons cells**:
+  `First`, `Rest` and `Prepend` are O(1) and share the tail, and `Nth`
+  on a list is O(1) after the first call on it. Recurse over lists as
+  freely as you fold them.
 - **Operators are infix**: `a Mod b`, never `Mod(a, b)`.
 - **A bare name in argument position is passed as a function**, not
   called: `Map(xs, Double)`.
@@ -357,13 +361,20 @@ which needs double quotes, or anything long, cannot be typed. Call the
 `"name" STO` would have put it, and the line that uses it is
 `"doc" RCL JSONPARSE`.
 
+Text already in a file under the root needs no `put`. A line reads it:
+`"data.json" READFILE "doc" STO`, or `"data.json" JSONLOAD` for JSON.
+The root is named in the server's `initialize` instructions and in the
+`save`, `load` and `tape` tool descriptions, so you can tell which
+directory a file tool must write to for this session to read it.
+
 Files live under one root the server owns. A plain name like
 `"mine.sparky"` lands in it, and so does `"saved/mine.sparky"`. A path
 that tries to leave it, such as `"../elsewhere"` or an absolute path
 somewhere else, touches nothing outside the root. A read of such a path
 is refused with `CANNOT READ ... (OUTSIDE THE FILE ROOT)`. A write, a
 delete or `FILEEXISTS` answers `False` instead, with no refusal, so check
-what a write answers. Use plain names.
+what a write answers. The `save`, `load` and `tape` tools keep to the
+same root and refuse a path outside it. Use plain names.
 """;
 
     // ---- subject cards ----

@@ -370,6 +370,24 @@ public sealed class SparkySession : IDisposable
         finally { gate.Release(); }
     }
 
+    /// <summary>`put`: text into a register, past the tokenizer. SpkBank
+    /// does the store with the same DictPut RckSto makes and tapes a
+    /// confirmation carrying the length and not the text; this keeps the
+    /// state and answers the confirmation, under the same gate a turn
+    /// takes.</summary>
+    public string Bank(string name, string text)
+    {
+        gate.Wait();
+        try
+        {
+            ShoddyValue r = host.Word("SpkBank").Call(state, ShoddyValue.Str(name), ShoddyValue.Str(text));
+            ShoddyValue next = host.Word("SpkAfter").Call(state, r);
+            lock (sync) state = next;
+            return string.Join("\n", Lines(r.Field("NextOut")));
+        }
+        finally { gate.Release(); }
+    }
+
     /// <summary>sparkyrc, with halifaxrc's exact semantics: absent is
     /// silence, present is loaded through RckLoad and reported, bad says
     /// so and the session starts anyway. No tape rows — the tape is a

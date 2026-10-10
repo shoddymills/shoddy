@@ -4,7 +4,7 @@ Rem Licensed under the MIT License. See the LICENSE file in the project root.
 Rem ==================================================================
 Rem seeddict.shoddy — reckoner seed: dict.shoddy over a LIST of PAIRs
 Rem
-Rem DPUT, DGET, DHAS and DKEYS. A "dict" at the keyboard is an ordinary
+Rem DPUT, DGET, DHAS, DKEYS and DPATH. A "dict" at the keyboard is an ordinary
 Rem LIST cell whose elements are PAIR cells — no new stack case, per
 Rem R4.16's discipline applied to association lists rather than arrays:
 Rem "rate" 0.05 PAIR 1 GATHER is a one-entry dict, and DPUT grows it.
@@ -136,10 +136,82 @@ Def DcKeys(vs As List Of Cell) As RckWork
         Case Else
             RckWorkBad("DKEYS did not answer")
 
+Rem ---- DPATH ------------------------------------------------------------
+Rem A path through nested dicts and lists in one word: a STRING step reads
+Rem a key as DGET would, a NUMBER step reads an element as NTH would, and
+Rem the value so far is what the next step reads. One line reaches a leaf
+Rem that took a line per step before, and every refusal names the step,
+Rem because a caller that cannot see the value needs to know where the
+Rem walk stopped. A parsed JSON, XML or HTML document, a CSVPAIRS row and
+Rem an HTTP header dict all have this shape, which is why the word is
+Rem seed-dict's and not json's.
+
+Def DcSeedDpath(st As RckState) As RckState
+    RckReg(st, "DPATH", 2, RckPure(Fn(vs) => DcPath(vs)), "( d path -- v )", "The value at the end of a path: a LIST of STRING keys and NUMBER indices, each step a DGET or an NTH on the value so far. Refuses naming the step that failed. An empty path answers d itself.")
+
+Def DcPath(vs As List Of Cell) As RckWork
+    Select Case RckListArg("DPATH", Nth(vs, 2))
+        Case Ok(steps)
+            DcPathWalk(Nth(vs, 1), steps, 1)
+        Case Err(w, at)
+            RckWorkBad(w)
+        Case Else
+            RckWorkBad("DPATH did not answer")
+
+Def DcPathWalk(c As Cell, steps As List Of Cell, n As Number) As RckWork
+    If IsEmpty(steps) Then
+        RckVals({ c })
+    Else
+        DcPathStep(c, First(steps), Rest(steps), n)
+
+Def DcPathStep(c As Cell, step As Cell, onward As List Of Cell, n As Number) As RckWork
+    Select Case step
+        Case CutStr(k)
+            DcPathKey(c, k, onward, n)
+        Case CutNum(i)
+            DcPathIndex(c, i, onward, n)
+        Case Else
+            RckWorkBad("DPATH: step " & Str(n) & " must be a STRING key or a NUMBER index, got " & CutKindOf(step))
+
+Def DcPathKey(c As Cell, k As String, onward As List Of Cell, n As Number) As RckWork
+    Select Case DcPairs("DPATH", c)
+        Case Ok(ps)
+            DcPathFound(ps, k, onward, n)
+        Case Else
+            RckWorkBad("DPATH: step " & Str(n) & " asks for " & Chr(34) & k & Chr(34) & " of " & CutKindOf(c) & ", not a dict")
+
+Rem The same walk DcGetAt makes, carrying the path so the next step can
+Rem start from the value found.
+Def DcPathFound(ps As List Of Cell, k As String, onward As List Of Cell, n As Number) As RckWork
+    If IsEmpty(ps) Then
+        RckWorkBad("DPATH: no entry " & Chr(34) & k & Chr(34) & " at step " & Str(n))
+    Else
+        DcPathFoundAt(ps, k, onward, n, First(ps))
+
+Def DcPathFoundAt(ps As List Of Cell, k As String, onward As List Of Cell, n As Number, p As Cell) As RckWork
+    If CutEqual(DcKeyOf(p), CutStr(k)) Then
+        DcPathWalk(DcValOf(p), onward, n + 1)
+    Else
+        DcPathFound(Rest(ps), k, onward, n)
+
+Def DcPathIndex(c As Cell, i As Number, onward As List Of Cell, n As Number) As RckWork
+    Select Case c
+        Case CutList(xs)
+            DcPathAt(xs, i, onward, n)
+        Case Else
+            RckWorkBad("DPATH: step " & Str(n) & " asks for element " & Str(i) & " of " & CutKindOf(c) & ", not a list")
+
+Def DcPathAt(xs As List Of Cell, i As Number, onward As List Of Cell, n As Number) As RckWork
+    If i < 1 Or i <> Floor(i) Or i > Length(xs) Then
+        RckWorkBad("DPATH: step " & Str(n) & " asks for element " & Str(i) & " of a list of " & Str(Length(xs)))
+    Else
+        DcPathWalk(Nth(xs, i), onward, n + 1)
+
 Rem ---- the seed -----------------------------------------------------------
 
 Def RckSeedDict(st As RckState) As RckState
     Let st1 = DcSeedDhas(RckSeeding(st, "seed-dict"))
     Let st2 = DcSeedDget(st1)
     Let st3 = DcSeedDput(st2)
-    DcSeedDkeys(st3)
+    Let st4 = DcSeedDkeys(st3)
+    DcSeedDpath(st4)

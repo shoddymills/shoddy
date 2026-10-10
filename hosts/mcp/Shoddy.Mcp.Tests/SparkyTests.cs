@@ -176,7 +176,7 @@ public class ServerTests : IDisposable
         JsonElement r = await Ask("""{"jsonrpc":"2.0","id":1,"method":"tools/list"}""");
         JsonElement[] listed = r.GetProperty("result").GetProperty("tools").EnumerateArray().ToArray();
         string[] names = listed.Select(t => t.GetProperty("name").GetString()!).ToArray();
-        foreach (string want in new[] { "eval", "define", "stack", "help", "view", "words",
+        foreach (string want in new[] { "eval", "define", "put", "stack", "help", "view", "words",
                                         "canvas", "save", "load", "tape", "machines",
                                         "subject", "reset", "abandon" })
             Assert.Contains(want, names);
@@ -323,6 +323,90 @@ public class ServerTests : IDisposable
         // This fixture withheld it, so the gated builtins answer that
         // rather than reaching a socket.
         Assert.Contains("[stack] x: False", await Eval("NETALLOWED"));
+    }
+
+    // ---- what one answer may carry ----
+
+    /// <summary>A STRING cell used to render whole, and the whole stack
+    /// is rendered after every line, so a long string left at y: came
+    /// back with every later answer. cuttle abbreviates it now; this is
+    /// the server showing the abbreviated row with the value intact.</summary>
+    [Fact]
+    public async Task ALongStringRendersBoundedOnTheStack()
+    {
+        string first = await Eval("1 2000 RANGE [ STR ] MAP \",\" JOIN");
+        string row = first.Split('\n').Last(l => l.StartsWith("[stack] x: "));
+        Assert.True(row.Length <= "[stack] x: ".Length + 76, "the row ran past the bound: " + row.Length);
+        Assert.Contains("... 8833 more", row);
+        Assert.Contains("[stack] x: 8892", await Eval("DUP LEN"));
+    }
+
+    [Fact]
+    public async Task PrintedOutputIsCappedPerTurnAndTheRestCounted()
+    {
+        string many = await Eval("1 1000 RANGE [ DUP PRINT ] MAP");
+        Assert.Contains("[printed] 200\n", many);
+        Assert.DoesNotContain("[printed] 201\n", many);
+        Assert.Contains("[printed] ... 800 more lines not shown", many);
+
+        string few = await Eval("1 199 RANGE [ DUP PRINT ] MAP");
+        Assert.Contains("[printed] 199\n", few);
+        Assert.DoesNotContain("not shown", few);
+
+        string one = await Eval("1 5000 RANGE [ STR ] MAP \",\" JOIN PRINT");
+        string line = one.Split('\n').First(l => l.StartsWith("[printed] 1,2,3"));
+        Assert.Equal("[printed] ".Length + SparkyTools.PrintedCharCap, line.Length);
+        Assert.Contains("[printed] ... 1 more line not shown", one);
+        Assert.DoesNotContain("not shown", await Eval("3 4 +"));
+    }
+
+    /// <summary>The tokenizer has no string escapes, so a JSON document
+    /// cannot be typed into a line. put is the door: the text goes in
+    /// whole, and every answer that follows stays small.</summary>
+    [Fact]
+    public async Task PutBanksTextPastTheTokenizerAndTheAnswersStaySmall()
+    {
+        var periods = new System.Text.StringBuilder();
+        for (int i = 1; i <= 400; i++)
+        {
+            if (i > 1) periods.Append(',');
+            periods.Append("{\"name\":\"Period ").Append(i).Append("\",\"temperature\":").Append(60 + i % 20).Append('}');
+        }
+        string json = "{\"properties\":{\"periods\":[" + periods + "]}}";
+        Assert.True(json.Length > 12_000, "the fixture is too small to prove anything: " + json.Length);
+
+        string banked = Text(await Call("put", JsonSerializer.Serialize(new { name = "doc", text = json })));
+        Assert.Equal("banked " + json.Length + " characters as doc", banked);
+
+        string parsed = await Eval("\"doc\" RCL JSONPARSE \"doc\" STO");
+        Assert.DoesNotContain("[refused]", parsed);
+        string walked = await Eval("\"doc\" RCL { \"properties\" \"periods\" 1 \"name\" } DPATH");
+        Assert.Contains("[stack] x: \"Period 1\"", walked);
+        foreach (string answer in new[] { banked, parsed, walked })
+            Assert.True(answer.Length < 2000, "an answer carried the document: " + answer.Length);
+
+        string tape = Text(await Call("tape", "{}"));
+        Assert.Contains("put doc: " + json.Length + " characters", tape);
+        Assert.DoesNotContain("\"periods\":[", tape);
+    }
+
+    [Fact]
+    public async Task PutWithoutANameIsAMalformedRequest()
+    {
+        JsonElement r = await Call("put", """{"text":"x"}""");
+        Assert.True(r.GetProperty("result").GetProperty("isError").GetBoolean());
+    }
+
+    [Fact]
+    public async Task ShapeDescribesAValueWithoutRenderingIt()
+    {
+        await Eval("1 25 RANGE [ DUP STR SWAP PAIR ] MAP");
+        string shape = await Eval("SHAPE");
+        Assert.Contains("[said] DICT of 25 entries", shape);
+        Assert.Contains("[said]   \"1\": NUMBER 1", shape);
+        Assert.Contains("[said]   ... 5 more", shape);
+        Assert.DoesNotContain("[said]   \"21\"", shape);
+        Assert.EndsWith("more }", shape.TrimEnd());   // the stack row is still the dict, abbreviated
     }
 
     // ---- the harness ----

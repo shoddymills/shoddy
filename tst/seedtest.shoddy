@@ -128,6 +128,16 @@ Def Near(a As Number, b As Number) As Boolean
 Def Q(s As String) As String
     Chr(34) & s & Chr(34)
 
+Rem What a line said, whichever way it ended.
+Def Says(st As RckState, line As String) As List Of String
+    Select Case RckEval(st, line)
+        Case RckNext(st2, out)
+            out
+        Case RckStop(st2, why, out)
+            out
+        Case Else
+            { }
+
 Rem The two-part abort-safety assertion: the line answers for the stated
 Rem reason with the state as it was, AND a further line evaluates
 Rem afterwards. Only the second half proves the mill lived.
@@ -323,6 +333,27 @@ Def Main()
     Assert(Refuses(g, "{ } " & Q("rate") & " DGET", "DGET found no entry for that key"), "DGET ON A KEY THAT IS NOT THERE")
     Assert(Text(Ran(d1, Q("rate") & " DGET")) = "0.05", "AND DGET FINDS IT WHEN IT IS")
     Assert(Text(Ran(d1, Q("cap") & " 100 DPUT")) = "{ ( " & Q("rate") & " 0.05 ) ( " & Q("cap") & " 100 ) }", "DPUT GROWS THE DICT, APPENDING A NEW KEY AT THE END")
+
+    Print("--- seed-dict: DPATH walks keys and indices in one word ---")
+    Let nest = Runs(s0, { "{ } " & Q("k") & " 7 DPUT " & Q("inner") & " STO",
+                          "{ } " & Q("xs") & " { 10 20 30 } DPUT " & Q("d") & " " & Q("inner") & " RCL DPUT" })
+    Assert(Text(Ran(nest, "{ " & Q("xs") & " 2 } DPATH")) = "20", "A KEY THEN AN INDEX")
+    Assert(Text(Ran(nest, "{ " & Q("d") & " " & Q("k") & " } DPATH")) = "7", "A KEY THEN A KEY")
+    Assert(Text(Ran(nest, "{ " & Q("xs") & " } DPATH")) = "{ 10 20 30 }", "ONE STEP")
+    Assert(Text(Ran(nest, "{ } DPATH")) = Text(nest), "AN EMPTY PATH ANSWERS THE VALUE ITSELF")
+    Assert(Refuses(nest, "{ " & Q("zz") & " } DPATH", "DPATH: no entry " & Q("zz") & " at step 1"), "A KEY THAT IS NOT THERE NAMES ITSELF AND ITS STEP")
+    Assert(Refuses(nest, "{ " & Q("xs") & " 4 } DPATH", "DPATH: step 2 asks for element 4 of a list of 3"), "AN INDEX PAST THE END NAMES THE LENGTH")
+    Assert(Refuses(nest, "{ " & Q("xs") & " " & Q("k") & " } DPATH", "DPATH: step 2 asks for " & Q("k") & " of LIST, not a dict"), "A KEY INTO A PLAIN LIST")
+    Assert(Refuses(nest, Q("a") & " 1 PAIR 1 GATHER DPATH", "DPATH: step 1 must be a STRING key or a NUMBER index, got PAIR"), "A STEP OF THE WRONG KIND")
+    Assert(Refuses(s0, "5 { 1 } DPATH", "DPATH: step 1 asks for element 1 of NUMBER, not a list"), "AN INDEX INTO A NUMBER")
+
+    Print("--- SHAPE describes a dict by its keys, twenty shown ---")
+    Let wide = Ran(s0, "1 25 RANGE [ DUP 0 TOFIXED SWAP PAIR ] MAP")
+    Let shape = Says(wide, "SHAPE")
+    Assert(First(shape) = "DICT of 25 entries", "A DICT BY ITS ENTRY COUNT")
+    Assert(Nth(shape, 2) = "  " & Q("1") & ": NUMBER 1", "THEN EACH KEY WITH THE KIND UNDER IT")
+    Assert(Length(shape) = 22 And Nth(shape, 22) = "  ... 5 more", "TWENTY SHOWN AND THE REST COUNTED")
+    Assert(Text(Ran(wide, "SHAPE")) = Text(wide), "AND THE STACK IS AS IT WAS")
 
     Print("--- seed-random: guarded reproducibly under SEED ---")
     Assert(Refuses(g, "5 1 RANDOMRANGE", "RANDOMRANGE needs hi at or above lo, got 5 and 1"), "RANDOMRANGE WITH HI BELOW LO")

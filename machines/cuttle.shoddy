@@ -258,8 +258,8 @@ Def CutFmtStd() As CutFmt
     CutFmt(CutModeStd(), 0)
 
 Rem THE FROZEN DISPLAY WIDTH: how many columns one cell's text may take
-Rem before an aggregate abbreviates. 76 is an 80-column line less the
-Rem "x: " label. It is a WIDTH and not an element count on purpose —
+Rem before an aggregate or a string abbreviates. 76 is an 80-column line
+Rem less the "x: " label. It is a WIDTH and not an element count on purpose —
 Rem twenty-five small numbers are worth showing whole where three rows
 Rem of four are not, and only a width can tell those apart.
 Def CutBound() As Number
@@ -375,6 +375,186 @@ Def CutShowMat(m As Matrix, f As CutFmt) As String
     Else
         head
 
+Rem A STRING renders to the same bound, and for the same reason: a row is
+Rem one terminal line, and a cell that spans several was never within it.
+Rem The marker sits inside the quotes, where a list's sits inside its
+Rem braces, and counts the characters not shown. A line break ends what
+Rem is shown and the rest counts toward the marker, so JSONPRETTY output
+Rem shows its first line here and all of itself under PRINT. The value
+Rem is untouched: LEN, MID and = see every character, as they do for a
+Rem list past its bound.
+Rem
+Rem This arm was added for a caller that is not a person at a terminal.
+Rem A model calling the reckoner over a wire is shown the whole stack
+Rem after every line, so a string left on it was resent, entire, with
+Rem every later answer until something dropped it.
+Def CutShowStr(t As String) As String
+    Let head = CutFirstLine(t)
+    If Len(head) = Len(t) And Len(t) + 2 <= CutBound() Then
+        Chr(34) & t & Chr(34)
+    Else
+        CutStrPart(t, CutStrFit(t, Min(Len(head), CutBound())))
+
+Rem Up to the first line break of either kind. A CR LF pair stops at the
+Rem CR, which is the same place.
+Def CutFirstLine(t As String) As String
+    CutUpTo(CutUpTo(t, Chr(10)), Chr(13))
+
+Def CutUpTo(t As String, mark As String) As String
+    If Instr(t, mark) = 0 Then
+        t
+    Else
+        Left(t, Instr(t, mark) - 1)
+
+Rem How many leading characters fit beside the marker. The two quotes,
+Rem the two spaces and the marker are charged against the bound, and the
+Rem marker gains a digit as k shrinks, so this walks down from the bound
+Rem rather than dividing. Nothing past the bound could have fitted, which
+Rem is why the walk starts there and not at the string's length.
+Def CutStrFit(t As String, k As Number) As Number
+    If k <= 0 Or 4 + k + Len(CutMoreOf(Len(t) - k)) <= CutBound() Then
+        Max(k, 0)
+    Else
+        CutStrFit(t, k - 1)
+
+Def CutStrPart(t As String, k As Number) As String
+    Chr(34) & Left(t, k) & "  " & CutMoreOf(Len(t) - k) & Chr(34)
+
+Rem ---- the shape of a value ----------------------------------------------
+Rem What a cell IS, without rendering it: the kind, the size, the keys of
+Rem a dict, the kinds of a list's first elements, how deep the nesting
+Rem goes. One line per fact, each inside the bound, twenty entries shown
+Rem and the rest counted. A caller that cannot see a screen plans a walk
+Rem from this and then spends its lines on NTH and DGET; a render would
+Rem show it three elements and a count.
+Rem
+Rem A DICT is a LIST whose every element is a PAIR keyed by a STRING,
+Rem the test seeddict and seedjson both apply, so a parsed JSON object,
+Rem an XML element's attributes and a CSVPAIRS row all read as one.
+
+Def CutShapeCap() As Number
+    20
+
+Def CutShape(c As Cell) As List Of String
+    Select Case c
+        Case CutStr(t)
+            CutShapeStr(t)
+        Case CutList(xs)
+            CutShapeList(xs)
+        Case CutPair(p)
+            { "PAIR", "  head: " & CutShapeLine(Fst(p)), "  tail: " & CutShapeLine(Snd(p)) }
+        Case CutProg(ts)
+            { CutShapeLine(c), "  " & CutShowProg(ts) }
+        Case Else
+            { CutShapeLine(c) }
+
+Rem One line for a cell: what CutShape says of it when it is an element.
+Def CutShapeLine(c As Cell) As String
+    Select Case c
+        Case CutNum(x)
+            "NUMBER " & Str(x)
+        Case CutStr(t)
+            "STRING of " & Str(Len(t)) & " characters"
+        Case CutBool(b)
+            "BOOLEAN " & Ifte(b, "True", "False")
+        Case CutList(xs)
+            CutShapeListLine(xs)
+        Case CutProg(ts)
+            "PROGRAM of " & Str(Length(ts)) & CutPlural(Length(ts), " token", " tokens")
+        Case CutPair(p)
+            "PAIR"
+        Case CutMoney(m)
+            "MONEY " & MoneyFmt(m)
+        Case CutMat(m)
+            "MATRIX " & CutDims(m)
+        Case Else
+            CutKindUnknown()
+
+Def CutShapeListLine(xs As List Of Cell) As String
+    If IsEmpty(xs) Then
+        "LIST, empty"
+    Else
+        If CutIsDict(xs) Then
+            "DICT of " & Str(Length(xs)) & CutPlural(Length(xs), " entry", " entries")
+        Else
+            "LIST of " & Str(Length(xs)) & CutPlural(Length(xs), " element", " elements") & ", depth " & Str(CutNest(CutList(xs)))
+
+Def CutPlural(n As Number, one As String, many As String) As String
+    Ifte(n = 1, one, many)
+
+Rem Length, line count, and the first line rendered to the bound, which
+Rem is the same text the stack row shows for it.
+Def CutShapeStr(t As String) As List Of String
+    { "STRING of " & Str(Len(t)) & " characters, " & Str(CutLineCount(t)) & CutPlural(CutLineCount(t), " line", " lines"), "  " & CutShowStr(CutFirstLine(t)) }
+
+Def CutLineCount(t As String) As Number
+    Length(Split(t, Chr(10)))
+
+Def CutIsDict(xs As List Of Cell) As Boolean
+    Not IsEmpty(xs) And All(xs, CutIsStrPair)
+
+Def CutIsStrPair(c As Cell) As Boolean
+    Select Case c
+        Case CutPair(p)
+            CutIsStr(Fst(p))
+        Case Else
+            False
+
+Def CutIsStr(c As Cell) As Boolean
+    Select Case c
+        Case CutStr(t)
+            True
+        Case Else
+            False
+
+Rem How deep the lists nest: a flat list is 1, a list of lists 2. A pair
+Rem counts the deeper of its halves and adds nothing of its own.
+Def CutNest(c As Cell) As Number
+    Select Case c
+        Case CutList(xs)
+            1 + Fold(xs, 0, Fn(d, x) => Max(d, CutNest(x)))
+        Case CutPair(p)
+            Max(CutNest(Fst(p)), CutNest(Snd(p)))
+        Case Else
+            0
+
+Def CutShapeList(xs As List Of Cell) As List Of String
+    If IsEmpty(xs) Then
+        { "LIST, empty" }
+    Else
+        Prepend(CutShapeListLine(xs), CutShapeEntries(xs))
+
+Rem The first CutShapeCap elements, keyed when the list is a dict and
+Rem numbered when it is not, then the count of the rest.
+Def CutShapeEntries(xs As List Of Cell) As List Of String
+    Let shown = Taken(xs, CutShapeCap())
+    Let keyed = CutIsDict(xs)
+    Let entries = Map(Range(1, Length(shown)), Fn(i) => CutShapeEntry(Nth(shown, i), i, keyed))
+    If Length(xs) > CutShapeCap() Then
+        Append(entries, "  " & CutMoreOf(Length(xs) - CutShapeCap()))
+    Else
+        entries
+
+Def CutShapeEntry(c As Cell, i As Number, keyed As Boolean) As String
+    If keyed Then
+        CutShapeKeyed(c)
+    Else
+        "  " & Str(i) & ": " & CutShapeLine(c)
+
+Def CutShapeKeyed(c As Cell) As String
+    Select Case c
+        Case CutPair(p)
+            "  " & CutShowStr(CutKeyText(Fst(p))) & ": " & CutShapeLine(Snd(p))
+        Case Else
+            "  " & CutShapeLine(c)
+
+Def CutKeyText(c As Cell) As String
+    Select Case c
+        Case CutStr(t)
+            t
+        Case Else
+            ""
+
 Def CutShowProg(ts As List Of String) As String
     If IsEmpty(ts) Then
         "[ ]"
@@ -386,7 +566,7 @@ Def CutShow(c As Cell, f As CutFmt) As String
         Case CutNum(x)
             CutShowNum(x, f)
         Case CutStr(t)
-            Chr(34) & t & Chr(34)
+            CutShowStr(t)
         Case CutBool(b)
             Ifte(b, "True", "False")
         Case CutList(xs)

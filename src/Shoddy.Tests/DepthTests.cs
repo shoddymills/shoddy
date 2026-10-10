@@ -115,7 +115,7 @@ public class DepthTests
     }
 
     [Fact]
-    public void ThePerchLaunchReturnsFromTwoMillionFrames()
+    public async Task ThePerchLaunchReturnsFromTwoMillionFrames()
     {
         // The debug weave carries a frame per Def call for the stack
         // view, a try/finally round each, and a line hook per statement:
@@ -160,7 +160,7 @@ public class DepthTests
             Engine.PendingSink = null;
         }
         Assert.Contains(Expected, said.ToString());
-        Assert.True(serverRun.Wait(TimeSpan.FromSeconds(30)), "the server never returned");
+        await serverRun.WaitAsync(TimeSpan.FromSeconds(30));
     }
 
     /// <summary>The least DAP client that can launch a program and read

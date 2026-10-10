@@ -219,10 +219,10 @@ Def FuzzShapes() As List Of String
       "1 [ DUP ] 0 TIMES", "1 " & Q("x") & " * ", "TRUE 3 +",
       "12 FIX", "1 0 MOD", "1 0 WRAP", "0 LN", "2 ASIN",
       "HELP", "VIEW", "HELP NOSUCHWORD", "VIEW DUP",
-      Rem The host's own four, reached the only way a client can reach
+      Rem The host's own five, reached the only way a client can reach
       Rem them: through a line. Every one must refuse and name the tool.
-      "SAVE", "LOAD", "TAPESAVE", "RESET",
-      "3 SAVE", "3 RESET DROP", "SAVE " & Q("x"), "QUIT", "EXIT",
+      "SAVE", "LOAD", "TAPESAVE", "RESET", "PUT",
+      "3 SAVE", "3 RESET DROP", "SAVE " & Q("x"), "3 PUT", "QUIT", "EXIT",
       Rem The shapes a person mistypes a pattern in.
       "RXTEST", Q("abc") & " RXTEST", Q("abc") & " " & Q("(") & " RXTEST",
       Q("abc") & " " & Q("a{99999}") & " RXTEST", "3 4 RXFIND",
@@ -302,7 +302,7 @@ Def Main()
     Assert(Not Knows(s0, "INPUTLINE"), "NO INPUTLINE")
     Assert(Not Knows(s0, "INKEY"), "NO INKEY")
 
-    Print("--- the four the host owns are listed, explained, and refuse ---")
+    Print("--- the five the host owns are listed, explained, and refuse ---")
     Each(SpkShellWordNames(), Fn(w) => Assert(Knows(s0, w), "THE DICTIONARY LISTS " & w))
     Assert(Length(RckHelp(s0, "SAVE")) = 3, "HELP SAVE ANSWERS")
     Assert(Contains(RckHelp(s0, "TAPESAVE"), "TAPESAVE  ( -- )"), "WITH ITS STACK EFFECT")
@@ -311,8 +311,22 @@ Def Main()
     Assert(Said(s0, "3 RESET DROP") = "?: RESET is the server's word, not the dictionary's: call the reset tool instead / [ empty ]",
            "INCLUDING THE ONE THAT TOUCHES NOTHING")
     Assert(Not RckTouches(Found(s0, "RESET")), "RESET TOUCHES NOTHING")
+    Assert(Said(s0, "PUT") = "?: PUT is the server's word, not the dictionary's: call the put tool instead / [ empty ]",
+           "AND PUT NAMES ITS TOOL TOO")
+    Assert(Not RckTouches(Found(s0, "PUT")), "PUT TOUCHES NOTHING: A REGISTER IS NOT THE WORLD")
     Assert(RckTouches(Found(s0, "SAVE")) And RckTouches(Found(s0, "TAPESAVE")) And RckTouches(Found(s0, "LOAD")),
            "AND THE THREE THAT NAME A FILE SAY SO")
+
+    Print("--- put banks text past the tokenizer ---")
+    Rem A JSON document cannot be typed into a line, because a string ends
+    Rem at the first closing quote. SpkBank takes it whole, into a register
+    Rem RCL reads back, and tapes the length and not the text.
+    Let docText = "{" & Q("a") & ": [1, 2, 3]}"
+    Assert(Join(SpkShown(SpkBank(s0, "doc", docText)), " / ") = "banked 16 characters as doc / [ empty ]", "PUT SAYS HOW MUCH IT BANKED")
+    Let banked = SpkAfter(s0, SpkBank(s0, "doc", docText))
+    Assert(Said(banked, Q("doc") & " RCL JSONPARSE") = "x: { ( " & Q("a") & " { 1 2 3 } ) }", "AND THE TEXT PARSES FROM THE REGISTER")
+    Assert(Contains(RckTape(banked), "> put doc: 16 characters"), "THE TAPE RECORDS THE PUT")
+    Assert(IsEmpty(Filter(RckTape(banked), Fn(r) => Instr(r, "[1, 2, 3]") > 0)), "AND NOT THE TEXT")
 
     Print("--- every word carries its metadata, the host's included ---")
     Assert(IsEmpty(Filter(RckDict(s0), Fn(e) => WordEffect(e) = "" Or WordDesc(e) = "")),

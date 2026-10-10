@@ -54,6 +54,16 @@ public sealed class SparkyTools : IDisposable
 
     public string Root => root;
 
+    /// <summary>How much of a turn's PRINT output one answer carries:
+    /// this many lines, or this many characters, whichever is reached
+    /// first. The rest is counted in one closing line and not kept. A
+    /// model that wants more writes to a file under the root and reads a
+    /// slice back, which is the answer a file tool gives for a long log.
+    /// The pen itself is drained whole, so nothing printed leaks into a
+    /// later turn; only what is copied into the answer is bounded.</summary>
+    public const int PrintedLineCap = 200;
+    public const int PrintedCharCap = 16_000;
+
     SparkySession Session(JsonElement args)
     {
         string name = Str(args, "session") ?? "main";
@@ -93,6 +103,17 @@ public sealed class SparkyTools : IDisposable
             "{\"type\":\"object\",\"properties\":{"
           + "\"definition\":{\"type\":\"string\",\"description\":\"The whole definition, e.g. ': VAT DUP 0.2 * + ;'\"},"
           + SessionArg + "},\"required\":[\"definition\"]}"),
+
+        new ToolSpec("put",
+            "Bank text in a register without typing it. A line's string ends at the first "
+          + "closing quote and has no escapes, so a JSON document, which needs double quotes, "
+          + "or anything long has no line that will carry it. This takes the text whole, "
+          + "exactly as text \"name\" STO would, and answers how many characters were "
+          + "banked. Then use it with \"name\" RCL, for example \"doc\" RCL JSONPARSE.",
+            "{\"type\":\"object\",\"properties\":{"
+          + "\"name\":{\"type\":\"string\",\"description\":\"The register, as STO names one: case-sensitive.\"},"
+          + "\"text\":{\"type\":\"string\",\"description\":\"The text, verbatim.\"},"
+          + SessionArg + "},\"required\":[\"name\",\"text\"]}"),
 
         new ToolSpec("stack",
             "The stack as it stands, rendered the way the calculator renders it.",
@@ -179,6 +200,14 @@ public sealed class SparkyTools : IDisposable
                 if (d is null) return Bad("define needs a definition");
                 return await Eval(Session(args), new[] { d }, args);
             }
+            case "put":
+            {
+                string? n = Str(args, "name");
+                string? t = Str(args, "text");
+                if (string.IsNullOrWhiteSpace(n)) return Bad("put needs a name");
+                if (t is null) return Bad("put needs text");
+                return ToolResult.Say(Session(args).Bank(n, t));
+            }
             case "stack": return ToolResult.Say(Join(Session(args).Stack()));
             case "help":
             {
@@ -254,7 +283,7 @@ public sealed class SparkyTools : IDisposable
                 sb.Append("[unfinished] the line is still open. Send the rest of it\n");
                 continue;
             }
-            foreach (string p in t.Printed) sb.Append("[printed] ").Append(p).Append('\n');
+            Printed(sb, t.Printed);
             foreach (string s in t.Said) sb.Append("[said] ").Append(s).Append('\n');
             if (t.Error != null) sb.Append("[refused] ").Append(t.Error).Append('\n');
             foreach (string s in t.Stack) sb.Append("[stack] ").Append(s).Append('\n');
@@ -270,6 +299,32 @@ public sealed class SparkyTools : IDisposable
             content.Add(Block.Image(frame.Png()));
         }
         return new ToolResult(content);
+    }
+
+    /// <summary>What was printed, to the budget. A line that would run
+    /// past the character cap is cut there and counted among the lines
+    /// not shown, so the marker is never missing when something was.</summary>
+    static void Printed(StringBuilder sb, IReadOnlyList<string> printed)
+    {
+        int lines = 0, chars = 0, left = 0;
+        foreach (string p in printed)
+        {
+            if (left > 0 || lines >= PrintedLineCap || chars >= PrintedCharCap) { left++; continue; }
+            int room = PrintedCharCap - chars;
+            if (p.Length > room)
+            {
+                sb.Append("[printed] ").Append(p, 0, room).Append('\n');
+                chars += room;
+                left++;
+                continue;
+            }
+            sb.Append("[printed] ").Append(p).Append('\n');
+            chars += p.Length;
+            lines++;
+        }
+        if (left > 0)
+            sb.Append("[printed] ... ").Append(left)
+              .Append(left == 1 ? " more line not shown" : " more lines not shown").Append('\n');
     }
 
     static ToolResult Canvas(SparkySession session, int? surface)

@@ -55,7 +55,7 @@ Rem the REPL would import a prompt model there is no prompt for.
 Rem
 Rem ---- THE WORDS THE HOST OWNS ---------------------------------------
 Rem
-Rem SAVE, LOAD, TAPESAVE and RESET are registered here for their
+Rem SAVE, LOAD, TAPESAVE, RESET and PUT are registered here for their
 Rem metadata alone, exactly as halifax registers its own: what
 Rem registration buys is that WORDS lists them and HELP SAVE answers.
 Rem A dictionary whose persistence is invisible to the two words someone
@@ -77,6 +77,8 @@ Rem dictionary and test.shoddy asserts it.
 Rem ==================================================================
 
 Include "../../machines/seq.shoddy"
+Include "../../machines/dict.shoddy"
+Include "../../machines/cuttle.shoddy"
 Include "../../machines/reckoner.shoddy"
 Include "../../machines/seeds/seedbuiltin.shoddy"
 Include "../../machines/seeds/seedmath.shoddy"
@@ -186,8 +188,11 @@ Def SpkTapeSaveWord() As String
 Def SpkResetWord() As String
     "RESET"
 
+Def SpkPutWord() As String
+    "PUT"
+
 Def SpkShellWordNames() As List Of String
-    { SpkSaveWord(), SpkLoadWord(), SpkTapeSaveWord(), SpkResetWord() }
+    { SpkSaveWord(), SpkLoadWord(), SpkTapeSaveWord(), SpkResetWord(), SpkPutWord() }
 
 Rem The three file words are RckTouch so WORDS groups them under
 Rem "touches the world" — true of them whoever ends up carrying it out.
@@ -199,7 +204,8 @@ Def SpkShellSeed(st As RckState) As RckState
     Let s2 = RckReg(s1, SpkLoadWord(), 0, RckTouch(Fn(vs) => SpkHostOnly(SpkLoadWord())), "( -- )", "Read a file of definitions back in; one bad line refuses the whole file. The server performs it: call the load tool with a file name.")
     Let s3 = RckReg(s2, SpkTapeSaveWord(), 0, RckTouch(Fn(vs) => SpkHostOnly(SpkTapeSaveWord())), "( -- )", "Write the tape to a file, exactly as it was shown. The server performs it: call the tape tool.")
     Let s4 = RckReg(s3, SpkResetWord(), 0, RckPure(Fn(vs) => SpkHostOnly(SpkResetWord())), "( -- )", "Start again: empty stack, no history, no tape, and only the words you started with. The server performs it: call the reset tool.")
-    RckSeeding(s4, RckUserName())
+    Let s5 = RckReg(s4, SpkPutWord(), 0, RckPure(Fn(vs) => SpkHostOnly(SpkPutWord())), "( -- )", "Bank text in a register without typing it, so a document with double quotes in it, or one too long for a line, can reach the stack. The server performs it: call the put tool with a name and the text, then \"name\" RCL.")
+    RckSeeding(s5, RckUserName())
 
 Rem Not "type it as the whole line", which is halifax's answer and would
 Rem be a lie here: there is no line that makes these work. The door that
@@ -277,6 +283,24 @@ Rem And a confirmation, for the same reason: "saved 1 word" belongs on
 Rem the tape between the line that caused it and the stack that followed.
 Def SpkSaid(st As RckState, line As String, said As String) As RckLine
     RckNext(RckTapedOk(st, st, line, { said }), { said })
+
+Rem ---- banking text the tokenizer cannot carry --------------------------
+Rem
+Rem A reckoner string ends at the first closing quote and has no escapes,
+Rem by design: an entry line is not a source file. So a JSON document,
+Rem which needs double quotes, and anything longer than a line is
+Rem comfortable with, has no line that will carry it. The put tool is the
+Rem door. The host hands the text here whole, it lands in a register
+Rem exactly as text "name" STO would have put it, and "name" RCL brings
+Rem it back. The store is reckoner's own DictPut on RckRegs, the same
+Rem call RckSto makes, so the host reaches into no state of its own.
+Rem
+Rem Taped as a confirmation, the way a save is, with the text's length
+Rem and never the text: a saved tape stays the size of the session.
+Def SpkBank(st As RckState, name As String, text As String) As RckLine
+    Let st2 = With(st, RckRegs = DictPut(RckRegs(st), name, CutStr(text)))
+    Let said = "banked " & Str(Len(text)) & " characters as " & name
+    RckNext(RckTapedOk(st, st2, "put " & name & ": " & Str(Len(text)) & " characters", { said }), { said })
 
 Rem ---- one line, or the start of one -----------------------------------
 

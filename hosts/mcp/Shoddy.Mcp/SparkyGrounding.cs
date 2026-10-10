@@ -239,8 +239,8 @@ Over eight hundred words, grouped by the seed each came from. This is the
 index. `words` gives the full list, and `help` gives any one word exactly.
 
     core          arithmetic, comparison, stack shuffling, registers, UNDO
-                  and REDO, TRACE, the tape, angle and display modes, and
-                  the combinators MAP FILTER FOLD TIMES IFT IFTE
+                  and REDO, TRACE, the tape, angle and display modes, SHAPE,
+                  and the combinators MAP FILTER FOLD TIMES IFT IFTE
     builtin       string slicing and character codes, number parsing,
                   arrays, whole-file read and write, the clock
     seed-math     logs to a base, hypotenuse, distance, clamp, lerp, remap
@@ -249,7 +249,7 @@ index. `words` gives the full list, and `help` gives any one word exactly.
     seed-str      case, trim, split, join, fixed-decimal text
     seed-money    exact decimal money, splitting a sum without losing a penny
     seed-matrix   building matrices, identity, transpose, multiply, dot
-    seed-dict     string-keyed dictionaries
+    seed-dict     string-keyed dictionaries, and DPATH through nested ones
     seed-file     line-oriented files, and whether one exists
     seed-clock    timestamps, monotonic ticks, elapsed time, durations
     seed-random   seeded generation, ranges, shuffling, sampling
@@ -285,7 +285,7 @@ index. `words` gives the full list, and `help` gives any one word exactly.
     seed-ephemeris the sun, moon and planets: positions, phases, rising and setting
     seed-sinq     sorting and grouping by a key, distinct items, set operations,
                   batches
-    shell         SAVE, LOAD, TAPESAVE and RESET, called as tools
+    shell         SAVE, LOAD, TAPESAVE, RESET and PUT, called as tools
 
 Ask `subject` for any of those to get a teaching card: what the machine
 is for, worked examples that run at this prompt, and its live word list.
@@ -317,8 +317,15 @@ on the stack in the first place.
 These are absent from the dictionary, not merely withheld. Ask `HELP`
 about one of their words and you are told it is not a word here.
 
-## Four things that catch a text-only caller harder than a person
+## Five things that catch a text-only caller harder than a person
 
+- **A string on the stack is rendered after every line.** The stack is
+  shown whole with each answer, so a long string left at `y:` comes back
+  with every later line until something drops it, abbreviated to one
+  row but there every time. Bank what you are not using: `"doc" STO`,
+  and `"doc" RCL` when you want it. `SHAPE` says what a value is, how
+  long, which keys, without rendering it, and `DPATH` reaches a leaf in
+  one line.
 - **`UNDO` does not un-draw.** After `TURTLEFORWARD`, `UNDO` restores
   the stack and leaves the line on the canvas.
 - **`UNDO` does not un-write, either.** A word that has already written
@@ -339,9 +346,16 @@ the `canvas` tool, which reads the buffer as it stands.
 
 ## Persistence
 
-`SAVE`, `LOAD`, `TAPESAVE` and `RESET` are the server's words, not the
-dictionary's. Call the tools of those names. Typing them in a line gets
-you a refusal saying so.
+`SAVE`, `LOAD`, `TAPESAVE`, `RESET` and `PUT` are the server's words, not
+the dictionary's. Call the tools of those names. Typing them in a line
+gets you a refusal saying so.
+
+`put` is the way in for text a line cannot carry. A string in a line
+ends at the first closing quote and has no escapes, so a JSON document,
+which needs double quotes, or anything long, cannot be typed. Call the
+`put` tool with a name and the text: it lands in a register exactly as
+`"name" STO` would have put it, and the line that uses it is
+`"doc" RCL JSONPARSE`.
 
 Files live under one root the server owns. A plain name like
 `"mine.sparky"` lands in it, and so does `"saved/mine.sparky"`. A path

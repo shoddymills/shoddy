@@ -101,7 +101,7 @@ public class PerchTests
     }
 
     [Fact]
-    public void BreakpointHitsInAMachineWovenCoreOverAttach()
+    public async Task BreakpointHitsInAMachineWovenCoreOverAttach()
     {
         // The instrumented machine weave, exactly as a debug
         // configuration builds it.
@@ -196,8 +196,7 @@ public class PerchTests
                                 m.GetProperty("command").GetString() == "setBreakpoints").Dispose();
             client.Request("continue", new { threadId = 1 });
 
-            Assert.True(call.Wait(TimeSpan.FromSeconds(20)), "the call never completed");
-            Assert.Equal(14, call.Result);
+            Assert.Equal(14, await call.WaitAsync(TimeSpan.FromSeconds(20)));
 
             client.Request("disconnect");
         }
@@ -206,6 +205,6 @@ public class PerchTests
             listener.Stop();
             Engine.PendingSink = null;
         }
-        Assert.True(serverRun.Wait(TimeSpan.FromSeconds(10)), "the server never returned");
+        await serverRun.WaitAsync(TimeSpan.FromSeconds(10));
     }
 }

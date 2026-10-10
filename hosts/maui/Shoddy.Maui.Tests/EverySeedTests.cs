@@ -296,7 +296,10 @@ public class EverySeedTests : IClassFixture<EverySeedTests.SeedHarness>
     }
 
     /// <summary>NETGET against a server this test owns: the user names
-    /// the URL (B4.6) and the reply comes back whole.</summary>
+    /// the URL (B4.6) and the reply comes back whole. HTTPBODY drops the
+    /// headers, because a string renders only its first line on the
+    /// stack and NETGET's first line is the status line; the body is
+    /// the proof the reply arrived.</summary>
     async Task NetProbe()
     {
         var listener = new HttpListener();
@@ -315,7 +318,7 @@ public class EverySeedTests : IClassFixture<EverySeedTests.SeedHarness>
         {
             IReadOnlyList<string> shown = await Run(new[]
             {
-                $"\"http://127.0.0.1:{port}/\" NETGET",
+                $"\"http://127.0.0.1:{port}/\" NETGET HTTPBODY",
             });
             AssertAnswered("seednet", shown, "shoddy-every-seed-hello", isRegex: false);
         }

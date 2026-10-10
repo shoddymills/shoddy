@@ -325,8 +325,10 @@ public sealed class SparkySession : IDisposable
         gate.Wait();
         try
         {
+            string? full = Under(path);
+            if (full is null) return Outside(path);
             IReadOnlyList<string> rows = Lines(host.Word("RckSave").Call(state));
-            Write(path, rows);
+            Write(full, rows);
             double n = host.Word("SpkUserCount").Call(state).AsNum();
             return "saved " + Counted(n, "word", "words");
         }
@@ -338,8 +340,10 @@ public sealed class SparkySession : IDisposable
         gate.Wait();
         try
         {
+            string? full = Under(path);
+            if (full is null) return Outside(path);
             IReadOnlyList<string> rows = Lines(state.Field("RckTape"));
-            Write(path, rows);
+            Write(full, rows);
             return "wrote " + Counted(rows.Count, "row", "rows");
         }
         finally { gate.Release(); }
@@ -354,7 +358,8 @@ public sealed class SparkySession : IDisposable
         gate.Wait();
         try
         {
-            string full = Resolve(path);
+            string? full = Under(path);
+            if (full is null) throw new InvalidOperationException("'" + path + "' is outside the file root");
             if (!File.Exists(full)) throw new FileNotFoundException("there is no file called " + path);
             ShoddyValue r = host.Word("RckLoad").Call(state, TextLines(File.ReadAllText(full)));
             if (!Is(r, "RckNext"))
@@ -370,6 +375,24 @@ public sealed class SparkySession : IDisposable
         finally { gate.Release(); }
     }
 
+    /// <summary>`put`: text into a register, past the tokenizer. SpkBank
+    /// does the store with the same DictPut RckSto makes and tapes a
+    /// confirmation carrying the length and not the text; this keeps the
+    /// state and answers the confirmation, under the same gate a turn
+    /// takes.</summary>
+    public string Bank(string name, string text)
+    {
+        gate.Wait();
+        try
+        {
+            ShoddyValue r = host.Word("SpkBank").Call(state, ShoddyValue.Str(name), ShoddyValue.Str(text));
+            ShoddyValue next = host.Word("SpkAfter").Call(state, r);
+            lock (sync) state = next;
+            return string.Join("\n", Lines(r.Field("NextOut")));
+        }
+        finally { gate.Release(); }
+    }
+
     /// <summary>sparkyrc, with halifaxrc's exact semantics: absent is
     /// silence, present is loaded through RckLoad and reported, bad says
     /// so and the session starts anyway. No tape rows — the tape is a
@@ -377,8 +400,8 @@ public sealed class SparkySession : IDisposable
     string? LoadRc()
     {
         string rc = host.Word("SpkRcName").Call().AsStr();
-        string full = Resolve(rc);
-        if (!File.Exists(full)) return null;
+        string? full = Under(rc);
+        if (full is null || !File.Exists(full)) return null;
         string text;
         try { text = File.ReadAllText(full); }
         catch { return rc + ": cannot read it"; }
@@ -418,15 +441,18 @@ public sealed class SparkySession : IDisposable
 
     /// <summary>One line per row and a closing newline; an empty tape
     /// writes an empty file.</summary>
-    void Write(string path, IReadOnlyList<string> rows) =>
-        File.WriteAllText(Resolve(path),
+    static void Write(string full, IReadOnlyList<string> rows) =>
+        File.WriteAllText(full,
             rows.Count == 0 ? "" : string.Join("\n", rows) + "\n");
 
     /// <summary>The paths the HOST resolves itself — sparkyrc, and the
-    /// save/load/tape tools. The paths the DICTIONARY resolves are the
-    /// runtime's business and are contained there, against the same
-    /// root, by ShoddyHostOptions.FileRoot.</summary>
-    string Resolve(string path) => Path.Combine(root, path);
+    /// save/load/tape tools — kept to the root by the same rule the
+    /// runtime applies to the dictionary's paths. Null means outside.
+    /// A plain Path.Combine stood here once, and it let an absolute
+    /// path or a `..` leave the root that every file word kept to.</summary>
+    string? Under(string path) => HostPath.Under(root, path);
+
+    static string Outside(string path) => "refused: '" + path + "' is outside the file root";
 
     /// <summary>Shut whatever the session left open. RckShutAll, never
     /// ScribblerRegistry.WaitAllClosed — the latter blocks until every

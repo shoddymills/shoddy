@@ -211,22 +211,27 @@ public sealed class HalifaxSession
 
     (IReadOnlyList<string>, ShoddyValue) SavedWords(ShoddyHost h, ShoddyValue st, string line, string path)
     {
+        string? full = Resolve(path);
+        if (full is null) return Refused(h, st, line, path + " is outside the file root");
         IReadOnlyList<string> rows = Lines(h.Word("RckSave").Call(st));
-        if (!TryWrite(path, rows)) return Refused(h, st, line, "cannot write " + path);
+        if (!TryWrite(full, rows)) return Refused(h, st, line, "cannot write " + path);
         double n = h.Word("HxUserCount").Call(st).AsNum();
         return Said(h, st, line, "saved " + Counted(h, n, "word", "words"));
     }
 
     (IReadOnlyList<string>, ShoddyValue) SavedTape(ShoddyHost h, ShoddyValue st, string line, string path)
     {
+        string? full = Resolve(path);
+        if (full is null) return Refused(h, st, line, path + " is outside the file root");
         IReadOnlyList<string> rows = Lines(st.Field("RckTape"));
-        if (!TryWrite(path, rows)) return Refused(h, st, line, "cannot write " + path);
+        if (!TryWrite(full, rows)) return Refused(h, st, line, "cannot write " + path);
         return Said(h, st, line, "wrote " + Counted(h, rows.Count, "row", "rows"));
     }
 
     (IReadOnlyList<string>, ShoddyValue) Loaded(ShoddyHost h, ShoddyValue st, string line, string path)
     {
-        string full = Resolve(path);
+        string? full = Resolve(path);
+        if (full is null) return Refused(h, st, line, path + " is outside the file root");
         if (!File.Exists(full)) return Refused(h, st, line, "there is no file called " + path);
         string text;
         try { text = File.ReadAllText(full); }
@@ -252,8 +257,8 @@ public sealed class HalifaxSession
     string? LoadRc()
     {
         const string rc = "halifaxrc";
-        string full = Resolve(rc);
-        if (!File.Exists(full)) return null;
+        string? full = Resolve(rc);
+        if (full is null || !File.Exists(full)) return null;
         string text;
         try { text = File.ReadAllText(full); }
         catch { return rc + ": cannot read it"; }
@@ -296,11 +301,11 @@ public sealed class HalifaxSession
 
     /// <summary>One line per row and a closing newline (the shell's
     /// HxFileText); an empty tape writes an empty file.</summary>
-    bool TryWrite(string path, IReadOnlyList<string> rows)
+    static bool TryWrite(string full, IReadOnlyList<string> rows)
     {
         try
         {
-            File.WriteAllText(Resolve(path),
+            File.WriteAllText(full,
                 rows.Count == 0 ? "" : string.Join("\n", rows) + "\n");
             return true;
         }
@@ -314,7 +319,9 @@ public sealed class HalifaxSession
         ShoddyValue.ListOf(text.Split('\n').Select(s => ShoddyValue.Str(s.Trim())));
 
     /// <summary>Every path the session touches resolves under the root
-    /// (B3.5): from inside the mill there is nothing outside it.</summary>
-    string Resolve(string path) =>
-        options.FileRoot is null ? path : Path.Combine(options.FileRoot, path);
+    /// (B3.5): from inside the mill there is nothing outside it. The
+    /// engine keeps its own file words to the root; these are the paths
+    /// the shell names itself, kept to it by the same rule. Null means
+    /// the path lies outside.</summary>
+    string? Resolve(string path) => HostPath.Under(options.FileRoot, path);
 }

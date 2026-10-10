@@ -60,6 +60,45 @@ public class PersistenceTests
         Assert.Contains("2 3 +", File.ReadAllText(Path.Combine(root, "tape.txt")));
     }
 
+    /// <summary>SAVE, LOAD and TAPESAVE name their file in the shell,
+    /// so the engine's boundary never saw the path. They keep to the
+    /// root by the same rule now (B3.5), and a plain name still lands
+    /// in it.</summary>
+    [Fact]
+    public async Task TheFileWordsKeepToTheRoot()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "shoddy-maui-tests", Guid.NewGuid().ToString("N"), "root");
+        Directory.CreateDirectory(root);
+        string parent = Path.GetDirectoryName(root)!;
+
+        var session = HalifaxSession.Open(new ShoddyHostOptions { FileRoot = root });
+        _ = session.Opening();
+        Assert.NotNull(await session.SubmitAsync(": DOZEN 12 * ;"));
+
+        HalifaxTurn? saved = await session.SubmitAsync("SAVE \"../escaped.halifax\"");
+        Assert.NotNull(saved);
+        Assert.Contains(saved!.Shown, l => l.Contains("outside the file root"));
+        Assert.False(File.Exists(Path.Combine(parent, "escaped.halifax")), "SAVE wrote outside the root");
+
+        string outside = Path.Combine(parent, "escaped.tape").Replace('\\', '/');
+        HalifaxTurn? taped = await session.SubmitAsync("TAPESAVE \"" + outside + "\"");
+        Assert.NotNull(taped);
+        Assert.Contains(taped!.Shown, l => l.Contains("outside the file root"));
+        Assert.False(File.Exists(Path.Combine(parent, "escaped.tape")), "TAPESAVE wrote outside the root");
+
+        string secret = Path.Combine(parent, "secret.txt");
+        File.WriteAllText(secret, "not a definition\n");
+        HalifaxTurn? loaded = await session.SubmitAsync("LOAD \"" + secret.Replace('\\', '/') + "\"");
+        Assert.NotNull(loaded);
+        Assert.Contains(loaded!.Shown, l => l.Contains("outside the file root"));
+        Assert.DoesNotContain(loaded.Shown, l => l.Contains("not a definition"));
+
+        HalifaxTurn? kept = await session.SubmitAsync("SAVE \"kept.halifax\"");
+        Assert.NotNull(kept);
+        Assert.Contains(kept!.Shown, l => l.Contains("saved"));
+        Assert.True(File.Exists(Path.Combine(root, "kept.halifax")), "a plain name did not land in the root");
+    }
+
     [Fact]
     public async Task LoadRefusesAMissingFileInLowerCaseProse()
     {

@@ -33,7 +33,11 @@ in their own shape; `FileExists` answers `False`, so nothing outside can
 be probed for.
 
 That is `Shoddy.Runtime.FileRoot`'s doing, not this host's, so every host
-gets it. What it is **not** is a defence against a hostile process
+gets it. The paths this host names itself, `sparkyrc` and the files the
+`save`, `load` and `tape` tools take, never reach the engine, so they are
+resolved by the same rule through `Shoddy.Hosting.HostPath` and refused
+outside the root with `... is outside the file root`. What the boundary
+is **not** is a defence against a hostile process
 sharing the root: a component swapped for a link between the check and
 the open that follows it needs the operating system to prevent, not a
 path comparison. Sparky is a local server whose trust boundary is the

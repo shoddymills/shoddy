@@ -136,7 +136,9 @@ public sealed class SparkyServer
               + "yourself, and show the working. Read sparky://grounding/reckoner before your "
               + "first line. Two of its rules differ from other stack languages: a user word "
               + "takes exactly one cell, and a word cannot call itself. Ask `help` rather than "
-              + "assuming a word exists. Every word carries its own stack effect and description.");
+              + "assuming a word exists. Every word carries its own stack effect and description. "
+              + "Files live under " + tools.Root + ": the save, load and tape tools and every "
+              + "file word read and write there, and a path outside it is refused.");
             w.WriteEndObject();
         };
     }

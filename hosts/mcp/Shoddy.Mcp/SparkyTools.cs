@@ -54,6 +54,16 @@ public sealed class SparkyTools : IDisposable
 
     public string Root => root;
 
+    /// <summary>How much of a turn's PRINT output one answer carries:
+    /// this many lines, or this many characters, whichever is reached
+    /// first. The rest is counted in one closing line and not kept. A
+    /// model that wants more writes to a file under the root and reads a
+    /// slice back, which is the answer a file tool gives for a long log.
+    /// The pen itself is drained whole, so nothing printed leaks into a
+    /// later turn; only what is copied into the answer is bounded.</summary>
+    public const int PrintedLineCap = 200;
+    public const int PrintedCharCap = 16_000;
+
     SparkySession Session(JsonElement args)
     {
         string name = Str(args, "session") ?? "main";
@@ -94,6 +104,19 @@ public sealed class SparkyTools : IDisposable
           + "\"definition\":{\"type\":\"string\",\"description\":\"The whole definition, e.g. ': VAT DUP 0.2 * + ;'\"},"
           + SessionArg + "},\"required\":[\"definition\"]}"),
 
+        new ToolSpec("put",
+            "Bank text in a register without typing it. A line's string ends at the first "
+          + "closing quote and has no escapes, so a JSON document, which needs double quotes, "
+          + "or anything long has no line that will carry it. This takes the text whole, "
+          + "exactly as text \"name\" STO would, and answers how many characters were "
+          + "banked. Then use it with \"name\" RCL, for example \"doc\" RCL JSONPARSE. Text "
+          + "already in a file under the root needs no put: a line reads it, as in "
+          + "\"data.json\" READFILE \"doc\" STO.",
+            "{\"type\":\"object\",\"properties\":{"
+          + "\"name\":{\"type\":\"string\",\"description\":\"The register, as STO names one: case-sensitive.\"},"
+          + "\"text\":{\"type\":\"string\",\"description\":\"The text, verbatim.\"},"
+          + SessionArg + "},\"required\":[\"name\",\"text\"]}"),
+
         new ToolSpec("stack",
             "The stack as it stands, rendered the way the calculator renders it.",
             "{\"type\":\"object\",\"properties\":{" + SessionArg + "}}"),
@@ -125,20 +148,27 @@ public sealed class SparkyTools : IDisposable
           + SessionArg + "}}"),
 
         new ToolSpec("save",
-            "Write the words defined in this session to a file under the server's root.",
+            "Write the words defined in this session to a file under the server's root, "
+          + root + ". A path outside the root is refused.",
             "{\"type\":\"object\",\"properties\":{"
           + "\"file\":{\"type\":\"string\"}," + SessionArg + "},\"required\":[\"file\"]}"),
 
         new ToolSpec("load",
-            "Read a file of definitions back in. One bad line refuses the whole file.",
+            "Read a file of definitions back in, from under the server's root, " + root
+          + ". One bad line refuses the whole file.",
             "{\"type\":\"object\",\"properties\":{"
           + "\"file\":{\"type\":\"string\"}," + SessionArg + "},\"required\":[\"file\"]}"),
 
         new ToolSpec("tape",
-            "The session's tape: every line entered and what it answered. With a file, writes "
-          + "it under the server's root instead.",
+            "The session's tape: every line entered and what it answered, one row each, "
+          + "counted from 1. With from and to, only those rows, and a closing line saying how "
+          + "many rows the tape holds. With a file, writes the whole tape to a file under the "
+          + "server's root, " + root + ", instead.",
             "{\"type\":\"object\",\"properties\":{"
-          + "\"file\":{\"type\":\"string\"}," + SessionArg + "}}"),
+          + "\"file\":{\"type\":\"string\"},"
+          + "\"from\":{\"type\":\"integer\",\"description\":\"First row to answer, counting from 1.\"},"
+          + "\"to\":{\"type\":\"integer\",\"description\":\"Last row to answer. Omit for the end.\"},"
+          + SessionArg + "}}"),
 
         new ToolSpec("machines",
             "Which subjects this server can teach: the seed groups in the dictionary and the "
@@ -179,6 +209,14 @@ public sealed class SparkyTools : IDisposable
                 if (d is null) return Bad("define needs a definition");
                 return await Eval(Session(args), new[] { d }, args);
             }
+            case "put":
+            {
+                string? n = Str(args, "name");
+                string? t = Str(args, "text");
+                if (string.IsNullOrWhiteSpace(n)) return Bad("put needs a name");
+                if (t is null) return Bad("put needs text");
+                return ToolResult.Say(Session(args).Bank(n, t));
+            }
             case "stack": return ToolResult.Say(Join(Session(args).Stack()));
             case "help":
             {
@@ -192,12 +230,19 @@ public sealed class SparkyTools : IDisposable
             }
             case "words":
             {
+                string? by = Str(args, "by");
+                if (Has(args, "by") && !Same(by, "seed") && !Same(by, "effect"))
+                    return Bad("words: by is 'seed' or 'effect'");
                 SparkySession s = Session(args);
-                return ToolResult.Say(Join(
-                    string.Equals(Str(args, "by"), "effect", StringComparison.OrdinalIgnoreCase)
-                        ? s.WordsByEffect() : s.Words()));
+                return ToolResult.Say(Join(Same(by, "effect") ? s.WordsByEffect() : s.Words()));
             }
-            case "canvas": return Canvas(Session(args), Int(args, "surface"));
+            case "canvas":
+            {
+                int? surface = Int(args, "surface");
+                if (Has(args, "surface") && surface is null)
+                    return Bad("canvas: surface is a whole number, counting surfaces from 1");
+                return Canvas(Session(args), surface);
+            }
             case "save":
             {
                 string? f = Str(args, "file");
@@ -218,7 +263,14 @@ public sealed class SparkyTools : IDisposable
             {
                 SparkySession s = Session(args);
                 string? f = Str(args, "file");
-                return ToolResult.Say(f is null ? Join(s.Tape()) : s.SaveTape(f));
+                bool sliced = Has(args, "from") || Has(args, "to");
+                if (f != null && sliced) return Bad("tape takes from and to, or a file, not both");
+                if (f != null) return ToolResult.Say(s.SaveTape(f));
+                if (!sliced) return ToolResult.Say(Join(s.Tape()));
+                int? from = Int(args, "from"), to = Int(args, "to");
+                if ((Has(args, "from") && from is null) || (Has(args, "to") && to is null))
+                    return Bad("tape: from and to are whole numbers, counting rows from 1");
+                return TapeSlice(s.Tape(), from ?? 1, to);
             }
             case "machines": return ToolResult.Say(Machines(Session(args)));
             case "subject":
@@ -254,7 +306,7 @@ public sealed class SparkyTools : IDisposable
                 sb.Append("[unfinished] the line is still open. Send the rest of it\n");
                 continue;
             }
-            foreach (string p in t.Printed) sb.Append("[printed] ").Append(p).Append('\n');
+            Printed(sb, t.Printed);
             foreach (string s in t.Said) sb.Append("[said] ").Append(s).Append('\n');
             if (t.Error != null) sb.Append("[refused] ").Append(t.Error).Append('\n');
             foreach (string s in t.Stack) sb.Append("[stack] ").Append(s).Append('\n');
@@ -270,6 +322,51 @@ public sealed class SparkyTools : IDisposable
             content.Add(Block.Image(frame.Png()));
         }
         return new ToolResult(content);
+    }
+
+    /// <summary>What was printed, to the budget. A line that would run
+    /// past the character cap is cut there and counted among the lines
+    /// not shown, so the marker is never missing when something was.</summary>
+    static void Printed(StringBuilder sb, IReadOnlyList<string> printed)
+    {
+        int lines = 0, chars = 0, left = 0;
+        foreach (string p in printed)
+        {
+            if (left > 0 || lines >= PrintedLineCap || chars >= PrintedCharCap) { left++; continue; }
+            int room = PrintedCharCap - chars;
+            if (p.Length > room)
+            {
+                sb.Append("[printed] ").Append(p, 0, room).Append('\n');
+                chars += room;
+                left++;
+                continue;
+            }
+            sb.Append("[printed] ").Append(p).Append('\n');
+            chars += p.Length;
+            lines++;
+        }
+        if (left > 0)
+            sb.Append("[printed] ... ").Append(left)
+              .Append(left == 1 ? " more line not shown" : " more lines not shown").Append('\n');
+    }
+
+    /// <summary>Rows from..to of the tape, counted from 1 and inclusive,
+    /// then one line saying which rows these are of how many. A range
+    /// past the end answers the count alone, so a caller that guessed
+    /// wrong is told how long the tape is rather than shown nothing.
+    /// The whole tape has no cap, because a caller can now ask for a
+    /// slice instead.</summary>
+    static ToolResult TapeSlice(IReadOnlyList<string> rows, int from, int? to)
+    {
+        if (from < 1) return Bad("tape: from counts rows from 1");
+        if (to is int t && t < from) return Bad("tape: to is before from");
+        int end = Math.Min(to ?? rows.Count, rows.Count);
+        var sb = new StringBuilder();
+        for (int i = from; i <= end; i++) sb.Append(rows[i - 1]).Append('\n');
+        sb.Append(end < from
+            ? $"the tape holds {rows.Count} rows; there is no row {from}"
+            : $"rows {from}-{end} of {rows.Count}");
+        return ToolResult.Say(sb.ToString());
     }
 
     static ToolResult Canvas(SparkySession session, int? surface)
@@ -368,6 +465,12 @@ public sealed class SparkyTools : IDisposable
         && args.TryGetProperty(name, out JsonElement v)
         && v.ValueKind == JsonValueKind.String
             ? v.GetString() : null;
+
+    static bool Has(JsonElement args, string name) =>
+        args.ValueKind == JsonValueKind.Object && args.TryGetProperty(name, out _);
+
+    static bool Same(string? a, string b) =>
+        string.Equals(a, b, StringComparison.OrdinalIgnoreCase);
 
     static int? Int(JsonElement args, string name) =>
         args.ValueKind == JsonValueKind.Object

@@ -176,7 +176,7 @@ public class ServerTests : IDisposable
         JsonElement r = await Ask("""{"jsonrpc":"2.0","id":1,"method":"tools/list"}""");
         JsonElement[] listed = r.GetProperty("result").GetProperty("tools").EnumerateArray().ToArray();
         string[] names = listed.Select(t => t.GetProperty("name").GetString()!).ToArray();
-        foreach (string want in new[] { "eval", "define", "stack", "help", "view", "words",
+        foreach (string want in new[] { "eval", "define", "put", "stack", "help", "view", "words",
                                         "canvas", "save", "load", "tape", "machines",
                                         "subject", "reset", "abandon" })
             Assert.Contains(want, names);
@@ -317,6 +317,81 @@ public class ServerTests : IDisposable
         Assert.True(File.Exists(Path.Combine(root, "kept.tape")), "a plain name did not land in the root");
     }
 
+    /// <summary>The save, load and tape tools name their file in the
+    /// host, not the engine, so the engine's boundary never saw the
+    /// path. They keep to the same root now, and a plain name still
+    /// lands in it.</summary>
+    [Fact]
+    public async Task TheFileToolsKeepToTheRootToo()
+    {
+        string parent = Path.GetDirectoryName(root)!;
+        await Eval(": DOZEN 12 * ;");
+
+        string outside = Path.Combine(parent, "escaped.sparky");
+        string saved = Text(await Call("save", JsonSerializer.Serialize(new { file = outside })));
+        Assert.Contains("outside the file root", saved);
+        Assert.False(File.Exists(outside), "save wrote outside the root");
+
+        string taped = Text(await Call("tape", """{"file":"../escaped.tape"}"""));
+        Assert.Contains("outside the file root", taped);
+        Assert.False(File.Exists(Path.Combine(parent, "escaped.tape")), "tape wrote outside the root");
+
+        string secret = Path.Combine(parent, "secret.txt");
+        File.WriteAllText(secret, "not a definition\n");
+        string loaded = Text(await Call("load", JsonSerializer.Serialize(new { file = secret })));
+        Assert.Contains("outside the file root", loaded);
+        Assert.DoesNotContain("not a definition", loaded);
+
+        Assert.Contains("saved", Text(await Call("save", """{"file":"kept.sparky"}""")));
+        Assert.True(File.Exists(Path.Combine(root, "kept.sparky")), "a plain name did not land in the root");
+    }
+
+    [Fact]
+    public async Task AnArgumentTheToolDoesNotUnderstandIsRefusedNotReinterpreted()
+    {
+        Assert.True(IsError(await Call("words", """{"by":"name"}""")));
+        Assert.True(IsError(await Call("canvas", """{"surface":"first"}""")));
+        Assert.True(IsError(await Call("tape", """{"from":"two"}""")));
+        Assert.False(IsError(await Call("words", """{"by":"effect"}""")));
+        Assert.False(IsError(await Call("words", """{"by":"seed"}""")));
+    }
+
+    [Fact]
+    public async Task TheTapeAnswersASliceByRowNumber()
+    {
+        await Eval("1");
+        await Eval("2");
+        await Eval("3");
+        string[] all = Text(await Call("tape", "{}")).Split('\n');
+        Assert.True(all.Length >= 3, "the tape is shorter than the three lines typed: " + all.Length);
+
+        string[] slice = Text(await Call("tape", """{"from":2,"to":2}""")).Split('\n');
+        Assert.Equal(2, slice.Length);
+        Assert.Equal(all[1], slice[0]);
+        Assert.Equal($"rows 2-2 of {all.Length}", slice[1]);
+
+        string tail = Text(await Call("tape", """{"from":2}"""));
+        Assert.EndsWith($"rows 2-{all.Length} of {all.Length}", tail);
+
+        Assert.Contains($"the tape holds {all.Length} rows", Text(await Call("tape", """{"from":999}""")));
+        Assert.True(IsError(await Call("tape", """{"from":3,"to":2}""")));
+        Assert.True(IsError(await Call("tape", """{"from":1,"file":"t.tape"}""")));
+    }
+
+    [Fact]
+    public async Task TheRootIsNamedWhereACallerCanReadIt()
+    {
+        JsonElement init = await Ask("""
+            {"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}
+            """);
+        Assert.Contains(root, init.GetProperty("result").GetProperty("instructions").GetString());
+
+        JsonElement list = await Ask("""{"jsonrpc":"2.0","id":1,"method":"tools/list"}""");
+        foreach (JsonElement t in list.GetProperty("result").GetProperty("tools").EnumerateArray())
+            if (t.GetProperty("name").GetString() is "save" or "load" or "tape")
+                Assert.Contains(root, t.GetProperty("description").GetString());
+    }
+
     [Fact]
     public async Task NetIsRefusedWhenItWasNotGranted()
     {
@@ -325,10 +400,97 @@ public class ServerTests : IDisposable
         Assert.Contains("[stack] x: False", await Eval("NETALLOWED"));
     }
 
+    // ---- what one answer may carry ----
+
+    /// <summary>A STRING cell used to render whole, and the whole stack
+    /// is rendered after every line, so a long string left at y: came
+    /// back with every later answer. cuttle abbreviates it now; this is
+    /// the server showing the abbreviated row with the value intact.</summary>
+    [Fact]
+    public async Task ALongStringRendersBoundedOnTheStack()
+    {
+        string first = await Eval("1 2000 RANGE [ STR ] MAP \",\" JOIN");
+        string row = first.Split('\n').Last(l => l.StartsWith("[stack] x: "));
+        Assert.True(row.Length <= "[stack] x: ".Length + 76, "the row ran past the bound: " + row.Length);
+        Assert.Contains("... 8833 more", row);
+        Assert.Contains("[stack] x: 8892", await Eval("DUP LEN"));
+    }
+
+    [Fact]
+    public async Task PrintedOutputIsCappedPerTurnAndTheRestCounted()
+    {
+        string many = await Eval("1 1000 RANGE [ DUP PRINT ] MAP");
+        Assert.Contains("[printed] 200\n", many);
+        Assert.DoesNotContain("[printed] 201\n", many);
+        Assert.Contains("[printed] ... 800 more lines not shown", many);
+
+        string few = await Eval("1 199 RANGE [ DUP PRINT ] MAP");
+        Assert.Contains("[printed] 199\n", few);
+        Assert.DoesNotContain("not shown", few);
+
+        string one = await Eval("1 5000 RANGE [ STR ] MAP \",\" JOIN PRINT");
+        string line = one.Split('\n').First(l => l.StartsWith("[printed] 1,2,3"));
+        Assert.Equal("[printed] ".Length + SparkyTools.PrintedCharCap, line.Length);
+        Assert.Contains("[printed] ... 1 more line not shown", one);
+        Assert.DoesNotContain("not shown", await Eval("3 4 +"));
+    }
+
+    /// <summary>The tokenizer has no string escapes, so a JSON document
+    /// cannot be typed into a line. put is the door: the text goes in
+    /// whole, and every answer that follows stays small.</summary>
+    [Fact]
+    public async Task PutBanksTextPastTheTokenizerAndTheAnswersStaySmall()
+    {
+        var periods = new System.Text.StringBuilder();
+        for (int i = 1; i <= 400; i++)
+        {
+            if (i > 1) periods.Append(',');
+            periods.Append("{\"name\":\"Period ").Append(i).Append("\",\"temperature\":").Append(60 + i % 20).Append('}');
+        }
+        string json = "{\"properties\":{\"periods\":[" + periods + "]}}";
+        Assert.True(json.Length > 12_000, "the fixture is too small to prove anything: " + json.Length);
+
+        string banked = Text(await Call("put", JsonSerializer.Serialize(new { name = "doc", text = json })));
+        Assert.Equal("banked " + json.Length + " characters as doc", banked);
+
+        string parsed = await Eval("\"doc\" RCL JSONPARSE \"doc\" STO");
+        Assert.DoesNotContain("[refused]", parsed);
+        string walked = await Eval("\"doc\" RCL { \"properties\" \"periods\" 1 \"name\" } DPATH");
+        Assert.Contains("[stack] x: \"Period 1\"", walked);
+        foreach (string answer in new[] { banked, parsed, walked })
+            Assert.True(answer.Length < 2000, "an answer carried the document: " + answer.Length);
+
+        string tape = Text(await Call("tape", "{}"));
+        Assert.Contains("put doc: " + json.Length + " characters", tape);
+        Assert.DoesNotContain("\"periods\":[", tape);
+    }
+
+    [Fact]
+    public async Task PutWithoutANameIsAMalformedRequest()
+    {
+        JsonElement r = await Call("put", """{"text":"x"}""");
+        Assert.True(r.GetProperty("result").GetProperty("isError").GetBoolean());
+    }
+
+    [Fact]
+    public async Task ShapeDescribesAValueWithoutRenderingIt()
+    {
+        await Eval("1 25 RANGE [ DUP STR SWAP PAIR ] MAP");
+        string shape = await Eval("SHAPE");
+        Assert.Contains("[said] DICT of 25 entries", shape);
+        Assert.Contains("[said]   \"1\": NUMBER 1", shape);
+        Assert.Contains("[said]   ... 5 more", shape);
+        Assert.DoesNotContain("[said]   \"21\"", shape);
+        Assert.EndsWith("more }", shape.TrimEnd());   // the stack row is still the dict, abbreviated
+    }
+
     // ---- the harness ----
 
     async Task<string> Eval(string line) =>
         Text(await Call("eval", JsonSerializer.Serialize(new { lines = new[] { line } })));
+
+    static bool IsError(JsonElement reply) =>
+        reply.GetProperty("result").GetProperty("isError").GetBoolean();
 
     async Task<JsonElement> Call(string tool, string args) => await Ask(
         "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\""

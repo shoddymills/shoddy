@@ -673,12 +673,10 @@ public class ConstantTests
     [Fact]
     public void AMachineConstantIsVisibleInTheDebuggersGlobals()
     {
-        // The perch always splices machine SOURCES — no machine DLLs, so
-        // every line is steppable — which means a machine's constant is
-        // bound by the program's own init phase and appears in Globals
-        // through the rt.BindGlobal already emitted there. That is why no
-        // registration hook is emitted for a machine weave: debug and
-        // machineClass never co-occur.
+        // A spliced file's constant (held.shoddy is a program sibling, not
+        // a machine-library file, so it is spliced) is bound by the
+        // program's own init phase and appears in Globals through the
+        // rt.BindGlobal already emitted there.
         string dir = Path.Combine(Path.GetTempPath(), "shoddy-const-dbg", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(dir);
         File.WriteAllText(Path.Combine(dir, "held.shoddy"), J(
@@ -698,7 +696,7 @@ public class ConstantTests
         try
         {
             var entry = Weaver.LoadDebug(Parser.Parse(Lexer.ReadProgram(p)));
-            entry(TextWriter.Null, TextReader.Null);
+            entry(TextWriter.Null, TextReader.Null, Array.Empty<string>());
         }
         finally { Engine.PendingSink = null; }
 

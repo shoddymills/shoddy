@@ -118,7 +118,7 @@ public class MachineSurfaceTests
     /// machine is resolved from a DLL or spliced from source. It did not:
     /// spliced, the qualifier reached the dependency's dependencies, so a
     /// program could compile under the runner and fail under the debugger,
-    /// which always splices.</summary>
+    /// which then spliced every machine.</summary>
     [Theory]
     [InlineData(true)]      // dependency compiled — resolved as a DLL
     [InlineData(false)]     // dependency not compiled — spliced from source

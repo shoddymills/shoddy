@@ -72,7 +72,7 @@ public class DebugTests
         Engine.PendingSink = rec;
         try
         {
-            Assert.Equal(0, entry(output, TextReader.Null));
+            Assert.Equal(0, entry(output, TextReader.Null, Array.Empty<string>()));
         }
         finally
         {
@@ -115,7 +115,7 @@ public class DebugTests
         Environment.CurrentDirectory = Root;
         try
         {
-            Assert.Equal(0, entry(output, input));
+            Assert.Equal(0, entry(output, input, Array.Empty<string>()));
         }
         finally
         {

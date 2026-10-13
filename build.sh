@@ -305,6 +305,10 @@ case "${1:-help}" in
             echo "==> scripts/$gate.js"
             node "scripts/$gate.js"
         done
+        # The VS Code extension's own logic (the debug launch), tested
+        # with no editor running.
+        echo "==> vscode-shoddy/test"
+        node --test vscode-shoddy/test/launch.test.js
         ;;
     run)
         # Switches before the file are the mill's own and pass through

@@ -18,7 +18,8 @@ var opt = new MillVerbs.Options();
 args = MillVerbs.StripFlags(args, opt);
 // --no-window is honoured vacuously: this build shows nothing anyway.
 
-if (args.Length == 1 && args[0] == "dap") return Refuse("dap");
+// Every form of dap, `--listen PORT` included, needs the full mill.
+if (args.Length >= 1 && args[0] == "dap") return Refuse("dap");
 
 MillVerbs.Command? cmd = MillVerbs.Parse(args);
 if (cmd is null) return MillVerbs.Usage();

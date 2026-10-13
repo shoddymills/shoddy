@@ -24,7 +24,11 @@ public static class MachineResolve
     /// A machine library file is always resolved: built if it has no DLL,
     /// rebuilt if the DLL is behind its source. Anything else — a
     /// program's own sibling files — splices, which is what lets a mill
-    /// spread itself across a dozen files.</summary>
+    /// spread itself across a dozen files.
+    ///
+    /// A debug set (the debugger's) builds and checks the instrumented
+    /// weave instead, so every machine a debugged program reaches can be
+    /// stepped into.</summary>
     public static bool Resolve(MachineSet machines, string sbPath, string? qual)
     {
         // Only a file in a machine library is a machine. A program's own
@@ -34,7 +38,8 @@ public static class MachineResolve
         // shell and tests quietly rescoped by the build's leftovers.
         if (!Lexer.IsMachineLibrary(sbPath)) return false;
 
-        string dll = MachineSet.DllPathFor(sbPath);
+        string dll = machines.PathFor(sbPath);
+        string kind = machines.Debug ? "instrumented machine" : "machine";
 
         if (!File.Exists(dll))
         {
@@ -43,15 +48,15 @@ public static class MachineResolve
             // whether a program is legal would depend on what happened to
             // be built. Build it instead; the mill already knows how.
             Console.Error.WriteLine(
-                $"mill: machine {Path.GetFileName(sbPath)} is not built. Building it now");
-            Build(sbPath);
+                $"mill: {kind} {Path.GetFileName(sbPath)} is not built. Building it now");
+            Build(sbPath, machines.Debug);
         }
-        else if (IsStale(sbPath, dll))
+        else if (IsStale(sbPath, dll, machines.Debug))
         {
             // The stale-DLL trap cost two debugging rounds in one week.
             Console.Error.WriteLine(
-                $"mill: machine {Path.GetFileName(sbPath)} is newer than its DLL. Rebuilding it now");
-            Build(sbPath);
+                $"mill: {kind} {Path.GetFileName(sbPath)} is newer than its DLL. Rebuilding it now");
+            Build(sbPath, machines.Debug);
         }
 
         return machines.TryResolve(sbPath, qual);
@@ -59,18 +64,18 @@ public static class MachineResolve
 
     /// <summary>Weave one machine to its DLL. Build failures fall through
     /// to the normal error path — the message names the machine.</summary>
-    static void Build(string sbPath)
+    static void Build(string sbPath, bool debug)
     {
-        var machines = new MachineSet();
+        var machines = new MachineSet(debug);
         List<Line> lines = Lexer.ReadProgram(sbPath, (p, q) => Resolve(machines, p, q));
         var prog = new ShoddyProgram();
         machines.SeedInto(prog);
-        Weaver.WeaveMachine(Parser.Parse(lines, prog), sbPath, machines.Machines);
+        Weaver.WeaveMachine(Parser.Parse(lines, prog), sbPath, machines.Machines, debug);
     }
 
     /// <summary>A DLL older than its source, or than any DLL it was built
     /// against: its calls bind to a surface that has since moved.</summary>
-    static bool IsStale(string sbPath, string dll)
+    static bool IsStale(string sbPath, string dll, bool debug)
     {
         DateTime built = File.GetLastWriteTimeUtc(dll);
         if (File.GetLastWriteTimeUtc(sbPath) > built) return true;
@@ -81,7 +86,7 @@ public static class MachineResolve
                 System.Text.RegularExpressions.Regex.Match(
                     line, "^Include \"([A-Za-z0-9_.-]+\\.shoddy)\"");
             if (!m.Success) continue;
-            string depDll = DependencyDllFor(dir, m.Groups[1].Value);
+            string depDll = DependencyDllFor(dir, m.Groups[1].Value, debug);
             if (File.Exists(depDll) && File.GetLastWriteTimeUtc(depDll) > built) return true;
         }
         return false;
@@ -91,10 +96,11 @@ public static class MachineResolve
     /// includer first (the common case) and one directory up otherwise — a
     /// reckoner seed in machines/seeds/ including a machine that lives one
     /// level up, in machines/ itself.</summary>
-    static string DependencyDllFor(string includerDir, string includedName)
+    static string DependencyDllFor(string includerDir, string includedName, bool debug)
     {
-        string sibling = MachineSet.DllPathFor(Path.Combine(includerDir, includedName));
+        Func<string, string> dllFor = debug ? MachineSet.DebugDllPathFor : MachineSet.DllPathFor;
+        string sibling = dllFor(Path.Combine(includerDir, includedName));
         if (File.Exists(sibling)) return sibling;
-        return MachineSet.DllPathFor(Path.Combine(includerDir, "..", includedName));
+        return dllFor(Path.Combine(includerDir, "..", includedName));
     }
 }

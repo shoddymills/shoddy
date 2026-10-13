@@ -28,20 +28,36 @@ public static class Weaver
         new CodeGen(prog, machineClass, debug, deps, ownFile).Generate();
 
     /// <summary>Compile a debug-instrumented (perch) build to memory and
-    /// return its Run entry point. Install the sink on
-    /// <see cref="Engine.PendingSink"/> before invoking. The perch always
-    /// splices sources (no machine DLLs) so every line is steppable.</summary>
-    public static Func<TextWriter, TextReader, int> LoadDebug(
-        ShoddyProgram prog, IReadOnlyList<MachineInfo>? machines = null)
+    /// return its Run entry point, which takes the program's output,
+    /// input and arguments exactly as `mill run` gives them. Install the
+    /// sink on <see cref="Engine.PendingSink"/> before invoking.
+    ///
+    /// The machines are whatever the caller resolved. The debugger
+    /// resolves them through a debug <see cref="MachineSet"/>, so they are
+    /// the instrumented weaves and every machine line is steppable.</summary>
+    public static Func<TextWriter, TextReader, string[], int> LoadDebug(
+        ShoddyProgram prog, IReadOnlyList<MachineInfo>? machines = null) =>
+        BuildDebug(prog, machines).Run;
+
+    /// <summary>The debug build in full: the entry point, and the
+    /// evaluator that compiles an expression against the running program
+    /// (<see cref="DebugBuild.Evaluate"/>).</summary>
+    public static DebugBuild BuildDebug(ShoddyProgram prog, IReadOnlyList<MachineInfo>? machines = null)
     {
-        using var pe = new MemoryStream();
-        Compile(GenerateSource(prog, debug: true, deps: machines),
-                pe, OutputKind.ConsoleApplication, machines,
-                "perch-" + Guid.NewGuid().ToString("N"));
-        pe.Position = 0;
-        Assembly asm = System.Runtime.Loader.AssemblyLoadContext.Default.LoadFromStream(pe);
+        var gen = new CodeGen(prog, null, debug: true, deps: machines);
+        string src = gen.Generate();
+        byte[] image;
+        using (var pe = new MemoryStream())
+        {
+            Compile(src, pe, OutputKind.ConsoleApplication, machines,
+                    "perch-" + Guid.NewGuid().ToString("N"));
+            image = pe.ToArray();
+        }
+        Assembly asm = System.Runtime.Loader.AssemblyLoadContext.Default.LoadFromStream(new MemoryStream(image));
         MethodInfo run = asm.GetType("Woven")!.GetMethod("Run")!;
-        return (o, i) => (int)run.Invoke(null, new object?[] { o, i, Array.Empty<string>() })!;
+        return new DebugBuild(prog, machines ?? Array.Empty<MachineInfo>(), image,
+            gen.DefMembers, gen.TypeMembers,
+            (o, i, args) => (int)run.Invoke(null, new object?[] { o, i, args })!);
     }
 
     /// <summary>Compile to memory and run immediately: the `mill run`
@@ -126,8 +142,9 @@ public static class Weaver
         return outDll;
     }
 
-    static void Compile(string src, Stream pe, OutputKind kind,
-                        IReadOnlyList<MachineInfo>? machines, string assemblyName)
+    internal static void Compile(string src, Stream pe, OutputKind kind,
+                        IReadOnlyList<MachineInfo>? machines, string assemblyName,
+                        IEnumerable<MetadataReference>? extra = null)
     {
         var tree = CSharpSyntaxTree.ParseText(src);
 
@@ -138,6 +155,7 @@ public static class Weaver
         if (machines != null)
             foreach (MachineInfo m in machines)
                 refs.Add(MetadataReference.CreateFromFile(m.DllPath));
+        if (extra != null) refs.AddRange(extra);
 
         // Deterministic: identical inputs give byte-identical output. The
         // default is a fresh MVID per emit, under which the same weave run

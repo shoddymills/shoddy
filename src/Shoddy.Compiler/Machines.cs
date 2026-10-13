@@ -118,6 +118,22 @@ public sealed class MachineSet
     public readonly List<MachineInfo> Machines = new();
     readonly HashSet<string> loaded = new();
 
+    /// <summary>
+    /// A debug set resolves every machine to its instrumented weave in
+    /// bin/debug/ (<see cref="DebugDllPathFor"/>), dependencies included,
+    /// so a debugged program can step into the machines it calls. Both
+    /// weaves carry the same assembly name, and one process loads only
+    /// one of them: the debugger's set is a debug set from the start.
+    /// </summary>
+    public bool Debug { get; }
+
+    public MachineSet(bool debug = false) => Debug = debug;
+
+    /// <summary>Where this set finds the DLL for a machine source: the
+    /// release weave, or the instrumented one in a debug set.</summary>
+    public string PathFor(string sbPath) =>
+        Debug ? DebugDllPathFor(sbPath) : DllPathFor(sbPath);
+
     /// <summary>The DLLs an Include named outright, as opposed to those
     /// dragged in behind them. Every loaded machine is linked; only these
     /// are <em>named</em>, because a machine's includes are its own
@@ -153,7 +169,7 @@ public sealed class MachineSet
     /// apart. They were two separate hooks, and a caller that wired only
     /// the first got the AS silently discarded.</summary>
     void SetQualifier(string sbPath, string qual) =>
-        qualByDll[DllPathFor(sbPath)] = qual;
+        qualByDll[PathFor(sbPath)] = qual;
 
     /// <summary>The woven class name: a valid C# identifier. A hyphen —
     /// every mill's <c>name-core.shoddy</c> — is legal in a file and an
@@ -216,7 +232,7 @@ public sealed class MachineSet
     /// source is never read and this is the only place the AS survives.</summary>
     public bool TryResolve(string sbPath, string? qual)
     {
-        string dll = DllPathFor(sbPath);
+        string dll = PathFor(sbPath);
         if (!File.Exists(dll)) return false;
         LoadRecursive(dll);
         direct.Add(dll);
@@ -235,7 +251,7 @@ public sealed class MachineSet
         foreach (var dep in asm.GetCustomAttributes<ShoddyDependsOnAttribute>())
         {
             if (loaded.Contains(dep.AssemblyName)) continue;
-            string? dpath = FindDependencyDll(dllPath, dep.AssemblyName);
+            string? dpath = FindDependencyDll(dllPath, dep.AssemblyName, Debug);
             if (dpath == null)
                 throw new ShoddyError(0,
                     $"machine {asm.GetName().Name} declares dependency " +
@@ -249,7 +265,7 @@ public sealed class MachineSet
             if (!rn.Name!.StartsWith("Shoddy.Machines.", StringComparison.Ordinal))
                 continue;
             if (loaded.Contains(rn.Name)) continue;
-            string? dep = FindDependencyDll(dllPath, rn.Name!);
+            string? dep = FindDependencyDll(dllPath, rn.Name!, Debug);
             if (dep == null)
                 throw new ShoddyError(0,
                     $"machine {asm.GetName().Name} references {rn.Name}, but its DLL " +
@@ -267,9 +283,14 @@ public sealed class MachineSet
     /// in machines/seeds/bin depending on the machine it bridges). The
     /// library-first order is what keeps a mill's own bin/ — which
     /// carries COPIES of dependency DLLs beside its woven shell — from
-    /// supplying stale identities. Null when no route has it.</summary>
-    static string? FindDependencyDll(string dllPath, string assemblyName)
+    /// supplying stale identities. Null when no route has it.
+    ///
+    /// A debug set looks in the debug/ subfolder of every one of those
+    /// places, so a debugged machine's dependencies are instrumented too
+    /// and the program can step on into them.</summary>
+    static string? FindDependencyDll(string dllPath, string assemblyName, bool debug)
     {
+        string file = assemblyName + ".dll";
         foreach (string lib in Shoddy.Devil.Lexer.LibDirs())
         {
             // The configuration's own copy first, then the shared one: a
@@ -277,16 +298,24 @@ public sealed class MachineSet
             // resolves against the library rather than failing to find it.
             if (BinScope.Length > 0)
             {
-                string scoped = Path.Combine(lib, BinDir, BinScope, assemblyName + ".dll");
+                string scoped = debug
+                    ? Path.Combine(lib, BinDir, BinScope, "debug", file)
+                    : Path.Combine(lib, BinDir, BinScope, file);
                 if (File.Exists(scoped)) return Path.GetFullPath(scoped);
             }
-            string inLib = Path.Combine(lib, BinDir, assemblyName + ".dll");
+            string inLib = debug
+                ? Path.Combine(lib, BinDir, "debug", file)
+                : Path.Combine(lib, BinDir, file);
             if (File.Exists(inLib)) return Path.GetFullPath(inLib);
         }
         string dir = Path.GetDirectoryName(dllPath)!;
-        string sibling = Path.Combine(dir, assemblyName + ".dll");
+        string sibling = Path.Combine(dir, file);
         if (File.Exists(sibling)) return sibling;
-        string upOneLevel = Path.Combine(dir, "..", "..", "bin", assemblyName + ".dll");
+        // One machine directory up: from seeds/bin/ to the machines/bin/
+        // beside seeds/, or from seeds/bin/debug/ to machines/bin/debug/.
+        string upOneLevel = debug
+            ? Path.Combine(dir, "..", "..", "..", BinDir, "debug", file)
+            : Path.Combine(dir, "..", "..", BinDir, file);
         return File.Exists(upOneLevel) ? upOneLevel : null;
     }
 

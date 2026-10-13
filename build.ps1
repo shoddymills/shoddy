@@ -407,6 +407,10 @@ function Invoke-Check {
         Write-Host "==> scripts/$gate.js"
         Native node "scripts/$gate.js"
     }
+    # The VS Code extension's own logic (the debug launch), tested with no
+    # editor running.
+    Write-Host '==> vscode-shoddy/test'
+    Native node --test vscode-shoddy/test/launch.test.js
 }
 
 # vsce is the ONE target with a dependency outside this repo's own tools,

@@ -143,7 +143,7 @@ public static class Lexer
                 // one, which namespaces one machine's manifest and never
                 // its dependencies'. They used to disagree, so the same
                 // program meant different things to the runner and to the
-                // debugger (which always splices).
+                // debugger (which then spliced every machine).
                 string? sub = qualified ? toks[3].Text : null;
                 if (qualified && !IsPlainWord(toks[3].Text))
                     throw new ShoddyError(start, path,

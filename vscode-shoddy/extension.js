@@ -3,7 +3,9 @@
 const vscode = require('vscode');
 const cp = require('child_process');
 const fs = require('fs');
+const net = require('net');
 const path = require('path');
+const launch = require('./launch');
 
 // This extension ships a mill and the machines under its own directory
 // (see `build.ps1 stage`), so installing the .vsix is the whole install.
@@ -77,6 +79,64 @@ function terminal(dir) {
         terms.set(dir, t);
     }
     return t;
+}
+
+/** A free loopback port: bound, read and released. */
+function freePort() {
+    return new Promise((resolve, reject) => {
+        const srv = net.createServer();
+        srv.once('error', reject);
+        srv.listen(0, '127.0.0.1', () => {
+            const { port } = srv.address();
+            srv.close(() => resolve(port));
+        });
+    });
+}
+
+/** Resolves once something accepts on the loopback port, or rejects
+ * when `gone()` says the process that should be listening has ended,
+ * or after `ms`. */
+function waitForPort(port, gone, ms) {
+    const deadline = Date.now() + ms;
+    return new Promise((resolve, reject) => {
+        const attempt = () => {
+            const sock = net.connect(port, '127.0.0.1');
+            sock.once('connect', () => { sock.destroy(); resolve(); });
+            sock.once('error', () => {
+                sock.destroy();
+                if (gone()) reject(new Error('the mill ended before the debugger started; its terminal says why'));
+                else if (Date.now() > deadline) reject(new Error('the mill did not start its debugger in time'));
+                else setTimeout(attempt, 100);
+            });
+        };
+        attempt();
+    });
+}
+
+// The debugged programs' terminals. A finished one is closed when the next
+// session starts, so they do not pile up; a live one is never touched.
+const debugTerms = new Set();
+
+/** An integrated-terminal launch: a terminal whose process is the mill
+ * (`mill dap --listen PORT`, no shell in between, so nothing is quoted or
+ * re-split), started in the program's folder. The program has that
+ * terminal's keyboard and screen. The debugger is reached on the port. */
+async function startInTerminal(config) {
+    for (const t of debugTerms)
+        if (t.exitStatus !== undefined) { t.dispose(); debugTerms.delete(t); }
+    const port = await freePort();
+    const run = launch.debuggeeProcess(millCommand(), port);
+    const term = vscode.window.createTerminal({
+        name: launch.terminalName(config.program),
+        shellPath: run.cmd,
+        shellArgs: run.args,
+        cwd: config.cwd,
+        env: millEnv(),
+    });
+    debugTerms.add(term);
+    term.show(true);
+    await waitForPort(port, () => term.exitStatus !== undefined, 60000);
+    return new vscode.DebugAdapterServer(port, '127.0.0.1');
 }
 
 /** Save and return the active editor's file path, or null. */
@@ -158,11 +218,14 @@ exports.activate = (ctx) => {
                         session.configuration.port,
                         session.configuration.host || '127.0.0.1');
                 }
-                // The perch runs the program inside this process, so the
-                // process's folder is the program's working directory.
-                // cwd is always set by resolveDebugConfigurationWithSubstitutedVariables
-                // below; the fallback only covers a launch that skipped it.
                 const config = session.configuration;
+                if (config.console !== 'internalConsole') return startInTerminal(config);
+                // internalConsole: the protocol over the mill's stdio, the
+                // program's output to the Debug Console. The perch runs
+                // the program inside this process, so the process's folder
+                // is the program's working directory. cwd is always set by
+                // resolveDebugConfigurationWithSubstitutedVariables below;
+                // the fallback only covers a launch that skipped it.
                 const cwd = config.cwd
                     || (config.program && path.isAbsolute(config.program) ? path.dirname(config.program) : undefined);
                 const { cmd, args } = millCommand();
@@ -209,13 +272,12 @@ exports.activate = (ctx) => {
             // folder, as VS Code takes its own. With no "cwd", the program
             // runs from its own folder.
             resolveDebugConfigurationWithSubstitutedVariables(folder, config) {
-                if (config.request !== 'launch' || !config.program) return config;
-                const base = folder ? folder.uri.fsPath : path.dirname(config.program);
-                if (!path.isAbsolute(config.program)) config.program = path.resolve(base, config.program);
-                config.cwd = config.cwd
-                    ? path.resolve(base, config.cwd)
-                    : path.dirname(config.program);
-                return config;
+                try {
+                    return launch.resolveLaunch(config, folder ? folder.uri.fsPath : undefined);
+                } catch (e) {
+                    vscode.window.showErrorMessage(`Shoddy debugger: ${e.message}`);
+                    return undefined;
+                }
             },
         }),
     );
@@ -223,4 +285,5 @@ exports.activate = (ctx) => {
 
 exports.deactivate = () => {
     for (const t of terms.values()) t.dispose();
+    for (const t of debugTerms) t.dispose();
 };

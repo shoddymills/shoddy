@@ -16,7 +16,10 @@ using Shoddy.Runtime;
 //   mill lex FILE.shoddy      dump the token lines (devil output; debug aid)
 //   mill gen FILE.shoddy      print the generated C# (debug aid)
 //   mill dap                  serve the Debug Adapter Protocol (the perch;
-//                             launched by the editor, not by hand)
+//                             launched by the editor, not by hand) over
+//                             stdin/stdout
+//   mill dap --listen PORT    the same over one loopback TCP connection,
+//                             leaving the console to the debugged program
 //
 // The verbs themselves live in Shoddy.Compiler's MillVerbs, shared with
 // the headless build; this entry point owns only what needs the window
@@ -28,12 +31,20 @@ var opt = new MillVerbs.Options();
 args = MillVerbs.StripFlags(args, opt);
 if (opt.NoWindow) ScribblerWindows.Hidden = true;
 
-if (args.Length == 1 && args[0] == "dap")
-    // The perch: DAP over stdio for the editor. The serve loop runs on a
-    // background thread so this (the main) thread can serve scribbler
-    // windows for the debugged program, exactly as `run` does; no linger,
-    // because a window must not outlive its debug session.
-    return ScribblerWindows.Run(DapServer.Serve, linger: false);
+if (args.Length >= 1 && args[0] == "dap")
+{
+    // The perch: DAP for the editor. The serve loop runs on a background
+    // thread so this (the main) thread can serve scribbler windows for the
+    // debugged program, exactly as `run` does; no linger, because a window
+    // must not outlive its debug session.
+    if (args.Length == 1)
+        return ScribblerWindows.Run(DapServer.Serve, linger: false);
+    if (args.Length == 3 && args[1] == "--listen" &&
+        int.TryParse(args[2], out int port) && port is > 0 and < 65536)
+        return ScribblerWindows.Run(() => DapServer.Listen(port), linger: false);
+    Console.Error.WriteLine("usage: mill dap [--listen PORT]");
+    return 2;
+}
 
 MillVerbs.Command? cmd = MillVerbs.Parse(args);
 if (cmd is null) return MillVerbs.Usage();

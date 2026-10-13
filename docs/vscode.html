@@ -129,40 +129,91 @@ instrumentation (the extra bookkeeping that lets the debugger watch each
 line). It is the same program <code>mill run</code> builds, machines and
 all, and it stops on its first line. If it would not compile, the launch fails
 with the error the runner gives, rather than starting and dying part-way
-through. Then:</p>
+through.</p>
+<p><strong>The program runs exactly as it does under <code>mill run</code>.</strong>
+It gets a terminal panel of its own, named <code>shoddy debug: FILE</code>:
+it reads that terminal's keyboard (<code>Input</code>, <code>InputLine</code>,
+<code>InKey</code>), draws on its screen (escape codes and all, so VT100 games
+play), opens scribbler windows and plays sound. It runs from its own folder,
+whichever folder the workspace is opened on, so a relative path such as
+<code>files/words.txt</code> finds the file beside the program. That is true
+in a checkout and out of one: the machines the extension ships are debugged
+the same way as the ones in the repository. Then:</p>
 <ul>
 <li><strong>Breakpoints</strong>: a breakpoint pauses the program at a line you
-mark. Click in the gutter (the margin left of the code) of any <code>.shoddy</code>
-file of your own. A machine is compiled code by the time your program runs,
-so there is no line of it to stop on: a breakpoint set in
-<code>seq.shoddy</code> comes back greyed out and says why. You step
-<em>over</em> <code>Sum</code> and <code>MatMul</code>, the way you step over
-any other runtime.</li>
+mark. Click in the gutter (the margin left of the code) of any
+<code>.shoddy</code> file: your own, or a machine's. A machine is Shoddy too,
+and the debugger runs every machine your program reaches in its
+instrumented build, so a breakpoint in <code>seq.shoddy</code> stops there.
+A top-level <code>Let</code> is a line like any other. A line stops once
+each time it runs, however much happens on it.
+<ul>
+<li><strong>Conditional</strong>: right-click the breakpoint, <em>Edit
+Breakpoint&hellip;</em> &rarr; <em>Expression</em>, and give any Shoddy expression that answers
+<code>True</code> or <code>False</code>, such as <code>n = 3</code>. A
+condition that fails, or answers something else, stops the program and
+says why in the Debug Console.</li>
+<li><strong>Hit count</strong> (<em>Edit Breakpoint&hellip;</em> &rarr;
+<em>Hit Count</em>): a whole number stops on that hit only.
+<code>&gt;</code>, <code>&gt;=</code>, <code>&lt;</code>, <code>&lt;=</code>
+or <code>=</code> before it compare, and <code>% N</code> stops on every
+Nth hit. Only hits whose condition held are counted.</li>
+<li><strong>Logpoint</strong> (right-click the gutter, <em>Add
+Logpoint&hellip;</em>): a message that is written to the Debug
+Console each time the line runs, without stopping. Anything in braces is
+evaluated: <code>n is {n}, doubled {n * 2}</code>.</li>
+</ul></li>
+<li><strong>Runtime errors</strong> stop the program at the failing line, with
+every frame, local and stack value still there to look at; the Debug Console
+shows the message. Continue, and the program ends with the error exactly as
+it would under <code>mill run</code>. Untick <em>Runtime errors</em> in the
+Breakpoints view to let errors end the program without stopping.</li>
+<li><strong>Pause</strong> (<code>F6</code>) stops a running program at the
+next line it reaches, a program stuck in a loop included.</li>
 <li><strong>Stepping</strong>: run one line at a time: step over (<code>F10</code>), into (<code>F11</code>), out (<code>Shift+F11</code>).
-A tail-recursive def (one whose last act is to call itself) loops in
-place without growing the stack, exactly as it executes. Stepping into a
-machine word steps over it: there is nothing of it left to step through.</li>
+Step into goes into the Def a line calls, a machine's included, so you can
+watch <code>Sum</code> or <code>MatMul</code> work. A tail-recursive def (one
+whose last act is to call itself) loops in place without growing the stack,
+exactly as it executes, and each pass is a new line to step to.</li>
 <li><strong>Call Stack</strong>: the chain of defs that called each other, by name: <code>UPDATEBINV &larr; SOLVE &larr; MAIN</code>.</li>
 <li><strong>Variables</strong>: three scopes: <strong>Locals</strong> (the current def's bindings,
 shown as Shoddy values; records print as
 <code>Person(Name = &quot;ANN&quot;, Age = 34)</code> and expand into fields), <strong>Globals</strong>
 (top-level Lets), and the <strong>Value Stack</strong>, half the story in a
-stack language.</li>
-<li><strong>Debug Console</strong>: type a binding's name to inspect it; hovering a
-name in the editor shows its value.</li>
+stack language. Double-click any of them, a record's field or a list's
+element included, to set it to the value of any Shoddy expression. The
+program computes with the new value from the next thing it does.</li>
+<li><strong>Debug Console, Watch and hover</strong>: any Shoddy expression,
+evaluated in the frame you are looking at. It can use the frame's locals,
+the top-level Lets, the program's own Defs and types, every machine word the
+program included, and the builtins: <code>Twice(k) + Px(p)</code>,
+<code>IndexOf(names, "ANN")</code>. It is compiled, as everything in Shoddy
+is, and it leaves the program as it found it.</li>
 </ul>
-<p><strong>The program runs from its own folder</strong>, whichever folder
-the workspace is opened on. A relative path in it, such as
-<code>files/words.txt</code>, finds the file beside the program, exactly as
-it does when the mill's own <code>build.sh</code> runs it. To run from
-somewhere else, add <code>"cwd"</code> to a <code>launch.json</code>
-configuration. A relative <code>"cwd"</code> is taken against the workspace
-folder. The extension's Run, Weave, Build Machine and Show Generated C#
-commands run from the program's folder too.</p>
-<p>Limitation: under the perch, <code>Input</code> reads end-of-file, because
-typed input (interactive stdin) is not wired through the debug session. Debug
-the logic here, and run the interactive session with the run task from
-<a href="#tasks">section 4</a>.</p>
+
+<h3 id="launch">Settings for a launch</h3>
+<p>None are needed. To give a program arguments, arm the network, or run it
+from another folder, add a <code>launch.json</code> (<strong>Run &rarr; Add
+Configuration&hellip; &rarr; Shoddy</strong>) and set any of these:</p>
+<table>
+<tr><th>Setting</th><th>What it does</th></tr>
+<tr><td><code>program</code></td><td>The <code>.shoddy</code> file to debug. Default: the one you are editing.</td></tr>
+<tr><td><code>args</code></td><td>The program's arguments, what <code>Args()</code> answers: <code>["words.txt", "42"]</code> is <code>mill run FILE words.txt 42</code>.</td></tr>
+<tr><td><code>allowNet</code></td><td><code>true</code> arms the network, as <code>mill run --allow-net</code> does.</td></tr>
+<tr><td><code>cwd</code></td><td>The folder the program runs from. Default: the program's own folder. A relative one is taken against the workspace folder.</td></tr>
+<tr><td><code>console</code></td><td><code>"integratedTerminal"</code>, the default: a terminal of its own, with keyboard and screen. <code>"internalConsole"</code>: output to the Debug Console instead, with no keyboard, so <code>Input</code> reads end of input.</td></tr>
+<tr><td><code>stopOnEntry</code></td><td>Stop on the first line.</td></tr>
+</table>
+<pre><code class="language-json">{
+    "type": "shoddy",
+    "request": "launch",
+    "name": "Burler, seeded",
+    "program": "${workspaceFolder}/burler.shoddy",
+    "args": ["files/words.txt", "42"]
+}
+</code></pre>
+<p>The extension's Run, Weave, Build Machine and Show Generated C# commands
+run from the program's folder too.</p>
 
 <h2 id="tasks">4. Run, weave, build inside VS Code <span class="badge info">Usage &middot; nothing to configure</span></h2>
 <p>Open the repo (<code>code /path/to/shoddy</code>) and the shipped
@@ -285,7 +336,8 @@ is on <a href="build.html#testing">the Toolchain page</a>.</p>
 
 <h2 id="interactive">6. Interactive programs <span class="badge info">Usage &middot; nothing to configure</span></h2>
 <p>Tasks run in the integrated terminal, so programs that use <code>Input</code>
-work as they are. Run <code>tst/gradebook.shoddy</code> with <code>Cmd+Shift+B</code> /
+work as they are, and so does <code>F5</code>: the debugged program has a
+terminal of its own (<a href="#perch">section 3</a>). Run <code>tst/gradebook.shoddy</code> with <code>Cmd+Shift+B</code> /
 <code>Ctrl+Shift+B</code> and type at the prompts. To replay its scripted session
 instead (a command-line matter, the only one on this page):</p>
 <pre><code class="language-sh">bin/mill run tst/gradebook.shoddy &lt; tst/golden/gradebook.in

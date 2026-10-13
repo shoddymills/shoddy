@@ -334,7 +334,7 @@ public sealed class CodeGen
         foreach (TypeDef t in prog.Types)
         {
             if (Prelude.Declares(t.Name)) continue;      // reached, not minted
-            W($"{(machine ? "public " : "")}static readonly TypeDef {typeField[t.Name]} = " +
+            W($"{(machine || debug ? "public " : "")}static readonly TypeDef {typeField[t.Name]} = " +
               $"MT({StrLit(t.Name)}, {StrLit(t.Disp ?? t.Name)}, {StrArr(t.Fields)}, {StrArr(t.FDisp)});");
             emitted++;
         }
@@ -368,6 +368,10 @@ public sealed class CodeGen
             W("");
         }
 
+        // A debug weave makes every Def's entry and every type public (a
+        // machine's always are): the debugger evaluates an expression by
+        // weaving it as a Def of its own that calls into this assembly.
+        //
         // Every Def is two methods. The ENTRY keeps the Def's name and
         // signature, so manifests, hosting and the perch see what they
         // always saw. The BODY answers which Def runs next: -1 when it
@@ -382,7 +386,7 @@ public sealed class CodeGen
         foreach ((string name, Quot body) in prog.Defs)
         {
             W("[System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]");
-            W($"{(machine ? "public " : "")}static void {defIds[name]}(Engine rt)  // {name}");
+            W($"{(machine || debug ? "public " : "")}static void {defIds[name]}(Engine rt)  // {name}");
             Open();
             W($"int next = {bodyIds[name]}(rt);");
             W("if (next >= 0) Trampoline(rt, next);");
@@ -408,6 +412,9 @@ public sealed class CodeGen
             if (debug)
             {
                 Close();
+                // Never catches: the filter reports a runtime error to the
+                // debugger before this frame unwinds (Engine.DbgError).
+                W("catch (Exception __e) when (rt.DbgError(__e)) { throw; }");
                 W("finally { rt.Exit(); }");
             }
             Close();
@@ -444,6 +451,9 @@ public sealed class CodeGen
             W($"{defIds["MAIN"]}(rt);");
             W("return 0;");
             Close();
+            // An error in a top-level Let has no Def frame to report it:
+            // the program frame's filter does, before anything unwinds.
+            if (debug) W("catch (Exception __e) when (rt.DbgError(__e)) { throw; }");
             W("catch (ShoddyError e)");
             Open();
             W("Console.Error.Write(\"ERROR\");");
@@ -477,8 +487,17 @@ public sealed class CodeGen
         if (prog.InitQuot == null) return;
         inInit = true;
         var sc = new Scope();
+        (string File, int Line)? last = null;
         foreach (Node n in prog.InitQuot.Items)
         {
+            // Top-level lines are lines like any other: a breakpoint on a
+            // top-level Let stops there, and stepping walks through them.
+            if (debug && n.File != null && (last == null || last.Value != (n.File, n.Line)))
+            {
+                W($"rt.Dbg({Fid(fileIds[n.File])}, {n.Line});");
+                EmitReloads(sc);
+                last = (n.File, n.Line);
+            }
             if (n.T == NType.Take)      // a top-level Let binding
             {
                 for (int k = n.Names.Count - 1; k >= 0; k--)
@@ -508,11 +527,55 @@ public sealed class CodeGen
             if (debug && n.File != null && (last == null || last.Value != (n.File, n.Line)))
             {
                 W($"rt.Dbg({Fid(fileIds[n.File])}, {n.Line});");
+                EmitReloads(sc);
                 last = (n.File, n.Line);
             }
             EmitNode(n, sc, k == q.Items.Count - 1 ? tailDef : null);
         }
     }
+
+    /// <summary>After a line hook: if the debugger set a variable while
+    /// the program was stopped there, read every local in scope, and every
+    /// top-level Let, back from the engine (Engine.TakeEdits). Locals are
+    /// C# locals, so this is the only way a set variable reaches the
+    /// program. A machine's top-level Lets are constants and are not
+    /// reloaded.</summary>
+    void EmitReloads(Scope sc)
+    {
+        var locals = new List<(string Name, string Id)>();
+        var seen = new HashSet<string>();
+        for (Scope? s = sc; s != null; s = s.Parent)
+            foreach ((string name, string id) in s.Map)
+                if (name[0] != '\u0001' && seen.Add(name))
+                    locals.Add((name, id));
+        if (locals.Count > 0)
+        {
+            W("if (rt.TakeEdits())");
+            Open();
+            foreach ((string name, string id) in locals)
+                W($"{id} = rt.Reload({StrLit(name)}, {id});");
+            Close();
+        }
+        if (machineClass != null) return;
+        var globals = globalIds.Where(g => GlobalVisible(g.Key)).ToList();
+        if (globals.Count > 0)
+        {
+            W("if (rt.TakeGlobalEdits())");
+            Open();
+            foreach ((string name, string id) in globals)
+                W($"{id} = rt.ReloadGlobal({StrLit(name)}, {id});");
+            Close();
+        }
+    }
+
+    /// <summary>The C# member each of the program's own Defs is woven to,
+    /// valid after <see cref="Generate"/>: the debugger's evaluator calls
+    /// them from an expression it weaves separately.</summary>
+    public IReadOnlyDictionary<string, string> DefMembers => defIds;
+
+    /// <summary>The C# field each of the program's own types is woven
+    /// to, valid after <see cref="Generate"/>.</summary>
+    public IReadOnlyDictionary<string, string> TypeMembers => typeField;
 
     void EmitNode(Node n, Scope sc, string? tailDef)
     {

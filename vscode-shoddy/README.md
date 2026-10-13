@@ -16,12 +16,18 @@ the **mill** (the .NET toolchain).
 - **Snippets** — `def`, `sdef`, `main`, `type`, `sum`, `if`, `select`,
   `casew`, `fn`, `let`, `each`, `include`.
 - **Native debugging — the perch.** Press `F5` on any `.shoddy` file
-  (no launch.json needed): breakpoints, stepping, a call stack of your
-  defs, Shoddy-shaped variables in three scopes (Locals, Globals, and
-  the Value Stack), and a debug console that inspects bindings by
-  name. Scribbler programs debug too — the window opens under the
-  perch and stays live while you sit at a breakpoint. Runs `mill dap`
-  under the hood.
+  (no launch.json needed). The program runs as it does under `mill run`,
+  in a terminal of its own with its keyboard and screen, from its own
+  folder. Breakpoints anywhere, machines included, with conditions, hit
+  counts and logpoints; a stop at any runtime error; pause; stepping
+  into, over and out of any Def, a machine's included; a call stack of
+  your defs; Shoddy-shaped variables in three scopes (Locals, Globals,
+  and the Value Stack), each of which can be set; and a Debug Console,
+  Watch and hover that evaluate any Shoddy expression. Scribbler
+  programs debug too — the window opens under the perch and stays live
+  while you sit at a breakpoint. A launch.json adds `args`, `allowNet`,
+  `cwd` and `console` (`"integratedTerminal"`, the default, or
+  `"internalConsole"`). Runs `mill dap --listen` under the hood.
 - **Commands** (palette, editor context menu, and the ▶ run button):
   - **Shoddy: Run File** (`ctrl+r`) — `mill run` in the integrated
     terminal, so `Input` works.
@@ -34,8 +40,9 @@ the **mill** (the .NET toolchain).
   **A program runs from its own folder**, whichever folder the
   workspace is opened on, so a relative path in it such as
   `files/words.txt` finds the file beside the program. That holds for
-  `F5` and for every command. A launch.json can name another folder with
-  `"cwd"`; a relative one is taken against the workspace folder.
+  `F5` and for every command, in a checkout or out of one. A launch.json
+  can name another folder with `"cwd"`; a relative one is taken against
+  the workspace folder.
 
   Run, Weave, and Build Machine share one terminal per folder, named
   `shoddy mill: FOLDER`. If a previous run there is still sitting at an

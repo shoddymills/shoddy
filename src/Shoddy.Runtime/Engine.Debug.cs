@@ -68,6 +68,32 @@ public sealed partial class Engine
         FileBase(files);
     }
 
+    /// <summary>An instrumented machine's source files, where they are
+    /// now rather than where they were when it was woven.
+    ///
+    /// <para>A machine is woven in one place and run in another: the
+    /// VS Code extension ships machines woven on the build machine, and a
+    /// user's install puts them somewhere else entirely. A path fixed at
+    /// weave time then names a file that does not exist here, and the
+    /// debugger can neither show a machine's lines nor stop at a
+    /// breakpoint in one. So the weave records each source relative to the
+    /// folder its DLL is written to (<paramref name="relative"/>), and this
+    /// resolves them against the folder the DLL was actually loaded from.
+    /// The library is copied whole, sources beside bin/debug/, so the
+    /// relation holds wherever it lands.</para>
+    ///
+    /// <para>An assembly loaded from memory has no folder (its Location
+    /// is empty), and then the path recorded at weave time
+    /// (<paramref name="woven"/>) is the only one there is.</para></summary>
+    public static string[] SourcesBeside(System.Reflection.Assembly asm, string[] relative, string[] woven)
+    {
+        string dir = asm.Location.Length == 0 ? "" : Path.GetDirectoryName(asm.Location) ?? "";
+        var now = new string[relative.Length];
+        for (int i = 0; i < relative.Length; i++)
+            now[i] = dir.Length == 0 ? woven[i] : Path.GetFullPath(Path.Combine(dir, relative[i]));
+        return now;
+    }
+
     /// <summary>The offset this assembly's file ids live at — appended
     /// on first sight, constant thereafter. Called by instrumented
     /// machine words on entry; O(1) after the first call.</summary>

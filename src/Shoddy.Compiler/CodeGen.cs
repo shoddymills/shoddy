@@ -362,9 +362,25 @@ public sealed class CodeGen
         // it (once per engine) on entry, carrying the offset in each
         // frame — the per-assembly scheme that lets a debug program and
         // any number of debug machines share one engine's table (D6).
+        //
+        // Each path is written relative to the folder the DLL is woven
+        // into, and resolved where the DLL is loaded from
+        // (Engine.SourcesBeside), because the two are different places as
+        // soon as the library is installed anywhere. '/' throughout, so a
+        // weave made on Windows and one made elsewhere carry the same
+        // text.
         if (debug && machine)
         {
-            W($"static readonly string[] __DbgFiles = {StrArr(fileList)};");
+            string? dllDir = ownFile == null ? null : Path.GetDirectoryName(MachineSet.DebugDllPathFor(ownFile));
+            if (dllDir == null)
+                W($"static readonly string[] __DbgFiles = {StrArr(fileList)};");
+            else
+            {
+                IEnumerable<string> relative = fileList.Select(f =>
+                    Path.GetRelativePath(dllDir, f).Replace(Path.DirectorySeparatorChar, '/'));
+                W($"static readonly string[] __DbgFiles = global::Shoddy.Runtime.Engine.SourcesBeside(" +
+                  $"typeof({machineClass}).Assembly, {StrArr(relative)}, {StrArr(fileList)});");
+            }
             W("");
         }
 

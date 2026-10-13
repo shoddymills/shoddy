@@ -393,7 +393,6 @@ exports.activate = (ctx) => {
                         request: 'launch',
                         name: 'Perch: debug current file',
                         program: '${file}',
-                        stopOnEntry: true,
                     };
                 }
                 if (!config.program || config.program === '${file}') {

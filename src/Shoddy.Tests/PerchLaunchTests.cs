@@ -358,6 +358,59 @@ public class PerchLaunchTests
         s.Request("disconnect");
     }
 
+    /// <summary>The VS Code extension ships machines woven on the build
+    /// machine, so the library a user debugs against is never the folder
+    /// it was woven in. Here seq is woven in one folder, installed in
+    /// another, and the first is deleted: a breakpoint set in the installed
+    /// seq.shoddy must stop, and the frame must name that file, which must
+    /// exist. Nothing may be rewoven on the way, or the test would pass
+    /// against a weave made where it runs.</summary>
+    [Fact]
+    public void AMachineDebugsWhereItIsInstalledNotWhereItWasWoven()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "shoddy-installed", Guid.NewGuid().ToString("N"));
+        string woven = Path.Combine(root, "woven", "machines");
+        string installed = Path.Combine(root, "installed", "machines");
+        Directory.CreateDirectory(woven);
+        File.Copy(SeqSource, Path.Combine(woven, "seq.shoddy"));
+        var (exit, said) = ProcessRun.CaptureAll(
+            new ProcessStartInfo(MillPath, "machine --debug seq.shoddy") { WorkingDirectory = woven });
+        Assert.True(exit == 0, said);
+
+        string dllName = Path.Combine("bin", "debug", "Shoddy.Machines.Seq.dll");
+        Directory.CreateDirectory(Path.Combine(installed, "bin", "debug"));
+        string seq = Path.Combine(installed, "seq.shoddy");
+        string dll = Path.Combine(installed, dllName);
+        File.Copy(Path.Combine(woven, "seq.shoddy"), seq);
+        File.Copy(Path.Combine(woven, dllName), dll);
+        // The weave newer than its source, as a build leaves them, so the
+        // mill takes it as it is.
+        File.SetLastWriteTimeUtc(seq, DateTime.UtcNow.AddMinutes(-5));
+        File.SetLastWriteTimeUtc(dll, DateTime.UtcNow.AddMinutes(-1));
+        Directory.Delete(Path.Combine(root, "woven"), recursive: true);
+
+        string dir = Folder(inRepo: false);
+        string prog = Program(dir, "useseq.shoddy", UsesSeq);
+        using var s = Session.Start(dir, env: new Dictionary<string, string> { ["SHODDYLIB"] = installed });
+        s.Launch(prog);
+        s.Breakpoints(seq, new { line = 193 });             // IndexOf's body
+        s.ConfigurationDone();
+
+        using (JsonDocument stopped = s.WaitForEvent("stopped"))
+            Assert.Equal("breakpoint", stopped.RootElement.GetProperty("body").GetProperty("reason").GetString());
+        JsonElement top = s.TopFrame();
+        Assert.Equal("INDEXOF", top.GetProperty("name").GetString());
+        string shown = top.GetProperty("source").GetProperty("path").GetString()!;
+        Assert.Equal(Path.GetFullPath(seq), shown, StringComparer.OrdinalIgnoreCase);
+        Assert.True(File.Exists(shown), $"the debugger names {shown}, which does not exist");
+
+        s.Request("continue", new { threadId = 1 });
+        Assert.Equal(0, s.ExitCode());
+        string screen = s.Finish();
+        Assert.DoesNotContain("Building it now", screen);
+        Assert.DoesNotContain("Rebuilding it now", screen);
+    }
+
     // ---- stepping ---------------------------------------------------------
 
     const string TwoLines = """
@@ -635,7 +688,8 @@ public class PerchLaunchTests
                 lock (screen) screen.Append(buf, 0, n);
         });
 
-        public static Session Start(string cwd, string? stdin = null, bool probeFirst = false)
+        public static Session Start(string cwd, string? stdin = null, bool probeFirst = false,
+                                    IReadOnlyDictionary<string, string>? env = null)
         {
             int port = FreePort();
             var psi = new ProcessStartInfo(MillPath, $"dap --listen {port}")
@@ -645,6 +699,8 @@ public class PerchLaunchTests
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
             };
+            if (env != null)
+                foreach ((string name, string value) in env) psi.Environment[name] = value;
             Process p = Process.Start(psi)!;
             if (stdin != null) p.StandardInput.Write(stdin);
             p.StandardInput.Close();

@@ -31,10 +31,16 @@ the **mill** (the .NET toolchain).
   - **Shoddy: Show Generated C#** — opens the weave's output as a C#
     document.
 
-  Run, Weave, and Build Machine share one `shoddy mill` terminal. If a
-  previous run is still sitting at an `Input` prompt, the next command's
-  text goes to that prompt instead — finish or `Ctrl+C` the old run
-  first.
+  **A program runs from its own folder**, whichever folder the
+  workspace is opened on, so a relative path in it such as
+  `files/words.txt` finds the file beside the program. That holds for
+  `F5` and for every command. A launch.json can name another folder with
+  `"cwd"`; a relative one is taken against the workspace folder.
+
+  Run, Weave, and Build Machine share one terminal per folder, named
+  `shoddy mill: FOLDER`. If a previous run there is still sitting at an
+  `Input` prompt, the next command's text goes to that prompt instead —
+  finish or `Ctrl+C` the old run first.
 
 ## Setup
 

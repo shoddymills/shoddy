@@ -63,12 +63,20 @@ function millEnv() {
     return (lib && !process.env.SHODDYLIB) ? { SHODDYLIB: lib } : {};
 }
 
-let term;
-function terminal() {
-    if (!term || term.exitStatus !== undefined) {
-        term = vscode.window.createTerminal('shoddy mill');
+// A program runs from its own folder, wherever the workspace is opened,
+// so a relative path in it (`files/words.txt`) means the same thing in
+// VS Code as it does from the mill's build wrapper, which changes into
+// the mill folder first. That is one terminal per folder: a terminal's
+// starting folder is fixed when it is created, and moving one with a cd
+// would mean writing a different command for every shell.
+const terms = new Map();
+function terminal(dir) {
+    let t = terms.get(dir);
+    if (!t || t.exitStatus !== undefined) {
+        t = vscode.window.createTerminal({ name: `shoddy mill: ${path.basename(dir)}`, cwd: dir });
+        terms.set(dir, t);
     }
-    return term;
+    return t;
 }
 
 /** Save and return the active editor's file path, or null. */
@@ -86,7 +94,7 @@ function millInTerminal(subcommand) {
     return async () => {
         const file = await activeFile();
         if (!file) return;
-        const t = terminal();
+        const t = terminal(path.dirname(file));
         t.show(true);
         // PowerShell needs the call operator to run a quoted path;
         // cmd and POSIX shells choke on it.
@@ -103,7 +111,7 @@ async function showGenerated() {
     if (!file) return;
     const { cmd, args } = millCommand();
     cp.execFile(cmd, [...args, 'gen', file],
-        { maxBuffer: 64 * 1024 * 1024, env: { ...process.env, ...millEnv() } },
+        { maxBuffer: 64 * 1024 * 1024, env: { ...process.env, ...millEnv() }, cwd: path.dirname(file) },
         async (err, stdout, stderr) => {
             if (err || !stdout) {
                 vscode.window.showErrorMessage(
@@ -150,9 +158,16 @@ exports.activate = (ctx) => {
                         session.configuration.port,
                         session.configuration.host || '127.0.0.1');
                 }
+                // The perch runs the program inside this process, so the
+                // process's folder is the program's working directory.
+                // cwd is always set by resolveDebugConfigurationWithSubstitutedVariables
+                // below; the fallback only covers a launch that skipped it.
+                const config = session.configuration;
+                const cwd = config.cwd
+                    || (config.program && path.isAbsolute(config.program) ? path.dirname(config.program) : undefined);
                 const { cmd, args } = millCommand();
                 return new vscode.DebugAdapterExecutable(cmd, [...args, 'dap'],
-                    { env: millEnv() });
+                    cwd ? { env: millEnv(), cwd } : { env: millEnv() });
             },
         }),
         // Zero-config F5: debug the current .shoddy file. We resolve
@@ -188,10 +203,24 @@ exports.activate = (ctx) => {
                 }
                 return config;
             },
+            // After VS Code has filled in ${workspaceFolder} and the rest:
+            // the program and the folder it runs from, both absolute. A
+            // relative path in launch.json is taken against the workspace
+            // folder, as VS Code takes its own. With no "cwd", the program
+            // runs from its own folder.
+            resolveDebugConfigurationWithSubstitutedVariables(folder, config) {
+                if (config.request !== 'launch' || !config.program) return config;
+                const base = folder ? folder.uri.fsPath : path.dirname(config.program);
+                if (!path.isAbsolute(config.program)) config.program = path.resolve(base, config.program);
+                config.cwd = config.cwd
+                    ? path.resolve(base, config.cwd)
+                    : path.dirname(config.program);
+                return config;
+            },
         }),
     );
 };
 
 exports.deactivate = () => {
-    if (term) term.dispose();
+    for (const t of terms.values()) t.dispose();
 };

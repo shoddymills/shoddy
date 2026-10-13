@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Build the MCP lane: restore, build and test Sparky. Run the repo root's
-# build first so bin/mill exists — ShoddyWeave drives it. The .ps1 twin
+# Build the MCP lane: restore, build and test Sparky. Every call first
+# runs the repo root's build, which publishes bin/mill - ShoddyWeave
+# drives it. The .ps1 twin
 # is the file that ships from the Windows workstation; keep the two in
 # step.
 #
@@ -18,10 +19,10 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-if [ ! -e ../../bin/mill ] && [ ! -e ../../bin/mill.exe ]; then
-    echo "STOPPED: bin/mill is missing - run ./build.sh at the repo root first." >&2
-    exit 1
-fi
+# The root's build, every call: a check that bin/mill exists passed a mill
+# from before a compiler change, and every sparky woven by it failed with
+# "unknown word: TAKEN". build() in ../../build.sh has the whole story.
+../../build.sh build
 
 case "${1:-build}" in
     build)   dotnet build Sparky.slnx ;;
@@ -33,15 +34,17 @@ case "${1:-build}" in
         # per OS, so the far end needs no repo and no .NET install.
         # Cross-targeting every RID from one runner is safe because the
         # lane is pure managed code - mcp.yml asserts that from outside.
-        # win-x64 ships as .zip; the unix RIDs as .tar.gz, because the
-        # executable bit only survives a tar.
+        # The Windows RIDs ship as .zip; the unix RIDs as .tar.gz, because
+        # the executable bit only survives a tar. win-arm64 is its own
+        # archive so an ARM64 Windows machine runs sparky natively rather
+        # than under x64 emulation.
         suffix="${2:+-$2}"
         pub=../../artifacts/publish
         mkdir -p "$pub"
-        for rid in win-x64 linux-x64 osx-x64 osx-arm64; do
+        for rid in win-x64 win-arm64 linux-x64 osx-x64 osx-arm64; do
             dotnet publish sparky -c Release -r "$rid" --self-contained \
                 -p:PublishSingleFile=true -o "$pub/sparky/$rid"
-            if [ "$rid" = win-x64 ]; then
+            if [ "${rid#win-}" != "$rid" ]; then
                 (cd "$pub/sparky/$rid" && zip -qj "../../sparky$suffix-$rid.zip" sparky.exe)
             else
                 chmod +x "$pub/sparky/$rid/sparky"

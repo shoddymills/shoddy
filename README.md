@@ -542,7 +542,7 @@ Requires the .NET 10 SDK. Build the mill (it is not committed), then run a
 program and the tests:
 
 ```
-dotnet publish src/Shoddy.Mill -c Release -o bin   # build the mill into bin/
+./build.sh build                                   # the mill into bin/ (./build.ps1 build on Windows)
 bin/mill run tst/examples.shoddy                   # compile in memory and run
 dotnet test src/Shoddy.Tests                       # golden conformance suite
 ```

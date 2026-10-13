@@ -33,7 +33,10 @@ const fail = (msg) => { console.log(msg); bad++; };
 const ok = (msg) => console.log(`ok  ${msg}`);
 
 const isWin = process.platform === "win32";
-const RID = isWin ? "win-x64"
+// process.arch is node's own architecture: an x64 node under emulation on
+// an ARM64 machine proves the win-x64 archive, which is still a real proof.
+const RID = isWin
+    ? (process.arch === "arm64" ? "win-arm64" : "win-x64")
     : process.platform === "darwin"
         ? (process.arch === "arm64" ? "osx-arm64" : "osx-x64")
         : "linux-x64";

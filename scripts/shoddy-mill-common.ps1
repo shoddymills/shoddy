@@ -4,7 +4,8 @@
 # $PSScriptRoot of the CALLING script. Provides:
 #
 #   $Repo, $Mill    the toolchain, resolved from $MillDir
-#   Assert-Mill     builds the toolchain into $Repo/bin if missing
+#   Assert-Mill     publishes the toolchain into $Repo/bin, every call,
+#                   through the repo root's build.ps1
 #   Invoke-Live     runs a scriptblock from a given location, not from
 #                   the mill's folder - for any target that launches a
 #                   program a person interacts with, so a path they type
@@ -57,11 +58,16 @@ function Invoke-Native {
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 }
 
+# The root's `build`, not a copy of it: that is the one place that
+# publishes the mill and empties machine DLLs woven by an older one. It
+# used to be an existence check here, which kept a stale mill forever -
+# Invoke-Build in the root build.ps1 has the whole story. Push/Pop,
+# because the root script sets its own location and runs in this one's
+# runspace.
 function Assert-Mill {
-    if (-not (Test-Path $Mill)) {
-        Write-Host "mill toolchain not built; building it into $Repo/bin ..."
-        Invoke-Native { dotnet publish (Join-Path $Repo 'src/Shoddy.Mill') -c Release -o (Join-Path $Repo 'bin') }
-    }
+    Push-Location $Repo
+    try { & ./build.ps1 build } finally { Pop-Location }
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 }
 
 function Invoke-Live {

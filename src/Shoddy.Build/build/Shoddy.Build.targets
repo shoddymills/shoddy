@@ -57,6 +57,16 @@
     <PropertyGroup Condition="'$(ShoddyToolPath)' != ''">
       <_ShoddyMillCmd>"$(ShoddyToolPath)"</_ShoddyMillCmd>
     </PropertyGroup>
+    <!-- The mill's own assemblies are weave inputs too. Without them a
+         rebuilt mill re-wove nothing: the woven core kept the old
+         compiler's code until a mill source happened to change, which
+         is how a sparky built after the lists rework still called Taken
+         as a seq word that no longer existed. Only the ShoddyToolPath
+         route names a file; the tool-manifest and PATH routes have no
+         path to list. -->
+    <ItemGroup Condition="'$(ShoddyToolPath)' != ''">
+      <_ShoddyToolFile Include="$([System.IO.Path]::GetDirectoryName('$(ShoddyToolPath)'))/*.dll" />
+    </ItemGroup>
     <Exec Condition="'$(_ShoddyMillCmd)' == ''"
           Command="dotnet tool run mill -- --version"
           IgnoreExitCode="true" EchoOff="true"
@@ -274,12 +284,13 @@
 
   <!-- The weave itself, incremental per mill (C2.5): Inputs are the
        mill's sources, its transitive machine closure (DLLs and their
-       sources) and the manifest; Outputs the woven artifact. An
+       sources), the manifest and the mill toolchain's own DLLs; Outputs
+       the woven artifact. An
        untouched mill launches nothing; a touched dependency re-weaves
        what depends on it. -->
   <Target Name="_ShoddyWeaveEach" DependsOnTargets="_ShoddyPlan"
           Condition="'@(ShoddyMill)' != ''"
-          Inputs="%(ShoddyPlanned.Inputs)" Outputs="%(ShoddyPlanned.OutDll)">
+          Inputs="%(ShoddyPlanned.Inputs);@(_ShoddyToolFile)" Outputs="%(ShoddyPlanned.OutDll)">
     <Exec Command="$(_ShoddyMillCmd) %(ShoddyPlanned.Verb) &quot;%(ShoddyPlanned.WeaveIn)&quot;"
           EnvironmentVariables="SHODDY_BIN_SCOPE=$(ShoddyBinScope)" />
   </Target>

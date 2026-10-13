@@ -28,8 +28,8 @@ const root = path.resolve(__dirname, "..");
 
 const mill = path.join(root, "bin", process.platform === "win32" ? "mill.exe" : "mill");
 if (!fs.existsSync(mill)) {
-    console.log("bin/mill is not there - publish it first: "
-        + "dotnet publish src/Shoddy.Mill -c Release -o bin");
+    console.log("bin/mill is not there - build it first: "
+        + "./build.sh build (./build.ps1 build on Windows)");
     process.exit(1);
 }
 

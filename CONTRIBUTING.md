@@ -18,7 +18,7 @@ that license (see the [Developer Certificate of Origin](https://developercertifi
 2. Fork, branch, and make your change.
 3. Build and run the tests locally:
    ```
-   dotnet publish src/Shoddy.Mill -c Release -o bin
+   ./build.sh build                    # the mill into bin/ (./build.ps1 build on Windows)
    dotnet test src/Shoddy.Tests        # golden conformance suite
    bin/mill run tst/libtest.shoddy      # ends: ALL ASSERTIONS PASSED
    ```

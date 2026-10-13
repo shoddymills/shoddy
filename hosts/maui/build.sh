@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Build the MAUI lane: restore, build and test whatever this machine's
-# workloads can build. Run the repo root's build first so bin/mill
-# exists — ShoddyWeave drives it. The .ps1 twin is the file that ships
+# workloads can build. Every call first runs the repo root's build,
+# which publishes bin/mill - ShoddyWeave drives it. The .ps1 twin is the
+# file that ships
 # from the Windows workstation; keep the two in step.
 #
 #   ./build.sh          restore + build (Debug)
@@ -11,10 +12,9 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-if [ ! -e ../../bin/mill ] && [ ! -e ../../bin/mill.exe ]; then
-    echo "STOPPED: bin/mill is missing - run ./build.sh at the repo root first." >&2
-    exit 1
-fi
+# The root's build, every call: a check that bin/mill exists passes a mill
+# from before a compiler change. build() in ../../build.sh says why.
+../../build.sh build
 
 case "${1:-build}" in
     build)   dotnet build ShoddyMaui.slnx ;;

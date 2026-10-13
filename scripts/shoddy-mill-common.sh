@@ -7,7 +7,8 @@
 #
 #   $MILL_DIR       this mill's own absolute directory
 #   $MILL           the mill toolchain, resolved from MILL_DIR
-#   ensure_mill     builds the toolchain into ../../bin if it is missing
+#   ensure_mill     publishes the toolchain into ../../bin, every call,
+#                   through the repo root's build.sh
 #   run_live CMD...   runs CMD from ORIG_DIR, not from the mill's folder -
 #                     for any target that launches a program a person
 #                     interacts with, so a path they type or pass at the
@@ -34,11 +35,12 @@ MILL_DIR=$(pwd)
 REPO=$MILL_DIR/../..
 MILL=$REPO/bin/mill
 
+# The root's `build`, not a copy of it: that is the one place that
+# publishes the mill and empties machine DLLs woven by an older one. It
+# used to be an existence check here, which kept a stale mill forever -
+# build() in the root build.sh has the whole story.
 ensure_mill() {
-    [ -x "$MILL" ] || {
-        echo "mill toolchain not built; building it into $REPO/bin ..."
-        dotnet publish "$REPO/src/Shoddy.Mill" -c Release -o "$REPO/bin"
-    }
+    "$REPO/build.sh" build
 }
 
 run_live() {

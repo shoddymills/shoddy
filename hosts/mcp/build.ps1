@@ -1,6 +1,7 @@
 #!/usr/bin/env pwsh
-# Build the MCP lane: restore, build and test Sparky. Run the repo root's
-# build first so bin/mill.exe exists - ShoddyWeave drives it.
+# Build the MCP lane: restore, build and test Sparky. Every call first
+# runs the repo root's build, which publishes bin/mill.exe - ShoddyWeave
+# drives it.
 #
 #   ./build.ps1              restore + build (Debug)
 #   ./build.ps1 test         build + run Shoddy.Mcp.Tests
@@ -21,9 +22,14 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-Location $PSScriptRoot
 
-$mill = Join-Path $PSScriptRoot '..\..\bin\mill.exe'
-if (-not (Test-Path $mill)) {
-    Write-Host 'STOPPED: bin/mill.exe is missing - run ./build.ps1 at the repo root first.' -ForegroundColor Red
+# The root's build, every call: a check that bin/mill.exe exists passed a
+# mill from before a compiler change, and every sparky woven by it failed
+# with "unknown word: TAKEN". Invoke-Build in ../../build.ps1 has the
+# whole story. Push/Pop, because the root script sets its own location.
+Push-Location (Join-Path $PSScriptRoot '../..')
+try { & ./build.ps1 build } finally { Pop-Location }
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "STOPPED: the repo root's build failed (exit $LASTEXITCODE)." -ForegroundColor Red
     exit 1
 }
 
@@ -51,18 +57,20 @@ switch ($Command) {
         # per OS, so the far end needs no repo and no .NET install.
         # Cross-targeting every RID from one machine is safe because the
         # lane is pure managed code - mcp.yml asserts that from outside.
-        # win-x64 ships as .zip; the unix RIDs as .tar.gz, because the
-        # executable bit only survives a tar. An archive cut on Windows
+        # The Windows RIDs ship as .zip; the unix RIDs as .tar.gz, because
+        # the executable bit only survives a tar. win-arm64 is its own
+        # archive so an ARM64 Windows machine runs sparky natively rather
+        # than under x64 emulation. An archive cut on Windows
         # cannot record that bit at all, so unix archives made here are
         # for inspection - the ones a release attaches are the Linux
         # runner's.
         $suffix = ''
         if ($Version) { $suffix = "-$Version" }
         $pub = Join-Path $PSScriptRoot '..\..\artifacts\publish'
-        foreach ($rid in @('win-x64', 'linux-x64', 'osx-x64', 'osx-arm64')) {
+        foreach ($rid in @('win-x64', 'win-arm64', 'linux-x64', 'osx-x64', 'osx-arm64')) {
             $dir = Join-Path $pub "sparky\$rid"
             Run @('publish', 'sparky', '-c', 'Release', '-r', $rid, '--self-contained', '-p:PublishSingleFile=true', '-o', $dir)
-            if ($rid -eq 'win-x64') {
+            if ($rid -like 'win-*') {
                 Compress-Archive -Path (Join-Path $dir 'sparky.exe') `
                     -DestinationPath (Join-Path $pub "sparky$suffix-$rid.zip") -Force
             } else {

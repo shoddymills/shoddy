@@ -20,9 +20,11 @@
 # all: the whole toolchain from nothing — clean, then test (which rebuilds
 # the mill), then vsix (which builds the machines, stages, and packages).
 # This is the path for a package you mean to install or ship; `vsix` on its
-# own reuses whatever bin/mill is already there and runs no tests, which is
-# fine for a quick turn and not for a release. Takes the same optional bump
-# as vsix: ./build.ps1 all patch
+# own runs no tests, which is fine for a quick turn and not for a release.
+# Takes the same optional bump as vsix: ./build.ps1 all patch
+#
+# Every target that runs the mill publishes it first, every time - see
+# Invoke-Build below for why that is not left to a check.
 #
 # vsix [bump]: optional patch|minor|major or an exact X.Y.Z to bump the
 # extension version before packaging (e.g. ./build.ps1 vsix patch).
@@ -77,15 +79,114 @@ $Mill = Join-Path 'bin' 'mill.exe'
 $StageMill = Join-Path 'vscode-shoddy' 'mill'
 $StageLib = Join-Path 'vscode-shoddy' 'machines'
 
+# THE MILL IS REBUILT ON EVERY CALL, NOT WHEN IT LOOKS MISSING. This was
+# `if (-not (Test-Path bin/mill.exe)) { build }`, which never rebuilt a
+# mill that existed. A mill from before a compiler change then went on
+# weaving every machine with the old compiler - the lists rework moved
+# Taken from seq into the runtime, the old mill still compiled it as a seq
+# word, and every sparky session failed with "unknown word: TAKEN" while
+# each step reported success. Deciding staleness here would mean keeping a
+# list of what the mill is built from; MSBuild already knows exactly.
+#
+# AND IT IS PUBLISHED INTO AN EMPTY FOLDER, NEVER STRAIGHT INTO bin/.
+# Publish copies a file only when the source is NEWER than the one already
+# there, so a mill in bin/ with later timestamps than the build output - one
+# published from another checkout, or restored from anywhere - survives a
+# `dotnet publish -o bin` untouched while the publish reports success. That
+# was proved, not supposed: an older mill planted in bin/ was still the one
+# running after the publish. So the build lands in $MillPub, which is
+# emptied first, and bin/ is replaced by it whenever the two differ by a
+# single byte. About a second when nothing changed. If a running mill.exe
+# holds bin/ open, the Remove-Item fails and stops the build, which is the
+# right answer: carrying on would run the mill that is there.
+#
+# THEN THE MACHINE DLLS ARE CHECKED AGAINST THE MILL THAT WOVE THEM. A
+# fresh mill is not enough on its own: the resolver judges a machine DLL
+# only against its source and its dependencies, so DLLs woven by the old
+# mill still pass as current. Each machine bin/ carries .mill-id, the hash
+# of the mill's DLLs at the time it was emptied; when that differs from
+# the mill now in bin/, the folder is emptied and the resolver weaves
+# every machine afresh with this mill on first use. A hash of the content,
+# not a timestamp: a timestamp moves when nothing changed (another project
+# recompiling Shoddy.Runtime with its own settings does it) and can stay
+# put when something did. A folder with no .mill-id is treated as
+# mismatched, so a tree from before this rule is emptied once.
+$MillPub = Join-Path 'artifacts' 'mill-publish'
 function Invoke-Build {
-    Native dotnet publish src/Shoddy.Mill -c Release -o bin
+    if (Test-Path $MillPub) { Remove-Item -Recurse -Force $MillPub }
+    Native dotnet publish src/Shoddy.Mill -c Release -o $MillPub
+    if ((Get-TreeId $MillPub) -eq (Get-TreeId 'bin')) {
+        Remove-Item -Recurse -Force $MillPub
+    }
+    else {
+        if (Test-Path bin) {
+            Write-Host 'bin/ is not the mill just built: replacing it'
+            Remove-Item -Recurse -Force bin
+        }
+        Move-Item $MillPub bin
+    }
+    $id = Get-MillId
+    foreach ($d in 'machines/bin', 'machines/seeds/bin') {
+        $stamp = Join-Path $d '.mill-id'
+        $was = if (Test-Path $stamp) { "$(Get-Content $stamp -Raw)".Trim() } else { '' }
+        if ($was -ne $id) {
+            if (Test-Path $d) {
+                Write-Host "mill changed: emptying $d so its machines are rewoven by this mill"
+                Remove-Item -Recurse -Force $d
+            }
+            New-Item -ItemType Directory -Path $d -Force | Out-Null
+            Set-Content -Path $stamp -Value $id -NoNewline
+        }
+    }
+}
+
+# The identity of the mill in bin/: one hash over all of its DLLs, taken
+# in ordinal order of their names - byte order, as build.sh's mill_id
+# takes them under LC_ALL=C. Sort-Object would not do: it ignores case.
+function Get-MillId {
+    $files = @(Get-ChildItem bin -Filter *.dll -File)
+    $names = [string[]]@($files | ForEach-Object Name)
+    [Array]::Sort($names, [System.StringComparer]::Ordinal)
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        foreach ($n in $names) {
+            # FullName, because .NET resolves a relative path against the
+            # process directory, which is not PowerShell's location.
+            $bytes = [System.IO.File]::ReadAllBytes((Get-Item (Join-Path bin $n)).FullName)
+            [void]$sha.TransformBlock($bytes, 0, $bytes.Length, $null, 0)
+        }
+        [void]$sha.TransformFinalBlock([byte[]]::new(0), 0, 0)
+        return ([System.BitConverter]::ToString($sha.Hash) -replace '-', '').ToLowerInvariant()
+    }
+    finally { $sha.Dispose() }
+}
+
+# Everything in a folder, as one hash: each file's path relative to the
+# folder, then its bytes, in ordinal order of path. Two folders hash the
+# same only when they hold the same files with the same content - what
+# `diff -r -q` answers in build.sh. A missing folder hashes as empty.
+function Get-TreeId([string]$Dir) {
+    if (-not (Test-Path $Dir)) { return '' }
+    $root = (Get-Item $Dir).FullName.TrimEnd('/', '\') + [System.IO.Path]::DirectorySeparatorChar
+    $paths = [string[]]@(Get-ChildItem $Dir -Recurse -File -Force |
+        ForEach-Object { $_.FullName.Substring($root.Length).Replace('\', '/') })
+    [Array]::Sort($paths, [System.StringComparer]::Ordinal)
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        foreach ($p in $paths) {
+            $name = [System.Text.Encoding]::UTF8.GetBytes($p + [char]0)
+            [void]$sha.TransformBlock($name, 0, $name.Length, $null, 0)
+            $bytes = [System.IO.File]::ReadAllBytes($root + $p)
+            [void]$sha.TransformBlock($bytes, 0, $bytes.Length, $null, 0)
+        }
+        [void]$sha.TransformFinalBlock([byte[]]::new(0), 0, 0)
+        return ([System.BitConverter]::ToString($sha.Hash) -replace '-', '').ToLowerInvariant()
+    }
+    finally { $sha.Dispose() }
 }
 
 function Assert-Mill {
-    if (-not (Test-Path $Mill)) {
-        Write-Host 'mill not built; running build first...'
-        Invoke-Build
-    }
+    Invoke-Build
 }
 
 # Read a list out of scripts/suites.mjs - THE ONLY COPY of the suite
@@ -433,7 +534,7 @@ switch ($Command) {
     'install' { Invoke-Install }
     'clean' { Invoke-Clean }
     { $_ -in 'help', '-h', '--help' } {
-        Get-Content $PSCommandPath | Select-Object -Skip 1 -First 34 |
+        Get-Content $PSCommandPath | Select-Object -Skip 1 -First 36 |
             ForEach-Object { $_ -replace '^#\s?', '' }
     }
     default {

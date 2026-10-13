@@ -1,7 +1,7 @@
 #!/usr/bin/env pwsh
 # Build the MAUI lane: restore, build and test whatever this machine's
-# workloads can build (today: Windows). Run the repo root's build first
-# so bin/mill.exe exists — ShoddyWeave drives it.
+# workloads can build (today: Windows). Every call first runs the repo
+# root's build, which publishes bin/mill.exe - ShoddyWeave drives it.
 #
 #   ./build.ps1          restore + build (Debug)
 #   ./build.ps1 test     build + run Shoddy.Maui.Tests
@@ -12,9 +12,13 @@ param([Parameter(Position = 0)][string]$Command = 'build')
 $ErrorActionPreference = 'Stop'
 Set-Location $PSScriptRoot
 
-$mill = Join-Path $PSScriptRoot '..\..\bin\mill.exe'
-if (-not (Test-Path $mill)) {
-    Write-Host 'STOPPED: bin/mill.exe is missing - run ./build.ps1 at the repo root first.' -ForegroundColor Red
+# The root's build, every call: a check that bin/mill.exe exists passes a
+# mill from before a compiler change. Invoke-Build in ../../build.ps1
+# says why. Push/Pop, because the root script sets its own location.
+Push-Location (Join-Path $PSScriptRoot '../..')
+try { & ./build.ps1 build } finally { Pop-Location }
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "STOPPED: the repo root's build failed (exit $LASTEXITCODE)." -ForegroundColor Red
     exit 1
 }
 

@@ -42,12 +42,12 @@ public sealed class PerchServer : IDebugSink
     /// Run the launched program on this process's own console: its
     /// keyboard, its screen, its error stream, exactly as `mill run`
     /// gives them. Set when the protocol travels over a socket, which
-    /// leaves the console free for the program (`mill dap --listen`, the
-    /// editor's integrated terminal).
+    /// leaves the console free for the program (`mill dap --listen`, which
+    /// the VS Code extension runs in a terminal window of its own).
     ///
     /// <para>Off, the protocol owns this process's stdin and stdout, so
     /// the program's output travels to the client as output events and its
-    /// input is empty. That is the editor's "internalConsole" choice.</para>
+    /// input is empty (`mill dap`).</para>
     /// </summary>
     public bool ConsoleIo { get; set; }
 

@@ -93,50 +93,186 @@ function freePort() {
     });
 }
 
-/** Resolves once something accepts on the loopback port, or rejects
- * when `gone()` says the process that should be listening has ended,
- * or after `ms`. */
-function waitForPort(port, gone, ms) {
-    const deadline = Date.now() + ms;
-    return new Promise((resolve, reject) => {
+/** True while process `pid` exists. EPERM means it exists and belongs to
+ * someone else. */
+function alive(pid) {
+    try { process.kill(pid, 0); return true; }
+    catch (e) { return e.code === 'EPERM'; }
+}
+
+/** How long the mill has to start serving the debugger after its window
+ * opens. The first launch after an install weaves the instrumented
+ * machines the program includes, which takes seconds, not minutes. */
+const START_MS = 60000;
+
+/** The debug adapter for a launch, running inside the extension.
+ *
+ * A program being debugged runs in a terminal window of the operating
+ * system's own, never inside VS Code: it has that window's keyboard and
+ * screen, at that window's size, exactly as under `mill run`. VS Code
+ * opens the window when its debug adapter asks it to (runInTerminal, kind
+ * "external"), and the user's terminal.external.* settings choose which
+ * terminal that is. The mill in the window is not that adapter: it serves
+ * the protocol on a loopback port. So this class is the adapter VS Code
+ * talks to. It asks for the window, waits for the mill to answer on the
+ * port, then relays every message both ways unchanged. */
+class ExternalLaunch {
+    constructor(config) {
+        this.config = config;
+        this.emitter = new vscode.EventEmitter();
+        this.onDidSendMessage = this.emitter.event;
+        this.pending = [];      // VS Code's messages, held until the mill is reached
+        this.socket = null;
+        this.started = false;
+        this.ended = false;     // no mill to relay to, now or ever
+        this.told = false;      // VS Code has had the terminated event
+        this.asked = null;      // the seq of the runInTerminal request, until answered
+    }
+
+    handleMessage(message) {
+        if (message.type === 'response' && message.request_seq === this.asked) {
+            this.asked = null;
+            if (message.success && this.config.noDebug) this.ran();
+            else if (message.success) this.connect(message.body || {});
+            else this.fail(`VS Code could not open a terminal window for the program: ${message.message || 'it gave no reason'}`);
+            return;
+        }
+        if (this.socket && !this.socket.destroyed) { this.socket.write(launch.frame(message)); return; }
+        if (this.ended) { this.answerAfterEnd(message); return; }
+        this.pending.push(message);
+        if (!this.started) this.start(message);
+    }
+
+    /** A request that arrives with no mill left to answer it. VS Code
+     * ends every session with disconnect and waits for the reply, so that
+     * one succeeds. Without debugging there was never a mill to answer,
+     * and the program is running in its window, so launch succeeds too
+     * (refusing it would put an error in front of a program that started
+     * fine). Anything else is refused. */
+    answerAfterEnd(m) {
+        if (m.type !== 'request') return;
+        const ok = m.command === 'disconnect' || this.config.noDebug === true;
+        this.emitter.fire({
+            type: 'response', seq: 0, request_seq: m.seq, command: m.command,
+            success: ok, message: ok ? undefined : 'the program has ended',
+        });
+    }
+
+    /** On VS Code's first message, which is always initialize: ask for the
+     * window. */
+    async start(first) {
+        this.started = true;
+        const args = first.arguments || {};
+        if (first.command !== 'initialize' || !args.supportsRunInTerminalRequest) {
+            this.fail('this editor cannot open a terminal window, and a Shoddy program being debugged runs in one');
+            return;
+        }
+        // A port only when debugging: without, nothing listens on one.
+        let port;
+        if (!this.config.noDebug) {
+            try { port = await freePort(); }
+            catch (e) { this.fail(`no loopback port is free for the debugger: ${e.message}`); return; }
+            if (this.ended) return;
+            this.port = port;
+        }
+        // The mill numbers its own messages from 1 once it is reached; this
+        // request is answered before then, so the two never overlap.
+        this.asked = 1;
+        this.emitter.fire({
+            type: 'request', seq: this.asked, command: 'runInTerminal',
+            arguments: launch.terminalRequest(this.config, millCommand(), port, millEnv()),
+        });
+    }
+
+    /** Without debugging, the window is the whole of the job: the program
+     * runs there under `mill run`, and there is no debugger to talk to.
+     * Answer initialize, then end the session; the window stays. */
+    ran() {
+        for (const m of this.pending) {
+            if (m.type !== 'request') continue;
+            this.emitter.fire({
+                type: 'response', seq: 0, request_seq: m.seq, command: m.command,
+                success: true, body: {},
+            });
+        }
+        this.pending = [];
+        this.end();
+    }
+
+    /** The window is open: connect to the mill as soon as it listens. A
+     * refused connection means it has not started yet, so try again,
+     * until the process is gone or START_MS has passed. */
+    connect(body) {
+        const pid = body.processId;
+        const deadline = Date.now() + START_MS;
         const attempt = () => {
-            const sock = net.connect(port, '127.0.0.1');
-            sock.once('connect', () => { sock.destroy(); resolve(); });
+            if (this.ended) return;
+            const sock = net.connect(this.port, '127.0.0.1');
+            sock.once('connect', () => {
+                sock.removeAllListeners('error');
+                this.relay(sock);
+            });
             sock.once('error', () => {
                 sock.destroy();
-                if (gone()) reject(new Error('the mill ended before the debugger started; its terminal says why'));
-                else if (Date.now() > deadline) reject(new Error('the mill did not start its debugger in time'));
+                if (pid && !alive(pid)) this.fail('the mill ended before its debugger started; its window says why');
+                else if (Date.now() > deadline) this.fail(`the mill did not start its debugger within ${START_MS / 1000} seconds`);
                 else setTimeout(attempt, 100);
             });
         };
         attempt();
-    });
-}
+    }
 
-// The debugged programs' terminals. A finished one is closed when the next
-// session starts, so they do not pile up; a live one is never touched.
-const debugTerms = new Set();
+    relay(sock) {
+        if (this.ended) { sock.destroy(); return; }
+        this.socket = sock;
+        const unframer = new launch.Unframer();
+        sock.on('data', (chunk) => {
+            let messages;
+            try { messages = unframer.push(chunk); }
+            catch (e) { this.fail(`the mill sent a message that could not be read: ${e.message}`); return; }
+            for (const m of messages) {
+                if (m.type === 'event' && m.event === 'terminated') this.told = true;
+                this.emitter.fire(m);
+            }
+        });
+        // An error is always followed by close, which ends the session.
+        sock.on('error', () => {});
+        sock.on('close', () => this.end());
+        for (const m of this.pending) sock.write(launch.frame(m));
+        this.pending = [];
+    }
 
-/** An integrated-terminal launch: a terminal whose process is the mill
- * (`mill dap --listen PORT`, no shell in between, so nothing is quoted or
- * re-split), started in the program's folder. The program has that
- * terminal's keyboard and screen. The debugger is reached on the port. */
-async function startInTerminal(config) {
-    for (const t of debugTerms)
-        if (t.exitStatus !== undefined) { t.dispose(); debugTerms.delete(t); }
-    const port = await freePort();
-    const run = launch.debuggeeProcess(millCommand(), port);
-    const term = vscode.window.createTerminal({
-        name: launch.terminalName(config.program),
-        shellPath: run.cmd,
-        shellArgs: run.args,
-        cwd: config.cwd,
-        env: millEnv(),
-    });
-    debugTerms.add(term);
-    term.show(true);
-    await waitForPort(port, () => term.exitStatus !== undefined, 60000);
-    return new vscode.DebugAdapterServer(port, '127.0.0.1');
+    /** The session is over. If the mill did not say so itself (it was
+     * killed, or its window was closed), say so for it, or VS Code would
+     * wait for it forever. */
+    end() {
+        if (this.ended) return;
+        this.ended = true;
+        if (this.told) return;
+        this.told = true;
+        this.emitter.fire({ type: 'event', seq: 0, event: 'terminated' });
+    }
+
+    /** Refuse every request still waiting, with `reason`, and end. */
+    fail(reason) {
+        if (this.ended) return;
+        for (const m of this.pending) {
+            if (m.type !== 'request') continue;
+            this.emitter.fire({
+                type: 'response', seq: 0, request_seq: m.seq, command: m.command,
+                success: false, message: reason,
+            });
+        }
+        this.pending = [];
+        if (this.socket) this.socket.destroy();
+        this.end();
+    }
+
+    dispose() {
+        this.ended = true;
+        if (this.socket) this.socket.destroy();
+        this.emitter.dispose();
+    }
 }
 
 /** Save and return the active editor's file path, or null. */
@@ -148,6 +284,23 @@ async function activeFile() {
     }
     await editor.document.save();
     return editor.document.fileName;
+}
+
+/** Run File: the program in a terminal window of its own, under `mill
+ * run`, from its own folder. It goes through a launch without debugging,
+ * the same route as Run → Run Without Debugging, because that is how VS
+ * Code opens a terminal window outside itself. */
+async function runFile() {
+    const file = await activeFile();
+    if (!file) return;
+    const uri = vscode.Uri.file(file);
+    await vscode.debug.startDebugging(vscode.workspace.getWorkspaceFolder(uri), {
+        type: 'shoddy',
+        request: 'launch',
+        name: `Shoddy: run ${path.basename(file)}`,
+        program: file,
+        noDebug: true,
+    });
 }
 
 function millInTerminal(subcommand) {
@@ -202,15 +355,15 @@ exports.activate = (ctx) => {
     else ctx.environmentVariableCollection.delete('SHODDYLIB');
 
     ctx.subscriptions.push(
-        vscode.commands.registerCommand('shoddy.run', millInTerminal('run')),
+        vscode.commands.registerCommand('shoddy.run', runFile),
         vscode.commands.registerCommand('shoddy.weave', millInTerminal('weave')),
         vscode.commands.registerCommand('shoddy.machine', millInTerminal('machine')),
         vscode.commands.registerCommand('shoddy.gen', showGenerated),
 
-        // The perch: `mill dap` speaks the Debug Adapter Protocol for a
-        // launch; an attach names a transport — never a host kind — and
-        // connects straight to the debuggee's perch service, no mill
-        // process in the path.
+        // The perch: a launch runs `mill dap --listen PORT` in a terminal
+        // window of its own, reached through ExternalLaunch; an attach
+        // names a transport — never a host kind — and connects straight
+        // to the debuggee's perch service, no mill process in the path.
         vscode.debug.registerDebugAdapterDescriptorFactory('shoddy', {
             createDebugAdapterDescriptor: (session) => {
                 if (session.configuration.request === 'attach') {
@@ -218,19 +371,7 @@ exports.activate = (ctx) => {
                         session.configuration.port,
                         session.configuration.host || '127.0.0.1');
                 }
-                const config = session.configuration;
-                if (config.console !== 'internalConsole') return startInTerminal(config);
-                // internalConsole: the protocol over the mill's stdio, the
-                // program's output to the Debug Console. The perch runs
-                // the program inside this process, so the process's folder
-                // is the program's working directory. cwd is always set by
-                // resolveDebugConfigurationWithSubstitutedVariables below;
-                // the fallback only covers a launch that skipped it.
-                const cwd = config.cwd
-                    || (config.program && path.isAbsolute(config.program) ? path.dirname(config.program) : undefined);
-                const { cmd, args } = millCommand();
-                return new vscode.DebugAdapterExecutable(cmd, [...args, 'dap'],
-                    cwd ? { env: millEnv(), cwd } : { env: millEnv() });
+                return new vscode.DebugAdapterInlineImplementation(new ExternalLaunch(session.configuration));
             },
         }),
         // Zero-config F5: debug the current .shoddy file. We resolve
@@ -285,5 +426,4 @@ exports.activate = (ctx) => {
 
 exports.deactivate = () => {
     for (const t of terms.values()) t.dispose();
-    for (const t of debugTerms) t.dispose();
 };

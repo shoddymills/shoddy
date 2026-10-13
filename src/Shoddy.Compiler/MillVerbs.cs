@@ -191,7 +191,12 @@ public static class MillVerbs
             case "machine":
             {
                 bool debug = cmd.ProgArgs.Contains("--debug");
-                (ShoddyProgram prog, MachineSet machines) = ParseWithMachines(cmd.File, opt);
+                // An instrumented machine links against the instrumented
+                // weaves of the machines it includes, exactly as the
+                // resolver builds one on demand (MachineResolve.Build), so
+                // a machine built here and one built under the debugger
+                // are the same artifact.
+                (ShoddyProgram prog, MachineSet machines) = ParseWithMachines(cmd.File, opt, debug);
                 string outDll = Weaver.WeaveMachine(prog, cmd.File, machines.Machines, debug);
                 Console.Error.WriteLine(
                     $"mill: built {(debug ? "instrumented " : "")}machine {cmd.File} -> {outDll}");
@@ -219,10 +224,11 @@ public static class MillVerbs
     /// seed, parse, lint. Warnings go to stderr — they never stop a
     /// build, and stdout belongs to the program. Unknown words are
     /// errors: nothing legitimate survives resolution, and runtime would
-    /// die at the same spot with less context.</summary>
-    public static (ShoddyProgram, MachineSet) ParseWithMachines(string file, Options opt)
+    /// die at the same spot with less context. With <paramref name="debug"/>,
+    /// every Include resolves to its instrumented weave in bin/debug/.</summary>
+    public static (ShoddyProgram, MachineSet) ParseWithMachines(string file, Options opt, bool debug = false)
     {
-        var machines = new MachineSet();
+        var machines = new MachineSet(debug);
         List<Line> lines = Lexer.ReadProgram(file, (p, q) => MachineResolve.Resolve(machines, p, q));
         var prog = new ShoddyProgram();
         machines.SeedInto(prog);

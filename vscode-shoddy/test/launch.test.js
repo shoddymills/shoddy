@@ -44,13 +44,10 @@ test('allowNet is off unless it is true', () => {
     assert.strictEqual(launch.resolveLaunch({ request: 'launch', program: prog, allowNet: true }, ws).allowNet, true);
 });
 
-test('the console is the integrated terminal unless chosen otherwise', () => {
-    assert.strictEqual(launch.resolveLaunch({ request: 'launch', program: prog }, ws).console, 'integratedTerminal');
-    assert.strictEqual(
-        launch.resolveLaunch({ request: 'launch', program: prog, console: 'internalConsole' }, ws).console,
-        'internalConsole');
-    assert.throws(() => launch.resolveLaunch({ request: 'launch', program: prog, console: 'external' }, ws),
-        /"console" must be one of/);
+test('a console setting is refused, whatever it names', () => {
+    for (const value of ['integratedTerminal', 'internalConsole', 'externalTerminal'])
+        assert.throws(() => launch.resolveLaunch({ request: 'launch', program: prog, console: value }, ws),
+            /"console" is not a setting here/);
 });
 
 test('an attach configuration is left alone', () => {
@@ -67,6 +64,73 @@ test('the terminal runs the mill itself, serving the debugger on the port', () =
         { cmd: 'dotnet', args: ['/ext/mill/mill.dll', 'dap', '--listen', '5123'] });
 });
 
-test('the terminal is named for the program', () => {
+test('the terminal is named for the program, and says whether it is debugged', () => {
     assert.strictEqual(launch.terminalName(prog), 'shoddy debug: burler.shoddy');
+    assert.strictEqual(launch.terminalName(prog, true), 'shoddy run: burler.shoddy');
+});
+
+test('without debugging, the window runs the program under mill run', () => {
+    const c = launch.resolveLaunch(
+        { request: 'launch', program: prog, noDebug: true, args: ['files/words.txt', '42'], allowNet: true }, ws);
+    assert.deepStrictEqual(
+        launch.terminalRequest(c, { cmd: '/x/mill', args: [] }, undefined, {}),
+        {
+            kind: 'external',
+            title: 'shoddy run: burler.shoddy',
+            cwd: path.dirname(prog),
+            args: ['/x/mill', 'run', '--allow-net', prog, 'files/words.txt', '42'],
+            env: {},
+        });
+    const plain = launch.resolveLaunch({ request: 'launch', program: prog, noDebug: true }, ws);
+    assert.deepStrictEqual(
+        launch.runProcess({ cmd: 'dotnet', args: ['/ext/mill/mill.dll'] }, plain),
+        { cmd: 'dotnet', args: ['/ext/mill/mill.dll', 'run', prog] });
+});
+
+test('the window is an external terminal running the mill in the program folder', () => {
+    const c = launch.resolveLaunch({ request: 'launch', program: prog }, ws);
+    assert.deepStrictEqual(
+        launch.terminalRequest(c, { cmd: 'dotnet', args: ['/ext/mill/mill.dll'] }, 5123, { SHODDYLIB: '/ext/machines' }),
+        {
+            kind: 'external',
+            title: 'shoddy debug: burler.shoddy',
+            cwd: path.dirname(prog),
+            args: ['dotnet', '/ext/mill/mill.dll', 'dap', '--listen', '5123'],
+            env: { SHODDYLIB: '/ext/machines' },
+        });
+});
+
+test('a framed message carries its length in bytes, not characters', () => {
+    const msg = { type: 'event', event: 'output', body: { output: 'café ✓' } };
+    const bytes = launch.frame(msg);
+    const text = bytes.toString('utf8');
+    const body = Buffer.from(JSON.stringify(msg), 'utf8');
+    assert.ok(text.startsWith(`Content-Length: ${body.length}\r\n\r\n`));
+    assert.notStrictEqual(body.length, JSON.stringify(msg).length);
+});
+
+test('framed messages come back whole, however the bytes are split', () => {
+    const msgs = [
+        { seq: 1, type: 'request', command: 'initialize' },
+        { seq: 2, type: 'event', event: 'output', body: { output: 'café ✓\n' } },
+        { seq: 3, type: 'response', request_seq: 1, success: true },
+    ];
+    const all = Buffer.concat(msgs.map(launch.frame));
+    // Every split point, including one inside a multi-byte character and
+    // one inside the header.
+    for (let cut = 1; cut < all.length; cut++) {
+        const u = new launch.Unframer();
+        const got = [...u.push(all.subarray(0, cut)), ...u.push(all.subarray(cut))];
+        assert.deepStrictEqual(got, msgs, `split at byte ${cut}`);
+    }
+    // One byte at a time.
+    const u = new launch.Unframer();
+    const got = [];
+    for (const b of all) got.push(...u.push(Buffer.from([b])));
+    assert.deepStrictEqual(got, msgs);
+});
+
+test('a header with no length is refused, not guessed at', () => {
+    const u = new launch.Unframer();
+    assert.throws(() => u.push(Buffer.from('Content-Type: x\r\n\r\n{}')), /no Content-Length/);
 });

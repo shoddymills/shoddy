@@ -1,7 +1,7 @@
 #!/usr/bin/env pwsh
 # Shoddy build wrapper (Windows). Unix users: use build.sh (same commands).
 #
-#   ./build.ps1 all [bump]            everything: clean, test, then .vsix
+#   ./build.ps1 all [bump|X.Y.Z]      everything: clean, test, then .vsix
 #   ./build.ps1 build                 build the mill into bin/
 #   ./build.ps1 test                  everything: dotnet tests, the machine
 #                                     suites and every mill's own suite
@@ -12,8 +12,8 @@
 #   ./build.ps1 weave FILE.shoddy     compile a program to an assembly
 #   ./build.ps1 machines              compile every machine to a machine DLL
 #   ./build.ps1 stage                 stage the mill + machines into the extension
-#   ./build.ps1 vsix [bump]           package the VS Code extension (.vsix)
-#   ./build.ps1 install               install the packaged .vsix into VS Code
+#   ./build.ps1 vsix [bump|X.Y.Z]     package the VS Code extension (.vsix)
+#   ./build.ps1 install [X.Y.Z]       install the packaged .vsix into VS Code
 #   ./build.ps1 clean                 remove build output
 #   ./build.ps1 help                  show this help
 #
@@ -21,14 +21,20 @@
 # the mill), then vsix (which builds the machines, stages, and packages).
 # This is the path for a package you mean to install or ship; `vsix` on its
 # own runs no tests, which is fine for a quick turn and not for a release.
-# Takes the same optional bump as vsix: ./build.ps1 all patch
+# Takes the same optional argument as vsix: ./build.ps1 all 2.10.0
 #
 # Every target that runs the mill publishes it first, every time - see
 # Invoke-Build below for why that is not left to a check.
 #
-# vsix [bump]: optional patch|minor|major or an exact X.Y.Z to bump the
-# extension version before packaging (e.g. ./build.ps1 vsix patch).
+# vsix [bump|X.Y.Z]: patch|minor|major has vsce bump the version in
+# package.json, then package. An exact X.Y.Z builds this package as that
+# version and changes no file in the tree: the staged mill reports X.Y.Z
+# and the package is vscode-shoddy-X.Y.Z.vsix. That is how a local build
+# carries a release number (./build.ps1 vsix 2.10.0).
 # vsix stages first, so the package carries its own mill and machines.
+#
+# install [X.Y.Z]: install vscode-shoddy-X.Y.Z.vsix, or with no version,
+# the package for the version package.json names.
 #
 # run [SWITCHES] FILE.shoddy [ARGS...]: SWITCHES go before the file and
 # are the mill's own - --allow-net (arm the network), --no-window (hide
@@ -208,6 +214,15 @@ function Invoke-Machines {
     # only if Shoddy.Machines.X.dll is already built — otherwise the
     # source is spliced in and its defs re-exported, which collides with
     # the real machine downstream (duplicate definition of ANY, etc.).
+    #
+    # Each machine is woven twice: the release weave into bin/, and the
+    # instrumented one (--debug) into bin/debug/, which the debugger loads
+    # so a program can be stepped into the machine's own lines. Both are
+    # built here so the extension ships both. Without the instrumented
+    # set, the first F5 after an install wove every machine the program
+    # reached, inside the installed extension, before the program could
+    # start. The same order serves both: an instrumented machine links
+    # against the instrumented weaves of the machines it includes.
     $files = @(Get-ChildItem machines/*.shoddy, machines/seeds/*.shoddy | Sort-Object Name)
     $deps = @{}
     foreach ($f in $files) {
@@ -231,6 +246,10 @@ function Invoke-Machines {
         foreach ($f in $ready) {
             Write-Host "==> $($f.Name)"
             Native $Mill machine $f.FullName
+            # Quoted, as the -p: arguments in Invoke-Stage are: PowerShell
+            # parses a bare word that starts with a dash as a parameter
+            # name, and a quoted one only as text for the mill.
+            Native $Mill machine '--debug' $f.FullName
             [void]$built.Add($f.BaseName.ToLowerInvariant())
             $pending.Remove($f)
         }
@@ -243,7 +262,14 @@ function Invoke-Machines {
 # is) and the machines it needs. The extension points SHODDYLIB at the
 # staged machines/, where Include finds the source and the resolver
 # finds the DLL beside it in bin/.
+#
+# With a version, the staged mill and every assembly published with it
+# carry that version. It is passed to this one publish as a property rather
+# than written into Directory.Build.props, so the tree is left as it was.
+# bin/mill is not restamped: it only weaves the machines, and a machine DLL
+# records no mill version.
 function Invoke-Stage {
+    param([string]$Version)
     Invoke-Machines
     foreach ($d in $StageMill, $StageLib) {
         if (Test-Path $d) { Remove-Item -Recurse -Force $d }
@@ -265,14 +291,24 @@ function Invoke-Stage {
     # Quoting is correct in both shells. The sibling publish in
     # hosts/mcp/build.ps1 already quotes theirs, which is exactly why it
     # went on working.
-    Native dotnet publish src/Shoddy.Mill -c Release -o $StageMill `
-        '-p:SatelliteResourceLanguages=en' '-p:DebugType=none'
-    New-Item -ItemType Directory -Path (Join-Path $StageLib 'bin') -Force | Out-Null
-    New-Item -ItemType Directory -Path (Join-Path $StageLib 'seeds/bin') -Force | Out-Null
+    # Two calls rather than an array of properties: splatting an array into
+    # Native would reopen the question the quotes above settle.
+    if ($Version) {
+        Native dotnet publish src/Shoddy.Mill -c Release -o $StageMill `
+            '-p:SatelliteResourceLanguages=en' '-p:DebugType=none' "-p:Version=$Version"
+    }
+    else {
+        Native dotnet publish src/Shoddy.Mill -c Release -o $StageMill `
+            '-p:SatelliteResourceLanguages=en' '-p:DebugType=none'
+    }
+    New-Item -ItemType Directory -Path (Join-Path $StageLib 'bin/debug') -Force | Out-Null
+    New-Item -ItemType Directory -Path (Join-Path $StageLib 'seeds/bin/debug') -Force | Out-Null
     Copy-Item machines/*.shoddy $StageLib
     Copy-Item machines/bin/*.dll (Join-Path $StageLib 'bin')
+    Copy-Item machines/bin/debug/*.dll (Join-Path $StageLib 'bin/debug')
     Copy-Item machines/seeds/*.shoddy (Join-Path $StageLib 'seeds')
     Copy-Item machines/seeds/bin/*.dll (Join-Path $StageLib 'seeds/bin')
+    Copy-Item machines/seeds/bin/debug/*.dll (Join-Path $StageLib 'seeds/bin/debug')
     # One timestamp across every staged DLL, newer than every staged
     # source, and identical between them. Copy stamps each file as it
     # goes - alphabetically - and a machine counts as stale when a DLL
@@ -280,7 +316,8 @@ function Invoke-Stage {
     # seq and str, all later in the alphabet) arrived looking stale and
     # rebuilt itself on first use, inside the installed extension.
     $stamp = Get-Date
-    Get-ChildItem (Join-Path $StageLib 'bin'), (Join-Path $StageLib 'seeds/bin') -Filter *.dll |
+    Get-ChildItem (Join-Path $StageLib 'bin'), (Join-Path $StageLib 'seeds/bin'),
+                  (Join-Path $StageLib 'bin/debug'), (Join-Path $StageLib 'seeds/bin/debug') -Filter *.dll |
         ForEach-Object { $_.LastWriteTime = $stamp }
     # Roslyn, Silk.NET, GLFW and OpenAL Soft are redistributed in the
     # package, so their notices have to travel with it — LGPL-2.1 for
@@ -424,6 +461,35 @@ function Invoke-Check {
 # script putting software on your machine, globally, without asking. CI does
 # not need that behaviour either: release.yml installs vsce as its own
 # explicit step before it calls this.
+# An exact release number, as release.yml accepts it from a tag.
+function Test-Version([string]$Text) {
+    return $Text -cmatch '^[0-9]+\.[0-9]+\.[0-9]+$'
+}
+
+# Package the extension as $Version without changing package.json. vsce
+# names and labels the package from package.json, so the version has to be
+# in that file while vsce runs. The file is copied aside first and moved
+# back on every way out: success, failure, Ctrl+C. A copy left behind
+# means a run was killed outright, and package.json may still carry the
+# stamp, so the next run stops and says how to put it back rather than
+# guessing which of the two files is the real one.
+# Runs in vscode-shoddy/.
+function Invoke-PackageAs([string]$Version) {
+    $kept = Join-Path '..' (Join-Path 'artifacts' 'package.json.unstamped')
+    if (Test-Path $kept) {
+        [Console]::Error.WriteLine("$kept is left from an interrupted vsix run.")
+        [Console]::Error.WriteLine('Check it, then put it back: Move-Item -Force artifacts/package.json.unstamped vscode-shoddy/package.json')
+        exit 1
+    }
+    New-Item -ItemType Directory -Path (Join-Path '..' 'artifacts') -Force | Out-Null
+    Copy-Item package.json $kept
+    try {
+        Native node -e "const f=require('fs');const p=JSON.parse(f.readFileSync('package.json','utf8'));p.version=process.argv[1];f.writeFileSync('package.json',JSON.stringify(p,null,2)+'\n')" $Version
+        Native vsce package
+    }
+    finally { Move-Item -Force $kept package.json }
+}
+
 function Invoke-Vsix {
     param([string]$Bump)
     if (-not (Get-Command vsce -ErrorAction SilentlyContinue)) {
@@ -433,19 +499,28 @@ function Invoke-Vsix {
         [Console]::Error.WriteLine('stage, clean - needs only PowerShell and dotnet.')
         exit 1
     }
-    Invoke-Stage
-    Push-Location vscode-shoddy
-    try {
-        if ($Bump) { Native vsce package $Bump --no-git-tag-version }
-        else { Native vsce package }
+    if ($Bump -and (Test-Version $Bump)) {
+        Invoke-Stage $Bump
+        Push-Location vscode-shoddy
+        try { Invoke-PackageAs $Bump }
+        finally { Pop-Location }
     }
-    finally { Pop-Location }
+    else {
+        Invoke-Stage
+        Push-Location vscode-shoddy
+        try {
+            if ($Bump) { Native vsce package $Bump --no-git-tag-version }
+            else { Native vsce package }
+        }
+        finally { Pop-Location }
+    }
 }
 
 # The other target with a dependency outside the repo's tools — the
 # `code` CLI — and, like vsce, it is REPORTED rather than acquired. It
-# installs the .vsix for the version package.json currently names, and
-# refuses if that exact package has not been built: installing whatever
+# installs the .vsix for the version given, or else the version
+# package.json currently names, and refuses if that exact package has not
+# been built: installing whatever
 # .vsix happens to be newest is how a stale extension gets mistaken for
 # a fresh one, which is the failure this target exists to end.
 #
@@ -453,11 +528,18 @@ function Invoke-Vsix {
 # with no VS Code, and installing into an editor is a workstation act,
 # not a build step. Locally the pair is: ./build.ps1 all, then install.
 function Invoke-Install {
+    param([string]$Version)
     if (-not (Get-Command code -ErrorAction SilentlyContinue)) {
         [Console]::Error.WriteLine('install needs the VS Code CLI (code), which is not on PATH.')
         exit 1
     }
-    $ver = (Get-Content (Join-Path 'vscode-shoddy' 'package.json') -Raw | ConvertFrom-Json).version
+    if ($Version) {
+        if (-not (Test-Version $Version)) { [Console]::Error.WriteLine('usage: ./build.ps1 install [X.Y.Z]'); exit 2 }
+        $ver = $Version
+    }
+    else {
+        $ver = (Get-Content (Join-Path 'vscode-shoddy' 'package.json') -Raw | ConvertFrom-Json).version
+    }
     $pkg = Join-Path 'vscode-shoddy' "vscode-shoddy-$ver.vsix"
     if (-not (Test-Path $pkg)) {
         [Console]::Error.WriteLine("no package for the current version: $pkg is not there.")
@@ -535,10 +617,10 @@ switch ($Command) {
     'machines' { Invoke-Machines }
     'stage' { Invoke-Stage }
     'vsix' { Invoke-Vsix $File }
-    'install' { Invoke-Install }
+    'install' { Invoke-Install $File }
     'clean' { Invoke-Clean }
     { $_ -in 'help', '-h', '--help' } {
-        Get-Content $PSCommandPath | Select-Object -Skip 1 -First 36 |
+        Get-Content $PSCommandPath | Select-Object -Skip 1 -First 42 |
             ForEach-Object { $_ -replace '^#\s?', '' }
     }
     default {

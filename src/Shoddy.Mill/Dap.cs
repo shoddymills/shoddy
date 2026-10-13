@@ -24,14 +24,16 @@ namespace Shoddy.Mill;
 ///   mill dap                  the protocol over this process's stdin and
 ///                             stdout. The program's output reaches the
 ///                             editor as output events, and it has no
-///                             keyboard: the editor's "internalConsole".
+///                             keyboard. For a client that runs its
+///                             adapter as a child process; the VS Code
+///                             extension does not use it.
 ///   mill dap --listen PORT    the protocol over one loopback TCP
 ///                             connection, so this process's console
 ///                             belongs to the program: its keyboard, its
 ///                             screen, its error stream, as `mill run`
-///                             gives them. The editor starts this in an
-///                             integrated terminal ("integratedTerminal",
-///                             the default).
+///                             gives them. The VS Code extension starts
+///                             this in a terminal window of its own,
+///                             outside the editor, and connects to it.
 /// </summary>
 public static class DapServer
 {
@@ -42,9 +44,8 @@ public static class DapServer
     /// the console, and the session ends with it.
     ///
     /// <para>A connection that closes without sending a request is not a
-    /// session: it is somebody checking that the port is up (the editor
-    /// does exactly that while it waits for this process to start), and
-    /// the next connection is accepted instead.</para></summary>
+    /// session: it is somebody checking that the port is up, and the
+    /// next connection is accepted instead.</para></summary>
     public static int Listen(int port)
     {
         var listener = new TcpListener(IPAddress.Loopback, port);

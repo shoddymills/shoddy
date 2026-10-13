@@ -2,7 +2,7 @@
 # Shoddy build wrapper (Unix: Linux / macOS / WSL).
 # Windows users: use build.ps1 (same commands).
 #
-#   ./build.sh all [bump]            everything: clean, test, then .vsix
+#   ./build.sh all [bump|X.Y.Z]      everything: clean, test, then .vsix
 #   ./build.sh build                 build the mill into bin/
 #   ./build.sh test                  everything: dotnet tests, the machine
 #                                    suites and every mill's own suite
@@ -13,8 +13,8 @@
 #   ./build.sh weave FILE.shoddy     compile a program to an assembly
 #   ./build.sh machines              compile every machine to a machine DLL
 #   ./build.sh stage                 stage the mill + machines into the extension
-#   ./build.sh vsix [bump]           package the VS Code extension (.vsix)
-#   ./build.sh install               install the packaged .vsix into VS Code
+#   ./build.sh vsix [bump|X.Y.Z]     package the VS Code extension (.vsix)
+#   ./build.sh install [X.Y.Z]       install the packaged .vsix into VS Code
 #   ./build.sh clean                 remove build output
 #   ./build.sh help                  show this help
 #
@@ -22,14 +22,20 @@
 # the mill), then vsix (which builds the machines, stages, and packages).
 # This is the path for a package you mean to install or ship; `vsix` on its
 # own runs no tests, which is fine for a quick turn and not for a release.
-# Takes the same optional bump as vsix: ./build.sh all patch
+# Takes the same optional argument as vsix: ./build.sh all 2.10.0
 #
 # Every target that runs the mill publishes it first, every time - see
 # build() below for why that is not left to a check.
 #
-# vsix [bump]: optional patch|minor|major or an exact X.Y.Z to bump the
-# extension version before packaging (e.g. ./build.sh vsix patch).
+# vsix [bump|X.Y.Z]: patch|minor|major has vsce bump the version in
+# package.json, then package. An exact X.Y.Z builds this package as that
+# version and changes no file in the tree: the staged mill reports X.Y.Z
+# and the package is vscode-shoddy-X.Y.Z.vsix. That is how a local build
+# carries a release number (./build.sh vsix 2.10.0).
 # vsix stages first, so the package carries its own mill and machines.
+#
+# install [X.Y.Z]: install vscode-shoddy-X.Y.Z.vsix, or with no version,
+# the package for the version package.json names.
 #
 # run [SWITCHES] FILE.shoddy [ARGS...]: SWITCHES go before the file and
 # are the mill's own - --allow-net (arm the network), --no-window (hide
@@ -127,6 +133,15 @@ machines() {
     # only if Shoddy.Machines.X.dll is already built — otherwise the
     # source is spliced in and its defs re-exported, which collides with
     # the real machine downstream (duplicate definition of ANY, etc.).
+    #
+    # Each machine is woven twice: the release weave into bin/, and the
+    # instrumented one (--debug) into bin/debug/, which the debugger loads
+    # so a program can be stepped into the machine's own lines. Both are
+    # built here so the extension ships both. Without the instrumented
+    # set, the first F5 after an install wove every machine the program
+    # reached, inside the installed extension, before the program could
+    # start. The same order serves both: an instrumented machine links
+    # against the instrumented weaves of the machines it includes.
     pending=$(echo machines/*.shoddy machines/seeds/*.shoddy)
     built=" "
     while [ -n "$pending" ]; do
@@ -142,6 +157,7 @@ machines() {
             if [ -z "$unmet" ]; then
                 echo "==> $m"
                 "$MILL" machine "$m"
+                "$MILL" machine --debug "$m"
                 built="$built$stem "
                 progress=1
             else
@@ -205,18 +221,27 @@ mill_suites() {
     done
 }
 
+# stage [X.Y.Z]: with a version, the staged mill and every assembly
+# published with it carry that version. It is passed to this one publish
+# as a property rather than written into Directory.Build.props, so the
+# tree is left as it was. bin/mill is not restamped: it only weaves the
+# machines, and a machine DLL records no mill version.
 stage() {
+    version=${1:-}
     machines
     rm -rf "$STAGE_MILL" "$STAGE_LIB"
     # Satellite resource assemblies are Roslyn's localized diagnostics —
     # ~5 MB of the package for messages the mill never surfaces.
     dotnet publish src/Shoddy.Mill -c Release -o "$STAGE_MILL" \
-        -p:SatelliteResourceLanguages=en -p:DebugType=none
-    mkdir -p "$STAGE_LIB/bin" "$STAGE_LIB/seeds/bin"
+        -p:SatelliteResourceLanguages=en -p:DebugType=none \
+        ${version:+"-p:Version=$version"}
+    mkdir -p "$STAGE_LIB/bin/debug" "$STAGE_LIB/seeds/bin/debug"
     cp machines/*.shoddy "$STAGE_LIB"
     cp machines/bin/*.dll "$STAGE_LIB/bin"
+    cp machines/bin/debug/*.dll "$STAGE_LIB/bin/debug"
     cp machines/seeds/*.shoddy "$STAGE_LIB/seeds"
     cp machines/seeds/bin/*.dll "$STAGE_LIB/seeds/bin"
+    cp machines/seeds/bin/debug/*.dll "$STAGE_LIB/seeds/bin/debug"
     # One timestamp across every staged DLL, newer than every staged
     # source. cp stamps them in the order it copies — alphabetical — and
     # a machine is stale when a DLL it depends on is newer than its own,
@@ -228,7 +253,8 @@ stage() {
     # each file, and those differ by a tick in the same alphabetical
     # order, which is all the staleness test compares.
     : > "$STAGE_LIB/bin/.stamp"
-    touch -r "$STAGE_LIB/bin/.stamp" "$STAGE_LIB"/bin/*.dll "$STAGE_LIB"/seeds/bin/*.dll
+    touch -r "$STAGE_LIB/bin/.stamp" "$STAGE_LIB"/bin/*.dll "$STAGE_LIB"/seeds/bin/*.dll \
+        "$STAGE_LIB"/bin/debug/*.dll "$STAGE_LIB"/seeds/bin/debug/*.dll
     rm -f "$STAGE_LIB/bin/.stamp"
     # Roslyn, Silk.NET, GLFW and OpenAL Soft are redistributed in the
     # package, so their notices have to travel with it — LGPL-2.1 for
@@ -238,6 +264,35 @@ stage() {
     cp THIRD-PARTY-NOTICES.md vscode-shoddy
     cp AUTHORSHIP.md vscode-shoddy
     echo "staged mill + machines into vscode-shoddy/ ($(du -shc "$STAGE_MILL" "$STAGE_LIB" | tail -1 | cut -f1) total)"
+}
+
+# An exact release number, as release.yml accepts it from a tag.
+is_version() {
+    [[ $1 =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+}
+
+# Package the extension as version $1 without changing package.json. vsce
+# names and labels the package from package.json, so the version has to be
+# in that file while vsce runs. The file is copied aside first and moved
+# back on every way out: success, failure, Ctrl+C. A copy left behind
+# means a run was killed outright, and package.json may still carry the
+# stamp, so the next run stops and says how to put it back rather than
+# guessing which of the two files is the real one.
+# Runs in vscode-shoddy/.
+package_as() {
+    kept=../artifacts/package.json.unstamped
+    if [ -e "$kept" ]; then
+        echo "$kept is left from an interrupted vsix run." >&2
+        echo "Check it, then put it back: mv artifacts/package.json.unstamped vscode-shoddy/package.json" >&2
+        exit 1
+    fi
+    mkdir -p ../artifacts
+    cp -p package.json "$kept"
+    trap 'mv -f "$kept" package.json' EXIT
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+    node -e "const f=require('fs');const p=JSON.parse(f.readFileSync('package.json','utf8'));p.version=process.argv[1];f.writeFileSync('package.json',JSON.stringify(p,null,2)+'\n')" "$1"
+    vsce package
 }
 
 case "${1:-help}" in
@@ -362,22 +417,30 @@ case "${1:-help}" in
             echo "stage, clean — needs only this shell and dotnet." >&2
             exit 1
         }
-        stage
-        (
-            cd vscode-shoddy
-            if [ $# -ge 2 ]; then
-                vsce package "$2" --no-git-tag-version
-            else
-                vsce package
-            fi
-        )
+        if [ $# -ge 2 ] && is_version "$2"; then
+            stage "$2"
+            (
+                cd vscode-shoddy
+                package_as "$2"
+            )
+        else
+            stage
+            (
+                cd vscode-shoddy
+                if [ $# -ge 2 ]; then
+                    vsce package "$2" --no-git-tag-version
+                else
+                    vsce package
+                fi
+            )
+        fi
         ;;
     install)
         # The other target with a dependency outside the repo's tools —
         # the `code` CLI — and, like vsce, it is REPORTED rather than
-        # acquired. It installs the .vsix for the version package.json
-        # currently names, and refuses if that exact package has not
-        # been built: installing whatever .vsix happens to be newest is
+        # acquired. It installs the .vsix for the version given, or else
+        # the version package.json currently names, and refuses if that
+        # exact package has not been built: installing whatever .vsix happens to be newest is
         # how a stale extension gets mistaken for a fresh one, which is
         # the failure this target exists to end.
         #
@@ -389,7 +452,12 @@ case "${1:-help}" in
             echo "install needs the VS Code CLI (code), which is not on PATH." >&2
             exit 1
         }
-        ver=$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' vscode-shoddy/package.json | head -1)
+        if [ $# -ge 2 ]; then
+            is_version "$2" || { echo "usage: ./build.sh install [X.Y.Z]" >&2; exit 2; }
+            ver=$2
+        else
+            ver=$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' vscode-shoddy/package.json | head -1)
+        fi
         pkg="vscode-shoddy/vscode-shoddy-$ver.vsix"
         [ -f "$pkg" ] || {
             echo "no package for the current version: $pkg is not there." >&2
@@ -405,7 +473,7 @@ case "${1:-help}" in
         echo "cleaned."
         ;;
     help|-h|--help)
-        sed -n '2,38p' "$SELF" | sed 's/^# \{0,1\}//'
+        sed -n '2,44p' "$SELF" | sed 's/^# \{0,1\}//'
         ;;
     *)
         echo "unknown command: $1" >&2

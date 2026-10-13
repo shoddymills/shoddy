@@ -17,20 +17,21 @@ the **mill** (the .NET toolchain).
   `casew`, `fn`, `let`, `each`, `include`.
 - **Native debugging — the perch.** Press `F5` on any `.shoddy` file
   (no launch.json needed). The program runs as it does under `mill run`,
-  in a terminal of its own with its keyboard and screen, from its own
-  folder. Breakpoints anywhere, machines included, with conditions, hit
+  in a terminal window of its own, outside VS Code (the system's
+  terminal, or the one `terminal.external.*` names), with its keyboard
+  and screen, from its own folder. Breakpoints anywhere, machines included, with conditions, hit
   counts and logpoints; a stop at any runtime error; pause; stepping
   into, over and out of any Def, a machine's included; a call stack of
   your defs; Shoddy-shaped variables in three scopes (Locals, Globals,
   and the Value Stack), each of which can be set; and a Debug Console,
   Watch and hover that evaluate any Shoddy expression. Scribbler
   programs debug too — the window opens under the perch and stays live
-  while you sit at a breakpoint. A launch.json adds `args`, `allowNet`,
-  `cwd` and `console` (`"integratedTerminal"`, the default, or
-  `"internalConsole"`). Runs `mill dap --listen` under the hood.
+  while you sit at a breakpoint. A launch.json adds `args`, `allowNet`
+  and `cwd`. Runs `mill dap --listen` in that window under the hood.
 - **Commands** (palette, editor context menu, and the ▶ run button):
-  - **Shoddy: Run File** (`ctrl+r`) — `mill run` in the integrated
-    terminal, so `Input` works.
+  - **Shoddy: Run File** (`ctrl+r`) — `mill run` in a terminal window
+    of its own, outside VS Code, so `Input` and `InKey` work at full
+    size. The same as Run → Run Without Debugging (`Ctrl+F5`).
   - **Shoddy: Weave File** — compile to a `.dll` beside the source.
   - **Shoddy: Build Machine from File** — compile a library to its
     `Shoddy.Machines.<Name>.dll`.
@@ -88,10 +89,14 @@ or uninstalled from there like any other.
 
 After editing the extension, repackage from the repo root — that stages
 a fresh mill and freshly built machines into the package first. The
-optional bump is `patch`/`minor`/`major` or an exact semver:
+optional argument is `patch`/`minor`/`major`, which bumps the version in
+`package.json`, or an exact `X.Y.Z`, which packages this build as that
+version and changes no file:
 
 ```sh
 ./build.sh vsix patch      # ./build.ps1 vsix patch on Windows
+./build.sh vsix 2.10.0     # mill and package both report 2.10.0
+./build.sh install 2.10.0  # install vscode-shoddy-2.10.0.vsix
 ```
 
 Running `vsce package` by hand in this folder still works, but it packs

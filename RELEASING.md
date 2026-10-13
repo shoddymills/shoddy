@@ -46,6 +46,11 @@ development default whatever branch it came from. That is accurate (a local
 build is not a release) and the version a user sees on a downloaded
 archive is stamped from the tag that built it.
 
+**To test a release number locally,** run `./build.sh vsix X.Y.Z`. It
+stamps the packaged mill and the extension for that one build and changes
+no file, so it does not break the rule above. `./build.sh install X.Y.Z`
+installs that package.
+
 ## There is no gate harness
 
 There used to be one: a step registry, a receipt store keyed to the working

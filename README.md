@@ -550,8 +550,10 @@ dotnet test src/Shoddy.Tests                       # golden conformance suite
 Or use the build wrapper (`./build.sh <cmd>` on Linux/macOS/WSL,
 `./build.ps1 <cmd>` on Windows), which bundles the common tasks: `build`,
 `test` (the whole suite: conformance, every machine, every mill), `check`
-(the fast verify gates), `run FILE`, `weave FILE`, `machines`, `stage`,
-`vsix`, `install`, `all`, `clean`.
+(the fast verify gates), `prove` (the release proof: everything CI and the
+release run that this machine can), `reproducible`, `run FILE`,
+`weave FILE`, `machines`, `stage`, `vsix`, `install`, `all`, `clean`,
+`help`.
 
 `vsix` packages a self-contained VS Code extension: it stages the mill and
 every machine into the package, so installing the `.vsix` needs only the

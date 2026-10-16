@@ -59,38 +59,29 @@ pipeline, in order:</p>
 <tr><td><b>verify</b></td><td>checks <code>mill.manifest</code> against the tree; a stale machines section is a build error naming the drift</td></tr>
 <tr><td><b>gate</b></td><td>default-deny over the manifest's declared capabilities: anything not granted is refused; a refusal prints the exact <code>Grant="&hellip;"</code> line to add</td></tr>
 <tr><td><b>weave</b></td><td>compiles the mill; incremental, so an untouched mill launches nothing</td></tr>
-<tr><td><b>reference</b></td><td>the woven DLL and its transitive machine closure become references, all copy-local</td></tr>
+<tr><td><b>reference</b></td><td>the woven DLL and the machine libraries it links become references, all copy-local</td></tr>
 <tr><td><b>assets</b></td><td>declared assets are copied beside the output under the mill's own layout</td></tr>
 <tr><td><b>embed</b></td><td><code>mill.manifest</code> is embedded as a resource, for hosts that read their mills at runtime</td></tr>
 </table>
 <p>The toolchain computes every name and path itself; the targets only
 orchestrate, so there is no second derivation to drift. The mill is found
-three ways, in order: the <code>ShoddyToolPath</code> property, a local
-.NET tool manifest carrying <code>mill</code>, then PATH.</p>
-<p><b>Two configurations building one mill want
-<code>ShoddyBinScope</code>.</b> Woven output lands in <code>bin/</code>
-beside the mill, at the same path in every configuration. That is fine
-until a lane builds Debug and Release back to back. A test host from the
-first still holds its woven DLLs <em>loaded</em>, and Windows refuses to
-rename a loaded assembly until its holder exits, so the second build fails
-moving a <code>Shoddy.Machines.*.dll</code> into place. No lock helps: the
-holder is not competing for the file, it is using it. Set
-<code>&lt;ShoddyBinScope&gt;cfg-$(Configuration)&lt;/ShoddyBinScope&gt;</code>
-and each configuration weaves into its own subdirectory of that
-<code>bin/</code> instead.</p>
-<ul>
-<li><b>Empty by default</b>, so a build that does not set it writes exactly
-where it always did.</li>
-<li><b>Prefix the value.</b> <code>bin/debug/</code> already means the
-instrumented weave rather than a configuration, so a bare
-<code>$(Configuration)</code> would collide with it.</li>
-<li><b>A scope is a plain name.</b> One carrying a separator, a dot or a
-colon is ignored rather than cleaned up; a half-sanitized value would put
-build output somewhere nobody named.</li>
-<li><b>It reaches the toolchain as <code>SHODDY_BIN_SCOPE</code></b>, passed
-to every mill process the targets start, so the plan that predicts output
-paths and the weave that writes them cannot disagree.</li>
-</ul>
+four ways, in order: a <code>ShoddyTool</code> item (a
+<code>ProjectReference</code> to <code>Shoddy.Mill.Headless</code> with
+<code>ReferenceOutputAssembly="false"</code> and
+<code>OutputItemType="ShoddyTool"</code>, which builds the toolchain from a
+checkout and never links it), the <code>ShoddyToolPath</code> property, a
+local .NET tool manifest carrying <code>mill</code>, then PATH. None
+answering is error <code>SHODDY1000</code>, which names all four.</p>
+<p><b>Woven output is build output.</b> The weave writes under the
+project's own intermediate folder (<code>obj/</code>, or
+<code>artifacts/obj/</code> with the artifacts layout), one folder per
+configuration and runtime identifier, and nothing beside the mill's
+sources. Debug and Release built back to back therefore never share a
+path, and a test host holding one configuration's DLLs loaded cannot
+block the other's build. A <code>ShoddyTool</code> reference should carry
+<code>GlobalPropertiesToRemove="RuntimeIdentifier;SelfContained"</code>
+when the host publishes for a platform: the toolchain runs on the build
+machine, and a publish's <code>-r</code> must not reach it.</p>
 <p><strong>The manifest is the contract.</strong> Each mill folder carries a
 <code>mill.manifest</code> (schema: <code>docs/schemas/mill.manifest.json</code>)
 declaring its name, core, shell, modes, capabilities, and machine closure.
@@ -255,7 +246,7 @@ holds the reusable pieces (the session loop, the terminal control, the
 canvas view, the audio sinks), <code>shoddy-reckoner</code> is the app, and
 <code>Shoddy.Maui.Tests</code> proves both without opening a window. Build
 the mill first, then run it:</p>
-<pre><code class="language-sh">./build.ps1 build          # repo root: builds the mill under artifacts/  (./build.sh elsewhere)
+<pre><code class="language-sh">./build.ps1 build          # repo root: builds the mill under artifacts/  (build.sh on Linux and macOS)
 dotnet run -c Release --project hosts/maui/shoddy-reckoner</code></pre>
 <p>The app is a calculator with a games shelf, and the shelf is the point:
 five mills from <a href="mills/index.html">the catalog</a>, each running

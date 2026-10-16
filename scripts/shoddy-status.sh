@@ -134,13 +134,19 @@ if [ "$pushed" = "no" ] && [ "$branch" != "main" ]; then
     row "proven" "NO - nothing pushed, so CI has never seen $short"
 elif [ "$have_gh" = "no" ]; then
     row "proven" "gh is not installed, so CI was not asked"
-elif ci=$(gh run list --commit "$commit" --json conclusion,name,status 2>/dev/null); then
-    case "$ci" in
-        *'"conclusion":"failure"'*)                    row "proven" "NO - CI is red on $short" ;;
-        *'"status":"in_progress"'*|*'"status":"queued"'*) row "proven" "not yet - CI is still running on $short" ;;
-        *'"conclusion":"success"'*)                    green=yes; row "proven" "yes - CI is green on $short" ;;
-        *)                                             row "proven" "no finished CI run for $short" ;;
-    esac
+elif ci=$(gh run list --workflow ci.yml --commit "$commit" --json status,conclusion \
+             --jq '.[] | .status + ":" + .conclusion' 2>/dev/null); then
+    # The same rule shoddy-ship.sh refuses by: ci.yml only, every run
+    # finished, every run a success.
+    if [ -z "$ci" ]; then
+        row "proven" "no ci.yml run for $short yet"
+    elif printf '%s\n' "$ci" | grep -qv '^completed:'; then
+        row "proven" "not yet - CI is still running on $short"
+    elif printf '%s\n' "$ci" | grep -qv '^completed:success$'; then
+        row "proven" "NO - CI did not pass on $short"
+    else
+        green=yes; row "proven" "yes - CI is green on $short"
+    fi
 else
     row "proven" "could not ask GitHub about $short"
 fi
@@ -184,7 +190,7 @@ if [ "$offline" = "yes" ]; then
 fi
 
 # ---- what comes next ----
-# The order matches WORKFLOW.md: branch, work, prove, notes, review, land,
+# The order matches WORKFLOW.md: branch, work, notes, prove, review, land,
 # ship. Only the first unmet thing is worth printing; a list of everything
 # outstanding is a list nobody reads.
 echo

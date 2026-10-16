@@ -12,7 +12,7 @@
 // This was found the hard way. mills/pac-vt100/mill.manifest had lost
 // julian from its machines section, and the only thing in the repository
 // that noticed was the MAUI host lane's build - which nothing local ran and
-// which CI only runs when hosts/maui/** changes. A file in mills/ was
+// which CI then only ran when hosts/maui/** changed. A file in mills/ was
 // breaking a lane in hosts/, and the two were connected by nothing that
 // would ever fire.
 //

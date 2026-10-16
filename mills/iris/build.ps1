@@ -4,9 +4,9 @@
 #
 #   ./build.ps1            build both programs into bin/
 #   ./build.ps1 build      same as above
-#   ./build.ps1 train      build if needed, then train the model
+#   ./build.ps1 train      build, then train the model
 #                          (writes dat/iris-model.bin; a few seconds)
-#   ./build.ps1 run        build if needed, then classify interactively
+#   ./build.ps1 run        build, then classify interactively
 #   ./build.ps1 test       grade the shipped model against the held-out rows
 #   ./build.ps1 clean      remove built binaries from bin/
 #
@@ -61,12 +61,12 @@ try {
             Invoke-BuildMill
         }
         'train' {
-            if (-not (Test-Path $TrainOut)) { Invoke-BuildMill }
+            Invoke-BuildMill   # always: a stale bin/ DLL must never run in place of the source
             Invoke-Native { & dotnet $TrainOut }
             exit $LASTEXITCODE
         }
         'run' {
-            if (-not (Test-Path $RunOut)) { Invoke-BuildMill }
+            Invoke-BuildMill
             Invoke-Native { & dotnet $RunOut }
             exit $LASTEXITCODE
         }
@@ -74,7 +74,7 @@ try {
             # Run from source, not from bin/: the point is to grade what is
             # in the tree. No training - test.shoddy explains why.
             Assert-Mill
-            Invoke-Native { & $Mill run test.shoddy }
+            Invoke-Native { $null | & $Mill run test.shoddy }
             exit $LASTEXITCODE
         }
         'clean' {

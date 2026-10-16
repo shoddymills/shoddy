@@ -10,9 +10,9 @@
 # `dotnet spiro.dll` has no window backend. The pure half in
 # spiro-core.shoddy is what test.shoddy covers, and that needs no display.
 #
-# Finding a mill, in order: $env:MILL if you set it, the repo's own bin/mill
-# when this folder sits inside a checkout, then whatever `mill` is on the
-# PATH - the VS Code extension carries one. Copy this file beside your own
+# Finding a mill, in order: $env:MILL if you set it, the mill the checkout
+# has built (under artifacts/) when this folder sits inside one, then
+# whatever `mill` is on the PATH - the VS Code extension carries one. Copy this file beside your own
 # program and it keeps working wherever the folder lives. That is why this
 # one does NOT source scripts/shoddy-mill-common.ps1 the way a mill's build.ps1
 # does: mill-common assumes the repository layout, and a tutorial meant to
@@ -35,7 +35,7 @@ Push-Location $PSScriptRoot
 try {
     function Find-Mill {
         if ($env:MILL) { return $env:MILL }
-        foreach ($candidate in @('../../bin/mill.exe', '../../bin/mill')) {
+        foreach ($candidate in @('../../artifacts/bin/Shoddy.Mill/release/mill.exe', '../../artifacts/bin/Shoddy.Mill/release/mill')) {
             if (Test-Path $candidate) { return (Resolve-Path $candidate).Path }
         }
         if (Get-Command mill -ErrorAction SilentlyContinue) { return 'mill' }
@@ -52,7 +52,7 @@ try {
     function Invoke-Mill([string]$Program) {
         $prev = $ErrorActionPreference
         $ErrorActionPreference = 'Continue'
-        try { & $mill run $Program } finally { $ErrorActionPreference = $prev }
+        try { $null | & $mill run $Program } finally { $ErrorActionPreference = $prev }
         exit $LASTEXITCODE
     }
 

@@ -14,8 +14,8 @@
 // comment quoting a host to say why it is excluded — opts out with the
 // marker string below, the encoding check's pattern.
 //
-// This is the one verify-* script wired into ci.yml; the others stay
-// manual pre-release gates.
+// One of the seven gates `build check` runs, and ci.yml's checks job runs
+// the same seven.
 
 const fs = require("fs");
 const path = require("path");

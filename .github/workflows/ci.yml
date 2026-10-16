@@ -20,11 +20,13 @@ name: CI
 # the SDK the repository names, and restores in locked mode, so the
 # package graph is the one the lock files record.
 #
-# EVERY STEP BELOW IS A BUILD VERB, never inline logic. `./build.sh prove`
-# runs the same verbs on a workstation, under the same locked restore, so
-# what fails here has already failed there. A check written only into this
-# file is a check nobody can run before pushing - which is how a release
-# used to meet its failures for the first time on the runner.
+# EVERY CHECK BELOW IS A BUILD VERB OR A scripts/verify-*.js, never inline
+# logic. The only other steps are provisioning: checkout, the SDK, node,
+# vsce, the MAUI workload. `./build.sh prove` runs the same verbs on a
+# workstation in the same CI mode (SHODDY_CI=1: locked restore, CI build
+# settings), so what fails here has already failed there. A check written
+# only into this file is a check nobody can run before pushing - which is
+# how a release used to meet its failures for the first time on the runner.
 on:
   push:
     branches: [main]
@@ -82,8 +84,8 @@ jobs:
   #
   # The scribbler/turtle/plotter suites are not here: they open a real
   # window, and GLFW has no platform to open one on on a hosted runner -
-  # not even under Xvfb (tried in v1.10.1; still failed). They live in
-  # scripts/shoddy-display.ps1, run by hand on a machine with a display.
+  # not even under Xvfb (tried in v1.10.1; still failed). `build prove`
+  # runs them on any machine with a display (scripts/shoddy-display.*).
   core:
     runs-on: ubuntu-latest
     steps:
@@ -104,9 +106,59 @@ jobs:
       - name: Test - the whole suite
         run: ./build.sh test
 
+      # The .trx holds the whole of a failure's output; keep it when the
+      # suite fails, before anything below deletes artifacts/.
+      - name: Keep the test results
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-linux
+          path: artifacts/test-results
+
       # Two clean builds of one commit must agree byte for byte.
       - name: The build is reproducible
         run: ./build.sh reproducible
+
+      # The packaging release.yml does, at a throwaway version, so a
+      # broken stage or vsce run fails here and not after a tag is
+      # public. The vsce version is build.sh's VSCE_VERSION.
+      - name: Install vsce
+        run: npm install -g @vscode/vsce@3.2.1
+
+      - name: Package the extension
+        run: ./build.sh vsix 0.0.1
+
+  # The root build.ps1 on Windows, under Windows PowerShell 5.1 - the shell
+  # a Windows machine has before anything is installed. `test` runs every
+  # mill's own build.ps1 too, so this is the only automated proof of the
+  # PowerShell twins; verify-twins compares their verbs, not their logic.
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: The fast gates, from PowerShell
+        shell: powershell
+        run: ./build.ps1 check
+
+      - name: Test - the whole suite, from PowerShell
+        shell: powershell
+        run: ./build.ps1 test
+
+      - name: Keep the test results
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-windows
+          path: artifacts/test-results
 
   # The MCP host lane, on ubuntu deliberately: this lane has no platform
   # head, no window, no audio and no workload to install. If it ever stops
@@ -116,17 +168,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # The one-way dependency rule (B2.2), hosts side: nothing under
-      # hosts/ references Shoddy.Mill or Shoddy.Compiler (B2.4). The
-      # weave arrives through ShoddyWeave, driven by the headless
-      # toolchain, which the lane's projects build and never link.
-      # verify-lanes in the checks job proves the same rule; this copy is
-      # the lane's own belt-and-braces.
-      - name: One-way dependency check
-        run: |
-          if grep -rE 'Shoddy\.Mill\.csproj|Shoddy\.Compiler\.csproj' hosts --include='*.csproj'; then
-            echo 'hosts/ must not reference Shoddy.Mill or Shoddy.Compiler (B2.4)'; exit 1
-          fi
+      # The one-way dependency rule (B2.4) is verify-lanes, in the checks
+      # job above and in `build check`: one copy, runnable before a push.
 
       - uses: actions/setup-dotnet@v4
         with:
@@ -157,11 +200,13 @@ jobs:
         run: ./build.sh release
 
       # The archives a release attaches, cut exactly as release.yml cuts
-      # them; publish then unpacks this platform's archive outside the
-      # repo and drives it over stdio (scripts/verify-shipped.js).
+      # them - versioned, at a throwaway version; publish then checks every
+      # unix archive's execute bit, unpacks this platform's archive outside
+      # the repo, and drives it over stdio, version included
+      # (scripts/verify-shipped.js).
       - name: Publish the release archives, and drive the shipped binary
         working-directory: hosts/mcp
-        run: ./build.sh publish
+        run: ./build.sh publish 0.0.1
 
   # The MAUI host lane (B2.5), on windows-latest - the Windows lane is a
   # CI release artifact, not a Mac dev target. Canvas and audio proofs run
@@ -173,12 +218,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: One-way dependency check
-        shell: pwsh
-        run: |
-          $bad = Get-ChildItem hosts -Recurse -Filter *.csproj | Select-String -Pattern 'Shoddy\.Mill\.csproj|Shoddy\.Compiler\.csproj'
-          if ($bad) { $bad | ForEach-Object { Write-Host $_ }; Write-Error 'hosts/ must not reference Shoddy.Mill or Shoddy.Compiler (B2.4)' }
-
       - uses: actions/setup-dotnet@v4
         with:
           global-json-file: global.json
@@ -187,6 +226,9 @@ jobs:
         with:
           node-version: '22'
 
+      # Provisioning, not a check: the workload is the platform this lane
+      # builds on, as setup-dotnet is the SDK. A workstation installs it
+      # once; build.ps1 prove fails at the lane's build if it is missing.
       - name: Install MAUI workload
         shell: pwsh
         run: |
@@ -225,37 +267,27 @@ jobs:
   # `run` refuses by name rather than crashing. The bare SDK image is the
   # kind of machine consumers' CI actually is, which is the reason the
   # headless build exists (C3).
+  #
+  # The checks themselves are scripts/verify-headless.js - the same script
+  # `build test` runs on every workstation - so the container adds only
+  # what a workstation cannot: the absence of X11 and audio. The SDK is
+  # global.json's, installed into the bare image, not the image's own.
   headless:
     runs-on: ubuntu-latest
     container: mcr.microsoft.com/dotnet/sdk:10.0
-    # The headless mill carries no machine library and no sources: it
-    # is the build tool, and a project tells it what to link. At a
-    # command line the two variables do the same: SHODDYLIB names the
-    # sources an Include resolves against, SHODDYLIBBIN the compiled
-    # libraries - here the seeds project's output, which carries the
-    # library it references beside its own.
-    env:
-      SHODDYLIB: ${{ github.workspace }}/machines
-      SHODDYLIBBIN: ${{ github.workspace }}/artifacts/bin/Shoddy.Machines.Seeds/release
     steps:
       - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
 
       - name: Build the headless mill and the machine library
         run: dotnet build machines/seeds/Shoddy.Machines.Seeds.csproj -c Release
 
-      - name: Weave a real mill, headless
-        run: dotnet artifacts/bin/Shoddy.Mill.Headless/release/mill.dll weave mills/halifax/halifax.shoddy -o artifacts/headless
-
-      - name: Machine-weave its core, headless
-        run: dotnet artifacts/bin/Shoddy.Mill.Headless/release/mill.dll machine mills/halifax/halifax-core.shoddy -o artifacts/headless
-
-      - name: run refuses by name
-        run: |
-          set +e
-          out=$(dotnet artifacts/bin/Shoddy.Mill.Headless/release/mill.dll run mills/halifax/halifax.shoddy 2>&1)
-          code=$?
-          set -e
-          echo "$out"
-          test $code -eq 1
-          echo "$out" | grep -q "headless"
-          echo "$out" | grep -q "full mill"
+      - name: Weave, machine-weave, and refuse run by name - headless
+        run: node scripts/verify-headless.js

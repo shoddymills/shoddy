@@ -4,7 +4,7 @@
 #
 #   ./build.ps1            build the program into bin/
 #   ./build.ps1 build      same as above
-#   ./build.ps1 run FILE   build if needed, then run on an MPS FILE
+#   ./build.ps1 run FILE   build, then run on an MPS FILE
 #   ./build.ps1 test       solve both fixtures and check the answers
 #   ./build.ps1 clean      remove built binaries from bin/
 #
@@ -19,11 +19,11 @@
 #   dotnet bin/simplex-mps.dll files/blend.mps        # or files/mix.mps
 #
 # Add -z (or --zero-lower) to force x >= 0 on every variable.
-[CmdletBinding()]
-param(
-    [Parameter(Position = 0)][string]$Command = 'build',
-    [Parameter(Position = 1, ValueFromRemainingArguments = $true)][string[]]$Rest
-)
+# A SIMPLE param block, not [CmdletBinding()]: an advanced script refuses
+# `-z` as a parameter it does not declare, and -z is the program's flag.
+# Undeclared words land in $args, exactly as `"$@"` carries them in the .sh.
+param([string]$Command = 'build')
+$Rest = @($args)
 
 $ErrorActionPreference = 'Stop'
 $OrigLocation = Get-Location
@@ -55,13 +55,13 @@ try {
                 [Console]::Error.WriteLine('usage: ./build.ps1 run FILE.mps [-z]')
                 exit 2
             }
-            if (-not (Test-Path $Out)) { Invoke-BuildMill }
+            Invoke-BuildMill   # always: a stale bin/ DLL must never run in place of the source
             Invoke-Live $OrigLocation { & dotnet (Join-Path $MillDir $Out) @Rest }
             exit $LASTEXITCODE
         }
         'test' {
             Assert-Mill
-            Invoke-Native { & $Mill run test.shoddy }
+            Invoke-Native { $null | & $Mill run test.shoddy }
             exit $LASTEXITCODE
         }
         'clean' {

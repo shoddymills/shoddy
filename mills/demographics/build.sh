@@ -4,9 +4,9 @@
 #
 #   ./build.sh            build both programs into bin/
 #   ./build.sh build      same as above
-#   ./build.sh train      build if needed, then train the model
+#   ./build.sh train      build, then train the model
 #                         (writes dat/people-model.bin; ~9 minutes)
-#   ./build.sh run        build if needed, then predict interactively
+#   ./build.sh run        build, then predict interactively
 #   ./build.sh test       grade the shipped model against the data files
 #   ./build.sh clean      remove built binaries from bin/
 #
@@ -40,11 +40,11 @@ case "${1:-build}" in
         build
         ;;
     train)
-        [ -f "$TRAIN_OUT" ] || build
+        build   # always: a stale bin/ DLL must never run in place of the source
         dotnet "$TRAIN_OUT"
         ;;
     run)
-        [ -f "$RUN_OUT" ] || build
+        build
         dotnet "$RUN_OUT"
         ;;
     test)
@@ -52,7 +52,7 @@ case "${1:-build}" in
         # in the tree. No training - nine minutes, and it would rewrite
         # the model being graded. test.shoddy says so at more length.
         ensure_mill
-        "$MILL" run test.shoddy
+        "$MILL" run test.shoddy < /dev/null
         ;;
     clean)
         rm -f bin/*.dll bin/*.json

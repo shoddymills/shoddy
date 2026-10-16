@@ -6,10 +6,10 @@
 #   ./build.ps1 test                  everything: dotnet tests, the machine
 #                                     suites and every mill's own suite
 #   ./build.ps1 check                 the fast gates: docs, errors, permissions,
-#                                     host-blind, suites, twins, lanes
-#   ./build.ps1 prove                 THE RELEASE PROOF: everything CI runs
-#                                     that this machine can, restored as CI
-#                                     restores, and the display suites
+#                                     host-blind, suites, twins, lanes (read-only)
+#   ./build.ps1 prove                 THE RELEASE PROOF: everything CI and the
+#                                     release run that this machine can, in
+#                                     CI mode, and the display suites
 #   ./build.ps1 reproducible          two clean builds must agree byte for byte
 #   ./build.ps1 run [SWITCHES] FILE.shoddy [ARGS...]
 #                                     compile in memory and run a program
@@ -47,13 +47,14 @@
 # install [X.Y.Z]: install vscode-shoddy-X.Y.Z.vsix, or with no version,
 # the package for the version package.json names.
 #
-# prove: the one command between finishing work and opening the pull
-# request. check, reproducible, test, then each host lane exactly as
-# ci.yml drives it (build, test, release, publish - every verb grading
-# its own output), then the display suites CI cannot run. Restores run
-# LOCKED, as on the runner, so a drifted lock file fails here. What this
-# machine cannot run (the MAUI lane off Windows, the display suites with
-# no display) is named at the end, never skipped in silence.
+# prove: the one command between the last commit and the pull request.
+# In CI's order: check, test, reproducible; the MCP lane's build, test,
+# release and a versioned publish (each verb grading its own output);
+# then vsix at a throwaway version, the packaging release.yml does; on
+# Windows the MAUI lane; then the display suites CI cannot run.
+# SHODDY_CI=1 makes every build behave as on the runner: locked restore,
+# CI build settings. What this machine cannot run is named at the end,
+# never skipped in silence.
 #
 # run [SWITCHES] FILE.shoddy [ARGS...]: SWITCHES go before the file and
 # are the mill's own - --allow-net (arm the network), --no-window (hide
@@ -90,14 +91,41 @@ function Native {
     $rest = @($args[1..($args.Count - 1)])
     $prev = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
-    try { & $exe @rest } finally { $ErrorActionPreference = $prev }
+    # Standard input is closed ($null), as build.sh closes it with
+    # </dev/null: nothing this script runs reads a keyboard, and a suite
+    # that asks for input must see end-of-file, not hang the run.
+    try { $null | & $exe @rest } finally { $ErrorActionPreference = $prev }
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+}
+
+# The one vsce this repository packages with. ci.yml and release.yml
+# install exactly this; prove names it when vsce is missing.
+$VsceVersion = '3.2.1'
+
+# The version vscode-shoddy/package.json names.
+function Get-PackageVersion {
+    return (Get-Content (Join-Path 'vscode-shoddy' 'package.json') -Raw | ConvertFrom-Json).version
+}
+
+# vsce exiting 0 is not the same as the right file existing: the package
+# must carry the version asked for, in its name. release.yml attaches it
+# by that name.
+function Assert-Package([string]$Version) {
+    $pkg = Join-Path 'vscode-shoddy' "vscode-shoddy-$Version.vsix"
+    if (-not (Test-Path $pkg)) {
+        [Console]::Error.WriteLine("vsce finished, but $pkg is not there.")
+        exit 1
+    }
+    Write-Host "packaged $pkg"
 }
 
 # The full toolchain, where `dotnet build` puts it: the apphost beside
 # mill.dll, the machine library in lib/ and lib/debug/ beside that, the
 # machine sources in machines/.
-$Mill = Join-Path 'artifacts' (Join-Path 'bin' (Join-Path 'Shoddy.Mill' (Join-Path 'release' 'mill.exe')))
+# mill.exe on Windows, mill (the apphost) everywhere else: pwsh runs this
+# script on macOS and Linux too, and the .sh twin's path is the same file.
+$MillExe = if ($env:OS -eq 'Windows_NT') { 'mill.exe' } else { 'mill' }
+$Mill = Join-Path 'artifacts' (Join-Path 'bin' (Join-Path 'Shoddy.Mill' (Join-Path 'release' $MillExe)))
 # A checkout pins the mill to its own machine sources: every mill in
 # the tree reaches a machine by relative path (../../machines/x.shoddy),
 # and naming the folder is what makes those files machines rather than
@@ -171,7 +199,7 @@ function Invoke-Test {
     # builds and runs, and the debugger driven as the editor drives it.
     # The results go under artifacts/ as a .trx, the standard form: the
     # whole of a failure's output is there when the console has scrolled
-    # it away, and CI can attach it.
+    # it away, and CI uploads it when this step fails.
     Native dotnet test src/Shoddy.Tests --logger 'trx;LogFileName=Shoddy.Tests.trx' `
         --results-directory artifacts/test-results
     # The core suites: the golden library suite, the builtin surface check,
@@ -192,8 +220,12 @@ function Invoke-Test {
     # The tutorial's program is documentation that has to keep working:
     # its pure half is headless by design, so the checks run here beside
     # everything else and the tutorial cannot drift from code that no
-    # longer compiles.
-    Native $Mill run tutorials/spiro/test.shoddy
+    # longer compiles. Through the tutorial's own build script, so the
+    # script a reader copies is exercised too.
+    $env:MILL = (Resolve-Path $Mill).Path
+    try { & (Join-Path $PSScriptRoot 'tutorials/spiro/build.ps1') test }
+    finally { Remove-Item Env:MILL -ErrorAction SilentlyContinue }
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     # The sinq demo is the same argument for a machine rather than a
     # tutorial: docs/machines/sinq.html reproduces it line for line, so
     # running it here is what stops the page showing a program that no
@@ -215,15 +247,21 @@ function Invoke-Test {
 
 # Two clean builds of one commit must agree byte for byte: the
 # deterministic settings in Directory.Build.props are proved, not
-# assumed. ci.yml's core job calls this verb; it is the only copy.
+# assumed. Every DLL under artifacts/bin is compared - the toolchain,
+# both library configurations, the headless mill. ci.yml's core job
+# calls this verb; it is the only copy. Only artifacts/ is removed, as
+# in build.sh: the stage is not part of the build being compared.
 function Invoke-Reproducible {
-    $rel = Join-Path 'artifacts' (Join-Path 'bin' (Join-Path 'Shoddy.Mill' 'release'))
+    $base = (Join-Path $PSScriptRoot 'artifacts/bin')
     $sums = {
-        @(Get-ChildItem $rel -Filter *.dll -File) + @(Get-ChildItem (Join-Path $rel 'lib') -Filter *.dll -File) |
-            ForEach-Object { "$((Get-FileHash $_.FullName -Algorithm SHA256).Hash)  $($_.Directory.Name)/$($_.Name)" }
+        Get-ChildItem $base -Recurse -Filter *.dll -File |
+            ForEach-Object { "$((Get-FileHash $_.FullName -Algorithm SHA256).Hash)  $($_.FullName.Substring($base.Length).Replace('\', '/'))" } |
+            Sort-Object -CaseSensitive
     }
-    Invoke-Clean; Invoke-Build; $first = & $sums
-    Invoke-Clean; Invoke-Build; $second = & $sums
+    if (Test-Path 'artifacts') { Remove-Item -Recurse -Force 'artifacts' }
+    Invoke-Build; $first = @(& $sums)
+    Remove-Item -Recurse -Force 'artifacts'
+    Invoke-Build; $second = @(& $sums)
     $diff = Compare-Object $first $second
     if ($diff) {
         [Console]::Error.WriteLine('the build is not reproducible - two clean builds differ:')
@@ -233,33 +271,58 @@ function Invoke-Reproducible {
     Write-Host 'reproducible: two clean builds agree byte for byte'
 }
 
-# Each lane script sets its own location; Push/Pop keeps ours.
-function Invoke-Lane([string]$Lane, [string[]]$Verbs) {
-    foreach ($verb in $Verbs) {
-        Push-Location $PSScriptRoot
-        try { & (Join-Path $PSScriptRoot "hosts/$Lane/build.ps1") $verb }
-        finally { Pop-Location }
-        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-    }
+# One verb of a lane's build.ps1, with its arguments. Each lane script
+# sets its own location; Push/Pop keeps ours.
+function Invoke-Lane([string]$Lane, [string]$Verb, [string[]]$LaneArgs = @()) {
+    Push-Location $PSScriptRoot
+    try { & (Join-Path $PSScriptRoot "hosts/$Lane/build.ps1") $Verb @LaneArgs }
+    finally { Pop-Location }
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 }
 
 function Invoke-Prove {
-    $env:SHODDY_LOCKED_RESTORE = '1'
+    # vsce is checked first: packaging is part of the proof, and a
+    # missing tool should stop the run now, not after twenty minutes.
+    if (-not (Get-Command vsce -ErrorAction SilentlyContinue)) {
+        [Console]::Error.WriteLine('prove packages the extension, and needs @vscode/vsce:')
+        [Console]::Error.WriteLine("  npm install -g @vscode/vsce@$VsceVersion")
+        exit 1
+    }
+    $env:SHODDY_CI = '1'
+    # What this run proves is a COMMIT, so it is recorded only when the
+    # tree is clean before and after: the files proved are then exactly
+    # HEAD. A suite that writes into the tree also shows here.
+    $gitState = {
+        $prevPref = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        try { $s = (& git status --porcelain 2>$null | Out-String).Trim(); if ($LASTEXITCODE -ne 0) { 'not a git checkout' } else { $s } }
+        finally { $ErrorActionPreference = $prevPref }
+    }
+    $startDirty = & $gitState
+    # A throwaway version for the packaging steps, never a real one: the
+    # release's own version comes from its tag.
+    $pv = '0.0.1'
     $onWindows = ($env:OS -eq 'Windows_NT')
-    $proved = @('check', 'reproducible', 'test', 'mcp lane')
-    $skipped = @()
+    $proved = @('check', 'test', 'reproducible', 'mcp lane', 'vsix')
+    $skipped = @("headless container - CI's container job runs verify-headless with no X11 and no audio device")
     $step = { param($t) Write-Host ''; Write-Host "=== $t" -ForegroundColor Cyan }
     & $step 'check: the fast gates';          Invoke-Check
-    & $step 'reproducible: two clean builds'; Invoke-Reproducible
     & $step 'test: the whole suite';          Invoke-Test
-    & $step 'mcp lane: build, test, release, publish'
-    Invoke-Lane 'mcp' @('build', 'test', 'release', 'publish')
+    & $step 'reproducible: two clean builds'; Invoke-Reproducible
+    & $step "mcp lane: build, test, release, publish $pv"
+    foreach ($verb in 'build', 'test', 'release') { Invoke-Lane 'mcp' $verb }
+    Invoke-Lane 'mcp' 'publish' @($pv)
+    & $step "vsix: package the extension as $pv, as release.yml does"
+    Invoke-Vsix $pv
+    Remove-Item -Force (Join-Path 'vscode-shoddy' "vscode-shoddy-$pv.vsix") -ErrorAction SilentlyContinue
     if ($onWindows) {
+        # The workstation runs the MAUI suite WITH its device: every
+        # assertion CI runs, plus the audio ones CI's runner cannot.
         & $step 'maui lane: build, test, release'
-        Invoke-Lane 'maui' @('build', 'test', 'release')
+        foreach ($verb in 'build', 'test', 'release') { Invoke-Lane 'maui' $verb }
         $proved += 'maui lane'
     }
-    else { $skipped += "maui lane - it builds on Windows only; CI's windows runner proves it" }
+    else { $skipped += "maui lane - it builds on Windows only; CI's windows job proves it" }
     if ([Environment]::UserInteractive -and ($onWindows -or $IsMacOS -or $env:DISPLAY -or $env:WAYLAND_DISPLAY)) {
         & $step 'display suites: the three CI cannot run'
         Push-Location $PSScriptRoot
@@ -272,6 +335,21 @@ function Invoke-Prove {
     Write-Host ''
     Write-Host ('PROVED: ' + ($proved -join ', ')) -ForegroundColor Green
     foreach ($s in $skipped) { Write-Host "NOT PROVED ON THIS MACHINE: $s" -ForegroundColor Yellow }
+    $endDirty = & $gitState
+    $head = (& git rev-parse HEAD 2>$null | Out-String).Trim()
+    if (-not $startDirty -and -not $endDirty -and $head) {
+        New-Item -ItemType Directory -Force -Path (Join-Path 'artifacts' 'proved') | Out-Null
+        New-Item -ItemType File -Force -Path (Join-Path (Join-Path 'artifacts' 'proved') $head) | Out-Null
+        Write-Host "RECORDED: prove passed on $head - shoddy-pr names it in the pull request" -ForegroundColor Green
+    }
+    elseif ($startDirty) {
+        Write-Host 'NOT RECORDED: the tree had uncommitted changes, so no commit was proved' -ForegroundColor Yellow
+    }
+    else {
+        [Console]::Error.WriteLine('NOT RECORDED: the run left changes in the tree - something writes where it should not:')
+        [Console]::Error.WriteLine($endDirty)
+        exit 1
+    }
 }
 
 # The machine suites. Every machines/<name>.shoddy that has one is graded
@@ -338,15 +416,17 @@ function Invoke-MillSuites {
     }
 }
 
-# The fast gates - the doc and boundary verifiers, all Node and all quick.
-# The same list CI's checks job runs; verify-permissions STAGES its fix
-# locally (CI runs it with --check, which fails instead - a gate that
-# repairs the evidence is not a gate).
+# The fast gates - the doc and boundary verifiers. All Node, all quick,
+# read-only, and EXACTLY what CI's checks job runs: verify-permissions
+# with --check, which fails on a missing executable bit instead of
+# staging the fix. To stage the fix, run it without the flag:
+# node scripts/verify-permissions.js
 function Invoke-Check {
     foreach ($gate in 'verify-docs', 'verify-errors', 'verify-permissions',
                       'verify-host-blind', 'verify-suites', 'verify-twins', 'verify-lanes') {
         Write-Host "==> scripts/$gate.js"
-        Native node "scripts/$gate.js"
+        if ($gate -eq 'verify-permissions') { Native node "scripts/$gate.js" --check }
+        else { Native node "scripts/$gate.js" }
     }
     # The VS Code extension's own logic (the debug launch), tested with no
     # editor running.
@@ -403,6 +483,7 @@ function Invoke-Vsix {
         Push-Location vscode-shoddy
         try { Invoke-PackageAs $Bump }
         finally { Pop-Location }
+        Assert-Package $Bump
     }
     else {
         Invoke-Stage
@@ -412,6 +493,7 @@ function Invoke-Vsix {
             else { Native vsce package }
         }
         finally { Pop-Location }
+        if (-not $Bump) { Assert-Package (Get-PackageVersion) }
     }
 }
 
@@ -436,7 +518,7 @@ function Invoke-Install {
         $ver = $Version
     }
     else {
-        $ver = (Get-Content (Join-Path 'vscode-shoddy' 'package.json') -Raw | ConvertFrom-Json).version
+        $ver = Get-PackageVersion
     }
     $pkg = Join-Path 'vscode-shoddy' "vscode-shoddy-$ver.vsix"
     if (-not (Test-Path $pkg)) {
@@ -448,13 +530,19 @@ function Invoke-Install {
     Write-Host "installed $pkg - reload VS Code windows to pick it up."
 }
 
-# Every MSBuild output lives under artifacts/, and the stage is the one
-# other place a build writes. Anything else git ignores - a packaged
-# .vsix, a log - is yours: `git clean -Xdf` removes it all, and asks
-# nothing.
+# Every MSBuild output lives under artifacts/; the stage is the other
+# place a build writes; and `mill weave` / `mill machine` write bin/
+# beside a loose source. All three go. Anything else git ignores - a
+# packaged .vsix, a log - is yours: `git clean -Xdf` removes it all, and
+# asks nothing.
 function Invoke-Clean {
     foreach ($d in 'artifacts', $StageMill, (Join-Path 'vscode-shoddy' 'machines')) {
         if (Test-Path $d) { Remove-Item -Recurse -Force $d }
+    }
+    foreach ($top in 'machines', 'mills', 'proofs', 'tst', 'tutorials') {
+        Get-ChildItem $top -Recurse -Directory -Filter bin -ErrorAction SilentlyContinue |
+            Where-Object { Test-Path $_.FullName } |
+            ForEach-Object { Remove-Item -Recurse -Force $_.FullName }
     }
     Write-Host 'cleaned.'
 }

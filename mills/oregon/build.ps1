@@ -35,7 +35,7 @@ try {
         }
         'test' {
             Assert-Mill
-            Invoke-Native { & $Mill run test.shoddy }
+            Invoke-Native { $null | & $Mill run test.shoddy }
             exit $LASTEXITCODE
         }
         default {

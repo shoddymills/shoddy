@@ -31,11 +31,13 @@ $lines = [System.Collections.Generic.List[string]]::new()
 $lines.Add('<?xml version="1.0" encoding="UTF-8"?>')
 $lines.Add('<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">')
 
-# Sorted by ordinal so the file is byte-identical to what the .sh twin
-# writes; `LC_ALL=C sort` there is the same ordering.
-$pages = Get-ChildItem $docs -Recurse -File -Filter '*.html' |
-    Where-Object { $_.Name -ne '404.html' } |
-    Sort-Object { $_.FullName.Substring($docs.Length).Replace('\', '/') } -CaseSensitive
+# Sorted by ORDINAL - byte order, as `LC_ALL=C sort` sorts in the .sh twin -
+# so the two write byte-identical files. Sort-Object compares by culture,
+# even with -CaseSensitive, which puts '-' and '_' elsewhere.
+$pages = @(Get-ChildItem $docs -Recurse -File -Filter '*.html' |
+    Where-Object { $_.Name -ne '404.html' })
+$keys = [string[]]@($pages | ForEach-Object { $_.FullName.Substring($docs.Length).Replace('\', '/') })
+[Array]::Sort($keys, $pages, [StringComparer]::Ordinal)
 
 foreach ($page in $pages) {
     $rel = $page.FullName.Substring($docs.Length).TrimStart('\', '/').Replace('\', '/')

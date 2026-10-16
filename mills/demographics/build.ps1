@@ -4,9 +4,9 @@
 #
 #   ./build.ps1            build both programs into bin/
 #   ./build.ps1 build      same as above
-#   ./build.ps1 train      build if needed, then train the model
+#   ./build.ps1 train      build, then train the model
 #                          (writes dat/people-model.bin; ~9 minutes)
-#   ./build.ps1 run        build if needed, then predict interactively
+#   ./build.ps1 run        build, then predict interactively
 #   ./build.ps1 test       grade the shipped model against the data files
 #   ./build.ps1 clean      remove built binaries from bin/
 #
@@ -53,12 +53,12 @@ try {
             Invoke-BuildMill
         }
         'train' {
-            if (-not (Test-Path $TrainOut)) { Invoke-BuildMill }
+            Invoke-BuildMill   # always: a stale bin/ DLL must never run in place of the source
             Invoke-Native { & dotnet $TrainOut }
             exit $LASTEXITCODE
         }
         'run' {
-            if (-not (Test-Path $RunOut)) { Invoke-BuildMill }
+            Invoke-BuildMill
             Invoke-Native { & dotnet $RunOut }
             exit $LASTEXITCODE
         }
@@ -67,7 +67,7 @@ try {
             # in the tree. No training - nine minutes, and it would rewrite
             # the model being graded. test.shoddy says so at more length.
             Assert-Mill
-            Invoke-Native { & $Mill run test.shoddy }
+            Invoke-Native { $null | & $Mill run test.shoddy }
             exit $LASTEXITCODE
         }
         'clean' {

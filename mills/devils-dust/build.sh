@@ -21,7 +21,7 @@ case "${1:-run}" in
         ;;
     test)
         ensure_mill
-        "$MILL" run test.shoddy
+        "$MILL" run test.shoddy < /dev/null
         ;;
     *)
         echo "usage: ./build.sh [run|test]" >&2

@@ -33,6 +33,6 @@ MILL_BIN=$(find_mill)
 
 case "${1:-run}" in
     run)  "$MILL_BIN" run spiro.shoddy ;;
-    test) "$MILL_BIN" run test.shoddy ;;
+    test) "$MILL_BIN" run test.shoddy < /dev/null ;;
     *)    echo "usage: ./build.sh [run|test]" >&2; exit 2 ;;
 esac

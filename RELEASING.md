@@ -9,9 +9,10 @@ How a version gets cut, in full, and why the procedure is as short as it is.
 ## The short version
 
 ```powershell
-./build.ps1 prove                # everything CI runs that this machine can, locked
-# write release-notes/vX.Y.Z.md, commit it, merge the PR with CI green
-# land, then wait for CI to go green on main
+# write release-notes/vX.Y.Z.md and commit it
+./build.ps1 prove                # everything CI and the release run that this machine can
+./scripts/shoddy-pr.ps1          # then a person merges it with CI green
+./scripts/shoddy-branch.ps1 land # then wait for CI to go green on main
 ./scripts/shoddy-ship.ps1 2.6.0  # tag and push - CI publishes
 ```
 
@@ -30,7 +31,10 @@ follows from it.
 **Nothing in this repository records a release number.**
 `Directory.Build.props` and `vscode-shoddy/package.json` carry development
 defaults; a release takes its number from the git tag, and `release.yml`
-stamps both files on the runner, uncommitted, before building.
+passes it to the build verbs as an argument: `build.sh all X.Y.Z` stages
+and packages at it, `hosts/mcp/build.sh publish X.Y.Z` publishes at it.
+Those are the verbs CI and `build prove` run on every push at a throwaway
+version, so the release's versioning is exercised before a tag exists.
 
 **Everything a version-in-a-file needs, this does not need.** No bump
 commit. No `release/VX.Y.Z` branch to cut. No merge back. No half-finished
@@ -62,25 +66,32 @@ second, describing work that no longer exists.
 **What replaces it is CI's own verdict.** `ci.yml` carries no path filters
 and proves everything on every push: the checks, the core suite, the MCP
 lane, the MAUI lane on a Windows runner, and the headless container.
-`scripts/shoddy-ship.ps1` asks GitHub whether the commit it is about to tag
-passed, and refuses if it did not. That is a better answer than a local
-receipt for the same reason a build artefact is better than a build log: it
-is the machine that does the work, reporting on the work itself.
+`scripts/shoddy-ship.ps1` asks GitHub for ci.yml's runs on the exact commit
+it is about to tag, and refuses unless every one finished and succeeded: no
+run, a run still going, a failure, a cancellation, a timeout, or no `gh` to
+ask with - each one stops it. That is a better answer than a local receipt
+for the same reason a build artefact is better than a build log: it is the
+machine that does the work, reporting on the work itself.
 
-**Locally, `./build.ps1 prove` is the same proof.** Every step in ci.yml
-is a build verb, and `prove` runs those verbs in the same order under the
-same locked restore: the gates, the reproducibility check, the whole
-suite, each host lane's build, test, release and publish - every one
-grading its own output - and the display suites CI cannot run. A check
-that lives only in a workflow is a check nobody can run before pushing,
-so there are none. What a machine cannot run (the MAUI lane off Windows)
-is named at the end, never skipped quietly. Run it before opening the
-pull request; CI runs the same verbs again either way.
+**Locally, `./build.ps1 prove` is the same proof.** Every check in ci.yml
+is a build verb or a `scripts/verify-*.js` gate - the workflow's other
+steps only provision the runner - and `prove` runs those verbs in CI's
+order, in CI mode (`SHODDY_CI=1`: locked restore, CI build settings): the
+gates, the whole suite, the reproducibility check, each host lane's build,
+test, release and versioned publish - every one grading its own output -
+the packaging the release does, and the display suites CI cannot run. A
+check that lives only in a workflow is a check nobody can run before
+pushing, so there are none. What a machine cannot run (the MAUI lane off
+Windows, the bare headless container) is named at the end, never skipped
+quietly.
 
-If `gh` is not installed the CI check is skipped with a warning rather than
-failing (an unavailable tool should not block a release), but the workflow
-re-runs the whole suite on the tagged commit anyway, so nothing ships
-unproven.
+**`prove` records only a commit it proved.** A clean tree before and after
+is the condition: then the files proved are exactly HEAD, and it writes
+`artifacts/proved/<commit>`, which `shoddy-pr` reads to say in the pull
+request whether `prove` passed on the commit under review. That is not the
+retired receipt store: it is keyed to a commit, not a tree, so it cannot
+describe work that has since changed. The verdict a release depends on is
+still CI's.
 
 ## There is one way to ship
 
@@ -121,15 +132,19 @@ somewhere:
 `ship` refuses to tag one CI has not passed, but a release is the one
 thing that cannot be un-shipped, and this costs minutes.
 
-**The package was produced at the tag's version.** vsce packages at
-`package.json`'s version, which the stamping step set from the tag, so the
-`.vsix` name and the tag can no longer disagree.
+**The package was produced at the tag's version.** `build.sh vsix X.Y.Z`
+packages with `package.json` stamped for that one run and asserts
+`vscode-shoddy-X.Y.Z.vsix` exists, so the `.vsix` name and the tag cannot
+disagree. CI runs the same verb at a throwaway version on every push.
 
-**The unix sparky archive carries the executable bit.** It only survives a
-tar made on a filesystem that has one; an archive cut on Windows cannot
-record it at all, and a binary that arrives without it does not run. This
-is why the release job is a Linux runner, and it is a requirement rather
-than incidental.
+**Every unix sparky archive carries the executable bit, and the binary
+reports the tag's version.** The bit only survives a tar made on a
+filesystem that has one; an archive cut on Windows cannot record it at
+all, and a binary that arrives without it does not run. This is why the
+release job is a Linux runner. `hosts/mcp/build.sh publish X.Y.Z` checks
+the bit on every unix archive, then unpacks the Linux one outside the repo,
+drives it over stdio, and checks `serverInfo` says X.Y.Z
+(`scripts/verify-shipped.js`).
 
 ## The suites CI cannot run
 
@@ -151,17 +166,19 @@ index**, not on the filesystem; a checkout with `core.filemode=false`, the
 default on Windows, makes a raw `chmod` invisible to git no matter what the
 filesystem did.
 
-It has two modes on purpose. Locally it **stages the fix**, because
-reporting a wrong bit and making the reader go and correct it by hand is
-how four of them once shipped at once, one of which took down a release
-with "Permission denied", exit 126. In CI it runs with `--check`, which
-fixes nothing and fails instead: a runner's index is thrown away at the end
-of the job, so a fixing run there would repair the bit, print a cheerful
-line, exit 0, and let the fault through. **A gate that repairs the
-evidence is not a gate.** The window between writing a `.sh` and adding it
-is covered separately: `scripts/shoddy-commit.ps1` stages any new `.sh` with
-`--chmod=+x`, because a check that walks tracked files cannot see a script
-that has never been added.
+It has two modes on purpose. `build check` - locally and in CI alike - runs
+it with `--check`, which fixes nothing and fails instead: a fixing run in
+CI would repair the bit in an index that is thrown away, print a cheerful
+line, exit 0, and let the fault through, and a local check that behaved
+differently would pass what CI then fails. **A gate that repairs the
+evidence is not a gate.** Run without the flag -
+`node scripts/verify-permissions.js` - it **stages the fix**, because
+reporting a wrong bit and making the reader correct it by hand is how four
+of them once shipped at once, one of which took down a release with
+"Permission denied", exit 126. The window between writing a script and
+adding it is covered separately: `scripts/shoddy-commit.ps1` stages every
+new file that opens with `#!` with `--chmod=+x`, because a check that walks
+tracked files cannot see a script that has never been added.
 
 ## Release notes
 

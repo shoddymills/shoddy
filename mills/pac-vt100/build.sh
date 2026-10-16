@@ -3,6 +3,7 @@
 # Windows users: use build.ps1 (same commands).
 #
 #   ./build.sh          run the game
+#   ./build.sh run      same as above
 #   ./build.sh test     run the headless simulation smoke check
 #
 # Pac is a VT100 terminal program — no scribbler, no window: it draws
@@ -22,7 +23,7 @@ case "${1:-run}" in
         ;;
     test)
         ensure_mill
-        "$MILL" run test.shoddy
+        "$MILL" run test.shoddy < /dev/null
         ;;
     *)
         echo "usage: ./build.sh [run|test]" >&2

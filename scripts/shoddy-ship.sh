@@ -13,8 +13,8 @@
 # pushes that tag. Everything else it does is refuse. There is no version
 # bump to commit, no release branch to cut, and nothing to merge back,
 # because the version is not stored in a file - release.yml reads it from
-# the tag and stamps Directory.Build.props and vscode-shoddy/package.json
-# on the runner before building.
+# the tag and passes it to the build verbs (`build.sh all X.Y.Z`,
+# `hosts/mcp/build.sh publish X.Y.Z`), the same verbs CI runs.
 #
 # PUSHING THE TAG IS THE MOMENT IT SHIPS. A tag someone may have fetched
 # is never moved: if the workflow fails, fix forward with a new patch
@@ -92,25 +92,28 @@ git ls-files --error-unmatch "$notes" >/dev/null 2>&1 \
 # a second opinion from a machine that is not the one that builds the
 # release, and the earlier design's local 'receipt store' is exactly the
 # thing that once printed a pass describing yesterday's tree.
-if command -v gh >/dev/null 2>&1; then
-    if state=$(gh run list --commit "$commit" --json conclusion,name,status 2>/dev/null); then
-        case "$state" in
-            *'"conclusion":"failure"'*)
-                stop "CI is red on $short." "Fix it on a branch and merge before tagging." ;;
-            *'"status":"in_progress"'*|*'"status":"queued"'*)
-                stop "CI is still running on $short." \
-                     "Wait for it. The tag should name a commit already proven." ;;
-            *'"conclusion":"success"'*)
-                echo "CI is green on $short." ;;
-            *)
-                echo "NOTE: no finished CI run found for $short." ;;
-        esac
-    else
-        echo "NOTE: could not ask GitHub about CI for $short - continuing without that check."
-    fi
-else
-    echo "NOTE: gh is not installed, so CI's verdict on this commit was not checked."
+#
+# ci.yml's runs on THIS commit, and only ci.yml's: a green Pages deploy is
+# not a proof of anything. Every run must be finished and every one a
+# success. No run, a run still going, a failed, cancelled or timed-out
+# run, or no way to ask - each one stops here. Pushing the tag is the
+# moment it ships, and an unproven commit is never tagged.
+command -v gh >/dev/null 2>&1 \
+    || stop "gh is not installed, so CI's verdict on $short cannot be read." \
+            "Install the GitHub CLI and run 'gh auth login'. A release is never tagged unproven."
+runs=$(gh run list --workflow ci.yml --commit "$commit" --json status,conclusion \
+          --jq '.[] | .status + ":" + .conclusion' 2>/dev/null) \
+    || stop "could not ask GitHub about CI for $short." "Check 'gh auth status', then try again."
+[ -n "$runs" ] \
+    || stop "ci.yml has no run for $short." "CI runs on every push to main: wait for it to start and finish."
+if printf '%s\n' "$runs" | grep -qv '^completed:'; then
+    stop "CI is still running on $short." "Wait for it. The tag names a commit already proven."
 fi
+if printf '%s\n' "$runs" | grep -qv '^completed:success$'; then
+    stop "CI did not pass on $short ($(printf '%s ' $runs | sed 's/completed://g'))" \
+         "Fix it on a branch and merge before tagging."
+fi
+echo "CI is green on $short."
 
 # ---- 8. say what is about to happen, then ask ----
 # The display suites cannot run in CI (they open a real window), so the one

@@ -98,7 +98,11 @@ function header(text) {
   for (const line of text.split("\n")) {
     const t = line.trim();
     if (t.startsWith("#!")) continue;
-    if (t.startsWith("#")) { out.push(t.replace(/^#\s?/, "")); continue; }
+    // Trimmed AFTER the # comes off: usage lines are indented under it
+    // ("#   ./build.sh test"), and an untrimmed line never matches the
+    // invocation pattern below. Until that was fixed every header read as
+    // no verbs at all, and every pair "agreed" by comparing two empty sets.
+    if (t.startsWith("#")) { out.push(t.replace(/^#\s?/, "").trim()); continue; }
     if (t === "") { if (out.length) break; continue; }
     break;
   }
@@ -126,7 +130,10 @@ function header(text) {
 // than one that cries wolf.
 function verbs(text, file) {
   const base = path.basename(file).replace(/\./g, "\\.");
-  const pattern = new RegExp(`^(?:\\S*[\\\\/])?${base}\\s+([A-Za-z][A-Za-z0-9-]*)(?=\\s{2,}|\\s*$|\\s\\[)`);
+  // A verb followed by its placeholder (weave FILE.shoddy, run 63011) is a
+  // verb too: an uppercase or digit word after one space is an argument, not
+  // the first word of a description.
+  const pattern = new RegExp(`^(?:\\S*[\\\\/])?${base}\\s+([A-Za-z][A-Za-z0-9-]*)(?=\\s{2,}|\\s*$|\\s\\[|\\s[A-Z0-9])`);
   const found = new Set();
   for (const line of header(text)) {
     const m = line.match(pattern);
@@ -170,6 +177,15 @@ for (const file of scripts) {
   for (const v of shVerbs) {
     if (!psVerbs.has(v)) problems.push(`${ps} does not offer '${v}', which ${sh} documents`);
   }
+}
+
+// A gate that compares nothing passes everything. Every pair whose header
+// documents its verbs must yield some; a parse that finds none in a script
+// known to have them is the parser failing, and is reported as that.
+for (const file of ["build.sh", "build.ps1", "hosts/mcp/build.sh", "hosts/maui/build.ps1"]) {
+  const p = path.join(root, file);
+  if (fs.existsSync(p) && verbs(fs.readFileSync(p, "utf8"), file).size === 0)
+    problems.push(`${file}: no verbs read from its header - the header parser is broken`);
 }
 
 if (problems.length === 0) {

@@ -8,11 +8,16 @@ name: Release
 #
 # THE TAG IS THE VERSION. Nothing in the repository records a release
 # number: Directory.Build.props and vscode-shoddy/package.json carry
-# development defaults, and the steps below stamp both from the tag on
-# this runner, uncommitted. So there is no version-bump commit to make, no
-# release branch to cut, and nothing to merge back afterwards - the
-# sequence that used to need a documented recovery procedure for when it
-# died halfway through.
+# development defaults. The version reaches the binaries as an argument to
+# the same verbs CI and `build prove` run - `build.sh all X.Y.Z` stages and
+# packages at X.Y.Z, `hosts/mcp/build.sh publish X.Y.Z` publishes at it -
+# so there is no stamping step here that nothing else exercises, no
+# version-bump commit, no release branch, and nothing to merge back.
+#
+# EVERY CHECK BELOW IS A BUILD VERB. The vsix verb asserts the package
+# exists under its version's name; publish checks every unix archive's
+# execute bit and drives this platform's binary, version included. CI
+# runs both on every push, at a throwaway version.
 #
 # The staged mill is framework-dependent and carries every RID's natives
 # (see build.sh `stage`), so a package built here on Linux is the same
@@ -67,61 +72,40 @@ jobs:
 
       - uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: '10.0.x'
+          global-json-file: global.json
 
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
 
+      # Exactly the vsce CI packages with: build.sh's VSCE_VERSION.
       - name: Install vsce
-        run: npm install -g @vscode/vsce
-
-      # RUNNER-LOCAL AND NEVER COMMITTED. Every binary this repository
-      # builds reads its version from Directory.Build.props, and the
-      # extension packages at package.json's version; stamping both here
-      # from the tag is what makes the tag the single source. A locally
-      # built mill reports the development default, which is honest - a
-      # local build is not a release.
-      - name: Stamp the version from the tag
-        run: |
-          sed -i "s#<Version>[0-9][0-9.]*</Version>#<Version>${{ steps.ver.outputs.version }}</Version>#" Directory.Build.props
-          grep -q "<Version>${{ steps.ver.outputs.version }}</Version>" Directory.Build.props || {
-            echo 'Directory.Build.props did not take the version stamp'; exit 1; }
-          cd vscode-shoddy
-          npm version "${{ steps.ver.outputs.version }}" --no-git-tag-version --allow-same-version
+        run: npm install -g @vscode/vsce@3.2.1
 
       # The whole toolchain from nothing: clean, the entire test surface
       # (the C# suite, every core and machine suite, every mill), then
-      # stage and package the extension. A red test stops everything with
-      # nothing published.
+      # stage and package the extension AT THE TAG'S VERSION - the staged
+      # mill reports it and the package is named for it, which the vsix
+      # verb asserts. A red test stops everything with nothing published.
       - name: Build, test, package
-        run: ./build.sh all
-
-      - name: Confirm the package was produced
-        run: test -f "vscode-shoddy/vscode-shoddy-${{ steps.ver.outputs.version }}.vsix"
+        run: ./build.sh all ${{ steps.ver.outputs.version }}
 
       # The MCP lane ships beside the extension: sparky as a
       # self-contained single-file binary per OS, so a user needs
       # nothing but the download and an MCP client - no repo, no .NET
       # install. Its server tests run first; there is no point attaching
-      # a binary the fold or the protocol would fail. `./build.sh all`
-      # above already staged bin/mill, which ShoddyWeave drives.
+      # a binary the fold or the protocol would fail.
       - name: Test the MCP lane
         working-directory: hosts/mcp
         run: ./build.sh test
 
+      # Published at the tag's version. The executable bit only survives
+      # a tar made on a filesystem that has one, which is why this runner
+      # is Linux; publish checks it on every unix archive, then drives the
+      # linux binary and checks it reports this version.
       - name: Publish sparky binaries
         working-directory: hosts/mcp
         run: ./build.sh publish ${{ steps.ver.outputs.version }}
-
-      # The executable bit only survives a tar made on a filesystem that
-      # has one; an archive cut on Windows cannot record it at all, and a
-      # sparky that arrives without it does not run.
-      - name: The published sparky must be executable
-        run: |
-          tar -tvzf artifacts/publish/sparky-${{ steps.ver.outputs.version }}-linux-x64.tar.gz \
-            | grep -q '^-rwx' || {
-              echo 'the linux archive carries sparky without its execute bit'; exit 1; }
 
       # Hand-written notes win. scripts/shoddy-ship.ps1 refuses to tag without
       # them, so the fallback here is for a tag pushed by hand: never

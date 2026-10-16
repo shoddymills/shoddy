@@ -23,9 +23,11 @@ that license (see the [Developer Certificate of Origin](https://developercertifi
    ./build.sh run tst/libtest.shoddy   # ends: ALL ASSERTIONS PASSED
    ```
    `./build.sh test` runs the whole suite (conformance, every machine,
-   every mill) and `./build.sh check` runs the same fast verify gates CI
-   runs on your pull request; both are optional locally, since CI is the
-   arbiter either way.
+   every mill) and `./build.sh check` runs the same seven fast verify
+   gates CI's checks job runs on your pull request, read-only.
+   `./build.sh prove` runs everything CI does that your machine can, as CI
+   runs it, and is what a maintainer runs before a pull request. All three
+   are optional for a contributor, since CI is the arbiter either way.
 4. Keep the golden fixtures (`tst/golden/`) authoritative; if your change
    alters output intentionally, update the fixtures in the same PR and
    explain why.

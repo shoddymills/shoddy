@@ -3,6 +3,7 @@
 # Unix users: use build.sh (same commands).
 #
 #   ./build.ps1          run the game
+#   ./build.ps1 run      same as above
 #   ./build.ps1 test     run the headless simulation smoke check
 #
 # Pac is a VT100 terminal program - no scribbler, no window: it draws
@@ -37,7 +38,7 @@ try {
         }
         'test' {
             Assert-Mill
-            Invoke-Native { & $Mill run test.shoddy }
+            Invoke-Native { $null | & $Mill run test.shoddy }
             exit $LASTEXITCODE
         }
         default {

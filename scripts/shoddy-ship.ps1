@@ -8,8 +8,8 @@
 # pushes that tag. Everything else it does is refuse. There is no version
 # bump to commit, no release branch to cut, and nothing to merge back,
 # because the version is not stored in a file - release.yml reads it from
-# the tag and stamps Directory.Build.props and vscode-shoddy/package.json
-# on the runner before building.
+# the tag and passes it to the build verbs (`build.sh all X.Y.Z`,
+# `hosts/mcp/build.sh publish X.Y.Z`), the same verbs CI runs.
 #
 # That is the whole design, and it is a deliberate reaction to how this
 # used to work. The version lived in two files, so shipping meant rewriting
@@ -114,34 +114,45 @@ if ((RunGit @('ls-files', '--error-unmatch', $notes)).Code -ne 0) {
 # a second opinion from a machine that is not the one that builds the
 # release, and the earlier design's local 'receipt store' is exactly the
 # thing that once printed a pass describing yesterday's tree.
-$gh = Get-Command gh -ErrorAction SilentlyContinue
-if ($gh) {
-    $prev = $ErrorActionPreference
-    $ErrorActionPreference = 'Continue'
-    try {
-        $state = & gh run list --commit $commit --json conclusion,name,status 2>&1 | Out-String
-    } finally { $ErrorActionPreference = $prev }
-
-    if ($LASTEXITCODE -ne 0) {
-        Write-Host "NOTE: could not ask GitHub about CI for $($commit.Substring(0,8)) - continuing without that check." -ForegroundColor Yellow
-    } elseif ($state -match '"conclusion":"failure"') {
-        Stop-With "CI is red on $($commit.Substring(0,8))." "Fix it on a branch and merge before tagging."
-    } elseif ($state -match '"status":"in_progress"' -or $state -match '"status":"queued"') {
-        Stop-With "CI is still running on $($commit.Substring(0,8))." "Wait for it. The tag should name a commit already proven."
-    } elseif ($state -notmatch '"conclusion":"success"') {
-        Write-Host "NOTE: no finished CI run found for $($commit.Substring(0,8))." -ForegroundColor Yellow
-    } else {
-        Write-Host "CI is green on $($commit.Substring(0,8))." -ForegroundColor Green
-    }
-} else {
-    Write-Host "NOTE: gh is not installed, so CI's verdict on this commit was not checked." -ForegroundColor Yellow
+#
+# ci.yml's runs on THIS commit, and only ci.yml's: a green Pages deploy is
+# not a proof of anything. Every run must be finished and every one a
+# success. No run, a run still going, a failed, cancelled or timed-out
+# run, or no way to ask - each one stops here. Pushing the tag is the
+# moment it ships, and an unproven commit is never tagged.
+$short = $commit.Substring(0, 8)
+if (-not (Get-Command gh -ErrorAction SilentlyContinue)) {
+    Stop-With "gh is not installed, so CI's verdict on $short cannot be read." `
+              "Install the GitHub CLI and run 'gh auth login'. A release is never tagged unproven."
 }
+$prev = $ErrorActionPreference
+$ErrorActionPreference = 'Continue'
+try { $json = & gh run list --workflow ci.yml --commit $commit --json status,conclusion 2>$null | Out-String }
+finally { $ErrorActionPreference = $prev }
+if ($LASTEXITCODE -ne 0) { Stop-With "could not ask GitHub about CI for $short." "Check 'gh auth status', then try again." }
+# foreach enumerates the parsed array: Windows PowerShell 5.1's
+# ConvertFrom-Json hands an array back as ONE object, so @() alone would
+# count an empty list as one run.
+$runs = @(foreach ($r in ($json | ConvertFrom-Json)) { $r })
+if ($runs.Count -eq 0) { Stop-With "ci.yml has no run for $short." "CI runs on every push to main: wait for it to start and finish." }
+if (@($runs | Where-Object { $_.status -ne 'completed' }).Count -gt 0) {
+    Stop-With "CI is still running on $short." "Wait for it. The tag names a commit already proven."
+}
+$bad = @($runs | Where-Object { $_.conclusion -ne 'success' })
+if ($bad.Count -gt 0) {
+    Stop-With "CI did not pass on $short ($(($bad | ForEach-Object { $_.conclusion }) -join ', '))" `
+              "Fix it on a branch and merge before tagging."
+}
+Write-Host "CI is green on $short." -ForegroundColor Green
 
 # ---- 8. say what is about to happen, then ask ----
 # The display suites cannot run in CI (they open a real window), so the one
 # thing worth remembering here is said here: if anything windowed changed
 # since the last release, ./build.ps1 prove (which runs them) before yes.
-$previous = (RunGit @('describe', '--tags', '--abbrev=0')).Text
+# Judged on the code: with no tag yet, describe's answer is an error
+# message, and it must not be printed as a version.
+$described = RunGit @('describe', '--tags', '--abbrev=0')
+$previous = if ($described.Code -eq 0) { $described.Text } else { '' }
 Write-Host ''
 Write-Host "  tag        $tag" -ForegroundColor White
 Write-Host "  commit     $($commit.Substring(0,8))  $((RunGit @('log','-1','--format=%s')).Text)"

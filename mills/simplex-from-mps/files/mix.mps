@@ -10,7 +10,7 @@
 *             X, Y >= 0
 *
 * Optimum: X = 2, Y = 4, COST = 38; shadow prices VITA 1, VITC 3.
-* Try it: bin\mill run tst\simplex-mps.shoddy tst/dat/mix.mps
+* Try it: mills/simplex-from-mps/build.sh run files/mix.mps
 NAME MIX
 ROWS
  N COST

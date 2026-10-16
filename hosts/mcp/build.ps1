@@ -67,9 +67,12 @@ switch ($Command) {
         $suffix = ''
         if ($Version) { $suffix = "-$Version" }
         $pub = Join-Path $PSScriptRoot '..\..\artifacts\publish'
+        # ShoddyRidPublish: these restores keep their lock files under
+        # artifacts/, unlocked - see Directory.Build.props for why.
+        # Single-file is set in sparky/Sparky.csproj, not here.
         foreach ($rid in @('win-x64', 'win-arm64', 'linux-x64', 'osx-x64', 'osx-arm64')) {
             $dir = Join-Path $pub "sparky\$rid"
-            Run @('publish', 'sparky', '-c', 'Release', '-r', $rid, '--self-contained', '-p:PublishSingleFile=true', '-o', $dir)
+            Run @('publish', 'sparky', '-c', 'Release', '-r', $rid, '--self-contained', '-p:ShoddyRidPublish=true', '-o', $dir)
             if ($rid -like 'win-*') {
                 Compress-Archive -Path (Join-Path $dir 'sparky.exe') `
                     -DestinationPath (Join-Path $pub "sparky$suffix-$rid.zip") -Force

@@ -41,9 +41,13 @@ case "${1:-build}" in
         suffix="${2:+-$2}"
         pub=../../artifacts/publish
         mkdir -p "$pub"
+        # ShoddyRidPublish: these restores keep their lock files under
+        # artifacts/, unlocked - see Directory.Build.props for why.
+        # Single-file is set in sparky/Sparky.csproj, not here.
         for rid in win-x64 win-arm64 linux-x64 osx-x64 osx-arm64; do
             dotnet publish sparky -c Release -r "$rid" --self-contained \
-                -p:PublishSingleFile=true -o "$pub/sparky/$rid"
+                -p:ShoddyRidPublish=true \
+                -o "$pub/sparky/$rid"
             if [ "${rid#win-}" != "$rid" ]; then
                 (cd "$pub/sparky/$rid" && zip -qj "../../sparky$suffix-$rid.zip" sparky.exe)
             else

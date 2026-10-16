@@ -2,7 +2,7 @@
 //
 //   node scripts/verify-manifests.js
 //
-// Needs bin/mill - the gate's build-mill step publishes it.
+// Needs the full mill, where `./build.sh build` puts it.
 //
 // A mill.manifest names the machines a mill is woven from, and a host reads
 // it to know what it is embedding. It is GENERATED, which is exactly why it
@@ -26,9 +26,10 @@ const fs = require("fs");
 const path = require("path");
 const root = path.resolve(__dirname, "..");
 
-const mill = path.join(root, "bin", process.platform === "win32" ? "mill.exe" : "mill");
+const millDir = path.join(root, "artifacts", "bin", "Shoddy.Mill", "release");
+const mill = path.join(millDir, process.platform === "win32" ? "mill.exe" : "mill");
 if (!fs.existsSync(mill)) {
-    console.log("bin/mill is not there - build it first: "
+    console.log("the mill is not built - build it first: "
         + "./build.sh build (./build.ps1 build on Windows)");
     process.exit(1);
 }
@@ -51,7 +52,7 @@ for (const entry of fs.readdirSync(millsDir, { withFileTypes: true })) {
         for (const line of `${r.stdout ?? ""}${r.stderr ?? ""}`.split(/\r?\n/)) {
             if (line.trim()) console.log(`    ${line.trim()}`);
         }
-        console.log(`    regenerate it: bin/mill manifest --write mills/${entry.name}`);
+        console.log(`    regenerate it: ${path.relative(root, mill)} manifest --write mills/${entry.name}`);
         bad++;
     }
 }

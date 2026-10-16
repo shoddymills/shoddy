@@ -285,7 +285,7 @@ public class BuzzerTests
         var prog = new ShoddyProgram();
         machines.SeedInto(prog);
         Parser.Parse(lines, prog);
-        string dll = Weaver.WeaveMachine(prog, src, machines.Machines);
+        string dll = Weaver.WeaveMachine(prog, src, MillVerbs.MachineOut(src, null, false), machines.Machines);
         Assert.True(File.Exists(dll), $"machine DLL not produced: {dll}");
     }
 

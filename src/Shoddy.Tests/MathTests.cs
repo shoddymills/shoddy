@@ -164,8 +164,9 @@ public class MathTests
         var lines = Lexer.ReadProgram(sb, machines.TryResolve);
         var prog = new ShoddyProgram();
         machines.SeedInto(prog);
-        Weaver.WeaveMachine(Parser.Parse(lines, prog), sb, machines.Machines);
-        Assert.True(File.Exists(MachineSet.DllPathFor(sb)));
+        string dll = Weaver.WeaveMachine(Parser.Parse(lines, prog), sb,
+                                         MillVerbs.MachineOut(sb, null, false), machines.Machines);
+        Assert.True(File.Exists(dll));
     }
 
     // ---- helpers --------------------------------------------------------

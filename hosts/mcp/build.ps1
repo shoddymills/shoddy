@@ -1,7 +1,8 @@
 #!/usr/bin/env pwsh
-# Build the MCP lane: restore, build and test Sparky. Every call first
-# runs the repo root's build, which publishes bin/mill.exe - ShoddyWeave
-# drives it.
+# Build the MCP lane: restore, build and test Sparky. The lane's
+# projects build the toolchain they weave with and reference the machine
+# library, so a plain dotnet build is the whole build; the repo root's
+# build runs first only so the mill's own suite has a mill.
 #
 #   ./build.ps1              restore + build (Debug)
 #   ./build.ps1 test         build + run Shoddy.Mcp.Tests
@@ -22,10 +23,9 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-Location $PSScriptRoot
 
-# The root's build, every call: a check that bin/mill.exe exists passed a
-# mill from before a compiler change, and every sparky woven by it failed
-# with "unknown word: TAKEN". Invoke-Build in ../../build.ps1 has the
-# whole story. Push/Pop, because the root script sets its own location.
+# The root's build: the full mill, for the mill's own suite. MSBuild's
+# up-to-date check makes this free when nothing changed. Push/Pop,
+# because the root script sets its own location.
 Push-Location (Join-Path $PSScriptRoot '../..')
 try { & ./build.ps1 build } finally { Pop-Location }
 if ($LASTEXITCODE -ne 0) {

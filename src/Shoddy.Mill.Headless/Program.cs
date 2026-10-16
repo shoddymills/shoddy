@@ -18,7 +18,8 @@ var opt = new MillVerbs.Options();
 args = MillVerbs.StripFlags(args, opt);
 // --no-window is honoured vacuously: this build shows nothing anyway.
 
-// Every form of dap, `--listen PORT` included, needs the full mill.
+// The debugger's two processes, `dap` (the adapter) and `run --perch`
+// (the debugged program), need the full mill, as every run does.
 if (args.Length >= 1 && args[0] == "dap") return Refuse("dap");
 
 MillVerbs.Command? cmd = MillVerbs.Parse(args);

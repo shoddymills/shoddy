@@ -113,7 +113,8 @@ public class PerchTests
         List<Line> lines = Lexer.ReadProgram(sb, machines.TryResolve);
         var prog = new ShoddyProgram();
         machines.SeedInto(prog);
-        string dll = Weaver.WeaveMachine(Parser.Parse(lines, prog), sb, machines.Machines, debug: true);
+        string dll = Weaver.WeaveMachine(Parser.Parse(lines, prog), sb,
+                                         MillVerbs.MachineOut(sb, null, debug: true), machines.Machines, debug: true);
         Assembly asm = Assembly.LoadFrom(dll);
 
         // The attach transport: loopback TCP, the host-side shape.

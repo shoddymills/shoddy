@@ -60,8 +60,9 @@ public class HostingTests
         List<Line> lines = Lexer.ReadProgram(sb, machines.TryResolve);
         var prog = new ShoddyProgram();
         machines.SeedInto(prog);
-        Weaver.WeaveMachine(Parser.Parse(lines, prog), sb, machines.Machines);
-        return Assembly.LoadFrom(MachineSet.DllPathFor(sb));
+        string dll = Weaver.WeaveMachine(Parser.Parse(lines, prog), sb,
+                                         MillVerbs.MachineOut(sb, null, false), machines.Machines);
+        return Assembly.LoadFrom(dll);
     }
 
     [Fact]

@@ -3,9 +3,10 @@
 # Dot-source this after Push-Location $PSScriptRoot, with $MillDir set to
 # $PSScriptRoot of the CALLING script. Provides:
 #
-#   $Repo, $Mill    the toolchain, resolved from $MillDir
-#   Assert-Mill     publishes the toolchain into $Repo/bin, every call,
-#                   through the repo root's build.ps1
+#   $Repo, $Mill    the full toolchain, where `dotnet build` puts it
+#   Assert-Mill     builds the toolchain and the machine library it
+#                   carries, through the repo root's build.ps1; MSBuild's
+#                   own up-to-date check makes a second call free
 #   Invoke-Live     runs a scriptblock from a given location, not from
 #                   the mill's folder - for any target that launches a
 #                   program a person interacts with, so a path they type
@@ -17,9 +18,9 @@
 #                   that dependency belongs in the call, not in scope
 #                   lookup across a dot-sourced file.
 #   Invoke-Weave    weaves one or more .shoddy sources (found in
-#                   $MillDir) and moves every resulting
-#                   .dll/.runtimeconfig.json, plus any Shoddy.*.dll,
-#                   into $MillDir/bin
+#                   $MillDir) into $MillDir/bin: the program, its
+#                   runtime config, the runtime and the libraries it
+#                   links. `mill weave` writes there itself now.
 #
 # The rule this buys: run/capture/train/demo - anything that puts a live
 # program in front of you - go through Invoke-Live, so a path resolves
@@ -29,7 +30,10 @@
 # script from would be the surprise, not the fix.
 
 $Repo = Join-Path $MillDir '../..'
-$Mill = Join-Path $Repo 'bin/mill.exe'
+$Mill = Join-Path $Repo 'artifacts/bin/Shoddy.Mill/release/mill.exe'
+# The checkout's own machine sources are the library this mill's
+# relative includes reach; see the root build.ps1.
+$env:SHODDYLIB = Join-Path $Repo 'machines'
 
 # Run a scriptblock containing a native call with $ErrorActionPreference
 # neutralised for its duration, then judge it on its EXIT CODE alone - the
@@ -37,9 +41,9 @@ $Mill = Join-Path $Repo 'bin/mill.exe'
 # helper at the top of the repo's own build.ps1: Windows PowerShell 5.1
 # wraps every stderr line a native program writes in a NativeCommandError
 # record whenever the CALLER captures our streams, and under 'Stop' that
-# record is terminating. So mill's ordinary "machine x.shoddy is not built
-# - building" notice killed the run on a freshly cleaned tree, while the
-# identical command straight into a console was fine.
+# record is terminating. So an ordinary notice the mill writes to stderr
+# killed the run, while the identical command straight into a console
+# was fine.
 #
 # It takes a SCRIPTBLOCK rather than a command and its arguments, because
 # the calls here are not all plain: several pipe their standard input
@@ -48,7 +52,7 @@ $Mill = Join-Path $Repo 'bin/mill.exe'
 # pipeline keeps those exactly as they were.
 #
 # It lives here because every mill's build.ps1 dot-sources this file, so
-# one definition covers all twelve, whether run from the repo's build.ps1
+# one definition covers all of them, whether run from the repo's build.ps1
 # or on their own.
 function Invoke-Native {
     param([Parameter(Mandatory)][scriptblock]$Action)
@@ -58,12 +62,8 @@ function Invoke-Native {
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 }
 
-# The root's `build`, not a copy of it: that is the one place that
-# publishes the mill and empties machine DLLs woven by an older one. It
-# used to be an existence check here, which kept a stale mill forever -
-# Invoke-Build in the root build.ps1 has the whole story. Push/Pop,
-# because the root script sets its own location and runs in this one's
-# runspace.
+# The root's `build`, not a copy of it. Push/Pop, because the root script
+# sets its own location and runs in this one's runspace.
 function Assert-Mill {
     Push-Location $Repo
     try { & ./build.ps1 build } finally { Pop-Location }
@@ -93,11 +93,4 @@ function Invoke-Weave {
     foreach ($src in $Sources) {
         Invoke-Native { & $Mill weave $src }
     }
-    New-Item -ItemType Directory -Path bin -Force | Out-Null
-    foreach ($src in $Sources) {
-        $base = $src -replace '\.shoddy$', ''
-        Move-Item -Force "$base.dll", "$base.runtimeconfig.json" bin/
-    }
-    $extra = @(Get-ChildItem Shoddy.*.dll -ErrorAction SilentlyContinue)
-    if ($extra.Count -gt 0) { Move-Item -Force $extra bin/ }
 }

@@ -72,15 +72,22 @@ public sealed partial class Engine
     /// now rather than where they were when it was woven.
     ///
     /// <para>A machine is woven in one place and run in another: the
-    /// VS Code extension ships machines woven on the build machine, and a
-    /// user's install puts them somewhere else entirely. A path fixed at
+    /// VS Code extension ships a library woven on the build machine, and
+    /// a user's install puts it somewhere else entirely. A path fixed at
     /// weave time then names a file that does not exist here, and the
     /// debugger can neither show a machine's lines nor stop at a
     /// breakpoint in one. So the weave records each source relative to the
-    /// folder its DLL is written to (<paramref name="relative"/>), and this
+    /// folder its DLL will be loaded from (<paramref name="relative"/>:
+    /// ../../machines/x.shoddy from a toolchain's lib/debug/), and this
     /// resolves them against the folder the DLL was actually loaded from.
-    /// The library is copied whole, sources beside bin/debug/, so the
-    /// relation holds wherever it lands.</para>
+    /// The toolchain carries its library and the sources together, so
+    /// the relation holds wherever it lands.</para>
+    ///
+    /// <para>A pinned source library wins: when SHODDYLIB names a folder
+    /// holding the file (or its seeds/ companion does), that is the file
+    /// shown, so a checkout debugs its own sources rather than the copy
+    /// its build carries. The same variable is what the Include resolver
+    /// reads, so the two agree.</para>
     ///
     /// <para>An assembly loaded from memory has no folder (its Location
     /// is empty), and then the path recorded at weave time
@@ -88,9 +95,19 @@ public sealed partial class Engine
     public static string[] SourcesBeside(System.Reflection.Assembly asm, string[] relative, string[] woven)
     {
         string dir = asm.Location.Length == 0 ? "" : Path.GetDirectoryName(asm.Location) ?? "";
+        string? pinned = Environment.GetEnvironmentVariable("SHODDYLIB");
         var now = new string[relative.Length];
         for (int i = 0; i < relative.Length; i++)
+        {
+            if (!string.IsNullOrEmpty(pinned))
+            {
+                string name = Path.GetFileName(relative[i]);
+                bool seed = relative[i].Replace('\\', '/').Contains("/seeds/", StringComparison.OrdinalIgnoreCase);
+                string at = seed ? Path.Combine(pinned, "seeds", name) : Path.Combine(pinned, name);
+                if (File.Exists(at)) { now[i] = Path.GetFullPath(at); continue; }
+            }
             now[i] = dir.Length == 0 ? woven[i] : Path.GetFullPath(Path.Combine(dir, relative[i]));
+        }
         return now;
     }
 

@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# Build the MCP lane: restore, build and test Sparky. Every call first
-# runs the repo root's build, which publishes bin/mill - ShoddyWeave
-# drives it. The .ps1 twin
-# is the file that ships from the Windows workstation; keep the two in
-# step.
+# Build the MCP lane: restore, build and test Sparky. The lane's
+# projects build the toolchain they weave with and reference the machine
+# library, so a plain dotnet build is the whole build; the repo root's
+# build runs first only so the mill's own suite below has a mill. The
+# .ps1 twin is the file that ships from the Windows workstation; keep
+# the two in step.
 #
 #   ./build.sh              restore + build (Debug)
 #   ./build.sh test         build + run Shoddy.Mcp.Tests
@@ -19,9 +20,8 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-# The root's build, every call: a check that bin/mill exists passed a mill
-# from before a compiler change, and every sparky woven by it failed with
-# "unknown word: TAKEN". build() in ../../build.sh has the whole story.
+# The root's build: the full mill, for the mill's own suite. MSBuild's
+# up-to-date check makes this free when nothing changed.
 ../../build.sh build
 
 case "${1:-build}" in

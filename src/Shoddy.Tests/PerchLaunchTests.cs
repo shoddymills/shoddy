@@ -2,21 +2,25 @@
 // Licensed under the MIT License. See the LICENSE file in the project root.
 
 using System.Diagnostics;
-using System.Net;
-using System.Net.Sockets;
-using System.Text;
 using System.Text.Json;
 
 namespace Shoddy.Tests;
 
 /// <summary>
-/// The debugger as the editor reaches it: the published mill, started as
-/// `mill dap --listen PORT` in the program's own folder, the protocol over
-/// loopback TCP, and the program on that process's console. Everything a
-/// program can do under `mill run` it must do here: read the keyboard,
-/// draw on the screen, take its arguments, read files beside it, use the
-/// network when allowed, and call into machines, which the debugger steps
-/// into.
+/// The debugger as the editor reaches it: the program's own process,
+/// started as the adapter starts it (`mill run --perch PORT FILE` in the
+/// program's folder, connecting back to the port), the protocol over
+/// that connection, and the program on that process's console. The test
+/// plays the adapter (<see cref="PerchSession"/>). Everything a program
+/// can do under `mill run` it must do here: read the keyboard, draw on
+/// the screen, take its arguments, read files beside it, use the network
+/// when allowed, and call into machines, which the debugger steps into.
+///
+/// The mill is this test host's own copy of mill.dll, which carries the
+/// standard library in lib/ and lib/debug/ and the sources in machines/
+/// beside it, exactly as a published toolchain does. SHODDYLIB pins the
+/// sources to the checkout's own machines/ so a breakpoint set in a
+/// machine names the file in the tree.
 ///
 /// Every test runs twice: once with the program in a folder inside this
 /// checkout, once in a temporary folder outside it. Debugging must not
@@ -31,15 +35,7 @@ public class PerchLaunchTests
 {
     static readonly string Root = RepoRoot.Dir;
 
-    static PerchLaunchTests()
-    {
-        if (!File.Exists(MillPath))
-            ProcessRun.CaptureAll(new ProcessStartInfo("dotnet", "publish src/Shoddy.Mill -c Release -o bin")
-            { WorkingDirectory = Root });
-    }
-
-    static string MillPath => Path.Combine(Root, "bin",
-        OperatingSystem.IsWindows() ? "mill.exe" : "mill");
+    static string MillDll => TestHost.MillDll;
 
     /// <summary>A fresh folder for one program: inside the checkout
     /// (under artifacts/, which is build output) or outside it.</summary>
@@ -78,7 +74,7 @@ public class PerchLaunchTests
                 Print("HELLO " & name)
             """);
 
-        using var s = Session.Start(dir, stdin: "ADA\n");
+        using var s = PerchSession.Start(dir, prog, stdin: "ADA\n");
         s.Launch(prog, new { args = new[] { "x", "y" } });
         s.ConfigurationDone();
         Assert.Equal(0, s.ExitCode());
@@ -101,28 +97,11 @@ public class PerchLaunchTests
                 Print("[" & InKey() & InKey() & "]")
             """);
 
-        using var s = Session.Start(dir, stdin: "qz");
+        using var s = PerchSession.Start(dir, prog, stdin: "qz");
         s.Launch(prog);
         s.ConfigurationDone();
         Assert.Equal(0, s.ExitCode());
         Assert.Contains("[qz]", s.Finish());
-    }
-
-    [Fact]
-    public void AConnectionThatSaysNothingIsNotTheSession()
-    {
-        // The editor checks the port is up before it connects for real;
-        // that check must not become the session.
-        string dir = Folder(inRepo: false);
-        string prog = Program(dir, "hello.shoddy", """
-            Def Main()
-                Print("HELLO")
-            """);
-        using var s = Session.Start(dir, probeFirst: true);
-        s.Launch(prog);
-        s.ConfigurationDone();
-        Assert.Equal(0, s.ExitCode());
-        Assert.Contains("HELLO", s.Finish());
     }
 
     [Theory]
@@ -141,7 +120,7 @@ public class PerchLaunchTests
                 Play(1, "T240 O4 L16 C D E")
                 Print("PLAYED")
             """);
-        using var s = Session.Start(dir);
+        using var s = PerchSession.Start(dir, prog);
         s.Launch(prog);
         s.ConfigurationDone();
         Assert.Equal(0, s.ExitCode());
@@ -161,14 +140,14 @@ public class PerchLaunchTests
                 Print(NetAllowed())
             """);
 
-        using (var on = Session.Start(dir))
+        using (var on = PerchSession.Start(dir, prog))
         {
             on.Launch(prog, new { allowNet = true });
             on.ConfigurationDone();
             Assert.Equal(0, on.ExitCode());
             Assert.Contains("True", on.Finish());
         }
-        using (var off = Session.Start(dir))
+        using (var off = PerchSession.Start(dir, prog))
         {
             off.Launch(prog);
             off.ConfigurationDone();
@@ -181,7 +160,7 @@ public class PerchLaunchTests
     public void TheNetDemoRunsUnderTheDebugger()
     {
         string demo = Path.Combine(Root, "tst", "net-demo.shoddy");
-        using var s = Session.Start(Path.GetDirectoryName(demo)!);
+        using var s = PerchSession.Start(Path.GetDirectoryName(demo)!, demo);
         s.Launch(demo, new { allowNet = true });
         s.ConfigurationDone();
         Assert.Equal(0, s.ExitCode());
@@ -206,7 +185,7 @@ public class PerchLaunchTests
                 Print(Spin(0))
             """);
 
-        using var s = Session.Start(dir);
+        using var s = PerchSession.Start(dir, prog);
         s.Launch(prog);
         s.ConfigurationDone();
         // Main's one line hands straight to Spin, which never returns: a
@@ -243,7 +222,7 @@ public class PerchLaunchTests
         string dir = Folder(inRepo);
         string prog = Program(dir, "divide.shoddy", Divides);
 
-        using var s = Session.Start(dir);
+        using var s = PerchSession.Start(dir, prog);
         s.Launch(prog);
         s.Request("setExceptionBreakpoints", new { filters = new[] { "errors" } });
         s.WaitForResponse("setExceptionBreakpoints").Dispose();
@@ -278,7 +257,7 @@ public class PerchLaunchTests
         string dir = Folder(inRepo: false);
         string prog = Program(dir, "divide.shoddy", Divides);
 
-        using var s = Session.Start(dir);
+        using var s = PerchSession.Start(dir, prog);
         s.Launch(prog);
         s.Request("setExceptionBreakpoints", new { filters = Array.Empty<string>() });
         s.WaitForResponse("setExceptionBreakpoints").Dispose();
@@ -306,7 +285,7 @@ public class PerchLaunchTests
         string dir = Folder(inRepo);
         string prog = Program(dir, "useseq.shoddy", UsesSeq);
 
-        using var s = Session.Start(dir);
+        using var s = PerchSession.Start(dir, prog);
         s.Launch(prog);
         // seq.shoddy:193 is IndexOf's body.
         s.Request("setBreakpoints", new
@@ -341,7 +320,7 @@ public class PerchLaunchTests
         string dir = Folder(inRepo);
         string prog = Program(dir, "useseq.shoddy", UsesSeq);
 
-        using var s = Session.Start(dir);
+        using var s = PerchSession.Start(dir, prog);
         s.Launch(prog, new { stopOnEntry = true });
         s.ConfigurationDone();
         s.WaitForEvent("stopped").Dispose();                // entry: Main's first line
@@ -358,13 +337,14 @@ public class PerchLaunchTests
         s.Request("disconnect");
     }
 
-    /// <summary>The VS Code extension ships machines woven on the build
+    /// <summary>The VS Code extension ships a library woven on the build
     /// machine, so the library a user debugs against is never the folder
     /// it was woven in. Here seq is woven in one folder, installed in
     /// another, and the first is deleted: a breakpoint set in the installed
     /// seq.shoddy must stop, and the frame must name that file, which must
-    /// exist. Nothing may be rewoven on the way, or the test would pass
-    /// against a weave made where it runs.</summary>
+    /// exist. Nothing may be rewoven on the way: the resolver builds
+    /// nothing, so a machine missing from the installed library is an
+    /// error, never a weave made where it runs.</summary>
     [Fact]
     public void AMachineDebugsWhereItIsInstalledNotWhereItWasWoven()
     {
@@ -373,25 +353,31 @@ public class PerchLaunchTests
         string installed = Path.Combine(root, "installed", "machines");
         Directory.CreateDirectory(woven);
         File.Copy(SeqSource, Path.Combine(woven, "seq.shoddy"));
+        // The instrumented weave, to lib/debug/ two folders below the
+        // source: the layout a toolchain carries, and the one the weave
+        // records its source path against.
         var (exit, said) = ProcessRun.CaptureAll(
-            new ProcessStartInfo(MillPath, "machine --debug seq.shoddy") { WorkingDirectory = woven });
+            new ProcessStartInfo("dotnet", $"\"{MillDll}\" machine --debug seq.shoddy -o lib/debug")
+            { WorkingDirectory = woven });
         Assert.True(exit == 0, said);
 
-        string dllName = Path.Combine("bin", "debug", "Shoddy.Machines.Seq.dll");
-        Directory.CreateDirectory(Path.Combine(installed, "bin", "debug"));
+        string dllName = Path.Combine("lib", "debug", "Shoddy.Machines.Seq.dll");
+        Directory.CreateDirectory(Path.Combine(installed, "lib", "debug"));
         string seq = Path.Combine(installed, "seq.shoddy");
         string dll = Path.Combine(installed, dllName);
         File.Copy(Path.Combine(woven, "seq.shoddy"), seq);
         File.Copy(Path.Combine(woven, dllName), dll);
-        // The weave newer than its source, as a build leaves them, so the
-        // mill takes it as it is.
-        File.SetLastWriteTimeUtc(seq, DateTime.UtcNow.AddMinutes(-5));
-        File.SetLastWriteTimeUtc(dll, DateTime.UtcNow.AddMinutes(-1));
         Directory.Delete(Path.Combine(root, "woven"), recursive: true);
 
         string dir = Folder(inRepo: false);
         string prog = Program(dir, "useseq.shoddy", UsesSeq);
-        using var s = Session.Start(dir, env: new Dictionary<string, string> { ["SHODDYLIB"] = installed });
+        // The installed library, sources and compiled form alike: the
+        // two variables a pinned library is named by.
+        using var s = PerchSession.Start(dir, prog, env: new Dictionary<string, string>
+        {
+            ["SHODDYLIB"] = installed,
+            ["SHODDYLIBBIN"] = Path.Combine(installed, "lib"),
+        });
         s.Launch(prog);
         s.Breakpoints(seq, new { line = 193 });             // IndexOf's body
         s.ConfigurationDone();
@@ -406,9 +392,7 @@ public class PerchLaunchTests
 
         s.Request("continue", new { threadId = 1 });
         Assert.Equal(0, s.ExitCode());
-        string screen = s.Finish();
-        Assert.DoesNotContain("Building it now", screen);
-        Assert.DoesNotContain("Rebuilding it now", screen);
+        s.Finish();
     }
 
     // ---- stepping ---------------------------------------------------------
@@ -429,7 +413,7 @@ public class PerchLaunchTests
         string dir = Folder(inRepo);
         string prog = Program(dir, "two.shoddy", TwoLines);
 
-        using var s = Session.Start(dir);
+        using var s = PerchSession.Start(dir, prog);
         s.Launch(prog, new { stopOnEntry = true });
         s.ConfigurationDone();
         s.WaitForEvent("stopped").Dispose();
@@ -451,7 +435,7 @@ public class PerchLaunchTests
         string dir = Folder(inRepo);
         string prog = Program(dir, "two.shoddy", TwoLines);
 
-        using var s = Session.Start(dir);
+        using var s = PerchSession.Start(dir, prog);
         s.Launch(prog, new { stopOnEntry = true });
         s.ConfigurationDone();
         s.WaitForEvent("stopped").Dispose();
@@ -477,7 +461,7 @@ public class PerchLaunchTests
         string dir = Folder(inRepo);
         string prog = Program(dir, "two.shoddy", TwoLines);
 
-        using var s = Session.Start(dir);
+        using var s = PerchSession.Start(dir, prog);
         s.Launch(prog);
         s.Request("setBreakpoints", new
         {
@@ -515,10 +499,10 @@ public class PerchLaunchTests
         """;
 
     /// <summary>Launch Points stopped at line 15, the Print.</summary>
-    static Session AtThePrint(string dir, out string prog)
+    static PerchSession AtThePrint(string dir, out string prog)
     {
         prog = Program(dir, "points.shoddy", Points);
-        var s = Session.Start(dir);
+        var s = PerchSession.Start(dir, prog);
         s.Launch(prog);
         s.Breakpoints(prog, new { line = 15 });
         s.ConfigurationDone();
@@ -531,7 +515,7 @@ public class PerchLaunchTests
     [InlineData(false)]
     public void TheDebugConsoleEvaluatesAnyExpression(bool inRepo)
     {
-        using Session s = AtThePrint(Folder(inRepo), out _);
+        using PerchSession s = AtThePrint(Folder(inRepo), out _);
         int frame = s.TopFrame().GetProperty("id").GetInt32();
 
         Assert.Equal("8", s.Evaluate(frame, "k + 1"));                    // a local
@@ -552,7 +536,7 @@ public class PerchLaunchTests
     [InlineData(false)]
     public void SettingAVariableChangesWhatTheProgramComputes(bool inRepo)
     {
-        using Session s = AtThePrint(Folder(inRepo), out _);
+        using PerchSession s = AtThePrint(Folder(inRepo), out _);
         int frame = s.TopFrame().GetProperty("id").GetInt32();
         int[] scopes = s.Scopes(frame);                   // Locals, Globals, Value Stack
 
@@ -574,7 +558,7 @@ public class PerchLaunchTests
     {
         string dir = Folder(inRepo);
         string prog = Program(dir, "points.shoddy", Points);
-        using var s = Session.Start(dir);
+        using var s = PerchSession.Start(dir, prog);
         s.Launch(prog);
         s.Breakpoints(prog, new { line = 7 });
         s.ConfigurationDone();
@@ -607,7 +591,7 @@ public class PerchLaunchTests
     {
         string dir = Folder(inRepo);
         string prog = Program(dir, "count.shoddy", Counts);
-        using var s = Session.Start(dir);
+        using var s = PerchSession.Start(dir, prog);
         s.Launch(prog);
         s.Breakpoints(prog, new { line = 2, condition = "n = 3" });
         s.ConfigurationDone();
@@ -625,7 +609,7 @@ public class PerchLaunchTests
     {
         string dir = Folder(inRepo);
         string prog = Program(dir, "count.shoddy", Counts);
-        using var s = Session.Start(dir);
+        using var s = PerchSession.Start(dir, prog);
         s.Launch(prog);
         s.Breakpoints(prog, new { line = 2, hitCondition = "4" });
         s.ConfigurationDone();
@@ -644,7 +628,7 @@ public class PerchLaunchTests
     {
         string dir = Folder(inRepo);
         string prog = Program(dir, "count.shoddy", Counts);
-        using var s = Session.Start(dir);
+        using var s = PerchSession.Start(dir, prog);
         s.Launch(prog);
         s.Breakpoints(prog, new { line = 2, logMessage = "n is {n}, doubled {n * 2}" });
         s.ConfigurationDone();
@@ -653,283 +637,5 @@ public class PerchLaunchTests
         string console = s.Console();
         for (int n = 5; n >= 0; n--)
             Assert.Contains($"n is {n}, doubled {n * 2}\n", console);
-    }
-
-    // ---- the session ------------------------------------------------------
-
-    /// <summary>One `mill dap --listen` process and the protocol client
-    /// talking to it. The process's stdout and stderr are its screen.</summary>
-    sealed class Session : IDisposable
-    {
-        readonly Process proc;
-        readonly TcpClient tcp;
-        readonly NetworkStream stream;
-        readonly StringBuilder screen = new();
-        readonly StringBuilder console = new();     // Debug Console output events
-        readonly Task outPump, errPump;
-        int seq;
-        int? exitCode;
-
-        Session(Process proc, TcpClient tcp)
-        {
-            this.proc = proc;
-            this.tcp = tcp;
-            stream = tcp.GetStream();
-            stream.ReadTimeout = 120_000;       // a hang fails rather than wedges
-            outPump = Pump(proc.StandardOutput);
-            errPump = Pump(proc.StandardError);
-        }
-
-        Task Pump(StreamReader r) => Task.Run(async () =>
-        {
-            var buf = new char[4096];
-            int n;
-            while ((n = await r.ReadAsync(buf)) > 0)
-                lock (screen) screen.Append(buf, 0, n);
-        });
-
-        public static Session Start(string cwd, string? stdin = null, bool probeFirst = false,
-                                    IReadOnlyDictionary<string, string>? env = null)
-        {
-            int port = FreePort();
-            var psi = new ProcessStartInfo(MillPath, $"dap --listen {port}")
-            {
-                WorkingDirectory = cwd,
-                RedirectStandardInput = true,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-            };
-            if (env != null)
-                foreach ((string name, string value) in env) psi.Environment[name] = value;
-            Process p = Process.Start(psi)!;
-            if (stdin != null) p.StandardInput.Write(stdin);
-            p.StandardInput.Close();
-
-            var deadline = DateTime.UtcNow.AddSeconds(60);
-            if (probeFirst)
-                while (true)
-                {
-                    using var probe = new TcpClient();
-                    try { probe.Connect(IPAddress.Loopback, port); break; }
-                    catch (SocketException) when (DateTime.UtcNow < deadline && !p.HasExited)
-                    {
-                        Thread.Sleep(100);
-                    }
-                }
-            while (true)
-            {
-                var c = new TcpClient();
-                try
-                {
-                    c.Connect(IPAddress.Loopback, port);
-                    var s = new Session(p, c);
-                    s.Request("initialize", new { adapterID = "shoddy" });
-                    s.WaitForEvent("initialized").Dispose();
-                    return s;
-                }
-                catch (SocketException) when (DateTime.UtcNow < deadline && !p.HasExited)
-                {
-                    c.Dispose();
-                    Thread.Sleep(100);
-                }
-            }
-        }
-
-        static int FreePort()
-        {
-            var l = new TcpListener(IPAddress.Loopback, 0);
-            l.Start();
-            int port = ((IPEndPoint)l.LocalEndpoint).Port;
-            l.Stop();
-            return port;
-        }
-
-        public void Launch(string program, object? extra = null)
-        {
-            var args = new Dictionary<string, object?> { ["program"] = program };
-            if (extra != null)
-                foreach (var p in extra.GetType().GetProperties())
-                    args[p.Name] = p.GetValue(extra);
-            Request("launch", args);
-            using JsonDocument launched = WaitForResponse("launch");
-            Assert.True(launched.RootElement.GetProperty("success").GetBoolean(),
-                launched.RootElement.ToString());
-        }
-
-        /// <summary>Replace the breakpoints in one file.</summary>
-        public void Breakpoints(string file, params object[] breakpoints)
-        {
-            Request("setBreakpoints", new { source = new { path = file }, breakpoints });
-            using JsonDocument r = WaitForResponse("setBreakpoints");
-            foreach (JsonElement b in r.RootElement.GetProperty("body").GetProperty("breakpoints").EnumerateArray())
-                Assert.True(b.GetProperty("verified").GetBoolean(), r.RootElement.ToString());
-        }
-
-        /// <summary>An expression's result in a frame, or null when the
-        /// debugger refused it.</summary>
-        public string? Evaluate(int frameId, string expression)
-        {
-            Request("evaluate", new { expression, frameId, context = "repl" });
-            using JsonDocument r = WaitForResponse("evaluate");
-            return r.RootElement.GetProperty("success").GetBoolean()
-                ? r.RootElement.GetProperty("body").GetProperty("result").GetString()
-                : null;
-        }
-
-        /// <summary>A frame's scopes' references: Locals, Globals, Value Stack.</summary>
-        public int[] Scopes(int frameId)
-        {
-            Request("scopes", new { frameId });
-            using JsonDocument sc = WaitForResponse("scopes");
-            return sc.RootElement.GetProperty("body").GetProperty("scopes").EnumerateArray()
-                .Select(x => x.GetProperty("variablesReference").GetInt32()).ToArray();
-        }
-
-        public Dictionary<string, (string Value, int Reference)> Variables(int reference)
-        {
-            Request("variables", new { variablesReference = reference });
-            using JsonDocument vs = WaitForResponse("variables");
-            return vs.RootElement.GetProperty("body").GetProperty("variables").EnumerateArray()
-                .ToDictionary(v => v.GetProperty("name").GetString()!,
-                              v => (v.GetProperty("value").GetString()!, v.GetProperty("variablesReference").GetInt32()));
-        }
-
-        /// <summary>Set a variable; answers its new value as shown.</summary>
-        public string SetVariable(int reference, string name, string value)
-        {
-            Request("setVariable", new { variablesReference = reference, name, value });
-            using JsonDocument r = WaitForResponse("setVariable");
-            Assert.True(r.RootElement.GetProperty("success").GetBoolean(), r.RootElement.ToString());
-            return r.RootElement.GetProperty("body").GetProperty("value").GetString()!;
-        }
-
-        /// <summary>What the debugger has written to the Debug Console.</summary>
-        public string Console() => console.ToString();
-
-        public void ConfigurationDone()
-        {
-            Request("configurationDone");
-            WaitForResponse("configurationDone").Dispose();
-        }
-
-        public void Request(string command, object? args = null)
-        {
-            byte[] body = JsonSerializer.SerializeToUtf8Bytes(
-                new { seq = ++seq, type = "request", command, arguments = args });
-            byte[] head = Encoding.ASCII.GetBytes($"Content-Length: {body.Length}\r\n\r\n");
-            stream.Write(head);
-            stream.Write(body);
-            stream.Flush();
-        }
-
-        public JsonDocument WaitForEvent(string name) => WaitFor(m =>
-            m.GetProperty("type").GetString() == "event" && m.GetProperty("event").GetString() == name);
-
-        public JsonDocument WaitForResponse(string command) => WaitFor(m =>
-            m.GetProperty("type").GetString() == "response" && m.GetProperty("command").GetString() == command);
-
-        /// <summary>The exit code the session reports for the program.</summary>
-        public int ExitCode()
-        {
-            if (exitCode is int known) return known;
-            using JsonDocument exited = WaitForEvent("exited");
-            exitCode = exited.RootElement.GetProperty("body").GetProperty("exitCode").GetInt32();
-            return exitCode.Value;
-        }
-
-        /// <summary>The innermost frame of the stopped program.</summary>
-        public JsonElement TopFrame()
-        {
-            Request("stackTrace", new { threadId = 1 });
-            using JsonDocument st = WaitForResponse("stackTrace");
-            return st.RootElement.GetProperty("body").GetProperty("stackFrames")[0].Clone();
-        }
-
-        /// <summary>A frame's Locals scope, name to displayed value.</summary>
-        public Dictionary<string, string> Locals(int frameId)
-        {
-            Request("scopes", new { frameId });
-            int reference;
-            using (JsonDocument sc = WaitForResponse("scopes"))
-                reference = sc.RootElement.GetProperty("body").GetProperty("scopes")[0]
-                    .GetProperty("variablesReference").GetInt32();
-            Request("variables", new { variablesReference = reference });
-            using JsonDocument vs = WaitForResponse("variables");
-            return vs.RootElement.GetProperty("body").GetProperty("variables").EnumerateArray()
-                .ToDictionary(v => v.GetProperty("name").GetString()!, v => v.GetProperty("value").GetString()!);
-        }
-
-        /// <summary>End the session and answer everything the program put
-        /// on its screen.</summary>
-        public string Finish()
-        {
-            Request("disconnect");
-            if (!proc.WaitForExit(60_000)) proc.Kill(entireProcessTree: true);
-            Task.WaitAll(outPump, errPump);
-            lock (screen) return screen.ToString().Replace("\r\n", "\n");
-        }
-
-        JsonDocument WaitFor(Func<JsonElement, bool> want)
-        {
-            for (int i = 0; i < 500; i++)
-            {
-                JsonDocument msg = Read();
-                JsonElement m = msg.RootElement;
-                if (m.GetProperty("type").GetString() == "event" &&
-                    m.GetProperty("event").GetString() == "exited")
-                    exitCode = m.GetProperty("body").GetProperty("exitCode").GetInt32();
-                if (m.GetProperty("type").GetString() == "event" &&
-                    m.GetProperty("event").GetString() == "output" &&
-                    m.GetProperty("body").GetProperty("category").GetString() == "console")
-                    console.Append(m.GetProperty("body").GetProperty("output").GetString());
-                if (want(m)) return msg;
-                msg.Dispose();
-            }
-            throw new TimeoutException("expected message never arrived");
-        }
-
-        JsonDocument Read()
-        {
-            int len = -1;
-            var line = new StringBuilder();
-            while (true)
-            {
-                int c = stream.ReadByte();
-                if (c < 0) throw new IOException("transport closed: " + Screen());
-                if (c == '\n')
-                {
-                    string h = line.ToString().TrimEnd('\r');
-                    line.Clear();
-                    if (h.Length == 0) break;
-                    if (h.StartsWith("Content-Length:", StringComparison.OrdinalIgnoreCase))
-                        len = int.Parse(h["Content-Length:".Length..].Trim());
-                }
-                else line.Append((char)c);
-            }
-            var buf = new byte[len];
-            int got = 0;
-            while (got < len)
-            {
-                int n = stream.Read(buf, got, len - got);
-                if (n <= 0) throw new IOException("transport closed: " + Screen());
-                got += n;
-            }
-            return JsonDocument.Parse(buf);
-        }
-
-        string Screen()
-        {
-            lock (screen) return screen.ToString();
-        }
-
-        public void Dispose()
-        {
-            tcp.Dispose();
-            if (!proc.HasExited)
-            {
-                if (!proc.WaitForExit(10_000)) proc.Kill(entireProcessTree: true);
-            }
-            proc.Dispose();
-        }
     }
 }

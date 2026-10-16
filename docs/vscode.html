@@ -96,12 +96,13 @@ the file to copy.</p>
 
 <h2 id="millpath">2. Point it at the mill <span class="badge opt">Optional</span></h2>
 <p>The extension looks for a mill in four places, in order: the
-<code>shoddy.millPath</code> setting; <code>bin/mill</code> inside your workspace,
-the folder you have open (<code>bin/mill.exe</code> on Windows); its own
-bundled copy; then <code>mill</code> on your PATH, the list of folders your
-terminal searches for commands. <strong>The bundled copy means almost
-everyone can skip this section.</strong></p>
-<p>The one ordering to know: a workspace's own <code>bin/mill</code> beats the
+<code>shoddy.millPath</code> setting; the mill your workspace has built, at
+<code>artifacts/bin/Shoddy.Mill/release/mill</code> under the folder you have
+open (<code>mill.exe</code> on Windows); its own bundled copy; then
+<code>mill</code> on your PATH, the list of folders your terminal searches
+for commands. <strong>The bundled copy means almost everyone can skip this
+section.</strong></p>
+<p>The one ordering to know: a workspace's own built mill beats the
 bundled one. That is deliberate. When the repo is your open folder, the mill
 you just built is the one you want tested, not the one that shipped. Set
 <code>millPath</code> explicitly in two cases: you keep several checkouts
@@ -113,13 +114,13 @@ settings, not per-workspace. Then every folder you ever open, inside the
 repo or out, finds it with no per-folder setup:
 <code>Ctrl+Shift+P</code> / <code>Cmd+Shift+P</code> &rarr;
 <em>Preferences: Open User Settings (JSON)</em>, then add:</p>
-<pre><code class="language-json">"shoddy.millPath": "C:\\github\\shoddy\\bin\\mill.exe"
+<pre><code class="language-json">"shoddy.millPath": "C:\\github\\shoddy\\artifacts\\bin\\Shoddy.Mill\\release\\mill.exe"
 </code></pre>
-<p>(macOS/Linux: the full absolute path to <code>bin/mill</code>. Do not rely
-on <code>~</code> expanding inside settings.)</p>
-<p>The repo's <code>.vscode/settings.json</code> pins what matters either way:
-Shoddy's blocks are indentation-based (a tab counts as 4) and the whole
-corpus uses 4 spaces. Let the editor keep it that way.</p>
+<p>(macOS/Linux: the full absolute path to the built <code>mill</code>. Do
+not rely on <code>~</code> expanding inside settings.)</p>
+<p>Whichever mill answers, keep the editor at four spaces for
+<code>.shoddy</code> files: Shoddy's blocks are indentation-based (a tab
+counts as 4) and the whole corpus uses 4 spaces.</p>
 
 <h2 id="perch">3. Debugging: the perch <span class="badge info">Usage &middot; nothing to configure</span></h2>
 <p>Start here: it is the fastest way to see the whole chain working, and it
@@ -148,7 +149,21 @@ play), opens scribbler windows and plays sound. It runs from its own folder,
 whichever folder the workspace is opened on, so a relative path such as
 <code>files/words.txt</code> finds the file beside the program. That is true
 in a checkout and out of one: the machines the extension ships are debugged
-the same way as the ones in the repository. Then:</p>
+the same way as the ones in the repository.</p>
+<p>Why a window of its own: VS Code's integrated terminal keeps
+<code>F1</code>, <code>F5</code> and the chord prefixes for the editor, and
+a game that reads the arrow keys and the function keys through
+<code>InKey</code> never sees them there. <a href="terminal-checklist.html">The
+terminal checklist</a> records, per mill, what each one asks of a terminal
+and which terminals pass. The window is opened on the machine VS Code
+itself runs on, so a remote, WSL or container session, where the editor's
+window and the program's would be on different machines, cannot launch;
+debug on the machine that has the terminal.</p>
+<p>Under the hood, VS Code runs <code>mill dap</code> as the debug adapter.
+The adapter asks VS Code for the window and starts the program's own
+process in it, <code>mill run --perch PORT FILE</code>, which compiles the
+program with the instrumented library and connects back to the adapter;
+from then on the adapter relays between the two. Then:</p>
 <ul>
 <li><strong>Breakpoints</strong>: a breakpoint pauses the program at a line you
 mark. Click in the gutter (the margin left of the code) of any
@@ -179,7 +194,9 @@ shows the message. Continue, and the program ends with the error exactly as
 it would under <code>mill run</code>. Untick <em>Runtime errors</em> in the
 Breakpoints view to let errors end the program without stopping.</li>
 <li><strong>Pause</strong> (<code>F6</code>) stops a running program at the
-next line it reaches, a program stuck in a loop included.</li>
+next line it reaches, a program stuck in a loop included. A program waiting
+in <code>Input</code> or <code>InKey</code> reaches its next line when you
+give it the key it is waiting for, and pauses then.</li>
 <li><strong>Stepping</strong>: run one line at a time: step over (<code>F10</code>), into (<code>F11</code>), out (<code>Shift+F11</code>).
 Step into goes into the Def a line calls, a machine's included, so you can
 watch <code>Sum</code> or <code>MatMul</code> work. A tail-recursive def (one
@@ -198,7 +215,10 @@ evaluated in the frame you are looking at. It can use the frame's locals,
 the top-level Lets, the program's own Defs and types, every machine word the
 program included, and the builtins: <code>Twice(k) + Px(p)</code>,
 <code>IndexOf(names, "ANN")</code>. It is compiled, as everything in Shoddy
-is, and it leaves the program as it found it.</li>
+is, and it leaves the program as it found it. A program running inside a
+host (<a href="hosting.html">Hosting</a>) is debugged by attaching, and
+there the Debug Console, Watch and hover show a variable by name but cannot
+evaluate an expression, because the host carries no compiler.</li>
 </ul>
 
 <h3 id="launch">Settings for a launch</h3>
@@ -252,8 +272,8 @@ on.</td></tr>
 produces, to read.</td></tr>
 </table>
 <p>Work on the mill itself happens at the command line, with the build
-wrapper: <code>./build.sh build</code> publishes the mill into
-<code>bin/</code>, and <code>./build.sh test</code> proves it still passes
+wrapper: <code>./build.sh build</code> builds the mill under
+<code>artifacts/</code>, and <code>./build.sh test</code> proves it still passes
 (<code>./build.ps1</code> on Windows). <a href="build.html#wrappers">The
 Toolchain page</a> lists every command.</p>
 
@@ -300,7 +320,7 @@ its own (<a href="#perch">section 3</a>), so programs that use
 <code>tst/gradebook.shoddy</code> with <code>ctrl+r</code> and type at the
 prompts. To replay its scripted session
 instead (a command-line matter, the only one on this page):</p>
-<pre><code class="language-sh">bin/mill run tst/gradebook.shoddy &lt; tst/golden/gradebook.in
+<pre><code class="language-sh">./build.sh run tst/gradebook.shoddy &lt; tst/golden/gradebook.in
 </code></pre>
 
 <h2 id="smoke">7. Smoke-test the whole chain <span class="badge req">Recommended &middot; once</span></h2>

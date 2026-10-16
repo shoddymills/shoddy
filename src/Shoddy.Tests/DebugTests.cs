@@ -96,11 +96,13 @@ public class DebugTests
     }
 
     /// <summary>An instrumented machine is woven in one place and run from
-    /// another: the VS Code extension ships machines woven on the build
-    /// machine, and an install puts them somewhere else. Stepping into one
+    /// another: the VS Code extension ships a library woven on the build
+    /// machine, and an install puts it somewhere else. Stepping into one
     /// must show its source where it is now. Here the folder it was woven
     /// in is deleted before it runs, so a path recorded at weave time
-    /// cannot be found by accident.</summary>
+    /// cannot be found by accident. The layout is the toolchain's: the
+    /// instrumented weave two folders below the sources, in lib/debug/,
+    /// as the weave records it.</summary>
     [Fact]
     public void AnInstrumentedMachineFindsItsSourceWhereverItIsInstalled()
     {
@@ -119,12 +121,14 @@ public class DebugTests
         List<Line> lines = Lexer.ReadProgram(sb, machines.TryResolve);
         var prog = new ShoddyProgram();
         machines.SeedInto(prog);
-        string dll = Weaver.WeaveMachine(Parser.Parse(lines, prog), sb, machines.Machines, debug: true);
+        string dll = Weaver.WeaveMachine(Parser.Parse(lines, prog), sb,
+            Path.Combine(wovenIn, "lib", "debug", MachineSet.AssemblyNameFor(sb) + ".dll"),
+            machines.Machines, debug: true);
 
-        // The library's layout, copied whole: source, and the weave in
-        // bin/debug/ beside it. Then the original goes.
+        // The install's layout, copied whole: the source, and the weave
+        // in lib/debug/ two below it. Then the original goes.
         string movedSb = Path.Combine(installed, stem + ".shoddy");
-        string movedDll = Path.Combine(installed, "bin", "debug", Path.GetFileName(dll));
+        string movedDll = Path.Combine(installed, "lib", "debug", Path.GetFileName(dll));
         Directory.CreateDirectory(Path.GetDirectoryName(movedDll)!);
         File.Copy(sb, movedSb);
         File.Copy(dll, movedDll);

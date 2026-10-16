@@ -2,7 +2,7 @@
 # Shoddy build wrapper (Windows). Unix users: use build.sh (same commands).
 #
 #   ./build.ps1 all [bump|X.Y.Z]      everything: clean, test, then .vsix
-#   ./build.ps1 build                 build the mill into bin/
+#   ./build.ps1 build                 build the mill, with the machine library
 #   ./build.ps1 test                  everything: dotnet tests, the machine
 #                                     suites and every mill's own suite
 #   ./build.ps1 check                 the fast gates: docs, errors, permissions,
@@ -10,28 +10,35 @@
 #   ./build.ps1 run [SWITCHES] FILE.shoddy [ARGS...]
 #                                     compile in memory and run a program
 #   ./build.ps1 weave FILE.shoddy     compile a program to an assembly
-#   ./build.ps1 machines              compile every machine to a machine DLL
-#   ./build.ps1 stage                 stage the mill + machines into the extension
+#   ./build.ps1 machines              build the machine library (same as build)
+#   ./build.ps1 stage [X.Y.Z]         stage the mill into the extension
 #   ./build.ps1 vsix [bump|X.Y.Z]     package the VS Code extension (.vsix)
 #   ./build.ps1 install [X.Y.Z]       install the packaged .vsix into VS Code
 #   ./build.ps1 clean                 remove build output
 #   ./build.ps1 help                  show this help
 #
-# all: the whole toolchain from nothing — clean, then test (which rebuilds
-# the mill), then vsix (which builds the machines, stages, and packages).
-# This is the path for a package you mean to install or ship; `vsix` on its
-# own runs no tests, which is fine for a quick turn and not for a release.
-# Takes the same optional argument as vsix: ./build.ps1 all 2.10.0
+# MSBUILD IS THE BUILD. `build` is `dotnet build src/Shoddy.Mill`: that
+# builds the toolchain, builds the machine library in Debug and Release
+# (machines/Shoddy.Machines.csproj and the seeds beside it) and carries
+# both inside the mill's output under artifacts/, where every other
+# project's output lives too. Nothing a build writes lands in a source
+# folder, and there is no staleness logic here - MSBuild's up-to-date
+# check knows every input, the compiler's own assemblies included. This
+# script only names what dotnet cannot do by itself: run the Shoddy
+# suites, stage the extension, call vsce and code.
 #
-# Every target that runs the mill publishes it first, every time - see
-# Invoke-Build below for why that is not left to a check.
+# all: the whole toolchain from nothing - clean, then test (which builds
+# the mill), then vsix (which stages and packages). This is the path for
+# a package you mean to install or ship; `vsix` on its own runs no
+# tests, which is fine for a quick turn and not for a release. Takes the
+# same optional argument as vsix: ./build.ps1 all 2.10.0
 #
 # vsix [bump|X.Y.Z]: patch|minor|major has vsce bump the version in
 # package.json, then package. An exact X.Y.Z builds this package as that
 # version and changes no file in the tree: the staged mill reports X.Y.Z
 # and the package is vscode-shoddy-X.Y.Z.vsix. That is how a local build
 # carries a release number (./build.ps1 vsix 2.10.0).
-# vsix stages first, so the package carries its own mill and machines.
+# vsix stages first, so the package carries its own mill and library.
 #
 # install [X.Y.Z]: install vscode-shoddy-X.Y.Z.vsix, or with no version,
 # the package for the version package.json names.
@@ -61,11 +68,7 @@ Set-Location $PSScriptRoot
 # in a NativeCommandError record whenever the CALLER captures our streams:
 # `./build.ps1 all 2>&1 | tee log.txt`, a CI step, an assistant's shell.
 # Under 'Stop' that record is terminating, so an ordinary informational
-# line kills the run even though the program exited 0. That is what broke
-# `build.ps1 all`: clean wipes machines/bin, so the next mill prints
-# "machine seq.shoddy is not built - building" on stderr and the release
-# gate died there - while the identical command straight into a console was
-# fine, which is why it went unnoticed.
+# line kills the run even though the program exited 0.
 #
 # 'Stop' stays in force everywhere else, because it is doing real work for
 # CMDLET failures: a Copy-Item that fails during stage must not go on to
@@ -79,120 +82,22 @@ function Native {
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 }
 
-$Mill = Join-Path 'bin' 'mill.exe'
-# Where `stage` drops the extension's own copy of the toolchain. Both are
-# build output: gitignored, and rebuilt from scratch on every stage.
+# The full toolchain, where `dotnet build` puts it: the apphost beside
+# mill.dll, the machine library in lib/ and lib/debug/ beside that, the
+# machine sources in machines/.
+$Mill = Join-Path 'artifacts' (Join-Path 'bin' (Join-Path 'Shoddy.Mill' (Join-Path 'release' 'mill.exe')))
+# A checkout pins the mill to its own machine sources: every mill in
+# the tree reaches a machine by relative path (../../machines/x.shoddy),
+# and naming the folder is what makes those files machines rather than
+# source to splice. The extension does the same for the sources it
+# carries.
+$env:SHODDYLIB = Join-Path $PSScriptRoot 'machines'
+# Where `stage` publishes the extension's own copy of the toolchain.
+# Build output: gitignored, and rebuilt from scratch on every stage.
 $StageMill = Join-Path 'vscode-shoddy' 'mill'
-$StageLib = Join-Path 'vscode-shoddy' 'machines'
 
-# THE MILL IS REBUILT ON EVERY CALL, NOT WHEN IT LOOKS MISSING. This was
-# `if (-not (Test-Path bin/mill.exe)) { build }`, which never rebuilt a
-# mill that existed. A mill from before a compiler change then went on
-# weaving every machine with the old compiler - the lists rework moved
-# Taken from seq into the runtime, the old mill still compiled it as a seq
-# word, and every sparky session failed with "unknown word: TAKEN" while
-# each step reported success. Deciding staleness here would mean keeping a
-# list of what the mill is built from; MSBuild already knows exactly.
-#
-# AND IT IS PUBLISHED INTO AN EMPTY FOLDER, NEVER STRAIGHT INTO bin/.
-# Publish copies a file only when the source is NEWER than the one already
-# there, so a mill in bin/ with later timestamps than the build output - one
-# published from another checkout, or restored from anywhere - survives a
-# `dotnet publish -o bin` untouched while the publish reports success. That
-# was proved, not supposed: an older mill planted in bin/ was still the one
-# running after the publish. So the build lands in $MillPub, which is
-# emptied first, and bin/ is replaced by it whenever the two differ by a
-# single byte. About a second when nothing changed. If a running mill.exe
-# holds bin/ open, the Remove-Item fails and stops the build, which is the
-# right answer: carrying on would run the mill that is there.
-#
-# THEN THE MACHINE DLLS ARE CHECKED AGAINST THE MILL THAT WOVE THEM. A
-# fresh mill is not enough on its own: the resolver judges a machine DLL
-# only against its source and its dependencies, so DLLs woven by the old
-# mill still pass as current. Each machine bin/ carries .mill-id, the hash
-# of the mill's DLLs at the time it was emptied; when that differs from
-# the mill now in bin/, the folder is emptied and the resolver weaves
-# every machine afresh with this mill on first use. A hash of the content,
-# not a timestamp: a timestamp moves when nothing changed (another project
-# recompiling Shoddy.Runtime with its own settings does it) and can stay
-# put when something did. A folder with no .mill-id is treated as
-# mismatched, so a tree from before this rule is emptied once.
-$MillPub = Join-Path 'artifacts' 'mill-publish'
 function Invoke-Build {
-    if (Test-Path $MillPub) { Remove-Item -Recurse -Force $MillPub }
-    Native dotnet publish src/Shoddy.Mill -c Release -o $MillPub
-    if ((Get-TreeId $MillPub) -eq (Get-TreeId 'bin')) {
-        Remove-Item -Recurse -Force $MillPub
-    }
-    else {
-        if (Test-Path bin) {
-            Write-Host 'bin/ is not the mill just built: replacing it'
-            Remove-Item -Recurse -Force bin
-        }
-        Move-Item $MillPub bin
-    }
-    $id = Get-MillId
-    foreach ($d in 'machines/bin', 'machines/seeds/bin') {
-        $stamp = Join-Path $d '.mill-id'
-        $was = if (Test-Path $stamp) { "$(Get-Content $stamp -Raw)".Trim() } else { '' }
-        if ($was -ne $id) {
-            if (Test-Path $d) {
-                Write-Host "mill changed: emptying $d so its machines are rewoven by this mill"
-                Remove-Item -Recurse -Force $d
-            }
-            New-Item -ItemType Directory -Path $d -Force | Out-Null
-            Set-Content -Path $stamp -Value $id -NoNewline
-        }
-    }
-}
-
-# The identity of the mill in bin/: one hash over all of its DLLs, taken
-# in ordinal order of their names - byte order, as build.sh's mill_id
-# takes them under LC_ALL=C. Sort-Object would not do: it ignores case.
-function Get-MillId {
-    $files = @(Get-ChildItem bin -Filter *.dll -File)
-    $names = [string[]]@($files | ForEach-Object Name)
-    [Array]::Sort($names, [System.StringComparer]::Ordinal)
-    $sha = [System.Security.Cryptography.SHA256]::Create()
-    try {
-        foreach ($n in $names) {
-            # FullName, because .NET resolves a relative path against the
-            # process directory, which is not PowerShell's location.
-            $bytes = [System.IO.File]::ReadAllBytes((Get-Item (Join-Path bin $n)).FullName)
-            [void]$sha.TransformBlock($bytes, 0, $bytes.Length, $null, 0)
-        }
-        [void]$sha.TransformFinalBlock([byte[]]::new(0), 0, 0)
-        return ([System.BitConverter]::ToString($sha.Hash) -replace '-', '').ToLowerInvariant()
-    }
-    finally { $sha.Dispose() }
-}
-
-# Everything in a folder, as one hash: each file's path relative to the
-# folder, then its bytes, in ordinal order of path. Two folders hash the
-# same only when they hold the same files with the same content - what
-# `diff -r -q` answers in build.sh. A missing folder hashes as empty.
-function Get-TreeId([string]$Dir) {
-    if (-not (Test-Path $Dir)) { return '' }
-    $root = (Get-Item $Dir).FullName.TrimEnd('/', '\') + [System.IO.Path]::DirectorySeparatorChar
-    $paths = [string[]]@(Get-ChildItem $Dir -Recurse -File -Force |
-        ForEach-Object { $_.FullName.Substring($root.Length).Replace('\', '/') })
-    [Array]::Sort($paths, [System.StringComparer]::Ordinal)
-    $sha = [System.Security.Cryptography.SHA256]::Create()
-    try {
-        foreach ($p in $paths) {
-            $name = [System.Text.Encoding]::UTF8.GetBytes($p + [char]0)
-            [void]$sha.TransformBlock($name, 0, $name.Length, $null, 0)
-            $bytes = [System.IO.File]::ReadAllBytes($root + $p)
-            [void]$sha.TransformBlock($bytes, 0, $bytes.Length, $null, 0)
-        }
-        [void]$sha.TransformFinalBlock([byte[]]::new(0), 0, 0)
-        return ([System.BitConverter]::ToString($sha.Hash) -replace '-', '').ToLowerInvariant()
-    }
-    finally { $sha.Dispose() }
-}
-
-function Assert-Mill {
-    Invoke-Build
+    Native dotnet build src/Shoddy.Mill -c Release
 }
 
 # Read a list out of scripts/suites.mjs - THE ONLY COPY of the suite
@@ -208,73 +113,19 @@ function Read-Roster([string]$Name) {
     return $out
 }
 
-function Invoke-Machines {
-    Assert-Mill
-    # Dependency order: an Include "x.shoddy" resolves to the machine DLL
-    # only if Shoddy.Machines.X.dll is already built — otherwise the
-    # source is spliced in and its defs re-exported, which collides with
-    # the real machine downstream (duplicate definition of ANY, etc.).
-    #
-    # Each machine is woven twice: the release weave into bin/, and the
-    # instrumented one (--debug) into bin/debug/, which the debugger loads
-    # so a program can be stepped into the machine's own lines. Both are
-    # built here so the extension ships both. Without the instrumented
-    # set, the first F5 after an install wove every machine the program
-    # reached, inside the installed extension, before the program could
-    # start. The same order serves both: an instrumented machine links
-    # against the instrumented weaves of the machines it includes.
-    $files = @(Get-ChildItem machines/*.shoddy, machines/seeds/*.shoddy | Sort-Object Name)
-    $deps = @{}
-    foreach ($f in $files) {
-        $deps[$f.BaseName] = @(
-            Select-String -Path $f.FullName -Pattern '^\s*Include\s+"(.+)\.shoddy"' |
-                ForEach-Object { $_.Matches[0].Groups[1].Value.ToLowerInvariant() })
-    }
-    $built = New-Object 'System.Collections.Generic.HashSet[string]'
-    $pending = [System.Collections.ArrayList]$files
-    while ($pending.Count -gt 0) {
-        $ready = @($pending | Where-Object {
-            $unmet = @($deps[$_.BaseName] |
-                Where-Object { $deps.ContainsKey($_) -and -not $built.Contains($_) })
-            $unmet.Count -eq 0
-        })
-        if ($ready.Count -eq 0) {
-            Write-Error ('include cycle among machines: ' +
-                (($pending | ForEach-Object BaseName) -join ', '))
-            exit 1
-        }
-        foreach ($f in $ready) {
-            Write-Host "==> $($f.Name)"
-            Native $Mill machine $f.FullName
-            # Quoted, as the -p: arguments in Invoke-Stage are: PowerShell
-            # parses a bare word that starts with a dash as a parameter
-            # name, and a quoted one only as text for the mill.
-            Native $Mill machine '--debug' $f.FullName
-            [void]$built.Add($f.BaseName.ToLowerInvariant())
-            $pending.Remove($f)
-        }
-    }
-}
-
-# Give the extension its own toolchain, so installing the .vsix is the
-# whole install: a framework-dependent mill (every RID's natives ride
-# along in runtimes/, so one package runs everywhere the .NET runtime
-# is) and the machines it needs. The extension points SHODDYLIB at the
-# staged machines/, where Include finds the source and the resolver
-# finds the DLL beside it in bin/.
-#
-# With a version, the staged mill and every assembly published with it
-# carry that version. It is passed to this one publish as a property rather
-# than written into Directory.Build.props, so the tree is left as it was.
-# bin/mill is not restamped: it only weaves the machines, and a machine DLL
-# records no mill version.
+# stage [X.Y.Z]: publish the full mill into the extension, framework-
+# dependent (every RID's natives ride along in runtimes/, so one package
+# runs everywhere the .NET runtime is), carrying the machine library in
+# lib/ and the machine sources in machines/. With a version, the staged
+# mill and every assembly published with it carry that version; it is
+# passed to this one publish as a property rather than written into
+# Directory.Build.props, so the tree is left as it was.
 function Invoke-Stage {
     param([string]$Version)
-    Invoke-Machines
-    foreach ($d in $StageMill, $StageLib) {
+    foreach ($d in $StageMill, (Join-Path 'vscode-shoddy' 'machines')) {
         if (Test-Path $d) { Remove-Item -Recurse -Force $d }
     }
-    # Satellite resource assemblies are Roslyn's localized diagnostics —
+    # Satellite resource assemblies are Roslyn's localized diagnostics -
     # ~5 MB of the package for messages the mill never surfaces.
     #
     # THE QUOTES ROUND THE -p: ARGUMENTS ARE LOAD-BEARING. PowerShell reads
@@ -282,62 +133,35 @@ function Invoke-Stage {
     # and Native takes everything through $args with no param() block, so
     # the name is discarded and only the value survives. MSBuild then sees
     # SatelliteResourceLanguages=en as a second project to build and stops
-    # with MSB1008, "Only one project can be specified" - which names
-    # neither the property nor the shell, and reads like a broken solution.
-    #
-    # Windows PowerShell 5.1 passed the bare form through and PowerShell 7
-    # does not, so this sat unnoticed until the gate's steps moved to pwsh,
-    # and then took the v2.4.0 release down at its first package step.
-    # Quoting is correct in both shells. The sibling publish in
-    # hosts/mcp/build.ps1 already quotes theirs, which is exactly why it
-    # went on working.
-    # Two calls rather than an array of properties: splatting an array into
-    # Native would reopen the question the quotes above settle.
+    # with MSB1008. Quoting is correct in both shells.
     if ($Version) {
         Native dotnet publish src/Shoddy.Mill -c Release -o $StageMill `
-            '-p:SatelliteResourceLanguages=en' '-p:DebugType=none' "-p:Version=$Version"
+            '-p:SatelliteResourceLanguages=en' "-p:Version=$Version"
     }
     else {
         Native dotnet publish src/Shoddy.Mill -c Release -o $StageMill `
-            '-p:SatelliteResourceLanguages=en' '-p:DebugType=none'
+            '-p:SatelliteResourceLanguages=en'
     }
-    New-Item -ItemType Directory -Path (Join-Path $StageLib 'bin/debug') -Force | Out-Null
-    New-Item -ItemType Directory -Path (Join-Path $StageLib 'seeds/bin/debug') -Force | Out-Null
-    Copy-Item machines/*.shoddy $StageLib
-    Copy-Item machines/bin/*.dll (Join-Path $StageLib 'bin')
-    Copy-Item machines/bin/debug/*.dll (Join-Path $StageLib 'bin/debug')
-    Copy-Item machines/seeds/*.shoddy (Join-Path $StageLib 'seeds')
-    Copy-Item machines/seeds/bin/*.dll (Join-Path $StageLib 'seeds/bin')
-    Copy-Item machines/seeds/bin/debug/*.dll (Join-Path $StageLib 'seeds/bin/debug')
-    # One timestamp across every staged DLL, newer than every staged
-    # source, and identical between them. Copy stamps each file as it
-    # goes - alphabetically - and a machine counts as stale when a DLL
-    # it depends on is newer than its own, so csv (depending on dict,
-    # seq and str, all later in the alphabet) arrived looking stale and
-    # rebuilt itself on first use, inside the installed extension.
-    $stamp = Get-Date
-    Get-ChildItem (Join-Path $StageLib 'bin'), (Join-Path $StageLib 'seeds/bin'),
-                  (Join-Path $StageLib 'bin/debug'), (Join-Path $StageLib 'seeds/bin/debug') -Filter *.dll |
-        ForEach-Object { $_.LastWriteTime = $stamp }
     # Roslyn, Silk.NET, GLFW and OpenAL Soft are redistributed in the
-    # package, so their notices have to travel with it — LGPL-2.1 for
+    # package, so their notices have to travel with it - LGPL-2.1 for
     # OpenAL Soft, attribution for the rest. The authorship statement and
     # its AI disclosure travel with it for the same reason: the .vsix is
     # the whole install for most people, and never sees the repository.
     Copy-Item THIRD-PARTY-NOTICES.md vscode-shoddy
     Copy-Item AUTHORSHIP.md vscode-shoddy
-    $size = (Get-ChildItem $StageMill, $StageLib -Recurse -File |
-        Measure-Object Length -Sum).Sum
-    Write-Host ('staged mill + machines into vscode-shoddy/ ({0:N1} MB)' -f ($size / 1MB))
+    $size = (Get-ChildItem $StageMill -Recurse -File | Measure-Object Length -Sum).Sum
+    Write-Host ('staged the mill and its library into vscode-shoddy/ ({0:N1} MB)' -f ($size / 1MB))
 }
 
 function Invoke-Test {
-    # The mill first: ProofTests can publish it themselves when it is
-    # missing, but that fallback runs inside `dotnet test` on a cold
-    # cache - it stalled a clean release runner for half an hour
-    # (v2.0.0). Building it here makes the fallback a no-op.
-    Assert-Mill
-    Native dotnet test src/Shoddy.Tests
+    Invoke-Build
+    # The C# suite: the toolchain's own tests, the proof projects it
+    # builds and runs, and the debugger driven as the editor drives it.
+    # The results go under artifacts/ as a .trx, the standard form: the
+    # whole of a failure's output is there when the console has scrolled
+    # it away, and CI can attach it.
+    Native dotnet test src/Shoddy.Tests --logger 'trx;LogFileName=Shoddy.Tests.trx' `
+        --results-directory artifacts/test-results
     # The core suites: the golden library suite, the builtin surface check,
     # and the numerics/property suites. The roster is CORE_SUITES in
     # scripts/suites.mjs - THE ONLY COPY, shared with build.sh and proved
@@ -350,7 +174,7 @@ function Invoke-Test {
     # The net demo is the only end-to-end exercise of the socket words: it
     # stands up a server, connects a client to it and trades lines, both
     # ends in one process on loopback. --allow-net is required because the
-    # network is a gated capability — without the flag the first socket
+    # network is a gated capability - without the flag the first socket
     # word aborts, so this run also proves the gate opens.
     Native $Mill run --allow-net tst/net-demo.shoddy
     # The tutorial's program is documentation that has to keep working:
@@ -361,13 +185,11 @@ function Invoke-Test {
     # The sinq demo is the same argument for a machine rather than a
     # tutorial: docs/machines/sinq.html reproduces it line for line, so
     # running it here is what stops the page showing a program that no
-    # longer compiles. It asserts nothing -- tst/sinq.shoddy grades the
+    # longer compiles. It asserts nothing - tst/sinq.shoddy grades the
     # behaviour; this proves the example still READS as documented.
     Native $Mill run tst/sinq-demo.shoddy
     # Everything else the tree can prove about itself: a suite for every
-    # machine that has one, and every mill's own suite. Both existed
-    # before and neither ran here, which meant a release could ship a
-    # broken machine or a broken mill through a green gate. Nothing is
+    # machine that has one, and every mill's own suite. Nothing is
     # released that has not been through this.
     Invoke-MachineSuites
     Invoke-MillSuites
@@ -376,7 +198,7 @@ function Invoke-Test {
 # The machine suites. Every machines/<name>.shoddy that has one is graded
 # here, by name rather than by glob: a suite that stops being listed is a
 # suite that stops running, and that is how nine of them once stopped
-# running unnoticed. The list itself lives in scripts/suites.mjs —
+# running unnoticed. The list itself lives in scripts/suites.mjs -
 # THE ONLY COPY. This script and build.sh both read it through node, after
 # three hand-kept copies drifted apart and dropped seedterminaltest
 # between them; scripts/verify-suites.js (build check, and CI) proves the
@@ -384,7 +206,6 @@ function Invoke-Test {
 # it reopens the file isamtest leaves behind - the round trip across two
 # processes is the thing being proved, and DELETE clears up after it.
 function Invoke-MachineSuites {
-    Assert-Mill
     $suites = Read-Roster 'MACHINE_SUITES'
     foreach ($suite in $suites) {
         Write-Host "==> tst/$suite.shoddy"
@@ -392,15 +213,27 @@ function Invoke-MachineSuites {
     }
     # seedscribblertest, seedturtletest and seedplottertest are NOT run
     # here. --no-window hides the window, but it is still a real one, and
-    # GLFW has no platform to open it on on GitHub's hosted runners — no
+    # GLFW has no platform to open it on on GitHub's hosted runners - no
     # X server's worth of libraries even under Xvfb (v1.10.1 shipped that
     # gate and it still failed the same way). Run them by hand, locally,
-    # on a machine with a real display: `bin/mill --no-window run
-    # tst/seedscribblertest.shoddy` and the same for turtle/plotter.
-    Write-Host '==> tst/isamtest.shoddy'
-    Native $Mill run tst/isamtest.shoddy
-    Write-Host '==> tst/isamdump.shoddy'
-    Native $Mill run tst/isamdump.shoddy DELETE
+    # on a machine with a real display: scripts/shoddy-display.ps1.
+    # isamtest leaves _isamtest.tmp and its index for isamdump to reopen,
+    # and both are written where the program runs: a scratch folder, so
+    # nothing a suite writes lands in the tree.
+    $scratch = Join-Path ([System.IO.Path]::GetTempPath()) ('shoddy-isam-' + [System.IO.Path]::GetRandomFileName())
+    New-Item -ItemType Directory -Path $scratch | Out-Null
+    $millPath = (Resolve-Path $Mill).Path
+    Push-Location $scratch
+    try {
+        Write-Host '==> tst/isamtest.shoddy'
+        Native $millPath run (Join-Path $PSScriptRoot 'tst/isamtest.shoddy')
+        Write-Host '==> tst/isamdump.shoddy'
+        Native $millPath run (Join-Path $PSScriptRoot 'tst/isamdump.shoddy') DELETE
+    }
+    finally {
+        Pop-Location
+        Remove-Item -Recurse -Force $scratch
+    }
 }
 
 # Every mill's own test target, through the mill's own build.ps1, so there
@@ -410,24 +243,16 @@ function Invoke-MachineSuites {
 # shipping one without a suite.
 #
 # Every mill carries a native build.ps1 beside its build.sh, so this runs
-# PowerShell to PowerShell and needs no bash on the machine at all. It
-# used to hunt down Git Bash and run the .sh through it, which worked but
-# meant a Windows contributor could not test a mill without installing a
-# second shell — and meant the twins could drift, since only one of them
-# was ever exercised here. A mill missing its .ps1 fails loudly rather
-# than silently falling back, because a silent fallback is how the gap
-# lasted this long.
+# PowerShell to PowerShell and needs no bash on the machine at all. A mill
+# missing its .ps1 fails loudly rather than silently falling back, because
+# a silent fallback is how the gap lasted this long.
 function Invoke-MillSuites {
-    Assert-Mill
     foreach ($m in Get-ChildItem mills -Directory | Sort-Object Name) {
         $script = Join-Path $m.FullName 'build.ps1'
         if (-not (Test-Path $script)) {
             [Console]::Error.WriteLine("mills/$($m.Name) has no build.ps1 - every mill carries both twins.")
             exit 1
         }
-        # In-process, as before: each mill's build.ps1 protects its own
-        # native calls through the Native helper in shoddy-mill-common.ps1, so it
-        # behaves the same run from here or run on its own.
         Write-Host "==> mills/$($m.Name)/build.ps1 test"
         & $script test
         if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -450,17 +275,6 @@ function Invoke-Check {
     Native node --test vscode-shoddy/test/launch.test.js
 }
 
-# vsce is the ONE target with a dependency outside this repo's own tools,
-# and it is unavoidable: a .vsix is a VS Code extension package and there is
-# no dotnet or Shoddy path to producing one. Every other target here — and
-# every mill's own wrapper — needs nothing but PowerShell, dotnet and
-# bin/mill.
-#
-# It is REPORTED rather than installed. This used to run
-# `npm install -g @vscode/vsce` when vsce was missing, which is a build
-# script putting software on your machine, globally, without asking. CI does
-# not need that behaviour either: release.yml installs vsce as its own
-# explicit step before it calls this.
 # An exact release number, as release.yml accepts it from a tag.
 function Test-Version([string]$Text) {
     return $Text -cmatch '^[0-9]+\.[0-9]+\.[0-9]+$'
@@ -490,13 +304,19 @@ function Invoke-PackageAs([string]$Version) {
     finally { Move-Item -Force $kept package.json }
 }
 
+# vsce is the ONE target with a dependency outside this repo's own tools,
+# and it is unavoidable: a .vsix is a VS Code extension package and there is
+# no dotnet or Shoddy path to producing one. It is REPORTED rather than
+# installed: a build script must not put software on your machine,
+# globally, without asking. release.yml installs vsce as its own explicit
+# step before it calls this.
 function Invoke-Vsix {
     param([string]$Bump)
     if (-not (Get-Command vsce -ErrorAction SilentlyContinue)) {
         [Console]::Error.WriteLine('vsix needs @vscode/vsce, which is not installed.')
         [Console]::Error.WriteLine('  npm install -g @vscode/vsce      (needs Node.js)')
-        [Console]::Error.WriteLine('Every other target - build, test, run, weave, machines,')
-        [Console]::Error.WriteLine('stage, clean - needs only PowerShell and dotnet.')
+        [Console]::Error.WriteLine('Every other target - build, test, run, weave, stage,')
+        [Console]::Error.WriteLine('clean - needs only PowerShell, dotnet and node.')
         exit 1
     }
     if ($Bump -and (Test-Version $Bump)) {
@@ -516,13 +336,12 @@ function Invoke-Vsix {
     }
 }
 
-# The other target with a dependency outside the repo's tools — the
-# `code` CLI — and, like vsce, it is REPORTED rather than acquired. It
+# The other target with a dependency outside the repo's tools - the
+# `code` CLI - and, like vsce, it is REPORTED rather than acquired. It
 # installs the .vsix for the version given, or else the version
 # package.json currently names, and refuses if that exact package has not
-# been built: installing whatever
-# .vsix happens to be newest is how a stale extension gets mistaken for
-# a fresh one, which is the failure this target exists to end.
+# been built: installing whatever .vsix happens to be newest is how a
+# stale extension gets mistaken for a fresh one.
 #
 # Deliberately NOT part of `all`: release.yml runs `all` on a runner
 # with no VS Code, and installing into an editor is a workstation act,
@@ -550,16 +369,14 @@ function Invoke-Install {
     Write-Host "installed $pkg - reload VS Code windows to pick it up."
 }
 
+# Every MSBuild output lives under artifacts/, and the stage is the one
+# other place a build writes. Anything else git ignores - a packaged
+# .vsix, a log - is yours: `git clean -Xdf` removes it all, and asks
+# nothing.
 function Invoke-Clean {
-    if (Test-Path bin) { Remove-Item -Recurse -Force bin }
-    if (Test-Path artifacts) { Remove-Item -Recurse -Force artifacts }
-    if (Test-Path machines/bin) { Remove-Item -Recurse -Force machines/bin }
-    if (Test-Path machines/seeds/bin) { Remove-Item -Recurse -Force machines/seeds/bin }
-    foreach ($d in $StageMill, $StageLib) {
+    foreach ($d in 'artifacts', $StageMill, (Join-Path 'vscode-shoddy' 'machines')) {
         if (Test-Path $d) { Remove-Item -Recurse -Force $d }
     }
-    Get-ChildItem src -Recurse -Directory -Include bin, obj |
-        ForEach-Object { Remove-Item -Recurse -Force $_.FullName }
     Write-Host 'cleaned.'
 }
 
@@ -567,7 +384,7 @@ switch ($Command) {
     'all' {
         # The build.sh twin re-invokes itself per step; here the steps are
         # called as functions instead, because a .ps1 invoked with & does
-        # not reliably surface its exit code to the caller — the explicit
+        # not reliably surface its exit code to the caller - the explicit
         # $LASTEXITCODE guards inside each function are what stop the chain,
         # so a red test never reaches the packager.
         Invoke-Clean
@@ -575,14 +392,10 @@ switch ($Command) {
         Invoke-Vsix $File
     }
     'build' { Invoke-Build }
+    'machines' { Invoke-Build }
     'test' { Invoke-Test }
     'check' { Invoke-Check }
     'run' {
-        # Native, so a program that fails is reported as a failure: this
-        # used to leave $LASTEXITCODE unpropagated and answer 0 for a
-        # program mill had just exited 1 on, which every mill's own
-        # build.ps1 got right and this one did not.
-        #
         # Switches before the file are the mill's own and pass through
         # as-is; everything after the file is the program's, reaching it
         # through Args (weather-glass takes its ZIP there). $File is only
@@ -598,33 +411,32 @@ switch ($Command) {
         $i = 0
         while ($i -lt $words.Count -and $words[$i] -like '--*') {
             if ($words[$i] -notin '--allow-net', '--no-window', '--no-lint', '--lint-verbose') {
-                [Console]::Error.WriteLine("unknown run switch: $($words[$i])`n$usage")
+                [Console]::Error.WriteLine("unknown run switch: $($words[$i])")
+                [Console]::Error.WriteLine($usage)
                 exit 2
             }
             $switches += $words[$i]
             $i++
         }
         if ($i -ge $words.Count) { [Console]::Error.WriteLine($usage); exit 2 }
-        $tail = @($words[$i..($words.Count - 1)])
-        Assert-Mill
-        Native $Mill run @switches @tail
+        Invoke-Build
+        Native $Mill run @switches @($words[$i..($words.Count - 1)])
     }
     'weave' {
         if (-not $File) { [Console]::Error.WriteLine('usage: ./build.ps1 weave FILE.shoddy'); exit 2 }
-        Assert-Mill
+        Invoke-Build
         Native $Mill weave $File
     }
-    'machines' { Invoke-Machines }
-    'stage' { Invoke-Stage }
+    'stage' { Invoke-Stage $File }
     'vsix' { Invoke-Vsix $File }
     'install' { Invoke-Install $File }
     'clean' { Invoke-Clean }
-    { $_ -in 'help', '-h', '--help' } {
-        Get-Content $PSCommandPath | Select-Object -Skip 1 -First 42 |
-            ForEach-Object { $_ -replace '^#\s?', '' }
+    'help' {
+        Get-Content $PSCommandPath | Select-Object -Skip 1 -First 51 | ForEach-Object { $_ -replace '^# ?', '' }
     }
     default {
-        [Console]::Error.WriteLine("unknown command: $Command`nrun './build.ps1 help' for usage.")
+        [Console]::Error.WriteLine("unknown command: $Command")
+        [Console]::Error.WriteLine("run './build.ps1 help' for usage.")
         exit 2
     }
 }

@@ -11,11 +11,12 @@ namespace Shoddy.Maui.Tests;
 /// <summary>
 /// Two B8 boxes, both asserted rather than inspected:
 ///
-/// Only-what-it-needs (B1.6): the app's linked machine set equals the
-/// union of its declared mills' transitive closures — halifax's whole
-/// fold, nothing else — enumerated from the build output. Reckoner
-/// sits at the ceiling and is compliant while linking almost
-/// everything; a machine OUTSIDE the closure is the violation.
+/// Only-what-it-needs (B1.6): the app's linked Shoddy set is the woven
+/// cores of its declared mills and the two machine libraries they were
+/// woven against, nothing else — enumerated from the build output. The
+/// library is one assembly, so which machines a mill folds is a fact
+/// about its manifest (EverySeedTests reads it), and what this proves is
+/// that nothing woven or linked sits outside the declaration.
 ///
 /// The exclusion (B4.11): no listen, accept or blocking-wait word is
 /// reachable from the app's dictionary, asserted against the seeded
@@ -41,15 +42,17 @@ public class IsolationTests
         Assert.True(Directory.Exists(appOut),
             "build shoddy-reckoner before running the tests — the enumeration reads its output");
 
-        using JsonDocument manifest = JsonDocument.Parse(
-            File.ReadAllText(Path.Combine(root, "mills", "halifax", "mill.manifest")));
-        var declared = manifest.RootElement.GetProperty("machines")
-            .EnumerateArray().Select(m => m.GetString()!)
-            .Select(m => $"Shoddy.Machines.{char.ToUpperInvariant(m[0])}{m[1..]}.dll")
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
-        declared.Add("Shoddy.Machines.Halifax-core.dll");
+        // The declaration: the Mode N core, and the libraries the
+        // project references. The Mode T games are woven whole under
+        // their own names and are not Shoddy.Machines.* assemblies.
+        var declared = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "Shoddy.Machines.Halifax-core.dll",
+            "Shoddy.Machines.dll",
+            "Shoddy.Machines.Seeds.dll",
+        };
 
-        var linked = Directory.GetFiles(appOut, "Shoddy.Machines.*.dll")
+        var linked = Directory.GetFiles(appOut, "Shoddy.Machines*.dll")
             .Select(Path.GetFileName).Select(f => f!)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 

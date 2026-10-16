@@ -118,10 +118,13 @@ public sealed class SparkySession : IDisposable
     (ShoddyHost, Pen) LoadHost()
     {
         var p = new Pen();
+        // The woven core, and the reckoner machine out of the standard
+        // library it was woven against: the library is one assembly, so
+        // the machine is picked by name.
         ShoddyHost h = ShoddyHost.Load(
             new ShoddyHostOptions { FileRoot = root, AllowNet = allowNet, Output = p },
             Assembly.Load("Shoddy.Machines.Sparky-core"),
-            Assembly.Load("Shoddy.Machines.Reckoner"));
+            ShoddyHost.Pick(Assembly.Load("Shoddy.Machines"), "reckoner"));
         return (h, p);
     }
 

@@ -1,22 +1,22 @@
-// Shoddy for VS Code — mill commands.
+// Shoddy for VS Code — mill commands and the debugger.
 // Plain JavaScript, no build step: the folder is the extension.
 const vscode = require('vscode');
 const cp = require('child_process');
 const fs = require('fs');
-const net = require('net');
 const path = require('path');
 const launch = require('./launch');
 
-// This extension ships a mill and the machines under its own directory
-// (see `build.ps1 stage`), so installing the .vsix is the whole install.
-// A workspace that builds its own mill still wins: a Shoddy hacker's
-// bin/mill is the one they just changed, and the bundled copy is only
-// the fallback for everyone else.
+// This extension ships a mill under its own directory (see `build.sh
+// stage`), with the machine library in lib/ and the machine sources in
+// machines/ beside it, so installing the .vsix is the whole install. A
+// workspace that builds its own mill still wins: a Shoddy hacker's
+// freshly built mill is the one they just changed, and the bundled copy
+// is only the fallback for everyone else.
 let bundleRoot = null;
 
-/** How to launch the mill bundled with this extension — a command and
- * the arguments that must precede the subcommand — or null when it
- * wasn't staged.
+/** How to launch the mill bundled with this extension — a command, the
+ * arguments that must precede the subcommand, and the machine sources
+ * beside it — or null when it wasn't staged.
  *
  * The staged build is framework-dependent and built without a runtime
  * identifier, so the only native launcher in it is the Windows
@@ -26,42 +26,46 @@ let bundleRoot = null;
 function bundledMill() {
     if (!bundleRoot) return null;
     const dir = path.join(bundleRoot, 'mill');
+    const lib = path.join(dir, 'machines');
     const exe = path.join(dir, process.platform === 'win32' ? 'mill.exe' : 'mill');
-    if (fs.existsSync(exe)) return { cmd: exe, args: [] };
+    if (fs.existsSync(exe)) return { cmd: exe, args: [], lib };
     const dll = path.join(dir, 'mill.dll');
-    return fs.existsSync(dll) ? { cmd: 'dotnet', args: [dll] } : null;
+    return fs.existsSync(dll) ? { cmd: 'dotnet', args: [dll], lib } : null;
 }
 
-/** The machines bundled with this extension, or null when not staged. */
-function bundledLib() {
-    if (!bundleRoot) return null;
-    const dir = path.join(bundleRoot, 'machines');
-    return fs.existsSync(dir) ? dir : null;
-}
-
-/** How to launch the mill: the shoddy.millPath setting, else the
- * workspace's bin/mill (bin/mill.exe on Windows), else the bundled
- * copy, else `mill` on PATH. Returns {cmd, args} — args is empty for
- * every route but the bundled `dotnet mill.dll` one. */
+/** How to launch the mill: the shoddy.millPath setting, else the mill a
+ * workspace has built (where `dotnet build src/Shoddy.Mill -c Release`
+ * puts it under artifacts/), else the bundled copy, else `mill` on
+ * PATH. Returns {cmd, args, lib}: args is empty for every route but the
+ * bundled `dotnet mill.dll` one, and lib is the folder of machine
+ * sources that goes with that mill — a checkout's own machines/ for the
+ * mill it built, the bundle's for the bundled mill — or null when the
+ * route says nothing about one. */
 function millCommand() {
     const configured = vscode.workspace.getConfiguration('shoddy').get('millPath');
-    if (configured) return { cmd: configured, args: [] };
+    if (configured) return { cmd: configured, args: [], lib: null };
     for (const folder of vscode.workspace.workspaceFolders || []) {
-        const candidate = path.join(folder.uri.fsPath, 'bin', 'mill');
-        if (fs.existsSync(candidate)) return { cmd: candidate, args: [] };
+        const root = folder.uri.fsPath;
+        const candidate = path.join(root, 'artifacts', 'bin', 'Shoddy.Mill', 'release', 'mill');
+        const machines = path.join(root, 'machines');
+        const lib = fs.existsSync(machines) ? machines : null;
+        if (fs.existsSync(candidate)) return { cmd: candidate, args: [], lib };
         if (process.platform === 'win32' && fs.existsSync(candidate + '.exe'))
-            return { cmd: candidate + '.exe', args: [] };
+            return { cmd: candidate + '.exe', args: [], lib };
     }
-    return bundledMill() || { cmd: 'mill', args: [] };
+    return bundledMill() || { cmd: 'mill', args: [], lib: null };
 }
 
-/** The environment for a mill we spawn ourselves. An Include the mill
- * can't find beside its source falls back to $SHODDYLIB, so pointing
- * that at the bundled machines/ makes `Include "seq.shoddy"` work in a
- * scratch file anywhere. A SHODDYLIB the user set is theirs — we never
- * override it, since it's how a checkout is pinned to its own machines. */
+/** The environment for a mill we spawn ourselves, or ask VS Code to.
+ * SHODDYLIB names the machine library's sources: a file reached there
+ * is a machine rather than source to splice, and an Include the mill
+ * can't find beside its source is looked for there. It is pointed at
+ * the sources that go with the mill in use, so `Include "seq.shoddy"`
+ * works in a scratch file anywhere, and a mill in a checkout links the
+ * checkout's library exactly as the checkout's build wrapper has it. A
+ * SHODDYLIB the user set is theirs — we never override it. */
 function millEnv() {
-    const lib = bundledLib();
+    const { lib } = millCommand();
     return (lib && !process.env.SHODDYLIB) ? { SHODDYLIB: lib } : {};
 }
 
@@ -79,200 +83,6 @@ function terminal(dir) {
         terms.set(dir, t);
     }
     return t;
-}
-
-/** A free loopback port: bound, read and released. */
-function freePort() {
-    return new Promise((resolve, reject) => {
-        const srv = net.createServer();
-        srv.once('error', reject);
-        srv.listen(0, '127.0.0.1', () => {
-            const { port } = srv.address();
-            srv.close(() => resolve(port));
-        });
-    });
-}
-
-/** True while process `pid` exists. EPERM means it exists and belongs to
- * someone else. */
-function alive(pid) {
-    try { process.kill(pid, 0); return true; }
-    catch (e) { return e.code === 'EPERM'; }
-}
-
-/** How long the mill has to start serving the debugger after its window
- * opens. The first launch after an install weaves the instrumented
- * machines the program includes, which takes seconds, not minutes. */
-const START_MS = 60000;
-
-/** The debug adapter for a launch, running inside the extension.
- *
- * A program being debugged runs in a terminal window of the operating
- * system's own, never inside VS Code: it has that window's keyboard and
- * screen, at that window's size, exactly as under `mill run`. VS Code
- * opens the window when its debug adapter asks it to (runInTerminal, kind
- * "external"), and the user's terminal.external.* settings choose which
- * terminal that is. The mill in the window is not that adapter: it serves
- * the protocol on a loopback port. So this class is the adapter VS Code
- * talks to. It asks for the window, waits for the mill to answer on the
- * port, then relays every message both ways unchanged. */
-class ExternalLaunch {
-    constructor(config) {
-        this.config = config;
-        this.emitter = new vscode.EventEmitter();
-        this.onDidSendMessage = this.emitter.event;
-        this.pending = [];      // VS Code's messages, held until the mill is reached
-        this.socket = null;
-        this.started = false;
-        this.ended = false;     // no mill to relay to, now or ever
-        this.told = false;      // VS Code has had the terminated event
-        this.asked = null;      // the seq of the runInTerminal request, until answered
-    }
-
-    handleMessage(message) {
-        if (message.type === 'response' && message.request_seq === this.asked) {
-            this.asked = null;
-            if (message.success && this.config.noDebug) this.ran();
-            else if (message.success) this.connect(message.body || {});
-            else this.fail(`VS Code could not open a terminal window for the program: ${message.message || 'it gave no reason'}`);
-            return;
-        }
-        if (this.socket && !this.socket.destroyed) { this.socket.write(launch.frame(message)); return; }
-        if (this.ended) { this.answerAfterEnd(message); return; }
-        this.pending.push(message);
-        if (!this.started) this.start(message);
-    }
-
-    /** A request that arrives with no mill left to answer it. VS Code
-     * ends every session with disconnect and waits for the reply, so that
-     * one succeeds. Without debugging there was never a mill to answer,
-     * and the program is running in its window, so launch succeeds too
-     * (refusing it would put an error in front of a program that started
-     * fine). Anything else is refused. */
-    answerAfterEnd(m) {
-        if (m.type !== 'request') return;
-        const ok = m.command === 'disconnect' || this.config.noDebug === true;
-        this.emitter.fire({
-            type: 'response', seq: 0, request_seq: m.seq, command: m.command,
-            success: ok, message: ok ? undefined : 'the program has ended',
-        });
-    }
-
-    /** On VS Code's first message, which is always initialize: ask for the
-     * window. */
-    async start(first) {
-        this.started = true;
-        const args = first.arguments || {};
-        if (first.command !== 'initialize' || !args.supportsRunInTerminalRequest) {
-            this.fail('this editor cannot open a terminal window, and a Shoddy program being debugged runs in one');
-            return;
-        }
-        // A port only when debugging: without, nothing listens on one.
-        let port;
-        if (!this.config.noDebug) {
-            try { port = await freePort(); }
-            catch (e) { this.fail(`no loopback port is free for the debugger: ${e.message}`); return; }
-            if (this.ended) return;
-            this.port = port;
-        }
-        // The mill numbers its own messages from 1 once it is reached; this
-        // request is answered before then, so the two never overlap.
-        this.asked = 1;
-        this.emitter.fire({
-            type: 'request', seq: this.asked, command: 'runInTerminal',
-            arguments: launch.terminalRequest(this.config, millCommand(), port, millEnv()),
-        });
-    }
-
-    /** Without debugging, the window is the whole of the job: the program
-     * runs there under `mill run`, and there is no debugger to talk to.
-     * Answer initialize, then end the session; the window stays. */
-    ran() {
-        for (const m of this.pending) {
-            if (m.type !== 'request') continue;
-            this.emitter.fire({
-                type: 'response', seq: 0, request_seq: m.seq, command: m.command,
-                success: true, body: {},
-            });
-        }
-        this.pending = [];
-        this.end();
-    }
-
-    /** The window is open: connect to the mill as soon as it listens. A
-     * refused connection means it has not started yet, so try again,
-     * until the process is gone or START_MS has passed. */
-    connect(body) {
-        const pid = body.processId;
-        const deadline = Date.now() + START_MS;
-        const attempt = () => {
-            if (this.ended) return;
-            const sock = net.connect(this.port, '127.0.0.1');
-            sock.once('connect', () => {
-                sock.removeAllListeners('error');
-                this.relay(sock);
-            });
-            sock.once('error', () => {
-                sock.destroy();
-                if (pid && !alive(pid)) this.fail('the mill ended before its debugger started; its window says why');
-                else if (Date.now() > deadline) this.fail(`the mill did not start its debugger within ${START_MS / 1000} seconds`);
-                else setTimeout(attempt, 100);
-            });
-        };
-        attempt();
-    }
-
-    relay(sock) {
-        if (this.ended) { sock.destroy(); return; }
-        this.socket = sock;
-        const unframer = new launch.Unframer();
-        sock.on('data', (chunk) => {
-            let messages;
-            try { messages = unframer.push(chunk); }
-            catch (e) { this.fail(`the mill sent a message that could not be read: ${e.message}`); return; }
-            for (const m of messages) {
-                if (m.type === 'event' && m.event === 'terminated') this.told = true;
-                this.emitter.fire(m);
-            }
-        });
-        // An error is always followed by close, which ends the session.
-        sock.on('error', () => {});
-        sock.on('close', () => this.end());
-        for (const m of this.pending) sock.write(launch.frame(m));
-        this.pending = [];
-    }
-
-    /** The session is over. If the mill did not say so itself (it was
-     * killed, or its window was closed), say so for it, or VS Code would
-     * wait for it forever. */
-    end() {
-        if (this.ended) return;
-        this.ended = true;
-        if (this.told) return;
-        this.told = true;
-        this.emitter.fire({ type: 'event', seq: 0, event: 'terminated' });
-    }
-
-    /** Refuse every request still waiting, with `reason`, and end. */
-    fail(reason) {
-        if (this.ended) return;
-        for (const m of this.pending) {
-            if (m.type !== 'request') continue;
-            this.emitter.fire({
-                type: 'response', seq: 0, request_seq: m.seq, command: m.command,
-                success: false, message: reason,
-            });
-        }
-        this.pending = [];
-        if (this.socket) this.socket.destroy();
-        this.end();
-    }
-
-    dispose() {
-        this.ended = true;
-        if (this.socket) this.socket.destroy();
-        this.emitter.dispose();
-    }
 }
 
 /** Save and return the active editor's file path, or null. */
@@ -360,10 +170,15 @@ exports.activate = (ctx) => {
         vscode.commands.registerCommand('shoddy.machine', millInTerminal('machine')),
         vscode.commands.registerCommand('shoddy.gen', showGenerated),
 
-        // The perch: a launch runs `mill dap --listen PORT` in a terminal
-        // window of its own, reached through ExternalLaunch; an attach
-        // names a transport — never a host kind — and connects straight
-        // to the debuggee's perch service, no mill process in the path.
+        // The debugger. A launch runs `mill dap` as the adapter: a child
+        // of this extension host speaking the protocol over its stdin and
+        // stdout, which asks VS Code for a terminal window of the
+        // operating system's own and runs the program there under
+        // `mill run --perch`, so the program has that window's keyboard
+        // and screen exactly as under `mill run`. The window inherits the
+        // library environment through the adapter. An attach names a
+        // transport — never a host kind — and connects straight to the
+        // debuggee's perch service, no mill process in the path.
         vscode.debug.registerDebugAdapterDescriptorFactory('shoddy', {
             createDebugAdapterDescriptor: (session) => {
                 if (session.configuration.request === 'attach') {
@@ -371,7 +186,8 @@ exports.activate = (ctx) => {
                         session.configuration.port,
                         session.configuration.host || '127.0.0.1');
                 }
-                return new vscode.DebugAdapterInlineImplementation(new ExternalLaunch(session.configuration));
+                const { cmd, args } = millCommand();
+                return new vscode.DebugAdapterExecutable(cmd, [...args, 'dap'], { env: millEnv() });
             },
         }),
         // Zero-config F5: debug the current .shoddy file. We resolve

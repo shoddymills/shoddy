@@ -2,38 +2,51 @@
 // Licensed under the MIT License. See the LICENSE file in the project root.
 
 using System.Reflection;
+using Shoddy.Devil;
 using Shoddy.Runtime;
 
 namespace Shoddy.Compiler;
 
-/// <summary>The weave-time surface of one compiled machine DLL, read
-/// from its assembly-attribute manifest.</summary>
+/// <summary>The weave-time surface of one compiled machine, read from
+/// the manifest attributes on its class.</summary>
 public sealed class MachineInfo
 {
     public required string AssemblyName;
+    /// <summary>The compiled assembly the machine lives in. Empty while a
+    /// library is being generated: the machine exists as C# source only,
+    /// and the one compilation that follows holds every class.</summary>
     public required string DllPath;
     public required string ClassName;   // e.g. "Shoddy.Machines.Seq"
+    /// <summary>The source file name the machine was woven from, as an
+    /// Include spells it: seq.shoddy.</summary>
+    public required string Source;
+    /// <summary>The machines this one's Include chain reaches, by class
+    /// name. Declared by the weave, so a pure re-export survives.</summary>
+    public readonly List<string> DependsOn = new();
     public readonly Dictionary<string, string> Defs = new();   // name -> method
     public readonly Dictionary<string, (int Pops, int Pushes)> DefEffects = new();
     public readonly Dictionary<string, (string Field, TypeDef Shape)> Types = new();
 
-    public static MachineInfo From(Assembly asm, string dllPath)
+    public static MachineInfo From(Type klass, string dllPath)
     {
-        var m = asm.GetCustomAttribute<ShoddyMachineAttribute>()
-            ?? throw new ShoddyError(0, $"'{dllPath}' is not a Shoddy machine (no manifest)");
+        var m = klass.GetCustomAttribute<ShoddyMachineAttribute>()
+            ?? throw new ShoddyError(0, $"'{klass.FullName}' in '{dllPath}' is not a Shoddy machine (no manifest)");
         var info = new MachineInfo
         {
-            AssemblyName = asm.GetName().Name!,
+            AssemblyName = klass.Assembly.GetName().Name!,
             DllPath = dllPath,
-            ClassName = m.ClassName,
+            ClassName = klass.FullName!,
+            Source = m.Source,
         };
-        foreach (var d in asm.GetCustomAttributes<ShoddyDefAttribute>())
+        foreach (var dep in klass.GetCustomAttributes<ShoddyDependsOnAttribute>())
+            info.DependsOn.Add(dep.ClassName);
+        foreach (var d in klass.GetCustomAttributes<ShoddyDefAttribute>())
         {
             info.Defs[d.Name] = d.Method;
             if (d.Pops >= 0 && d.Pushes >= 0)
                 info.DefEffects[d.Name] = (d.Pops, d.Pushes);
         }
-        foreach (var t in asm.GetCustomAttributes<ShoddyTypeAttribute>())
+        foreach (var t in klass.GetCustomAttributes<ShoddyTypeAttribute>())
         {
             var shape = new TypeDef { Name = t.Name, Disp = t.Disp };
             for (int k = 0; k < t.Fields.Length; k++)
@@ -45,96 +58,168 @@ public sealed class MachineInfo
         }
         return info;
     }
+
+    /// <summary>Every machine an assembly carries: one for a woven core,
+    /// one per source for a library.</summary>
+    public static List<MachineInfo> AllIn(Assembly asm, string dllPath)
+    {
+        var found = new List<MachineInfo>();
+        foreach (Type t in MachineClasses(asm))
+            found.Add(From(t, dllPath));
+        return found;
+    }
+
+    /// <summary>The classes of an assembly that carry a machine manifest.</summary>
+    public static IEnumerable<Type> MachineClasses(Assembly asm)
+    {
+        Type[] types;
+        try { types = asm.GetExportedTypes(); }
+        catch (ReflectionTypeLoadException e) { types = e.Types.Where(t => t != null).ToArray()!; }
+        foreach (Type t in types)
+            if (t.IsDefined(typeof(ShoddyMachineAttribute), inherit: false))
+                yield return t;
+    }
 }
 
 /// <summary>
-/// Resolves Include paths to precompiled machine DLLs. A machine for
-/// lib/seq.shoddy is Shoddy.Machines.Seq.dll in a "bin" subdirectory beside
-/// it (lib/bin/, mirroring how each mill drops its woven output in bin/ and
-/// keeping the source tree clear of build artifacts); loading one pulls in
-/// the manifests of the machines it references (compiled include-once —
-/// an assembly is loaded at most once, however many routes reach it).
+/// Resolves Include paths to precompiled machines. A machine for
+/// lib/seq.shoddy is the class Shoddy.Machines.Seq, in whichever compiled
+/// library the set searches: the libraries named outright (ShoddyWeave
+/// passes a consumer's references with --lib), else $SHODDYLIBBIN, else
+/// the lib/ folder beside the running toolchain. Loading one pulls in the
+/// manifests of the machines it reaches (compiled include-once — a
+/// machine is loaded at most once, however many routes reach it).
+///
+/// <para>The set never builds anything and never judges staleness. A
+/// library is built by its project, under MSBuild's own up-to-date check,
+/// and a machine that is in no library is an error that names the
+/// build to run.</para>
 /// </summary>
 public sealed class MachineSet
 {
-    /// <summary>Subdirectory beside a machine's source that holds its
-    /// compiled DLL — build output, gitignored via the global bin/ rule.</summary>
-    public const string BinDir = "bin";
-
-    /// <summary>
-    /// A scope inside <see cref="BinDir"/> that keeps one build
-    /// configuration's woven output away from another's. Empty unless
-    /// SHODDY_BIN_SCOPE says otherwise, so a plain `mill` run writes
-    /// exactly where it always did.
-    ///
-    /// <para><b>Why a shared bin/ is not merely untidy.</b> Every
-    /// configuration wove to the same mills/&lt;name&gt;/bin DLL, and the
-    /// two obvious races were already closed: <c>MillGate</c> is a named
-    /// mutex and so serializes writers ACROSS processes, and
-    /// <c>Weaver.WeaveMachine</c> weaves beside then renames, so a
-    /// compiler READING the previous weave sees one whole file or the
-    /// other.</para>
-    ///
-    /// <para>Neither touches the case that actually bit: a process that
-    /// has LOADED the assembly. Windows holds a loaded assembly's file
-    /// against rename and delete until that process exits, so a Release
-    /// build starting while the previous step's test host is still
-    /// shutting down fails the final File.Move with
-    /// UnauthorizedAccessException. No lock can fix it, because the
-    /// holder is not contending for the file - it is using it, and it is
-    /// entitled to. The configurations have to stop sharing the path.</para>
-    ///
-    /// <para>Read from the environment because ShoddyWeave drives the
-    /// mill as a separate process per build: MSBuild knows the
-    /// configuration and the mill cannot be told any other way.</para>
-    /// </summary>
-    public static readonly string BinScope = ScopeFromEnvironment();
-
-    /// <summary>A scope is a plain name. Anything carrying a separator,
-    /// a dot or a colon is IGNORED rather than cleaned up, because a
-    /// half-sanitized value would put build output somewhere nobody
-    /// named - and writing to the shared path is the behaviour this has
-    /// always had, so falling back to it is safe.</summary>
-    static string ScopeFromEnvironment()
-    {
-        string raw = Environment.GetEnvironmentVariable("SHODDY_BIN_SCOPE")?.Trim() ?? "";
-        if (raw.Length == 0) return "";
-        foreach (char c in raw)
-            if (!char.IsAsciiLetterOrDigit(c) && c != '-' && c != '_')
-                return "";
-        return raw.ToLowerInvariant();
-    }
-
-    /// <summary>The directory a machine's compiled DLL lives in: bin/
-    /// beside the source, and the configuration's own subdirectory of it
-    /// when a scope is set.</summary>
-    static string BinFor(string sbPath)
-    {
-        string bin = Path.Combine(
-            Path.GetDirectoryName(Path.GetFullPath(sbPath))!, BinDir);
-        return BinScope.Length == 0 ? bin : Path.Combine(bin, BinScope);
-    }
-
     public readonly List<MachineInfo> Machines = new();
-    readonly HashSet<string> loaded = new();
+    readonly Dictionary<string, MachineInfo> loaded = new(StringComparer.Ordinal);
+
+    /// <summary>Machines registered as generated source, before any
+    /// assembly holds them: a library being built seeds each machine
+    /// from the ones generated ahead of it.</summary>
+    readonly Dictionary<string, MachineInfo> known = new(StringComparer.Ordinal);
+
+    readonly List<Library> libraries = new();
 
     /// <summary>
-    /// A debug set resolves every machine to its instrumented weave in
-    /// bin/debug/ (<see cref="DebugDllPathFor"/>), dependencies included,
-    /// so a debugged program can step into the machines it calls. Both
-    /// weaves carry the same assembly name, and one process loads only
-    /// one of them: the debugger's set is a debug set from the start.
+    /// A debug set resolves every machine to its instrumented weave —
+    /// the debug/ subfolder of every library location, where the twins
+    /// live under the same assembly names — dependencies included, so a
+    /// debugged program can step into the machines it calls. One process
+    /// loads one of the two: the debugger's set is a debug set from the
+    /// start.
     /// </summary>
     public bool Debug { get; }
 
-    public MachineSet(bool debug = false) => Debug = debug;
+    /// <summary>A set over the libraries named, and nothing else: an
+    /// Include resolves only against what the caller put in. The verbs
+    /// name the toolchain's own library (<see cref="DefaultLibraries"/>)
+    /// unless --lib says otherwise; a test names the library it built.
+    /// Nothing is searched that nobody named, so a process never loads a
+    /// library by accident, which matters because one process loads each
+    /// library once.</summary>
+    public MachineSet(bool debug = false, IEnumerable<string>? libraries = null)
+    {
+        Debug = debug;
+        if (libraries != null)
+            foreach (string dll in libraries)
+                AddLibrary(dll);
+    }
 
-    /// <summary>Where this set finds the DLL for a machine source: the
-    /// release weave, or the instrumented one in a debug set.</summary>
-    public string PathFor(string sbPath) =>
-        Debug ? DebugDllPathFor(sbPath) : DllPathFor(sbPath);
+    /// <summary>A set over the toolchain's own library: what every verb
+    /// uses when --lib names nothing.</summary>
+    public static MachineSet Default(bool debug = false) =>
+        new(debug, DefaultLibraries(debug));
 
-    /// <summary>The DLLs an Include named outright, as opposed to those
+    /// <summary>The compiled library folders a set searches when none
+    /// are named, in order. A debug set reads each one's debug/ twin.</summary>
+    public static IEnumerable<string> LibraryDirs(bool debug)
+    {
+        string? env = Environment.GetEnvironmentVariable("SHODDYLIBBIN");
+        if (!string.IsNullOrEmpty(env))
+            yield return debug ? Path.Combine(env, "debug") : env;
+        string lib = Path.Combine(AppContext.BaseDirectory, "lib");
+        yield return debug ? Path.Combine(lib, "debug") : lib;
+    }
+
+    /// <summary>Every machine library in the default library folders:
+    /// the assemblies named Shoddy.Machines or Shoddy.Machines.X. A
+    /// folder holds other assemblies too (a library's output carries the
+    /// runtime it references), and loading one of those by path when the
+    /// process already has it by name is a failure, so only the names
+    /// the convention gives a library are taken.</summary>
+    public static IEnumerable<string> DefaultLibraries(bool debug)
+    {
+        foreach (string dir in LibraryDirs(debug))
+        {
+            if (!Directory.Exists(dir)) continue;
+            foreach (string dll in Directory.GetFiles(dir, "Shoddy.Machines*.dll").OrderBy(p => p, StringComparer.Ordinal))
+                yield return dll;
+        }
+    }
+
+    /// <summary>The compiled libraries this set searches, in order.</summary>
+    public IEnumerable<string> LibraryPaths => libraries.Select(l => l.Path);
+
+    /// <summary>Add a compiled library to the search. A second file
+    /// carrying an assembly name already on the list is skipped: one
+    /// simple name loads once per process, and the first named wins.</summary>
+    public void AddLibrary(string dllPath)
+    {
+        string full = Path.GetFullPath(dllPath);
+        if (!File.Exists(full)) return;
+        string name;
+        try { name = AssemblyName.GetAssemblyName(full).Name ?? ""; }
+        catch (BadImageFormatException) { return; }       // not a .NET assembly
+        if (libraries.Any(l => string.Equals(l.AssemblyName, name, StringComparison.OrdinalIgnoreCase)))
+            return;
+        libraries.Add(new Library(full, name));
+    }
+
+    /// <summary>Register a machine that exists as generated source only.</summary>
+    public void Register(MachineInfo info) => known[info.ClassName] = info;
+
+    sealed class Library
+    {
+        public readonly string Path;
+        public readonly string AssemblyName;
+        Dictionary<string, MachineInfo>? machines;
+
+        public Library(string path, string assemblyName) { Path = path; AssemblyName = assemblyName; }
+
+        /// <summary>The machines the assembly carries, loaded on first
+        /// use. The load is by path into the default context, so the
+        /// woven program's reference resolves by name afterwards.</summary>
+        public Dictionary<string, MachineInfo> Machines
+        {
+            get
+            {
+                if (machines == null)
+                {
+                    Assembly asm;
+                    try { asm = Assembly.LoadFrom(Path); }
+                    catch (FileLoadException e)
+                    {
+                        throw new ShoddyError(0,
+                            $"cannot load the machine library {Path}: {e.Message}. " +
+                            "One process loads each library once, so a release weave and " +
+                            "an instrumented one of the same library cannot both be used in it");
+                    }
+                    machines = MachineInfo.AllIn(asm, Path)
+                        .ToDictionary(m => m.ClassName, m => m, StringComparer.Ordinal);
+                }
+                return machines;
+            }
+        }
+    }
+
+    /// <summary>The machines an Include named outright, as opposed to those
     /// dragged in behind them. Every loaded machine is linked; only these
     /// are <em>named</em>, because a machine's includes are its own
     /// business and not part of its surface.
@@ -143,33 +228,22 @@ public sealed class MachineSet
     /// same flat table — which made a machine's surface impossible to
     /// reason about and turned adding a word to seq into a possible
     /// collision anywhere in the tree.</summary>
-    readonly HashSet<string> direct = new(StringComparer.OrdinalIgnoreCase);
+    readonly HashSet<string> direct = new(StringComparer.Ordinal);
 
-    /// <summary>Dependency assembly name -> the machine that referenced
-    /// it, so a refusal can say "seq.shoddy, which stats.shoddy includes"
-    /// rather than leaving the reader to work out where it came from.</summary>
-    readonly Dictionary<string, string> via = new();
+    /// <summary>Dependency class name -> the source of the machine that
+    /// referenced it, so a refusal can say "seq.shoddy, which stats.shoddy
+    /// includes" rather than leaving the reader to work out where it came
+    /// from.</summary>
+    readonly Dictionary<string, string> via = new(StringComparer.Ordinal);
 
-    /// <summary>DLL path -> the namespace its INCLUDE carried. A machine is
-    /// never read as source, so its surface cannot be qualified the way a
-    /// spliced file's is; the Lexer reports the AS here instead.
+    /// <summary>Class name -> the namespace its INCLUDE carried. A machine
+    /// is never read as source, so its surface cannot be qualified the way
+    /// a spliced file's is; the Lexer reports the AS here instead.
     ///
     /// This is what makes two machines that export the same word usable in
     /// one program: unqualified, a shared export name (net and turtle both
     /// export CLOSE) makes including both a hard error.</summary>
-    readonly Dictionary<string, string> qualByDll = new(StringComparer.OrdinalIgnoreCase);
-
-    /// <summary>This machine's include said AS <paramref name="qual"/>.
-    /// Only the directly-included machine is qualified — the machines it
-    /// pulls in as dependencies keep their own names, since the including
-    /// program never named them.
-    ///
-    /// Called from <see cref="TryResolve"/> rather than by the caller, so
-    /// that resolving a machine and recording its namespace cannot come
-    /// apart. They were two separate hooks, and a caller that wired only
-    /// the first got the AS silently discarded.</summary>
-    void SetQualifier(string sbPath, string qual) =>
-        qualByDll[PathFor(sbPath)] = qual;
+    readonly Dictionary<string, string> qualByClass = new(StringComparer.Ordinal);
 
     /// <summary>The woven class name: a valid C# identifier. A hyphen —
     /// every mill's <c>name-core.shoddy</c> — is legal in a file and an
@@ -177,10 +251,9 @@ public sealed class MachineSet
     /// breaks and the parts join PascalCase: halifax-core → HalifaxCore.
     /// For the plain stems machines have always used this is exactly the
     /// old capitalize-first rule. Nothing spells this name by convention:
-    /// consumers read it from the ShoddyMachine attribute, and the
-    /// assembly and DLL keep the source's own stem (<see
-    /// cref="AssemblyStemFor"/>) so the assembly→source round trip in
-    /// dependency advice stays exact.</summary>
+    /// consumers read it from the ShoddyMachine attribute, and a core's
+    /// assembly keeps the source's own stem (<see
+    /// cref="AssemblyStemFor"/>) so the file visibly matches.</summary>
     public static string ClassNameFor(string sbPath)
     {
         string stem = Path.GetFileNameWithoutExtension(sbPath);
@@ -196,127 +269,92 @@ public sealed class MachineSet
         return sb.ToString();
     }
 
-    /// <summary>The stem the assembly and DLL carry: the source file's
-    /// own, capitalized — Shoddy.Machines.Halifax-core.dll visibly matches
-    /// halifax-core.shoddy, and <see cref="SourceNameFor(string)"/> can
-    /// lower-case an assembly name straight back to the Include that
-    /// names it.</summary>
+    /// <summary>The class a machine source weaves to, in full:
+    /// seq.shoddy -> Shoddy.Machines.Seq.</summary>
+    public static string ClassFullNameFor(string sbPath) => "Shoddy.Machines." + ClassNameFor(sbPath);
+
+    /// <summary>The stem a woven core's assembly carries: the source
+    /// file's own, capitalized — Shoddy.Machines.Halifax-core.dll visibly
+    /// matches halifax-core.shoddy.</summary>
     public static string AssemblyStemFor(string sbPath)
     {
         string stem = Path.GetFileNameWithoutExtension(sbPath);
         return char.ToUpperInvariant(stem[0]) + stem[1..].ToLowerInvariant();
     }
 
-    /// <summary>The .shoddy name a machine assembly came from — what a
-    /// user would write in an Include. Shoddy.Machines.Seq -> seq.shoddy.</summary>
-    static string SourceNameFor(MachineInfo m) => SourceNameFor(m.AssemblyName);
+    /// <summary>The assembly name `mill machine` gives one machine woven
+    /// alone: Shoddy.Machines.Halifax-core.</summary>
+    public static string AssemblyNameFor(string sbPath) => $"Shoddy.Machines.{AssemblyStemFor(sbPath)}";
 
-    static string SourceNameFor(string assemblyName) =>
-        assemblyName.Replace("Shoddy.Machines.", "").ToLowerInvariant() + ".shoddy";
+    /// <summary>The compiled machine for a source, or null when no
+    /// library this set searches holds it.</summary>
+    public MachineInfo? Find(string sbPath) => FindClass(ClassFullNameFor(sbPath));
 
-    public static string DllPathFor(string sbPath) =>
-        Path.Combine(BinFor(sbPath),
-                     $"Shoddy.Machines.{AssemblyStemFor(sbPath)}.dll");
+    MachineInfo? FindClass(string className)
+    {
+        if (known.TryGetValue(className, out MachineInfo? k)) return k;
+        foreach (Library lib in libraries)
+            if (lib.Machines.TryGetValue(className, out MachineInfo? m)) return m;
+        return null;
+    }
 
-    /// <summary>The instrumented (debug) weave of the same machine:
-    /// bin/debug/, same file name — the assembly's identity never forks,
-    /// only which artifact a configuration references.</summary>
-    public static string DebugDllPathFor(string sbPath) =>
-        Path.Combine(BinFor(sbPath), "debug",
-                     $"Shoddy.Machines.{AssemblyStemFor(sbPath)}.dll");
+    /// <summary>Where this set looked, for a message.</summary>
+    public string Describe() =>
+        libraries.Count == 0 ? "no compiled library" : string.Join(", ", LibraryPaths);
 
-    /// <summary>The Lexer's externalInclude hook: true = a machine DLL
-    /// satisfies this include, don't splice the source.
+    /// <summary>The Lexer's externalInclude hook: true = a compiled
+    /// machine satisfies this include, don't splice the source.
     /// <paramref name="qual"/> is the namespace the include carried, or
     /// null for a bare one; it is recorded here because the machine's
     /// source is never read and this is the only place the AS survives.</summary>
     public bool TryResolve(string sbPath, string? qual)
     {
-        string dll = PathFor(sbPath);
-        if (!File.Exists(dll)) return false;
-        LoadRecursive(dll);
-        direct.Add(dll);
-        if (qual != null) SetQualifier(sbPath, qual);
+        MachineInfo? m = Find(sbPath);
+        if (m == null) return false;
+        LoadRecursive(m);
+        direct.Add(m.ClassName);
+        if (qual != null) qualByClass[m.ClassName] = qual;
         return true;
     }
 
-    void LoadRecursive(string dllPath)
+    void LoadRecursive(MachineInfo m)
     {
-        Assembly asm = Assembly.LoadFrom(dllPath);
-        if (!loaded.Add(asm.GetName().Name!)) return;
-        Machines.Add(MachineInfo.From(asm, dllPath));
-        // Manifest-declared dependencies first: a pure re-export Include
-        // (isam's seq) has no code reference for Roslyn to keep, so the
-        // assembly-reference walk below cannot see it.
-        foreach (var dep in asm.GetCustomAttributes<ShoddyDependsOnAttribute>())
+        if (!loaded.TryAdd(m.ClassName, m)) return;
+        Machines.Add(m);
+        foreach (string dep in m.DependsOn)
         {
-            if (loaded.Contains(dep.AssemblyName)) continue;
-            string? dpath = FindDependencyDll(dllPath, dep.AssemblyName, Debug);
-            if (dpath == null)
-                throw new ShoddyError(0,
-                    $"machine {asm.GetName().Name} declares dependency " +
-                    $"{dep.AssemblyName}, but its DLL could not be found beside " +
-                    $"{dllPath} or its machine library");
-            via.TryAdd(dep.AssemblyName, SourceNameFor(asm.GetName().Name!));
-            LoadRecursive(dpath);
-        }
-        foreach (AssemblyName rn in asm.GetReferencedAssemblies())
-        {
-            if (!rn.Name!.StartsWith("Shoddy.Machines.", StringComparison.Ordinal))
-                continue;
-            if (loaded.Contains(rn.Name)) continue;
-            string? dep = FindDependencyDll(dllPath, rn.Name!, Debug);
-            if (dep == null)
-                throw new ShoddyError(0,
-                    $"machine {asm.GetName().Name} references {rn.Name}, but its DLL " +
-                    $"could not be found beside {dllPath} or its machine library");
-            via.TryAdd(rn.Name, SourceNameFor(asm.GetName().Name!));
-            LoadRecursive(dep);
+            if (loaded.ContainsKey(dep)) continue;
+            MachineInfo d = FindClass(dep)
+                ?? throw new ShoddyError(0,
+                    $"machine {m.Source} depends on {dep}, which is in no compiled library " +
+                    $"(looked in: {Describe()})");
+            via.TryAdd(dep, m.Source);
+            LoadRecursive(d);
         }
     }
 
-    /// <summary>Where a dependency's DLL is: the machine library first —
-    /// the canonical copy, and one identity per process, since loading
-    /// the same simple name from two paths is a hard failure — then
-    /// beside the needing machine (a scratch workspace whose machines
-    /// are their own library), then one directory up (a reckoner seed
-    /// in machines/seeds/bin depending on the machine it bridges). The
-    /// library-first order is what keeps a mill's own bin/ — which
-    /// carries COPIES of dependency DLLs beside its woven shell — from
-    /// supplying stale identities. Null when no route has it.
-    ///
-    /// A debug set looks in the debug/ subfolder of every one of those
-    /// places, so a debugged machine's dependencies are instrumented too
-    /// and the program can step on into them.</summary>
-    static string? FindDependencyDll(string dllPath, string assemblyName, bool debug)
+    /// <summary>Where a machine's source is now: the first machine library
+    /// folder (<see cref="Lexer.LibDirs"/>) holding a file of its name,
+    /// else beside its assembly's folder or up to two levels above it.
+    /// Null when nowhere — the capability lint then reads no tag.</summary>
+    public static string? SourcePathOf(MachineInfo m)
     {
-        string file = assemblyName + ".dll";
-        foreach (string lib in Shoddy.Devil.Lexer.LibDirs())
+        if (m.Source.Length == 0) return null;
+        foreach (string dir in Lexer.LibDirs())
         {
-            // The configuration's own copy first, then the shared one: a
-            // scoped build that has not rebuilt every machine still
-            // resolves against the library rather than failing to find it.
-            if (BinScope.Length > 0)
-            {
-                string scoped = debug
-                    ? Path.Combine(lib, BinDir, BinScope, "debug", file)
-                    : Path.Combine(lib, BinDir, BinScope, file);
-                if (File.Exists(scoped)) return Path.GetFullPath(scoped);
-            }
-            string inLib = debug
-                ? Path.Combine(lib, BinDir, "debug", file)
-                : Path.Combine(lib, BinDir, file);
-            if (File.Exists(inLib)) return Path.GetFullPath(inLib);
+            string p = Path.Combine(dir, m.Source);
+            if (File.Exists(p)) return Path.GetFullPath(p);
         }
-        string dir = Path.GetDirectoryName(dllPath)!;
-        string sibling = Path.Combine(dir, file);
-        if (File.Exists(sibling)) return sibling;
-        // One machine directory up: from seeds/bin/ to the machines/bin/
-        // beside seeds/, or from seeds/bin/debug/ to machines/bin/debug/.
-        string upOneLevel = debug
-            ? Path.Combine(dir, "..", "..", "..", BinDir, "debug", file)
-            : Path.Combine(dir, "..", "..", BinDir, file);
-        return File.Exists(upOneLevel) ? upOneLevel : null;
+        if (m.DllPath.Length > 0)
+        {
+            string dir = Path.GetDirectoryName(Path.GetFullPath(m.DllPath)) ?? "";
+            foreach (string up in new[] { dir, Path.Combine(dir, ".."), Path.Combine(dir, "..", "..") })
+            {
+                string p = Path.Combine(up, m.Source);
+                if (File.Exists(p)) return Path.GetFullPath(p);
+            }
+        }
+        return null;
     }
 
     /// <summary>Seed a program with the surface of every machine it
@@ -325,15 +363,15 @@ public sealed class MachineSet
     ///
     /// Machines pulled in behind those are loaded and linked but not
     /// seeded: a machine exports what it declares, and what it includes is
-    /// its own business. Their names go to <see cref="Unseeded"/> instead,
-    /// which is what lets the refusal name the include to add.</summary>
+    /// its own business. Their names go to <see cref="ShoddyProgram.Unseeded"/>
+    /// instead, which is what lets the refusal name the include to add.</summary>
     public void SeedInto(ShoddyProgram prog)
     {
         foreach (MachineInfo m in Machines)
         {
-            if (!direct.Contains(m.DllPath))
+            if (!direct.Contains(m.ClassName))
             {
-                (string, string?) advice = (SourceNameFor(m), via.GetValueOrDefault(m.AssemblyName));
+                (string, string?) advice = (m.Source, via.GetValueOrDefault(m.ClassName));
                 foreach (string bare in m.Defs.Keys) prog.Unseeded.TryAdd(bare, advice);
                 foreach ((string bare, (string _, TypeDef shape)) in m.Types)
                 {
@@ -343,7 +381,7 @@ public sealed class MachineSet
                 }
                 continue;
             }
-            string? q = qualByDll.GetValueOrDefault(m.DllPath);
+            string? q = qualByClass.GetValueOrDefault(m.ClassName);
             foreach ((string bare, string method) in m.Defs)
             {
                 string name = ShoddyProgram.Qualify(q, bare);

@@ -78,7 +78,7 @@ Nothing here is ceremonial; it is the fast loop.
 ./build.ps1 weave FILE.shoddy                  # compile only: catches every
                                                # invented word in a second
 mills/halifax/build.ps1 test                   # one mill's own suite
-./bin/mill.exe run tst/alg.shoddy              # one machine's suite
+./build.ps1 run tst/alg.shoddy                 # one machine's suite
 ./scripts/shoddy-commit.ps1 -Message "what changed"   # stage everything and commit
 ```
 

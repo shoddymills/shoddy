@@ -83,7 +83,26 @@ public sealed class ShoddyHost
     public static ShoddyHost Load(params Assembly[] machines) =>
         Load(new ShoddyHostOptions(), machines);
 
+    /// <summary>Every machine each assembly carries: a woven core holds
+    /// one, a library holds many. To take some of a library's machines
+    /// and not the rest, pass <see cref="Pick"/>s instead.</summary>
     public static ShoddyHost Load(ShoddyHostOptions options, params Assembly[] machines)
+    {
+        if (machines is null) throw new ArgumentNullException(nameof(machines));
+        return Load(options, machines.Select(a => (ShoddyMachinePick)a).ToArray());
+    }
+
+    /// <summary>One machine out of an assembly that carries several, by
+    /// the name of its source: Pick(library, "reckoner").</summary>
+    public static ShoddyMachinePick Pick(Assembly assembly, string machine)
+    {
+        if (assembly is null) throw new ArgumentNullException(nameof(assembly));
+        if (string.IsNullOrEmpty(machine))
+            throw new ArgumentException("a machine name is required", nameof(machine));
+        return new ShoddyMachinePick(assembly, machine);
+    }
+
+    public static ShoddyHost Load(ShoddyHostOptions options, params ShoddyMachinePick[] machines)
     {
         if (options is null) throw new ArgumentNullException(nameof(options));
         if (machines is null || machines.Length == 0)
@@ -106,7 +125,7 @@ public sealed class ShoddyHost
         return new ShoddyHost(options, machines);
     }
 
-    ShoddyHost(ShoddyHostOptions options, Assembly[] machines)
+    ShoddyHost(ShoddyHostOptions options, ShoddyMachinePick[] machines)
     {
         lock (ConstructionGate)
         {
@@ -141,23 +160,15 @@ public sealed class ShoddyHost
         rt.Files(Array.Empty<string>());
         if (Engine.PendingSink != null) rt.Sink = Engine.PendingSink;
 
-        foreach (Assembly asm in machines)
-        {
-            var machine = asm.GetCustomAttribute<ShoddyMachineAttribute>()
-                ?? throw new ArgumentException(
-                    $"'{asm.GetName().Name}' is not a Shoddy machine (no manifest)");
-            Type klass = asm.GetType(machine.ClassName)
-                ?? throw new ArgumentException(
-                    $"'{asm.GetName().Name}' names class {machine.ClassName} in its manifest, " +
-                    "but the assembly does not contain it");
-            foreach (ShoddyDefAttribute d in asm.GetCustomAttributes<ShoddyDefAttribute>())
-            {
-                MethodInfo? m = klass.GetMethod(d.Method,
-                    BindingFlags.Public | BindingFlags.Static);
-                if (m is null) continue;
-                words[d.Name] = new ShoddyWord(rt, d.Name, m, d.Pops, d.Pushes);
-            }
-        }
+        foreach (ShoddyMachinePick pick in machines)
+            foreach (Type klass in pick.Classes())
+                foreach (ShoddyDefAttribute d in klass.GetCustomAttributes<ShoddyDefAttribute>())
+                {
+                    MethodInfo? m = klass.GetMethod(d.Method,
+                        BindingFlags.Public | BindingFlags.Static);
+                    if (m is null) continue;
+                    words[d.Name] = new ShoddyWord(rt, d.Name, m, d.Pops, d.Pushes);
+                }
     }
 
     /// <summary>The word, case-folded like every Shoddy name. Unknown
@@ -242,6 +253,49 @@ public sealed class ShoddyHost
     /// of each construction.</summary>
     public static void ArmNetForProcess() =>
         Environment.SetEnvironmentVariable("SHODDY_ALLOW_NET", "1");
+}
+
+/// <summary>The machines a host loads out of one assembly: all of them
+/// (an assembly converts implicitly, which is what a woven core — one
+/// class, one assembly — always means), or one of a library's many,
+/// named by its source through <see cref="ShoddyHost.Pick"/>.</summary>
+public sealed class ShoddyMachinePick
+{
+    readonly Assembly assembly;
+    readonly string? name;
+
+    internal ShoddyMachinePick(Assembly assembly, string? name)
+    {
+        this.assembly = assembly;
+        this.name = name;
+    }
+
+    public static implicit operator ShoddyMachinePick(Assembly assembly) =>
+        new(assembly ?? throw new ArgumentNullException(nameof(assembly)), null);
+
+    /// <summary>The machine classes this pick names. Manifests are read
+    /// from the class, so a core and a library read alike.</summary>
+    internal List<Type> Classes()
+    {
+        var all = new List<Type>();
+        foreach (Type t in assembly.GetExportedTypes())
+            if (t.IsDefined(typeof(ShoddyMachineAttribute), inherit: false))
+                all.Add(t);
+        if (all.Count == 0)
+            throw new ArgumentException(
+                $"'{assembly.GetName().Name}' is not a Shoddy machine (no manifest)");
+        if (name == null) return all;
+        string want = Path.GetFileNameWithoutExtension(name);
+        List<Type> chosen = all.Where(t => string.Equals(
+                Path.GetFileNameWithoutExtension(t.GetCustomAttribute<ShoddyMachineAttribute>()!.Source),
+                want, StringComparison.OrdinalIgnoreCase)).ToList();
+        if (chosen.Count == 0)
+            throw new ArgumentException(
+                $"'{assembly.GetName().Name}' carries no machine named {want}. It carries: " +
+                string.Join(", ", all.Select(t =>
+                    Path.GetFileNameWithoutExtension(t.GetCustomAttribute<ShoddyMachineAttribute>()!.Source))));
+        return chosen;
+    }
 }
 
 /// <summary>One word of a loaded machine, callable from any .NET

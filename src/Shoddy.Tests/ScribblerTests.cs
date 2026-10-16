@@ -374,12 +374,9 @@ public class ScribblerTests
         {
             string sb = Path.Combine(ws, "machines", name + ".shoddy");
             var (prog, machines) = ParseWithMachines(sb);
-            Weaver.WeaveMachine(prog, sb, machines.Machines);
+            string dll = Weaver.WeaveMachine(prog, sb, MillVerbs.MachineOut(sb, null, false), machines.Machines);
+            Assert.True(File.Exists(dll));
         }
-        Assert.True(File.Exists(
-            MachineSet.DllPathFor(Path.Combine(ws, "machines", "scribbler.shoddy"))));
-        Assert.True(File.Exists(
-            MachineSet.DllPathFor(Path.Combine(ws, "machines", "clock.shoddy"))));
     }
 
     // ---- ScribblerSave and ScribblerPlace -------------------------------

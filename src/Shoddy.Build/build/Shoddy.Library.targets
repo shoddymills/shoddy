@@ -1,0 +1,84 @@
+<Project>
+
+  <!-- ==================================================================
+       A machine library as a project: every .shoddy source in the
+       project folder becomes one class under Shoddy.Machines, all in
+       one assembly, built by the ordinary C# compiler from the C# the
+       toolchain generates. Debug and Release, PDBs, incremental build,
+       deterministic output and the artifacts layout all come from
+       MSBuild for nothing; the Debug configuration is the instrumented
+       weave the debugger steps into.
+
+       A project imports this after declaring:
+
+         ShoddyTool              a ProjectReference to Shoddy.Mill.Headless
+                                 with ReferenceOutputAssembly="false" and
+                                 OutputItemType="ShoddyTool" - the
+                                 generator, built from the checkout
+         ShoddyLibrary           (optional) ProjectReferences to other
+                                 machine libraries the sources include
+                                 across, OutputItemType="ShoddyLibrary"
+         ShoddyInstalledSources  where the sources will sit relative to
+                                 the installed DLL (../../machines for a
+                                 library carried in a toolchain's
+                                 lib/debug/), for the instrumented
+                                 weave's file table
+         ShoddySource            (optional) the sources, when not every
+                                 *.shoddy in the folder
+       ================================================================== -->
+
+  <PropertyGroup>
+    <!-- The only C# is generated. -->
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <!-- Generated code is not annotated. -->
+    <Nullable>disable</Nullable>
+    <ShoddyLibraryDebug Condition="'$(ShoddyLibraryDebug)' == '' And '$(Configuration)' == 'Debug'">true</ShoddyLibraryDebug>
+    <ShoddyInstalledSources Condition="'$(ShoddyInstalledSources)' == ''">.</ShoddyInstalledSources>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ShoddySource Include="*.shoddy" Condition="'@(ShoddySource)' == ''" />
+    <None Include="@(ShoddySource)" />
+  </ItemGroup>
+
+  <!-- Everything the generating target's inputs and outputs depend on,
+       computed where IntermediateOutputPath is known, and run whether or
+       not the generation is up to date: the Compile item has to be there
+       on a skipped build too. -->
+  <Target Name="_ShoddyLibraryPlan" DependsOnTargets="ResolveProjectReferences">
+    <Error Condition="'@(ShoddyTool)' == ''" Code="SHODDY1010"
+           Text="a machine library needs its generator: add a ProjectReference to Shoddy.Mill.Headless with ReferenceOutputAssembly=&quot;false&quot; and OutputItemType=&quot;ShoddyTool&quot;." />
+    <ItemGroup>
+      <!-- A library's project sits with its sources: the folder a
+           referenced library's Includes are reached in. -->
+      <_ShoddyLibProject Include="@(ShoddyLibrary->'%(MSBuildSourceProjectFile)')" Condition="'@(ShoddyLibrary)' != ''" />
+    </ItemGroup>
+    <PropertyGroup>
+      <_ShoddyGeneratedFile>$(IntermediateOutputPath)$(AssemblyName).g.cs</_ShoddyGeneratedFile>
+      <_ShoddyToolDll>@(ShoddyTool)</_ShoddyToolDll>
+      <_ShoddyToolDir>$([System.IO.Path]::GetDirectoryName('$(_ShoddyToolDll)'))</_ShoddyToolDir>
+      <_ShoddyLibArg></_ShoddyLibArg>
+      <_ShoddyLibArg Condition="'@(ShoddyLibrary)' != ''">--lib &quot;@(ShoddyLibrary, ';')&quot;</_ShoddyLibArg>
+      <_ShoddyLibArg Condition="'@(_ShoddyLibProject)' != ''">$(_ShoddyLibArg) --libsrc &quot;@(_ShoddyLibProject->'%(RootDir)%(Directory)', ';')&quot;</_ShoddyLibArg>
+      <_ShoddyDebugArg></_ShoddyDebugArg>
+      <_ShoddyDebugArg Condition="'$(ShoddyLibraryDebug)' == 'true'">--debug</_ShoddyDebugArg>
+    </PropertyGroup>
+    <ItemGroup>
+      <!-- The toolchain's own assemblies are inputs: a changed compiler
+           regenerates the library. -->
+      <_ShoddyToolFile Include="$(_ShoddyToolDir)/*.dll" />
+      <Compile Include="$(_ShoddyGeneratedFile)" />
+      <FileWrites Include="$(_ShoddyGeneratedFile)" />
+    </ItemGroup>
+  </Target>
+
+  <!-- The generation, incremental: sources, the toolchain and the
+       libraries included across are the inputs; the one C# file is the
+       output. The toolchain leaves an unchanged file untouched, so the
+       compiler that follows sees nothing new. -->
+  <Target Name="ShoddyGenerateLibrary" BeforeTargets="CoreCompile" DependsOnTargets="_ShoddyLibraryPlan"
+          Inputs="@(ShoddySource);@(_ShoddyToolFile);@(ShoddyLibrary)" Outputs="$(_ShoddyGeneratedFile)">
+    <Exec Command="dotnet &quot;$(_ShoddyToolDll)&quot; gen --library $(_ShoddyDebugArg) @(ShoddySource->'&quot;%(FullPath)&quot;', ' ') -o &quot;$(_ShoddyGeneratedFile)&quot; --sources &quot;$(ShoddyInstalledSources)&quot; $(_ShoddyLibArg)" />
+  </Target>
+
+</Project>

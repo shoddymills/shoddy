@@ -9,10 +9,11 @@ namespace Shoddy.Perch;
 
 /// <summary>
 /// The perch: Shoddy-native debugging over the Debug Adapter Protocol,
-/// parameterized over a transport Stream pair — the mill serves it over
-/// stdio, a host's debug build serves it over a TCP connection, and a
-/// test serves it over a loopback pipe; the server neither knows nor
-/// cares (A6.1).
+/// parameterized over a transport Stream pair — a debugged program
+/// serves it over its connection back to the editor's adapter
+/// (<see cref="PerchAdapter"/>), a host's debug build serves it over a
+/// TCP connection, and a test serves it over a loopback pipe; the
+/// server neither knows nor cares (A6.1).
 ///
 /// Two ways in. LAUNCH: the client names a program, the
 /// <see cref="Launcher"/> hook (the mill's — it owns compilation)
@@ -38,19 +39,6 @@ public sealed class PerchServer : IDebugSink
     /// host — refuses launch by name.</summary>
     public Func<string, Func<TextWriter, TextReader, string[], int>>? Launcher { get; set; }
 
-    /// <summary>
-    /// Run the launched program on this process's own console: its
-    /// keyboard, its screen, its error stream, exactly as `mill run`
-    /// gives them. Set when the protocol travels over a socket, which
-    /// leaves the console free for the program (`mill dap --listen`, which
-    /// the VS Code extension runs in a terminal window of its own).
-    ///
-    /// <para>Off, the protocol owns this process's stdin and stdout, so
-    /// the program's output travels to the client as output events and its
-    /// input is empty (`mill dap`).</para>
-    /// </summary>
-    public bool ConsoleIo { get; set; }
-
     /// <summary>After a launched program returns: the mill waits here
     /// for open scribbler windows, so "draw a picture, return" stays a
     /// complete program under the debugger.</summary>
@@ -70,6 +58,25 @@ public sealed class PerchServer : IDebugSink
     /// binding.</para>
     /// </summary>
     public Func<Engine, IReadOnlyList<(string Name, Value V)>, string, Value[]>? Evaluator { get; set; }
+
+    /// <summary>What this debugger can do, as the initialize response
+    /// states it. The adapter answers initialize on the perch's behalf,
+    /// before the program's process exists, so the one statement is
+    /// here for both.</summary>
+    public static readonly object Capabilities = new
+    {
+        supportsConfigurationDoneRequest = true,
+        supportsEvaluateForHovers = true,
+        supportsExceptionInfoRequest = true,
+        supportsConditionalBreakpoints = true,
+        supportsHitConditionalBreakpoints = true,
+        supportsLogPoints = true,
+        supportsSetVariable = true,
+        exceptionBreakpointFilters = new[]
+        {
+            new { filter = ErrorsFilter, label = "Runtime errors", @default = true },
+        },
+    };
 
     /// <summary>One line breakpoint: where, and what it asks before it
     /// stops.</summary>
@@ -136,10 +143,6 @@ public sealed class PerchServer : IDebugSink
         this.output = output;
     }
 
-    /// <summary>Did the client send anything at all? A connection that
-    /// closed without a word was only somebody checking the port.</summary>
-    public bool Spoke { get; private set; }
-
     public int Serve()
     {
         try
@@ -148,7 +151,6 @@ public sealed class PerchServer : IDebugSink
             {
                 JsonDocument? msg = ReadMessage();
                 if (msg == null) return 0;
-                Spoke = true;
                 using (msg)
                 {
                     JsonElement root = msg.RootElement;
@@ -174,44 +176,14 @@ public sealed class PerchServer : IDebugSink
 
     JsonDocument? ReadMessage()
     {
-        int len = -1;
-        var line = new StringBuilder();
-        while (true)                    // headers
-        {
-            int c = input.ReadByte();
-            if (c < 0) return null;
-            if (c == '\n')
-            {
-                string h = line.ToString().TrimEnd('\r');
-                line.Clear();
-                if (h.Length == 0) break;
-                if (h.StartsWith("Content-Length:", StringComparison.OrdinalIgnoreCase))
-                    len = int.Parse(h["Content-Length:".Length..].Trim());
-            }
-            else line.Append((char)c);
-        }
-        if (len < 0) return null;
-        var buf = new byte[len];
-        int got = 0;
-        while (got < len)
-        {
-            int n = input.Read(buf, got, len - got);
-            if (n <= 0) return null;
-            got += n;
-        }
-        return JsonDocument.Parse(buf);
+        byte[]? body = DapWire.Read(input);
+        return body == null ? null : JsonDocument.Parse(body);
     }
 
     void Send(object payload)
     {
-        byte[] body = JsonSerializer.SerializeToUtf8Bytes(payload);
-        byte[] head = Encoding.ASCII.GetBytes($"Content-Length: {body.Length}\r\n\r\n");
-        lock (writeLock)
-        {
-            output.Write(head);
-            output.Write(body);
-            output.Flush();
-        }
+        byte[] body = DapWire.Body(payload);
+        lock (writeLock) DapWire.Write(output, body);
     }
 
     void Respond(JsonElement req, object? body = null, bool success = true, string? message = null) =>
@@ -238,20 +210,7 @@ public sealed class PerchServer : IDebugSink
         switch (cmd)
         {
             case "initialize":
-                Respond(req, new
-                {
-                    supportsConfigurationDoneRequest = true,
-                    supportsEvaluateForHovers = true,
-                    supportsExceptionInfoRequest = true,
-                    supportsConditionalBreakpoints = true,
-                    supportsHitConditionalBreakpoints = true,
-                    supportsLogPoints = true,
-                    supportsSetVariable = true,
-                    exceptionBreakpointFilters = new[]
-                    {
-                        new { filter = ErrorsFilter, label = "Runtime errors", @default = true },
-                    },
-                });
+                Respond(req, Capabilities);
                 Event("initialized");
                 break;
 
@@ -443,45 +402,17 @@ public sealed class PerchServer : IDebugSink
     {
         if (entry == null) return;      // attach: the host runs the program
         mode = stopOnEntry ? Mode.Entry : Mode.Run;
-        if (ConsoleIo) { StartOnConsole(entry); return; }
-        var stdout = new EventWriter(this, "stdout");
-        var stderr = new EventWriter(this, "stderr");
-        // Its own thread with the program stack, as every launcher gives
-        // a program: a thread-pool thread's size cannot be set, and a deep
-        // recursion under the debugger must return exactly as it does
-        // under `mill run`.
-        new Thread(() =>
-        {
-            int rc;
-            TextWriter savedErr = Console.Error;
-            Console.SetError(stderr);           // woven error reports -> debug console
-            try
-            {
-                Engine.PendingSink = this;
-                rc = entry(stdout, TextReader.Null, programArgs);
-                AfterRun?.Invoke();
-            }
-            catch (Exception e)
-            {
-                stderr.WriteLine($"perch: {e.Message}");
-                rc = 1;
-            }
-            finally
-            {
-                Engine.PendingSink = null;
-                Console.SetError(savedErr);
-            }
-            stdout.FlushBuf();
-            stderr.FlushBuf();
-            Event("exited", new { exitCode = rc });
-            Event("terminated");
-        }, Engine.ProgramStackBytes) { IsBackground = true, Name = "shoddy-program" }.Start();
+        StartOnConsole(entry);
     }
 
     /// <summary>The program on this process's own console: the keyboard
     /// it reads, the screen it draws on and the error stream it reports
     /// to are the ones `mill run` would give it. Only the exit code and
-    /// the end of the session travel as protocol events.</summary>
+    /// the end of the session travel as protocol events. Its own thread
+    /// with the program stack, as every launcher gives a program: a
+    /// thread-pool thread's size cannot be set, and a deep recursion
+    /// under the debugger must return exactly as it does under
+    /// `mill run`.</summary>
     void StartOnConsole(Func<TextWriter, TextReader, string[], int> run)
     {
         new Thread(() =>
@@ -995,49 +926,4 @@ public sealed class PerchServer : IDebugSink
         }
     }
 
-    /// <summary>Forwards program output to the client as output events,
-    /// line-buffered.</summary>
-    sealed class EventWriter : TextWriter
-    {
-        readonly PerchServer server;
-        readonly string category;
-        readonly StringBuilder buf = new();
-
-        public EventWriter(PerchServer server, string category)
-        {
-            this.server = server;
-            this.category = category;
-        }
-
-        public override Encoding Encoding => Encoding.UTF8;
-
-        public override void Write(char c)
-        {
-            lock (buf)
-            {
-                buf.Append(c);
-                if (c == '\n') FlushLocked();
-            }
-        }
-
-        public override void Write(string? s)
-        {
-            if (string.IsNullOrEmpty(s)) return;
-            foreach (char c in s) Write(c);
-        }
-
-        public override void Flush() => FlushBuf();
-
-        public void FlushBuf()
-        {
-            lock (buf) FlushLocked();
-        }
-
-        void FlushLocked()
-        {
-            if (buf.Length == 0) return;
-            server.Event("output", new { category, output = buf.ToString() });
-            buf.Clear();
-        }
-    }
 }

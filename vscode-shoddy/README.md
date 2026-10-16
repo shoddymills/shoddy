@@ -27,7 +27,9 @@ the **mill** (the .NET toolchain).
   Watch and hover that evaluate any Shoddy expression. Scribbler
   programs debug too — the window opens under the perch and stays live
   while you sit at a breakpoint. A launch.json adds `args`, `allowNet`
-  and `cwd`. Runs `mill dap --listen` in that window under the hood.
+  and `cwd`. Under the hood, `mill dap` is the debug adapter VS Code
+  talks to, and the window runs `mill run --perch`, the program's own
+  process, which connects back to it.
 - **Commands** (palette, editor context menu, and the ▶ run button):
   - **Shoddy: Run File** (`ctrl+r`) — `mill run` in a terminal window
     of its own, outside VS Code, so `Input` and `InKey` work at full
@@ -59,18 +61,21 @@ clone, no build, no `SHODDYLIB`. All it needs on the machine is the
 (the runtime, not the SDK).
 
 The extension finds the mill via the `shoddy.millPath` setting; when
-unset, it uses `bin/mill` in the workspace if present, then its own
+unset, it uses the mill the workspace has built
+(`artifacts/bin/Shoddy.Mill/release/mill`) if present, then its own
 bundled copy, else `mill` on your PATH. The bundled copy is portable
 .NET: on Windows it runs `mill.exe`, and everywhere else it runs
 `dotnet mill.dll` through the runtime you installed above. A workspace that builds its own
 mill therefore keeps using it — which is what you want when the mill is
 what you're changing.
 
-Includes resolve the same way: beside the file first, then `SHODDYLIB`.
-The extension points that at its bundled `machines/` when you haven't
-set one yourself, so `Include "seq.shoddy"` works in a scratch file in
-any folder. Set `SHODDYLIB` and it steps aside — a checkout stays
-pinned to its own machines.
+Includes resolve the same way: beside the file first, then `SHODDYLIB`,
+then the `machines/` beside the mill. When you haven't set `SHODDYLIB`
+yourself, the extension points it at the sources that go with the mill
+in use: a checkout's own `machines/` for the mill it built, the bundled
+`machines/` otherwise. So `Include "seq.shoddy"` works in a scratch
+file in any folder, and a mill in a checkout links the library the
+checkout built. Set `SHODDYLIB` and it steps aside.
 
 ### Install the packaged .vsix (recommended)
 
@@ -131,6 +136,6 @@ The [.NET 10 runtime](https://dotnet.microsoft.com/download/dotnet/10.0).
 Everything else — the mill and every machine — ships inside the `.vsix`.
 
 To work on Shoddy itself you want the SDK and a checkout instead; the
-mill you build into `bin/` takes precedence over the bundled one. See
+mill you build under `artifacts/` takes precedence over the bundled one. See
 [the toolchain guide](https://shoddymills.github.io/shoddy/build.html)
 for full workspace setup.

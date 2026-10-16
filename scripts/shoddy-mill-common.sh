@@ -6,9 +6,10 @@
 # preamble). Provides:
 #
 #   $MILL_DIR       this mill's own absolute directory
-#   $MILL           the mill toolchain, resolved from MILL_DIR
-#   ensure_mill     publishes the toolchain into ../../bin, every call,
-#                   through the repo root's build.sh
+#   $MILL           the full toolchain, where `dotnet build` puts it
+#   ensure_mill     builds the toolchain and the machine library it
+#                   carries, through the repo root's build.sh; MSBuild's
+#                   own up-to-date check makes a second call free
 #   run_live CMD...   runs CMD from ORIG_DIR, not from the mill's folder -
 #                     for any target that launches a program a person
 #                     interacts with, so a path they type or pass at the
@@ -20,9 +21,10 @@
 #                     substitute for run_live and not the default: most
 #                     mills' tests stay pinned to MILL_DIR below.
 #   weave_and_move SRC...   weaves one or more .shoddy sources (found
-#                     beside this script) and moves every resulting
-#                     .dll/.runtimeconfig.json, plus any Shoddy.*.dll,
-#                     into ./bin
+#                     beside this script) into ./bin: the program, its
+#                     runtime config, the runtime and the libraries it
+#                     links. `mill weave` writes there itself now; the
+#                     name stays so every mill's script reads as before.
 #
 # The rule this buys: run/capture/train/demo - anything that puts a live
 # program in front of you - go through run_live, so a path resolves
@@ -33,12 +35,11 @@
 
 MILL_DIR=$(pwd)
 REPO=$MILL_DIR/../..
-MILL=$REPO/bin/mill
+MILL=$REPO/artifacts/bin/Shoddy.Mill/release/mill
+# The checkout's own machine sources are the library this mill's
+# relative includes reach; see the root build.sh.
+export SHODDYLIB="$REPO/machines"
 
-# The root's `build`, not a copy of it: that is the one place that
-# publishes the mill and empties machine DLLs woven by an older one. It
-# used to be an existence check here, which kept a stale mill forever -
-# build() in the root build.sh has the whole story.
 ensure_mill() {
     "$REPO/build.sh" build
 }
@@ -56,10 +57,4 @@ weave_and_move() {
     for src in "$@"; do
         "$MILL" weave "$src"
     done
-    mkdir -p bin
-    for src in "$@"; do
-        base=${src%.shoddy}
-        mv -f "$base.dll" "$base.runtimeconfig.json" bin/
-    done
-    mv -f Shoddy.*.dll bin/ 2>/dev/null || true
 }

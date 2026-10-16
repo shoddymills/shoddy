@@ -10,16 +10,17 @@
 # `dotnet spiro.dll` has no window backend. The pure half in
 # spiro-core.shoddy is what test.shoddy covers, and that needs no display.
 #
-# Finding a mill, in order: $MILL if you set it, the repo's own bin/mill
-# when this folder sits inside a checkout, then whatever `mill` is on the
-# PATH — the VS Code extension carries one. Copy this file beside your own
-# program and it keeps working wherever the folder lives.
+# Finding a mill, in order: $MILL if you set it, the mill the checkout
+# has built (under artifacts/) when this folder sits inside one, then
+# whatever `mill` is on the PATH — the VS Code extension carries one.
+# Copy this file beside your own program and it keeps working wherever
+# the folder lives.
 set -euo pipefail
 cd "$(dirname "$0")"
 
 find_mill() {
     if [ -n "${MILL:-}" ]; then echo "$MILL"; return; fi
-    for candidate in ../../bin/mill ../../bin/mill.exe; do
+    for candidate in ../../artifacts/bin/Shoddy.Mill/release/mill ../../artifacts/bin/Shoddy.Mill/release/mill.exe; do
         [ -x "$candidate" ] && { echo "$candidate"; return; }
     done
     if command -v mill >/dev/null 2>&1; then echo mill; return; fi

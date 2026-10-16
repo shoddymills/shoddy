@@ -467,7 +467,7 @@ is in [the heritage of the name](https://shoddymills.github.io/shoddy/heritage.h
 | Path  | Contents                                                    |
 |-------|-------------------------------------------------------------|
 | `src/`| The .NET solution: `Shoddy.Runtime`, `Shoddy.Devil` (the front end), `Shoddy.Compiler`, `Shoddy.Mill`, `Shoddy.Mill.Headless`, `Shoddy.Perch` (the debugger), `Shoddy.Build` (ShoddyWeave, the csproj integration), `Shoddy.Hosting`, `Shoddy.Tests` |
-| `bin/`| Build output: the published `mill` toolchain lands here after `dotnet publish` (not committed; build it, then run `bin/mill`) |
+| `artifacts/`| Build output, in the .NET SDK's own layout: every project's output under `artifacts/bin/<project>/<configuration>/`. The built mill is `artifacts/bin/Shoddy.Mill/release/mill`, with the machine library and sources beside it (not committed; `./build.sh build`) |
 | `machines/`| The standard library, one `.shoddy` file per machine, with the reckoner seeds under `machines/seeds/`. Every machine is tiled under "The machines" above and has a page in [the machines catalog](https://shoddymills.github.io/shoddy/machines/index.html). |
 | `mills/`| Complete example programs, one folder per mill, each with its own `build.sh` / `build.ps1` wrapper. Every mill is tiled under "See it run" above and has a page in [the mills catalog](https://shoddymills.github.io/shoddy/mills/index.html). |
 | `docs/`| The documentation site, published to GitHub Pages as it stands. `index.html` is the front door; the "Documentation" section below maps the rest; `machines/` and `mills/` hold one page each. |
@@ -542,8 +542,8 @@ Requires the .NET 10 SDK. Build the mill (it is not committed), then run a
 program and the tests:
 
 ```
-./build.sh build                                   # the mill into bin/ (./build.ps1 build on Windows)
-bin/mill run tst/examples.shoddy                   # compile in memory and run
+./build.sh build                                   # the mill, under artifacts/ (./build.ps1 build on Windows)
+./build.sh run tst/examples.shoddy                 # compile in memory and run
 dotnet test src/Shoddy.Tests                       # golden conformance suite
 ```
 

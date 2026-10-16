@@ -16,8 +16,8 @@ set -eu
 
 cd "$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 
-MILL=bin/mill
-[ -x "$MILL" ] || MILL=bin/mill.exe
+MILL=artifacts/bin/Shoddy.Mill/release/mill
+[ -x "$MILL" ] || MILL=artifacts/bin/Shoddy.Mill/release/mill.exe
 
 READ='const m = await import("./scripts/suites.mjs");
 console.log(Object.entries(m.TST_EXCLUSIONS)

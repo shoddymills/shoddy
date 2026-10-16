@@ -1,7 +1,8 @@
 #!/usr/bin/env pwsh
 # Build the MAUI lane: restore, build and test whatever this machine's
-# workloads can build (today: Windows). Every call first runs the repo
-# root's build, which publishes bin/mill.exe - ShoddyWeave drives it.
+# workloads can build (today: Windows). The lane's projects build the
+# toolchain they weave with and reference the machine library, so a
+# plain dotnet build is the whole build.
 #
 #   ./build.ps1          restore + build (Debug)
 #   ./build.ps1 test     build + run Shoddy.Maui.Tests
@@ -11,16 +12,6 @@
 param([Parameter(Position = 0)][string]$Command = 'build')
 $ErrorActionPreference = 'Stop'
 Set-Location $PSScriptRoot
-
-# The root's build, every call: a check that bin/mill.exe exists passes a
-# mill from before a compiler change. Invoke-Build in ../../build.ps1
-# says why. Push/Pop, because the root script sets its own location.
-Push-Location (Join-Path $PSScriptRoot '../..')
-try { & ./build.ps1 build } finally { Pop-Location }
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "STOPPED: the repo root's build failed (exit $LASTEXITCODE)." -ForegroundColor Red
-    exit 1
-}
 
 function Run([string[]]$DotnetArgs) {
     Write-Host ("> dotnet " + ($DotnetArgs -join ' ')) -ForegroundColor Cyan

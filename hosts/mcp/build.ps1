@@ -19,11 +19,13 @@
 # and refuses if it does not answer (so a broken build never replaces a
 # working one), copies it to $env:SPARKY_HOME (default
 # %LOCALAPPDATA%\Shoddy\sparky on Windows, ~/.local/share/shoddy/sparky
-# elsewhere), and registers that path with Claude Code at user scope as
-# "sparky", replacing any earlier registration. The path never changes,
-# so re-running it is the whole upgrade; a new Claude Code session picks
-# it up. $env:SPARKY_ROOT, if set, is passed as --root (and created);
-# otherwise sparky uses its own default root. Without the claude CLI it
+# elsewhere), and registers that path with Claude Code as "sparky",
+# replacing any earlier registration. The path never changes, so
+# re-running it is the whole upgrade; a new Claude Code session picks it
+# up. By default it registers at project scope, in the .mcp.json of the
+# folder install was run from, with --root ".": sparky and fettle both
+# root in that repo. An absolute $env:SPARKY_ROOT registers at user scope
+# with that root instead - see Register-Sparky. Without the claude CLI it
 # installs and prints the command to register by hand.
 #
 # run is here for a person holding a terminal, and it will look like it
@@ -36,6 +38,9 @@ param(
     [Parameter(Position = 1)][string]$Version = ''
 )
 $ErrorActionPreference = 'Stop'
+# Where install was run from, before the Set-Location: a project
+# registration is written there.
+$Invoked = (Get-Location).Path
 Set-Location $PSScriptRoot
 
 # The root's build: the full mill, for the mill's own suite. MSBuild's
@@ -95,25 +100,48 @@ function Test-Sparky([string]$Exe) {
     Write-Host 'ok  the new sparky answers over stdio' -ForegroundColor Green
 }
 
-# Point Claude Code at $Exe, at user scope, replacing an earlier "sparky".
-# The arguments go as an array, so '--' reaches claude unchanged.
+# Point Claude Code at $Exe, replacing an earlier "sparky". An absolute
+# SPARKY_ROOT registers at user scope with that root. The arguments go
+# as an array, so '--' reaches claude unchanged.
+#
+# OTHERWISE IT REGISTERS AT PROJECT SCOPE, in the .mcp.json of the
+# folder install was run from, with --root SPARKY_ROOT (default "."). sparky resolves --root against the
+# folder Claude Code launches it in; fettle resolves it against the
+# folder holding the registration. Only a project registration makes
+# those one folder, so only there does "." mean the repo to both. The
+# user-scope "sparky" is removed either way: fettle reads ~/.claude.json
+# first, and would pair with that one instead.
 function Register-Sparky([string]$Exe) {
-    $cmd = @($Exe)
-    if ($env:SPARKY_ROOT) {
-        New-Item -ItemType Directory -Force -Path $env:SPARKY_ROOT | Out-Null
-        $cmd += @('--root', $env:SPARKY_ROOT)
+    $root = if ($env:SPARKY_ROOT) { $env:SPARKY_ROOT } else { '.' }
+    $scope = 'project'
+    if ([System.IO.Path]::IsPathRooted($root)) {
+        $scope = 'user'
+        New-Item -ItemType Directory -Force -Path $root | Out-Null
+    } else {
+        New-Item -ItemType Directory -Force -Path (Join-Path $Invoked $root) | Out-Null
     }
+    $cmd = @($Exe, '--root', $root)
     if (Get-Command claude -ErrorAction SilentlyContinue) {
         $prev = $ErrorActionPreference
         $ErrorActionPreference = 'Continue'
         try {
             $remove = @('mcp', 'remove', '--scope', 'user', 'sparky')
             & claude @remove 2>&1 | Out-Null
-            $add = @('mcp', 'add', '--scope', 'user', 'sparky', '--') + $cmd
-            & claude @add
+            $add = @('mcp', 'add', '--scope', $scope, 'sparky', '--') + $cmd
+            if ($scope -eq 'project') {
+                Push-Location $Invoked
+                try {
+                    $remove = @('mcp', 'remove', '--scope', 'project', 'sparky')
+                    & claude @remove 2>&1 | Out-Null
+                    & claude @add
+                } finally { Pop-Location }
+            } else {
+                & claude @add
+            }
         } finally { $ErrorActionPreference = $prev }
         if ($LASTEXITCODE -ne 0) { Write-Host 'STOPPED: claude mcp add failed.' -ForegroundColor Red; exit 1 }
-        Write-Host 'registered with Claude Code (user scope) as sparky - start a new session to use it' -ForegroundColor Green
+        $where = if ($scope -eq 'project') { "project scope, $(Join-Path $Invoked '.mcp.json')" } else { 'user scope' }
+        Write-Host "registered with Claude Code ($where) as sparky - start a new session to use it" -ForegroundColor Green
     } else {
         Write-Host 'the claude CLI is not on PATH, so nothing was registered. Give your MCP client:'
         Write-Host ('  ' + ($cmd -join ' '))

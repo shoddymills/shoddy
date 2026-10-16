@@ -21,10 +21,12 @@
 # and refuses if it does not answer (so a broken build never replaces a
 # working one), copies it to $SPARKY_HOME (default
 # ~/.local/share/shoddy/sparky), and registers that path with Claude Code
-# at user scope as "sparky", replacing any earlier registration. The path
-# never changes, so re-running it is the whole upgrade; a new Claude Code
-# session picks it up. SPARKY_ROOT, if set, is passed as --root (and
-# created); otherwise sparky uses its own default root. Without the
+# as "sparky", replacing any earlier registration. The path never
+# changes, so re-running it is the whole upgrade; a new Claude Code
+# session picks it up. By default it registers at project scope, in the
+# .mcp.json of the folder install was run from, with --root ".": sparky
+# and fettle both root in that repo. An absolute SPARKY_ROOT registers
+# at user scope with that root instead - see register(). Without the
 # claude CLI it installs and prints the command to register by hand.
 #
 # run is here for a person holding a terminal, and it will look like it
@@ -32,6 +34,9 @@
 # is exactly what it should do. README.md has two lines that prove it is
 # alive.
 set -euo pipefail
+# Where install was run from, before the cd: a project registration is
+# written there.
+invoked=$PWD
 cd "$(dirname "$0")"
 
 # The root's build: the full mill, for the mill's own suite. MSBuild's
@@ -56,17 +61,34 @@ smoke() {
     esac
 }
 
-# Point Claude Code at $1, at user scope, replacing an earlier "sparky".
+# Point Claude Code at $1, replacing an earlier "sparky". An absolute
+# SPARKY_ROOT registers at user scope with that root.
+#
+# OTHERWISE IT REGISTERS AT PROJECT SCOPE, in the .mcp.json of the
+# folder install was run from, with --root SPARKY_ROOT (default "."). sparky resolves --root against the
+# folder Claude Code launches it in; fettle resolves it against the
+# folder holding the registration. Only a project registration makes
+# those one folder, so only there does "." mean the repo to both. The
+# user-scope "sparky" is removed either way: fettle reads ~/.claude.json
+# first, and would pair with that one instead.
 register() {
-    local cmd=("$1")
-    if [ -n "${SPARKY_ROOT:-}" ]; then
-        mkdir -p "$SPARKY_ROOT"
-        cmd+=(--root "$SPARKY_ROOT")
-    fi
+    local root="${SPARKY_ROOT:-.}" scope=project
+    case "$root" in
+        /*) scope=user; mkdir -p "$root" ;;
+        *)  (cd "$invoked" && mkdir -p "$root") ;;
+    esac
+    local cmd=("$1" --root "$root")
     if command -v claude >/dev/null 2>&1; then
         claude mcp remove --scope user sparky >/dev/null 2>&1 || true
-        claude mcp add --scope user sparky -- "${cmd[@]}"
-        echo "registered with Claude Code (user scope) as sparky - start a new session to use it"
+        if [ "$scope" = project ]; then
+            (cd "$invoked"
+             claude mcp remove --scope project sparky >/dev/null 2>&1 || true
+             claude mcp add --scope project sparky -- "${cmd[@]}")
+            echo "registered with Claude Code (project scope, $invoked/.mcp.json) as sparky - start a new session there to use it"
+        else
+            claude mcp add --scope user sparky -- "${cmd[@]}"
+            echo "registered with Claude Code (user scope) as sparky - start a new session to use it"
+        fi
     else
         echo "the claude CLI is not on PATH, so nothing was registered. Give your MCP client:"
         echo "  ${cmd[*]}"

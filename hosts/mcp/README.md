@@ -31,11 +31,14 @@ cd hosts/mcp
 publishes the single file for this platform, drives it over stdio and
 stops if it does not answer, copies it to `SPARKY_HOME` (default
 `%LOCALAPPDATA%\Shoddy\sparky` on Windows, `~/.local/share/shoddy/sparky`
-elsewhere), and registers that path with Claude Code at user scope as
-`sparky`, replacing any earlier registration. The path never changes, so
+elsewhere), and registers that path with Claude Code as `sparky`,
+replacing any earlier registration. The path never changes, so
 re-running it is the upgrade; start a new Claude Code session to pick it
-up. Set `SPARKY_ROOT` to pass a `--root`. Without the `claude` CLI it
-installs and prints the command to give your client.
+up. It registers at project scope, in the `.mcp.json` of the folder you
+ran install from, with `--root .`, so sparky and fettle both root in
+that repo. An absolute `SPARKY_ROOT` registers at user scope with that
+root instead. Without the `claude` CLI it installs and prints the
+command to give your client.
 
 `publish [V]` cuts what a release attaches: a self-contained single-file
 sparky per OS, so the far end needs no repo and no .NET install. V names

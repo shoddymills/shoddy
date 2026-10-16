@@ -115,7 +115,7 @@ fi
 # ---- 8. say what is about to happen, then ask ----
 # The display suites cannot run in CI (they open a real window), so the one
 # thing worth remembering here is said here: if anything windowed changed
-# since the last release, run scripts/shoddy-display.sh before answering yes.
+# since the last release, ./build.sh prove (which runs them) before yes.
 previous=$(git describe --tags --abbrev=0 2>/dev/null || true)
 echo
 echo "  tag        $tag"
@@ -123,7 +123,7 @@ echo "  commit     $short  $(git log -1 --format=%s)"
 echo "  notes      $notes"
 [ -n "$previous" ] && echo "  since      $previous"
 echo "  publishes  the .vsix and one sparky archive per OS"
-echo "  displays   scripts/shoddy-display.sh does not run in CI - run it if windowed code changed"
+echo "  displays   CI cannot run the display suites - ./build.sh prove runs them"
 echo
 echo "  Pushing the tag is the moment it ships, and a tag is never moved."
 echo

@@ -229,7 +229,7 @@ $next = if ($dirty) {
 } elseif ($ahead -eq 0) {
     'nothing to review yet - do the work, then ./scripts/shoddy-commit.ps1'
 } elseif (-not $pushed -or -not $prState) {
-    './build.ps1 test  then  ./build.ps1 check  then  ./scripts/shoddy-pr.ps1'
+    './build.ps1 prove  then  ./scripts/shoddy-pr.ps1'
 } elseif ($prState -eq 'MERGED') {
     './scripts/shoddy-branch.ps1 land'
 } elseif ($green) {

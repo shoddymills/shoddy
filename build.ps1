@@ -7,6 +7,10 @@
 #                                     suites and every mill's own suite
 #   ./build.ps1 check                 the fast gates: docs, errors, permissions,
 #                                     host-blind, suites, twins, lanes
+#   ./build.ps1 prove                 THE RELEASE PROOF: everything CI runs
+#                                     that this machine can, restored as CI
+#                                     restores, and the display suites
+#   ./build.ps1 reproducible          two clean builds must agree byte for byte
 #   ./build.ps1 run [SWITCHES] FILE.shoddy [ARGS...]
 #                                     compile in memory and run a program
 #   ./build.ps1 weave FILE.shoddy     compile a program to an assembly
@@ -42,6 +46,14 @@
 #
 # install [X.Y.Z]: install vscode-shoddy-X.Y.Z.vsix, or with no version,
 # the package for the version package.json names.
+#
+# prove: the one command between finishing work and opening the pull
+# request. check, reproducible, test, then each host lane exactly as
+# ci.yml drives it (build, test, release, publish - every verb grading
+# its own output), then the display suites CI cannot run. Restores run
+# LOCKED, as on the runner, so a drifted lock file fails here. What this
+# machine cannot run (the MAUI lane off Windows, the display suites with
+# no display) is named at the end, never skipped in silence.
 #
 # run [SWITCHES] FILE.shoddy [ARGS...]: SWITCHES go before the file and
 # are the mill's own - --allow-net (arm the network), --no-window (hide
@@ -193,6 +205,73 @@ function Invoke-Test {
     # released that has not been through this.
     Invoke-MachineSuites
     Invoke-MillSuites
+    # The rest of CI's core job, so this target IS that job: every
+    # mill.manifest describes its mill, and the headless mill still
+    # weaves and refuses `run` by name (ci.yml's container job proves
+    # the same with no X11 and no audio device at all).
+    Native node scripts/verify-manifests.js
+    Native node scripts/verify-headless.js
+}
+
+# Two clean builds of one commit must agree byte for byte: the
+# deterministic settings in Directory.Build.props are proved, not
+# assumed. ci.yml's core job calls this verb; it is the only copy.
+function Invoke-Reproducible {
+    $rel = Join-Path 'artifacts' (Join-Path 'bin' (Join-Path 'Shoddy.Mill' 'release'))
+    $sums = {
+        @(Get-ChildItem $rel -Filter *.dll -File) + @(Get-ChildItem (Join-Path $rel 'lib') -Filter *.dll -File) |
+            ForEach-Object { "$((Get-FileHash $_.FullName -Algorithm SHA256).Hash)  $($_.Directory.Name)/$($_.Name)" }
+    }
+    Invoke-Clean; Invoke-Build; $first = & $sums
+    Invoke-Clean; Invoke-Build; $second = & $sums
+    $diff = Compare-Object $first $second
+    if ($diff) {
+        [Console]::Error.WriteLine('the build is not reproducible - two clean builds differ:')
+        [Console]::Error.WriteLine(($diff | Out-String))
+        exit 1
+    }
+    Write-Host 'reproducible: two clean builds agree byte for byte'
+}
+
+# Each lane script sets its own location; Push/Pop keeps ours.
+function Invoke-Lane([string]$Lane, [string[]]$Verbs) {
+    foreach ($verb in $Verbs) {
+        Push-Location $PSScriptRoot
+        try { & (Join-Path $PSScriptRoot "hosts/$Lane/build.ps1") $verb }
+        finally { Pop-Location }
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    }
+}
+
+function Invoke-Prove {
+    $env:SHODDY_LOCKED_RESTORE = '1'
+    $onWindows = ($env:OS -eq 'Windows_NT')
+    $proved = @('check', 'reproducible', 'test', 'mcp lane')
+    $skipped = @()
+    $step = { param($t) Write-Host ''; Write-Host "=== $t" -ForegroundColor Cyan }
+    & $step 'check: the fast gates';          Invoke-Check
+    & $step 'reproducible: two clean builds'; Invoke-Reproducible
+    & $step 'test: the whole suite';          Invoke-Test
+    & $step 'mcp lane: build, test, release, publish'
+    Invoke-Lane 'mcp' @('build', 'test', 'release', 'publish')
+    if ($onWindows) {
+        & $step 'maui lane: build, test, release'
+        Invoke-Lane 'maui' @('build', 'test', 'release')
+        $proved += 'maui lane'
+    }
+    else { $skipped += "maui lane - it builds on Windows only; CI's windows runner proves it" }
+    if ([Environment]::UserInteractive -and ($onWindows -or $IsMacOS -or $env:DISPLAY -or $env:WAYLAND_DISPLAY)) {
+        & $step 'display suites: the three CI cannot run'
+        Push-Location $PSScriptRoot
+        try { & (Join-Path $PSScriptRoot 'scripts/shoddy-display.ps1') }
+        finally { Pop-Location }
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        $proved += 'display suites'
+    }
+    else { $skipped += 'display suites - no display here, and CI has none: run scripts/shoddy-display.ps1 where there is one' }
+    Write-Host ''
+    Write-Host ('PROVED: ' + ($proved -join ', ')) -ForegroundColor Green
+    foreach ($s in $skipped) { Write-Host "NOT PROVED ON THIS MACHINE: $s" -ForegroundColor Yellow }
 }
 
 # The machine suites. Every machines/<name>.shoddy that has one is graded
@@ -395,6 +474,8 @@ switch ($Command) {
     'machines' { Invoke-Build }
     'test' { Invoke-Test }
     'check' { Invoke-Check }
+    'prove' { Invoke-Prove }
+    'reproducible' { Invoke-Reproducible }
     'run' {
         # Switches before the file are the mill's own and pass through
         # as-is; everything after the file is the program's, reaching it
@@ -432,7 +513,11 @@ switch ($Command) {
     'install' { Invoke-Install $File }
     'clean' { Invoke-Clean }
     'help' {
-        Get-Content $PSCommandPath | Select-Object -Skip 1 -First 51 | ForEach-Object { $_ -replace '^# ?', '' }
+        # The whole header comment, however long it grows.
+        foreach ($line in (Get-Content $PSCommandPath | Select-Object -Skip 1)) {
+            if (-not $line.StartsWith('#')) { break }
+            $line -replace '^# ?', ''
+        }
     }
     default {
         [Console]::Error.WriteLine("unknown command: $Command")

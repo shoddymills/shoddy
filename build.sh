@@ -8,6 +8,10 @@
 #                                    suites and every mill's own suite
 #   ./build.sh check                 the fast gates: docs, errors, permissions,
 #                                    host-blind, suites, twins, lanes
+#   ./build.sh prove                 THE RELEASE PROOF: everything CI runs
+#                                    that this machine can, restored as CI
+#                                    restores, and the display suites
+#   ./build.sh reproducible          two clean builds must agree byte for byte
 #   ./build.sh run [SWITCHES] FILE.shoddy [ARGS...]
 #                                    compile in memory and run a program
 #   ./build.sh weave FILE.shoddy     compile a program to an assembly
@@ -44,6 +48,14 @@
 # install [X.Y.Z]: install vscode-shoddy-X.Y.Z.vsix, or with no version,
 # the package for the version package.json names.
 #
+# prove: the one command between finishing work and opening the pull
+# request. check, reproducible, test, then each host lane exactly as
+# ci.yml drives it (build, test, release, publish - every verb grading
+# its own output), then the display suites CI cannot run. Restores run
+# LOCKED, as on the runner, so a drifted lock file fails here. What this
+# machine cannot run (the MAUI lane off Windows, the display suites with
+# no display) is named at the end, never skipped in silence.
+#
 # run [SWITCHES] FILE.shoddy [ARGS...]: SWITCHES go before the file and
 # are the mill's own - --allow-net (arm the network), --no-window (hide
 # scribbler windows), --no-lint, --lint-verbose. ARGS after the file reach
@@ -74,6 +86,25 @@ STAGE_MILL=vscode-shoddy/mill
 
 build() {
     dotnet build src/Shoddy.Mill -c Release
+}
+
+# Two clean builds of one commit must agree byte for byte: the
+# deterministic settings in Directory.Build.props are proved, not
+# assumed. ci.yml's core job calls this verb; it is the only copy.
+reproducible() {
+    sums() {
+        ( cd artifacts/bin/Shoddy.Mill/release
+          if command -v sha256sum >/dev/null 2>&1; then sha256sum ./*.dll lib/*.dll
+          else shasum -a 256 ./*.dll lib/*.dll; fi )
+    }
+    rm -rf artifacts; build; first=$(sums)
+    rm -rf artifacts; build; second=$(sums)
+    if [ "$first" != "$second" ]; then
+        echo "the build is not reproducible - two clean builds differ:" >&2
+        diff <(printf '%s\n' "$first") <(printf '%s\n' "$second") >&2 || true
+        exit 1
+    fi
+    echo "reproducible: two clean builds agree byte for byte"
 }
 
 # The machine suites. Every machines/<name>.shoddy that has one is
@@ -237,6 +268,48 @@ case "${1:-help}" in
         # is released that has not been through this.
         machine_suites
         mill_suites
+        # The rest of CI's core job, so this target IS that job: every
+        # mill.manifest describes its mill, and the headless mill still
+        # weaves and refuses `run` by name (ci.yml's container job proves
+        # the same with no X11 and no audio device at all).
+        node scripts/verify-manifests.js
+        node scripts/verify-headless.js
+        ;;
+    reproducible)
+        reproducible
+        ;;
+    prove)
+        export SHODDY_LOCKED_RESTORE=1
+        step() { printf '\n=== %s\n' "$1"; }
+        proved="check, reproducible, test, mcp lane"
+        skipped=()
+        step "check: the fast gates";        "$SELF" check
+        step "reproducible: two clean builds"; "$SELF" reproducible
+        step "test: the whole suite";        "$SELF" test
+        step "mcp lane: build, test, release, publish"
+        ( cd hosts/mcp && ./build.sh build && ./build.sh test \
+                       && ./build.sh release && ./build.sh publish )
+        case "$(uname -s)" in
+            MINGW*|MSYS*|CYGWIN*)
+                step "maui lane: build, test, release"
+                ( cd hosts/maui && ./build.sh build && ./build.sh test && ./build.sh release )
+                proved="$proved, maui lane" ;;
+            *)  skipped+=("maui lane - it builds on Windows only; CI's windows runner proves it") ;;
+        esac
+        if [ "$(uname -s)" = "Darwin" ] || [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]; then
+            step "display suites: the three CI cannot run"
+            scripts/shoddy-display.sh
+            proved="$proved, display suites"
+        else
+            skipped+=("display suites - no display here, and CI has none: run scripts/shoddy-display.sh where there is one")
+        fi
+        echo
+        echo "PROVED: $proved"
+        # The ${a[@]+...} form, because macOS ships bash 3.2, where an
+        # empty array under set -u is an unbound variable.
+        for s in ${skipped[@]+"${skipped[@]}"}; do
+            echo "NOT PROVED ON THIS MACHINE: $s"
+        done
         ;;
     check)
         # The fast gates - the doc and boundary verifiers. All Node, all
@@ -359,7 +432,8 @@ case "${1:-help}" in
         echo "cleaned."
         ;;
     help|-h|--help)
-        sed -n '2,52p' "$SELF" | sed 's/^# \{0,1\}//'
+        # The whole header comment, however long it grows.
+        awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$SELF"
         ;;
     *)
         echo "unknown command: $1" >&2

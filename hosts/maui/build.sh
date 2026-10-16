@@ -16,6 +16,9 @@ case "${1:-build}" in
     build)   dotnet build ShoddyMaui.slnx ;;
     test)    dotnet test Shoddy.Maui.Tests ;;
     run)     dotnet build shoddy-reckoner && dotnet run --project shoddy-reckoner --no-build ;;
-    release) dotnet build ShoddyMaui.slnx -c Release ;;
+    # release grades its own closure (B7.4): no perch, the woven core and
+    # the machine library present (scripts/verify-closure.js).
+    release) dotnet build ShoddyMaui.slnx -c Release
+             node ../../scripts/verify-closure.js reckoner ;;
     *)       echo "unknown command: $1 (build | test | run | release)" >&2; exit 1 ;;
 esac

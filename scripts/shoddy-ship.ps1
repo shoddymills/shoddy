@@ -140,7 +140,7 @@ if ($gh) {
 # ---- 8. say what is about to happen, then ask ----
 # The display suites cannot run in CI (they open a real window), so the one
 # thing worth remembering here is said here: if anything windowed changed
-# since the last release, run scripts/shoddy-display.ps1 before answering yes.
+# since the last release, ./build.ps1 prove (which runs them) before yes.
 $previous = (RunGit @('describe', '--tags', '--abbrev=0')).Text
 Write-Host ''
 Write-Host "  tag        $tag" -ForegroundColor White
@@ -148,7 +148,7 @@ Write-Host "  commit     $($commit.Substring(0,8))  $((RunGit @('log','-1','--fo
 Write-Host "  notes      $notes"
 if ($previous) { Write-Host "  since      $previous" }
 Write-Host "  publishes  the .vsix and one sparky archive per OS"
-Write-Host "  displays   scripts/shoddy-display.ps1 does not run in CI - run it if windowed code changed"
+Write-Host "  displays   CI cannot run the display suites - ./build.ps1 prove runs them"
 Write-Host ''
 Write-Host "  Pushing the tag is the moment it ships, and a tag is never moved." -ForegroundColor Yellow
 Write-Host ''

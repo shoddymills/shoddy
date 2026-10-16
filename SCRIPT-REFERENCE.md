@@ -15,7 +15,7 @@ Conventions shared by every script:
 
 | Script | Role | Commands |
 | --- | --- | --- |
-| [build.sh](build.sh) | Root build wrapper for the toolchain, suites and VS Code extension | `all`, `build`, `machines`, `test`, `check`, `run`, `weave`, `stage`, `vsix`, `install`, `clean`, `help` |
+| [build.sh](build.sh) | Root build wrapper for the toolchain, suites and VS Code extension | `all`, `build`, `machines`, `test`, `check`, `prove`, `reproducible`, `run`, `weave`, `stage`, `vsix`, `install`, `clean`, `help` |
 | [scripts/shoddy-branch.sh](scripts/shoddy-branch.sh) | Maintainer: cut, sync and land branches | `feature`, `bug`, `sync`, `land` |
 | [scripts/shoddy-commit.sh](scripts/shoddy-commit.sh) | Maintainer: stage everything and commit | flags only: `-Message`, `-Force` |
 | [scripts/shoddy-display.sh](scripts/shoddy-display.sh) | Maintainer: run the windowed suites CI cannot | (run), `--list` |
@@ -50,8 +50,10 @@ Unix wrapper around `dotnet build`. Exports `SHODDYLIB=<repo>/machines` so every
 | `help`, `-h`, `--help` | | Prints the usage block from the top of the script. |
 | `all` | `[patch]`, `[minor]`, `[major]` or `[X.Y.Z]` | Re-invokes the script as `clean`, then `test`, then `vsix` with the same optional argument. Stops at the first failure. |
 | `build`, `machines` | | `dotnet build src/Shoddy.Mill -c Release`. Builds the toolchain and the machine library in one go. |
-| `test` | | Runs `build`, then: `dotnet test src/Shoddy.Tests` with a `.trx` under `artifacts/test-results`; every `CORE_SUITES` suite from `scripts/suites.mjs`; `tst/net-demo.shoddy` with `--allow-net`; `tutorials/spiro/test.shoddy`; `tst/sinq-demo.shoddy`; every `MACHINE_SUITES` suite plus `tst/isamtest.shoddy` and `tst/isamdump.shoddy DELETE` in a scratch folder; then `./build.sh test` in every `mills/*/` folder. |
+| `test` | | Runs `build`, then: `dotnet test src/Shoddy.Tests` with a `.trx` under `artifacts/test-results`; every `CORE_SUITES` suite from `scripts/suites.mjs`; `tst/net-demo.shoddy` with `--allow-net`; `tutorials/spiro/test.shoddy`; `tst/sinq-demo.shoddy`; every `MACHINE_SUITES` suite plus `tst/isamtest.shoddy` and `tst/isamdump.shoddy DELETE` in a scratch folder; then `./build.sh test` in every `mills/*/` folder; then `node scripts/verify-manifests.js` and `node scripts/verify-headless.js`. This is CI's core job. |
 | `check` | | Runs `node scripts/<gate>.js` for `verify-docs`, `verify-errors`, `verify-permissions`, `verify-host-blind`, `verify-suites`, `verify-twins`, `verify-lanes`, then `node --test vscode-shoddy/test/launch.test.js`. |
+| `prove` | | **The release proof.** Sets `SHODDY_LOCKED_RESTORE=1` so restores run locked as in CI, then runs `check`, `reproducible`, `test`, the MCP lane's `build`, `test`, `release` and `publish`, the MAUI lane's `build`, `test` and `release` on Windows only, and `scripts/shoddy-display.sh` where there is a display. Ends with a `PROVED` line, plus a `NOT PROVED ON THIS MACHINE` line for each lane it could not run. |
+| `reproducible` | | Two clean builds, then compares SHA-256 sums of the mill's release DLLs and `lib/` DLLs. Fails with the diff if they differ. CI's core job calls this. |
 | `run` | `[--allow-net] [--no-window] [--no-lint] [--lint-verbose] FILE.shoddy [ARGS...]` | Runs `build`, then `mill run` with the switches and file. Switches must come before the file. Anything after the file reaches the program through `Args`. Any other `--` switch is refused with exit 2. Missing file: usage, exit 2. |
 | `weave` | `FILE.shoddy` | Runs `build`, then `mill weave FILE.shoddy`. Missing file: usage, exit 2. |
 | `stage` | `[X.Y.Z]` | Removes `vscode-shoddy/mill` and `vscode-shoddy/machines`, then `dotnet publish src/Shoddy.Mill -c Release -o vscode-shoddy/mill -p:SatelliteResourceLanguages=en`, adding `-p:Version=X.Y.Z` when given. Copies `THIRD-PARTY-NOTICES.md` and `AUTHORSHIP.md` into `vscode-shoddy/`. |
@@ -158,7 +160,7 @@ Default command: `build`. Unknown command exits 1.
 | `build` | | `dotnet build ShoddyMaui.slnx` (Debug). |
 | `test` | | `dotnet test Shoddy.Maui.Tests`. |
 | `run` | | `dotnet build shoddy-reckoner`, then `dotnet run --project shoddy-reckoner --no-build`. Launches the Reckoner app. |
-| `release` | | `dotnet build ShoddyMaui.slnx -c Release`. |
+| `release` | | `dotnet build ShoddyMaui.slnx -c Release`, then `node scripts/verify-closure.js reckoner`: no perch, and the woven core and machine library present. |
 
 ## hosts/mcp/build.sh
 
@@ -169,8 +171,8 @@ Always runs the root `../../build.sh build` first, so the mill's own suite has a
 | `build` | | `dotnet build Sparky.slnx` (Debug). |
 | `test` | | `dotnet test Shoddy.Mcp.Tests`. |
 | `run` | | `dotnet build sparky`, then `dotnet run --project sparky --no-build`. Starts the MCP server on stdin/stdout; it waits for a JSON-RPC message and looks idle. |
-| `release` | | `dotnet build Sparky.slnx -c Release`. |
-| `publish` | `[V]` | For each of `win-x64`, `win-arm64`, `linux-x64`, `osx-x64`, `osx-arm64`: `dotnet publish sparky -c Release -r <rid> --self-contained -p:PublishSingleFile=true -o ../../artifacts/publish/sparky/<rid>`. Windows RIDs are zipped to `sparky[-V]-<rid>.zip`; the others are tarred to `sparky[-V]-<rid>.tar.gz` with the executable bit set. Lists `artifacts/publish/` when done. |
+| `release` | | `dotnet build Sparky.slnx -c Release`, then `node scripts/verify-closure.js sparky`: no window, audio, toolchain or third-party protocol package in the closure. |
+| `publish` | `[V]` | For each of `win-x64`, `win-arm64`, `linux-x64`, `osx-x64`, `osx-arm64`: `dotnet publish sparky -c Release -r <rid> --self-contained -p:ShoddyRidPublish=true -o ../../artifacts/publish/sparky/<rid>`. Single-file comes from `Sparky.csproj`; `ShoddyRidPublish` keeps these restores' lock files under `artifacts/`. Windows RIDs are zipped to `sparky[-V]-<rid>.zip`; the others are tarred to `sparky[-V]-<rid>.tar.gz` with the executable bit set. Then `node scripts/verify-shipped.js sparky [V]` unpacks this platform's archive outside the repo and drives it over stdio. |
 
 ## Mill wrappers (mills/*/build.sh)
 

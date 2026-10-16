@@ -28,7 +28,10 @@ case "${1:-build}" in
     build)   dotnet build Sparky.slnx ;;
     test)    dotnet test Shoddy.Mcp.Tests ;;
     run)     dotnet build sparky && dotnet run --project sparky --no-build ;;
-    release) dotnet build Sparky.slnx -c Release ;;
+    # release grades its own closure: no window, audio, toolchain or
+    # third-party protocol package rides along (scripts/verify-closure.js).
+    release) dotnet build Sparky.slnx -c Release
+             node ../../scripts/verify-closure.js sparky ;;
     publish)
         # What a release attaches: a self-contained single-file sparky
         # per OS, so the far end needs no repo and no .NET install.
@@ -55,6 +58,9 @@ case "${1:-build}" in
                 tar -czf "$pub/sparky$suffix-$rid.tar.gz" -C "$pub/sparky/$rid" sparky
             fi
         done
-        ls -1 "$pub" | sed 's/^/  -> /' ;;
+        ls -1 "$pub" | sed 's/^/  -> /'
+        # Then drive the archive for THIS platform, unpacked outside the
+        # repo: the exact file a person downloads, not the build output.
+        node ../../scripts/verify-shipped.js sparky "${2:-}" ;;
     *)       echo "unknown command: $1 (build | test | run | release | publish)" >&2; exit 1 ;;
 esac

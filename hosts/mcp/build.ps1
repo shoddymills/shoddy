@@ -33,6 +33,17 @@ if ($LASTEXITCODE -ne 0) {
     exit 1
 }
 
+# A node gate, judged on its exit code alone, as Run judges dotnet.
+function Gate([string[]]$NodeArgs) {
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try { & node @NodeArgs } finally { $ErrorActionPreference = $prev }
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "STOPPED: node $($NodeArgs -join ' ') failed (exit $LASTEXITCODE)." -ForegroundColor Red
+        exit 1
+    }
+}
+
 function Run([string[]]$DotnetArgs) {
     Write-Host ("> dotnet " + ($DotnetArgs -join ' ')) -ForegroundColor Cyan
     # dotnet writes restore progress to stderr under some hosts; judge
@@ -51,7 +62,9 @@ switch ($Command) {
     'build'   { Run @('build', 'Sparky.slnx') }
     'test'    { Run @('test', 'Shoddy.Mcp.Tests') }
     'run'     { Run @('build', 'sparky'); Run @('run', '--project', 'sparky', '--no-build') }
-    'release' { Run @('build', 'Sparky.slnx', '-c', 'Release') }
+    # release grades its own closure: no window, audio, toolchain or
+    # third-party protocol package rides along (scripts/verify-closure.js).
+    'release' { Run @('build', 'Sparky.slnx', '-c', 'Release'); Gate @('../../scripts/verify-closure.js', 'sparky') }
     'publish' {
         # What a release attaches: a self-contained single-file sparky
         # per OS, so the far end needs no repo and no .NET install.
@@ -85,6 +98,9 @@ switch ($Command) {
             }
         }
         Get-ChildItem $pub -File | ForEach-Object { Write-Host ("  -> " + $_.Name) }
+        # Then drive the archive for THIS platform, unpacked outside the
+        # repo: the exact file a person downloads, not the build output.
+        Gate @('../../scripts/verify-shipped.js', 'sparky', $Version)
     }
     default   { Write-Host "unknown command: $Command (build | test | run | release | publish)" -ForegroundColor Red; exit 1 }
 }

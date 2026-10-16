@@ -19,6 +19,12 @@ name: CI
 # Every lane reads the SDK from global.json, so the runner builds with
 # the SDK the repository names, and restores in locked mode, so the
 # package graph is the one the lock files record.
+#
+# EVERY STEP BELOW IS A BUILD VERB, never inline logic. `./build.sh prove`
+# runs the same verbs on a workstation, under the same locked restore, so
+# what fails here has already failed there. A check written only into this
+# file is a check nobody can run before pushing - which is how a release
+# used to meet its failures for the first time on the runner.
 on:
   push:
     branches: [main]
@@ -94,22 +100,13 @@ jobs:
       - name: Build the mill
         run: ./build.sh build
 
+      # The whole suite, the manifests and the headless refusal.
       - name: Test - the whole suite
         run: ./build.sh test
 
-      - name: Every mill.manifest describes its mill
-        run: node scripts/verify-manifests.js
-
-      # Two clean builds of one commit must agree byte for byte: the
-      # deterministic settings in Directory.Build.props are proved here,
-      # not assumed.
+      # Two clean builds of one commit must agree byte for byte.
       - name: The build is reproducible
-        run: |
-          sha256sum artifacts/bin/Shoddy.Mill/release/*.dll artifacts/bin/Shoddy.Mill/release/lib/*.dll > first.sum
-          rm -rf artifacts
-          ./build.sh build
-          sha256sum artifacts/bin/Shoddy.Mill/release/*.dll artifacts/bin/Shoddy.Mill/release/lib/*.dll > second.sum
-          diff first.sum second.sum
+        run: ./build.sh reproducible
 
   # The MCP host lane, on ubuntu deliberately: this lane has no platform
   # head, no window, no audio and no workload to install. If it ever stops
@@ -135,6 +132,10 @@ jobs:
         with:
           global-json-file: global.json
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
       # The mill's own suite first: if the FOLD is wrong there is no
       # point grading the server over it.
       - name: The sparky mill's headless suite
@@ -149,44 +150,18 @@ jobs:
         working-directory: hosts/mcp
         run: ./build.sh test
 
-      - name: Release build
+      # release grades its own closure: no window, audio, toolchain or
+      # third-party protocol package (scripts/verify-closure.js).
+      - name: Release build, and its closure
         working-directory: hosts/mcp
         run: ./build.sh release
 
-      # No third-party package rides along: the protocol is hand-rolled
-      # over System.Text.Json, and this is what says so a year from now.
-      # The woven core and the two machine libraries are the whole of
-      # the Shoddy side.
-      - name: Assert the lane carries no window, audio or toolchain
-        run: |
-          rel=artifacts/bin/Sparky/release
-          test -f "$rel/sparky.dll" || { echo "no executable in $rel"; exit 1; }
-          test -f "$rel/Shoddy.Machines.Sparky-core.dll" || { echo 'missing the woven core'; exit 1; }
-          test -f "$rel/Shoddy.Machines.dll" || { echo 'missing the machine library'; exit 1; }
-          test -f "$rel/Shoddy.Machines.Seeds.dll" || { echo 'missing the seeds library'; exit 1; }
-          for bad in Shoddy.Compiler Shoddy.Devil Shoddy.Mill Silk.NET OpenAL glfw Microsoft.CodeAnalysis SkiaSharp; do
-            if ls "$rel" | grep -qi "$bad"; then echo "the server links past its floor: $bad"; exit 1; fi
-          done
-
-      # The publish target is what a release attaches, and a target only
-      # release.yml exercises would rot between releases the way any
-      # unrun script does. Cut the archives exactly as release.yml will.
-      - name: Publish the release archives
+      # The archives a release attaches, cut exactly as release.yml cuts
+      # them; publish then unpacks this platform's archive outside the
+      # repo and drives it over stdio (scripts/verify-shipped.js).
+      - name: Publish the release archives, and drive the shipped binary
         working-directory: hosts/mcp
         run: ./build.sh publish
-
-      # Then prove the shipped shape: unpack the linux archive and drive
-      # the single file over stdio - no client, no repo and no installed
-      # runtime in the loop. This is the exact artifact a user downloads.
-      - name: The shipped binary answers on stdio
-        run: |
-          tar -xzf artifacts/publish/sparky-linux-x64.tar.gz -C /tmp
-          mkdir -p /tmp/sparky-root
-          printf '%s\n' \
-            '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}' \
-            '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"eval","arguments":{"lines":["{ 12500 13100 11900 } MEAN"]}}}' \
-            | /tmp/sparky --root /tmp/sparky-root | tee answers.jsonl
-          grep -q 'x: 12500' answers.jsonl
 
   # The MAUI host lane (B2.5), on windows-latest - the Windows lane is a
   # CI release artifact, not a Mac dev target. Canvas and audio proofs run
@@ -207,6 +182,10 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           global-json-file: global.json
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
 
       - name: Install MAUI workload
         shell: pwsh
@@ -234,17 +213,11 @@ jobs:
           SHODDY_HEADLESS_CI: '1'
         run: ./build.ps1 test
 
+      # release grades its own closure (B7.4): no perch, the woven core
+      # and the machine library present (scripts/verify-closure.js).
       - name: Release build is provably clean (B7.4)
         working-directory: hosts/maui
         run: ./build.ps1 release
-
-      - name: Assert no perch in the release output (B7.4)
-        shell: pwsh
-        run: |
-          $rel = 'artifacts/bin/ShoddyReckoner/release_net10.0-windows10.0.19041.0'
-          if (Test-Path "$rel/Shoddy.Perch.dll") { Write-Error 'release output carries the debug transport (B7.4)' }
-          if (-not (Test-Path "$rel/Shoddy.Machines.Halifax-core.dll")) { Write-Error 'release output is missing the woven core' }
-          if (-not (Test-Path "$rel/Shoddy.Machines.dll")) { Write-Error 'release output is missing the machine library' }
 
   # The container proof (C8): the headless build of the mill runs a full
   # weave in a minimal Linux image with no X11 and no audio device - a

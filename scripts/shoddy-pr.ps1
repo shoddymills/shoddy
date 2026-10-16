@@ -140,8 +140,7 @@ $( (Gq log --format='- %s' "origin/main..HEAD") -join "`n" )
 ---
 Checked before opening:
 
-- ``./build.ps1 test`` - the C# suite, every core and machine suite, every mill
-- ``./build.ps1 check`` - docs, errors, permissions, host-blind, suites, twins, lanes
+- ``./build.ps1 prove`` - every CI verb this machine can run, under locked restore, and the display suites
 
 CI runs it all again - checks, core, MCP, MAUI and headless - on every push.
 "@

@@ -20,11 +20,11 @@ that reports rather than acts, so it is always safe to run.
 |---|---|---|
 | 1 | **Branch** | `./scripts/shoddy-branch.ps1 feature NAME`, or `bug NAMENN` for a fix |
 | 2 | **Work** | edit, `./build.ps1 run FILE.shoddy`, `./scripts/shoddy-commit.ps1 -Message "..."` |
-| 3 | **Prove** | `./build.ps1 test` then `./build.ps1 check` |
+| 3 | **Prove** | `./build.ps1 prove` |
 | 4 | **Notes** | `release-notes/vX.Y.Z.md`, on the branch, committed |
 | 5 | **Review** | `./scripts/shoddy-pr.ps1`; **then a person merges it on GitHub** |
 | 6 | **Land** | `./scripts/shoddy-branch.ps1 land` |
-| 7 | **Ship** | `./scripts/shoddy-ship.ps1 X.Y.Z` |
+| 7 | **Ship** | once CI is green on main: `./scripts/shoddy-ship.ps1 X.Y.Z` |
 | 8 | **Watch** | Actions &rarr; Release |
 
 ---
@@ -104,27 +104,32 @@ If `main` moves while you work:
 ## 3: Prove
 
 ```powershell
-./build.ps1 test     # the C# suite, every core and machine suite, every mill
-./build.ps1 check    # docs, errors, permissions, host-blind, suites, twins, lanes
+./build.ps1 prove    # everything CI runs that this machine can, and the display suites
 ```
 
-`test` is the whole local proof, the same command CI's core job runs.
-`check` is the fast half: seven read-only Node gates, seconds each. CI runs
-both again on every push, plus the lanes a workstation may not have (the
-MCP lane, the MAUI lane on a Windows runner, and the headless container),
-so the pull request carries the full verdict either way.
+**One command, and it is the same proof CI gives.** In order: `check` (the
+seven fast gates), `reproducible` (two clean builds agree byte for byte),
+`test` (the C# suite, every core and machine suite, every mill, the
+manifests, the headless refusal), the MCP lane's `build`, `test`,
+`release` and `publish` - each verb grading its own output, the last one
+driving the shipped archive - the MAUI lane on Windows, and the three
+display suites. Restores run **locked**, exactly as on the runner, so a
+drifted lock file fails here rather than after a push.
 
-**Three suites CI cannot run, and one command for them:**
+ci.yml calls the same verbs and nothing else, so a check cannot exist in
+CI without existing here. What this machine cannot run is printed at the
+end as `NOT PROVED ON THIS MACHINE` - off Windows that is the MAUI lane,
+which CI's Windows runner proves. It is never skipped in silence.
 
-```powershell
-scripts/shoddy-display.ps1          # seedscribbler, seedturtle, seedplotter
-```
-
-They open a real window; a hosted runner has no platform to open one on,
-not even under Xvfb. The list lives in `TST_EXCLUSIONS` in
+**The display suites** (seedscribbler, seedturtle, seedplotter) open a real
+window, and a hosted runner has no platform to open one on, not even under
+Xvfb. `prove` runs them wherever there is a display; on their own they are
+`scripts/shoddy-display.ps1`. The list lives in `TST_EXCLUSIONS` in
 `scripts/suites.mjs`, so a fourth windowed suite cannot be added there and
-forgotten here. Run it on a machine with a display whenever windowed code
-changes; it refuses anywhere else rather than failing somewhere inside GLFW.
+forgotten here.
+
+`test` and `check` are still there for the fast loop while you work.
+`prove` is the one that says the work is ready.
 
 ## 4: Release notes
 
@@ -160,6 +165,10 @@ branch whose pull request is not merged, so there is no back way round it.
 Returns to an up-to-date `main` and deletes the branch locally and on
 origin. It asks GitHub whether the pull request has merged before
 deleting anything.
+
+**Then wait for CI on main.** The merge is a new commit, CI runs on it,
+and `ship` refuses until that run is green. `./scripts/shoddy-status.ps1
+X.Y.Z` says when: its `next` line names `shoddy-ship` only then.
 
 ## 7: Ship
 

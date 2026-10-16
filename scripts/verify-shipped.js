@@ -1,9 +1,10 @@
 // MAINTAINER TOOL. Unpacks a release archive and DRIVES THE BINARY INSIDE
 // IT - no repository, no installed runtime, no project reference.
 //
-//   node scripts/verify-shipped.js sparky
+//   node scripts/verify-shipped.js sparky [VERSION]
 //
-// Run after that lane's `build.ps1 publish`.
+// The lane's own `publish` verb runs it last, with the version it
+// published under (none for a local or CI publish, the tag's on release).
 //
 // Everything else in this gate proves the source. This proves the artifact:
 // the exact file a person downloads, unpacked into a directory that knows
@@ -28,6 +29,7 @@ const path = require("path");
 const root = path.resolve(__dirname, "..");
 
 const lane = process.argv[2];
+const version = process.argv[3] || "";
 let bad = 0;
 const fail = (msg) => { console.log(msg); bad++; };
 const ok = (msg) => console.log(`ok  ${msg}`);
@@ -66,10 +68,9 @@ function findArchive(prefix) {
         fail(`artifacts/publish is not there - run the lane's \`build.ps1 publish\` first`);
         return null;
     }
-    // Unversioned first: the gate publishes without a version, and a stale
-    // versioned archive from an earlier release must never be mistaken for
-    // what was just built.
-    const exact = `${prefix}-${RID}${isWin ? ".zip" : ".tar.gz"}`;
+    // Exactly the name just published: a stale archive from another
+    // version must never be mistaken for what was just built.
+    const exact = `${prefix}${version ? "-" + version : ""}-${RID}${isWin ? ".zip" : ".tar.gz"}`;
     if (names.includes(exact)) return path.join(pub, exact);
     fail(`no ${exact} in artifacts/publish - run the lane's \`build.ps1 publish\` first`);
     return null;
@@ -113,7 +114,7 @@ if (lane === "sparky") {
     }
 
 } else {
-    console.log("usage: node scripts/verify-shipped.js <sparky>");
+    console.log("usage: node scripts/verify-shipped.js <sparky> [VERSION]");
     process.exit(2);
 }
 

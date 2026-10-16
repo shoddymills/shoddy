@@ -29,7 +29,9 @@ $ErrorActionPreference = 'Stop'
 Push-Location (Join-Path $PSScriptRoot '..')
 try {
     # Where `dotnet build` puts the full toolchain, as build.ps1 names it.
-    $mill = Join-Path 'artifacts' (Join-Path 'bin' (Join-Path 'Shoddy.Mill' (Join-Path 'release' 'mill.exe')))
+    # mill.exe on Windows, mill (the apphost) everywhere else.
+    $millExe = if ($env:OS -eq 'Windows_NT') { 'mill.exe' } else { 'mill' }
+    $mill = Join-Path 'artifacts' (Join-Path 'bin' (Join-Path 'Shoddy.Mill' (Join-Path 'release' $millExe)))
     # Pin the mill to this checkout's machine sources, exactly as build.ps1
     # does. These suites reach a machine by relative path
     # (../machines/seq.shoddy), and naming the folder is what makes those
@@ -38,10 +40,13 @@ try {
     $env:SHODDYLIB = Join-Path (Get-Location) 'machines'
 
     $reason = 'needs a real display'
-    $read = 'const m = await import("./scripts/suites.mjs");' +
+    # SINGLE QUOTES ONLY inside the JavaScript. Windows PowerShell 5.1
+    # strips or splits embedded double quotes when it passes an argument to
+    # a native program, and node then sees broken source.
+    $read = "const m = await import('./scripts/suites.mjs');" +
             'console.log(Object.entries(m.TST_EXCLUSIONS)' +
-            ".filter(([, why]) => why.startsWith(`"$reason`"))" +
-            '.map(([name]) => name).join(" "))'
+            ".filter(([, why]) => why.startsWith('$reason'))" +
+            ".map(([name]) => name).join(' '))"
 
     $prev = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'

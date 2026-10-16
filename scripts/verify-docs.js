@@ -10,7 +10,7 @@
 //                            record fields excluded so shared names don't lie)
 //   "The Machines It Uses" - the machine's own direct Includes
 //
-// Then six structural checks, so the docs can't quietly fall behind the tree
+// Then seven structural checks, so the docs can't quietly fall behind the tree
 // as Shoddy grows:
 //
 //   catalogs   - every machine and mill has a page, is listed in its catalog,
@@ -23,6 +23,8 @@
 //                every fact an assistant gets wrong without being told
 //   runtime    - the .NET version quoted in the docs matches what the mill
 //                actually targets
+//   commands   - every build-script verb and scripts/ file the maintainer
+//                docs name exists, and nothing names the retired bin/mill
 //   encoding   - no tracked text file carries UTF-8 that has been round-tripped
 //                through CP1252. v1.7.0 shipped ~400 mangled characters past
 //                this gate because it had no such check (issue #36). A file
@@ -442,6 +444,71 @@ if (!tfm) { console.log("cannot read TargetFramework from the mill's csproj"); b
 else for (const f of [...pages.map(p => path.relative(root, p).replace(/\\/g, "/")), "README.md"])
   for (const m of read(f).matchAll(/\.NET(?:&nbsp;|\s)([0-9]+)\b/g))
     if (m[1] !== tfm[1]) { console.log(f + ': says ".NET ' + m[1] + '", the mill targets net' + tfm[1] + ".0"); bad++; }
+
+// ---- commands: the docs name only verbs and scripts that exist ----
+// The maintainer docs are instructions, and an instruction naming a verb a
+// script no longer has - or a script that is gone, or the retired bin/mill -
+// is how a release used to meet its procedure's drift for the first time
+// halfway through. A verb counts when the script's OWN header lists it, the
+// same rule verify-twins.js reads the surface by. `./build.sh VERB` in a
+// page resolves to the build script that page is about; a path written out
+// (hosts/mcp/build.sh publish) resolves to that path.
+function headerVerbs(file) {
+  const text = fs.readFileSync(file, "utf8");
+  const base = path.basename(file).replace(/\./g, "\\.");
+  // As verify-twins.js reads a header, plus one more column break: a verb
+  // followed by its placeholder (weave FILE.shoddy, run 63011).
+  const pattern = new RegExp(`^(?:\\S*[\\\\/])?${base}\\s+([A-Za-z][A-Za-z0-9-]*)(?=\\s{2,}|\\s*$|\\s\\[|\\s[A-Z0-9])`);
+  const found = new Set(["help"]);
+  for (const line of text.split("\n")) {
+    const t = line.trim();
+    if (t.startsWith("#!")) continue;
+    if (!t.startsWith("#")) { if (found.size > 1) break; continue; }
+    const m = t.replace(/^#\s?/, "").trim().match(pattern);
+    if (m) found.add(m[1].toLowerCase());
+  }
+  return found;
+}
+const verbCache = {};
+const verbsOf = (file) => (verbCache[file] ??= headerVerbs(file));
+const docHome = (rel) => {
+  const mill = rel.match(/^docs\/mills\/([a-z0-9-]+)\.html$/);
+  if (mill) return path.join("mills", mill[1]);
+  const host = rel.match(/^(hosts\/[a-z]+|mills\/[a-z0-9-]+|tutorials\/[a-z0-9-]+)\//);
+  if (host) return host[1];
+  return ".";
+};
+const commandDocs = [
+  ...fs.readdirSync(root).filter(f => f.endsWith(".md")),
+  "docs/build.html", "docs/vscode.html", "docs/hosting.html", "docs/setup.html",
+  ...fs.readdirSync(path.join(root, "docs", "mills")).filter(f => f.endsWith(".html")).map(f => "docs/mills/" + f),
+  ...["hosts/mcp/README.md", "hosts/maui/README.md", "proofs/README.md", "release-notes/README.md"],
+].filter(f => fs.existsSync(path.join(root, f)));
+for (const rel of commandDocs) {
+  const text = read(rel);
+  text.split("\n").forEach((line, i) => {
+    const at = `${rel}:${i + 1}`;
+    if (/(^|[^\w./-])bin[/\\]mill\b/.test(line)) {
+      console.log(`${at}: names bin/mill, which no build writes - the mill is artifacts/bin/Shoddy.Mill/release/mill, or the wrapper`);
+      bad++;
+    }
+    for (const m of line.matchAll(/(\.\/|(?:[\w.-]+\/)+)build\.(sh|ps1)\s+([a-z][a-z-]*)\b/g)) {
+      const prefix = m[1] === "./" ? docHome(rel) : m[1].replace(/^\.\//, "");
+      const script = path.join(root, prefix, "build." + m[2]);
+      if (!fs.existsSync(script)) continue;   // a path relative to something else
+      if (!verbsOf(script).has(m[3])) {
+        console.log(`${at}: ${path.relative(root, script).replace(/\\/g, "/")} has no '${m[3]}' verb in its header`);
+        bad++;
+      }
+    }
+    for (const m of line.matchAll(/\bscripts\/([\w.-]+\.(?:sh|ps1|js|mjs))\b/g)) {
+      if (!fs.existsSync(path.join(root, "scripts", m[1]))) {
+        console.log(`${at}: names scripts/${m[1]}, which does not exist`);
+        bad++;
+      }
+    }
+  });
+}
 
 // ---- encoding: no file may carry UTF-8 that was mangled through CP1252 ----
 // v1.7.0 shipped ~400 mangled characters across eighteen files - the README's

@@ -10,10 +10,9 @@
 //   B2.4  nothing in hosts/ references Shoddy.Mill
 //         or Shoddy.Compiler                           ci.yml (mcp, maui jobs)
 //
-// ci.yml runs those jobs on every push now - it carries no path filters -
-// but a maintainer working locally should not need a push to find out a
-// boundary broke. So the rules live here too, run by `build check`, and
-// CI is the backstop rather than the only copy.
+// They live HERE now and only here: `build check` runs this, and so does
+// ci.yml's checks job. The workflow's own grep copies are gone - a rule
+// with two copies is a rule whose copies disagree.
 //
 // Pure text over the project files, deliberately. Reading the csproj
 // catches a reference in the same commit that adds it, before anything
@@ -66,39 +65,21 @@ for (const proj of projectsUnder("src")) {
 // rather than as a reference, so the pattern is anchored to the exact file
 // names the rule names.
 
+// ANY mention outside an XML comment counts, not only a ProjectReference:
+// an Import, a Reference or a property naming the project reaches the
+// toolchain just as surely. That is what the workflow's grep used to
+// catch; comments are stripped so a note explaining the rule is not a
+// breach of it.
 for (const proj of projectsUnder("hosts")) {
-    const text = fs.readFileSync(proj, "utf8");
-    for (const m of text.matchAll(/<ProjectReference[^>]*Include="([^"]+)"/g)) {
-        const base = m[1].replace(/\\/g, "/").split("/").pop();
-        if (base === "Shoddy.Mill.csproj" || base === "Shoddy.Compiler.csproj") {
-            fail(`${rel(proj)} references ${base} - hosts/ must not reference the `
-                + "toolchain (B2.4); the weave arrives through ShoddyWeave, driven by the headless mill");
-        }
+    const text = fs.readFileSync(proj, "utf8").replace(/<!--[\s\S]*?-->/g, "");
+    for (const m of text.matchAll(/[\w./\\-]*\b(Shoddy\.Mill|Shoddy\.Compiler)\.csproj/g)) {
+        fail(`${rel(proj)} names ${m[1]}.csproj - hosts/ must not reference the `
+            + "toolchain (B2.4); the weave arrives through ShoddyWeave, driven by the headless mill");
     }
 }
 
-// ---- the twins have not drifted ---------------------------------------
-//
-// Every lane ships its build script twice, and this machine runs the .ps1
-// while CI runs the .sh. A verb present in one and not the other is a
-// target that is only ever exercised on one platform - which is exactly
-// how a bug sits in the untested twin for release after release.
-
-for (const [lane, verbs] of [
-    ["hosts/mcp", ["build", "test", "release", "publish"]],
-    ["hosts/maui", ["build", "test", "release"]],
-]) {
-    for (const verb of verbs) {
-        for (const twin of ["build.ps1", "build.sh"]) {
-            const p = path.join(root, lane, twin);
-            if (!fs.existsSync(p)) { fail(`${lane}/${twin} is missing`); continue; }
-            if (!fs.readFileSync(p, "utf8").includes(verb)) {
-                fail(`${lane}/${twin} has lost the '${verb}' verb - its twin still has it, `
-                    + "so that target is now proved on one platform only");
-            }
-        }
-    }
-}
+// The lanes' twin scripts are verify-twins.js's job: it compares the verbs
+// each header documents, which a text search for the verb's name cannot.
 
 console.log(bad === 0 ? "ALL LANE BOUNDARIES HOLD" : bad + " problem(s)");
 process.exit(bad === 0 ? 0 : 1);

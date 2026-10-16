@@ -4,9 +4,9 @@
 #
 #   ./build.sh            build both programs into bin/
 #   ./build.sh build      same as above
-#   ./build.sh train      build if needed, then train the model
+#   ./build.sh train      build, then train the model
 #                         (writes dat/iris-model.bin; a few seconds)
-#   ./build.sh run        build if needed, then classify interactively
+#   ./build.sh run        build, then classify interactively
 #   ./build.sh test       grade the shipped model against the held-out rows
 #   ./build.sh clean      remove built binaries from bin/
 #
@@ -48,18 +48,18 @@ case "${1:-build}" in
         build
         ;;
     train)
-        [ -f "$TRAIN_OUT" ] || build
+        build   # always: a stale bin/ DLL must never run in place of the source
         dotnet "$TRAIN_OUT"
         ;;
     run)
-        [ -f "$RUN_OUT" ] || build
+        build
         dotnet "$RUN_OUT"
         ;;
     test)
         # Run from source, not from bin/: the point is to grade what is
         # in the tree. No training — test.shoddy explains why.
         ensure_mill
-        "$MILL" run test.shoddy
+        "$MILL" run test.shoddy < /dev/null
         ;;
     clean)
         rm -f bin/*.dll bin/*.json

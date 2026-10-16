@@ -84,7 +84,28 @@ function drive(exe, args, { input } = {}) {
     return { code: r.status ?? 1, out: r.stdout ?? "", err: r.stderr ?? "" };
 }
 
+// THE EXECUTABLE BIT. It only survives a tar made on a filesystem that has
+// one, and a sparky that arrives without it does not run. Every unix
+// archive of this version is listed and its entry must read -rwx. Off
+// Windows only: an archive cut on Windows cannot record the bit at all,
+// which is why a release is cut on the Linux runner.
+function executableBits(prefix) {
+    if (isWin) return;
+    const pub = path.join(root, "artifacts", "publish");
+    for (const rid of ["linux-x64", "osx-x64", "osx-arm64"]) {
+        const name = `${prefix}${version ? "-" + version : ""}-${rid}.tar.gz`;
+        const archive = path.join(pub, name);
+        if (!fs.existsSync(archive)) { fail(`no ${name} in artifacts/publish`); continue; }
+        const r = spawnSync("tar", ["-tvzf", archive], { encoding: "utf8" });
+        const entry = (r.stdout ?? "").split("\n").find((l) => /\s(\.\/)?sparky$/.test(l.trim()) || l.trim().endsWith(" sparky"));
+        if (!entry) fail(`${name} has no sparky entry`);
+        else if (!/^-rwx/.test(entry.trim())) fail(`${name} carries sparky without its execute bit: ${entry.trim()}`);
+        else ok(`${name} carries sparky executable`);
+    }
+}
+
 if (lane === "sparky") {
+    executableBits("sparky");
     const archive = findArchive("sparky");
     if (!archive) { console.log("1 problem(s)"); process.exit(1); }
     const dir = scratch("sparky");
@@ -108,6 +129,11 @@ if (lane === "sparky") {
         if (!r.out.includes('"serverInfo"')) {
             fail(`the shipped server did not answer initialize: '${r.out.slice(0, 400)}'`);
         } else ok("the shipped server answers initialize on stdio");
+        // The version is the tag's, stamped by the publish (-p:Version):
+        // what a user sees in serverInfo must be the number on the archive.
+        if (version && !r.out.includes(`"version":"${version}"`)) {
+            fail(`the shipped server does not report version ${version}: '${r.out.slice(0, 400)}'`);
+        } else if (version) ok(`and reports version ${version}`);
         if (!r.out.includes("x: 12500")) {
             fail(`the shipped server did not compute over its woven core: '${r.out.slice(0, 400)}'`);
         } else ok("and computes over its woven core");

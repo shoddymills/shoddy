@@ -14,12 +14,6 @@
 #                     for any target that launches a program a person
 #                     interacts with, so a path they type or pass at the
 #                     prompt resolves where THEY are sitting
-#   run_from_repo CMD...   runs CMD from the repo root specifically - for
-#                     the handful of test suites (tally, weather-glass)
-#                     whose own source hardcodes repo-root-relative
-#                     fixture paths rather than mill-relative ones. Not a
-#                     substitute for run_live and not the default: most
-#                     mills' tests stay pinned to MILL_DIR below.
 #   weave_and_move SRC...   weaves one or more .shoddy sources (found
 #                     beside this script) into ./bin: the program, its
 #                     runtime config, the runtime and the libraries it
@@ -46,10 +40,6 @@ ensure_mill() {
 
 run_live() {
     ( cd "$ORIG_DIR" && "$@" )
-}
-
-run_from_repo() {
-    ( cd "$REPO" && "$@" )
 }
 
 weave_and_move() {

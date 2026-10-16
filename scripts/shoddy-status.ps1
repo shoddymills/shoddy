@@ -157,18 +157,28 @@ if (-not $pushed -and $branch -ne 'main') {
 } elseif (-not $gh) {
     Row 'proven' 'gh is not installed, so CI was not asked' 'DarkGray'
 } else {
-    $ci = Ask @('run', 'list', '--commit', $commit, '--json', 'conclusion,name,status')
+    # The same rule shoddy-ship.ps1 refuses by: ci.yml only, every run
+    # finished, every run a success.
+    $ci = Ask @('run', 'list', '--workflow', 'ci.yml', '--commit', $commit, '--json', 'status,conclusion')
     if ($ci.Code -ne 0) {
         Row 'proven' "could not ask GitHub about $short" 'DarkGray'
-    } elseif ($ci.Text -match '"conclusion":"failure"') {
-        Row 'proven' "NO - CI is red on $short" 'Red'
-    } elseif ($ci.Text -match '"status":"(in_progress|queued)"') {
-        Row 'proven' "not yet - CI is still running on $short" 'Yellow'
-    } elseif ($ci.Text -match '"conclusion":"success"') {
-        $green = $true
-        Row 'proven' "yes - CI is green on $short" 'Green'
     } else {
-        Row 'proven' "no finished CI run for $short" 'Yellow'
+        # foreach enumerates the parsed array: Windows PowerShell 5.1's
+        # ConvertFrom-Json hands an array back as ONE object.
+        try { $parsed = $ci.Text | ConvertFrom-Json } catch { $parsed = $null }
+        $runs = @(foreach ($r in $parsed) { $r })
+        if ($null -eq $parsed) {
+            Row 'proven' "could not read GitHub's answer about $short" 'DarkGray'
+        } elseif ($runs.Count -eq 0) {
+            Row 'proven' "no ci.yml run for $short yet" 'Yellow'
+        } elseif (@($runs | Where-Object { $_.status -ne 'completed' }).Count -gt 0) {
+            Row 'proven' "not yet - CI is still running on $short" 'Yellow'
+        } elseif (@($runs | Where-Object { $_.conclusion -ne 'success' }).Count -gt 0) {
+            Row 'proven' "NO - CI did not pass on $short" 'Red'
+        } else {
+            $green = $true
+            Row 'proven' "yes - CI is green on $short" 'Green'
+        }
     }
 }
 
@@ -202,7 +212,8 @@ if ($Version) {
     }
 }
 
-$previous = Gtext describe --tags --abbrev=0
+$previous = Gtext describe --tags --abbrev=0 2>$null
+if ($LASTEXITCODE -ne 0) { $previous = '' }
 if ($previous) { Row 'released' "$previous is the latest tag reachable from here" 'Gray' }
 
 if ($offline) {
@@ -212,7 +223,7 @@ if ($offline) {
 }
 
 # ---- what comes next ----
-# The order matches WORKFLOW.md: branch, work, prove, notes, review, land,
+# The order matches WORKFLOW.md: branch, work, notes, prove, review, land,
 # ship. Only the first unmet thing is worth printing; a list of everything
 # outstanding is a list nobody reads.
 Write-Host ''

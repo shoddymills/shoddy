@@ -11,26 +11,39 @@ retrieval inverse document frequency. Her subject was retrieving the
 right material for a question, and half this server's job is retrieving
 the right grounding for a word.
 
-This folder has its own solution and workflow and depends one-way on
-`src/` (B2.2). Nothing here may reference `Shoddy.Mill` or
-`Shoddy.Compiler` (B2.4). The weave arrives through `ShoddyWeave`
-(`src/Shoddy.Build`), driven by the repo's published `bin/mill.exe` —
-build that first:
+This folder has its own solution and depends one-way on `src/` (B2.2).
+Nothing here may reference `Shoddy.Mill` or `Shoddy.Compiler` (B2.4);
+`scripts/verify-lanes.js` checks that. The weave arrives through
+`ShoddyWeave` (`src/Shoddy.Build`), driven by the headless mill, which
+the lane's projects build themselves. The lane's `build.ps1` (and
+`build.sh`) runs the repo root's `build` first:
 
 ```
-./build.ps1            # from the repo root: publishes bin/mill
 cd hosts/mcp
 ./build.ps1            # restore + build
 ./build.ps1 test       # and prove it
+./build.ps1 release    # Release build, and its closure (verify-closure.js)
 ./build.ps1 publish    # the per-OS release archives, in artifacts/publish/
+./build.ps1 install    # this machine: build, prove, install, register with Claude Code
 ```
 
-`publish` cuts what a release attaches: a self-contained single-file
-sparky per OS, so the far end needs no repo and no .NET install. The
-Release workflow runs it and puts one archive per OS on the GitHub
-Release, beside the extension; `mcp.yml` cuts the same archives on
-every push and drives the unpacked Linux binary over stdio, so the
-target cannot rot between releases.
+`install [V]` is the one command from a change to an agent using it. It
+publishes the single file for this platform, drives it over stdio and
+stops if it does not answer, copies it to `SPARKY_HOME` (default
+`%LOCALAPPDATA%\Shoddy\sparky` on Windows, `~/.local/share/shoddy/sparky`
+elsewhere), and registers that path with Claude Code at user scope as
+`sparky`, replacing any earlier registration. The path never changes, so
+re-running it is the upgrade; start a new Claude Code session to pick it
+up. Set `SPARKY_ROOT` to pass a `--root`. Without the `claude` CLI it
+installs and prints the command to give your client.
+
+`publish [V]` cuts what a release attaches: a self-contained single-file
+sparky per OS, so the far end needs no repo and no .NET install. V names
+the archives and is the version every binary reports. It then checks the
+execute bit on every unix archive and drives this platform's binary over
+stdio (`scripts/verify-shipped.js`). The Release workflow runs it at the
+tag's version; ci.yml's `mcp` job and `build prove` run it at a
+throwaway one on every push, so the target cannot rot between releases.
 
 ## The projects
 
@@ -95,12 +108,8 @@ at the client.
 
 | Item | Pinned where | Value this lane was built with |
 |---|---|---|
-| .NET SDK | `global.json` (repo root) states the floor; CI asks for `10.0.x` | 10.0.302 |
+| .NET SDK | `global.json` (repo root); every CI job and the Release workflow install it through `setup-dotnet`'s `global-json-file` | 10.0.302 |
 | packages | — | none; `System.Text.Json` ships with the framework |
-
-This lane has no workload, so it does not read `global.json` directly the
-way the MAUI lane does — the root file is a floor rather than a lock, and
-any 10.x the runner installs satisfies it.
 
 ## What it does not do
 

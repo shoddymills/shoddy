@@ -30,7 +30,8 @@
 # script from would be the surprise, not the fix.
 
 $Repo = Join-Path $MillDir '../..'
-$Mill = Join-Path $Repo 'artifacts/bin/Shoddy.Mill/release/mill.exe'
+# mill.exe on Windows, mill (the apphost) everywhere else.
+$Mill = Join-Path $Repo ('artifacts/bin/Shoddy.Mill/release/' + $(if ($env:OS -eq 'Windows_NT') { 'mill.exe' } else { 'mill' }))
 # The checkout's own machine sources are the library this mill's
 # relative includes reach; see the root build.ps1.
 $env:SHODDYLIB = Join-Path $Repo 'machines'

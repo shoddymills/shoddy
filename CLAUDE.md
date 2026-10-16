@@ -48,30 +48,37 @@ pre-release doc/error verification, release-notes timing, the scripts under
 script behavior: read it fresh each time from source, since scripts and
 workflows can change underneath a stale summary.
 
-- [WORKFLOW.md](WORKFLOW.md): **branch, work, prove, review, ship, in that
-  order, as one sequence.** The page to follow; the others are reference behind it.
+- [WORKFLOW.md](WORKFLOW.md): **branch, work, notes, prove, review, land,
+  ship, in that order, as one sequence.** The page to follow; the others are
+  reference behind it.
 - [RELEASING.md](RELEASING.md): the reasoning behind every release step
 - `./build.ps1` / `./build.sh`, the build and the proof: `test` runs the
   whole suite (the C# conformance suite, every core and machine suite,
-  every mill; ~20 minutes) and `check` runs the seven fast verify gates
-  (docs, errors, permissions, host-blind, suites, twins, lanes).
+  every mill; ~20 minutes), `check` runs the seven fast verify gates
+  (docs, errors, permissions, host-blind, suites, twins, lanes), and
+  `prove` is the release proof: everything CI and the release run that
+  this machine can, in CI mode, recorded against the commit it proved.
   **`check` is cheap and read-only; run it before proposing anything
-  release-shaped rather than reasoning about whether the tree is ready.**
+  release-shaped rather than reasoning about whether the tree is ready.
+  `prove` is what says a branch is ready.**
 - `scripts/shoddy-branch.*` (`feature`, `bug`, `sync`, `land`), `scripts/shoddy-commit.*`,
   `scripts/shoddy-pr.*`, `scripts/shoddy-ship.*`, `scripts/shoddy-display.*`: the whole
   procedure as scripts. **The pull request is the one unautomated step**: a
   person merges it on GitHub, `land` tidies up afterwards, and
   `ship X.Y.Z` tags `main` and pushes the tag; the tag is the version,
   and pushing it is the moment it ships. CI is the proof: `ship` asks
-  GitHub for its verdict and refuses a commit CI has not passed. There is
-  no primitive underneath `ship` that skips the checks.
+  GitHub for ci.yml's runs on the commit and refuses unless every one
+  finished and succeeded, or if `gh` is missing. There is no primitive
+  underneath `ship` that skips the checks.
 - [CONTRIBUTING.md](CONTRIBUTING.md): day-to-day contribution process
 - [release-notes/README.md](release-notes/README.md): release-notes format and timing
 - [SECURITY.md](SECURITY.md): vulnerability reporting (not via public issues)
 - Every script ships as a `.ps1`/`.sh` twin pair offering the same verbs
-  and flags, and `verify-twins.js` proves it; but they are not
-  line-for-line identical and have drifted before, so read the one that
-  matches the shell in use rather than the other
+  and flags. `verify-twins.js` proves the pairing and the verbs only - not
+  flags, not logic. ci.yml's `windows` job runs the root `build.ps1` and
+  every mill's `build.ps1`; the `.sh` side runs everywhere else. They are
+  not line-for-line identical and have drifted before, so read the one
+  that matches the shell in use rather than the other
 - `scripts/verify-docs.js` / `scripts/verify-errors.js`: pre-release gates
 - `.github/workflows/ci.yml`, `release.yml`, `pages.yml`: what CI runs
 

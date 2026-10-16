@@ -5,17 +5,23 @@ the reusable host pieces (the calculator session loop, the transcript
 view, the canvas view and the audio sinks), `shoddy-reckoner` is the
 app, `Shoddy.Maui.Tests` proves both without a window.
 
-This folder has its own solution and workflow and depends one-way on
-`src/` (B2.2). Nothing here may reference `Shoddy.Mill`; no mobile
-target may reference `Shoddy.Compiler` (B2.4). The weave arrives
-through `ShoddyWeave` (`src/Shoddy.Build`), driven by the repo's
-published `bin/mill.exe` — build that first:
+This folder has its own solution and depends one-way on `src/` (B2.2).
+Nothing here may reference `Shoddy.Mill` or `Shoddy.Compiler` (B2.4);
+`scripts/verify-lanes.js` checks that. The weave arrives through
+`ShoddyWeave` (`src/Shoddy.Build`), driven by the headless mill, which
+the lane's projects build themselves:
 
 ```
-./build.ps1            # from the repo root: publishes bin/mill
 cd hosts/maui
-./build.ps1            # restore + build + test the Windows lane
+./build.ps1            # restore + build (Debug)
+./build.ps1 test       # Shoddy.Maui.Tests
+./build.ps1 release    # Release build, and its closure (verify-closure.js)
 ```
+
+The repo root's `build.ps1 prove` runs all three on Windows. ci.yml's
+`maui` job runs the same verbs on `windows-latest` with
+`SHODDY_HEADLESS_CI=1`, which skips the assertions that need an audio
+device; a workstation runs them.
 
 ## Lanes and workstations
 
@@ -37,14 +43,12 @@ folders already hold all four heads.
 | MAUI workload | this table; re-install after every SDK bump | `maui-windows` 10.0.20 (workload set 10.0.302.1) |
 | SkiaSharp | `Shoddy.Maui.csproj` | see the csproj |
 
-`global.json` states the SDK this lane was built with, and `maui.yml` reads
-it through `setup-dotnet`'s `global-json-file` — so the runner installs that
-exact SDK and the workload above pairs with the SDK it was tested against.
-Its `rollForward` is `latestMinor`, which makes the version a **floor**
-rather than a lock: core CI asks `setup-dotnet` for `10.0.x` and the headless
-job runs a rolling `mcr.microsoft.com/dotnet/sdk:10.0` container, and neither
-must break the day .NET ships a new feature band. Bump the version here when
-you bump the workload, and re-run `dotnet workload install maui-windows`.
+`global.json` states the SDK this lane was built with, and every CI job
+and the Release workflow read it through `setup-dotnet`'s
+`global-json-file` - so the runner installs that exact SDK and the
+workload above pairs with the SDK it was tested against. Bump the version
+here when you bump the workload, and re-run
+`dotnet workload install maui-windows`.
 
 Workloads live inside the SDK directory and vanish with it: after any
 SDK bump, re-run `dotnet workload install maui-windows` (and on the

@@ -103,12 +103,16 @@ git push -u origin "$branch" || fail \
 # Re-runnable on purpose: pushing more commits to a branch that already has a
 # pull request is the normal way to answer review comments, and that must not
 # be an error.
+#
+# OPEN only. `gh pr view BRANCH` also answers with a MERGED or CLOSED pull
+# request from earlier work on a branch of the same name, and pushing to
+# one of those reviews nothing: a new pull request is opened instead.
 if existing=$(gh pr view "$branch" --json url,state 2>/dev/null); then
     url=$(printf '%s' "$existing" | sed -n 's/.*"url":"\([^"]*\)".*/\1/p')
     state=$(printf '%s' "$existing" | sed -n 's/.*"state":"\([A-Z]*\)".*/\1/p')
-    if [ -n "$url" ]; then
+    if [ -n "$url" ] && [ "$state" = "OPEN" ]; then
         echo
-        echo "Pull request already open (${state:-UNKNOWN}) - the new commits are on it."
+        echo "Pull request already open - the new commits are on it."
         echo "  $url"
         [ "$web" = "1" ] && gh pr view "$branch" --web >/dev/null
         exit 0
@@ -122,14 +126,26 @@ if [ -z "$title" ]; then
 fi
 [ -n "$title" ] || title="$branch"
 
+# What the body says about the local proof is what build prove recorded
+# for THIS commit (artifacts/proved/<sha>, written only from a clean
+# tree) - never a claim the script cannot back.
+head=$(git rev-parse HEAD)
+if [ -f "$(git rev-parse --show-toplevel)/artifacts/proved/$head" ]; then
+    proved_line="- \`./build.sh prove\` passed on this commit (${head:0:8})."
+else
+    echo
+    echo "NOTE: ./build.sh prove has not passed on ${head:0:8}; the pull request will say so."
+    proved_line="- \`./build.sh prove\` has NOT been run on this commit (${head:0:8})."
+fi
+
 body_file=$(mktemp)
 trap 'rm -f "$body_file"' EXIT
 {
     printf 'Merging `%s`.\n\n' "$branch"
     git log --format='- %s' "origin/main..HEAD"
-    printf '\n---\nChecked before opening:\n\n'
-    printf -- '- `./build.sh prove` - every CI verb this machine can run, under locked restore, and the display suites\n\n'
-    printf 'CI runs the same verbs again - checks, core, MCP, MAUI and headless - on every push.\n'
+    printf '\n---\nLocal proof:\n\n'
+    printf -- '%s\n\n' "$proved_line"
+    printf 'CI runs the same verbs again - checks, core, Windows, MCP, MAUI and headless - on every push.\n'
 } > "$body_file"
 
 gh_args=(pr create --base main --head "$branch" --title "$title" --body-file "$body_file")

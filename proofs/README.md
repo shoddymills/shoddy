@@ -16,7 +16,7 @@ covers this tree.
 | `fixtures/pure/` | The capability-free mill itself (A3.3b): one record type, three words, a headless golden suite, `capabilities: {}` |
 
 Everything references `src/` by `ProjectReference` and relative
-`Import` (C7.1); nothing here needs a published package. The
-`ShoddyToolPath` in each project points at the repo's own `bin/mill`,
-so run `./build.ps1 build` (or `./build.sh build`) once before building
-these directly.
+`Import` (C7.1); nothing here needs a published package. Each project
+reaches the toolchain as a `ShoddyTool` item - a build-only
+`ProjectReference` to `src/Shoddy.Mill.Headless` - so a plain
+`dotnet build` of any of them builds the mill it weaves with first.

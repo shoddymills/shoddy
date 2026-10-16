@@ -7,10 +7,10 @@
 #   ./build.sh test                  everything: dotnet tests, the machine
 #                                    suites and every mill's own suite
 #   ./build.sh check                 the fast gates: docs, errors, permissions,
-#                                    host-blind, suites, twins, lanes
-#   ./build.sh prove                 THE RELEASE PROOF: everything CI runs
-#                                    that this machine can, restored as CI
-#                                    restores, and the display suites
+#                                    host-blind, suites, twins, lanes (read-only)
+#   ./build.sh prove                 THE RELEASE PROOF: everything CI and the
+#                                    release run that this machine can, in
+#                                    CI mode, and the display suites
 #   ./build.sh reproducible          two clean builds must agree byte for byte
 #   ./build.sh run [SWITCHES] FILE.shoddy [ARGS...]
 #                                    compile in memory and run a program
@@ -48,13 +48,14 @@
 # install [X.Y.Z]: install vscode-shoddy-X.Y.Z.vsix, or with no version,
 # the package for the version package.json names.
 #
-# prove: the one command between finishing work and opening the pull
-# request. check, reproducible, test, then each host lane exactly as
-# ci.yml drives it (build, test, release, publish - every verb grading
-# its own output), then the display suites CI cannot run. Restores run
-# LOCKED, as on the runner, so a drifted lock file fails here. What this
-# machine cannot run (the MAUI lane off Windows, the display suites with
-# no display) is named at the end, never skipped in silence.
+# prove: the one command between the last commit and the pull request.
+# In CI's order: check, test, reproducible; the MCP lane's build, test,
+# release and a versioned publish (each verb grading its own output);
+# then vsix at a throwaway version, the packaging release.yml does; then
+# the display suites CI cannot run. SHODDY_CI=1 makes every build behave
+# as on the runner: locked restore, CI build settings. What this machine
+# cannot run is named at the end, never skipped in silence. On Windows,
+# run build.ps1 prove: it adds the MAUI lane.
 #
 # run [SWITCHES] FILE.shoddy [ARGS...]: SWITCHES go before the file and
 # are the mill's own - --allow-net (arm the network), --no-window (hide
@@ -90,12 +91,15 @@ build() {
 
 # Two clean builds of one commit must agree byte for byte: the
 # deterministic settings in Directory.Build.props are proved, not
-# assumed. ci.yml's core job calls this verb; it is the only copy.
+# assumed. Every DLL under artifacts/bin is compared - the toolchain,
+# both library configurations, the headless mill. ci.yml's core job
+# calls this verb; it is the only copy.
 reproducible() {
     sums() {
-        ( cd artifacts/bin/Shoddy.Mill/release
-          if command -v sha256sum >/dev/null 2>&1; then sha256sum ./*.dll lib/*.dll
-          else shasum -a 256 ./*.dll lib/*.dll; fi )
+        find artifacts/bin -type f -name '*.dll' | LC_ALL=C sort | while read -r f; do
+            if command -v sha256sum >/dev/null 2>&1; then sha256sum "$f"
+            else shasum -a 256 "$f"; fi
+        done
     }
     rm -rf artifacts; build; first=$(sums)
     rm -rf artifacts; build; second=$(sums)
@@ -185,6 +189,26 @@ is_version() {
     [[ $1 =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
 }
 
+# The one vsce this repository packages with. ci.yml and release.yml
+# install exactly this; prove names it when vsce is missing.
+VSCE_VERSION=3.2.1
+
+# The version vscode-shoddy/package.json names.
+package_version() {
+    sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' vscode-shoddy/package.json | head -1
+}
+
+# vsce exiting 0 is not the same as the right file existing: the package
+# must carry the version asked for, in its name. release.yml attaches it
+# by that name.
+expect_package() {
+    [ -f "vscode-shoddy/vscode-shoddy-$1.vsix" ] || {
+        echo "vsce finished, but vscode-shoddy/vscode-shoddy-$1.vsix is not there." >&2
+        exit 1
+    }
+    echo "packaged vscode-shoddy/vscode-shoddy-$1.vsix"
+}
+
 # Package the extension as version $1 without changing package.json. vsce
 # names and labels the package from package.json, so the version has to be
 # in that file while vsce runs. The file is copied aside first and moved
@@ -231,7 +255,7 @@ case "${1:-help}" in
         # resolve them the way the mill does.
         # The results go under artifacts/ as a .trx, the standard form:
         # the whole of a failure's output is there when the console has
-        # scrolled it away, and CI can attach it.
+        # scrolled it away, and CI uploads it when this step fails.
         dotnet test src/Shoddy.Tests --logger "trx;LogFileName=Shoddy.Tests.trx" \
             --results-directory artifacts/test-results
         # The core suites: the golden library suite, the builtin surface
@@ -250,19 +274,20 @@ case "${1:-help}" in
         # both ends in one process on loopback. --allow-net is required
         # because the network is a gated capability - without the flag the
         # first socket word aborts, so this run also proves the gate opens.
-        "$MILL" run --allow-net tst/net-demo.shoddy
+        "$MILL" run --allow-net tst/net-demo.shoddy </dev/null
         # The tutorial's program is documentation that has to keep
         # working: its pure half is headless by design, so the checks run
         # here beside everything else and the tutorial cannot drift from
-        # code that no longer compiles.
-        "$MILL" run tutorials/spiro/test.shoddy
+        # code that no longer compiles. Through the tutorial's own build
+        # script, so the script a reader copies is exercised too.
+        ( cd tutorials/spiro && MILL="$ROOT/$MILL" ./build.sh test )
         # The sinq demo is the same argument for a machine rather than a
         # tutorial: docs/machines/sinq.html reproduces it line for line,
         # so running it here is what stops the page showing a program
         # that no longer compiles. It asserts nothing - tst/sinq.shoddy
         # grades the behaviour; this proves the example still READS as
         # documented.
-        "$MILL" run tst/sinq-demo.shoddy
+        "$MILL" run tst/sinq-demo.shoddy </dev/null
         # Everything else the tree can prove about itself: a suite for
         # every machine that has one, and every mill's own suite. Nothing
         # is released that has not been through this.
@@ -279,23 +304,40 @@ case "${1:-help}" in
         reproducible
         ;;
     prove)
-        export SHODDY_LOCKED_RESTORE=1
-        step() { printf '\n=== %s\n' "$1"; }
-        proved="check, reproducible, test, mcp lane"
-        skipped=()
-        step "check: the fast gates";        "$SELF" check
-        step "reproducible: two clean builds"; "$SELF" reproducible
-        step "test: the whole suite";        "$SELF" test
-        step "mcp lane: build, test, release, publish"
-        ( cd hosts/mcp && ./build.sh build && ./build.sh test \
-                       && ./build.sh release && ./build.sh publish )
         case "$(uname -s)" in
             MINGW*|MSYS*|CYGWIN*)
-                step "maui lane: build, test, release"
-                ( cd hosts/maui && ./build.sh build && ./build.sh test && ./build.sh release )
-                proved="$proved, maui lane" ;;
-            *)  skipped+=("maui lane - it builds on Windows only; CI's windows runner proves it") ;;
+                echo "on Windows, run ./build.ps1 prove - it adds the MAUI lane, and the" >&2
+                echo "lane scripts it drives are the PowerShell twins." >&2
+                exit 2 ;;
         esac
+        # vsce is checked first: packaging is part of the proof, and a
+        # missing tool should stop the run now, not after twenty minutes.
+        command -v vsce >/dev/null 2>&1 || {
+            echo "prove packages the extension, and needs @vscode/vsce:" >&2
+            echo "  npm install -g @vscode/vsce@$VSCE_VERSION" >&2
+            exit 1
+        }
+        export SHODDY_CI=1
+        # What this run proves is a COMMIT, so it is recorded only when
+        # the tree is clean before and after: the files proved are then
+        # exactly HEAD. A suite that writes into the tree also shows here.
+        start_dirty=$(git status --porcelain 2>/dev/null || echo "not a git checkout")
+        # A throwaway version for the packaging steps, never a real one:
+        # the release's own version comes from its tag.
+        pv=0.0.1
+        step() { printf '\n=== %s\n' "$1"; }
+        proved="check, test, reproducible, mcp lane, vsix"
+        skipped=("maui lane - it builds on Windows only; CI's windows job proves it, or run build.ps1 prove there"
+                 "headless container - CI's container job runs verify-headless with no X11 and no audio device")
+        step "check: the fast gates";          "$SELF" check
+        step "test: the whole suite";          "$SELF" test
+        step "reproducible: two clean builds"; "$SELF" reproducible
+        step "mcp lane: build, test, release, publish $pv"
+        ( cd hosts/mcp && ./build.sh build && ./build.sh test \
+                       && ./build.sh release && ./build.sh publish "$pv" )
+        step "vsix: package the extension as $pv, as release.yml does"
+        "$SELF" vsix "$pv"
+        rm -f "vscode-shoddy/vscode-shoddy-$pv.vsix"
         if [ "$(uname -s)" = "Darwin" ] || [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]; then
             step "display suites: the three CI cannot run"
             scripts/shoddy-display.sh
@@ -310,14 +352,34 @@ case "${1:-help}" in
         for s in ${skipped[@]+"${skipped[@]}"}; do
             echo "NOT PROVED ON THIS MACHINE: $s"
         done
+        end_dirty=$(git status --porcelain 2>/dev/null || echo "not a git checkout")
+        head=$(git rev-parse HEAD 2>/dev/null || true)
+        if [ -z "$start_dirty" ] && [ -z "$end_dirty" ] && [ -n "$head" ]; then
+            mkdir -p artifacts/proved
+            : > "artifacts/proved/$head"
+            echo "RECORDED: prove passed on $head - shoddy-pr names it in the pull request"
+        elif [ -n "$start_dirty" ]; then
+            echo "NOT RECORDED: the tree had uncommitted changes, so no commit was proved"
+        else
+            echo "NOT RECORDED: the run left changes in the tree - something writes where it should not:" >&2
+            printf '%s\n' "$end_dirty" >&2
+            exit 1
+        fi
         ;;
     check)
         # The fast gates - the doc and boundary verifiers. All Node, all
-        # quick, and the same list CI's checks job runs.
+        # quick, read-only, and EXACTLY what CI's checks job runs:
+        # verify-permissions with --check, which fails on a missing
+        # executable bit instead of staging the fix. To stage the fix,
+        # run it without the flag: node scripts/verify-permissions.js
         for gate in verify-docs verify-errors verify-permissions \
                     verify-host-blind verify-suites verify-twins verify-lanes; do
             echo "==> scripts/$gate.js"
-            node "scripts/$gate.js"
+            if [ "$gate" = verify-permissions ]; then
+                node "scripts/$gate.js" --check
+            else
+                node "scripts/$gate.js"
+            fi
         done
         # The VS Code extension's own logic (the debug launch), tested
         # with no editor running.
@@ -379,6 +441,7 @@ case "${1:-help}" in
                 cd vscode-shoddy
                 package_as "$2"
             )
+            expect_package "$2"
         else
             stage
             (
@@ -389,6 +452,7 @@ case "${1:-help}" in
                     vsce package
                 fi
             )
+            [ $# -ge 2 ] || expect_package "$(package_version)"
         fi
         ;;
     install)
@@ -412,7 +476,7 @@ case "${1:-help}" in
             is_version "$2" || { echo "usage: ./build.sh install [X.Y.Z]" >&2; exit 2; }
             ver=$2
         else
-            ver=$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' vscode-shoddy/package.json | head -1)
+            ver=$(package_version)
         fi
         pkg="vscode-shoddy/vscode-shoddy-$ver.vsix"
         [ -f "$pkg" ] || {
@@ -424,11 +488,13 @@ case "${1:-help}" in
         echo "installed $pkg - reload VS Code windows to pick it up."
         ;;
     clean)
-        # Every MSBuild output lives under artifacts/, and the stage is
-        # the one other place a build writes. Anything else git ignores -
-        # a packaged .vsix, a log - is yours: `git clean -Xdf` removes it
-        # all, and asks nothing.
+        # Every MSBuild output lives under artifacts/; the stage is the
+        # other place a build writes; and `mill weave` / `mill machine`
+        # write bin/ beside a loose source. All three go. Anything else
+        # git ignores - a packaged .vsix, a log - is yours: `git clean
+        # -Xdf` removes it all, and asks nothing.
         rm -rf artifacts "$STAGE_MILL" vscode-shoddy/machines
+        find machines mills proofs tst tutorials -type d -name bin -prune -exec rm -rf {} +
         echo "cleaned."
         ;;
     help|-h|--help)

@@ -4,7 +4,7 @@
 #
 #   ./build.sh            build the program into bin/
 #   ./build.sh build      same as above
-#   ./build.sh run FILE   build if needed, then run on an MPS FILE
+#   ./build.sh run FILE   build, then run on an MPS FILE
 #   ./build.sh test       solve both fixtures and check the answers
 #   ./build.sh clean      remove built binaries from bin/
 #
@@ -38,13 +38,13 @@ case "${1:-build}" in
         ;;
     run)
         [ $# -ge 2 ] || { echo "usage: ./build.sh run FILE.mps [-z]" >&2; exit 2; }
-        [ -f "$OUT" ] || build
+        build   # always: a stale bin/ DLL must never run in place of the source
         shift
         run_live dotnet "$MILL_DIR/$OUT" "$@"
         ;;
     test)
         ensure_mill
-        "$MILL" run test.shoddy
+        "$MILL" run test.shoddy < /dev/null
         ;;
     clean)
         rm -f bin/*.dll bin/*.json

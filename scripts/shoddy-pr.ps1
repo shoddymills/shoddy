@@ -114,12 +114,16 @@ if ($LASTEXITCODE -ne 0) {
 # Re-runnable on purpose: pushing more commits to a branch that already has a
 # pull request is the normal way to answer review comments, and that must not
 # be an error.
+#
+# OPEN only. `gh pr view BRANCH` also answers with a MERGED or CLOSED pull
+# request from earlier work on a branch of the same name, and pushing to
+# one of those reviews nothing: a new pull request is opened instead.
 $existing = Ghq pr view $branch --json url,state
-if ($LASTEXITCODE -eq 0 -and $existing -match '"url":"([^"]+)"') {
+$state = if ($existing -match '"state":"([A-Z]+)"') { $Matches[1] } else { '' }
+if ($LASTEXITCODE -eq 0 -and $state -eq 'OPEN' -and $existing -match '"url":"([^"]+)"') {
     $url = $Matches[1]
-    $state = if ($existing -match '"state":"([A-Z]+)"') { $Matches[1] } else { 'UNKNOWN' }
     Write-Host ''
-    Write-Host "Pull request already open ($state) - the new commits are on it." -ForegroundColor Green
+    Write-Host 'Pull request already open - the new commits are on it.' -ForegroundColor Green
     Write-Host "  $url"
     if ($Web) { Ghq pr view $branch --web > $null }
     exit 0
@@ -132,17 +136,30 @@ if (-not $Title) {
 }
 if (-not $Title) { $Title = $branch }
 
+# What the body says about the local proof is what build prove recorded
+# for THIS commit (artifacts/proved/<sha>, written only from a clean
+# tree) - never a claim the script cannot back.
+$head = "$(Gq rev-parse HEAD)".Trim()
+$top = "$(Gq rev-parse --show-toplevel)".Trim()
+$provedLine = if (Test-Path (Join-Path $top (Join-Path 'artifacts' (Join-Path 'proved' $head)))) {
+    "- ``./build.ps1 prove`` passed on this commit ($($head.Substring(0, 8)))."
+} else {
+    Write-Host ''
+    Write-Host "NOTE: ./build.ps1 prove has not passed on $($head.Substring(0, 8)); the pull request will say so." -ForegroundColor Yellow
+    "- ``./build.ps1 prove`` has NOT been run on this commit ($($head.Substring(0, 8)))."
+}
+
 $body = @"
 Merging ``$branch``.
 
 $( (Gq log --format='- %s' "origin/main..HEAD") -join "`n" )
 
 ---
-Checked before opening:
+Local proof:
 
-- ``./build.ps1 prove`` - every CI verb this machine can run, under locked restore, and the display suites
+$provedLine
 
-CI runs it all again - checks, core, MCP, MAUI and headless - on every push.
+CI runs the same verbs again - checks, core, Windows, MCP, MAUI and headless - on every push.
 "@
 
 $bodyFile = Join-Path ([System.IO.Path]::GetTempPath()) "shoddy-pr-$PID.md"

@@ -1,0 +1,221 @@
+: ISWORD
+    "^[a-z]{5}$" RXTEST
+;
+
+: HIT
+    DUP "ANS" RCL SWAP CODEAT
+    SWAP "GS" RCL SWAP CODEAT
+    =
+;
+
+: ANSIX
+    "ANS" RCL SWAP CODEAT 96 -
+;
+
+: GSIX
+    "GS" RCL SWAP CODEAT 96 -
+;
+
+: BUMPUP
+    DUP "K" RCL NTH 1 +
+    "K" RCL SWAP SETNTH
+;
+
+: BUMPDOWN
+    DUP "K" RCL NTH 1 -
+    "K" RCL SWAP SETNTH
+;
+
+: SPARES
+    DROP
+    1 5 RANGE
+    26 0 DIM
+    [ DUP "I" STO HIT
+      [ ]
+      [ "I" RCL ANSIX "K" STO BUMPUP ]
+      IFTE ]
+    FOLD
+;
+
+: PLACE
+    "I" RCL 3 SETNTH
+;
+
+: PRESENT
+    "I" RCL 2 SETNTH
+    "SPARE" RCL BUMPDOWN "SPARE" STO
+;
+
+: MARKS
+    DROP
+    0 SPARES "SPARE" STO
+    1 5 RANGE
+    5 1 DIM
+    [ DUP "I" STO HIT
+      [ PLACE ]
+      [ "I" RCL GSIX "K" STO
+        "SPARE" RCL "K" RCL NTH 0 >
+        [ PRESENT ]
+        [ ]
+        IFTE ]
+      IFTE ]
+    FOLD
+;
+
+: GLYPH
+    UPPER
+    { " " "(" "[" } "M" RCL NTH SWAP +
+    { " " ")" "]" } "M" RCL NTH +
+;
+
+: TILE
+    DUP "MK" RCL SWAP NTH "M" STO
+    "GS" RCL SWAP 1 MID
+    GLYPH
+;
+
+: ROWOF
+    "GS" STO
+    0 MARKS "MK" STO
+    1 5 RANGE [ TILE ] MAP " " JOIN
+;
+
+: GRID
+    DROP
+    "GUESSES" RCL [ ROWOF ] MAP
+    6 "GUESSES" RCL LENGTH - " .   .   .   .   . " DIM
+    CONCAT
+;
+
+: BESTOF
+    DROP
+    "GUESSES" RCL
+    26 0 DIM
+    [ "GS" STO
+      0 MARKS "MK" STO
+      1 5 RANGE SWAP
+      [ DUP "I" STO GSIX "K" STO
+        DUP "K" RCL NTH "MK" RCL "I" RCL NTH MAX
+        "K" RCL SWAP SETNTH ]
+      FOLD ]
+    FOLD
+;
+
+: KEY
+    DUP 96 - "BEST" RCL SWAP NTH "M" STO
+    CHR
+    "M" RCL 0 =
+    [ " " SWAP + " " + ]
+    [ GLYPH ]
+    IFTE
+;
+
+: KEYROW
+    CODES [ KEY ] MAP " " JOIN
+;
+
+: WON
+    DROP
+    "GUESSES" RCL
+    DUP ISEMPTY
+    [ DROP False ]
+    [ DUP LENGTH NTH "ANS" RCL = ]
+    IFTE
+;
+
+: ENDED
+    DROP
+    0 WON
+    "GUESSES" RCL LENGTH 6 >= OR
+    "OVER" RCL OR
+;
+
+: HELPLINE
+    DROP
+    0 0 ENDED
+    [ DROP "Game over. NEWTHORNLE starts another." ]
+    [ DROP "Guess: a five-letter word in quotes, then GUESS. Q or QUIT gives up." ]
+    IFTE
+;
+
+: BOARD
+    DROP
+    0 BESTOF "BEST" STO
+    { "THORNLE" "" }
+    0 GRID CONCAT
+    { ""
+      "qwertyuiop" KEYROW
+      "  " "asdfghjkl" KEYROW +
+      "    " "zxcvbnm" KEYROW +
+      ""
+      "NOTE" RCL
+      0 HELPLINE }
+    CONCAT
+    10 CHR JOIN
+;
+
+: KNOWN
+    "T" STO
+    "WORDS" RCL [ "T" RCL = ] FILTER ISEMPTY NOT
+;
+
+: ACCEPT
+    "GUESSES" RCL "T" RCL 1 GATHER CONCAT "GUESSES" STO
+    0 WON
+    [ DROP "GOT IT IN " "GUESSES" RCL LENGTH STR + ]
+    [ "GUESSES" RCL LENGTH 6 >=
+      [ DROP "IT WAS " "ANS" RCL UPPER + ]
+      [ DROP "" ]
+      IFTE ]
+    IFTE
+    "NOTE" STO
+    0
+;
+
+: GIVEUP
+    DROP
+    True "OVER" STO
+    "IT WAS " "ANS" RCL UPPER + "NOTE" STO
+    0
+;
+
+: GUESS
+    TRIM LOWER "T" STO
+    0
+    0 ENDED
+    [ ]
+    [ "T" RCL DUP "q" = SWAP "quit" = OR
+      [ GIVEUP ]
+      [ "T" RCL "" =
+        [ ]
+        [ "T" RCL ISWORD NOT
+          [ DROP "FIVE LETTERS" "NOTE" STO 0 ]
+          [ "T" RCL KNOWN NOT
+            [ DROP "NOT IN THE LIST" "NOTE" STO 0 ]
+            [ ACCEPT ]
+            IFTE ]
+          IFTE ]
+        IFTE ]
+      IFTE ]
+    IFTE
+    DROP
+    0 BOARD
+;
+
+: NEWTHORNLEWITH
+    [ TRIM LOWER ] MAP [ ISWORD ] FILTER "WORDS" STO
+    "WORDS" RCL
+    DUP ISEMPTY
+    [ DROP "" ]
+    [ DUP LENGTH 1 SWAP RANDOMINT NTH ]
+    IFTE
+    "ANS" STO
+    { } "GUESSES" STO
+    False "OVER" STO
+    "" "NOTE" STO
+    0 BOARD
+;
+
+: NEWTHORNLE
+    READLINES NEWTHORNLEWITH
+;

@@ -107,7 +107,7 @@ for (const mill of mills) {
 
 // Hand-verified exclusions for string-literal false positives the filters
 // above cannot see. Re-check by eye if either side changes.
-usedByMills["buzzer"] = usedByMills["buzzer"].filter(m => m !== "pac-vt100"); // "P - Play" menu text
+usedByMills["buzzer"] = usedByMills["buzzer"].filter(m => m !== "pac-vt100" && m !== "thornle"); // "P - Play" menu text, both
 // emley-moor closes SOCKETS. Close is net's and turtle's alike - the very
 // collision net.shoddy's header documents - and the scan cannot tell which
 // one a bare call meant. The mill includes net and not turtle.

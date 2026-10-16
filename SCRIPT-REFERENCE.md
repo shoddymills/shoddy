@@ -38,6 +38,7 @@ Conventions shared by every script:
 | [mills/simplex-from-mps/build.sh](mills/simplex-from-mps/build.sh) | Simplex from MPS mill | `build`, `run`, `test`, `clean` |
 | [mills/sparky/build.sh](mills/sparky/build.sh) | Sparky mill (the dictionary under the MCP server) | `run`, `test`, `build` |
 | [mills/tally/build.sh](mills/tally/build.sh) | Tally mill | `run`, `capture`, `test`, `build`, `clean` |
+| [mills/thornle/build.sh](mills/thornle/build.sh) | Thornle mill | `run`, `short`, `test` |
 | [mills/weather-glass/build.sh](mills/weather-glass/build.sh) | Weather Glass mill | `run`, `test`, `build`, `clean` |
 | [tutorials/spiro/build.sh](tutorials/spiro/build.sh) | Spirograph tutorial | `run`, `test` |
 
@@ -301,6 +302,16 @@ Default command: `run`. `SPEC` is the second argument and defaults to `files/gra
 | `test` | | `mill run test.shoddy < /dev/null`. |
 | `build` | | Weaves `tally.shoddy` into `bin/`. A woven program has no window backend, so charts still need `mill run`. |
 | `clean` | | `rm -rf bin`. |
+
+### mills/thornle/build.sh
+
+Default command: `run`.
+
+| Command | Arguments | What it does |
+| --- | --- | --- |
+| `run` | | `mill run thornle.shoddy`. VT100 terminal game on `files/words.txt`; wants an ANSI terminal of at least 80x24. A typed word guesses, Q or QUIT leaves the game. |
+| `short` | | `mill run thornle.shoddy files/short-list.txt`. The same game on six words. |
+| `test` | | `mill run test.shoddy`, then `mill weave thornle.shoddy`, then one scripted session piped through `mill run thornle.shoddy files/words.txt 42`. A hang or a crash in the session fails; its frames are not checked. |
 
 ### mills/weather-glass/build.sh
 

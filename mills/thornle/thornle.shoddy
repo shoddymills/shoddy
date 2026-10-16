@@ -1,0 +1,314 @@
+Rem ==================================================================
+Rem thornle.shoddy — Thornle in the terminal (VT100 escapes + the loop).
+Rem
+Rem Run: ./build.ps1   (or ./build.sh), or from anywhere
+Rem      mill run thornle.shoddy [WORDS-FILE] [SEED]
+Rem      WORDS-FILE defaults to files/words.txt, resolved against the
+Rem      working directory; a numeric SEED replays a reported game.
+Rem
+Rem Six guesses at a hidden five-letter word. Each guess is a whole
+Rem typed line, read through the InputLine builtin so that the end of
+Rem input (a closed or redirected stdin) leaves the game rather than
+Rem spinning on blank lines; after each one every
+Rem letter is marked right-place, wrong-place or absent, and the marks
+Rem are the three thread colours of the project mark, as 24-bit SGR.
+Rem Q or QUIT alone returns to the menu. Needs a terminal at least
+Rem 80x24; Windows Terminal and any modern Unix terminal render the
+Rem colours, the legacy conhost window does not, and the menu's C turns
+Rem them off for glyph marks instead.
+Rem
+Rem The pure model is thornle-core.shoddy and is checked headless by
+Rem test.shoddy. This file is the terminal half: painting, the menu and
+Rem the loop. Print appends a newline, so each frame is assembled into
+Rem ONE string that ends by parking the cursor on row 19; the newline
+Rem then lands on row 20, which is where the prompt goes, and nothing
+Rem can scroll the board away. With colour off, not one SGR sequence is
+Rem emitted: only cursor addressing and plain text.
+Rem ==================================================================
+
+Include "thornle-core.shoddy"
+Include "vt100.shoddy"
+Include "str.shoddy"
+
+Rem ---- colour --------------------------------------------------------
+Rem The vt100 machine stops at attributes, so the 24-bit colour codes
+Rem live here, as pac's do. Every hex value appears once, beside the
+Rem shade it names.
+
+Def Ink(colour As Boolean, seq As String) As String
+    If colour Then
+        seq
+    Else
+        ""
+
+Def Fg(r As Number, g As Number, b As Number) As String
+    Csi() & "38;2;" & Str(r) & ";" & Str(g) & ";" & Str(b) & "m"
+
+Def Bg(r As Number, g As Number, b As Number) As String
+    Csi() & "48;2;" & Str(r) & ";" & Str(g) & ";" & Str(b) & "m"
+
+Rem drab olive #55604A: the project's green, for a right-place tile
+Def OliveBg() As String
+    Bg(85, 96, 74)
+
+Rem madder oxblood #6E3A33: the project's red, for an absent tile
+Def MadderBg() As String
+    Bg(110, 58, 51)
+
+Rem the same madder, as ink, for the banner
+Def MadderFg() As String
+    Fg(110, 58, 51)
+
+Rem indigo navy #2F4560: the project's blue, for a wrong-place tile
+Def IndigoBg() As String
+    Bg(47, 69, 96)
+
+Rem paper #efece4: the letter on a coloured tile
+Def PaperFg() As String
+    Fg(239, 236, 228)
+
+Rem ---- tiles ---------------------------------------------------------
+
+Def Shade(m As Mark) As String
+    Select Case m
+        Case Placed
+            OliveBg()
+        Case Present
+            IndigoBg()
+        Case Else
+            MadderBg()
+
+Rem With colour off the mark is a glyph around the letter.
+Def Glyph(ch As String, m As Mark) As String
+    Select Case m
+        Case Placed
+            "[" & Upper(ch) & "]"
+        Case Present
+            "(" & Upper(ch) & ")"
+        Case Else
+            " " & Upper(ch) & " "
+
+Rem One marked tile, three columns wide.
+Def Tile(ch As String, m As Mark, colour As Boolean) As String
+    If colour Then
+        Shade(m) & PaperFg() & Bold() & " " & Upper(ch) & " " & AttrsOff()
+    Else
+        Glyph(ch, m)
+
+Rem The dot of an empty tile is the terminal's own ink, dimmed, so it
+Rem reads on a dark screen and on light paper alike. A fixed shade
+Rem cannot: the line colour #ddd6c6 vanished on paper.
+Def EmptyTile(colour As Boolean) As String
+    Ink(colour, LowIntensity()) & " . " & Ink(colour, AttrsOff())
+
+Rem ---- the frame -----------------------------------------------------
+Rem Title on row 2; the six grid rows from row 4; the three keyboard
+Rem rows from row 12; the message line on row 16; the help line on row
+Rem 18; the prompt on row 20.
+
+Def Title(colour As Boolean) As String
+    CursorPos(2, 4) & Ink(colour, MadderFg() & Bold()) & "THORNLE" & Ink(colour, AttrsOff())
+
+Def GuessTiles(ans As String, gs As String, colour As Boolean) As String
+    Let ms = Marks(ans, gs)
+    Fold(Range(1, wordLen), "", Fn(acc, i) => acc & Tile(Mid(gs, i, 1), Nth(ms, i), colour) & " ")
+
+Def RowText(g As Game, r As Number, colour As Boolean) As String
+    Let at = CursorPos(3 + r, 4)
+    If r <= Length(Guesses(g)) Then
+        at & GuessTiles(Answer(g), Nth(Guesses(g), r), colour)
+    Else
+        at & StrRep(EmptyTile(colour) & " ", wordLen)
+
+Def GridText(g As Game, colour As Boolean) As String
+    Fold(Range(1, maxGuesses), "", Fn(acc, r) => acc & RowText(g, r, colour))
+
+Rem A letter never guessed stays lowercase, so that with colour off an
+Rem absent letter (bare, uppercase) still reads apart from one not yet
+Rem tried.
+Def KeyText(lg As Array Of Option, ch As String, colour As Boolean) As String
+    Select Case Nth(lg, LetterIx(Asc(ch)))
+        Case Some(m)
+            Tile(ch, m, colour)
+        Case None
+            " " & ch & " "
+
+Def KeyRow(lg As Array Of Option, keys As String, row As Number, col As Number, colour As Boolean) As String
+    CursorPos(row, col) & Fold(Range(1, Len(keys)), "", Fn(acc, i) => acc & KeyText(lg, Mid(keys, i, 1), colour) & " ")
+
+Rem The legend, laid out like a keyboard.
+Def KeysText(g As Game, colour As Boolean) As String
+    Let lg = Legend(g)
+    KeyRow(lg, "qwertyuiop", 12, 4, colour) & KeyRow(lg, "asdfghjkl", 13, 6, colour) & KeyRow(lg, "zxcvbnm", 14, 8, colour)
+
+Def NoteText(g As Game) As String
+    CursorPos(16, 4) & Note(g)
+
+Rem Once the game has ended the only thing a line can do is return to
+Rem the menu, so the help line says that and nothing else.
+Def HelpText(g As Game) As String
+    If Ended(g) Then
+        CursorPos(18, 4) & "Press Enter for the menu."
+    Else
+        CursorPos(18, 4) & "Type a five-letter word and press Enter. Q or QUIT returns to the menu."
+
+Rem One frame: everything, ending with attributes off and the cursor
+Rem parked on row 19 so the prompt lands on row 20.
+Def FrameText(g As Game, colour As Boolean) As String
+    ClearScreen() & Title(colour) & GridText(g, colour) & KeysText(g, colour) & NoteText(g) & HelpText(g) & Ink(colour, AttrsOff()) & CursorPos(19, 1)
+
+Rem ---- reading a line ------------------------------------------------
+Rem InputLine answers [atEof, text]; Input would collapse the end of
+Rem input into a blank line, and a blank line does nothing, so a closed
+Rem stdin would spin forever. Here it is None, and None means leave.
+
+Def AskLine(prompt As String) As Option
+    Let r = InputLine(prompt)
+    If Nth(r, 1) Then
+        None()
+    Else
+        Some(Nth(r, 2))
+
+Def LineAction(o As Option) As Action
+    Select Case o
+        Case Some(t)
+            Classify(t)
+        Case None
+            Leave()
+
+Rem ---- the loop ------------------------------------------------------
+Rem Line-driven: paint, read a line, apply it, repeat. Some(game) when a
+Rem game has ended and been acknowledged; None when the player left.
+
+Def GameLoop(g As Game, colour As Boolean) As Option
+    Print(FrameText(g, colour))
+    If Ended(g) Then
+        Let k = AskLine("   > ")
+        Some(g)
+    Else
+        Turn(g, colour, LineAction(AskLine("   > ")))
+
+Def Turn(g As Game, colour As Boolean, a As Action) As Option
+    Select Case a
+        Case Leave
+            None()
+        Case Else
+            GameLoop(Act(g, a), colour)
+
+Def PlayGame(words As List Of String, colour As Boolean) As Option
+    GameLoop(NewGame(words), colour)
+
+Rem ---- the menu ------------------------------------------------------
+Rem The banner, a short description, the legend as it will be painted,
+Rem the session tally, then P play, C colour on/off, Q quit.
+Rem The tally is threaded through the menu recursion and not persisted.
+
+Type Session
+    Played  As Number
+    Wins    As Number
+    Streak  As Number
+    LastWin As Number
+
+Rem A finished game updates the tally; a game left early does not count.
+Def AfterGame(s As Session, r As Option) As Session
+    Select Case r
+        Case Some(g)
+            Settle(s, g)
+        Case None
+            s
+
+Def Settle(s As Session, g As Game) As Session
+    If Won(g) Then
+        Session(Played(s) + 1, Wins(s) + 1, Streak(s) + 1, Length(Guesses(g)))
+    Else
+        Session(Played(s) + 1, Wins(s), 0, LastWin(s))
+
+Def OnOff(colour As Boolean) As String
+    If colour Then
+        "on"
+    Else
+        "off"
+
+Def TallyText(s As Session) As String
+    "PLAYED " & Str(Played(s)) & "   WON " & Str(Wins(s)) & "   STREAK " & Str(Streak(s)) & "   LAST WIN IN " & Str(LastWin(s))
+
+Rem The four marks as the grid will paint them, with their meanings:
+Rem coloured tiles when colour is on, the glyphs when it is off. Built
+Rem from Tile so the legend can never drift from the board.
+Def LegendText(colour As Boolean) As String
+    Let a = CursorPos(9, 4) & Tile("a", Placed(), colour) & " right letter, right place    " & Tile("a", Present(), colour) & " right letter, wrong place"
+    a & CursorPos(10, 4) & Tile("a", Absent(), colour) & " not in the word" & StrRep(" ", 14) & " a  not yet tried"
+
+Rem The menu: the name, what the game is, the legend for the current
+Rem colour setting, the tally, then the three choices.
+Def MenuText(s As Session, colour As Boolean) As String
+    Let a = ClearScreen() & Title(colour)
+    Let b = a & CursorPos(4, 4) & "Named for Thornhill, where John Michell worked out the odds."
+    Let c = b & CursorPos(6, 4) & "Guess the hidden five-letter word. You have six tries, and after" & CursorPos(7, 4) & "each one every letter of your guess comes back marked:"
+    Let d = c & LegendText(colour) & CursorPos(12, 4) & TallyText(s)
+    Let e = d & CursorPos(14, 4) & "P - Play" & CursorPos(15, 4) & "C - Colour (" & OnOff(colour) & ")" & CursorPos(16, 4) & "Q - Quit"
+    e & Ink(colour, AttrsOff()) & CursorPos(17, 1)
+
+Rem The end of input quits, as Q does.
+Def MenuChoice(o As Option) As String
+    Select Case o
+        Case Some(t)
+            Upper(Trim(t))
+        Case None
+            "Q"
+
+Def Menu(s As Session, words As List Of String, colour As Boolean) As Session
+    Print(MenuText(s, colour))
+    Select Case MenuChoice(AskLine("   > "))
+        Case "P"
+            Menu(AfterGame(s, PlayGame(words, colour)), words, colour)
+        Case "C"
+            Menu(s, words, Not colour)
+        Case "Q"
+            s
+        Case Else
+            Menu(s, words, colour)
+
+Rem ---- arguments and start -------------------------------------------
+
+Def PathArg(args As List Of String) As String
+    If IsEmpty(args) Then
+        "files/words.txt"
+    Else
+        First(args)
+
+Rem A numeric second argument seeds the game so a reported one can be
+Rem replayed. Without one the generator is left as the runtime started
+Rem it, which is already seeded from the clock. Ticks() is not a clock:
+Rem it counts milliseconds since the runtime's stopwatch began, and its
+Rem first call answers about zero, so Seed(Ticks()) here would pick the
+Rem same word on every run.
+Def SeedArg(args As List Of String) As Option
+    If Length(args) >= 2 And IsNumeric(Nth(args, 2)) Then
+        Some(Val(Nth(args, 2)))
+    Else
+        None()
+
+Def Start(words As List Of String, n As Option)
+    Select Case n
+        Case Some(x)
+            Seed(x)
+            Run(words)
+        Case None
+            Run(words)
+
+Def Run(words As List Of String)
+    If IsEmpty(words) Then
+        Print("THE LIST HOLDS NO FIVE-LETTER WORDS")
+    Else
+        Let final = Menu(Session(0, 0, 0, 0), words, True)
+        Print(ClearScreen() & CursorPos(1, 1) & TallyText(final))
+
+Rem A file that cannot be read ends the program with one plain line.
+Def Main()
+    Let args = Args()
+    Select Case TryReadLines(PathArg(args))
+        Case Ok(lines)
+            Start(Normalise(lines), SeedArg(args))
+        Case Err(why, at)
+            Print(why)

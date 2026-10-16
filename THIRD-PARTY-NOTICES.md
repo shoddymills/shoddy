@@ -100,6 +100,19 @@ is a trademark of Taito Corporation / Square Enix. This project is an
 educational homage and is not affiliated with, endorsed by, or sponsored by the
 trademark owner.
 
+### Wordle homage (`mills/thornle/`)
+
+The `thornle*.shoddy` files and `thornle.halifax` are an original
+implementation of the five-letter guessing game. *Wordle* is a trademark of
+The New York Times Company. This project is an educational homage and is not
+affiliated with, endorsed by, or sponsored by the trademark owner. The word
+"Wordle" appears in no program or menu, and in the documentation only in
+trademark notices like this one.
+
+The word list, `files/words.txt`, is a published list of five-letter English
+words, reproduced here **as data only**. `files/short-list.txt` is six words
+from it, kept for quick test games.
+
 ### Boids (`mills/devils-dust/`)
 
 The flocking simulation in the `devils-dust*.shoddy` files implements

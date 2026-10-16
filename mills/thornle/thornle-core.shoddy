@@ -1,0 +1,200 @@
+Rem ==================================================================
+Rem thornle-core.shoddy — Thornle, the pure model.
+Rem
+Rem Everything the game IS that does not touch a terminal: the word
+Rem list as the game uses it, the scoring of a guess against the answer,
+Rem the state record, the line classifier and the keyboard legend. No
+Rem Print, no Input, no file read and no cursor addressing, so it runs
+Rem headless and is checked that way by test.shoddy. thornle.shoddy adds
+Rem the VT100 painting, the menu and the loop on top.
+Rem
+Rem The decisions the rest depends on:
+Rem   - The shell reads the file; the core takes a List Of String and
+Rem     never knows where it came from. That is what lets the tests hand
+Rem     it ten words.
+Rem   - Input is a whole line, not a key. Classify turns one line into
+Rem     an Action; the terminal does the editing.
+Rem   - Marks are not stored. The shell recomputes them from the answer
+Rem     and each guess when it paints, because scoring five letters is
+Rem     cheaper than keeping two lists in step.
+Rem   - Scoring handles repeated letters the way the original game does:
+Rem     exact hits first, each consuming its answer letter; then, left to
+Rem     right, a remaining guess letter is wrong-place if an unconsumed
+Rem     copy is left (and consumes it), otherwise absent.
+Rem ==================================================================
+
+Include "seq.shoddy"
+Include "str.shoddy"
+Include "math.shoddy"
+
+Rem ---- tunables ------------------------------------------------------
+
+Let wordLen = 5
+Let maxGuesses = 6
+
+Rem ---- the word list -------------------------------------------------
+
+Rem A playable word: exactly five letters a-z.
+Def IsWord(s As String) As Boolean
+    Len(s) = wordLen And All(Codes(s), Fn(c) => c >= 97 And c <= 122)
+
+Rem The list as the game uses it: lowercased, trimmed, and only the
+Rem five-letter words kept. The shipped file is already clean, so this
+Rem costs nothing and protects the game from a list somebody edits.
+Def Normalise(lines As List Of String) As List Of String
+    Filter(Map(lines, Fn(s) => Lower(Trim(s))), IsWord)
+
+Rem ---- marks ---------------------------------------------------------
+
+Rem Right letter in the right place; right letter in the wrong place;
+Rem letter not in the word.
+Type Mark = Placed | Present | Absent
+
+Rem The second pass's working state: the marks so far, and how many
+Rem unconsumed copies of each letter the answer still has.
+Type Scoring
+    ScMarks As Array Of Mark
+    ScSpare As Array Of Number
+
+Rem a = 1 .. z = 26
+Def LetterIx(code As Number) As Number
+    code - 96
+
+Def Hit(ans As String, gs As String, i As Number) As Boolean
+    CodeAt(ans, i) = CodeAt(gs, i)
+
+Def Bump(counts As Array Of Number, k As Number, d As Number) As Array Of Number
+    SetNth(counts, k, Nth(counts, k) + d)
+
+Rem Pass one: the answer's letters at the positions that are not exact
+Rem hits, counted per letter.
+Def SpareCounts(ans As String, gs As String) As Array Of Number
+    Fold(Range(1, wordLen), Dim(26, 0), Fn(acc, i) => SpareAdd(acc, ans, gs, i))
+
+Def SpareAdd(acc As Array Of Number, ans As String, gs As String, i As Number) As Array Of Number
+    If Hit(ans, gs, i) Then
+        acc
+    Else
+        Bump(acc, LetterIx(CodeAt(ans, i)), 1)
+
+Rem The five marks for a guess against the answer.
+Def Marks(ans As String, gs As String) As Array Of Mark
+    Let start = Scoring(Dim(wordLen, Absent()), SpareCounts(ans, gs))
+    ScMarks(Fold(Range(1, wordLen), start, Fn(sc, i) => MarkAt(sc, ans, gs, i)))
+
+Rem Pass two, one position: an exact hit is Placed; otherwise the guess
+Rem letter is Present if a spare copy is left, and consumes it.
+Def MarkAt(sc As Scoring, ans As String, gs As String, i As Number) As Scoring
+    If Hit(ans, gs, i) Then
+        With(sc, ScMarks = SetNth(ScMarks(sc), i, Placed()))
+    Else
+        MarkSpare(sc, i, LetterIx(CodeAt(gs, i)))
+
+Def MarkSpare(sc As Scoring, i As Number, k As Number) As Scoring
+    If Nth(ScSpare(sc), k) > 0 Then
+        Scoring(SetNth(ScMarks(sc), i, Present()), Bump(ScSpare(sc), k, -1))
+    Else
+        sc
+
+Rem ---- the game ------------------------------------------------------
+
+Rem One record, threaded through the loop and replaced, never changed.
+Rem Note is the message line: "", or why a line was refused, or how the
+Rem game ended.
+Type Game
+    Answer  As String
+    Words   As List Of String
+    Guesses As List Of String
+    Note    As String
+    Won     As Boolean
+    Ended   As Boolean
+
+Rem The answer is picked with Pick; the shell seeds first.
+Def NewGame(ws As List Of String) As Game
+    Game(Pick(ws), ws, { }, "", False, False)
+
+Rem A submitted line. Rejected lines leave the guesses alone and set
+Rem the note; once the game has ended nothing changes.
+Def Submit(g As Game, t As String) As Game
+    If Ended(g) Then
+        g
+    Else
+        If Not IsWord(t) Then
+            With(g, Note = "FIVE LETTERS")
+        Else
+            If Not Contains(Words(g), t) Then
+                With(g, Note = "NOT IN THE LIST")
+            Else
+                Accept(g, t)
+
+Def Accept(g As Game, t As String) As Game
+    Let tried = Append(Guesses(g), t)
+    Let isWin = t = Answer(g)
+    Let isOver = isWin Or Length(tried) >= maxGuesses
+    With(g, Guesses = tried, Won = isWin, Ended = isOver, Note = Outcome(isWin, isOver, Length(tried), Answer(g)))
+
+Def Outcome(isWin As Boolean, isOver As Boolean, n As Number, ans As String) As String
+    If isWin Then
+        "GOT IT IN " & Str(n)
+    Else
+        If isOver Then
+            "IT WAS " & Upper(ans)
+        Else
+            ""
+
+Rem ---- lines ---------------------------------------------------------
+
+Rem What one typed line means. Q or QUIT alone leaves the game; a blank
+Rem line does nothing; anything else is a guess, lowercased and trimmed.
+Rem Any five-letter word is a guess, so a word that starts with Q is
+Rem never mistaken for quit.
+Type Action = Guess(Typed) | Leave | Idle
+
+Def Classify(line As String) As Action
+    Let t = Lower(Trim(line))
+    If t = "q" Or t = "quit" Then
+        Leave()
+    Else
+        If t = "" Then
+            Idle()
+        Else
+            Guess(t)
+
+Rem Leave is the shell's to act on; the game itself only sees guesses.
+Def Act(g As Game, a As Action) As Game
+    Select Case a
+        Case Guess(t)
+            Submit(g, t)
+        Case Else
+            g
+
+Rem ---- the keyboard legend -------------------------------------------
+
+Rem The best mark seen so far for each of the 26 letters: None for a
+Rem letter never guessed, else Some(mark), where right-place beats
+Rem wrong-place beats absent.
+Def Legend(g As Game) As Array Of Option
+    Fold(Guesses(g), Dim(26, None()), Fn(acc, gs) => LegendRow(acc, Answer(g), gs))
+
+Def LegendRow(acc As Array Of Option, ans As String, gs As String) As Array Of Option
+    Let ms = Marks(ans, gs)
+    Fold(Range(1, wordLen), acc, Fn(a, i) => LegendAt(a, LetterIx(CodeAt(gs, i)), Nth(ms, i)))
+
+Def LegendAt(acc As Array Of Option, k As Number, m As Mark) As Array Of Option
+    SetNth(acc, k, Some(Better(Nth(acc, k), m)))
+
+Def Rank(m As Mark) As Number
+    Select Case m
+        Case Placed
+            3
+        Case Present
+            2
+        Case Else
+            1
+
+Def Better(old As Option, m As Mark) As Mark
+    Select Case old
+        Case Some(o)
+            Ifte(Rank(o) >= Rank(m), o, m)
+        Case None
+            m

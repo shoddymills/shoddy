@@ -18,6 +18,12 @@ cd "$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 
 MILL=artifacts/bin/Shoddy.Mill/release/mill
 [ -x "$MILL" ] || MILL=artifacts/bin/Shoddy.Mill/release/mill.exe
+# Pin the mill to this checkout's machine sources, exactly as build.sh
+# does. These suites reach a machine by relative path
+# (../machines/seq.shoddy), and naming the folder is what makes those
+# files machines rather than source to splice. Without it seq is spliced
+# AND loaded as a machine, and the run dies on "duplicate definition".
+export SHODDYLIB="$PWD/machines"
 
 READ='const m = await import("./scripts/suites.mjs");
 console.log(Object.entries(m.TST_EXCLUSIONS)

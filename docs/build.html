@@ -41,12 +41,13 @@ line.</div>
 
 <h2 id="commands">1. The mill's commands</h2>
 <pre><code class="language-sh">mill run x.shoddy        # compile in memory and run (default: mill x.shoddy)
-mill weave x.shoddy      # compile -&gt; x.dll (+ runtimeconfig + runtime dlls)
-dotnet x.dll             # run the woven program
-mill machine lib.shoddy  # compile a library to a machine DLL
+mill weave x.shoddy      # compile -&gt; bin/x.dll beside the source (+ runtimeconfig + runtime dlls)
+dotnet bin/x.dll         # run the woven program
+mill machine lib.shoddy  # compile one machine of your own to bin/Shoddy.Machines.Lib.dll
 mill gen x.shoddy        # print the generated C#
 mill lex x.shoddy        # dump token lines (debug)
-mill dap                 # DAP server &mdash; the perch (the editor launches this)
+mill dap                 # the debug adapter, over stdin/stdout (the editor launches this)
+mill run --perch PORT x.shoddy   # the debugged program's process, as the adapter starts it
 
 mill run --allow-net x.shoddy   # arm the gated TCP builtins (the net machine)
 mill run --no-window x.shoddy   # open every scribbler hidden (a capture run)
@@ -87,16 +88,20 @@ Set that variable yourself when running one.</p>
 sit at the repo root:
 <code>build.ps1</code> on Windows, <code>build.sh</code> on
 Linux/macOS/WSL, same subcommands:</p>
-<pre><code class="language-sh">./build.sh build                 # build the mill into bin/
+<pre><code class="language-sh">./build.sh build                 # build the mill and the machine library, under artifacts/
 ./build.sh test                  # the whole suite: conformance, machines, mills
 ./build.sh check                 # the seven fast verify gates (read-only)
+./build.sh prove                 # the release proof: every CI verb this machine can run, locked
+./build.sh reproducible          # two clean builds must agree byte for byte
 ./build.sh run tst/examples.shoddy
 ./build.sh weave tst/simplex.shoddy
-./build.sh machines              # compile every machine to a DLL
-./build.sh stage                 # stage the mill + machines into the extension
+./build.sh machines              # the same as build: the library is built with the mill
+./build.sh stage                 # publish the mill, library and sources into the extension
 ./build.sh vsix                  # package the VS Code extension (.vsix)
 ./build.sh vsix patch            # bump version, then package
+./build.sh vsix 2.10.0           # package as 2.10.0; no file changes
 ./build.sh install               # install the packaged .vsix into VS Code
+./build.sh install 2.10.0        # install vscode-shoddy-2.10.0.vsix
 ./build.sh all                   # clean, test, then vsix -- the ship path
 ./build.sh clean
 </code></pre>
@@ -104,6 +109,13 @@ Linux/macOS/WSL, same subcommands:</p>
 <code>./build.sh</code> (e.g. <code>./build.ps1 build</code>). If PowerShell
 refuses the unsigned script, bypass the policy for that one invocation:
 <code>powershell -ExecutionPolicy Bypass -File .\build.ps1 build</code>.</p>
+<p>A local build reports the version in <code>Directory.Build.props</code>,
+which is a development default. A release takes its number from its git
+tag. To give a local package a release number, pass it to
+<code>vsix</code>: <code>./build.sh vsix 2.10.0</code>. The mill inside
+the package then reports 2.10.0, and the package is
+<code>vscode-shoddy-2.10.0.vsix</code>. No file in the repo changes.
+Install it with <code>./build.sh install 2.10.0</code>.</p>
 <p><code>test</code> is the proof: the C# conformance suite, every core and
 machine suite, and every mill&#39;s own suite, in one run (about twenty
 minutes). <code>check</code> is its cheap companion: seven read-only
@@ -124,50 +136,64 @@ shell you already have. See <a href="mills/index.html">the mills
 catalog</a>.</p>
 
 <h2 id="rebuild">3. Rebuilding the mill</h2>
-<p><code>./build.sh build</code> runs
-<code>dotnet publish src/Shoddy.Mill -c Release -o bin</code>. That is a folder
-publish, not single-file, and the difference matters: the weaver
-references
-<code>Shoddy.Runtime.dll</code> from disk when compiling generated code.
-The executable lands at <code>bin/mill</code> (<code>bin\mill.exe</code> on
-Windows). Re-run it after touching anything under <code>src/</code>.</p>
+<p><code>./build.sh build</code> is <code>dotnet build src/Shoddy.Mill -c
+Release</code>. That builds the toolchain, builds the machine library in
+Debug and Release (<code>machines/Shoddy.Machines.csproj</code> and the
+seeds beside it: the toolchain generates the C#, the ordinary compiler
+builds it, one assembly each), and carries both configurations inside the
+mill's output. The executable lands at
+<code>artifacts/bin/Shoddy.Mill/release/mill</code> (<code>mill.exe</code> on
+Windows), with the library in <code>lib/</code> and <code>lib/debug/</code>
+beside it and the machine sources in <code>machines/</code>. Every project's
+output lives under <code>artifacts/</code>, the SDK's own layout, and nothing
+a build writes lands in a source folder.</p>
+<p>Every wrapper target that runs the mill builds first, so there is no
+step to remember after touching <code>src/</code> or <code>machines/</code>:
+MSBuild's up-to-date check knows every input, the compiler's own assemblies
+included, so a changed machine source regenerates and recompiles the
+library and nothing else judges staleness.</p>
 
 <h2 id="machines">4. Includes and machines</h2>
 <ul>
 <li><p><code>Include &quot;FILE.shoddy&quot;</code> resolves relative to the <em>including file</em>, then
 the <code>SHODDYLIB</code> directory, then the machine library shipped with the
-running mill (<code>machines/</code> beside the executable, then beside its
-<code>bin/</code>). A bare <code>Include &quot;seq.shoddy&quot;</code> therefore works from any
-folder with no setup, which is how the mills spell it. Include-once: a
-file arrives at most once.</p>
+running mill (<code>machines/</code> beside the executable). A bare
+<code>Include &quot;seq.shoddy&quot;</code> therefore works from any folder with
+no setup, which is how the mills spell it. Include-once: a file arrives at
+most once.</p>
 </li>
-<li><p><strong>A machine is always used compiled.</strong> Every entry point that
-reads a program (<code>mill run</code>, <code>mill weave</code>, and the
-debugger) links against <code>Shoddy.Machines.&lt;Name&gt;.dll</code> beside
-the <code>.shoddy</code>, and builds it first if it is missing or older than
-its source. What a program means never depends on what happens to have been
-built. Splicing a machine instead would put its own includes into your flat
-table and quietly undo the surface scoping. A file that is <em>not</em> in a
-machine library (one of your program's own source files) splices as it
-always has. That is what lets a mill spread itself across a dozen files.</p>
-<p><code>./build.sh machines</code> still compiles the lot up front, working out
-the order itself: it reads each machine's <code>Include</code> lines and builds
-a machine only once everything it includes is already a DLL
-(<code>seq</code> before <code>dict</code>, <code>matrix</code> before
-<code>simplex</code>, and so on). To build one by hand:</p>
-<pre><code class="language-sh">bin/mill machine machines/seq.shoddy
-</code></pre>
+<li><p><strong>A machine is always used compiled.</strong> The standard
+library is one assembly, <code>Shoddy.Machines.dll</code>, built from
+<code>machines/Shoddy.Machines.csproj</code> like any other project (the
+reckoner seeds are a second one beside it), and the mill carries both in
+<code>lib/</code>, with the instrumented build the debugger links in
+<code>lib/debug/</code>, so a debugged program can step into every machine
+it calls. Every entry point that reads a program (<code>mill run</code>,
+<code>mill weave</code>, and the debugger) links a machine from there, or
+from a library named with <code>--lib</code>, which is how a project's
+references reach the mill through ShoddyWeave. Nothing is built at run
+time: a machine missing from the library is an error that names the
+library to build. What a program means never depends on what happens to
+have been built. Splicing a machine instead would put its own includes into
+your flat table and quietly undo the surface scoping. A file that is
+<em>not</em> in a machine library (one of your program's own source files)
+splices as it always has. That is what lets a mill spread itself across a
+dozen files.</p>
+<p>A file counts as a machine by where it is: in <code>SHODDYLIB</code>, in
+the mill's own <code>machines/</code>, or in a folder a build names with
+<code>--libsrc</code>. The repo's wrapper sets <code>SHODDYLIB</code> to the
+checkout's <code>machines/</code>, so a mill that reaches a machine by
+relative path (<code>../../machines/seq.shoddy</code>) links the library the
+checkout built.</p>
+<p>A machine of your own, outside the library: <code>mill machine
+mylib.shoddy</code> compiles it to <code>bin/Shoddy.Machines.Mylib.dll</code>
+beside its source (<code>--debug</code> for the instrumented build), and
+<code>--lib</code> names that file to a run or a weave.</p>
 </li>
 <li><p>Curious what your program compiles to? <code>mill gen file.shoddy</code>
 prints the generated C#. Self-tail-recursive defs show
 <code>continue;  // self tail call &mdash; the loop is the TCO</code>. (TCO is
 tail-call optimization: the compiler turns that recursion into a loop.)</p>
-</li>
-<li><p><strong>Stale DLLs rebuild themselves.</strong> When a machine's
-<code>.shoddy</code> source (or any machine DLL it depends on) is newer than its
-DLL, the mill rebuilds it in place before loading, with a one-line note on
-stderr. An edited machine can no longer be silently shadowed by yesterday's
-build.</p>
 </li>
 </ul>
 

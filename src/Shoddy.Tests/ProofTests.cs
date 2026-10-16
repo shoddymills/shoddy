@@ -31,30 +31,10 @@ public class ProofTests
         return ProcessRun.CaptureAll(psi);
     }
 
-    /// <summary>The published mill the proof projects' ShoddyToolPath
-    /// names; built once if absent (a fresh checkout under plain
-    /// `dotnet test`).</summary>
-    static ProofTests()
-    {
-        if (!File.Exists(Path.Combine(Root, "bin", "mill.exe")) &&
-            !File.Exists(Path.Combine(Root, "bin", "mill")))
-        {
-            // The nested publish the build scripts warn about: on a cold
-            // cache it is slow AND loud, and reading its pipes one at a time
-            // is what turned "slow" into "stopped".
-            var psi = new ProcessStartInfo("dotnet",
-                $"publish src/Shoddy.Mill -c Release -o bin")
-            { WorkingDirectory = Root };
-            ProcessRun.CaptureAll(psi);
-        }
-    }
-
-    /// <summary>The published mill, by the name this OS gives it —
-    /// bin/mill.exe on Windows, bin/mill everywhere else. The scaffold
-    /// builds pass it as ShoddyToolPath; naming the .exe unconditionally
-    /// broke every proof on the Linux runners (v2.0.0).</summary>
-    static string MillPath => Path.Combine(Root, "bin",
-        OperatingSystem.IsWindows() ? "mill.exe" : "mill");
+    // No toolchain is published ahead of these: every proof project
+    // references the headless mill and the machine library as build-only
+    // project references, so `dotnet build` of a proof builds what it
+    // weaves with. A fresh checkout under plain `dotnet test` works.
 
     [Fact]
     public void ConsoleCsProofsPass()
@@ -164,16 +144,14 @@ public class ProofTests
                 $"new shoddy-console -n Scaffolded --mill \"{mill}\" --shoddyBuild \"{build}\"" +
                 $" -o scaffold-console", ws);
             Assert.True(nExit == 0, nOut);
-            var (bExit, bOut) = Dotnet(
-                $"build scaffold-console -p:ShoddyToolPath=\"{MillPath}\"", ws);
+            var (bExit, bOut) = Dotnet("build scaffold-console", ws);
             Assert.True(bExit == 0, bOut);
 
             var (lExit, lOut) = Dotnet(
                 $"new shoddy-lib -n ScaffoldedLib --mill \"{mill}\" --shoddyBuild \"{build}\"" +
                 $" -o scaffold-lib", ws);
             Assert.True(lExit == 0, lOut);
-            var (lbExit, lbOut) = Dotnet(
-                $"build scaffold-lib -p:ShoddyToolPath=\"{MillPath}\"", ws);
+            var (lbExit, lbOut) = Dotnet("build scaffold-lib", ws);
             Assert.True(lbExit == 0, lbOut);
         }
         finally

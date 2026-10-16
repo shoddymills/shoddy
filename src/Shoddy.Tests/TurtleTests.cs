@@ -116,9 +116,10 @@ public class TurtleTests
         var lines = Lexer.ReadProgram(sb, machines.TryResolve);
         var prog = new ShoddyProgram();
         machines.SeedInto(prog);
-        Weaver.WeaveMachine(Parser.Parse(lines, prog), sb, machines.Machines);
-        // The DLL lands where the Include resolver looks for it (machines/bin/).
-        Assert.True(File.Exists(MachineSet.DllPathFor(sb)));
+        // bin/ beside the source, where `mill machine` puts a lone weave.
+        string dll = Weaver.WeaveMachine(Parser.Parse(lines, prog), sb,
+                                         MillVerbs.MachineOut(sb, null, false), machines.Machines);
+        Assert.True(File.Exists(dll));
     }
 
     // ---- helpers --------------------------------------------------------

@@ -4,8 +4,8 @@
 //   node scripts/verify-closure.js sparky
 //   node scripts/verify-closure.js reckoner
 //
-// Run AFTER that lane's release build; it reads the output directory and
-// asserts nothing else.
+// The lanes' own `release` verb runs it after the build, so a local
+// release and CI's release are graded by this one copy of the lists.
 //
 // A dependency floor is a claim about what is linked, and the only place a
 // claim like that can be checked is the closure itself - a csproj says what
@@ -13,9 +13,9 @@
 // a path-filtered workflow, so the local gate could be green while the
 // shipped artifact carried a debug transport or a window toolkit.
 //
-// The lists are the workflows' lists, deliberately: ci.yml's mcp and maui
-// jobs keep theirs as the CI backstop, and if the two ever disagree, one
-// has been edited without the other and that is worth finding out.
+// THE ONLY COPY of these lists. ci.yml used to carry its own inline
+// version beside this one; now it calls the lane's `release` verb, which
+// calls this, so there is nothing left to drift.
 
 const fs = require("fs");
 const path = require("path");
@@ -62,7 +62,8 @@ function check(project, { must, banned, why }) {
 switch (lane) {
     case "sparky":
         check("Sparky", {
-            must: ["sparky.dll", "Shoddy.Machines.Sparky-core.dll"],
+            must: ["sparky.dll", "Shoddy.Machines.Sparky-core.dll",
+                   "Shoddy.Machines.dll", "Shoddy.Machines.Seeds.dll"],
             // No window, no audio, no toolchain, and no third-party protocol
             // package: the JSON-RPC layer is hand-rolled over
             // System.Text.Json, and this is what still says so in a year.
@@ -81,7 +82,7 @@ switch (lane) {
 
     case "reckoner":
         check("ShoddyReckoner", {
-            must: ["Shoddy.Machines.Halifax-core.dll"],
+            must: ["Shoddy.Machines.Halifax-core.dll", "Shoddy.Machines.dll"],
             banned: ["Shoddy.Perch"],
             why: "a release artifact must not carry the debug transport (B7.4)",
         });

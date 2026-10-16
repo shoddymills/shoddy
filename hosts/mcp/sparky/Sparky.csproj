@@ -5,20 +5,22 @@
        stdio streams. Everything else is Shoddy.Mcp.
 
        The woven mill arrives through ShoddyWeave exactly as it does in
-       any plain .NET consumer — the MCP lane adds only a protocol. -->
+       any plain .NET consumer — the MCP lane adds only a protocol. The
+       toolchain that weaves it is a build-only project reference, never
+       linked (B2.4); the machine library is an ordinary reference. -->
 
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
     <OutputType>Exe</OutputType>
     <AssemblyName>sparky</AssemblyName>
     <RootNamespace>Sparky</RootNamespace>
-    <ImplicitUsings>enable</ImplicitUsings>
-    <Nullable>enable</Nullable>
     <InvariantGlobalization>true</InvariantGlobalization>
-    <!-- Windows runs the published apphost; everywhere else publish
-         drops 'mill' with no extension - same tool, two spellings. -->
-    <ShoddyToolPath Condition="$([MSBuild]::IsOSPlatform('Windows'))">$(MSBuildThisFileDirectory)..\..\..\bin\mill.exe</ShoddyToolPath>
-    <ShoddyToolPath Condition="'$(ShoddyToolPath)' == ''">$(MSBuildThisFileDirectory)../../../bin/mill</ShoddyToolPath>
+    <!-- Single-file only when publishing for a platform, and set HERE
+         rather than as -p: on the command line: a global property
+         reaches every project in the graph, and the weaving tool (an
+         Exe) then infers the host's RID, which was never restored
+         (NETSDK1047). -->
+    <PublishSingleFile Condition="'$(RuntimeIdentifier)' != ''">true</PublishSingleFile>
   </PropertyGroup>
 
   <ItemGroup>
@@ -35,6 +37,14 @@
   <ItemGroup>
     <ProjectReference Include="..\Shoddy.Mcp\Shoddy.Mcp.csproj" />
     <ProjectReference Include="..\..\..\src\Shoddy.Hosting\Shoddy.Hosting.csproj" />
+    <!-- The tool runs on the build machine, never on the target: a
+         publish's -r and self-contained must not reach it, or it is
+         built for the target's RID and cannot run here. -->
+    <ProjectReference Include="..\..\..\src\Shoddy.Mill.Headless\Shoddy.Mill.Headless.csproj"
+                      ReferenceOutputAssembly="false" Private="false" OutputItemType="ShoddyTool"
+                      GlobalPropertiesToRemove="RuntimeIdentifier;SelfContained" />
+    <ProjectReference Include="..\..\..\machines\Shoddy.Machines.csproj" OutputItemType="ShoddyLibrary" />
+    <ProjectReference Include="..\..\..\machines\seeds\Shoddy.Machines.Seeds.csproj" OutputItemType="ShoddyLibrary" />
   </ItemGroup>
 
   <Import Project="..\..\..\src\Shoddy.Build\build\Shoddy.Build.targets" />

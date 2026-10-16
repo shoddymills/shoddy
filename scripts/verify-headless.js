@@ -3,7 +3,9 @@
 //
 //   node scripts/verify-headless.js
 //
-// Expects src/Shoddy.Mill.Headless to have been built in Release.
+// Expects the seeds library project to have been built in Release, which
+// builds the headless mill and both machine libraries:
+//   dotnet build machines/seeds/Shoddy.Machines.Seeds.csproj -c Release
 //
 // C3 and C8: the headless build exists so a machine with no window and no
 // audio device can still weave - the kind of machine consumers' CI actually
@@ -22,25 +24,27 @@
 const { spawnSync } = require("child_process");
 const path = require("path");
 const fs = require("fs");
+const os = require("os");
 const root = path.resolve(__dirname, "..");
 
 const dll = path.join(root, "artifacts", "bin", "Shoddy.Mill.Headless", "release", "mill.dll");
+const libs = path.join(root, "artifacts", "bin", "Shoddy.Machines.Seeds", "release");
 
 let bad = 0;
 const fail = (msg) => { console.log(msg); bad++; };
 
-if (!fs.existsSync(dll)) {
-    console.log(`${path.relative(root, dll).replace(/\\/g, "/")} is not there - `
-        + "build it first: dotnet build src/Shoddy.Mill.Headless -c Release");
+if (!fs.existsSync(dll) || !fs.existsSync(path.join(libs, "Shoddy.Machines.Seeds.dll"))) {
+    console.log("the headless mill or the machine library is not built - build them first: "
+        + "dotnet build machines/seeds/Shoddy.Machines.Seeds.csproj -c Release");
     process.exit(1);
 }
 
-// The headless mill runs from artifacts/bin/, where no machines/ directory
-// sits beside it, so the mill-relative library discovery that serves
-// bin/mill cannot serve it. SHODDYLIB pins the checkout's own machines,
-// which is exactly what the variable exists for - without it the first
-// weave dies chasing a seed's bare Include, as v2.0.0 did.
-const env = { ...process.env, SHODDYLIB: path.join(root, "machines") };
+// The headless mill carries no library and no sources: it is the build
+// tool, and a project tells it what to link. At a command line the two
+// variables do the same - SHODDYLIB names the sources an Include resolves
+// against, SHODDYLIBBIN the compiled libraries.
+const env = { ...process.env, SHODDYLIB: path.join(root, "machines"), SHODDYLIBBIN: libs };
+const out = fs.mkdtempSync(path.join(os.tmpdir(), "shoddy-headless-"));
 
 function mill(args) {
     const r = spawnSync("dotnet", [dll, ...args], {
@@ -53,13 +57,13 @@ function mill(args) {
 }
 
 {
-    const r = mill(["weave", "mills/halifax/halifax.shoddy"]);
+    const r = mill(["weave", "mills/halifax/halifax.shoddy", "-o", out]);
     if (r.code !== 0) fail(`headless weave failed (exit ${r.code}):\n${r.out}`);
     else console.log("ok  weaves a real mill");
 }
 
 {
-    const r = mill(["machine", "mills/halifax/halifax-core.shoddy"]);
+    const r = mill(["machine", "mills/halifax/halifax-core.shoddy", "-o", out]);
     if (r.code !== 0) fail(`headless machine-weave failed (exit ${r.code}):\n${r.out}`);
     else console.log("ok  machine-weaves its core");
 }

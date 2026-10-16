@@ -143,7 +143,7 @@ public static class Lexer
                 // one, which namespaces one machine's manifest and never
                 // its dependencies'. They used to disagree, so the same
                 // program meant different things to the runner and to the
-                // debugger (which always splices).
+                // debugger (which then spliced every machine).
                 string? sub = qualified ? toks[3].Text : null;
                 if (qualified && !IsPlainWord(toks[3].Text))
                     throw new ShoddyError(start, path,
@@ -183,16 +183,6 @@ public static class Lexer
         }
     }
 
-    /// <summary>Where an INCLUDE that isn't beside its includer is looked
-    /// for, in order: $SHODDYLIB, then the machine library shipped with
-    /// the running mill — beside it, then one level up, beside its bin/.
-    ///
-    /// The mill-relative pair is what lets a program keep a bare
-    /// Include "seq.shoddy" wherever it is copied: the repo's bin/mill
-    /// finds machines/ at the root, and the mill bundled in the VS Code
-    /// extension finds the machines/ staged beside it — neither needs
-    /// anything set. SHODDYLIB comes first so a checkout can still be
-    /// pinned to its own machines.</summary>
     /// <summary>Does this file live in a machine library — the directory
     /// an unqualified <c>Include "seq.shoddy"</c> would find it in?
     ///
@@ -217,28 +207,45 @@ public static class Lexer
         return false;
     }
 
-    /// <summary>Public because the machine-DLL dependency walk resolves
-    /// against the same library: a mill's core woven into its own bin/
-    /// declares dependencies that live in machines/bin, and finding them
-    /// must follow the same route an Include does.</summary>
+    /// <summary>Where an INCLUDE that isn't beside its includer is looked
+    /// for, in order: $SHODDYLIB, then the machine library the running
+    /// toolchain carries in machines/ beside itself. Each gets a "seeds"
+    /// companion one segment further down, because the reckoner seeds
+    /// live beside the machines they bridge rather than among them.
+    ///
+    /// The toolchain-relative folder is what lets a program keep a bare
+    /// Include "seq.shoddy" wherever it is copied: the mill's own build
+    /// output and the mill bundled in the VS Code extension both carry
+    /// the sources beside them — neither needs anything set. SHODDYLIB
+    /// comes first so a checkout can still be pinned to its own machines.
+    ///
+    /// Public because the compiled-machine resolver answers the same
+    /// question in reverse: a machine's source is wherever one of these
+    /// folders holds its name.</summary>
     public static IEnumerable<string> LibDirs()
     {
+        foreach (string named in NamedLibDirs)
+        {
+            yield return named;
+            yield return Path.Combine(named, "seeds");
+        }
         string? env = Environment.GetEnvironmentVariable("SHODDYLIB");
-        // The reckoner seeds live one level deeper, beside the machines
-        // they bridge rather than mixed in among them — every route to a
-        // machine library gets a "seeds" companion one segment further
-        // down, including a pinned SHODDYLIB.
-        if (env != null)
+        if (!string.IsNullOrEmpty(env))
         {
             yield return env;
             yield return Path.Combine(env, "seeds");
         }
         string mill = AppContext.BaseDirectory;
         yield return Path.Combine(mill, "machines");
-        yield return Path.Combine(mill, "..", "machines");
         yield return Path.Combine(mill, "machines", "seeds");
-        yield return Path.Combine(mill, "..", "machines", "seeds");
     }
+
+    /// <summary>Machine library folders named for this process ahead of
+    /// the environment: the toolchain's --libsrc, which a build passes
+    /// for every library project it references, so a mill that reaches
+    /// a machine by relative path (../../machines/seq.shoddy) is
+    /// compiling against the library whose sources those are.</summary>
+    public static readonly List<string> NamedLibDirs = new();
 
     /// <summary>Resolve an INCLUDE name relative to the including file's
     /// directory; absolute names and dirless includers pass through.</summary>

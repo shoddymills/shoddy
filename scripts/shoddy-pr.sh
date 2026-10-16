@@ -128,9 +128,8 @@ trap 'rm -f "$body_file"' EXIT
     printf 'Merging `%s`.\n\n' "$branch"
     git log --format='- %s' "origin/main..HEAD"
     printf '\n---\nChecked before opening:\n\n'
-    printf -- '- `./build.sh test` - the C# suite, every core and machine suite, every mill\n'
-    printf -- '- `./build.sh check` - docs, errors, permissions, host-blind, suites, twins, lanes\n\n'
-    printf 'CI runs it all again - checks, core, MCP, MAUI and headless - on every push.\n'
+    printf -- '- `./build.sh prove` - every CI verb this machine can run, under locked restore, and the display suites\n\n'
+    printf 'CI runs the same verbs again - checks, core, MCP, MAUI and headless - on every push.\n'
 } > "$body_file"
 
 gh_args=(pr create --base main --head "$branch" --title "$title" --body-file "$body_file")

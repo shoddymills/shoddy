@@ -27,7 +27,7 @@
 </header>
 
 <p>This page covers everything about writing Shoddy in VS Code: installing
-the extension, the tasks, native debugging (the perch, Shoddy's debugger),
+the extension, its commands, native debugging (the perch, Shoddy's debugger),
 and the one environment detail worth understanding. An extension is an
 add-on package that teaches VS Code something new; here, a whole language.
 This one carries its own mill (the program that compiles and runs Shoddy)
@@ -37,7 +37,7 @@ and machines, so the only prerequisite is the .NET 10 runtime:
 <a href="#install">installing the extension</a> (required, once) and the
 <a href="#smoke">smoke test</a> (recommended, a minute). Everything else is
 either optional, with its trigger stated on the section, plain usage
-(<a href="#perch">&sect;3</a> to <a href="#tasks">&sect;4</a>,
+(<a href="#perch">&sect;3</a> to <a href="#commands">&sect;4</a>,
 <a href="#interactive">&sect;6</a>), or background
 (<a href="#environment">&sect;5</a>).</p>
 
@@ -59,8 +59,11 @@ glance (keywords, builtins, quotations, stack-effect signatures,
 <code>select</code>, <code>fn</code>, ...);</li>
 <li><strong>native debugging with <code>F5</code></strong> (<a href="#perch">section 3</a>);</li>
 <li>mill commands: <strong>Shoddy: Run File</strong>
-(<code>ctrl+r</code>, plus the &#9654; button), <strong>Weave File</strong>, <strong>Build Machine from
-File</strong>, and <strong>Show Generated C#</strong>.</li>
+(<code>ctrl+r</code>, plus the &#9654; button), which runs the program in a
+terminal window of its own, <strong>Weave File</strong>, <strong>Build Machine from
+File</strong>, and <strong>Show Generated C#</strong>. Run File is the same
+as <strong>Run &rarr; Run Without Debugging</strong>
+(<code>Ctrl+F5</code>).</li>
 </ul>
 <p>It also carries a complete toolchain, every tool needed to build and run
 Shoddy. A mill and every machine ship inside the package, so installing it is
@@ -93,12 +96,13 @@ the file to copy.</p>
 
 <h2 id="millpath">2. Point it at the mill <span class="badge opt">Optional</span></h2>
 <p>The extension looks for a mill in four places, in order: the
-<code>shoddy.millPath</code> setting; <code>bin/mill</code> inside your workspace,
-the folder you have open (<code>bin/mill.exe</code> on Windows); its own
-bundled copy; then <code>mill</code> on your PATH, the list of folders your
-terminal searches for commands. <strong>The bundled copy means almost
-everyone can skip this section.</strong></p>
-<p>The one ordering to know: a workspace's own <code>bin/mill</code> beats the
+<code>shoddy.millPath</code> setting; the mill your workspace has built, at
+<code>artifacts/bin/Shoddy.Mill/release/mill</code> under the folder you have
+open (<code>mill.exe</code> on Windows); its own bundled copy; then
+<code>mill</code> on your PATH, the list of folders your terminal searches
+for commands. <strong>The bundled copy means almost everyone can skip this
+section.</strong></p>
+<p>The one ordering to know: a workspace's own built mill beats the
 bundled one. That is deliberate. When the repo is your open folder, the mill
 you just built is the one you want tested, not the one that shipped. Set
 <code>millPath</code> explicitly in two cases: you keep several checkouts
@@ -110,13 +114,13 @@ settings, not per-workspace. Then every folder you ever open, inside the
 repo or out, finds it with no per-folder setup:
 <code>Ctrl+Shift+P</code> / <code>Cmd+Shift+P</code> &rarr;
 <em>Preferences: Open User Settings (JSON)</em>, then add:</p>
-<pre><code class="language-json">"shoddy.millPath": "C:\\github\\shoddy\\bin\\mill.exe"
+<pre><code class="language-json">"shoddy.millPath": "C:\\github\\shoddy\\artifacts\\bin\\Shoddy.Mill\\release\\mill.exe"
 </code></pre>
-<p>(macOS/Linux: the full absolute path to <code>bin/mill</code>. Do not rely
-on <code>~</code> expanding inside settings.)</p>
-<p>The repo's <code>.vscode/settings.json</code> pins what matters either way:
-Shoddy's blocks are indentation-based (a tab counts as 4) and the whole
-corpus uses 4 spaces. Let the editor keep it that way.</p>
+<p>(macOS/Linux: the full absolute path to the built <code>mill</code>. Do
+not rely on <code>~</code> expanding inside settings.)</p>
+<p>Whichever mill answers, keep the editor at four spaces for
+<code>.shoddy</code> files: Shoddy's blocks are indentation-based (a tab
+counts as 4) and the whole corpus uses 4 spaces.</p>
 
 <h2 id="perch">3. Debugging: the perch <span class="badge info">Usage &middot; nothing to configure</span></h2>
 <p>Start here: it is the fastest way to see the whole chain working, and it
@@ -127,118 +131,151 @@ inspected for flaws. Open any <code>.shoddy</code> file and press
 <strong><code>F5</code></strong>: no <code>launch.json</code> needed. The program compiles with debug
 instrumentation (the extra bookkeeping that lets the debugger watch each
 line). It is the same program <code>mill run</code> builds, machines and
-all, and it stops on its first line. If it would not compile, the launch fails
+all, and it runs until it reaches a breakpoint, as a C# program does under
+the .NET debugger. If it would not compile, the launch fails
 with the error the runner gives, rather than starting and dying part-way
-through. Then:</p>
+through.</p>
+<p><strong>The program runs exactly as it does under <code>mill run</code>.</strong>
+It gets a terminal window of its own, outside VS Code, named
+<code>shoddy debug: FILE</code>. That is the operating system's own
+terminal (Windows Terminal or the console on Windows, Terminal on macOS),
+at its full size. To use a different one, set VS Code's
+<code>terminal.external.windowsExec</code>,
+<code>terminal.external.osxExec</code> or
+<code>terminal.external.linuxExec</code>. The program
+reads that window's keyboard (<code>Input</code>, <code>InputLine</code>,
+<code>InKey</code>), draws on its screen (escape codes and all, so VT100 games
+play), opens scribbler windows and plays sound. It runs from its own folder,
+whichever folder the workspace is opened on, so a relative path such as
+<code>files/words.txt</code> finds the file beside the program. That is true
+in a checkout and out of one: the machines the extension ships are debugged
+the same way as the ones in the repository.</p>
+<p>Why a window of its own: VS Code's integrated terminal keeps
+<code>F1</code>, <code>F5</code> and the chord prefixes for the editor, and
+a game that reads the arrow keys and the function keys through
+<code>InKey</code> never sees them there. <a href="terminal-checklist.html">The
+terminal checklist</a> records, per mill, what each one asks of a terminal
+and which terminals pass. The window is opened on the machine VS Code
+itself runs on, so a remote, WSL or container session, where the editor's
+window and the program's would be on different machines, cannot launch;
+debug on the machine that has the terminal.</p>
+<p>Under the hood, VS Code runs <code>mill dap</code> as the debug adapter.
+The adapter asks VS Code for the window and starts the program's own
+process in it, <code>mill run --perch PORT FILE</code>, which compiles the
+program with the instrumented library and connects back to the adapter;
+from then on the adapter relays between the two. Then:</p>
 <ul>
 <li><strong>Breakpoints</strong>: a breakpoint pauses the program at a line you
-mark. Click in the gutter (the margin left of the code) of any <code>.shoddy</code>
-file of your own. A machine is compiled code by the time your program runs,
-so there is no line of it to stop on: a breakpoint set in
-<code>seq.shoddy</code> comes back greyed out and says why. You step
-<em>over</em> <code>Sum</code> and <code>MatMul</code>, the way you step over
-any other runtime.</li>
+mark. Click in the gutter (the margin left of the code) of any
+<code>.shoddy</code> file: your own, or a machine's. A machine is Shoddy too,
+and the debugger runs every machine your program reaches in its
+instrumented build, so a breakpoint in <code>seq.shoddy</code> stops there.
+A top-level <code>Let</code> is a line like any other. A line stops once
+each time it runs, however much happens on it.
+<ul>
+<li><strong>Conditional</strong>: right-click the breakpoint, <em>Edit
+Breakpoint&hellip;</em> &rarr; <em>Expression</em>, and give any Shoddy expression that answers
+<code>True</code> or <code>False</code>, such as <code>n = 3</code>. A
+condition that fails, or answers something else, stops the program and
+says why in the Debug Console.</li>
+<li><strong>Hit count</strong> (<em>Edit Breakpoint&hellip;</em> &rarr;
+<em>Hit Count</em>): a whole number stops on that hit only.
+<code>&gt;</code>, <code>&gt;=</code>, <code>&lt;</code>, <code>&lt;=</code>
+or <code>=</code> before it compare, and <code>% N</code> stops on every
+Nth hit. Only hits whose condition held are counted.</li>
+<li><strong>Logpoint</strong> (right-click the gutter, <em>Add
+Logpoint&hellip;</em>): a message that is written to the Debug
+Console each time the line runs, without stopping. Anything in braces is
+evaluated: <code>n is {n}, doubled {n * 2}</code>.</li>
+</ul></li>
+<li><strong>Runtime errors</strong> stop the program at the failing line, with
+every frame, local and stack value still there to look at; the Debug Console
+shows the message. Continue, and the program ends with the error exactly as
+it would under <code>mill run</code>. Untick <em>Runtime errors</em> in the
+Breakpoints view to let errors end the program without stopping.</li>
+<li><strong>Pause</strong> (<code>F6</code>) stops a running program at the
+next line it reaches, a program stuck in a loop included. A program waiting
+in <code>Input</code> or <code>InKey</code> reaches its next line when you
+give it the key it is waiting for, and pauses then.</li>
 <li><strong>Stepping</strong>: run one line at a time: step over (<code>F10</code>), into (<code>F11</code>), out (<code>Shift+F11</code>).
-A tail-recursive def (one whose last act is to call itself) loops in
-place without growing the stack, exactly as it executes. Stepping into a
-machine word steps over it: there is nothing of it left to step through.</li>
+Step into goes into the Def a line calls, a machine's included, so you can
+watch <code>Sum</code> or <code>MatMul</code> work. A tail-recursive def (one
+whose last act is to call itself) loops in place without growing the stack,
+exactly as it executes, and each pass is a new line to step to.</li>
 <li><strong>Call Stack</strong>: the chain of defs that called each other, by name: <code>UPDATEBINV &larr; SOLVE &larr; MAIN</code>.</li>
 <li><strong>Variables</strong>: three scopes: <strong>Locals</strong> (the current def's bindings,
 shown as Shoddy values; records print as
 <code>Person(Name = &quot;ANN&quot;, Age = 34)</code> and expand into fields), <strong>Globals</strong>
 (top-level Lets), and the <strong>Value Stack</strong>, half the story in a
-stack language.</li>
-<li><strong>Debug Console</strong>: type a binding's name to inspect it; hovering a
-name in the editor shows its value.</li>
+stack language. Double-click any of them, a record's field or a list's
+element included, to set it to the value of any Shoddy expression. The
+program computes with the new value from the next thing it does.</li>
+<li><strong>Debug Console, Watch and hover</strong>: any Shoddy expression,
+evaluated in the frame you are looking at. It can use the frame's locals,
+the top-level Lets, the program's own Defs and types, every machine word the
+program included, and the builtins: <code>Twice(k) + Px(p)</code>,
+<code>IndexOf(names, "ANN")</code>. It is compiled, as everything in Shoddy
+is, and it leaves the program as it found it. A program running inside a
+host (<a href="hosting.html">Hosting</a>) is debugged by attaching, and
+there the Debug Console, Watch and hover show a variable by name but cannot
+evaluate an expression, because the host carries no compiler.</li>
 </ul>
-<p>Limitation: under the perch, <code>Input</code> reads end-of-file, because
-typed input (interactive stdin) is not wired through the debug session. Debug
-the logic here, and run the interactive session with the run task from
-<a href="#tasks">section 4</a>.</p>
 
-<h2 id="tasks">4. Run, weave, build inside VS Code <span class="badge info">Usage &middot; nothing to configure</span></h2>
-<p>Open the repo (<code>code /path/to/shoddy</code>) and the shipped
-<a href="../.vscode/tasks.json"><code>.vscode/tasks.json</code></a> wires six
-tasks to the mill. They are committed, so there is nothing to set up:</p>
+<h3 id="launch">Settings for a launch</h3>
+<p>None are needed. To give a program arguments, arm the network, or run it
+from another folder, add a <code>launch.json</code> (<strong>Run &rarr; Add
+Configuration&hellip; &rarr; Shoddy</strong>) and set any of these:</p>
 <table>
-<thead>
-<tr>
-<th>Task</th>
-<th>What it does</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><strong>Shoddy: run current file</strong></td>
-<td><code>mill run</code> on the file you are editing, bound to <code>Cmd+Shift+B</code> / <code>Ctrl+Shift+B</code></td>
-</tr>
-<tr>
-<td>Shoddy: weave current file</td>
-<td>compiles to a <code>.dll</code> beside the source (<code>dotnet FILE.dll</code> runs it)</td>
-</tr>
-<tr>
-<td>Shoddy: build machine from current file</td>
-<td>compiles a <code>machines/*.shoddy</code> to <code>Shoddy.Machines.&lt;Name&gt;.dll</code></td>
-</tr>
-<tr>
-<td>Shoddy: show generated C# for current file</td>
-<td>prints what the weave emits: the readable compiler output</td>
-</tr>
-<tr>
-<td>Shoddy: golden conformance tests</td>
-<td><code>dotnet test</code>: the five goldens, the machines path, and the TCO check</td>
-</tr>
-<tr>
-<td>Shoddy: rebuild mill into bin/</td>
-<td>re-publishes the mill into <code>bin/</code> (folder)</td>
-</tr>
-</tbody>
+<tr><th>Setting</th><th>What it does</th></tr>
+<tr><td><code>program</code></td><td>The <code>.shoddy</code> file to debug. Default: the one you are editing.</td></tr>
+<tr><td><code>args</code></td><td>The program's arguments, what <code>Args()</code> answers: <code>["words.txt", "42"]</code> is <code>mill run FILE words.txt 42</code>.</td></tr>
+<tr><td><code>allowNet</code></td><td><code>true</code> arms the network, as <code>mill run --allow-net</code> does.</td></tr>
+<tr><td><code>cwd</code></td><td>The folder the program runs from. Default: the program's own folder. A relative one is taken against the workspace folder.</td></tr>
+<tr><td><code>stopOnEntry</code></td><td><code>true</code> stops on the first line that runs. That is a top-level <code>Let</code> in an included file when there is one, since those run before <code>Main</code>. Off by default.</td></tr>
 </table>
-<p>Workflow: open <code>tst/examples.shoddy</code>, press
-<strong><code>Cmd+Shift+B</code></strong> / <strong><code>Ctrl+Shift+B</code></strong>, and the
-program runs in the integrated terminal (the terminal panel inside the
-editor). Everything else is under
-<strong>Terminal &rarr; Run Task&hellip;</strong> (<code>Cmd+Shift+P</code> &rarr; &ldquo;Run Task&rdquo;).</p>
-<p>Note the tasks are <em>repo-local</em>. In a folder outside the repo,
-use the extension's own &#9654; Run button (or <code>ctrl+r</code>), which works
-everywhere.</p>
-<p><strong>Optional</strong>, only if you want a dedicated run key beyond
-<code>Ctrl+Shift+B</code>: add to your <code>keybindings.json</code>
-(<code>Cmd+Shift+P</code> &rarr; &quot;Open Keyboard Shortcuts (JSON)&quot;; on Windows use
-<code>ctrl+r ctrl+r</code>):</p>
 <pre><code class="language-json">{
-    "key": "cmd+r cmd+r",
-    "command": "workbench.action.tasks.runTask",
-    "args": "Shoddy: run current file",
-    "when": "editorLangId == shoddy"
+    "type": "shoddy",
+    "request": "launch",
+    "name": "Burler, seeded",
+    "program": "${workspaceFolder}/burler.shoddy",
+    "args": ["files/words.txt", "42"]
 }
 </code></pre>
+<p>There is no <code>console</code> setting. A program being debugged
+always runs in a terminal window of its own, and a launch that names
+<code>console</code> is refused with a message saying to remove it.</p>
+<p>The extension's Run, Weave, Build Machine and Show Generated C# commands
+run from the program's folder too.</p>
 
-<h3 id="building">Building, without leaving the editor</h3>
-<p>Everything the mill builds can be built from in here, with no terminal
-commands to remember:</p>
-<ul>
-<li><strong>Your program, to a .dll</strong>: with the file open,
-<strong>Terminal &rarr; Run Task&hellip; &rarr; Shoddy: weave current file</strong>. The
-assembly lands beside the source as <code>FILE.dll</code>, a self-contained
-program that later runs anywhere .NET runs. (Running it is a command-line
-matter; see <a href="build.html#commands">the Toolchain page</a>. One
-exception applies: scribbler-window programs only run under
-<code>mill run</code>, so weave console programs.)</li>
-<li><strong>A machine, to a library DLL</strong>: open a
-<code>machines/*.shoddy</code> and run <strong>Shoddy: build machine from
-current file</strong>. It compiles to
-<code>Shoddy.Machines.&lt;Name&gt;.dll</code> beside the source, which
-run and weave link against automatically from then on.</li>
-<li><strong>The mill itself</strong>: after touching anything under
-<code>src/</code>, run <strong>Shoddy: rebuild mill into bin/</strong> to
-re-publish the toolchain, then <strong>Shoddy: golden conformance
-tests</strong> to prove it still passes. Both are tasks. Neither needs a
-terminal.</li>
-<li><strong>Curious what your program compiles to?</strong>
-<strong>Shoddy: show generated C# for current file</strong> prints the
-weave's readable output.</li>
-</ul>
+<h2 id="commands">4. Run, weave, build inside VS Code <span class="badge info">Usage &middot; nothing to configure</span></h2>
+<p>The extension's four commands work on the <code>.shoddy</code> file you
+are editing, in any folder, inside a checkout or out of one. Right-click in
+the file to find them, or open the Command Palette
+(<code>Cmd+Shift+P</code> / <code>Ctrl+Shift+P</code>) and type
+&ldquo;Shoddy&rdquo;.</p>
+<table>
+<tr><th>Command</th><th>What it does</th></tr>
+<tr><td><strong>Run File</strong> (<code>ctrl+r</code>, or the &#9654;
+button)</td><td>Runs the program with <code>mill run</code> in a terminal
+window of its own. The same as <strong>Run &rarr; Run Without
+Debugging</strong> (<code>Ctrl+F5</code>).</td></tr>
+<tr><td><strong>Weave File (compile)</strong></td><td>Compiles the program
+to <code>FILE.dll</code> beside the source, a program that later runs
+anywhere .NET runs (<a href="build.html#commands">the Toolchain page</a>
+says how). Scribbler-window programs run only under <code>mill run</code>,
+so weave console programs.</td></tr>
+<tr><td><strong>Build Machine from File</strong></td><td>Compiles a machine to
+<code>Shoddy.Machines.&lt;Name&gt;.dll</code> in the <code>bin/</code>
+folder beside its source. Run and weave link against it from then
+on.</td></tr>
+<tr><td><strong>Show Generated C#</strong></td><td>Opens the C# the weave
+produces, to read.</td></tr>
+</table>
+<p>Work on the mill itself happens at the command line, with the build
+wrapper: <code>./build.sh build</code> builds the mill under
+<code>artifacts/</code>, and <code>./build.sh test</code> proves it still passes
+(<code>./build.ps1</code> on Windows). <a href="build.html#wrappers">The
+Toolchain page</a> lists every command.</p>
 
 <h2 id="environment">5. How the extension sees your environment <span class="badge info">Background &middot; no action</span></h2>
 <p>Nothing to configure here. This section explains what the extension does
@@ -248,14 +285,15 @@ set one yourself.</p>
 Machine, Show Generated C#, and F5 Debug), and they do not all receive
 environment variables the same way. (An environment variable is a named
 setting the operating system hands to a program when it starts.)
-Run, Weave and Machine go through VS Code's integrated
+Weave and Machine go through VS Code's integrated
 terminal, which picks up <code>terminal.integrated.env.*</code> from
-workspace settings. Show Generated C# and F5 Debug spawn the process
-directly from the extension host (the background process that runs
-extensions). Those two inherit <strong>only</strong> the
-environment the VS Code process itself was launched with. That
-split used to be a trap: a <code>SHODDYLIB</code> set in workspace settings made &#9654; Run
-work while silently breaking F5 on the first Include-using program.</p>
+workspace settings. Run and F5 Debug open a terminal window of the
+operating system's own, and Show Generated C# runs the mill directly from
+the extension host (the background process that runs extensions). Those
+three inherit <strong>only</strong> the environment the VS Code process
+itself was launched with, plus what the extension adds. That split is a
+trap: a <code>SHODDYLIB</code> set in workspace settings makes Weave work
+while silently breaking Run and F5 on the first Include-using program.</p>
 <p>The extension now closes that gap itself. It points <code>SHODDYLIB</code>
 at its own bundled machines by both routes at once (a terminal environment
 collection for the terminal commands, and an explicit environment for the two
@@ -276,11 +314,13 @@ F5 and &#9654; Run to lint alike. What it warns about, and why it is off by defa
 is on <a href="build.html#testing">the Toolchain page</a>.</p>
 
 <h2 id="interactive">6. Interactive programs <span class="badge info">Usage &middot; nothing to configure</span></h2>
-<p>Tasks run in the integrated terminal, so programs that use <code>Input</code>
-work as they are. Run <code>tst/gradebook.shoddy</code> with <code>Cmd+Shift+B</code> /
-<code>Ctrl+Shift+B</code> and type at the prompts. To replay its scripted session
+<p>Run File and <code>F5</code> both give the program a terminal window of
+its own (<a href="#perch">section 3</a>), so programs that use
+<code>Input</code> or <code>InKey</code> work as they are. Run
+<code>tst/gradebook.shoddy</code> with <code>ctrl+r</code> and type at the
+prompts. To replay its scripted session
 instead (a command-line matter, the only one on this page):</p>
-<pre><code class="language-sh">bin/mill run tst/gradebook.shoddy &lt; tst/golden/gradebook.in
+<pre><code class="language-sh">./build.sh run tst/gradebook.shoddy &lt; tst/golden/gradebook.in
 </code></pre>
 
 <h2 id="smoke">7. Smoke-test the whole chain <span class="badge req">Recommended &middot; once</span></h2>
@@ -297,13 +337,11 @@ Def Main()
     Print(Sum({ 1, 2, 3 }))</code></pre></li>
 <li>Open the folder in VS Code and run it with the &#9654; Run button. Expect
 <code>6</code>, not <code>unknown word: Sum</code> or a &ldquo;cannot
-open&rdquo; error. (<code>Ctrl+Shift+B</code> will not exist out here. The
-tasks are repo-local.)</li>
+open&rdquo; error.</li>
 <li>Press <strong>F5</strong> on the same file and confirm it also runs
-clean under the debugger. This is the step that catches the
-terminal-vs-extension-host environment gap from
-<a href="#environment">section 5</a>, before it surprises you
-mid-program.</li>
+clean under the debugger. With the &#9654; Run step, this catches the
+environment gap from <a href="#environment">section 5</a> before it
+surprises you mid-program.</li>
 <li>Delete the scratch folder once both pass.</li>
 </ol>
 
@@ -313,11 +351,11 @@ mid-program.</li>
 before the editor.</p>
 <table>
 <tr><th>Symptom</th><th>Likely cause</th></tr>
-<tr><td>Works on &#9654; (Run) but fails only on F5 or
+<tr><td>Works on Weave File but fails on &#9654; (Run), F5 or
 &ldquo;Show Generated C#&rdquo;</td>
 <td>A <code>SHODDYLIB</code> of your own was set only in a workspace's
-<code>terminal.integrated.env</code>, where the two spawned processes never
-see it. See <a href="#environment">section 5</a></td></tr>
+<code>terminal.integrated.env</code>, which only the integrated terminal
+sees. See <a href="#environment">section 5</a></td></tr>
 <tr><td><code>unknown word: Sum</code> (or any library word) on Run
 <em>and</em> F5 alike</td>
 <td>A <code>SHODDYLIB</code> left over from an older install points somewhere
@@ -340,10 +378,6 @@ not found&rdquo;</td>
 without its mill staged. Check <code>shoddy.millPath</code> is not set to a
 stale path (it is checked first, and a wrong value beats the bundled copy),
 then reinstall the <code>.vsix</code> from the Releases page</td></tr>
-<tr><td><code>Ctrl+Shift+B</code> does nothing outside the repo</td>
-<td>Expected: the six tasks live in the repo's
-<code>.vscode/tasks.json</code>. Use the &#9654; Run button or
-<code>ctrl+r</code>, which the extension provides everywhere</td></tr>
 </table>
 
 <footer>Named for the shoddy mills of the West Riding: <a href="heritage.html">Useless Things Made

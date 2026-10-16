@@ -14,34 +14,53 @@ namespace Shoddy.Compiler;
 /// Roslyn compiles that against the running framework, and the result
 /// either runs immediately in-process (`mill run` — compiled to memory,
 /// never touching disk) or is written out as a runnable assembly
-/// (`mill weave`), with a runtimeconfig.json and Shoddy.Runtime.dll (and
-/// any referenced machine DLLs) alongside so `dotnet program.dll` just
+/// (`mill weave`), with a runtimeconfig.json, Shoddy.Runtime.dll and the
+/// compiled libraries it links alongside so `dotnet program.dll` just
 /// works. Machines compile the same way, minus the entry point, plus
-/// their manifest.
+/// their manifest: one alone (`mill machine`), or a whole library in one
+/// assembly (`mill library`, or the library project over `mill gen
+/// --library`).
 /// </summary>
 public static class Weaver
 {
     public static string GenerateSource(ShoddyProgram prog, string? machineClass = null,
                                         bool debug = false,
                                         IReadOnlyList<MachineInfo>? deps = null,
-                                        string? ownFile = null) =>
-        new CodeGen(prog, machineClass, debug, deps, ownFile).Generate();
+                                        string? ownFile = null,
+                                        string? dbgSourceDir = null) =>
+        new CodeGen(prog, machineClass, debug, deps, ownFile, dbgSourceDir).Generate();
 
     /// <summary>Compile a debug-instrumented (perch) build to memory and
-    /// return its Run entry point. Install the sink on
-    /// <see cref="Engine.PendingSink"/> before invoking. The perch always
-    /// splices sources (no machine DLLs) so every line is steppable.</summary>
-    public static Func<TextWriter, TextReader, int> LoadDebug(
-        ShoddyProgram prog, IReadOnlyList<MachineInfo>? machines = null)
+    /// return its Run entry point, which takes the program's output,
+    /// input and arguments exactly as `mill run` gives them. Install the
+    /// sink on <see cref="Engine.PendingSink"/> before invoking.
+    ///
+    /// The machines are whatever the caller resolved. The debugger
+    /// resolves them through a debug <see cref="MachineSet"/>, so they are
+    /// the instrumented weaves and every machine line is steppable.</summary>
+    public static Func<TextWriter, TextReader, string[], int> LoadDebug(
+        ShoddyProgram prog, IReadOnlyList<MachineInfo>? machines = null) =>
+        BuildDebug(prog, machines).Run;
+
+    /// <summary>The debug build in full: the entry point, and the
+    /// evaluator that compiles an expression against the running program
+    /// (<see cref="DebugBuild.Evaluate"/>).</summary>
+    public static DebugBuild BuildDebug(ShoddyProgram prog, IReadOnlyList<MachineInfo>? machines = null)
     {
-        using var pe = new MemoryStream();
-        Compile(GenerateSource(prog, debug: true, deps: machines),
-                pe, OutputKind.ConsoleApplication, machines,
-                "perch-" + Guid.NewGuid().ToString("N"));
-        pe.Position = 0;
-        Assembly asm = System.Runtime.Loader.AssemblyLoadContext.Default.LoadFromStream(pe);
+        var gen = new CodeGen(prog, null, debug: true, deps: machines);
+        string src = gen.Generate();
+        byte[] image;
+        using (var pe = new MemoryStream())
+        {
+            Compile(src, pe, OutputKind.ConsoleApplication, machines,
+                    "perch-" + Guid.NewGuid().ToString("N"));
+            image = pe.ToArray();
+        }
+        Assembly asm = System.Runtime.Loader.AssemblyLoadContext.Default.LoadFromStream(new MemoryStream(image));
         MethodInfo run = asm.GetType("Woven")!.GetMethod("Run")!;
-        return (o, i) => (int)run.Invoke(null, new object?[] { o, i, Array.Empty<string>() })!;
+        return new DebugBuild(prog, machines ?? Array.Empty<MachineInfo>(), image,
+            gen.DefMembers, gen.TypeMembers,
+            (o, i, args) => (int)run.Invoke(null, new object?[] { o, i, args })!);
     }
 
     /// <summary>Compile to memory and run immediately: the `mill run`
@@ -54,14 +73,26 @@ public static class Weaver
         Compile(GenerateSource(prog), pe, OutputKind.ConsoleApplication, machines,
                 "woven-" + Guid.NewGuid().ToString("N"));
         pe.Position = 0;
-        // Machines were Assembly.LoadFrom'd while reading manifests, which
+        // Libraries were Assembly.LoadFrom'd while reading manifests, which
         // lands them in the default context — references resolve by name.
         Assembly asm = System.Runtime.Loader.AssemblyLoadContext.Default.LoadFromStream(pe);
         MethodInfo run = asm.GetType("Woven")!.GetMethod("Run")!;
         return (int)run.Invoke(null, new object?[] { output, input, args ?? Array.Empty<string>() })!;
     }
 
-    /// <summary>Weave a program to a runnable assembly beside it.
+    /// <summary>The distinct compiled assemblies behind a set of machines:
+    /// one per library, one per woven core. What a weave references, and
+    /// what travels beside its output.</summary>
+    public static IEnumerable<string> LibrariesOf(IReadOnlyList<MachineInfo>? machines) =>
+        machines == null
+            ? Array.Empty<string>()
+            : machines.Where(m => m.DllPath.Length > 0)
+                      .Select(m => Path.GetFullPath(m.DllPath))
+                      .Distinct(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Weave a program to a runnable assembly at
+    /// <paramref name="outDll"/>, with its runtime config, the runtime
+    /// and the libraries it links beside it.
     ///
     /// Every file lands through <see cref="Publish"/>, never by truncating
     /// in place. Two projects in one solution weave the same mill under
@@ -73,6 +104,8 @@ public static class Weaver
     public static void Weave(ShoddyProgram prog, string outDll,
                              IReadOnlyList<MachineInfo>? machines = null)
     {
+        string outDir = Path.GetDirectoryName(Path.GetFullPath(outDll))!;
+        Directory.CreateDirectory(outDir);
         using (var pe = new MemoryStream())
         {
             Compile(GenerateSource(prog), pe, OutputKind.ConsoleApplication, machines,
@@ -85,32 +118,30 @@ public static class Weaver
             "{\"name\":\"Microsoft.NETCore.App\",\"version\":\"10.0.0\"}," +
             "\"rollForward\":\"LatestMinor\"}}\n"));
 
-        string outDir = Path.GetDirectoryName(Path.GetFullPath(outDll))!;
         CopyBeside(typeof(Engine).Assembly.Location, outDir);
-        if (machines != null)
-            foreach (MachineInfo m in machines)
-                CopyBeside(m.DllPath, outDir);
+        foreach (string dll in LibrariesOf(machines))
+            CopyBeside(dll, outDir);
     }
 
-    /// <summary>Weave a machine: machines/seq.shoddy -> Shoddy.Machines.Seq.dll
-    /// beside it, exporting its defs and types with a manifest.
+    /// <summary>Weave one machine alone: halifax-core.shoddy ->
+    /// Shoddy.Machines.Halifax-core.dll at <paramref name="outDll"/>,
+    /// exporting its defs and types with a manifest on its class.
     ///
     /// With <paramref name="debug"/>, the instrumented machine weave
     /// (A6.2): same assembly name, same manifest, every line hooked —
-    /// written to a bin/debug/ subfolder so a debug configuration can
+    /// written wherever the caller says, so a debug configuration can
     /// reference the instrumented artifact while the release one stays
     /// untouched, and the assembly's identity never forks.</summary>
-    public static string WeaveMachine(ShoddyProgram prog, string sbPath,
+    public static string WeaveMachine(ShoddyProgram prog, string sbPath, string outDll,
                                       IReadOnlyList<MachineInfo>? machines = null,
                                       bool debug = false)
     {
-        string outDll = debug ? MachineSet.DebugDllPathFor(sbPath) : MachineSet.DllPathFor(sbPath);
         string cls = MachineSet.ClassNameFor(sbPath);
-        // Two different outer targets can both auto-build the same shared
-        // machine (MachineResolve.Build); gate on the output so those
-        // serialize too — the per-target gate in RunPure cannot see them.
+        // Two different outer targets can both weave the same shared
+        // machine; gate on the output so those serialize too — the
+        // per-target gate in RunPure cannot see them.
         using IDisposable gate = MillGate.Hold(outDll);
-        Directory.CreateDirectory(Path.GetDirectoryName(outDll)!);
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(outDll))!);
         // Weave beside, then move into place: the gate serializes WRITERS,
         // but another project's compiler can be READING the previous weave
         // as a metadata reference at this very moment, and truncating the
@@ -119,25 +150,64 @@ public static class Weaver
         // and the weave is deterministic, so rewriting is always safe.
         string tmp = outDll + ".weaving";
         using (FileStream pe = File.Create(tmp))
-            Compile(GenerateSource(prog, cls, debug: debug, deps: machines, ownFile: sbPath), pe,
-                    OutputKind.DynamicallyLinkedLibrary,
-                    machines, $"Shoddy.Machines.{MachineSet.AssemblyStemFor(sbPath)}");
+            Compile(GenerateSource(prog, cls, debug: debug, deps: machines, ownFile: sbPath,
+                                   dbgSourceDir: RelativeDir(outDll, sbPath)),
+                    pe, OutputKind.DynamicallyLinkedLibrary,
+                    machines, MachineSet.AssemblyNameFor(sbPath));
         File.Move(tmp, outDll, overwrite: true);
         return outDll;
     }
 
-    static void Compile(string src, Stream pe, OutputKind kind,
-                        IReadOnlyList<MachineInfo>? machines, string assemblyName)
+    /// <summary>Weave a whole library — every machine source named, in
+    /// dependency order — into one assembly at <paramref name="outDll"/>.
+    /// <paramref name="libraries"/> are the compiled libraries the
+    /// sources may include across (the seeds include the machines they
+    /// bridge); <paramref name="dbgSourceDir"/> is where the sources will
+    /// sit relative to the DLL once installed, for the instrumented
+    /// weave's file table.</summary>
+    public static string WeaveLibrary(IReadOnlyList<string> sources, string outDll, string assemblyName,
+                                      bool debug = false, IEnumerable<string>? libraries = null,
+                                      string? dbgSourceDir = null)
     {
-        var tree = CSharpSyntaxTree.ParseText(src);
+        if (sources.Count == 0) throw new ShoddyError(0, "a library needs at least one machine source");
+        LibraryGen lib = LibraryGen.Generate(sources, debug, libraries,
+                                             dbgSourceDir ?? RelativeDir(outDll, sources[0]));
+        using IDisposable gate = MillGate.Hold(outDll);
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(outDll))!);
+        string tmp = outDll + ".weaving";
+        using (FileStream pe = File.Create(tmp))
+            Compile(lib.Units.Select(u => CodeGen.Header + u.Text).ToList(), pe,
+                    OutputKind.DynamicallyLinkedLibrary, lib.External, assemblyName);
+        File.Move(tmp, outDll, overwrite: true);
+        return outDll;
+    }
+
+    /// <summary>Where a source's folder sits relative to the folder a DLL
+    /// is written to, with '/' throughout so a weave made on Windows and
+    /// one made elsewhere carry the same text.</summary>
+    public static string RelativeDir(string outDll, string sbPath) =>
+        Path.GetRelativePath(Path.GetDirectoryName(Path.GetFullPath(outDll))!,
+                             Path.GetDirectoryName(Path.GetFullPath(sbPath))!)
+            .Replace(Path.DirectorySeparatorChar, '/');
+
+    internal static void Compile(string src, Stream pe, OutputKind kind,
+                                 IReadOnlyList<MachineInfo>? machines, string assemblyName,
+                                 IEnumerable<MetadataReference>? extra = null) =>
+        Compile(new[] { src }, pe, kind, machines, assemblyName, extra);
+
+    internal static void Compile(IReadOnlyList<string> sources, Stream pe, OutputKind kind,
+                                 IReadOnlyList<MachineInfo>? machines, string assemblyName,
+                                 IEnumerable<MetadataReference>? extra = null)
+    {
+        SyntaxTree[] trees = sources.Select(s => CSharpSyntaxTree.ParseText(s)).ToArray();
 
         var refs = ((string)AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES")!)
             .Split(Path.PathSeparator)
             .Select(p => (MetadataReference)MetadataReference.CreateFromFile(p))
             .ToList();
-        if (machines != null)
-            foreach (MachineInfo m in machines)
-                refs.Add(MetadataReference.CreateFromFile(m.DllPath));
+        foreach (string dll in LibrariesOf(machines))
+            refs.Add(MetadataReference.CreateFromFile(dll));
+        if (extra != null) refs.AddRange(extra);
 
         // Deterministic: identical inputs give byte-identical output. The
         // default is a fresh MVID per emit, under which the same weave run
@@ -145,7 +215,7 @@ public static class Weaver
         // same artifact for every shared verb) could never hold.
         var comp = CSharpCompilation.Create(
             assemblyName,
-            new[] { tree },
+            trees,
             refs,
             new CSharpCompilationOptions(kind, optimizationLevel: OptimizationLevel.Release,
                                          deterministic: true));
@@ -154,7 +224,7 @@ public static class Weaver
         if (!result.Success)
         {
             string dump = Path.Combine(Path.GetTempPath(), assemblyName + ".woven.cs");
-            File.WriteAllText(dump, src);
+            File.WriteAllText(dump, string.Join("\n// ---- next unit ----\n", sources));
             string errs = string.Join("\n", result.Diagnostics
                 .Where(d => d.Severity == DiagnosticSeverity.Error)
                 .Take(10)

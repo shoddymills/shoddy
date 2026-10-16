@@ -63,8 +63,8 @@ public class MachineSurfaceTests
         File.WriteAllText(Path.Combine(machines, dep + ".shoddy"), DepSource);
         File.WriteAllText(Path.Combine(machines, demo + ".shoddy"), DemoSource(dep));
 
-        if (buildDepFirst) Build(Path.Combine(machines, dep + ".shoddy"));
-        Build(Path.Combine(machines, demo + ".shoddy"));
+        if (buildDepFirst) Build(machines, Path.Combine(machines, dep + ".shoddy"));
+        Build(machines, Path.Combine(machines, demo + ".shoddy"));
 
         MachineInfo info = ManifestOf(Path.Combine(machines, demo + ".shoddy"));
 
@@ -93,12 +93,12 @@ public class MachineSurfaceTests
         string machines = Workspace();
         File.WriteAllText(Path.Combine(machines, "depc.shoddy"), DepSource);
         File.WriteAllText(Path.Combine(machines, "democ.shoddy"), DemoSource("depc"));
-        Build(Path.Combine(machines, "depc.shoddy"));
+        Build(machines, Path.Combine(machines, "depc.shoddy"));
         string demo = Path.Combine(machines, "democ.shoddy");
-        Build(demo);
+        Build(machines, demo);
 
         // The dependency is gone from the manifest but still referenced.
-        Assembly built = Assembly.LoadFrom(MachineSet.DllPathFor(demo));
+        Assembly built = Assembly.LoadFrom(MillVerbs.MachineOut(demo, null, false));
         Assert.Contains("Shoddy.Machines.Depc",
                         built.GetReferencedAssemblies().Select(r => r.Name));
 
@@ -109,7 +109,7 @@ public class MachineSurfaceTests
         File.WriteAllText(src,
             "Include \"machines/democ.shoddy\"\n\nDef Main()\n    Print(DemoAvg({ 1, 2, 3, 4 }))\n");
 
-        var (prog, set) = ParseWithMachines(src);
+        var (prog, set) = ParseWithMachines(src, machines);
         Assert.True(prog.ExternalDefs.ContainsKey("DEMOAVG"));
         Weaver.Weave(prog, Path.Combine(ws, "consumer.dll"), set.Machines);   // links clean
     }
@@ -118,7 +118,7 @@ public class MachineSurfaceTests
     /// machine is resolved from a DLL or spliced from source. It did not:
     /// spliced, the qualifier reached the dependency's dependencies, so a
     /// program could compile under the runner and fail under the debugger,
-    /// which always splices.</summary>
+    /// which then spliced every machine.</summary>
     [Theory]
     [InlineData(true)]      // dependency compiled — resolved as a DLL
     [InlineData(false)]     // dependency not compiled — spliced from source
@@ -133,15 +133,15 @@ public class MachineSurfaceTests
 
         if (buildDepFirst)
         {
-            Build(Path.Combine(machines, "deepd.shoddy"));
-            Build(Path.Combine(machines, "depd.shoddy"));
+            Build(machines, Path.Combine(machines, "deepd.shoddy"));
+            Build(machines, Path.Combine(machines, "depd.shoddy"));
         }
 
         string ws = Path.GetDirectoryName(machines)!;
         string src = Path.Combine(ws, "user.shoddy");
         File.WriteAllText(src,
             "Include \"machines/depd.shoddy\" As St\n\nDef Main()\n    Print(1)\n");
-        var (prog, _) = ParseWithMachines(src);
+        var (prog, _) = ParseWithMachines(src, machines);
 
         // The named file's own surface is prefixed...
         Assert.True(Reachable(prog, "STDEPAVG"));
@@ -182,8 +182,8 @@ public class MachineSurfaceTests
             Def DepUse() As Number
                 Deep()
             """);
-        Build(Path.Combine(machines, "deepe.shoddy"));
-        Build(Path.Combine(machines, "depe.shoddy"));
+        Build(machines, Path.Combine(machines, "deepe.shoddy"));
+        Build(machines, Path.Combine(machines, "depe.shoddy"));
 
         string ws = Path.GetDirectoryName(machines)!;
         string src = Path.Combine(ws, "user.shoddy");
@@ -194,7 +194,7 @@ public class MachineSurfaceTests
             Def Main()
                 Print(DepUse())
             """);
-        var (prog, _) = ParseWithMachines(src);
+        var (prog, _) = ParseWithMachines(src, machines);
 
         Assert.True(prog.ExternalDefs.ContainsKey("DEPUSE"));    // what it included
         Assert.False(prog.ExternalDefs.ContainsKey("DEEP"));     // what that included
@@ -223,8 +223,8 @@ public class MachineSurfaceTests
             Def DepUse() As Number
                 DeepWord()
             """);
-        Build(Path.Combine(machines, "deepf.shoddy"));
-        Build(Path.Combine(machines, "depf.shoddy"));
+        Build(machines, Path.Combine(machines, "deepf.shoddy"));
+        Build(machines, Path.Combine(machines, "depf.shoddy"));
 
         string ws = Path.GetDirectoryName(machines)!;
         string src = Path.Combine(ws, "user.shoddy");
@@ -235,8 +235,8 @@ public class MachineSurfaceTests
             Def Main()
                 Print(DeepWord())
             """);
-        var (prog, _) = ParseWithMachines(src);
-        var lines = Lexer.ReadProgram(src, new MachineSet().TryResolve);
+        var (prog, _) = ParseWithMachines(src, machines);
+        var lines = Lexer.ReadProgram(src, new MachineSet(false, Libs(machines)).TryResolve);
         Lint.Result r = Lint.Run(prog, lines);
 
         string msg = Assert.Single(r.UnknownWords).Item1;
@@ -267,8 +267,8 @@ public class MachineSurfaceTests
             Def DepUse() As Number
                 DeepWord()
             """);
-        Build(Path.Combine(machines, "deepg.shoddy"));
-        Build(Path.Combine(machines, "depg.shoddy"));
+        Build(machines, Path.Combine(machines, "deepg.shoddy"));
+        Build(machines, Path.Combine(machines, "depg.shoddy"));
 
         string ws = Path.GetDirectoryName(machines)!;
         string src = Path.Combine(ws, "user.shoddy");
@@ -280,7 +280,7 @@ public class MachineSurfaceTests
                 Print(DeepWord())
             """);
 
-        var set = new MachineSet();
+        var set = new MachineSet(false, Libs(machines));
         var lines = Lexer.ReadProgram(src, set.TryResolve);
         var seeded = new ShoddyProgram();
         set.SeedInto(seeded);
@@ -337,26 +337,25 @@ public class MachineSurfaceTests
 
     /// <summary>A hyphenated source file — every mill's
     /// <c>name-core.shoddy</c> — must machine-weave. The hyphen is legal
-    /// in the DLL and assembly name, which keep it (so the
-    /// assembly→source advice round trip stays exact); it is not legal in
-    /// a C# class, so the class name joins the parts PascalCase — and no
-    /// consumer spells that name, they read it from the manifest
-    /// attribute.</summary>
+    /// in the DLL and assembly name, which keep it (so the file visibly
+    /// matches the source); it is not legal in a C# class, so the class
+    /// name joins the parts PascalCase — and no consumer spells that
+    /// name, they read it from the manifest attribute.</summary>
     [Fact]
     public void AHyphenatedCoreWeavesAsAMachine()
     {
         string machines = Workspace();
         string sb = Path.Combine(machines, "hyph-core.shoddy");
         File.WriteAllText(sb, DepSource);
-        Build(sb);
+        string dll = Build(machines, sb);
 
-        string dll = MachineSet.DllPathFor(sb);
         Assert.EndsWith("Shoddy.Machines.Hyph-core.dll", dll);
         Assembly asm = Assembly.LoadFrom(dll);
         Assert.Equal("Shoddy.Machines.Hyph-core", asm.GetName().Name);
 
-        MachineInfo info = MachineInfo.From(asm, dll);
+        MachineInfo info = Assert.Single(MachineInfo.AllIn(asm, dll));
         Assert.Equal("Shoddy.Machines.HyphCore", info.ClassName);
+        Assert.Equal("hyph-core.shoddy", info.Source);
         Assert.NotNull(asm.GetType(info.ClassName));
         Assert.Contains("DEPAVG", info.Defs.Keys);
 
@@ -365,7 +364,7 @@ public class MachineSurfaceTests
         string src = Path.Combine(ws, "hyphconsumer.shoddy");
         File.WriteAllText(src,
             "Include \"machines/hyph-core.shoddy\"\n\nDef Main()\n    Print(DepAvg({ 2, 4 }))\n");
-        var (prog, set) = ParseWithMachines(src);
+        var (prog, set) = ParseWithMachines(src, machines);
         Assert.True(prog.ExternalDefs.ContainsKey("DEPAVG"));
         Weaver.Weave(prog, Path.Combine(ws, "hyphconsumer.dll"), set.Machines);
     }
@@ -373,8 +372,16 @@ public class MachineSurfaceTests
     /// <summary>The manifest of one built machine, read back from its DLL.</summary>
     static MachineInfo ManifestOf(string sbPath)
     {
-        string dll = MachineSet.DllPathFor(sbPath);
-        return MachineInfo.From(Assembly.LoadFrom(dll), dll);
+        string dll = MillVerbs.MachineOut(sbPath, null, false);
+        return Assert.Single(MachineInfo.AllIn(Assembly.LoadFrom(dll), dll));
+    }
+
+    /// <summary>The compiled machines a workspace resolves against:
+    /// whatever its bin/ holds, which is what Build put there.</summary>
+    static IEnumerable<string> Libs(string machines)
+    {
+        string bin = Path.Combine(machines, "bin");
+        return Directory.Exists(bin) ? Directory.GetFiles(bin, "*.dll") : Array.Empty<string>();
     }
 
     /// <summary>A scratch machines/ directory. Nothing is copied in: these
@@ -388,21 +395,24 @@ public class MachineSurfaceTests
         return machines;
     }
 
-    static void Build(string sbPath)
+    /// <summary>Weave one machine to bin/ beside its source, against
+    /// whatever the workspace has built so far.</summary>
+    static string Build(string machines, string sbPath)
     {
-        var (prog, machines) = ParseWithMachines(sbPath);
-        Weaver.WeaveMachine(prog, sbPath, machines.Machines);
+        var (prog, set) = ParseWithMachines(sbPath, machines);
+        return Weaver.WeaveMachine(prog, sbPath, MillVerbs.MachineOut(sbPath, null, false), set.Machines);
     }
 
     /// <summary>The mill's own pipeline, including the onQualified hook —
     /// without it an `Include ... As` is silently dropped and these tests
-    /// would pass by testing nothing.</summary>
-    static (ShoddyProgram, MachineSet) ParseWithMachines(string file)
+    /// would pass by testing nothing. Resolves against the workspace's
+    /// own bin/ and nothing else.</summary>
+    static (ShoddyProgram, MachineSet) ParseWithMachines(string file, string machines)
     {
-        var machines = new MachineSet();
-        var lines = Lexer.ReadProgram(file, machines.TryResolve);
+        var set = new MachineSet(false, Libs(machines));
+        var lines = Lexer.ReadProgram(file, set.TryResolve);
         var prog = new ShoddyProgram();
-        machines.SeedInto(prog);
-        return (Parser.Parse(lines, prog), machines);
+        set.SeedInto(prog);
+        return (Parser.Parse(lines, prog), set);
     }
 }

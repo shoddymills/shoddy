@@ -86,14 +86,9 @@ public static class CapabilityLint
         return null;
     }
 
-    /// <summary>The machine source beside its DLL: bin/Shoddy.Machines.X.dll
-    /// sits in a bin/ subdirectory beside x.shoddy, and the assembly stem
-    /// round-trips to the source name exactly (split identities).</summary>
-    static string SourceOf(MachineInfo m)
-    {
-        string stem = m.AssemblyName.Replace("Shoddy.Machines.", "").ToLowerInvariant();
-        return Path.Combine(Path.GetDirectoryName(m.DllPath) ?? "", "..", stem + ".shoddy");
-    }
+    /// <summary>The machine's source, wherever a machine library holds
+    /// it now; "" when nowhere, which reads as no tag.</summary>
+    static string SourceOf(MachineInfo m) => MachineSet.SourcePathOf(m) ?? "";
 
     /// <summary>The capabilities a parsed program actually reaches, each
     /// with one example word for the diagnostic.</summary>

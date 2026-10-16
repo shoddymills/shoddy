@@ -15,6 +15,16 @@ name: CI
 # will tag a release. The counter-argument is cost - a doc typo rebuilds
 # every lane for nothing - and that cost is real and small. When the
 # choice is between wasting a runner and not knowing, waste the runner.
+#
+# Every lane reads the SDK from global.json, so the runner builds with
+# the SDK the repository names, and restores in locked mode, so the
+# package graph is the one the lock files record.
+#
+# EVERY STEP BELOW IS A BUILD VERB, never inline logic. `./build.sh prove`
+# runs the same verbs on a workstation, under the same locked restore, so
+# what fails here has already failed there. A check written only into this
+# file is a check nobody can run before pushing - which is how a release
+# used to meet its failures for the first time on the runner.
 on:
   push:
     branches: [main]
@@ -61,6 +71,9 @@ jobs:
       - name: The lane boundaries hold
         run: node scripts/verify-lanes.js
 
+      - name: The VS Code extension's debug launch logic
+        run: node --test vscode-shoddy/test/launch.test.js
+
   # The core lane: the mill, the C# conformance suite, the golden library
   # suite, every core and machine suite, and every mill's own suite -
   # exactly what `./build.sh test` runs locally, because it IS
@@ -78,7 +91,7 @@ jobs:
 
       - uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: '10.0.x'
+          global-json-file: global.json
 
       - uses: actions/setup-node@v4
         with:
@@ -87,11 +100,13 @@ jobs:
       - name: Build the mill
         run: ./build.sh build
 
+      # The whole suite, the manifests and the headless refusal.
       - name: Test - the whole suite
         run: ./build.sh test
 
-      - name: Every mill.manifest describes its mill
-        run: node scripts/verify-manifests.js
+      # Two clean builds of one commit must agree byte for byte.
+      - name: The build is reproducible
+        run: ./build.sh reproducible
 
   # The MCP host lane, on ubuntu deliberately: this lane has no platform
   # head, no window, no audio and no workload to install. If it ever stops
@@ -103,7 +118,8 @@ jobs:
 
       # The one-way dependency rule (B2.2), hosts side: nothing under
       # hosts/ references Shoddy.Mill or Shoddy.Compiler (B2.4). The
-      # weave arrives through ShoddyWeave, driven by bin/mill.
+      # weave arrives through ShoddyWeave, driven by the headless
+      # toolchain, which the lane's projects build and never link.
       # verify-lanes in the checks job proves the same rule; this copy is
       # the lane's own belt-and-braces.
       - name: One-way dependency check
@@ -114,10 +130,11 @@ jobs:
 
       - uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: '10.0.x'
+          global-json-file: global.json
 
-      - name: Publish the mill (ShoddyWeave drives it)
-        run: dotnet publish src/Shoddy.Mill -c Release -o bin
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
 
       # The mill's own suite first: if the FOLD is wrong there is no
       # point grading the server over it.
@@ -133,60 +150,24 @@ jobs:
         working-directory: hosts/mcp
         run: ./build.sh test
 
-      - name: Release build
+      # release grades its own closure: no window, audio, toolchain or
+      # third-party protocol package (scripts/verify-closure.js).
+      - name: Release build, and its closure
         working-directory: hosts/mcp
         run: ./build.sh release
 
-      # No third-party package rides along: the protocol is hand-rolled
-      # over System.Text.Json, and this is what says so a year from now.
-      - name: Assert the lane carries no window, audio or toolchain
-        run: |
-          rel=artifacts/bin/Sparky/release
-          test -f "$rel/sparky.dll" || { echo "no executable in $rel"; exit 1; }
-          test -f "$rel/Shoddy.Machines.Sparky-core.dll" || { echo 'missing the woven core'; exit 1; }
-          for bad in Shoddy.Compiler Shoddy.Devil Shoddy.Mill Silk.NET OpenAL glfw Microsoft.CodeAnalysis SkiaSharp; do
-            if ls "$rel" | grep -qi "$bad"; then echo "the server links past its floor: $bad"; exit 1; fi
-          done
-
-      # The three seeds that are not folded must not be present as
-      # machine assemblies either - the fold is the mechanism, and this
-      # is the mechanism observed from outside.
-      - name: Assert the excluded seeds are not linked
-        run: |
-          rel=artifacts/bin/Sparky/release
-          for bad in Seedbuzzer Seedkeys Seedvt100 Buzzer.dll Keys.dll Vt100.dll; do
-            if ls "$rel" | grep -q "Shoddy.Machines.$bad"; then
-              echo "an excluded seed is in the server's closure: $bad"; exit 1
-            fi
-          done
-
-      # The publish target is what a release attaches, and a target only
-      # release.yml exercises would rot between releases the way any
-      # unrun script does. Cut the archives exactly as release.yml will.
-      - name: Publish the release archives
+      # The archives a release attaches, cut exactly as release.yml cuts
+      # them; publish then unpacks this platform's archive outside the
+      # repo and drives it over stdio (scripts/verify-shipped.js).
+      - name: Publish the release archives, and drive the shipped binary
         working-directory: hosts/mcp
         run: ./build.sh publish
-
-      # Then prove the shipped shape: unpack the linux archive and drive
-      # the single file over stdio - no client, no repo and no installed
-      # runtime in the loop. This is the exact artifact a user downloads.
-      - name: The shipped binary answers on stdio
-        run: |
-          tar -xzf artifacts/publish/sparky-linux-x64.tar.gz -C /tmp
-          mkdir -p /tmp/sparky-root
-          printf '%s\n' \
-            '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}' \
-            '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"eval","arguments":{"lines":["{ 12500 13100 11900 } MEAN"]}}}' \
-            | /tmp/sparky --root /tmp/sparky-root | tee answers.jsonl
-          grep -q 'x: 12500' answers.jsonl
 
   # The MAUI host lane (B2.5), on windows-latest - the Windows lane is a
   # CI release artifact, not a Mac dev target. Canvas and audio proofs run
   # under the desktop/device harness locally (B7.3, R4), never as a
   # hosted-runner gate: SHODDY_HEADLESS_CI tells the test suite which
-  # assertions have no device here. This lane reads global.json directly,
-  # because the MAUI workload has to pair with the SDK it was tested
-  # against.
+  # assertions have no device here.
   maui:
     runs-on: windows-latest
     steps:
@@ -202,9 +183,9 @@ jobs:
         with:
           global-json-file: global.json
 
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-node@v4
         with:
-          dotnet-version: '10.0.x'
+          node-version: '22'
 
       - name: Install MAUI workload
         shell: pwsh
@@ -222,9 +203,6 @@ jobs:
             }
           }
 
-      - name: Publish the mill (ShoddyWeave drives it)
-        run: dotnet publish src/Shoddy.Mill -c Release -o bin
-
       - name: Build the MAUI lane
         working-directory: hosts/maui
         run: ./build.ps1
@@ -235,16 +213,11 @@ jobs:
           SHODDY_HEADLESS_CI: '1'
         run: ./build.ps1 test
 
+      # release grades its own closure (B7.4): no perch, the woven core
+      # and the machine library present (scripts/verify-closure.js).
       - name: Release build is provably clean (B7.4)
         working-directory: hosts/maui
         run: ./build.ps1 release
-
-      - name: Assert no perch in the release output (B7.4)
-        shell: pwsh
-        run: |
-          $rel = 'artifacts/bin/ShoddyReckoner/release_net10.0-windows10.0.19041.0'
-          if (Test-Path "$rel/Shoddy.Perch.dll") { Write-Error 'release output carries the debug transport (B7.4)' }
-          if (-not (Test-Path "$rel/Shoddy.Machines.Halifax-core.dll")) { Write-Error 'release output is missing the woven core' }
 
   # The container proof (C8): the headless build of the mill runs a full
   # weave in a minimal Linux image with no X11 and no audio device - a
@@ -255,25 +228,26 @@ jobs:
   headless:
     runs-on: ubuntu-latest
     container: mcr.microsoft.com/dotnet/sdk:10.0
-    # The headless mill runs from artifacts/bin/, where no machines/
-    # directory sits beside it - so the mill-relative library discovery
-    # that serves bin/mill cannot serve it. SHODDYLIB pins the checkout's
-    # own machines, which is exactly what the variable exists for.
-    # Without it the first weave dies chasing a seed's bare Include
-    # ("cannot open machines/seeds/cuttle.shoddy") - v2.0.0 did.
+    # The headless mill carries no machine library and no sources: it
+    # is the build tool, and a project tells it what to link. At a
+    # command line the two variables do the same: SHODDYLIB names the
+    # sources an Include resolves against, SHODDYLIBBIN the compiled
+    # libraries - here the seeds project's output, which carries the
+    # library it references beside its own.
     env:
       SHODDYLIB: ${{ github.workspace }}/machines
+      SHODDYLIBBIN: ${{ github.workspace }}/artifacts/bin/Shoddy.Machines.Seeds/release
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build the headless mill
-        run: dotnet build src/Shoddy.Mill.Headless -c Release
+      - name: Build the headless mill and the machine library
+        run: dotnet build machines/seeds/Shoddy.Machines.Seeds.csproj -c Release
 
       - name: Weave a real mill, headless
-        run: dotnet artifacts/bin/Shoddy.Mill.Headless/release/mill.dll weave mills/halifax/halifax.shoddy
+        run: dotnet artifacts/bin/Shoddy.Mill.Headless/release/mill.dll weave mills/halifax/halifax.shoddy -o artifacts/headless
 
       - name: Machine-weave its core, headless
-        run: dotnet artifacts/bin/Shoddy.Mill.Headless/release/mill.dll machine mills/halifax/halifax-core.shoddy
+        run: dotnet artifacts/bin/Shoddy.Mill.Headless/release/mill.dll machine mills/halifax/halifax-core.shoddy -o artifacts/headless
 
       - name: run refuses by name
         run: |

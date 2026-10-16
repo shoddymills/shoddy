@@ -12,14 +12,19 @@ namespace Shoddy.Compiler;
 /// mill wraps `run` and `dap` in the window and audio stack it alone
 /// references; the headless build carries no such reference and refuses
 /// those two verbs by name. Everything else — flag stripping, command
-/// parsing, the pure verbs (lex, gen, weave, machine, manifest), the
-/// error report — lives here, written once. That single implementation
-/// is what makes the two builds one mill: byte-identical artifacts for
-/// every verb they share is an acceptance criterion, and code that
-/// cannot diverge is how it is met.
+/// parsing, the pure verbs (lex, gen, weave, machine, library,
+/// manifest), the error report — lives here, written once. That single
+/// implementation is what makes the two builds one mill: byte-identical
+/// artifacts for every verb they share is an acceptance criterion, and
+/// code that cannot diverge is how it is met.
 /// </summary>
 public static class MillVerbs
 {
+    /// <summary>Where a verb writes when no -o says otherwise: a bin/
+    /// folder beside the source. Build output never lands in a source
+    /// folder itself.</summary>
+    public const string DefaultOutDir = "bin";
+
     /// <summary>Flags every build understands, stripped before the
     /// positional command/file parse.</summary>
     public sealed class Options
@@ -31,6 +36,17 @@ public static class MillVerbs
         /// the flag is honoured vacuously rather than refused — the
         /// flag's meaning is "show nothing", and nothing is shown.</summary>
         public bool NoWindow;
+        /// <summary>--lib: the compiled libraries Includes resolve
+        /// against, in order. Named, they replace the default search
+        /// ($SHODDYLIBBIN, then lib/ beside the toolchain): a build that
+        /// says what it links gets exactly that. ShoddyWeave passes a
+        /// consumer's references here.</summary>
+        public readonly List<string> Libraries = new();
+
+        /// <summary>The libraries a set should search: the named ones,
+        /// else the toolchain's own.</summary>
+        public IEnumerable<string> LibrariesFor(bool debug) =>
+            Libraries.Count > 0 ? Libraries : MachineSet.DefaultLibraries(debug);
     }
 
     public static bool WantsVersion(string[] args) =>
@@ -70,88 +86,152 @@ public static class MillVerbs
             Environment.GetEnvironmentVariable("SHODDY_LINT") == "0";
         opt.LintVerbose = args.Contains("--lint-verbose");
 
-        return args.Where(a => a is not ("--no-window" or "--no-lint" or "--lint-verbose"))
-                   .ToArray();
+        // --lib PATH and --libsrc DIR, repeatable; a value may carry
+        // several joined with ';' as MSBuild joins an item list. --lib
+        // names a compiled library; --libsrc names a library's source
+        // folder, so a file reached there by relative path counts as a
+        // machine. A build passes both for every library it references.
+        var kept = new List<string>();
+        for (int i = 0; i < args.Length; i++)
+        {
+            string a = args[i];
+            if (a is "--no-window" or "--no-lint" or "--lint-verbose") continue;
+            string? listed = null;
+            List<string>? into = null;
+            if (a is "--lib" or "--libsrc")
+            {
+                if (i + 1 >= args.Length) { kept.Add(a); continue; }
+                listed = args[++i];
+                into = a == "--lib" ? opt.Libraries : Lexer.NamedLibDirs;
+            }
+            else if (a.StartsWith("--lib=", StringComparison.Ordinal))
+            {
+                listed = a[6..];
+                into = opt.Libraries;
+            }
+            else if (a.StartsWith("--libsrc=", StringComparison.Ordinal))
+            {
+                listed = a[9..];
+                into = Lexer.NamedLibDirs;
+            }
+            if (listed != null)
+            {
+                foreach (string p in listed.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                    into!.Add(Path.GetFullPath(p));
+                continue;
+            }
+            kept.Add(a);
+        }
+        return kept.ToArray();
     }
 
     /// <summary>One parsed command line: the verb, its file (or folder,
-    /// for manifest), and the program arguments (run only; --write for
-    /// manifest).</summary>
-    public sealed record Command(string Verb, string File, string[] ProgArgs);
+    /// for manifest and library), and the rest — the program arguments
+    /// for run; the verb's own flags and any further folders for the
+    /// others.</summary>
+    public sealed record Command(string Verb, string File, string[] ProgArgs)
+    {
+        /// <summary>`run --perch PORT`: this is a debugged program's
+        /// process, started by the editor's adapter, and PORT is where
+        /// it connects back. Null for every other run.</summary>
+        public string? Perch { get; init; }
+
+        /// <summary>The value after a flag (-o DIR), or null.</summary>
+        public string? Flag(params string[] names)
+        {
+            for (int i = 0; i + 1 < ProgArgs.Length; i++)
+                if (names.Contains(ProgArgs[i])) return ProgArgs[i + 1];
+            return null;
+        }
+
+        public bool Has(string flag) => ProgArgs.Contains(flag);
+
+        /// <summary>The targets after the first: more library folders.</summary>
+        public IEnumerable<string> Targets
+        {
+            get
+            {
+                yield return File;
+                for (int i = 0; i < ProgArgs.Length; i++)
+                {
+                    if (ProgArgs[i] is "-o" or "--out" or "--gate" or "--mode" or "--sources") { i++; continue; }
+                    if (ProgArgs[i].StartsWith('-')) continue;
+                    yield return ProgArgs[i];
+                }
+            }
+        }
+    }
 
     /// <summary>Null when the line is unusable; the caller prints
     /// <see cref="Usage"/> and exits 2. `dap` is not parsed here — it
     /// takes no file, and each entry point owns what it means.</summary>
     public static Command? Parse(string[] args)
     {
-        string? cmd = null, file = null;
-        string[] progArgs = Array.Empty<string>();
-        if (args.Length >= 1)
+        if (args.Length == 0) return null;
+        string cmd;
+        string[] rest;
+        if (args[0] is "run" or "lex" or "weave" or "machine" or "gen" or "manifest" or "library")
         {
-            if (args[0] is "run" or "lex" or "weave" or "machine" or "gen" or "manifest")
+            cmd = args[0];
+            rest = args[1..];
+        }
+        else
+        {
+            (cmd, rest) = ("run", args);
+        }
+        if (cmd == "run")
+        {
+            // --perch PORT before the file: the debugged program's process,
+            // as the adapter starts it. Everything after the file is the
+            // program's own.
+            string? perch = null;
+            if (rest.Length >= 2 && rest[0] == "--perch") { perch = rest[1]; rest = rest[2..]; }
+            return rest.Length == 0 ? null : new Command("run", rest[0], rest[1..]) { Perch = perch };
+        }
+
+        // Every other verb: its flags in either position, like a .NET
+        // tool's, and one target — or several folders for a library.
+        var flags = new List<string>();
+        var targets = new List<string>();
+        for (int i = 0; i < rest.Length; i++)
+        {
+            switch (rest[i])
             {
-                cmd = args[0];
-                if (args.Length >= 2) { file = args[1]; progArgs = args[2..]; }
-            }
-            else
-            {
-                (cmd, file, progArgs) = ("run", args[0], args[1..]);
+                case "-o" or "--out" or "--gate" or "--mode" or "--sources":
+                    if (i + 1 >= rest.Length) return null;
+                    flags.Add(rest[i]);
+                    flags.Add(rest[++i]);
+                    break;
+                case "--write" or "--inputs" or "--debug" or "--library":
+                    flags.Add(rest[i]);
+                    break;
+                default:
+                    if (rest[i].StartsWith('-')) return null;
+                    targets.Add(rest[i]);
+                    break;
             }
         }
-        if (cmd == "manifest")
-        {
-            // Flags may come before or after the target; both orders are
-            // seen in the docs and neither deserves a usage error.
-            // --write regenerates; --inputs and --gate serve the build
-            // (ShoddyWeave's incrementality and its capability gate).
-            var flags = new List<string>();
-            string? target = null;
-            string[] rest = args[1..];
-            for (int i = 0; i < rest.Length; i++)
-            {
-                switch (rest[i])
-                {
-                    case "--write" or "--inputs":
-                        flags.Add(rest[i]);
-                        break;
-                    case "--gate" or "--mode":
-                        if (i + 1 >= rest.Length) return null;
-                        flags.Add(rest[i]);
-                        flags.Add(rest[++i]);
-                        break;
-                    default:
-                        if (target != null) return null;
-                        target = rest[i];
-                        break;
-                }
-            }
-            if (target is null) return null;
-            int actions = flags.Count(f => f is "--write" or "--inputs" or "--gate");
-            if (actions > 1) return null;
-            return new Command(cmd, target, flags.ToArray());
-        }
-        if (cmd == "machine")
-        {
-            // --debug — the instrumented machine weave (A6.2) — in
-            // either position, like manifest's flags.
-            string[] rest = args[1..];
-            string[] flags = rest.Where(a => a == "--debug").ToArray();
-            string[] files = rest.Where(a => a != "--debug").ToArray();
-            if (files.Length != 1 || flags.Length > 1) return null;
-            return new Command(cmd, files[0], flags);
-        }
-        if (file is null) return null;
-        if (cmd != "run" && progArgs.Length > 0) return null;
-        return new Command(cmd!, file, progArgs);
+        if (targets.Count == 0) return null;
+        bool many = cmd == "library" || (cmd == "gen" && flags.Contains("--library"));
+        if (!many && targets.Count != 1) return null;
+        if (cmd == "manifest" && flags.Count(f => f is "--write" or "--inputs" or "--gate") > 1) return null;
+        return new Command(cmd, targets[0], flags.Concat(targets.Skip(1)).ToArray());
     }
 
     public static int Usage()
     {
         Console.Error.WriteLine(
             "usage: mill [run] FILE.shoddy [program args...]\n" +
-            "       mill weave|lex|gen FILE.shoddy\n" +
-            "       mill machine [--debug] LIB.shoddy\n" +
-            "       mill manifest [--write | --inputs | --gate MODE] [--mode MODE] TARGET");
+            "       mill dap                 the debug adapter, for an editor (full mill)\n" +
+            "       mill weave FILE.shoddy [-o DIR]\n" +
+            "       mill machine [--debug] LIB.shoddy [-o DIR|FILE.dll]\n" +
+            "       mill library [--debug] FOLDER... -o FILE.dll [--sources REL]\n" +
+            "       mill gen FILE.shoddy\n" +
+            "       mill gen --library [--debug] FOLDER... [-o FILE.cs] [--sources REL]\n" +
+            "       mill lex FILE.shoddy\n" +
+            "       mill manifest [--write | --inputs [-o DIR] | --gate MODE] [--mode MODE] TARGET\n" +
+            "       any verb: --lib FILE.dll names a compiled library Includes resolve against;\n" +
+            "                 --libsrc DIR names a library's source folder (both repeatable)");
         return 2;
     }
 
@@ -172,6 +252,33 @@ public static class MillVerbs
                 return 0;
             case "gen":
             {
+                if (cmd.Has("--library"))
+                {
+                    List<string> sources = LibraryGen.SourcesIn(cmd.Targets);
+                    if (sources.Count == 0) throw new ShoddyError(0, "no machine sources to generate");
+                    string? outFile = cmd.Flag("-o", "--out");
+                    string rel = cmd.Flag("--sources")
+                        ?? (outFile == null ? "." : Weaver.RelativeDir(outFile, sources[0]));
+                    bool debug = cmd.Has("--debug");
+                    LibraryGen lib = LibraryGen.Generate(sources, debug, opt.LibrariesFor(debug), rel);
+                    string text = lib.ToSource();
+                    if (outFile == null)
+                    {
+                        Console.Write(text);
+                    }
+                    else
+                    {
+                        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(outFile))!);
+                        // Unchanged text is left alone: the file is a build
+                        // input downstream, and a moved timestamp is a
+                        // recompile.
+                        if (!File.Exists(outFile) || File.ReadAllText(outFile) != text)
+                            File.WriteAllText(outFile, text);
+                        Console.Error.WriteLine(
+                            $"mill: generated {lib.Units.Count} machine{(lib.Units.Count == 1 ? "" : "s")} -> {outFile}");
+                    }
+                    return 0;
+                }
                 (ShoddyProgram prog, _) = ParseWithMachines(cmd.File, opt);
                 Console.Write(Weaver.GenerateSource(prog));
                 return 0;
@@ -179,50 +286,79 @@ public static class MillVerbs
             case "weave":
             {
                 (ShoddyProgram prog, MachineSet machines) = ParseWithMachines(cmd.File, opt);
-                string outDll = Path.ChangeExtension(cmd.File, ".dll");
+                string outDir = cmd.Flag("-o", "--out")
+                    ?? Path.Combine(Path.GetDirectoryName(Path.GetFullPath(cmd.File))!, DefaultOutDir);
+                string outDll = Path.Combine(outDir, Path.GetFileNameWithoutExtension(cmd.File) + ".dll");
                 Weaver.Weave(prog, outDll, machines.Machines);
-                string via = machines.Machines.Count > 0
-                    ? $" (against {machines.Machines.Count} machine{(machines.Machines.Count == 1 ? "" : "s")})"
-                    : "";
+                int n = Weaver.LibrariesOf(machines.Machines).Count();
+                string via = n > 0 ? $" (against {n} librar{(n == 1 ? "y" : "ies")})" : "";
                 Console.Error.WriteLine(
-                    $"mill: wove {cmd.File} -> {outDll}{via}   (run: dotnet {outDll})");
+                    $"mill: wove {cmd.File} -> {outDll}{via}   (run: dotnet \"{outDll}\")");
                 return 0;
             }
             case "machine":
             {
-                bool debug = cmd.ProgArgs.Contains("--debug");
-                (ShoddyProgram prog, MachineSet machines) = ParseWithMachines(cmd.File, opt);
-                string outDll = Weaver.WeaveMachine(prog, cmd.File, machines.Machines, debug);
+                bool debug = cmd.Has("--debug");
+                // An instrumented machine links against the instrumented
+                // weaves of the machines it includes, so a machine built
+                // here and one the debugger loads are the same artifact.
+                (ShoddyProgram prog, MachineSet machines) = ParseWithMachines(cmd.File, opt, debug);
+                string outDll = MachineOut(cmd.File, cmd.Flag("-o", "--out"), debug);
+                Weaver.WeaveMachine(prog, cmd.File, outDll, machines.Machines, debug);
                 Console.Error.WriteLine(
                     $"mill: built {(debug ? "instrumented " : "")}machine {cmd.File} -> {outDll}");
                 return 0;
             }
+            case "library":
+            {
+                bool debug = cmd.Has("--debug");
+                string? outDll = cmd.Flag("-o", "--out");
+                if (outDll == null || !outDll.EndsWith(".dll", StringComparison.OrdinalIgnoreCase))
+                    throw new ShoddyError(0, "library needs -o FILE.dll: the assembly to write");
+                List<string> sources = LibraryGen.SourcesIn(cmd.Targets);
+                Weaver.WeaveLibrary(sources, outDll, Path.GetFileNameWithoutExtension(outDll), debug,
+                                    opt.LibrariesFor(debug), cmd.Flag("--sources"));
+                Console.Error.WriteLine(
+                    $"mill: built {(debug ? "instrumented " : "")}library of {sources.Count} machine{(sources.Count == 1 ? "" : "s")} -> {outDll}");
+                return 0;
+            }
             case "manifest":
             {
-                if (cmd.ProgArgs.Contains("--inputs"))
-                    return Manifest.Inputs(cmd.File);
-                if (cmd.ProgArgs.Contains("--gate"))
-                {
-                    int g = Array.IndexOf(cmd.ProgArgs, "--gate");
-                    int m = Array.IndexOf(cmd.ProgArgs, "--mode");
-                    return Manifest.Gate(cmd.File, cmd.ProgArgs[g + 1],
-                                         m >= 0 ? cmd.ProgArgs[m + 1] : null);
-                }
-                return Manifest.Run(cmd.File, write: cmd.ProgArgs.Contains("--write"));
+                if (cmd.Has("--inputs"))
+                    return Manifest.Inputs(cmd.File, cmd.Flag("-o", "--out"), opt.LibrariesFor(false));
+                if (cmd.Has("--gate"))
+                    return Manifest.Gate(cmd.File, cmd.Flag("--gate")!, cmd.Flag("--mode"));
+                return Manifest.Run(cmd.File, write: cmd.Has("--write"), opt.LibrariesFor(false));
             }
             default:
                 throw new ShoddyError(0, $"internal: '{cmd.Verb}' is not a pure verb");
         }
     }
 
+    /// <summary>Where `mill machine` writes: the -o given (a .dll path,
+    /// or a folder to put the conventionally named DLL in), else bin/
+    /// beside the source — bin/debug/ for the instrumented weave, so the
+    /// two twins never share a path.</summary>
+    public static string MachineOut(string sbPath, string? outArg, bool debug)
+    {
+        string file = MachineSet.AssemblyNameFor(sbPath) + ".dll";
+        if (outArg != null)
+            return outArg.EndsWith(".dll", StringComparison.OrdinalIgnoreCase)
+                ? outArg
+                : Path.Combine(outArg, file);
+        string bin = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(sbPath))!, DefaultOutDir);
+        return Path.Combine(debug ? Path.Combine(bin, "debug") : bin, file);
+    }
+
     /// <summary>The mill's own pipeline: read with machine resolution,
     /// seed, parse, lint. Warnings go to stderr — they never stop a
     /// build, and stdout belongs to the program. Unknown words are
     /// errors: nothing legitimate survives resolution, and runtime would
-    /// die at the same spot with less context.</summary>
-    public static (ShoddyProgram, MachineSet) ParseWithMachines(string file, Options opt)
+    /// die at the same spot with less context. With <paramref name="debug"/>,
+    /// every Include resolves to its instrumented weave.</summary>
+    public static (ShoddyProgram, MachineSet) ParseWithMachines(string file, Options opt, bool debug = false)
     {
-        var machines = new MachineSet();
+        var machines = new MachineSet(debug, opt.LibrariesFor(debug));
         List<Line> lines = Lexer.ReadProgram(file, (p, q) => MachineResolve.Resolve(machines, p, q));
         var prog = new ShoddyProgram();
         machines.SeedInto(prog);

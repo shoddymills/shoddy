@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
-# Build the MCP lane: restore, build and test Sparky. Run the repo root's
-# build first so bin/mill exists — ShoddyWeave drives it. The .ps1 twin
-# is the file that ships from the Windows workstation; keep the two in
-# step.
+# Build the MCP lane: restore, build and test Sparky. The lane's
+# projects build the toolchain they weave with and reference the machine
+# library, so a plain dotnet build is the whole build; the repo root's
+# build runs first only so the mill's own suite below has a mill. The
+# .ps1 twin is the file that ships from the Windows workstation; keep
+# the two in step.
 #
 #   ./build.sh              restore + build (Debug)
 #   ./build.sh test         build + run Shoddy.Mcp.Tests
@@ -18,36 +20,47 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-if [ ! -e ../../bin/mill ] && [ ! -e ../../bin/mill.exe ]; then
-    echo "STOPPED: bin/mill is missing - run ./build.sh at the repo root first." >&2
-    exit 1
-fi
+# The root's build: the full mill, for the mill's own suite. MSBuild's
+# up-to-date check makes this free when nothing changed.
+../../build.sh build
 
 case "${1:-build}" in
     build)   dotnet build Sparky.slnx ;;
     test)    dotnet test Shoddy.Mcp.Tests ;;
     run)     dotnet build sparky && dotnet run --project sparky --no-build ;;
-    release) dotnet build Sparky.slnx -c Release ;;
+    # release grades its own closure: no window, audio, toolchain or
+    # third-party protocol package rides along (scripts/verify-closure.js).
+    release) dotnet build Sparky.slnx -c Release
+             node ../../scripts/verify-closure.js sparky ;;
     publish)
         # What a release attaches: a self-contained single-file sparky
         # per OS, so the far end needs no repo and no .NET install.
         # Cross-targeting every RID from one runner is safe because the
         # lane is pure managed code - mcp.yml asserts that from outside.
-        # win-x64 ships as .zip; the unix RIDs as .tar.gz, because the
-        # executable bit only survives a tar.
+        # The Windows RIDs ship as .zip; the unix RIDs as .tar.gz, because
+        # the executable bit only survives a tar. win-arm64 is its own
+        # archive so an ARM64 Windows machine runs sparky natively rather
+        # than under x64 emulation.
         suffix="${2:+-$2}"
         pub=../../artifacts/publish
         mkdir -p "$pub"
-        for rid in win-x64 linux-x64 osx-x64 osx-arm64; do
+        # ShoddyRidPublish: these restores keep their lock files under
+        # artifacts/, unlocked - see Directory.Build.props for why.
+        # Single-file is set in sparky/Sparky.csproj, not here.
+        for rid in win-x64 win-arm64 linux-x64 osx-x64 osx-arm64; do
             dotnet publish sparky -c Release -r "$rid" --self-contained \
-                -p:PublishSingleFile=true -o "$pub/sparky/$rid"
-            if [ "$rid" = win-x64 ]; then
+                -p:ShoddyRidPublish=true \
+                -o "$pub/sparky/$rid"
+            if [ "${rid#win-}" != "$rid" ]; then
                 (cd "$pub/sparky/$rid" && zip -qj "../../sparky$suffix-$rid.zip" sparky.exe)
             else
                 chmod +x "$pub/sparky/$rid/sparky"
                 tar -czf "$pub/sparky$suffix-$rid.tar.gz" -C "$pub/sparky/$rid" sparky
             fi
         done
-        ls -1 "$pub" | sed 's/^/  -> /' ;;
+        ls -1 "$pub" | sed 's/^/  -> /'
+        # Then drive the archive for THIS platform, unpacked outside the
+        # repo: the exact file a person downloads, not the build output.
+        node ../../scripts/verify-shipped.js sparky "${2:-}" ;;
     *)       echo "unknown command: $1 (build | test | run | release | publish)" >&2; exit 1 ;;
 esac

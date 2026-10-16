@@ -1,27 +1,60 @@
 <Project>
 
-  <!-- Centralize every project's build output into artifacts/ instead of
-       each project's own src/<Project>/bin and obj. Keeps Shoddy.Runtime.dll,
-       Shoddy.Compiler.dll, Shoddy.Devil.dll, and mill.dll in one predictable
-       place for plain `dotnet build`/`dotnet test` runs. The mill's published
-       bin/ (dotnet publish -o bin) and the machines/*.shoddy machine DLLs
-       (which land in a bin/ subdirectory beside their .shoddy source, where
-       the Include resolver looks) are unaffected â€” both use explicit output
-       paths. -->
+  <!-- Every project's build output goes under artifacts/ — the .NET
+       SDK's artifacts layout — instead of a bin/ and obj/ beside each
+       project. The toolchain, the machine library, the hosts, the proofs
+       and the tests all land in one predictable place, and nothing a
+       build writes lands in a source folder. -->
   <PropertyGroup>
     <ArtifactsPath>$(MSBuildThisFileDirectory)artifacts</ArtifactsPath>
     <UseArtifactsOutput>true</UseArtifactsOutput>
+  </PropertyGroup>
+
+  <!-- What every C# project here assumes, said once. The target
+       framework stays in each project: a project that multi-targets
+       (the MAUI head) must own it. -->
+  <PropertyGroup>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+  </PropertyGroup>
+
+  <!-- Reproducible builds. Deterministic is the compiler default and is
+       named here so nobody has to wonder; under CI the build also drops
+       absolute paths from the PDBs and marks itself a CI build, so two
+       clean builds of one commit are byte-identical. Portable PDBs ship
+       with every assembly, Source Link embeds what git does not track,
+       and the package graph is pinned by lock files restored in locked
+       mode under CI, so a restore cannot drift between two runs. -->
+  <PropertyGroup>
+    <Deterministic>true</Deterministic>
+    <DebugType>portable</DebugType>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <ContinuousIntegrationBuild Condition="'$(GITHUB_ACTIONS)' == 'true'">true</ContinuousIntegrationBuild>
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+    <!-- Locked under CI, and under `build prove` (SHODDY_LOCKED_RESTORE=1),
+         so the local proof restores exactly as the runner does: a lock
+         file that has drifted fails on this machine, not after a push. -->
+    <RestoreLockedMode Condition="'$(GITHUB_ACTIONS)' == 'true' Or '$(SHODDY_LOCKED_RESTORE)' == '1'">true</RestoreLockedMode>
+  </PropertyGroup>
+
+  <!-- The one exception: sparky's per-RID single-file publish
+       (hosts/mcp/build.sh publish passes ShoddyRidPublish=true). It
+       restores runtime identifiers and the implicit ILLink package,
+       which the committed lock files do not record, so a locked restore
+       refuses it (NU1004) and an unlocked one would rewrite them. Its
+       lock files go under artifacts/ instead; global.json's SDK still
+       pins those packages. -->
+  <PropertyGroup Condition="'$(ShoddyRidPublish)' == 'true'">
+    <RestoreLockedMode>false</RestoreLockedMode>
+    <NuGetLockFilePath>$(MSBuildThisFileDirectory)artifacts/obj/$(MSBuildProjectName)/packages.rid-publish.lock.json</NuGetLockFilePath>
   </PropertyGroup>
 
   <!-- ONE version for everything this repository ships. It reaches src/
        and hosts/mcp/ alike, so the mill's version banner and sparky's
        serverInfo answer the same number: the one printed on the archive
        somebody downloaded.
-
-       Before this, nothing stamped a version at all. Every binary
-       reported the MSBuild default of 1.0.0 while the repository shipped
-       2.x, which made the smoke test in RELEASING.md report a number
-       that meant nothing.
 
        The number here is a DEVELOPMENT DEFAULT. A release takes its
        version from the git tag: release.yml stamps this line and

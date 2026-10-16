@@ -59,10 +59,13 @@ public sealed class HalifaxSession
         Prompt = host.Word("HxPrompt").Call().AsStr();
     }
 
+    /// <summary>The woven core, and the reckoner machine out of the
+    /// standard library it was woven against: the library is one
+    /// assembly, so the machine is picked by name.</summary>
     static ShoddyHost LoadHost(ShoddyHostOptions options) =>
         ShoddyHost.Load(options,
             Assembly.Load("Shoddy.Machines.Halifax-core"),
-            Assembly.Load("Shoddy.Machines.Reckoner"));
+            ShoddyHost.Pick(Assembly.Load("Shoddy.Machines"), "reckoner"));
 
     /// <summary>Open a session. The root is where the mill's declared
     /// files live — halifaxrc, SAVE and LOAD paths — and it must exist;

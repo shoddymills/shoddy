@@ -41,7 +41,7 @@ public static class Manifest
 
     /// <summary>Entry point for the verb. <paramref name="target"/> is
     /// the mill folder or any .shoddy file in it.</summary>
-    public static int Run(string target, bool write)
+    public static int Run(string target, bool write, IEnumerable<string>? libraries = null)
     {
         string folder = Directory.Exists(target)
             ? target
@@ -89,7 +89,7 @@ public static class Manifest
             return 1;
         }
 
-        List<string> truth = Closure(root, folder);
+        List<string> truth = Closure(root, folder, libraries);
 
         if (write)
         {
@@ -123,16 +123,17 @@ public static class Manifest
     ///   name|…        the manifest's name
     ///   core|…        the core file (Mode N input), when declared
     ///   shell|…       the shell file (Mode T input), when declared
-    ///   outn|…        the machine DLL the core weaves to
-    ///   outndebug|…   its instrumented (--debug) twin
-    ///   outt|…        the console DLL the shell weaves to
+    ///   outn|…        the machine DLL the core weaves to, under --out
+    ///   outt|…        the console DLL the shell weaves to, under --out
     ///   source|…      the mill's own files, spliced siblings included
-    ///   machine|…     a transitive-closure machine DLL
-    ///   machinesrc|…  that machine's source (its change re-weaves too)
+    ///   machine|…     a compiled library the closure links: one line
+    ///                 per assembly, however many machines it holds
     ///   asset|…       a declared asset file, globs and folders expanded
     ///   manifest|…    the manifest itself
-    /// ShoddyWeave reads this into its items; nothing else parses it.</summary>
-    public static int Inputs(string target)
+    /// ShoddyWeave reads this into its items; nothing else parses it.
+    /// Without --out, the outputs land in bin/ beside each entry file,
+    /// where `mill machine` and `mill weave` put them by default.</summary>
+    public static int Inputs(string target, string? outDir = null, IEnumerable<string>? libraries = null)
     {
         (string folder, string path) = Locate(target);
         if (!File.Exists(path))
@@ -149,38 +150,27 @@ public static class Manifest
         Console.WriteLine($"name|{root["name"]?.GetValue<string>() ?? Path.GetFileName(folder)}");
 
         var sources = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
-        var set = new MachineSet();
+        var set = new MachineSet(false, libraries ?? MachineSet.DefaultLibraries(false));
         foreach (string key in new[] { "shell", "core" })
         {
             if (root[key]?.GetValue<string>() is not string file) continue;
             string full = Path.GetFullPath(Path.Combine(folder, file));
             Console.WriteLine($"{key}|{full}");
+            string outIn = outDir != null
+                ? Path.GetFullPath(outDir)
+                : Path.Combine(Path.GetDirectoryName(full)!, MillVerbs.DefaultOutDir);
             if (key == "core")
-            {
-                Console.WriteLine($"outn|{MachineSet.DllPathFor(full)}");
-                Console.WriteLine($"outndebug|{MachineSet.DebugDllPathFor(full)}");
-            }
+                Console.WriteLine($"outn|{Path.Combine(outIn, MachineSet.AssemblyNameFor(full) + ".dll")}");
             else
-            {
-                Console.WriteLine($"outt|{Path.ChangeExtension(full, ".dll")}");
-            }
+                Console.WriteLine($"outt|{Path.Combine(outIn, Path.GetFileNameWithoutExtension(full) + ".dll")}");
             foreach (Line l in Lexer.ReadProgram(full,
                                                  (p, q) => ResolveDependency(set, folder, p, q)))
                 if (l.File != null) sources.Add(Path.GetFullPath(l.File));
         }
         foreach (string s in sources)
             Console.WriteLine($"source|{s}");
-        foreach (MachineInfo m in set.Machines.OrderBy(m => m.DllPath, StringComparer.OrdinalIgnoreCase))
-        {
-            string dll = Path.GetFullPath(m.DllPath);
+        foreach (string dll in Weaver.LibrariesOf(set.Machines).OrderBy(d => d, StringComparer.OrdinalIgnoreCase))
             Console.WriteLine($"machine|{dll}");
-            // bin/Shoddy.Machines.X.dll -> ../x.shoddy, exact because the
-            // assembly stem keeps the source's own spelling.
-            string stem = m.AssemblyName.Replace("Shoddy.Machines.", "").ToLowerInvariant();
-            string src = Path.GetFullPath(Path.Combine(
-                Path.GetDirectoryName(dll)!, "..", stem + ".shoddy"));
-            if (File.Exists(src)) Console.WriteLine($"machinesrc|{src}");
-        }
         foreach (string a in StrArray(root, "assets", new List<string>()))
         {
             string full = Path.GetFullPath(Path.Combine(folder, a));
@@ -304,9 +294,9 @@ public static class Manifest
     /// <summary>The transitive machine closure of the mill's sources —
     /// shell and core, each walked with the resolver every other verb
     /// uses. Source names, lower-case, sorted, without .shoddy.</summary>
-    static List<string> Closure(JsonObject root, string folder)
+    static List<string> Closure(JsonObject root, string folder, IEnumerable<string>? libraries)
     {
-        var set = new MachineSet();
+        var set = new MachineSet(false, libraries ?? MachineSet.DefaultLibraries(false));
         foreach (string key in new[] { "shell", "core" })
         {
             if (root[key]?.GetValue<string>() is not string file) continue;
@@ -314,10 +304,15 @@ public static class Manifest
                               (p, q) => ResolveDependency(set, folder, p, q));
         }
         return set.Machines
-            .Select(m => m.AssemblyName.Replace("Shoddy.Machines.", "").ToLowerInvariant())
+            .Select(MachineName)
             .OrderBy(s => s, StringComparer.Ordinal)
             .ToList();
     }
+
+    /// <summary>A machine as the manifest's machines section names it:
+    /// its source name, lower-case, without .shoddy.</summary>
+    static string MachineName(MachineInfo m) =>
+        Path.GetFileNameWithoutExtension(m.Source).ToLowerInvariant();
 
     /// <summary>The derivation's resolver: like every other verb's, but
     /// the mill's OWN files always splice — a woven core sitting in the

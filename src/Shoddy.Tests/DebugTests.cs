@@ -1,8 +1,10 @@
 // Copyright (c) Stephen Vincent Foster and Shoddy Language contributors.
 // Licensed under the MIT License. See the LICENSE file in the project root.
 
+using System.Reflection;
 using Shoddy.Compiler;
 using Shoddy.Devil;
+using Shoddy.Hosting;
 using Shoddy.Runtime;
 
 namespace Shoddy.Tests;
@@ -72,7 +74,7 @@ public class DebugTests
         Engine.PendingSink = rec;
         try
         {
-            Assert.Equal(0, entry(output, TextReader.Null));
+            Assert.Equal(0, entry(output, TextReader.Null, Array.Empty<string>()));
         }
         finally
         {
@@ -85,6 +87,71 @@ public class DebugTests
         Assert.Equal(49, xSeen);
         Assert.Equal(40, baseGlobal);
         Assert.Contains(rec.Hits, h => h.File == "prog.shoddy" && h.Line == 7 && h.Frame == "MAIN");
+    }
+
+    sealed class PathRecorder : IDebugSink
+    {
+        public readonly List<string> Paths = new();
+        public void OnLine(Engine rt) => Paths.Add(rt.DebugFiles[rt.Frames[^1].FileId]);
+    }
+
+    /// <summary>An instrumented machine is woven in one place and run from
+    /// another: the VS Code extension ships a library woven on the build
+    /// machine, and an install puts it somewhere else. Stepping into one
+    /// must show its source where it is now. Here the folder it was woven
+    /// in is deleted before it runs, so a path recorded at weave time
+    /// cannot be found by accident. The layout is the toolchain's: the
+    /// instrumented weave two folders below the sources, in lib/debug/,
+    /// as the weave records it.</summary>
+    [Fact]
+    public void AnInstrumentedMachineFindsItsSourceWhereverItIsInstalled()
+    {
+        // A name of its own: an assembly loads once per test process.
+        string stem = "reloc" + Guid.NewGuid().ToString("N")[..8];
+        string root = Path.Combine(Path.GetTempPath(), "shoddy-reloc", Guid.NewGuid().ToString("N"));
+        string wovenIn = Path.Combine(root, "woven");
+        string installed = Path.Combine(root, "installed");
+        Directory.CreateDirectory(wovenIn);
+        string sb = Path.Combine(wovenIn, stem + ".shoddy");
+        File.WriteAllText(sb, string.Join('\n',
+            "Def Twice(n As Number) As Number",
+            "    n * 2",
+            ""));
+        var machines = new MachineSet(debug: true);
+        List<Line> lines = Lexer.ReadProgram(sb, machines.TryResolve);
+        var prog = new ShoddyProgram();
+        machines.SeedInto(prog);
+        string dll = Weaver.WeaveMachine(Parser.Parse(lines, prog), sb,
+            Path.Combine(wovenIn, "lib", "debug", MachineSet.AssemblyNameFor(sb) + ".dll"),
+            machines.Machines, debug: true);
+
+        // The install's layout, copied whole: the source, and the weave
+        // in lib/debug/ two below it. Then the original goes.
+        string movedSb = Path.Combine(installed, stem + ".shoddy");
+        string movedDll = Path.Combine(installed, "lib", "debug", Path.GetFileName(dll));
+        Directory.CreateDirectory(Path.GetDirectoryName(movedDll)!);
+        File.Copy(sb, movedSb);
+        File.Copy(dll, movedDll);
+        Directory.Delete(wovenIn, recursive: true);
+
+        var rec = new PathRecorder();
+        Engine.PendingSink = rec;
+        try
+        {
+            ShoddyHost host = ShoddyHost.Load(Assembly.LoadFrom(movedDll));
+            Assert.Equal(14, host.Word("Twice").Call(ShoddyValue.Num(7)).AsNum());
+        }
+        finally
+        {
+            Engine.PendingSink = null;
+        }
+
+        Assert.NotEmpty(rec.Paths);
+        Assert.All(rec.Paths, p =>
+        {
+            Assert.Equal(Path.GetFullPath(movedSb), p);
+            Assert.True(File.Exists(p), $"the debugger names {p}, which does not exist");
+        });
     }
 
     [Fact]
@@ -115,7 +182,7 @@ public class DebugTests
         Environment.CurrentDirectory = Root;
         try
         {
-            Assert.Equal(0, entry(output, input));
+            Assert.Equal(0, entry(output, input, Array.Empty<string>()));
         }
         finally
         {

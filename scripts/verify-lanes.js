@@ -72,7 +72,7 @@ for (const proj of projectsUnder("hosts")) {
         const base = m[1].replace(/\\/g, "/").split("/").pop();
         if (base === "Shoddy.Mill.csproj" || base === "Shoddy.Compiler.csproj") {
             fail(`${rel(proj)} references ${base} - hosts/ must not reference the `
-                + "toolchain (B2.4); the weave arrives through ShoddyWeave, driven by bin/mill");
+                + "toolchain (B2.4); the weave arrives through ShoddyWeave, driven by the headless mill");
         }
     }
 }

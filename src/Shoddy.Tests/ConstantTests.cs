@@ -31,11 +31,16 @@ public class ConstantTests
 
     /// <summary>Machines and programs share one directory, the way an
     /// Include next to the includer expects, with the machine DLLs landing
-    /// in bin/ beside them exactly as `mill machine` puts them.</summary>
+    /// in bin/ beside them exactly as `mill machine` puts them. Every
+    /// machine built here joins <see cref="Libraries"/>, which is what a
+    /// program in the workspace resolves against: nothing is searched
+    /// that this workspace did not build.</summary>
     sealed class Workspace : IDisposable
     {
         public readonly string Dir =
             Path.Combine(Path.GetTempPath(), "shoddy-const", Guid.NewGuid().ToString("N"));
+
+        public readonly List<string> Libraries = new();
 
         public Workspace()
         {
@@ -69,28 +74,30 @@ public class ConstantTests
         }
     }
 
-    static (ShoddyProgram, MachineSet) Parse(string file)
+    static (ShoddyProgram, MachineSet) Parse(Workspace ws, string file)
     {
-        var machines = new MachineSet();
+        var machines = new MachineSet(false, ws.Libraries);
         List<Line> lines = Lexer.ReadProgram(file, machines.TryResolve);
         var prog = new ShoddyProgram();
         machines.SeedInto(prog);
         return (Parser.Parse(lines, prog), machines);
     }
 
-    /// <summary>Weave a machine source to its DLL beside it, as
-    /// `mill machine` does.</summary>
-    static string BuildMachine(string path)
+    /// <summary>Weave a machine source to its DLL in bin/ beside it, as
+    /// `mill machine` does, and make it resolvable in the workspace.</summary>
+    static string BuildMachine(Workspace ws, string path)
     {
-        var (prog, set) = Parse(path);
-        return Weaver.WeaveMachine(prog, path, set.Machines);
+        var (prog, set) = Parse(ws, path);
+        string dll = Weaver.WeaveMachine(prog, path, MillVerbs.MachineOut(path, null, false), set.Machines);
+        ws.Libraries.Add(dll);
+        return dll;
     }
 
-    /// <summary>Weave a program against whatever machines resolve, run it,
+    /// <summary>Weave a program against the workspace's machines, run it,
     /// and return everything it printed.</summary>
     static string RunProgram(Workspace ws, string path)
     {
-        var (prog, set) = Parse(path);
+        var (prog, set) = Parse(ws, path);
         string dll = Path.Combine(ws.Dir, "out", Path.GetFileNameWithoutExtension(path) + ".dll");
         Weaver.Weave(prog, dll, set.Machines);
         Assembly asm = Assembly.Load(File.ReadAllBytes(dll));
@@ -110,7 +117,7 @@ public class ConstantTests
         using var ws = new Workspace();
         ws.Standard("seq");
         string p = ws.Machine("fixture", src);
-        try { BuildMachine(p); return ""; }
+        try { BuildMachine(ws, p); return ""; }
         catch (ShoddyError e) { return e.Message; }
     }
 
@@ -127,7 +134,7 @@ public class ConstantTests
     public void AConstantListAndAFreshListAreBothEqualToThemselves()
     {
         using var ws = new Workspace();
-        BuildMachine(ws.Machine("held", J(
+        BuildMachine(ws, ws.Machine("held", J(
             "Let xs = { \"A\", \"B\" }",
             "",
             "Def HeldXs() As List Of String",
@@ -156,7 +163,7 @@ public class ConstantTests
     public void ToArrayAndDimFold()
     {
         using var ws = new Workspace();
-        BuildMachine(ws.Machine("arr", J(
+        BuildMachine(ws, ws.Machine("arr", J(
             "Let table = ToArray({ 1, 2, 3 })",
             "Let zeros = Dim(3, 0)",
             "",
@@ -181,7 +188,7 @@ public class ConstantTests
     public void TrueAndFalseFold()
     {
         using var ws = new Workspace();
-        BuildMachine(ws.Machine("flags", J(
+        BuildMachine(ws, ws.Machine("flags", J(
             "Type FlagWay",
             "    FwName As String",
             "    FwBoth As Boolean",
@@ -216,7 +223,7 @@ public class ConstantTests
     public void ConstantOperatorExpressionsFoldToWhatTheRuntimeComputes()
     {
         using var ws = new Workspace();
-        BuildMachine(ws.Machine("ops", J(
+        BuildMachine(ws, ws.Machine("ops", J(
             "Let planck = 6.62607015 * (10 ^ (0 - 34))",
             "Let minusOne = 0 - 1",
             "Let joined = \"a\" & \"b\"",
@@ -280,14 +287,14 @@ public class ConstantTests
         // in declaration order. Read off the generated source, because a
         // wrong order fails at class load with a NullReferenceException
         // that names nothing.
-        var (prog, set) = Parse(path);
+        var (prog, set) = Parse(ws, path);
         string cs = Weaver.GenerateSource(prog, "Rec", deps: set.Machines, ownFile: path);
         int typeAt = cs.IndexOf("static readonly TypeDef", StringComparison.Ordinal);
         int constAt = cs.IndexOf("static readonly Value G_MILE", StringComparison.Ordinal);
         Assert.True(typeAt >= 0 && constAt > typeAt,
             "the type field must be emitted before the constant that names it");
 
-        BuildMachine(path);
+        BuildMachine(ws, path);
         Assert.Equal("MILE\nTrue\nTrue\n", RunProgram(ws, ws.Program("use", J(
             "Include \"rec.shoddy\"",
             "",
@@ -304,7 +311,7 @@ public class ConstantTests
     public void AConstantMayHoldAPreludeTypeOrAnotherMachinesType()
     {
         using var ws = new Workspace();
-        BuildMachine(ws.Machine("shape", J(
+        BuildMachine(ws, ws.Machine("shape", J(
             "Type Point",
             "    Px As Number",
             "    Py As Number",
@@ -315,7 +322,7 @@ public class ConstantTests
         // different machine, reached through its manifest. That is a read
         // of a static field on another class, which the CLR initializes
         // before the read - a different guarantee from R3.7's ordering.
-        BuildMachine(ws.Machine("holder", J(
+        BuildMachine(ws, ws.Machine("holder", J(
             "Include \"shape.shoddy\"",
             "",
             "Let corner = Point(3, 4)",
@@ -354,7 +361,7 @@ public class ConstantTests
     public void TheSameValueIsHandedToEveryEngineInTheProcess()
     {
         using var ws = new Workspace();
-        string dll = BuildMachine(ws.Machine("shared", J(
+        string dll = BuildMachine(ws, ws.Machine("shared", J(
             "Let xs = { \"A\", \"B\" }",
             "",
             "Def SharedXs() As List Of String",
@@ -383,7 +390,7 @@ public class ConstantTests
     public void AMachineConstantIsNotVisibleToAProgramThatIncludesIt()
     {
         using var ws = new Workspace();
-        BuildMachine(ws.Machine("priv", J(
+        BuildMachine(ws, ws.Machine("priv", J(
             "Let secret = { \"A\" }",
             "",
             "Def PrivXs() As List Of String",
@@ -395,7 +402,7 @@ public class ConstantTests
             "Def Main()",
             "    Let n = secret",
             "    Print(Length(n))"));
-        var set = new MachineSet();
+        var set = new MachineSet(false, ws.Libraries);
         List<Line> lines = Lexer.ReadProgram(p, set.TryResolve);
         var seeded = new ShoddyProgram();
         set.SeedInto(seeded);
@@ -411,12 +418,12 @@ public class ConstantTests
     public void TwoMachinesMayDeclareAConstantOfTheSameName()
     {
         using var ws = new Workspace();
-        BuildMachine(ws.Machine("one", J(
+        BuildMachine(ws, ws.Machine("one", J(
             "Let xs = { \"ONE\" }",
             "",
             "Def OneXs() As List Of String",
             "    xs")));
-        BuildMachine(ws.Machine("two", J(
+        BuildMachine(ws, ws.Machine("two", J(
             "Let xs = { \"TWO\" }",
             "",
             "Def TwoXs() As List Of String",
@@ -569,7 +576,7 @@ public class ConstantTests
     static Lint.Result LintMachine(Workspace ws, string name, string src)
     {
         string p = ws.Machine(name, src);
-        var set = new MachineSet();
+        var set = new MachineSet(false, ws.Libraries);
         List<Line> lines = Lexer.ReadProgram(p, set.TryResolve);
         var seeded = new ShoddyProgram();
         set.SeedInto(seeded);
@@ -636,7 +643,7 @@ public class ConstantTests
         // the standard machines: assemblies load by name into one context,
         // so a Shoddy.Machines.Seq built by another test in the same run
         // would answer this include instead.
-        BuildMachine(ws.Machine("spare", J(
+        BuildMachine(ws, ws.Machine("spare", J(
             "Def SpareOne() As Number",
             "    1")));
         // UsedWords feeds UnusedMachineIncludes. A constant cannot call a
@@ -673,12 +680,10 @@ public class ConstantTests
     [Fact]
     public void AMachineConstantIsVisibleInTheDebuggersGlobals()
     {
-        // The perch always splices machine SOURCES — no machine DLLs, so
-        // every line is steppable — which means a machine's constant is
-        // bound by the program's own init phase and appears in Globals
-        // through the rt.BindGlobal already emitted there. That is why no
-        // registration hook is emitted for a machine weave: debug and
-        // machineClass never co-occur.
+        // A spliced file's constant (held.shoddy is a program sibling, not
+        // a machine-library file, so it is spliced) is bound by the
+        // program's own init phase and appears in Globals through the
+        // rt.BindGlobal already emitted there.
         string dir = Path.Combine(Path.GetTempPath(), "shoddy-const-dbg", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(dir);
         File.WriteAllText(Path.Combine(dir, "held.shoddy"), J(
@@ -698,7 +703,7 @@ public class ConstantTests
         try
         {
             var entry = Weaver.LoadDebug(Parser.Parse(Lexer.ReadProgram(p)));
-            entry(TextWriter.Null, TextReader.Null);
+            entry(TextWriter.Null, TextReader.Null, Array.Empty<string>());
         }
         finally { Engine.PendingSink = null; }
 
@@ -723,7 +728,7 @@ public class ConstantTests
             "",
             "Def PlainNames() As List Of String",
             "    names"));
-        var (prog, set) = Parse(path);
+        var (prog, set) = Parse(ws, path);
         string cs = Weaver.GenerateSource(prog, "Plain", deps: set.Machines, ownFile: path);
         Assert.DoesNotContain("BindGlobal", cs);
         Assert.DoesNotContain("rt.Dbg", cs);

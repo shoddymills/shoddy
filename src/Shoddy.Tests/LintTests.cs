@@ -31,9 +31,9 @@ public class LintTests
         finally { Directory.Delete(dir, recursive: true); }
     }
 
-    static Lint.Result LintFile(string path, bool machines)
+    static Lint.Result LintFile(string path, bool machines, IEnumerable<string>? libraries = null)
     {
-        var set = new MachineSet();
+        var set = new MachineSet(false, libraries);
         List<Line> lines = machines
             ? Lexer.ReadProgram(path, set.TryResolve)
             : Lexer.ReadProgram(path);
@@ -532,11 +532,11 @@ public class LintTests
 
         var built = new MachineSet();
         ShoddyProgram mprog = Parser.Parse(Lexer.ReadProgram(sb, built.TryResolve));
-        Weaver.WeaveMachine(mprog, sb, built.Machines);
+        string dll = Weaver.WeaveMachine(mprog, sb, MillVerbs.MachineOut(sb, null, false), built.Machines);
 
         string f = Path.Combine(dir, "fixture.shoddy");
         File.WriteAllText(f, $"Include \"{machineName}.shoddy\"\n\n" + src);
-        return LintFile(f, machines: true);
+        return LintFile(f, machines: true, libraries: new[] { dll });
     }
 
     // ---- the effects table covers every builtin -------------------------

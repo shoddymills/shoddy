@@ -42,9 +42,9 @@ public class ManifestTests
         string machines = Path.Combine(ws, "machines");
         Directory.CreateDirectory(machines);
         File.WriteAllText(Path.Combine(machines, dep + ".shoddy"), DepSource);
-        // Built, so the resolver satisfies the Include from a DLL — a
-        // scratch folder is not a machine library, and only a DLL beside
-        // the source makes it a machine rather than a splice.
+        // Built, so the resolver can satisfy the Include from a compiled
+        // machine: the fixture's machines/ is named as the library (the
+        // test sets SHODDYLIB), and its bin/ holds what was built.
         Build(Path.Combine(machines, dep + ".shoddy"));
         string mill = Path.Combine(ws, "widget");
         Directory.CreateDirectory(mill);
@@ -75,7 +75,7 @@ public class ManifestTests
 
         // --write creates the skeleton: convention-named files found,
         // the closure derived through the resolver.
-        Assert.Equal(0, Manifest.Run(mill, write: true));
+        Assert.Equal(0, Manifest.Run(mill, write: true, Libs(mill)));
         var root = (JsonObject)JsonNode.Parse(File.ReadAllText(manifest))!;
         Assert.Equal("widget", (string)root["name"]!);
         Assert.Equal("widget-core.shoddy", (string)root["core"]!);
@@ -86,23 +86,23 @@ public class ManifestTests
             root["goldens"]!.AsArray().Select(n => (string)n!).ToArray());
 
         // Fresh manifest verifies clean.
-        Assert.Equal(0, Manifest.Run(mill, write: false));
+        Assert.Equal(0, Manifest.Run(mill, write: false, Libs(mill)));
 
         // A hand-edited stale dependency section fails verification.
         root["machines"] = new JsonArray();
         File.WriteAllText(manifest, root.ToJsonString());
-        Assert.Equal(1, Manifest.Run(mill, write: false));
+        Assert.Equal(1, Manifest.Run(mill, write: false, Libs(mill)));
 
         // And --write repairs it, preserving the hand-authored fields.
         root = (JsonObject)JsonNode.Parse(File.ReadAllText(manifest))!;
         root["capabilities"] = new JsonObject { ["clock"] = new JsonObject { ["optional"] = true } };
         File.WriteAllText(manifest, root.ToJsonString());
-        Assert.Equal(0, Manifest.Run(mill, write: true));
+        Assert.Equal(0, Manifest.Run(mill, write: true, Libs(mill)));
         root = (JsonObject)JsonNode.Parse(File.ReadAllText(manifest))!;
         Assert.Equal(new[] { "mana" },
             root["machines"]!.AsArray().Select(n => (string)n!).ToArray());
         Assert.True((bool)root["capabilities"]!["clock"]!["optional"]!);
-        Assert.Equal(0, Manifest.Run(mill, write: false));
+        Assert.Equal(0, Manifest.Run(mill, write: false, Libs(mill)));
         }
         finally
         {
@@ -115,7 +115,7 @@ public class ManifestTests
     {
         string mill = Mill("manb");
         string manifest = Path.Combine(mill, Manifest.FileName);
-        Assert.Equal(0, Manifest.Run(mill, write: true));
+        Assert.Equal(0, Manifest.Run(mill, write: true, Libs(mill)));
         var good = (JsonObject)JsonNode.Parse(File.ReadAllText(manifest))!;
 
         void Broken(Action<JsonObject> breakIt)
@@ -123,7 +123,7 @@ public class ManifestTests
             var copy = (JsonObject)JsonNode.Parse(good.ToJsonString())!;
             breakIt(copy);
             File.WriteAllText(manifest, copy.ToJsonString());
-            Assert.Equal(1, Manifest.Run(mill, write: false));
+            Assert.Equal(1, Manifest.Run(mill, write: false, Libs(mill)));
         }
 
         Broken(m => m.Remove("modes"));                       // modes required
@@ -139,27 +139,41 @@ public class ManifestTests
     /// <summary>The shipped example manifest stays valid against the
     /// structural checks and its generated section stays true — the
     /// drift test D1 demands. Out of process, through the real mill:
-    /// walking halifax loads dozens of machine assemblies, and a test
-    /// process that also builds scratch machines under the same simple
-    /// names must not share a load context with them.</summary>
+    /// walking halifax loads the standard library, and a test process
+    /// that also builds scratch machines must not share a load context
+    /// with it. The mill is this test host's own copy, which carries the
+    /// library and its sources beside it.</summary>
     [Fact]
     public void ShippedHalifaxManifestVerifies()
     {
-        string millExe = Path.Combine(Root, "bin", "mill.exe");
-        if (!File.Exists(millExe)) millExe = Path.Combine(Root, "bin", "mill");
-        var psi = new System.Diagnostics.ProcessStartInfo(millExe,
-            $"manifest \"{Path.Combine(Root, "mills", "halifax")}\"");
+        var psi = new System.Diagnostics.ProcessStartInfo("dotnet",
+            $"\"{TestHost.MillDll}\" manifest \"{Path.Combine(Root, "mills", "halifax")}\"");
+        // Halifax reaches its machines by relative path into the
+        // checkout's machines/, which is the library only when named: a
+        // checkout's build names it the same way.
+        psi.Environment["SHODDYLIB"] = Path.Combine(Root, "machines");
+        psi.Environment.Remove("SHODDYLIBBIN");
         var (exit, text) = ProcessRun.CaptureAll(psi);
         Assert.True(exit == 0, text);
     }
 
+    /// <summary>Weave a machine to bin/ beside its source, as `mill
+    /// machine` does.</summary>
     static void Build(string sbPath)
     {
         var machines = new MachineSet();
         List<Line> lines = Lexer.ReadProgram(sbPath, machines.TryResolve);
         var prog = new ShoddyProgram();
         machines.SeedInto(prog);
-        Weaver.WeaveMachine(Parser.Parse(lines, prog), sbPath, machines.Machines);
+        Weaver.WeaveMachine(Parser.Parse(lines, prog), sbPath, MillVerbs.MachineOut(sbPath, null, false), machines.Machines);
+    }
+
+    /// <summary>The compiled machines a fixture mill resolves against:
+    /// whatever its machines/bin holds.</summary>
+    static IEnumerable<string> Libs(string mill)
+    {
+        string bin = Path.Combine(Path.GetDirectoryName(mill)!, "machines", "bin");
+        return Directory.Exists(bin) ? Directory.GetFiles(bin, "*.dll") : Array.Empty<string>();
     }
 
     // ================= the capability derivation =================

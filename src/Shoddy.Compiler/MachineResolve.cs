@@ -14,87 +14,39 @@ namespace Shoddy.Compiler;
 ///
 /// A machine is a runtime. It is compiled, and it is used compiled: its
 /// source shipping alongside is for reading, not for splicing into
-/// whoever includes it. Everything below follows from that.
+/// whoever includes it. And it is compiled by its library's build, never
+/// here: resolving a program must not have side effects in a source
+/// tree, and whether a program is legal must not depend on what happened
+/// to be built. A machine that is in no compiled library is an error that
+/// names the build to run.
 /// </summary>
 public static class MachineResolve
 {
-    /// <summary>Resolve one Include. Returns true when a machine DLL
+    /// <summary>Resolve one Include. Returns true when a compiled machine
     /// satisfies it, false to let the Lexer splice the source.
     ///
-    /// A machine library file is always resolved: built if it has no DLL,
-    /// rebuilt if the DLL is behind its source. Anything else — a
+    /// A machine library file is always a machine. Anything else — a
     /// program's own sibling files — splices, which is what lets a mill
-    /// spread itself across a dozen files.</summary>
+    /// spread itself across a dozen files.
+    ///
+    /// A debug set (the debugger's) resolves the instrumented weave
+    /// instead, so every machine a debugged program reaches can be
+    /// stepped into.</summary>
     public static bool Resolve(MachineSet machines, string sbPath, string? qual)
     {
         // Only a file in a machine library is a machine. A program's own
         // siblings splice — and keep splicing even when a woven artifact
-        // sits beside them: a mill whose core has been machine-woven
-        // (ShoddyWeave does, into the mill's own bin/) must not have its
-        // shell and tests quietly rescoped by the build's leftovers.
+        // sits somewhere: a mill whose core has been machine-woven must
+        // not have its shell and tests quietly rescoped by the build's
+        // leftovers.
         if (!Lexer.IsMachineLibrary(sbPath)) return false;
 
-        string dll = MachineSet.DllPathFor(sbPath);
+        if (machines.TryResolve(sbPath, qual)) return true;
 
-        if (!File.Exists(dll))
-        {
-            // Splicing a machine would put its dependencies in the
-            // includer's flat table and quietly undo the scoping — so
-            // whether a program is legal would depend on what happened to
-            // be built. Build it instead; the mill already knows how.
-            Console.Error.WriteLine(
-                $"mill: machine {Path.GetFileName(sbPath)} is not built. Building it now");
-            Build(sbPath);
-        }
-        else if (IsStale(sbPath, dll))
-        {
-            // The stale-DLL trap cost two debugging rounds in one week.
-            Console.Error.WriteLine(
-                $"mill: machine {Path.GetFileName(sbPath)} is newer than its DLL. Rebuilding it now");
-            Build(sbPath);
-        }
-
-        return machines.TryResolve(sbPath, qual);
-    }
-
-    /// <summary>Weave one machine to its DLL. Build failures fall through
-    /// to the normal error path — the message names the machine.</summary>
-    static void Build(string sbPath)
-    {
-        var machines = new MachineSet();
-        List<Line> lines = Lexer.ReadProgram(sbPath, (p, q) => Resolve(machines, p, q));
-        var prog = new ShoddyProgram();
-        machines.SeedInto(prog);
-        Weaver.WeaveMachine(Parser.Parse(lines, prog), sbPath, machines.Machines);
-    }
-
-    /// <summary>A DLL older than its source, or than any DLL it was built
-    /// against: its calls bind to a surface that has since moved.</summary>
-    static bool IsStale(string sbPath, string dll)
-    {
-        DateTime built = File.GetLastWriteTimeUtc(dll);
-        if (File.GetLastWriteTimeUtc(sbPath) > built) return true;
-        string dir = Path.GetDirectoryName(Path.GetFullPath(sbPath))!;
-        foreach (string line in File.ReadLines(sbPath))
-        {
-            System.Text.RegularExpressions.Match m =
-                System.Text.RegularExpressions.Regex.Match(
-                    line, "^Include \"([A-Za-z0-9_.-]+\\.shoddy)\"");
-            if (!m.Success) continue;
-            string depDll = DependencyDllFor(dir, m.Groups[1].Value);
-            if (File.Exists(depDll) && File.GetLastWriteTimeUtc(depDll) > built) return true;
-        }
-        return false;
-    }
-
-    /// <summary>Where an Include's DLL would be, checked beside the
-    /// includer first (the common case) and one directory up otherwise — a
-    /// reckoner seed in machines/seeds/ including a machine that lives one
-    /// level up, in machines/ itself.</summary>
-    static string DependencyDllFor(string includerDir, string includedName)
-    {
-        string sibling = MachineSet.DllPathFor(Path.Combine(includerDir, includedName));
-        if (File.Exists(sibling)) return sibling;
-        return MachineSet.DllPathFor(Path.Combine(includerDir, "..", includedName));
+        string kind = machines.Debug ? "instrumented machine" : "machine";
+        throw new ShoddyError(0,
+            $"{kind} {Path.GetFileName(sbPath)} is in no compiled library (looked in: {machines.Describe()}). " +
+            "Build the library it belongs to (dotnet build on its project), or name a compiled " +
+            "library with --lib, or point SHODDYLIBBIN at a folder of them");
     }
 }

@@ -9,10 +9,9 @@ How a version gets cut, in full, and why the procedure is as short as it is.
 ## The short version
 
 ```powershell
-./build.ps1 test          # the C# suite, every core and machine suite, every mill
-./build.ps1 check         # docs, errors, permissions, host-blind, suites, twins, lanes
-scripts/shoddy-display.ps1       # the three windowed suites, if windowed code changed
+./build.ps1 prove                # everything CI runs that this machine can, locked
 # write release-notes/vX.Y.Z.md, commit it, merge the PR with CI green
+# land, then wait for CI to go green on main
 ./scripts/shoddy-ship.ps1 2.6.0  # tag and push - CI publishes
 ```
 
@@ -46,6 +45,11 @@ development default whatever branch it came from. That is accurate (a local
 build is not a release) and the version a user sees on a downloaded
 archive is stamped from the tag that built it.
 
+**To test a release number locally,** run `./build.sh vsix X.Y.Z`. It
+stamps the packaged mill and the extension for that one build and changes
+no file, so it does not break the rule above. `./build.sh install X.Y.Z`
+installs that package.
+
 ## There is no gate harness
 
 There used to be one: a step registry, a receipt store keyed to the working
@@ -63,9 +67,15 @@ passed, and refuses if it did not. That is a better answer than a local
 receipt for the same reason a build artefact is better than a build log: it
 is the machine that does the work, reporting on the work itself.
 
-Locally, `./build.ps1 test` is still the whole suite (roughly twenty
-minutes) and `./build.ps1 check` is the fast half, seconds. Run them
-before opening the pull request; CI runs them again either way.
+**Locally, `./build.ps1 prove` is the same proof.** Every step in ci.yml
+is a build verb, and `prove` runs those verbs in the same order under the
+same locked restore: the gates, the reproducibility check, the whole
+suite, each host lane's build, test, release and publish - every one
+grading its own output - and the display suites CI cannot run. A check
+that lives only in a workflow is a check nobody can run before pushing,
+so there are none. What a machine cannot run (the MAUI lane off Windows)
+is named at the end, never skipped quietly. Run it before opening the
+pull request; CI runs the same verbs again either way.
 
 If `gh` is not installed the CI check is skipped with a warning rather than
 failing (an unavailable tool should not block a release), but the workflow
@@ -131,9 +141,8 @@ shipped a gate for it and it failed the same way). The list lives in
 grades every `tst/*.shoddy` against, so a fourth windowed suite cannot be
 added there and quietly forgotten.
 
-They are the one part of the proof that stays manual: run them on a machine
-with a display whenever windowed code changes, before shipping. `ship`
-prints a reminder.
+They are the one part of the proof CI cannot give, so `./build.ps1 prove`
+runs them on any machine with a display, and `ship` prints a reminder.
 
 ## The executable bit, before it reaches CI
 

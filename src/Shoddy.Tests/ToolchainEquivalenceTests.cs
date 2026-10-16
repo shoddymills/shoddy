@@ -69,11 +69,13 @@ public class ToolchainEquivalenceTests
         File.WriteAllText(Path.Combine(ws, "hycore.shoddy"),
             "Def HyTwice(n As Number) As Number\n    n * 2\n");
 
-        // weave: full first, bytes kept, then headless over the same source.
+        // weave: full first, bytes kept, then headless over the same
+        // source. Both write to bin/ beside it.
         Assert.Equal(0, Run(FullMill, "weave hello.shoddy", ws).Exit);
-        byte[] fullWoven = File.ReadAllBytes(Path.Combine(ws, "hello.dll"));
+        string wovenDll = Path.Combine(ws, "bin", "hello.dll");
+        byte[] fullWoven = File.ReadAllBytes(wovenDll);
         Assert.Equal(0, Run(HeadlessMill, "weave hello.shoddy", ws).Exit);
-        Assert.Equal(fullWoven, File.ReadAllBytes(Path.Combine(ws, "hello.dll")));
+        Assert.Equal(fullWoven, File.ReadAllBytes(wovenDll));
 
         // machine: same comparison, same rule.
         string machineDll = Path.Combine(ws, "bin", "Shoddy.Machines.Hycore.dll");

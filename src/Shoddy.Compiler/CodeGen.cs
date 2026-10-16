@@ -66,6 +66,18 @@ public sealed class CodeGen
     // compiled decided the exported surface — the same source producing
     // two different public interfaces.
     readonly string? ownFile;
+    // Where the machine's sources will sit relative to the folder its
+    // DLL is loaded from, once installed: ../../machines for a library
+    // carried in a toolchain's lib/debug/. Null means the woven paths
+    // stand as they are.
+    readonly string? dbgSourceDir;
+    // A standalone weave is a whole C# file: usings and a file-scoped
+    // namespace. A library unit is one class among many in one file, so
+    // it opens and closes its namespace as a block and leaves the
+    // usings to the Header written once ahead of them.
+    readonly bool standalone;
+    readonly List<(string Name, string Id, Lint.DefEffect? Effect)> manifestDefs = new();
+    readonly List<TypeDef> manifestTypes = new();
     readonly Dictionary<string, int> fileIds = new();
     readonly List<string> fileList = new();
 
@@ -95,13 +107,16 @@ public sealed class CodeGen
     }
 
     public CodeGen(ShoddyProgram prog, string? machineClass, bool debug,
-                   IReadOnlyList<MachineInfo>? deps = null, string? ownFile = null)
+                   IReadOnlyList<MachineInfo>? deps = null, string? ownFile = null,
+                   string? dbgSourceDir = null, bool standalone = true)
     {
         this.prog = prog;
         this.machineClass = machineClass;
         this.debug = debug;
         this.deps = deps;
         this.ownFile = ownFile == null ? null : Path.GetFullPath(ownFile);
+        this.dbgSourceDir = dbgSourceDir;
+        this.standalone = standalone;
         if (debug)
         {
             if (prog.InitQuot != null) CollectFiles(prog.InitQuot);
@@ -261,42 +276,49 @@ public sealed class CodeGen
         if (machine && prog.InitQuot != null)
             constants = MachineConstants.Fold(prog, TypeRefOf);
 
-        W("// woven by mill: generated C#. Do not edit.");
-        W("#pragma warning disable CS0162, CS0164, CS0219, CS8321");
-        W("using System;");
-        W("using System.Collections.Generic;");
-        W("using System.IO;");
-        W("using Shoddy.Runtime;");
-        W("");
+        if (standalone) W(Header);
         if (machine)
         {
-            string full = $"Shoddy.Machines.{machineClass}";
-            W($"[assembly: ShoddyMachine({StrLit(full)})]");
-            // Declared dependencies survive even when Roslyn drops an
-            // unused assembly reference (a pure re-export Include).
+            // One class per machine, under Shoddy.Machines. A woven core is
+            // the only class in its assembly and gets the file-scoped
+            // namespace; a library unit is one of many in one file, so it
+            // opens a namespace block and closes it after the class.
+            if (standalone) W("namespace Shoddy.Machines;");
+            else { W("namespace Shoddy.Machines"); Open(); }
+            W("");
+            // The manifest, on the class: the source the machine came
+            // from; the machines its Include chain reaches (declared, so
+            // a pure re-export survives Roslyn dropping an unused
+            // reference); each word with its stack effect when the linter
+            // could infer one, so downstream programs get their machine
+            // calls depth-checked without reading the source; and each
+            // type it declares.
+            W($"[ShoddyMachine({StrLit(ownFile == null ? "" : Path.GetFileName(ownFile))})]");
             if (deps != null)
                 foreach (MachineInfo dm in deps)
-                    W($"[assembly: ShoddyDependsOn({StrLit(dm.AssemblyName)})]");
-            // The manifest carries each word's stack effect when the
-            // linter could infer one, so downstream programs get their
-            // machine calls depth-checked without reading the source.
+                    W($"[ShoddyDependsOn({StrLit(dm.ClassName)})]");
             Dictionary<string, Lint.DefEffect> fx = Lint.DefEffects(prog);
             foreach ((string name, string id) in defIds)
             {
                 if (!DeclaredHere(name)) continue;
-                W(fx.TryGetValue(name, out Lint.DefEffect e)
-                    ? $"[assembly: ShoddyDef({StrLit(name)}, {StrLit(id)}, Pops = {e.Pops}, Pushes = {e.Pushes})]"
-                    : $"[assembly: ShoddyDef({StrLit(name)}, {StrLit(id)})]");
+                if (fx.TryGetValue(name, out Lint.DefEffect e))
+                {
+                    manifestDefs.Add((name, id, e));
+                    W($"[ShoddyDef({StrLit(name)}, {StrLit(id)}, Pops = {e.Pops}, Pushes = {e.Pushes})]");
+                }
+                else
+                {
+                    manifestDefs.Add((name, id, null));
+                    W($"[ShoddyDef({StrLit(name)}, {StrLit(id)})]");
+                }
             }
             foreach (TypeDef t in prog.Types)
             {
                 if (!DeclaredHere(t.Name)) continue;
-                W($"[assembly: ShoddyType({StrLit(t.Name)}, {StrLit(t.Disp ?? t.Name)}, " +
+                manifestTypes.Add(t);
+                W($"[ShoddyType({StrLit(t.Name)}, {StrLit(t.Disp ?? t.Name)}, " +
                   $"{StrLit(typeField[t.Name])}, {StrArr(t.Fields)}, {StrArr(t.FDisp)})]");
             }
-            W("");
-            W("namespace Shoddy.Machines;");
-            W("");
             W($"public static class {machineClass}");
         }
         else
@@ -334,7 +356,7 @@ public sealed class CodeGen
         foreach (TypeDef t in prog.Types)
         {
             if (Prelude.Declares(t.Name)) continue;      // reached, not minted
-            W($"{(machine ? "public " : "")}static readonly TypeDef {typeField[t.Name]} = " +
+            W($"{(machine || debug ? "public " : "")}static readonly TypeDef {typeField[t.Name]} = " +
               $"MT({StrLit(t.Name)}, {StrLit(t.Disp ?? t.Name)}, {StrArr(t.Fields)}, {StrArr(t.FDisp)});");
             emitted++;
         }
@@ -362,12 +384,38 @@ public sealed class CodeGen
         // it (once per engine) on entry, carrying the offset in each
         // frame — the per-assembly scheme that lets a debug program and
         // any number of debug machines share one engine's table (D6).
+        //
+        // Each path is written relative to the folder the DLL will be
+        // loaded from (dbgSourceDir, which the caller knows: ../../machines
+        // from a toolchain's lib/debug/), and resolved there at run time
+        // (Engine.SourcesBeside), because the folder a library is built in
+        // and the folder it is installed in are different places. '/'
+        // throughout, so a weave made on Windows and one made elsewhere
+        // carry the same text. A file from outside the machine's own
+        // folder keeps its woven path.
         if (debug && machine)
         {
-            W($"static readonly string[] __DbgFiles = {StrArr(fileList)};");
+            if (dbgSourceDir == null || ownFile == null)
+                W($"static readonly string[] __DbgFiles = {StrArr(fileList)};");
+            else
+            {
+                string ownDir = Path.GetDirectoryName(ownFile) ?? "";
+                string prefix = dbgSourceDir is "" or "." ? "" : dbgSourceDir.TrimEnd('/') + "/";
+                IEnumerable<string> relative = fileList.Select(f =>
+                    string.Equals(Path.GetDirectoryName(Path.GetFullPath(f)) ?? "", ownDir,
+                                  StringComparison.OrdinalIgnoreCase)
+                        ? prefix + Path.GetFileName(f)
+                        : f);
+                W($"static readonly string[] __DbgFiles = global::Shoddy.Runtime.Engine.SourcesBeside(" +
+                  $"typeof({machineClass}).Assembly, {StrArr(relative)}, {StrArr(fileList)});");
+            }
             W("");
         }
 
+        // A debug weave makes every Def's entry and every type public (a
+        // machine's always are): the debugger evaluates an expression by
+        // weaving it as a Def of its own that calls into this assembly.
+        //
         // Every Def is two methods. The ENTRY keeps the Def's name and
         // signature, so manifests, hosting and the perch see what they
         // always saw. The BODY answers which Def runs next: -1 when it
@@ -382,7 +430,7 @@ public sealed class CodeGen
         foreach ((string name, Quot body) in prog.Defs)
         {
             W("[System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]");
-            W($"{(machine ? "public " : "")}static void {defIds[name]}(Engine rt)  // {name}");
+            W($"{(machine || debug ? "public " : "")}static void {defIds[name]}(Engine rt)  // {name}");
             Open();
             W($"int next = {bodyIds[name]}(rt);");
             W("if (next >= 0) Trampoline(rt, next);");
@@ -408,6 +456,9 @@ public sealed class CodeGen
             if (debug)
             {
                 Close();
+                // Never catches: the filter reports a runtime error to the
+                // debugger before this frame unwinds (Engine.DbgError).
+                W("catch (Exception __e) when (rt.DbgError(__e)) { throw; }");
                 W("finally { rt.Exit(); }");
             }
             Close();
@@ -444,6 +495,9 @@ public sealed class CodeGen
             W($"{defIds["MAIN"]}(rt);");
             W("return 0;");
             Close();
+            // An error in a top-level Let has no Def frame to report it:
+            // the program frame's filter does, before anything unwinds.
+            if (debug) W("catch (Exception __e) when (rt.DbgError(__e)) { throw; }");
             W("catch (ShoddyError e)");
             Open();
             W("Console.Error.Write(\"ERROR\");");
@@ -469,6 +523,7 @@ public sealed class CodeGen
         }
         foreach (string s in siteDecls) W(s);
         Close();
+        if (machine && !standalone) Close();      // the namespace block
         return sb.ToString();
     }
 
@@ -477,8 +532,17 @@ public sealed class CodeGen
         if (prog.InitQuot == null) return;
         inInit = true;
         var sc = new Scope();
+        (string File, int Line)? last = null;
         foreach (Node n in prog.InitQuot.Items)
         {
+            // Top-level lines are lines like any other: a breakpoint on a
+            // top-level Let stops there, and stepping walks through them.
+            if (debug && n.File != null && (last == null || last.Value != (n.File, n.Line)))
+            {
+                W($"rt.Dbg({Fid(fileIds[n.File])}, {n.Line});");
+                EmitReloads(sc);
+                last = (n.File, n.Line);
+            }
             if (n.T == NType.Take)      // a top-level Let binding
             {
                 for (int k = n.Names.Count - 1; k >= 0; k--)
@@ -508,10 +572,91 @@ public sealed class CodeGen
             if (debug && n.File != null && (last == null || last.Value != (n.File, n.Line)))
             {
                 W($"rt.Dbg({Fid(fileIds[n.File])}, {n.Line});");
+                EmitReloads(sc);
                 last = (n.File, n.Line);
             }
             EmitNode(n, sc, k == q.Items.Count - 1 ? tailDef : null);
         }
+    }
+
+    /// <summary>After a line hook: if the debugger set a variable while
+    /// the program was stopped there, read every local in scope, and every
+    /// top-level Let, back from the engine (Engine.TakeEdits). Locals are
+    /// C# locals, so this is the only way a set variable reaches the
+    /// program. A machine's top-level Lets are constants and are not
+    /// reloaded.</summary>
+    void EmitReloads(Scope sc)
+    {
+        var locals = new List<(string Name, string Id)>();
+        var seen = new HashSet<string>();
+        for (Scope? s = sc; s != null; s = s.Parent)
+            foreach ((string name, string id) in s.Map)
+                if (name[0] != '\u0001' && seen.Add(name))
+                    locals.Add((name, id));
+        if (locals.Count > 0)
+        {
+            W("if (rt.TakeEdits())");
+            Open();
+            foreach ((string name, string id) in locals)
+                W($"{id} = rt.Reload({StrLit(name)}, {id});");
+            Close();
+        }
+        if (machineClass != null) return;
+        var globals = globalIds.Where(g => GlobalVisible(g.Key)).ToList();
+        if (globals.Count > 0)
+        {
+            W("if (rt.TakeGlobalEdits())");
+            Open();
+            foreach ((string name, string id) in globals)
+                W($"{id} = rt.ReloadGlobal({StrLit(name)}, {id});");
+            Close();
+        }
+    }
+
+    /// <summary>The C# member each of the program's own Defs is woven to,
+    /// valid after <see cref="Generate"/>: the debugger's evaluator calls
+    /// them from an expression it weaves separately.</summary>
+    public IReadOnlyDictionary<string, string> DefMembers => defIds;
+
+    /// <summary>The C# field each of the program's own types is woven
+    /// to, valid after <see cref="Generate"/>.</summary>
+    public IReadOnlyDictionary<string, string> TypeMembers => typeField;
+
+    /// <summary>The top of every generated file: the warnings a weave
+    /// trips on purpose, and the usings its code assumes. A standalone
+    /// weave writes it itself; a library writes it once ahead of every
+    /// unit.</summary>
+    public const string Header =
+        "// woven by mill: generated C#. Do not edit.\n" +
+        "#pragma warning disable CS0162, CS0164, CS0219, CS8321\n" +
+        "using System;\n" +
+        "using System.Collections.Generic;\n" +
+        "using System.IO;\n" +
+        "using Shoddy.Runtime;\n";
+
+    /// <summary>The manifest this weave put on its class, as the resolver
+    /// would read it back from the DLL. Valid after <see cref="Generate"/>;
+    /// a library being built seeds its next machine from this, before any
+    /// assembly exists.</summary>
+    public MachineInfo Manifest(string assemblyName, string dllPath)
+    {
+        var info = new MachineInfo
+        {
+            AssemblyName = assemblyName,
+            DllPath = dllPath,
+            ClassName = $"Shoddy.Machines.{machineClass}",
+            Source = ownFile == null ? "" : Path.GetFileName(ownFile),
+        };
+        if (deps != null)
+            foreach (MachineInfo dm in deps) info.DependsOn.Add(dm.ClassName);
+        foreach ((string name, string id, Lint.DefEffect? e) in manifestDefs)
+        {
+            info.Defs[name] = id;
+            if (e != null) info.DefEffects[name] = (e.Value.Pops, e.Value.Pushes);
+        }
+        foreach (TypeDef t in manifestTypes)
+            info.Types[t.Name] = (typeField[t.Name], t);
+        return info;
     }
 
     void EmitNode(Node n, Scope sc, string? tailDef)

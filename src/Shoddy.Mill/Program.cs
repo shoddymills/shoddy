@@ -15,12 +15,16 @@ using Shoddy.Runtime;
 //   mill manifest MILL        verify a mill.manifest (--write: generate)
 //   mill lex FILE.shoddy      dump the token lines (devil output; debug aid)
 //   mill gen FILE.shoddy      print the generated C# (debug aid)
-//   mill dap                  serve the Debug Adapter Protocol (the perch;
-//                             launched by the editor, not by hand)
+//   mill dap                  the debug adapter, for an editor: the
+//                             protocol over stdin/stdout; the program
+//                             runs in a terminal window of its own
+//   mill run --perch PORT FILE.shoddy
+//                             the debugged program's process, as the
+//                             adapter starts it in that window
 //
 // The verbs themselves live in Shoddy.Compiler's MillVerbs, shared with
 // the headless build; this entry point owns only what needs the window
-// and audio stack — `run`'s serving loop and `dap`.
+// and audio stack — `run`'s serving loop and the debugger's processes.
 
 if (MillVerbs.WantsVersion(args)) return MillVerbs.Version("full");
 
@@ -28,12 +32,15 @@ var opt = new MillVerbs.Options();
 args = MillVerbs.StripFlags(args, opt);
 if (opt.NoWindow) ScribblerWindows.Hidden = true;
 
-if (args.Length == 1 && args[0] == "dap")
-    // The perch: DAP over stdio for the editor. The serve loop runs on a
-    // background thread so this (the main) thread can serve scribbler
-    // windows for the debugged program, exactly as `run` does; no linger,
-    // because a window must not outlive its debug session.
-    return ScribblerWindows.Run(DapServer.Serve, linger: false);
+if (args.Length >= 1 && args[0] == "dap")
+{
+    // The adapter: the editor's end of the debugger. It opens no
+    // window; the program runs in a terminal window of its own, under
+    // `mill run --perch`, which is where the window loop runs.
+    if (args.Length == 1) return DapServer.Adapter();
+    Console.Error.WriteLine("usage: mill dap");
+    return 2;
+}
 
 MillVerbs.Command? cmd = MillVerbs.Parse(args);
 if (cmd is null) return MillVerbs.Usage();
@@ -41,6 +48,22 @@ if (cmd is null) return MillVerbs.Usage();
 try
 {
     if (cmd.Verb != "run") return MillVerbs.RunPure(cmd, opt);
+
+    if (cmd.Perch is string perch)
+    {
+        // The debugged program's process, started by the adapter in a
+        // terminal window of its own and connecting back to it. The
+        // perch serves the session on a worker thread so this (the
+        // main) thread can serve scribbler windows for the debugged
+        // program, exactly as `run` does; no linger, because a window
+        // must not outlive its debug session.
+        if (!int.TryParse(perch, out int port) || port is <= 0 or >= 65536)
+        {
+            Console.Error.WriteLine("usage: mill run --perch PORT FILE.shoddy");
+            return 2;
+        }
+        return ScribblerWindows.Run(() => DapServer.Connect(port, cmd.File), linger: false);
+    }
 
     (ShoddyProgram prog, MachineSet machines) = MillVerbs.ParseWithMachines(cmd.File, opt);
     // The program runs on a background thread; this (the main) thread

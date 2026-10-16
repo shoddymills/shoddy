@@ -5,33 +5,75 @@
     <ProjectReference Include="..\Shoddy.Runtime\Shoddy.Runtime.csproj" />
     <ProjectReference Include="..\Shoddy.Compiler\Shoddy.Compiler.csproj" />
     <ProjectReference Include="..\Shoddy.Perch\Shoddy.Perch.csproj" />
+    <!-- The library projects: restored and built with this one, never
+         linked. The carry target below builds both configurations and
+         places them. Private="false" keeps their copy items out of this
+         output: a build-order reference walks the referenced project's
+         copy items otherwise, and the generator behind the libraries is
+         the headless mill, whose mill.deps.json would overwrite this
+         one's. -->
+    <ProjectReference Include="..\..\machines\Shoddy.Machines.csproj" ReferenceOutputAssembly="false" Private="false" />
+    <ProjectReference Include="..\..\machines\seeds\Shoddy.Machines.Seeds.csproj" ReferenceOutputAssembly="false" Private="false" />
   </ItemGroup>
 
   <!-- The scribbler's window/GL stack. Presentation only: the runtime draws
        into a plain byte[] and the mill blits it as one textured quad. GLFW
        natives ride in transitively via Silk.NET.Windowing. -->
   <ItemGroup>
-    <PackageReference Include="Silk.NET.Windowing" Version="2.*" />
-    <PackageReference Include="Silk.NET.Input" Version="2.*" />
-    <PackageReference Include="Silk.NET.OpenGL" Version="2.*" />
+    <PackageReference Include="Silk.NET.Windowing" />
+    <PackageReference Include="Silk.NET.Input" />
+    <PackageReference Include="Silk.NET.OpenGL" />
   </ItemGroup>
 
   <!-- The buzzer's audio stack. OpenAL Soft rides in as a native the same
        way GLFW does: the runtime validates and calls through
        BuzzerRegistry; only the mill touches OpenAL. -->
   <ItemGroup>
-    <PackageReference Include="Silk.NET.OpenAL" Version="2.*" />
-    <PackageReference Include="Silk.NET.OpenAL.Soft.Native" Version="1.*" />
+    <PackageReference Include="Silk.NET.OpenAL" />
+    <PackageReference Include="Silk.NET.OpenAL.Soft.Native" />
   </ItemGroup>
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <AssemblyName>mill</AssemblyName>
     <TargetFramework>net10.0</TargetFramework>
-    <ImplicitUsings>enable</ImplicitUsings>
-    <Nullable>enable</Nullable>
     <!-- OpenAL device/context handles are raw pointers in Silk.NET -->
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
+
+  <!-- THE FULL MILL CARRIES THE STANDARD LIBRARY, as the .NET runtime
+       carries its framework: `mill run FILE` and the debugger resolve an
+       Include against lib/ (Release) or lib/debug/ (instrumented) beside
+       mill.dll, and read the sources from machines/ beside it. Both
+       configurations travel whichever one this project is built in,
+       because a release mill still debugs. The headless build carries
+       nothing: it is the build tool, and a consumer's project references
+       tell it what to link. -->
+  <ItemGroup>
+    <None Include="..\..\machines\*.shoddy" Link="machines\%(Filename)%(Extension)"
+          CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" Visible="false" />
+    <None Include="..\..\machines\seeds\*.shoddy" Link="machines\seeds\%(Filename)%(Extension)"
+          CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" Visible="false" />
+  </ItemGroup>
+
+  <Target Name="ShoddyCarryLibrary" BeforeTargets="AssignTargetPaths">
+    <ItemGroup>
+      <_ShoddyLibraryProject Include="..\..\machines\Shoddy.Machines.csproj;..\..\machines\seeds\Shoddy.Machines.Seeds.csproj" />
+    </ItemGroup>
+    <MSBuild Projects="@(_ShoddyLibraryProject)" Targets="Build" Properties="Configuration=Release" BuildInParallel="false">
+      <Output TaskParameter="TargetOutputs" ItemName="_ShoddyLibRelease" />
+    </MSBuild>
+    <MSBuild Projects="@(_ShoddyLibraryProject)" Targets="Build" Properties="Configuration=Debug" BuildInParallel="false">
+      <Output TaskParameter="TargetOutputs" ItemName="_ShoddyLibDebug" />
+    </MSBuild>
+    <ItemGroup>
+      <_ShoddyLibReleaseFile Include="@(_ShoddyLibRelease);@(_ShoddyLibRelease->'%(RootDir)%(Directory)%(Filename).pdb')" />
+      <_ShoddyLibDebugFile Include="@(_ShoddyLibDebug);@(_ShoddyLibDebug->'%(RootDir)%(Directory)%(Filename).pdb')" />
+      <None Include="@(_ShoddyLibReleaseFile)" Condition="Exists('%(Identity)')" Link="lib\%(Filename)%(Extension)"
+            CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" Visible="false" />
+      <None Include="@(_ShoddyLibDebugFile)" Condition="Exists('%(Identity)')" Link="lib\debug\%(Filename)%(Extension)"
+            CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" Visible="false" />
+    </ItemGroup>
+  </Target>
 
 </Project>

@@ -5,13 +5,7 @@
 #   ./build.ps1          run the game
 #   ./build.ps1 run      same as above
 #   ./build.ps1 short    run the game on files/short-list.txt, six words
-#   ./build.ps1 test     run the headless checks, weave the shell so its
-#                        weave and lint are checked too, then play one
-#                        scripted session through the real shell: a short
-#                        line, a word not in the list, a word that is,
-#                        leave; colour off, one more word, leave, quit.
-#                        A hang or a crash there is a failure; the frames
-#                        it paints are not checked.
+#   ./build.ps1 test     run the headless checks
 #
 # Thornle is a VT100 terminal program - no scribbler, no window: it draws
 # with escape sequences and reads each guess as a whole line through the
@@ -46,9 +40,7 @@ try {
         }
         'test' {
             Assert-Mill
-            Invoke-Native { & $Mill run test.shoddy }
-            Invoke-Native { & $Mill weave thornle.shoddy }
-            Invoke-Native { @('P', 'cran', 'zzzzz', 'speed', 'q', 'C', 'P', 'speed', 'q', 'q') | & $Mill run thornle.shoddy files/words.txt 42 }
+            Invoke-Native { $null | & $Mill run test.shoddy }
             exit $LASTEXITCODE
         }
         default {

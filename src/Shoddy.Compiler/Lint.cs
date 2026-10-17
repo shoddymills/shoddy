@@ -141,8 +141,13 @@ public static class Lint
     /// Case patterns. UsedWords counts every Word node, so a parameter named
     /// `seed` reads there as the SEED builtin. The capability lint judges
     /// what the program reaches, so it needs this narrower set: mungo-caverns
-    /// was told it used `random` because NewGame takes a `seed`.</summary>
-    internal static HashSet<string> CalledWords(ShoddyProgram prog)
+    /// was told it used `random` because NewGame takes a `seed`.
+    ///
+    /// With <paramref name="only"/>, the words one Def's body calls and
+    /// nothing else: the capability lint walks a machine word's own body
+    /// that way, because a machine is compiled and its bodies are not in
+    /// the calling program.</summary>
+    internal static HashSet<string> CalledWords(ShoddyProgram prog, string? only = null)
     {
         var called = new HashSet<string>();
         var globals = new HashSet<string>(GlobalNames(prog));
@@ -172,6 +177,11 @@ public static class Lint
                 if (n.Q != null) walk(n.Q, new HashSet<string>(locals), inDef);
                 if (n.ElseQ != null) walk(n.ElseQ, new HashSet<string>(locals), inDef);
             }
+        }
+        if (only != null)
+        {
+            if (prog.Defs.TryGetValue(only, out Quot? one)) walk(one, new HashSet<string>(), true);
+            return called;
         }
         foreach (Quot body in prog.Defs.Values) walk(body, new HashSet<string>(), true);
         if (prog.InitQuot != null) walk(prog.InitQuot, new HashSet<string>(), false);

@@ -15,13 +15,22 @@ namespace Shoddy.Compiler;
 /// existing extension surfaces it with no new code.
 ///
 /// The word→capability mapping is derived, never hand-maintained, from
-/// two mechanical sources:
+/// three mechanical sources:
 ///   1. machines carry a capability tag — a `Rem Capability: X` header
 ///      line, read textually the way docs ground truth is read;
 ///   2. a builtin→capability table below, for capabilities that are
-///      engine builtins rather than machines.
-/// Three consumers read the same derivation: this lint, `mill manifest`,
-/// and the ShoddyWeave gate.
+///      engine builtins rather than machines;
+///   3. the body of every machine word the program calls, parsed from
+///      the machine's source: what that body calls counts, through the
+///      table, through further machine words, and through the tags.
+/// The third exists because a tag is all-or-nothing per machine. math
+/// carries none, being pure almost throughout, yet its Pick, RandInt,
+/// RandRange and Chance draw on RND; read by tag alone, devils-dust and
+/// invaders used random numbers and were told they used none.
+///
+/// This derivation is the lint's alone. `mill manifest` checks the
+/// machines section, and the ShoddyWeave gate grants from the manifest's
+/// declarations; neither reads what a mill reaches.
 ///
 /// A program with no mill.manifest beside it has declared nothing and
 /// gets no capability diagnostics — otherwise every plain program would
@@ -101,20 +110,104 @@ public static class CapabilityLint
             if (BuiltinCaps.TryGetValue(w, out string? cap))
                 used.TryAdd(cap, w);
 
-        // Machine words: the seeded name's declaring machine carries the
-        // tag. Tags are cached per machine — most words share one.
-        var tagByClass = new Dictionary<string, string?>();
-        foreach (MachineInfo m in machines.Machines)
-            tagByClass[m.ClassName] = TagOf(SourceOf(m));
+        // Machine words: the declaring machine's tag, and whatever the
+        // word's own body reaches.
+        var reach = new MachineReach(machines);
         foreach ((string name, string target) in prog.ExternalDefs)
         {
             if (!words.Contains(name)) continue;
-            int cut = target.LastIndexOf('.');
-            if (cut < 0) continue;
-            if (tagByClass.TryGetValue(target[..cut], out string? cap) && cap != null)
+            foreach (string cap in reach.Of(target))
                 used.TryAdd(cap, name);
         }
         return used;
+    }
+
+    /// <summary>What a machine word reaches: its machine's tag, plus what
+    /// its body calls, read from the machine's source and followed through
+    /// the machine's own Defs and into the machines it calls. Sources are
+    /// parsed once per machine, tags read once per machine, and each word
+    /// answered once. A source that cannot be found or parsed reaches
+    /// nothing beyond its tag, as a missing source already reads as no
+    /// tag: a lint warns, and never fails the build.</summary>
+    sealed class MachineReach
+    {
+        readonly MachineSet machines;
+        readonly Dictionary<string, MachineInfo> byClass = new(StringComparer.Ordinal);
+        readonly Dictionary<string, string?> tags = new(StringComparer.Ordinal);
+        readonly Dictionary<string, ShoddyProgram?> sources = new(StringComparer.Ordinal);
+        readonly Dictionary<string, HashSet<string>> answered = new(StringComparer.Ordinal);
+
+        public MachineReach(MachineSet machines)
+        {
+            this.machines = machines;
+            foreach (MachineInfo m in machines.Machines) byClass.TryAdd(m.ClassName, m);
+        }
+
+        /// <summary>The capabilities a call target (Class.Method) reaches.</summary>
+        public HashSet<string> Of(string target)
+        {
+            if (answered.TryGetValue(target, out HashSet<string>? known)) return known;
+            var caps = new HashSet<string>(StringComparer.Ordinal);
+            answered[target] = caps;   // a cycle back here adds nothing new
+            int cut = target.LastIndexOf('.');
+            if (cut < 0 || !byClass.TryGetValue(target[..cut], out MachineInfo? m)) return caps;
+            if (Tag(m) is string tag) caps.Add(tag);
+            string method = target[(cut + 1)..];
+            foreach ((string def, string id) in m.Defs)
+                if (id == method && Source(m) is ShoddyProgram src)
+                    Body(src, def, caps, new HashSet<string>(StringComparer.Ordinal));
+            return caps;
+        }
+
+        /// <summary>One Def's body, and the machine's own Defs it calls.</summary>
+        void Body(ShoddyProgram src, string def, HashSet<string> caps, HashSet<string> seen)
+        {
+            if (!seen.Add(def)) return;
+            foreach (string w in Lint.CalledWords(src, def))
+            {
+                string own = src.ResolveName(w, null);
+                if (src.Defs.ContainsKey(own))
+                    Body(src, own, caps, seen);
+                else if (src.ExternalDefs.TryGetValue(w, out string? target))
+                    caps.UnionWith(Of(target));
+                else if (BuiltinCaps.TryGetValue(w, out string? cap))
+                    caps.Add(cap);
+            }
+        }
+
+        string? Tag(MachineInfo m)
+        {
+            if (!tags.TryGetValue(m.ClassName, out string? t))
+                tags[m.ClassName] = t = TagOf(SourceOf(m));
+            return t;
+        }
+
+        /// <summary>The machine's source, parsed as `mill machine` parses
+        /// it: its own Includes resolve against the same compiled
+        /// libraries, in a set of its own so the caller's is untouched.</summary>
+        ShoddyProgram? Source(MachineInfo m)
+        {
+            if (sources.TryGetValue(m.ClassName, out ShoddyProgram? p)) return p;
+            p = null;
+            string? path = MachineSet.SourcePathOf(m);
+            if (path != null)
+            {
+                try
+                {
+                    var set = new MachineSet(machines.Debug, machines.LibraryPaths);
+                    List<Line> lines = Lexer.ReadProgram(path, (sb, q) => MachineResolve.Resolve(set, sb, q));
+                    var seeded = new ShoddyProgram();
+                    set.SeedInto(seeded);
+                    p = Parser.Parse(lines, seeded);
+                }
+                catch (Exception e) when (e is ShoddyError or IOException)
+                {
+                    p = null;
+                }
+            }
+            sources[m.ClassName] = p;
+            return p;
+        }
     }
 
     /// <summary>The lint itself. Empty when no manifest sits beside the

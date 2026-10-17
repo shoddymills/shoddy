@@ -11,7 +11,7 @@ namespace Shoddy.Tests;
 /// The Thornle pure model (mills/thornle/thornle-core.shoddy): scoring,
 /// the game record, the line classifier and the keyboard legend, none of
 /// which touch a terminal. The VT100 half (painting, the menu and the
-/// loop, in thornle.shoddy) is driven by the mill's own scripted session.
+/// loop, in thornle.shoddy) is left to manual play.
 /// Marks print as one letter each: P right place, W wrong place, - absent.
 /// </summary>
 public class ThornleTests

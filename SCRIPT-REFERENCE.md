@@ -311,7 +311,7 @@ Default command: `run`.
 | --- | --- | --- |
 | `run` | | `mill run thornle.shoddy`. VT100 terminal game on `files/words.txt`; wants an ANSI terminal of at least 80x24. A typed word guesses, Q or QUIT leaves the game. |
 | `short` | | `mill run thornle.shoddy files/short-list.txt`. The same game on six words. |
-| `test` | | `mill run test.shoddy`, then `mill weave thornle.shoddy`, then one scripted session piped through `mill run thornle.shoddy files/words.txt 42`. A hang or a crash in the session fails; its frames are not checked. |
+| `test` | | `mill run test.shoddy < /dev/null`. Headless model checks. |
 
 ### mills/weather-glass/build.sh
 

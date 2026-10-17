@@ -1,0 +1,103 @@
+Rem ==================================================================
+Rem test.shoddy — headless checks for the thornle core. No terminal.
+Rem
+Rem Run with ./build.ps1 test (or ./build.sh test), from the mill folder,
+Rem which is where the shipped word list is read from. A run that
+Rem reaches the final Print passed; a failed Assert stops the run and
+Rem names the check. Written from the requirements before the core
+Rem existed, and never edited to make the core pass.
+Rem
+Rem ONE DEPARTURE FROM THE REQUIREMENTS DOCUMENT. Its third scoring
+Rem example (abbey against babes) lists the fourth mark as wrong-place,
+Rem but both words hold E in fourth place, and the document's own rule
+Rem makes an exact hit right-place before anything else is considered.
+Rem The check below follows the rule.
+Rem ==================================================================
+
+Include "thornle-core.shoddy"
+Include "file.shoddy"
+
+Rem A ten-word list stands in for the file: the core never reads one.
+Let ten = { "crane", "speed", "erase", "abbey", "babes", "eerie", "sense", "stone", "trace", "brake" }
+
+Def Row(a As Mark, b As Mark, c As Mark, d As Mark, e As Mark) As Array Of Mark
+    ToArray({ a, b, c, d, e })
+
+Def Fresh() As Game
+    Game("crane", ten, { }, "", False, False)
+
+Rem Six wrong guesses in a row, each one accepted.
+Def LoseIt(g As Game) As Game
+    Fold({ "speed", "erase", "abbey", "babes", "eerie", "sense" }, g, Submit)
+
+Def Main()
+    Print("--- scoring ---")
+    Assert(Marks("crane", "crane") = Dim(5, Placed()), "THE ANSWER AGAINST ITSELF IS FIVE RIGHT-PLACE MARKS")
+    Assert(Marks("speed", "erase") = Row(Present(), Absent(), Absent(), Present(), Present()), "SPEED / ERASE: THE SECOND PASS RUNS LEFT TO RIGHT")
+    Assert(Marks("crane", "eerie") = Row(Absent(), Absent(), Present(), Absent(), Placed()), "CRANE / EERIE: THE EXACT HIT CONSUMES THE ONLY E")
+    Assert(Marks("abbey", "babes") = Row(Present(), Present(), Placed(), Placed(), Absent()), "ABBEY / BABES: A DOUBLED GUESS LETTER AGAINST ONE SPARE COPY")
+
+    Print("--- acceptance ---")
+    Let short = Submit(Fresh(), "cran")
+    Assert(IsEmpty(Guesses(short)) And Note(short) = "FIVE LETTERS", "A FOUR-LETTER LINE DOES NOT SUBMIT AND SAYS SO")
+    Let unknown = Submit(Fresh(), "zzzzz")
+    Assert(IsEmpty(Guesses(unknown)) And Note(unknown) = "NOT IN THE LIST", "A WORD THE LIST DOES NOT HOLD DOES NOT SUBMIT AND SAYS SO")
+    Let one = Submit(Fresh(), "speed")
+    Assert(Length(Guesses(one)) = 1 And First(Guesses(one)) = "speed", "AN ACCEPTED GUESS JOINS THE GUESSES")
+    Assert(Note(one) = "" And Not Ended(one) And Not Won(one), "AND THE GAME GOES ON WITH NO NOTE")
+
+    Print("--- ending ---")
+    Let win = Submit(Fresh(), "crane")
+    Assert(Won(win) And Ended(win), "THE ANSWER WINS AND ENDS THE GAME")
+    Assert(Note(win) = "GOT IT IN 1", "AND THE NOTE COUNTS THE GUESSES")
+    Let third = Submit(Submit(Submit(Fresh(), "speed"), "erase"), "crane")
+    Assert(Note(third) = "GOT IT IN 3", "GOT IT IN THREE")
+    Let lost = LoseIt(Fresh())
+    Assert(Ended(lost) And Not Won(lost) And Length(Guesses(lost)) = 6, "SIX WRONG GUESSES END THE GAME UNWON")
+    Assert(Note(lost) = "IT WAS CRANE", "AND THE NOTE REVEALS THE ANSWER")
+    Let late = Submit(lost, "crane")
+    Assert(Length(Guesses(late)) = 6 And Not Won(late), "ONCE ENDED, A FURTHER LINE CHANGES NOTHING")
+
+    Print("--- lines ---")
+    Assert(Classify("crane") = Guess("crane"), "A WORD IS A GUESS")
+    Assert(Classify("  CRANE ") = Guess("crane"), "TRIMMED AND LOWERCASED")
+    Assert(Classify("q") = Leave(), "Q ALONE LEAVES THE GAME")
+    Assert(Classify("QUIT") = Leave() And Classify("Quit") = Leave(), "SO DOES QUIT, IN ANY CASE")
+    Assert(Classify("quite") = Guess("quite"), "BUT A FIVE-LETTER WORD STARTING WITH Q IS A GUESS")
+    Assert(Classify("") = Idle() And Classify("   ") = Idle(), "A BLANK LINE DOES NOTHING")
+    Rem Compared against the one record, not a second Fresh(): a record
+    Rem holding a list is only = to itself, since lists compare by identity.
+    Let g0 = Fresh()
+    Assert(Act(g0, Leave()) = g0 And Act(g0, Idle()) = g0, "LEAVE AND IDLE DO NOT TOUCH THE GAME")
+    Assert(Length(Guesses(Act(Fresh(), Guess("speed")))) = 1, "ACT ON A GUESS SUBMITS IT")
+
+    Print("--- normalising ---")
+    Let cleaned = Normalise({ "CRANE", " crane ", "cran", "cranes", "cr4ne", "" })
+    Assert(Length(cleaned) = 2 And All(cleaned, =("crane")), "ONLY FIVE-LETTER WORDS SURVIVE, LOWERCASED AND TRIMMED")
+
+    Print("--- the legend ---")
+    Rem speed against crane marks its two Es wrong-place then absent;
+    Rem eerie then lands an E right-place; sense marks E absent again.
+    Let lg1 = Legend(Game("crane", ten, { "speed" }, "", False, False))
+    Assert(Nth(lg1, 5) = Some(Present()), "E WAS WRONG-PLACE THEN ABSENT IN ONE GUESS: WRONG-PLACE WINS")
+    Assert(Nth(lg1, 19) = Some(Absent()), "S IS ABSENT")
+    Assert(Nth(lg1, 2) = None(), "B WAS NEVER GUESSED")
+    Let lg2 = Legend(Game("crane", ten, { "speed", "eerie" }, "", False, False))
+    Assert(Nth(lg2, 5) = Some(Placed()), "A LATER RIGHT-PLACE MARK UPGRADES E")
+    Assert(Nth(lg2, 18) = Some(Present()), "R IS WRONG-PLACE")
+    Let lg3 = Legend(Game("crane", ten, { "speed", "eerie", "sense" }, "", False, False))
+    Assert(Nth(lg3, 5) = Some(Placed()), "A LATER ABSENT MARK NEVER OVERWRITES A BETTER ONE")
+    Assert(Nth(lg3, 14) = Some(Present()), "AND A NEW LETTER IS ADDED")
+
+    Print("--- a new game ---")
+    Assert(Contains(ten, Answer(NewGame(ten))), "THE ANSWER COMES FROM THE LIST")
+    Seed(7)
+    Let a = Answer(NewGame(ten))
+    Seed(7)
+    Assert(Answer(NewGame(ten)) = a, "THE SAME SEED PICKS THE SAME ANSWER")
+    Assert(IsEmpty(Guesses(NewGame(ten))) And Not Ended(NewGame(ten)), "AND STARTS WITH NOTHING GUESSED")
+
+    Print("--- the real file loads ---")
+    Assert(Length(Normalise(ReadLines("files/words.txt"))) = 14855, "THE SHIPPED LIST HAS 14855 WORDS")
+
+    Print("ALL THORNLE CHECKS PASSED")

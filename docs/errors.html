@@ -36,7 +36,8 @@ them. <strong>Runtime errors</strong> stop the program at the failing
 line: <code>ERROR (line N): message</code>. A bare
 <code>ERROR: message</code> has no source line. The fault is in how the
 program's pieces fit together, usually across machine DLLs (a DLL is a
-compiled library file).</p>
+compiled library file). A mill that a .NET app carries meets one more
+kind, from its manifest and the build gate, in section 4.</p>
 <p>Every message is below, grouped by kind, each with broken code on the
 left and the fix on the right. Placeholders like <code>{name}</code> stand
 for whatever your program supplied.</p>
@@ -52,7 +53,11 @@ for whatever your program supplied.</p>
 <a href="#rt-types">types &amp; stack</a> &middot;
 <a href="#rt-math">arithmetic</a> &middot;
 <a href="#rt-seq">sequences</a> &middot;
-<a href="#rt-io">files, network &amp; devices</a></blockquote>
+<a href="#rt-io">files, network &amp; devices</a> &nbsp;|&nbsp;
+<a href="#manifest">4. Manifests &amp; the build gate</a>:
+<a href="#mf-file">the manifest file</a> &middot;
+<a href="#mf-gate">the gate</a> &middot;
+<a href="#mf-weave">ShoddyWeave</a></blockquote>
 
 <h2 id="env">0. Setup &amp; environment: before the mill speaks</h2>
 <p>A fourth kind of message comes first: the operating system and the
@@ -1117,8 +1122,8 @@ recursion) "padded" with a spare call.</p>
 
 <div class="err">
 <p class="emsg"><code>a quotation reaches '{op}', which needs a number. An operator called like a function, as in Op(a), makes a quotation. Write `a Op b` (infix) or put the operand in parentheses</code>
-<code>IF's condition is a quotation. &hellip;</code>
-<code>IFTE's condition is a quotation. &hellip;</code></p>
+<code>IF's condition is a quotation. An operator called like a function, as in Op(a), makes a quotation. Write `a Op b` (infix)</code>
+<code>IFTE's condition is a quotation. An operator called like a function, as in Op(a), makes a quotation. Write `a Op b` (infix)</code></p>
 <p>Calling an operator like a function (<code>Mod(a, 2)</code>)
 is legal syntax, but it builds an operator <em>section</em> (a
 function value), not a result. So does a unary minus before parentheses.
@@ -1236,6 +1241,35 @@ Def Limit() As Number
 ' sizes.shoddy &mdash; included As S
 Def Limit() As Number
     100</code></pre></div>
+</div>
+</div>
+
+<div class="err" id="capability">
+<p class="emsg"><code>capability: {cap} is used ({word}) but not declared in mill.manifest</code>
+<code>capability: {cap} is declared in mill.manifest but nothing reaches it</code></p>
+<p>These two speak only for a mill with a <code>mill.manifest</code> beside
+the file. A capability is something a mill does that a host must allow,
+such as reading files or drawing random numbers. The lint works out what
+the program reaches. It counts the builtins the program calls, the tagged
+machines it uses, and what each machine word it calls reaches in turn.</p>
+<p>The first message names one word that reaches the capability. Declare
+the capability, because a host grants only what the manifest declares.
+The second is judged only at the shell, the one file that sees the whole
+mill. Remove that declaration, or use the capability.</p>
+<div class="fixpair">
+<div class="bad"><b>Broken</b><pre><code>' dice.shoddy: math's RandInt draws on RND
+Include "math.shoddy"
+
+Def Main()
+    Print(RandInt(1, 6))
+
+' mill.manifest
+"capabilities": { "terminal": true }</code></pre></div>
+<div class="good"><b>Fixed</b><pre><code>' mill.manifest
+"capabilities": {
+  "terminal": true,
+  "random": true
+}</code></pre></div>
 </div>
 </div>
 
@@ -1807,6 +1841,199 @@ unbounded audio.</p>
 <p>Anything beginning <code>internal:</code> is a toolchain bug, not a
 program bug. The dump path in the last one holds the evidence. Please report
 any of them.</p>
+</div>
+
+<h2 id="manifest">4. Manifests and the build gate</h2>
+<p>A mill that a .NET app carries has a <code>mill.manifest</code>, a JSON
+file naming the mill's files, modes, machines and capabilities.
+<code>mill manifest</code> checks it and prints a fault as
+<code>mill: {path}: {message}</code>. In an app's build, ShoddyWeave runs
+the same checks and then the gate. The gate's messages and ShoddyWeave's
+own carry an MSBuild code: <code>error SHODDY{n}</code> stops the build,
+and <code>warning SHODDY{n}</code> does not. <a href="hosting.html">Hosting</a>
+covers the manifest, the modes and grants in full.</p>
+
+<h3 id="mf-file">The manifest file</h3>
+
+<div class="err">
+<p class="emsg"><code>mill: no mill.manifest in {folder}. Generate one with: mill manifest --write {target}</code>
+<code>mill: {path}: not valid JSON: {reason}</code>
+<code>mill: {path}: the manifest must be a JSON object</code></p>
+<p>The folder has no manifest, or the file is not one JSON object. Run the
+command the first message prints. It writes a manifest from what the
+folder shows, and you complete the capabilities.</p>
+<div class="fixpair">
+<div class="bad"><b>Broken</b><pre><code>[ "name", "widget" ]</code></pre></div>
+<div class="good"><b>Fixed</b><pre><code>{
+  "name": "widget",
+  "shell": "widget.shoddy",
+  "modes": [ "T" ]
+}</code></pre></div>
+</div>
+</div>
+
+<div class="err">
+<p class="emsg"><code>mill: {path}: the machines section is stale.</code>
+<code>manifest: {listed}</code>
+<code>truth: {derived}</code>
+<code>regenerate with: mill manifest --write {target}</code></p>
+<p>The machines list is generated from the mill's Includes. A new Include,
+or a hand edit, has left it behind. Never edit the list by hand. Run the
+command the last line prints, and it rewrites the list and keeps every
+other field.</p>
+</div>
+
+<div class="err">
+<p class="emsg"><code>unknown field '{key}'</code>
+<code>{key} is required</code>
+<code>{key} must be a string</code>
+<code>{key} must be an array of strings</code>
+<code>{key} entries must be strings</code>
+<code>machines must be an array of machine names</code></p>
+<p>A manifest has ten fields: <code>$schema</code>, <code>name</code>,
+<code>version</code>, <code>core</code>, <code>shell</code>,
+<code>modes</code>, <code>machines</code>, <code>capabilities</code>,
+<code>assets</code> and <code>goldens</code>. Only <code>name</code> is
+required. The names and files are strings, and the lists are arrays of
+strings.</p>
+<div class="fixpair">
+<div class="bad"><b>Broken</b><pre><code>{
+  "title": "widget",
+  "assets": "files/words.txt"
+}</code></pre></div>
+<div class="good"><b>Fixed</b><pre><code>{
+  "name": "widget",
+  "assets": [ "files/words.txt" ]
+}</code></pre></div>
+</div>
+</div>
+
+<div class="err">
+<p class="emsg"><code>modes is required: an array naming "T", "N" or both</code>
+<code>modes entries must be "T" or "N"</code>
+<code>modes must name at least one of "T", "N"</code>
+<code>mode "{m}" is listed twice</code>
+<code>mode "N" requires a core entry</code>
+<code>mode "T" requires a shell entry</code></p>
+<p>A mode is how a host carries the mill. Mode <code>T</code> runs the
+shell whole, through pipes, so it needs a <code>shell</code>. Mode
+<code>N</code> weaves the core as a machine whose words the host calls, so
+it needs a <code>core</code>. List each mode the mill supports, once.</p>
+<div class="fixpair">
+<div class="bad"><b>Broken</b><pre><code>"core": "widget-core.shoddy",
+"modes": [ "T", "T" ]</code></pre></div>
+<div class="good"><b>Fixed</b><pre><code>"core": "widget-core.shoddy",
+"shell": "widget.shoddy",
+"modes": [ "T", "N" ]</code></pre></div>
+</div>
+</div>
+
+<div class="err">
+<p class="emsg"><code>{key} '{file}' does not exist in {folder}</code>
+<code>golden '{file}' does not exist in {folder}</code></p>
+<p>The core, the shell and each golden are paths from the mill's own
+folder. Fix the name, or move the file into the folder.</p>
+</div>
+
+<div class="err">
+<p class="emsg"><code>capabilities must be an object</code>
+<code>unknown capability '{cap}'. The capabilities are: net, file, terminal, vt100, keys, scribbler, buzzer, clock, random</code>
+<code>capability '{cap}': false is not a declaration. Leave the capability out instead</code>
+<code>capability '{cap}' must be true or an object</code>
+<code>capability '{cap}': unknown key '{key}'</code>
+<code>capability '{cap}': '{key}' has the wrong shape</code>
+<code>capability '{cap}': read/write paths belong to 'file'</code>
+<code>capability '{cap}': dimensions belong to 'scribbler'</code></p>
+<p>Each capability is <code>true</code>, or an object of details. Every
+capability can be <code>optional</code>, a boolean. Only
+<code>file</code> takes <code>read</code> and <code>write</code>, lists of
+paths. Only <code>scribbler</code> takes <code>width</code> and
+<code>height</code>, numbers. A capability the mill does not use is left
+out, not set to <code>false</code>.</p>
+<div class="fixpair">
+<div class="bad"><b>Broken</b><pre><code>"capabilities": {
+  "clock": false,
+  "buzzer": { "read": [ "song.txt" ] }
+}</code></pre></div>
+<div class="good"><b>Fixed</b><pre><code>"capabilities": {
+  "buzzer": { "optional": true },
+  "file": { "read": [ "song.txt" ] }
+}</code></pre></div>
+</div>
+</div>
+
+<h3 id="mf-gate">The gate</h3>
+
+<div class="err">
+<p class="emsg"><code>error SHODDY1002: mill '{name}' requires capability '{cap}', which this project has not granted. Add Grant="{cap}" to its &lt;ShoddyMill&gt; item, or remove the mill. Declared at {path}.</code></p>
+<p>The gate denies by default. Every capability the manifest declares, and
+does not mark optional, must be in the item's <code>Grant</code> list. The
+grant is your project saying the mill may do this. Add the capability the
+message names.</p>
+<div class="fixpair">
+<div class="bad"><b>Broken</b><pre><code>&lt;ShoddyMill Include="..\mills\invaders" Mode="T"
+            Grant="terminal;scribbler;buzzer;keys" /&gt;</code></pre></div>
+<div class="good"><b>Fixed</b><pre><code>&lt;ShoddyMill Include="..\mills\invaders" Mode="T"
+            Grant="terminal;scribbler;buzzer;keys;random" /&gt;</code></pre></div>
+</div>
+</div>
+
+<div class="err">
+<p class="emsg"><code>warning SHODDY1003: mill '{name}': optional capability '{cap}' is not granted; it runs with the seam's null behaviour.</code>
+<code>warning SHODDY1005: mill '{name}' does not declare capability '{cap}', so the grant has no effect.</code></p>
+<p>The first is a choice you may have made on purpose. An optional
+capability left ungranted does nothing: sound stays silent, keys never
+arrive. Grant it if the app should have it. The second is a grant for
+something the mill never declared. It grants nothing, so remove it.</p>
+</div>
+
+<div class="err">
+<p class="emsg"><code>error SHODDY1004: Grant="{grant}" on mill '{name}' is not a capability. The capabilities are: net, file, terminal, vt100, keys, scribbler, buzzer, clock, random.</code>
+<code>error SHODDY1001: mill '{name}' does not support mode {mode}. Its manifest declares [{modes}]. Declared at {path}.</code></p>
+<p>The <code>Grant</code> list names a word that is not one of the nine
+capabilities, or the item asks for a mode the manifest does not list.
+Spell the grant from the list the message prints, or use a mode the mill
+supports.</p>
+<div class="fixpair">
+<div class="bad"><b>Broken</b><pre><code>&lt;ShoddyMill Include="..\mills\pac-vt100" Mode="N"
+            Grant="terminal;clock;rng;vt100" /&gt;</code></pre></div>
+<div class="good"><b>Fixed</b><pre><code>&lt;ShoddyMill Include="..\mills\pac-vt100" Mode="T"
+            Grant="terminal;clock;random;vt100" /&gt;</code></pre></div>
+</div>
+</div>
+
+<h3 id="mf-weave">ShoddyWeave</h3>
+
+<div class="err">
+<p class="emsg"><code>error SHODDY1000: the Shoddy toolchain was not found. Four routes are tried, in order: a ShoddyTool item (a ProjectReference to Shoddy.Mill.Headless with ReferenceOutputAssembly="false" and OutputItemType="ShoddyTool"), the ShoddyToolPath property (set it to a mill executable), a local .NET tool manifest carrying the 'mill' tool (dotnet tool install), and 'mill' on PATH. None answered.</code>
+<code>error SHODDY1010: a machine library needs its generator: add a ProjectReference to Shoddy.Mill.Headless with ReferenceOutputAssembly="false" and OutputItemType="ShoddyTool".</code></p>
+<p>The build needs the mill to weave with, and found none. In a checkout,
+reference <code>Shoddy.Mill.Headless</code> as the message shows. That
+builds the toolchain and never links it into your app. Outside one,
+install the <code>mill</code> tool, or set <code>ShoddyToolPath</code>.</p>
+<div class="fixpair">
+<div class="bad"><b>Broken</b><pre><code>&lt;ItemGroup&gt;
+  &lt;ShoddyMill Include="..\mills\oregon" Mode="T" Grant="terminal;clock;random" /&gt;
+&lt;/ItemGroup&gt;</code></pre></div>
+<div class="good"><b>Fixed</b><pre><code>&lt;ItemGroup&gt;
+  &lt;ShoddyMill Include="..\mills\oregon" Mode="T" Grant="terminal;clock;random" /&gt;
+  &lt;ProjectReference Include="..\src\Shoddy.Mill.Headless\Shoddy.Mill.Headless.csproj"
+                    ReferenceOutputAssembly="false" OutputItemType="ShoddyTool" /&gt;
+&lt;/ItemGroup&gt;</code></pre></div>
+</div>
+</div>
+
+<div class="err">
+<p class="emsg"><code>error SHODDY1006: ShoddyMill '{item}' needs Mode="N" (native: the core as a machine DLL) or Mode="T" (terminal: the woven console shell).</code>
+<code>error SHODDY1007: mill '{item}': the manifest declares no {mode}-mode entry file.</code></p>
+<p>Every <code>ShoddyMill</code> item names one mode, <code>N</code> or
+<code>T</code>. The manifest must then name that mode's file: the
+<code>core</code> for <code>N</code>, the <code>shell</code> for
+<code>T</code>.</p>
+<div class="fixpair">
+<div class="bad"><b>Broken</b><pre><code>&lt;ShoddyMill Include="..\mills\oregon" Grant="terminal;clock;random" /&gt;</code></pre></div>
+<div class="good"><b>Fixed</b><pre><code>&lt;ShoddyMill Include="..\mills\oregon" Mode="T" Grant="terminal;clock;random" /&gt;</code></pre></div>
+</div>
 </div>
 
 <p>The three shapes and the golden-suite testing rule live on

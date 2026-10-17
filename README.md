@@ -237,6 +237,10 @@ write-up on each one, or start at
       <a href="https://shoddymills.github.io/shoddy/mills/pac-vt100.html"><img src="docs/media/pac-vt100.svg" alt="Pac-Man drawn with VT100 escapes" width="150"></a><br>
       <b>pac-vt100</b><br><sub>arcade chase in the terminal</sub>
     </td>
+    <td align="left" valign="top">
+      <a href="https://shoddymills.github.io/shoddy/mills/thornle.html"><img src="docs/media/thornle.svg" alt="Thornle's grid of marked letter tiles" width="150"></a><br>
+      <b>thornle</b><br><sub>five letters, six guesses</sub>
+    </td>
   </tr>
 </table>
 
@@ -637,7 +641,8 @@ Shoddy is free and open source under the **[MIT License](LICENSE)**: use it
 for anything, including commercially, with attribution.
 
 Third-party dependencies and the historical/homage example programs (OREGON,
-the Pac-Man and Space Invaders homages, and a neural-net reference) remain
+the Pac-Man, Space Invaders and five-letter word game homages, and a
+neural-net reference) remain
 under their own licenses and their owners' trademarks. The Colossal Cave
 Adventure port ([mills/mungo-caverns/](mills/mungo-caverns/)) derives from
 Crowther & Woods via Eric Raymond's Open Adventure and is **BSD-2-Clause**; see

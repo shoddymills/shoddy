@@ -285,4 +285,102 @@ public class ManifestTests
 
         Assert.Empty(CapabilityLint.Run(parsed, machines, core));
     }
+
+    /// <summary>A machine word reaches what its own body calls. The
+    /// fixture machine carries no tag, and its ManDie reaches RND only
+    /// through ManRoll, another of its Defs: the shape of math's Pick and
+    /// RandInt, which made devils-dust and invaders look as if they drew no
+    /// random numbers. The word is resolved from the compiled machine, so
+    /// its body is not in the program and only the machine's source can
+    /// say what it reaches.</summary>
+    [Fact]
+    public void MachineWordsReachWhatTheirBodiesCall()
+    {
+        string ws = Path.Combine(Path.GetTempPath(), "shoddy-manifest", Guid.NewGuid().ToString("N"));
+        string lib = Path.Combine(ws, "machines");
+        Directory.CreateDirectory(lib);
+        File.WriteAllText(Path.Combine(lib, "manr.shoddy"),
+            "Def ManRoll() As Number\n    Rnd() * 6\n\n" +
+            "Def ManDie() As Number\n    Floor(ManRoll()) + 1\n\n" +
+            "Def ManHalf(n As Number) As Number\n    n / 2\n");
+        Build(Path.Combine(lib, "manr.shoddy"));
+        string mill = Path.Combine(ws, "widget");
+        Directory.CreateDirectory(mill);
+        string shell = Path.Combine(mill, "widget.shoddy");
+        File.WriteAllText(shell, "Include \"../machines/manr.shoddy\"\n\nDef Main()\n    Print(ManDie())\n");
+
+        string? saved = Environment.GetEnvironmentVariable("SHODDYLIB");
+        Environment.SetEnvironmentVariable("SHODDYLIB", lib);
+        try
+        {
+            List<string> LintWith(string caps)
+            {
+                File.WriteAllText(Path.Combine(mill, Manifest.FileName),
+                    "{ \"name\": \"widget\", \"shell\": \"widget.shoddy\", \"modes\": [\"T\"], " +
+                    "\"machines\": [\"manr\"], \"capabilities\": { " + caps + " } }");
+                var machines = new MachineSet(false, Libs(mill));
+                List<Line> lines = Lexer.ReadProgram(shell, (p, q) => MachineResolve.Resolve(machines, p, q));
+                var prog = new ShoddyProgram();
+                machines.SeedInto(prog);
+                ShoddyProgram parsed = Parser.Parse(lines, prog);
+                Assert.False(parsed.Defs.ContainsKey("MANROLL"), "the machine was spliced, not resolved compiled");
+                return CapabilityLint.Run(parsed, machines, shell);
+            }
+
+            Assert.Contains(LintWith("\"terminal\": true"),
+                x => x.Contains("random is used") && x.Contains("not declared"));
+            Assert.DoesNotContain(LintWith("\"terminal\": true, \"random\": true"),
+                x => x.Contains("random"));
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("SHODDYLIB", saved);
+        }
+    }
+
+    /// <summary>Every shipped mill declares exactly the capabilities it
+    /// reaches: no capability warning from its shell, its core or its
+    /// goldens. Nothing held this before, so devils-dust and invaders
+    /// shipped without `random`, and the MAUI gate grants from what a
+    /// manifest declares. Out of process through the real mill, for the
+    /// reason ShippedHalifaxManifestVerifies gives. A program (the shell, a
+    /// golden) is linted by `mill gen`, which writes no file; the shell
+    /// splices its core, so a core is linted alone only when there is no
+    /// shell, and then by `mill machine` into a temporary folder, because a
+    /// core has no Main to generate.</summary>
+    [Fact]
+    public void ShippedManifestsDeclareWhatTheMillsReach()
+    {
+        var found = new List<string>();
+        foreach (string mill in Directory.GetDirectories(Path.Combine(Root, "mills")).OrderBy(d => d, StringComparer.Ordinal))
+        {
+            string manifest = Path.Combine(mill, Manifest.FileName);
+            if (!File.Exists(manifest)) continue;
+            var root = (JsonObject)JsonNode.Parse(File.ReadAllText(manifest))!;
+            var lints = new List<(string File, string Args)>();
+            string? shell = root["shell"]?.GetValue<string>();
+            string? core = root["core"]?.GetValue<string>();
+            if (shell != null)
+                lints.Add((shell, $"gen \"{Path.Combine(mill, shell)}\""));
+            else if (core != null)
+                lints.Add((core, $"machine \"{Path.Combine(mill, core)}\" -o \"" +
+                    Path.Combine(Path.GetTempPath(), "shoddy-manifest", Guid.NewGuid().ToString("N")) + "\""));
+            if (root["goldens"] is JsonArray goldens)
+                foreach (JsonNode? g in goldens)
+                    if (g?.GetValue<string>() is string golden)
+                        lints.Add((golden, $"gen \"{Path.Combine(mill, golden)}\""));
+            foreach ((string file, string args) in lints)
+            {
+                var psi = new System.Diagnostics.ProcessStartInfo("dotnet", $"\"{TestHost.MillDll}\" {args}");
+                psi.Environment["SHODDYLIB"] = Path.Combine(Root, "machines");
+                psi.Environment.Remove("SHODDYLIBBIN");
+                var (exit, text) = ProcessRun.CaptureAll(psi);
+                Assert.True(exit == 0, $"{Path.GetFileName(mill)}/{file}:\n{text}");
+                foreach (string line in text.Split('\n'))
+                    if (line.TrimStart().StartsWith("capability: ", StringComparison.Ordinal))
+                        found.Add($"{Path.GetFileName(mill)}/{file}: {line.Trim()}");
+            }
+        }
+        Assert.True(found.Count == 0, string.Join("\n", found));
+    }
 }

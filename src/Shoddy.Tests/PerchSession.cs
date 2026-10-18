@@ -39,7 +39,6 @@ sealed class PerchSession : IDisposable
         this.proc = proc;
         this.tcp = tcp;
         stream = tcp.GetStream();
-        stream.ReadTimeout = 120_000;       // a hang fails rather than wedges
         outPump = Pump(proc.StandardOutput);
         errPump = Pump(proc.StandardError);
     }
@@ -250,12 +249,37 @@ sealed class PerchSession : IDisposable
         throw new TimeoutException("expected message never arrived");
     }
 
+    /// <summary>Block until the mill has sent something. A read on the
+    /// socket has no clock of its own: a program two million frames deep
+    /// takes as long as the machine takes, and the other launchers' tests
+    /// wait on the process, not on a wall clock. What ends the wait early
+    /// is the mill exiting without sending, which is a failure with its
+    /// screen attached, or a mill alive and silent for ten minutes, which
+    /// is a hang and is killed rather than left to wedge the run.</summary>
+    void WaitForData()
+    {
+        if (stream.DataAvailable) return;
+        var quiet = Stopwatch.StartNew();
+        while (!tcp.Client.Poll(250_000, SelectMode.SelectRead))
+        {
+            if (proc.HasExited)
+                throw new IOException(
+                    $"the mill exited with {proc.ExitCode} before answering: " + Screen());
+            if (quiet.Elapsed > TimeSpan.FromMinutes(10))
+            {
+                proc.Kill(entireProcessTree: true);
+                throw new TimeoutException("the mill sent nothing for ten minutes: " + Screen());
+            }
+        }
+    }
+
     JsonDocument Read()
     {
         int len = -1;
         var line = new StringBuilder();
         while (true)
         {
+            WaitForData();
             int c = stream.ReadByte();
             if (c < 0) throw new IOException("transport closed: " + Screen());
             if (c == '\n')
@@ -272,6 +296,7 @@ sealed class PerchSession : IDisposable
         int got = 0;
         while (got < len)
         {
+            WaitForData();
             int n = stream.Read(buf, got, len - got);
             if (n <= 0) throw new IOException("transport closed: " + Screen());
             got += n;

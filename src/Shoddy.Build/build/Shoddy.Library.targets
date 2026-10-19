@@ -55,6 +55,7 @@
     </ItemGroup>
     <PropertyGroup>
       <_ShoddyGeneratedFile>$(IntermediateOutputPath)$(AssemblyName).g.cs</_ShoddyGeneratedFile>
+      <_ShoddyGeneratedStamp>$(_ShoddyGeneratedFile).stamp</_ShoddyGeneratedStamp>
       <_ShoddyToolDll>@(ShoddyTool)</_ShoddyToolDll>
       <_ShoddyToolDir>$([System.IO.Path]::GetDirectoryName('$(_ShoddyToolDll)'))</_ShoddyToolDir>
       <_ShoddyLibArg></_ShoddyLibArg>
@@ -68,17 +69,21 @@
            regenerates the library. -->
       <_ShoddyToolFile Include="$(_ShoddyToolDir)/*.dll" />
       <Compile Include="$(_ShoddyGeneratedFile)" />
-      <FileWrites Include="$(_ShoddyGeneratedFile)" />
+      <FileWrites Include="$(_ShoddyGeneratedFile);$(_ShoddyGeneratedStamp)" />
     </ItemGroup>
   </Target>
 
   <!-- The generation, incremental: sources, the toolchain and the
-       libraries included across are the inputs; the one C# file is the
-       output. The toolchain leaves an unchanged file untouched, so the
-       compiler that follows sees nothing new. -->
+       libraries included across are the inputs. The output MSBuild
+       checks is a stamp file touched on every run, not the C# file.
+       The toolchain does not rewrite the C# file when its content is
+       unchanged, so CoreCompile skips; if the C# file were the output
+       its timestamp would stay behind the inputs and this target would
+       run the generator on every build. -->
   <Target Name="ShoddyGenerateLibrary" BeforeTargets="CoreCompile" DependsOnTargets="_ShoddyLibraryPlan"
-          Inputs="@(ShoddySource);@(_ShoddyToolFile);@(ShoddyLibrary)" Outputs="$(_ShoddyGeneratedFile)">
+          Inputs="@(ShoddySource);@(_ShoddyToolFile);@(ShoddyLibrary)" Outputs="$(_ShoddyGeneratedStamp)">
     <Exec Command="dotnet &quot;$(_ShoddyToolDll)&quot; gen --library $(_ShoddyDebugArg) @(ShoddySource->'&quot;%(FullPath)&quot;', ' ') -o &quot;$(_ShoddyGeneratedFile)&quot; --sources &quot;$(ShoddyInstalledSources)&quot; $(_ShoddyLibArg)" />
+    <Touch Files="$(_ShoddyGeneratedStamp)" AlwaysCreate="true" />
   </Target>
 
 </Project>
